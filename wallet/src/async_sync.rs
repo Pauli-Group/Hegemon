@@ -162,13 +162,21 @@ impl AsyncWalletSyncEngine {
                 if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
                     let material = ivk.address_material(entry.ciphertext.diversifier_index)?;
                     eprintln!(
-                        "[DEBUG] Ciphertext #{}: version={} div_idx={}",
-                        entry.index, entry.ciphertext.version, entry.ciphertext.diversifier_index
+                        "[DEBUG] Ciphertext #{}: version={} suite={} div_idx={}",
+                        entry.index,
+                        entry.ciphertext.version,
+                        entry.ciphertext.crypto_suite,
+                        entry.ciphertext.diversifier_index
                     );
                     eprintln!("  expected version: {}", material.version());
+                    eprintln!("  expected suite: {}", material.crypto_suite());
                     eprintln!(
                         "  version match: {}",
                         entry.ciphertext.version == material.version()
+                    );
+                    eprintln!(
+                        "  suite match: {}",
+                        entry.ciphertext.crypto_suite == material.crypto_suite()
                     );
                     eprintln!(
                         "  div_idx match: {}",

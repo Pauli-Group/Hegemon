@@ -2,6 +2,27 @@
    Based on BRAND.md specifications */
 
 /* ========================================
+   Local Fonts (self-hosted)
+   ======================================== */
+@font-face {
+    font-family: 'Space Grotesk';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('fonts/space-grotesk-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 400 500;
+    font-display: swap;
+    src: url('fonts/jetbrains-mono-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ========================================
    CSS Variables (from BRAND.md)
    ======================================== */
 :root {
@@ -61,6 +82,35 @@ body {
     background-color: var(--primary-base);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+/* Accessible focus styling */
+:focus-visible {
+    outline: 2px solid rgba(27, 231, 255, 0.85);
+    outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+
+    *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+/* Scroll reveal */
+.fade-in {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 600ms ease-out, transform 600ms ease-out;
+}
+
+.fade-in.visible {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 /* ========================================
@@ -128,6 +178,10 @@ a:hover {
     background: rgba(14, 28, 54, 0.95);
     backdrop-filter: blur(12px);
     border-bottom: 1px solid rgba(27, 231, 255, 0.1);
+}
+
+.nav.nav-scrolled {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
 .nav-container {
@@ -490,18 +544,21 @@ a:hover {
 }
 
 .threat-danger {
-    background: rgba(255, 78, 78, 0.15);
-    color: var(--negative);
+    background: rgba(27, 231, 255, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(27, 231, 255, 0.25);
 }
 
 .threat-warning {
-    background: rgba(245, 166, 35, 0.15);
-    color: var(--secondary);
+    background: rgba(27, 231, 255, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(27, 231, 255, 0.25);
 }
 
 .threat-success {
-    background: rgba(25, 179, 126, 0.15);
-    color: var(--positive);
+    background: rgba(27, 231, 255, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(27, 231, 255, 0.25);
 }
 
 .threat-card h3 {
@@ -509,6 +566,50 @@ a:hover {
 }
 
 .threat-card p {
+    color: rgba(244, 247, 251, 0.7);
+    font-size: 0.9375rem;
+}
+
+/* ========================================
+   Feature Cards (Commerce)
+   ======================================== */
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--space-4);
+}
+
+.feature-card {
+    background: var(--primary-base);
+    border: 1px solid rgba(27, 231, 255, 0.12);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    transition: all var(--transition-normal);
+}
+
+.feature-card:hover {
+    border-color: rgba(27, 231, 255, 0.3);
+    transform: translateY(-4px);
+}
+
+.feature-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: var(--space-3);
+    background: rgba(27, 231, 255, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(27, 231, 255, 0.25);
+}
+
+.feature-card h3 {
+    margin-bottom: var(--space-2);
+}
+
+.feature-card p {
     color: rgba(244, 247, 251, 0.7);
     font-size: 0.9375rem;
 }
@@ -749,7 +850,7 @@ a:hover {
 .footer-pq {
     font-family: var(--font-mono);
     font-size: 0.75rem !important;
-    color: var(--positive) !important;
+    color: rgba(244, 247, 251, 0.55) !important;
 }
 
 @media (max-width: 768px) {

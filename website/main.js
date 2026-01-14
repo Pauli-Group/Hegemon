@@ -17,18 +17,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Nav background on scroll
     const nav = document.querySelector('.nav');
-    let lastScroll = 0;
 
     window.addEventListener('scroll', () => {
         const currentScroll = window.pageYOffset;
-        
-        if (currentScroll > 100) {
-            nav.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.3)';
-        } else {
-            nav.style.boxShadow = 'none';
-        }
-        
-        lastScroll = currentScroll;
+        nav.classList.toggle('nav-scrolled', currentScroll > 100);
     });
 
     // Intersection Observer for fade-in animations
@@ -52,23 +44,8 @@ document.addEventListener('DOMContentLoaded', () => {
         observer.observe(section);
     });
 
-    // Add CSS for animations
-    const style = document.createElement('style');
-    style.textContent = `
-        .fade-in {
-            opacity: 0;
-            transform: translateY(20px);
-            transition: opacity 0.6s ease-out, transform 0.6s ease-out;
-        }
-        .fade-in.visible {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    `;
-    document.head.appendChild(style);
-
     // Console easter egg
-    console.log('%c🔐 HEGEMON', 'font-size: 24px; font-weight: bold; color: #1BE7FF;');
-    console.log('%cQuantum-resistant private payments', 'font-size: 14px; color: #F4F7FB;');
-    console.log('%chttps://github.com/Pauli-Group/Hegemon', 'font-size: 12px; color: #19B37E;');
+    console.log('%cHEGEMON', 'font-size: 24px; font-weight: 700; color: #1BE7FF;');
+    console.log('%cQuantum-resistant private settlement', 'font-size: 14px; color: #F4F7FB;');
+    console.log('%chttps://github.com/Pauli-Group/Hegemon', 'font-size: 12px; color: rgba(244, 247, 251, 0.7);');
 });

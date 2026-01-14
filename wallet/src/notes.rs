@@ -101,14 +101,21 @@ impl NotePlaintext {
 
 /// Size of the ciphertext portion in pallet format
 pub const PALLET_CIPHERTEXT_SIZE: usize = 579;
-/// Size of the ML-KEM ciphertext
-pub const PALLET_KEM_CIPHERTEXT_SIZE: usize = 1088;
-/// Total size of the pallet encrypted note bytes
-pub const PALLET_ENCRYPTED_NOTE_SIZE: usize = PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE;
+
+pub(crate) fn expected_kem_ciphertext_len(crypto_suite: u16) -> Result<usize, WalletError> {
+    match crypto_suite {
+        protocol_versioning::CRYPTO_SUITE_GAMMA => Ok(synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN),
+        _ => Err(WalletError::Serialization(format!(
+            "Unsupported crypto suite: {}",
+            crypto_suite
+        ))),
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NoteCiphertext {
     pub version: u8,
+    pub crypto_suite: u16,
     pub diversifier_index: u32,
     #[serde(with = "serde_bytes_vec")]
     pub kem_ciphertext: Vec<u8>,
@@ -123,24 +130,26 @@ impl NoteCiphertext {
     /// Used when the proof has more output slots than actual recipients.
     pub fn empty() -> Self {
         Self {
-            version: 0,
+            version: 2,
+            crypto_suite: protocol_versioning::CRYPTO_SUITE_GAMMA,
             diversifier_index: 0,
-            kem_ciphertext: vec![0u8; PALLET_KEM_CIPHERTEXT_SIZE],
+            kem_ciphertext: vec![0u8; synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN],
             note_payload: vec![],
             memo_payload: vec![],
         }
     }
 
-    /// Convert to pallet-compatible format (579 + 1088 = 1667 bytes)
+    /// Convert to pallet-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
     ///
-    /// The pallet's EncryptedNote type uses fixed-size arrays:
-    /// - ciphertext: [u8; 579] containing version, diversifier_index, note/memo payloads
-    /// - kem_ciphertext: [u8; 1088] for ML-KEM
+    /// The pallet's EncryptedNote type uses:
+    /// - ciphertext: [u8; 579] containing version, crypto_suite, diversifier_index, note/memo payloads
+    /// - kem_ciphertext: BoundedVec<u8, _> for ML-KEM ciphertext bytes
     pub fn to_pallet_bytes(&self) -> Result<Vec<u8>, WalletError> {
-        if self.kem_ciphertext.len() != PALLET_KEM_CIPHERTEXT_SIZE {
+        let expected_kem_len = expected_kem_ciphertext_len(self.crypto_suite)?;
+        if self.kem_ciphertext.len() != expected_kem_len {
             return Err(WalletError::Serialization(format!(
                 "Invalid KEM ciphertext length: expected {}, got {}",
-                PALLET_KEM_CIPHERTEXT_SIZE,
+                expected_kem_len,
                 self.kem_ciphertext.len()
             )));
         }
@@ -153,6 +162,10 @@ impl NoteCiphertext {
         ciphertext[offset] = self.version;
         offset += 1;
 
+        // Crypto suite (2 bytes, little-endian)
+        ciphertext[offset..offset + 2].copy_from_slice(&self.crypto_suite.to_le_bytes());
+        offset += 2;
+
         // Diversifier index (4 bytes, little-endian)
         ciphertext[offset..offset + 4].copy_from_slice(&self.diversifier_index.to_le_bytes());
         offset += 4;
@@ -160,7 +173,7 @@ impl NoteCiphertext {
         // Note + memo payloads must fit in the ciphertext container.
         let note_len = self.note_payload.len();
         let memo_len = self.memo_payload.len();
-        let max_payload = PALLET_CIPHERTEXT_SIZE - 5 - 8; // version/diversifier + 2 length fields
+        let max_payload = PALLET_CIPHERTEXT_SIZE - 7 - 8; // version/crypto_suite/diversifier + 2 length fields
         if note_len + memo_len > max_payload {
             return Err(WalletError::Serialization(format!(
                 "Encrypted note payloads too large: note={} memo={} max_total={}",
@@ -186,38 +199,41 @@ impl NoteCiphertext {
             ciphertext[offset..offset + memo_len].copy_from_slice(&self.memo_payload[..memo_len]);
         }
 
-        // Combine ciphertext + kem_ciphertext
-        let mut result = Vec::with_capacity(PALLET_ENCRYPTED_NOTE_SIZE);
+        // Combine ciphertext + SCALE-encoded kem_ciphertext
+        let mut result = Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + 5 + self.kem_ciphertext.len());
         result.extend_from_slice(&ciphertext);
+        encode_compact_len(self.kem_ciphertext.len(), &mut result);
         result.extend_from_slice(&self.kem_ciphertext);
 
         Ok(result)
     }
 
-    /// Parse from pallet-compatible format (579 + 1088 = 1667 bytes)
+    /// Parse from pallet-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
     pub fn from_pallet_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        const EXPECTED_SIZE: usize = PALLET_ENCRYPTED_NOTE_SIZE;
-
-        if bytes.len() != EXPECTED_SIZE {
+        if bytes.len() < PALLET_CIPHERTEXT_SIZE + 1 {
             return Err(WalletError::Serialization(format!(
-                "Invalid encrypted note size: expected {}, got {}",
-                EXPECTED_SIZE,
+                "Invalid encrypted note size: expected at least {}, got {}",
+                PALLET_CIPHERTEXT_SIZE + 1,
                 bytes.len()
             )));
         }
 
         let ciphertext_bytes = &bytes[..PALLET_CIPHERTEXT_SIZE];
-        let kem_ciphertext = bytes[PALLET_CIPHERTEXT_SIZE..].to_vec();
 
         // Parse the ciphertext portion
         let version = ciphertext_bytes[0];
+        let crypto_suite = u16::from_le_bytes(
+            ciphertext_bytes[1..3]
+                .try_into()
+                .map_err(|_| WalletError::Serialization("crypto suite parse failed".into()))?,
+        );
         let diversifier_index = u32::from_le_bytes(
-            ciphertext_bytes[1..5]
+            ciphertext_bytes[3..7]
                 .try_into()
                 .map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?,
         );
 
-        let mut offset = 5;
+        let mut offset = 7;
 
         // Note payload length and data
         let note_len = u32::from_le_bytes(
@@ -250,8 +266,32 @@ impl NoteCiphertext {
             Vec::new()
         };
 
+        let (kem_len, kem_len_bytes) =
+            decode_compact_len(&bytes[PALLET_CIPHERTEXT_SIZE..])?;
+        let expected_kem_len = expected_kem_ciphertext_len(crypto_suite)?;
+        if kem_len != expected_kem_len {
+            return Err(WalletError::Serialization(format!(
+                "Invalid KEM ciphertext length: expected {}, got {}",
+                expected_kem_len, kem_len
+            )));
+        }
+
+        let kem_start = PALLET_CIPHERTEXT_SIZE + kem_len_bytes;
+        let kem_end = kem_start
+            .checked_add(kem_len)
+            .ok_or_else(|| WalletError::Serialization("KEM ciphertext length overflow".into()))?;
+        if bytes.len() != kem_end {
+            return Err(WalletError::Serialization(format!(
+                "Invalid encrypted note size: expected {}, got {}",
+                kem_end,
+                bytes.len()
+            )));
+        }
+        let kem_ciphertext = bytes[kem_start..kem_end].to_vec();
+
         Ok(Self {
             version,
+            crypto_suite,
             diversifier_index,
             kem_ciphertext,
             note_payload,
@@ -272,6 +312,7 @@ impl NoteCiphertext {
             &address.pk_enc,
             address.pk_recipient,
             address.version,
+            address.crypto_suite,
             address.diversifier_index,
             &crypto_note,
             &kem_seed,
@@ -284,6 +325,9 @@ impl NoteCiphertext {
     pub fn decrypt(&self, material: &AddressKeyMaterial) -> Result<NotePlaintext, WalletError> {
         if self.version != material.version() {
             return Err(WalletError::NoteMismatch("note version mismatch"));
+        }
+        if self.crypto_suite != material.crypto_suite() {
+            return Err(WalletError::NoteMismatch("note crypto suite mismatch"));
         }
         if material.diversifier_index != self.diversifier_index {
             return Err(WalletError::NoteMismatch("diversifier index mismatch"));
@@ -316,6 +360,7 @@ impl NoteCiphertext {
     fn to_crypto(&self) -> CryptoNoteCiphertext {
         CryptoNoteCiphertext {
             version: self.version,
+            crypto_suite: self.crypto_suite,
             diversifier_index: self.diversifier_index,
             kem_ciphertext: self.kem_ciphertext.clone(),
             note_payload: self.note_payload.clone(),
@@ -326,6 +371,7 @@ impl NoteCiphertext {
     fn from_crypto(crypto: CryptoNoteCiphertext) -> Self {
         Self {
             version: crypto.version,
+            crypto_suite: crypto.crypto_suite,
             diversifier_index: crypto.diversifier_index,
             kem_ciphertext: crypto.kem_ciphertext,
             note_payload: crypto.note_payload,
@@ -358,6 +404,74 @@ mod serde_bytes32 {
         let mut out = [0u8; 32];
         out.copy_from_slice(&bytes);
         Ok(out)
+    }
+}
+
+fn encode_compact_len(value: usize, out: &mut Vec<u8>) {
+    encode_compact_u64(value as u64, out);
+}
+
+fn encode_compact_u64(value: u64, out: &mut Vec<u8>) {
+    if value < 0x40 {
+        out.push((value as u8) << 2);
+    } else if value < 0x4000 {
+        let v = ((value as u16) << 2) | 0x01;
+        out.extend_from_slice(&v.to_le_bytes());
+    } else if value < 0x4000_0000 {
+        let v = ((value as u32) << 2) | 0x02;
+        out.extend_from_slice(&v.to_le_bytes());
+    } else {
+        let bytes_needed = ((64 - value.leading_zeros() + 7) / 8) as u8;
+        out.push(((bytes_needed - 4) << 2) | 0x03);
+        let value_bytes = value.to_le_bytes();
+        out.extend_from_slice(&value_bytes[..bytes_needed as usize]);
+    }
+}
+
+fn decode_compact_len(data: &[u8]) -> Result<(usize, usize), WalletError> {
+    if data.is_empty() {
+        return Err(WalletError::Serialization(
+            "compact length missing".into(),
+        ));
+    }
+    let flag = data[0] & 0x03;
+    match flag {
+        0 => Ok(((data[0] >> 2) as usize, 1)),
+        1 => {
+            if data.len() < 2 {
+                return Err(WalletError::Serialization(
+                    "compact length short (2-byte)".into(),
+                ));
+            }
+            let raw = u16::from_le_bytes([data[0], data[1]]);
+            Ok(((raw >> 2) as usize, 2))
+        }
+        2 => {
+            if data.len() < 4 {
+                return Err(WalletError::Serialization(
+                    "compact length short (4-byte)".into(),
+                ));
+            }
+            let raw = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+            Ok(((raw >> 2) as usize, 4))
+        }
+        _ => {
+            let bytes_needed = (data[0] >> 2) as usize + 4;
+            if data.len() < 1 + bytes_needed {
+                return Err(WalletError::Serialization(
+                    "compact length short (big-int)".into(),
+                ));
+            }
+            if bytes_needed > 8 {
+                return Err(WalletError::Serialization(
+                    "compact length too large".into(),
+                ));
+            }
+            let mut buf = [0u8; 8];
+            buf[..bytes_needed].copy_from_slice(&data[1..1 + bytes_needed]);
+            let value = u64::from_le_bytes(buf) as usize;
+            Ok((value, 1 + bytes_needed))
+        }
     }
 }
 
@@ -427,6 +541,7 @@ mod tests {
         let recovered = NoteCiphertext::from_bytes(&bytes).unwrap();
 
         assert_eq!(recovered.version, ciphertext.version);
+        assert_eq!(recovered.crypto_suite, ciphertext.crypto_suite);
         assert_eq!(recovered.diversifier_index, ciphertext.diversifier_index);
         assert_eq!(recovered.kem_ciphertext, ciphertext.kem_ciphertext);
         assert_eq!(recovered.note_payload, ciphertext.note_payload);
