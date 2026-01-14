@@ -42,7 +42,7 @@
 //! This module implements PQ network configuration:
 //!
 //! NOTE: This network does NOT use libp2p. All peer connections use PQ-Noise.
-//! - Bootnodes are specified as IP:port via HEGEMON_SEEDS env var
+//! - Bootnodes are specified via HEGEMON_SEEDS as host[:port] (defaults to 30333)
 //! - Peer discovery is handled by the PQ network layer
 //! - Use system_health RPC for peer count, NOT system_peers
 //! - PqNetworkConfig: Configuration for PQ-secure networking

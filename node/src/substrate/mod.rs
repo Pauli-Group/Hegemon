@@ -24,7 +24,7 @@
 //!
 //! IMPORTANT: This node uses a custom PQ (post-quantum) network layer.
 //! - No libp2p - all peer transport uses the PQ network layer
-//! - Bootnodes: Use HEGEMON_SEEDS env var with IP:port format
+//! - Bootnodes: Use HEGEMON_SEEDS env var with host[:port] (defaults to 30333)
 //! - Peer count: Use system_health RPC, NOT system_peers
 //! - Peer IDs: 32-byte PQ keys, not libp2p PeerIds
 //! - PqNetworkConfig for PQ-secure networking
