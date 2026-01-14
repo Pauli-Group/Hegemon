@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.7.0 - 2026-01-14
+- Version bump: `hegemon-node` and `wallet` are now `0.7.0`.
+
 ## v0.6.1 - 2026-01-13
 - Version bump: `hegemon-node` and `wallet` are now `0.6.1`.
 - App defaults: seed `hegemon.pauli.group:30333` for first-run connections and prefer live peer counts.
