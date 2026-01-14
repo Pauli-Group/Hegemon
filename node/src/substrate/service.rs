@@ -2185,11 +2185,13 @@ impl PqServiceConfig {
                             return Some(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
                         }
                         // If that fails, try DNS resolution (for hostname[:port])
-                        let resolve_host =
-                            |target: &str| -> Result<Option<std::net::SocketAddr>, std::io::Error> {
-                                std::net::ToSocketAddrs::to_socket_addrs(target)
-                                    .map(|mut addrs| addrs.next())
-                            };
+                        let resolve_host = |target: &str| -> Result<
+                            Option<std::net::SocketAddr>,
+                            std::io::Error,
+                        > {
+                            std::net::ToSocketAddrs::to_socket_addrs(target)
+                                .map(|mut addrs| addrs.next())
+                        };
 
                         match resolve_host(addr) {
                             Ok(Some(resolved)) => {

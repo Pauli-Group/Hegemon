@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.7.1 - 2026-01-14
+- Version bump: `hegemon-node` and `wallet` are now `0.7.1`.
+- Core console: always pass `--dev` when the dev toggle is enabled, resolve chain spec paths reliably, and bundle the dev chainspec in packaged builds.
+- P2P seeds: allow host-only defaults (port 30333 implied) to match UI defaults.
+
 ## v0.7.0 - 2026-01-14
 - Version bump: `hegemon-node` and `wallet` are now `0.7.0`.
 
