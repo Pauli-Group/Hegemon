@@ -36,7 +36,8 @@ export class NodeManager extends EventEmitter {
 
     if (chainSpecPath) {
       args.push('--chain', chainSpecPath);
-    } else if (options.dev) {
+    }
+    if (options.dev) {
       args.push('--dev');
     }
 
