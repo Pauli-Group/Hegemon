@@ -8,6 +8,7 @@
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::pallet_prelude::*;
 use scale_info::TypeInfo;
+use sp_std::vec;
 use sp_std::vec::Vec;
 
 /// The depth of the Merkle tree for note commitments.
