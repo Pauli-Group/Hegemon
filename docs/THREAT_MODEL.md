@@ -42,7 +42,7 @@ This document explains the attacker capabilities and design assumptions for each
 ## Security margins
 
 - **Signatures**: Target ≥ 128-bit PQ security (ML-DSA-65 / SLH-DSA-128f). Keys larger than spec are rejected.
-- **KEM**: ML-KEM-768 or higher. Shared secrets truncated to 256 bits of entropy.
+- **KEM**: ML-KEM-1024 for note encryption; ML-KEM-768 remains for PQ transport handshake until upgraded. Shared secrets truncated to 256 bits of entropy.
 - **Hashes**: SHA-256/BLAKE3 externally, Poseidon2 field hash internally (width 12, rate 6, capacity 6, 48-byte outputs).
 - **Proving**: FRI parameters are set for ≥128-bit engineering soundness (log_blowup 4, num_queries 43, no grinding).
 

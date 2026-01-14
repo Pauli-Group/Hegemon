@@ -111,7 +111,7 @@ The privacy layer is engineered as a single, MASP-style shielded pool from genes
 
 | Property | Classical Security | Post-Quantum Security | Notes |
 |----------|-------------------|----------------------|-------|
-| **Note encryption (ML-KEM-768)** | 192 bits | ~96 bits | NIST Level 3; protects sender→recipient payloads |
+| **Note encryption (ML-KEM-1024)** | 256 bits | ~128 bits | NIST Level 5; protects sender→recipient payloads |
 | **Commitment binding (Poseidon2-384)** | ~192 bits | ~128 bits | 48-byte digest; collision security |
 | **Nullifier preimage resistance** | ~384 bits | ~192 bits | 48-byte hash output |
 | **STARK proof soundness** | ≥128 bits | ≥128 bits | 43 queries × log₂(16) blowup (engineering estimate) |

@@ -6,14 +6,14 @@
 //!
 //! ## Design
 //!
-//! - **Trial Decryption**: Attempts ML-KEM-768 decapsulation on each note
+//! - **Trial Decryption**: Attempts ML-KEM-1024 decapsulation on each note
 //! - **Parallel Scanning**: Supports batch scanning for performance
 //! - **Incremental Sync**: Only scans new notes since last sync
 //!
 //! ## Post-Quantum Security
 //!
-//! Note encryption uses ML-KEM-768 (FIPS 203) for key encapsulation,
-//! providing 128-bit security against quantum attacks.
+//! Note encryption uses ML-KEM-1024 (FIPS 203) for key encapsulation,
+//! providing ~128-bit post-quantum security.
 //!
 //! ## Usage
 //!
@@ -173,7 +173,7 @@ impl ScanResult {
 
 /// Note scanner using incoming viewing key.
 ///
-/// The scanner trial-decrypts notes using ML-KEM-768 to determine ownership.
+/// The scanner trial-decrypts notes using ML-KEM-1024 to determine ownership.
 /// Only notes encrypted to this wallet's public key will decrypt successfully.
 pub struct NoteScanner {
     /// Incoming viewing key for trial decryption.

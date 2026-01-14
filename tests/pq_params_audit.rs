@@ -1,13 +1,13 @@
 //! Post-Quantum Cryptography Parameter Audit Tests - Phase 15.1.3
 //!
-//! These tests verify that ML-KEM-768 and ML-DSA-65 implementations
+//! These tests verify that ML-KEM-1024 and ML-DSA-65 implementations
 //! conform to FIPS 203 and FIPS 204 specifications respectively.
 //!
 //! ## Security Standards
 //!
-//! - **ML-KEM-768** (FIPS 203): Post-quantum key encapsulation
-//!   - Security level: 3 (128-bit classical, 128-bit quantum)
-//!   - Module dimension k=3, n=256, q=3329
+//! - **ML-KEM-1024** (FIPS 203): Post-quantum key encapsulation
+//!   - Security level: 5 (256-bit classical, 128-bit quantum)
+//!   - Module dimension k=4, n=256, q=3329
 //!
 //! - **ML-DSA-65** (FIPS 204): Post-quantum digital signatures
 //!   - Security level: 3 (128-bit classical, 128-bit quantum)
@@ -26,14 +26,14 @@ use crypto::{
 };
 
 // =============================================================================
-// ML-KEM-768 (FIPS 203) Parameter Tests
+// ML-KEM-1024 (FIPS 203) Parameter Tests
 // =============================================================================
 
-/// ML-KEM-768 NIST FIPS 203 specified parameters
-mod ml_kem_768_params {
+/// ML-KEM-1024 NIST FIPS 203 specified parameters
+mod ml_kem_1024_params {
     // Module dimension (k)
     #[allow(dead_code)]
-    pub const K: usize = 3;
+    pub const K: usize = 4;
     // Polynomial degree
     #[allow(dead_code)]
     pub const N: usize = 256;
@@ -47,21 +47,21 @@ mod ml_kem_768_params {
     pub const ETA2: usize = 2;
     // Compression parameters
     #[allow(dead_code)]
-    pub const DU: usize = 10;
+    pub const DU: usize = 11;
     #[allow(dead_code)]
-    pub const DV: usize = 4;
+    pub const DV: usize = 5;
 
     // Derived sizes (FIPS 203 Table 2)
-    pub const ENCAPSULATION_KEY_SIZE: usize = 384 * K + 32; // 1184
-                                                            // Decapsulation key: d (12*256*k/8 = 1152) + ek (1184) + H(ek) (32) + z (32) = 2400
-    pub const DECAPSULATION_KEY_SIZE: usize = 12 * 256 * K / 8 + ENCAPSULATION_KEY_SIZE + 32 + 32; // 2400
-    pub const CIPHERTEXT_SIZE: usize = 32 * (DU * K + DV); // 1088
+    pub const ENCAPSULATION_KEY_SIZE: usize = 384 * K + 32; // 1568
+                                                            // Decapsulation key: d (12*256*k/8 = 1536) + ek (1568) + H(ek) (32) + z (32) = 3168
+    pub const DECAPSULATION_KEY_SIZE: usize = 12 * 256 * K / 8 + ENCAPSULATION_KEY_SIZE + 32 + 32; // 3168
+    pub const CIPHERTEXT_SIZE: usize = 32 * (DU * K + DV); // 1568
     pub const SHARED_SECRET_SIZE: usize = 32;
 }
 
 #[test]
-fn test_ml_kem_768_key_sizes() {
-    use ml_kem_768_params::*;
+fn test_ml_kem_1024_key_sizes() {
+    use ml_kem_1024_params::*;
 
     // Verify our implementation matches FIPS 203 specified sizes
     assert_eq!(
@@ -88,7 +88,7 @@ fn test_ml_kem_768_key_sizes() {
         ML_KEM_SHARED_SECRET_LEN, SHARED_SECRET_SIZE
     );
 
-    println!("✅ ML-KEM-768 key sizes match FIPS 203:");
+    println!("✅ ML-KEM-1024 key sizes match FIPS 203:");
     println!("   Public key:     {} bytes", ML_KEM_PUBLIC_KEY_LEN);
     println!("   Secret key:     {} bytes", ML_KEM_SECRET_KEY_LEN);
     println!("   Ciphertext:     {} bytes", ML_KEM_CIPHERTEXT_LEN);
@@ -96,7 +96,7 @@ fn test_ml_kem_768_key_sizes() {
 }
 
 #[test]
-fn test_ml_kem_768_keygen() {
+fn test_ml_kem_1024_keygen() {
     // Test deterministic key generation
     let seed1 = [42u8; 32];
     let seed2 = [42u8; 32];
@@ -123,11 +123,11 @@ fn test_ml_kem_768_keygen() {
     // Verify key sizes
     assert_eq!(kp1.public_key().to_bytes().len(), ML_KEM_PUBLIC_KEY_LEN);
 
-    println!("✅ ML-KEM-768 key generation verified");
+    println!("✅ ML-KEM-1024 key generation verified");
 }
 
 #[test]
-fn test_ml_kem_768_encapsulation_decapsulation() {
+fn test_ml_kem_1024_encapsulation_decapsulation() {
     let seed = [1u8; 32];
     let kp = MlKemKeyPair::generate_deterministic(&seed);
 
@@ -151,11 +151,11 @@ fn test_ml_kem_768_encapsulation_decapsulation() {
         "Shared secrets must match after encapsulation/decapsulation"
     );
 
-    println!("✅ ML-KEM-768 encapsulation/decapsulation verified");
+    println!("✅ ML-KEM-1024 encapsulation/decapsulation verified");
 }
 
 #[test]
-fn test_ml_kem_768_different_encapsulations() {
+fn test_ml_kem_1024_different_encapsulations() {
     let seed = [1u8; 32];
     let kp = MlKemKeyPair::generate_deterministic(&seed);
 
@@ -185,11 +185,11 @@ fn test_ml_kem_768_different_encapsulations() {
     assert_eq!(ss1.as_bytes(), dec1.as_bytes());
     assert_eq!(ss2.as_bytes(), dec2.as_bytes());
 
-    println!("✅ ML-KEM-768 randomness verification passed");
+    println!("✅ ML-KEM-1024 randomness verification passed");
 }
 
 #[test]
-fn test_ml_kem_768_invalid_ciphertext() {
+fn test_ml_kem_1024_invalid_ciphertext() {
     let seed = [1u8; 32];
     let _kp = MlKemKeyPair::generate_deterministic(&seed);
 
@@ -202,7 +202,7 @@ fn test_ml_kem_768_invalid_ciphertext() {
     let result = MlKemCiphertext::from_bytes(&invalid_long);
     assert!(result.is_err(), "Should reject long ciphertext");
 
-    println!("✅ ML-KEM-768 invalid ciphertext handling verified");
+    println!("✅ ML-KEM-1024 invalid ciphertext handling verified");
 }
 
 // =============================================================================
@@ -425,7 +425,7 @@ fn test_pq_vs_classical_key_sizes() {
     println!("Key Encapsulation (vs X25519 ECDH):");
     println!("  X25519 public key:    32 bytes (BROKEN by quantum computers)");
     println!(
-        "  ML-KEM-768 public:    {} bytes (quantum-secure)",
+        "  ML-KEM-1024 public:   {} bytes (quantum-secure)",
         ML_KEM_PUBLIC_KEY_LEN
     );
     println!("  Size increase:        {}x", ML_KEM_PUBLIC_KEY_LEN / 32);
@@ -458,11 +458,11 @@ fn test_pq_security_levels() {
     println!("     Post-Quantum Security Levels");
     println!("========================================\n");
 
-    println!("ML-KEM-768 (FIPS 203):");
-    println!("  NIST Level: 3");
-    println!("  Classical security: ≥128 bits (AES-192 equivalent)");
+    println!("ML-KEM-1024 (FIPS 203):");
+    println!("  NIST Level: 5");
+    println!("  Classical security: ≥256 bits (AES-256 equivalent)");
     println!("  Quantum security: ≥128 bits");
-    println!("  Attack complexity: Module-LWE with dimension 768\n");
+    println!("  Attack complexity: Module-LWE with dimension 1024\n");
 
     println!("ML-DSA-65 (FIPS 204):");
     println!("  NIST Level: 3");
@@ -480,7 +480,7 @@ fn test_summary() {
     println!("    PQ Parameters Audit Summary");
     println!("========================================\n");
 
-    println!("ML-KEM-768 (Key Encapsulation):");
+    println!("ML-KEM-1024 (Key Encapsulation):");
     println!(
         "  ✅ Public key:     {} bytes (FIPS 203 compliant)",
         ML_KEM_PUBLIC_KEY_LEN

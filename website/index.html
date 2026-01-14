@@ -3,18 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HEGEMON — Quantum-Resistant Private Payments</title>
-    <meta name="description" content="Post-quantum shielded payments built on STARK proofs. No trusted setup. No elliptic curves. Future-proof privacy for the quantum era.">
+    <title>HEGEMON — Quantum-Resistant Private Settlement</title>
+    <meta name="description" content="A post-quantum, shielded settlement layer for private commerce. One pool from genesis, selective disclosure, no trusted setup, no elliptic curves.">
     
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Fonts (self-hosted) -->
+    <link rel="preload" href="fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
     
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260113">
 </head>
 <body>
     <!-- Navigation -->
@@ -30,12 +29,13 @@
                 <span>HEGEMON</span>
             </a>
             <div class="nav-links">
-                <a href="#why">Why PQ</a>
+                <a href="#commerce">Commerce</a>
+                <a href="#why">Threat Model</a>
                 <a href="#architecture">Architecture</a>
                 <a href="#security">Security</a>
                 <a href="https://github.com/Pauli-Group/Hegemon" target="_blank" rel="noopener">GitHub</a>
             </div>
-            <a href="https://github.com/Pauli-Group/Hegemon" class="nav-cta" target="_blank" rel="noopener">Run a Node →</a>
+            <a href="https://github.com/Pauli-Group/Hegemon/blob/main/runbooks/miner_wallet_quickstart.md" class="nav-cta" target="_blank" rel="noopener">Run a Node →</a>
         </div>
     </nav>
 
@@ -46,20 +46,15 @@
             <div class="hero-badge">ALPHA RELEASE</div>
             <h1 class="hero-title">
                 <span class="hero-title-main">Quantum-resistant</span>
-                <span class="hero-title-accent">private payments</span>
+                <span class="hero-title-accent">private settlement</span>
             </h1>
             <p class="hero-subtitle">
-                Post-quantum shielded pool built on STARK proofs. No trusted setup. 
-                No elliptic curves. Future-proof privacy for the quantum era.
+                A shielded settlement layer for invoices, payroll, and cross-border trade—built to withstand
+                quantum adversaries and AI-scale surveillance. One pool from genesis, with selective disclosure when business needs it.
             </p>
             <div class="hero-ctas">
                 <a href="#whitepaper" class="btn btn-primary">Read the Whitepaper</a>
-                <a href="https://github.com/Pauli-Group/Hegemon" class="btn btn-secondary" target="_blank" rel="noopener">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-                    </svg>
-                    View on GitHub
-                </a>
+                <a href="https://github.com/Pauli-Group/Hegemon/blob/main/runbooks/miner_wallet_quickstart.md" class="btn btn-secondary" target="_blank" rel="noopener">Run a Node</a>
             </div>
         </div>
         <div class="hero-visual">
@@ -76,16 +71,16 @@
     <section class="stats-bar">
         <div class="stats-container">
             <div class="stat">
-                <span class="stat-value">384-bit</span>
-                <span class="stat-label">Hash Digests</span>
+                <span class="stat-value">1 pool</span>
+                <span class="stat-label">Unified Privacy Set</span>
             </div>
             <div class="stat">
-                <span class="stat-value">ML-DSA</span>
-                <span class="stat-label">Signatures</span>
+                <span class="stat-value">PQ-first</span>
+                <span class="stat-label">No ECC / RSA</span>
             </div>
             <div class="stat">
                 <span class="stat-value">STARK</span>
-                <span class="stat-label">Proof System</span>
+                <span class="stat-label">Transparent Proofs</span>
             </div>
             <div class="stat">
                 <span class="stat-value">0</span>
@@ -94,15 +89,61 @@
         </div>
     </section>
 
+    <!-- Commerce Section -->
+    <section class="section section-dark" id="commerce">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-badge">COMMERCE</span>
+                <h2 class="section-title">Private settlement for real markets</h2>
+                <p class="section-subtitle">
+                    Transparent ledgers leak margins, supplier graphs, payroll, and inventory timing. HEGEMON keeps commerce legible to participants—not to observers.
+                </p>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 3l8 4v6c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7l8-4z"/>
+                            <path d="M9 12l2 2 4-4"/>
+                        </svg>
+                    </div>
+                    <h3>Digital bearer instrument</h3>
+                    <p>Custody notes locally and transact without exposing balances, ownership, or memos on-chain.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4a2 2 0 001-1.73z"/>
+                            <path d="M3.27 6.96L12 12l8.73-5.04"/>
+                            <path d="M12 22V12"/>
+                        </svg>
+                    </div>
+                    <h3>Cross-border settlement rail</h3>
+                    <p>Settle wholesale transfers and invoices with permissionless PoW finality—without publishing the trade graph.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10 13a5 5 0 007 0l3 3-3 3-3-3a5 5 0 00-7 0l-3-3 3-3 3 3z"/>
+                            <path d="M7 7a5 5 0 007 0l3 3-3 3-3-3a5 5 0 00-7 0L1 10l3-3 3 3z" opacity="0.4"/>
+                        </svg>
+                    </div>
+                    <h3>Selective disclosure</h3>
+                    <p>Generate payment proofs for auditors, exchanges, or counterparties without handing over a viewing key.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- Why Post-Quantum Section -->
     <section class="section" id="why">
         <div class="container">
             <div class="section-header">
-                <span class="section-badge">THE PROBLEM</span>
-                <h2 class="section-title">Why Post-Quantum?</h2>
+                <span class="section-badge">THREAT MODEL</span>
+                <h2 class="section-title">Commerce under adversaries</h2>
                 <p class="section-subtitle">
-                    Shor's algorithm will break every elliptic curve and RSA key on existing blockchains. 
-                    The question isn't if—it's when.
+                    AI scales surveillance. Quantum breaks today’s cryptography. Transparent ledgers leak business strategy.
                 </p>
             </div>
             
@@ -113,8 +154,8 @@
                             <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
                     </div>
-                    <h3>Shor's Algorithm</h3>
-                    <p>Exponentially faster factoring breaks RSA and discrete-log assumptions. Your ECDSA keys become transparent.</p>
+                    <h3>Quantum breaks ECC</h3>
+                    <p>Shor's algorithm collapses elliptic-curve cryptography. Legacy chains built on ECC become forgeable and rewindable.</p>
                 </div>
                 <div class="threat-card">
                     <div class="threat-icon threat-warning">
@@ -123,7 +164,18 @@
                         </svg>
                     </div>
                     <h3>Harvest Now, Decrypt Later</h3>
-                    <p>Nation-states are already recording encrypted traffic. Once quantum computers mature, they'll rewind everything.</p>
+                    <p>Adversaries record traffic today to decrypt tomorrow. If privacy depends on breakable assumptions, confidentiality has an expiration date.</p>
+                </div>
+                <div class="threat-card">
+                    <div class="threat-icon threat-warning">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 19a8 8 0 0116 0"/>
+                            <circle cx="12" cy="11" r="3"/>
+                            <path d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.364-6.364l-1.414 1.414M7.05 16.95l-1.414 1.414m0-11.314l1.414 1.414m11.314 11.314l1.414 1.414"/>
+                        </svg>
+                    </div>
+                    <h3>AI-scale surveillance</h3>
+                    <p>Transaction graphs and metadata become dossiers. In a transparent ledger, competitors and states can map the entire market.</p>
                 </div>
                 <div class="threat-card">
                     <div class="threat-icon threat-success">
@@ -132,7 +184,7 @@
                         </svg>
                     </div>
                     <h3>HEGEMON's Answer</h3>
-                    <p>Lattice-based signatures (ML-DSA), hash-based commitments, and STARK proofs. No curves. No pairings. No trusted setup.</p>
+                    <p>One shielded pool from genesis, STARK proofs, and lattice-based cryptography. Privacy by default, with selective disclosure when required.</p>
                 </div>
             </div>
         </div>
@@ -145,7 +197,7 @@
                 <span class="section-badge">PROTOCOL</span>
                 <h2 class="section-title">Architecture</h2>
                 <p class="section-subtitle">
-                    Four tightly-coupled subsystems deliver end-to-end quantum resistance.
+                    Four tightly-coupled subsystems deliver private, settlement-grade commerce.
                 </p>
             </div>
             
@@ -233,9 +285,9 @@
                     <tbody>
                         <tr>
                             <td><strong>Note encryption</strong></td>
-                            <td>192 bits</td>
-                            <td>~96 bits</td>
-                            <td>ML-KEM-768 (NIST Level 3)</td>
+                            <td>256 bits</td>
+                            <td>~128 bits</td>
+                            <td>ML-KEM-1024 (NIST Level 5)</td>
                         </tr>
                         <tr>
                             <td><strong>Commitment binding</strong></td>
@@ -357,14 +409,14 @@
     <section class="section section-cta">
         <div class="container">
             <div class="cta-content">
-                <h2>Ready to build on quantum-safe rails?</h2>
-                <p>Run a node, mine blocks, or contribute to the protocol.</p>
+                <h2>Ready to run private commerce rails?</h2>
+                <p>Start a dev node, mine blocks, and integrate wallets and selective disclosure.</p>
                 <div class="cta-buttons">
                     <a href="https://github.com/Pauli-Group/Hegemon/blob/main/runbooks/miner_wallet_quickstart.md" class="btn btn-primary btn-large" target="_blank" rel="noopener">
-                        Miner Quickstart →
+                        Node + Wallet Quickstart →
                     </a>
-                    <a href="https://github.com/Pauli-Group/Hegemon" class="btn btn-secondary btn-large" target="_blank" rel="noopener">
-                        Browse Source
+                    <a href="https://github.com/Pauli-Group/Hegemon/blob/main/docs/API_REFERENCE.md" class="btn btn-secondary btn-large" target="_blank" rel="noopener">
+                        API Reference
                     </a>
                 </div>
             </div>
@@ -385,7 +437,7 @@
                         </svg>
                         <span>HEGEMON</span>
                     </div>
-                    <p>Quantum-resistant private payments</p>
+                    <p>Quantum-resistant private settlement</p>
                 </div>
                 <div class="footer-links">
                     <div class="footer-column">
@@ -409,11 +461,11 @@
             </div>
             <div class="footer-bottom">
                 <p>© 2026 Pauli Group. Open source under MIT license.</p>
-                <p class="footer-pq">🔒 This site uses hybrid post-quantum key exchange (X25519Kyber768)</p>
+                <p class="footer-pq">Site hardened with modern security headers</p>
             </div>
         </div>
     </footer>
 
-    <script src="main.js"></script>
+    <script src="main.js?v=20260113"></script>
 </body>
 </html>

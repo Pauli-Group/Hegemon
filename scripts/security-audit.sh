@@ -342,7 +342,7 @@ if [ $VIOLATIONS -eq 0 ]; then
     echo ""
     echo "Approved Primitives:"
     echo "  ✓ Blake3 (PoW, general hashing)"
-    echo "  ✓ ML-KEM-768 (P2P handshake, note encryption)"
+    echo "  ✓ ML-KEM-768 (P2P handshake), ML-KEM-1024 (note encryption)"
     echo "  ✓ ML-DSA-65 (Signatures, identity)"
     echo "  ✓ SLH-DSA (Long-term trust roots)"
     echo "  ✓ STARK/FRI (Zero-knowledge proofs)"

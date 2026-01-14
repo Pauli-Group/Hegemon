@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use protocol_versioning::CRYPTO_SUITE_GAMMA;
 use synthetic_crypto::{
     deterministic::expand_to_length,
     hashes::{blake3_256, derive_prf_key},
@@ -13,7 +14,8 @@ use synthetic_crypto::{
 use crate::{address::ShieldedAddress, error::WalletError};
 
 const KEY_SIZE: usize = 32;
-const ADDRESS_VERSION: u8 = 1;
+const ADDRESS_VERSION: u8 = 2;
+const ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_GAMMA;
 
 /// Root secret key - the master seed for the wallet.
 /// This is zeroized on drop to prevent key material from persisting in memory.
@@ -139,6 +141,8 @@ impl DiversifierKey {
 
 #[derive(Clone, Debug)]
 pub struct AddressKeyMaterial {
+    version: u8,
+    crypto_suite: u16,
     pub diversifier_index: u32,
     diversifier: [u8; KEY_SIZE],
     pub pk_recipient: [u8; KEY_SIZE],
@@ -156,6 +160,8 @@ impl AddressKeyMaterial {
         let pk_recipient = view.pk_recipient(&diversifier);
         let keypair = encryption.derive_keypair(&diversifier, index);
         Ok(Self {
+            version: ADDRESS_VERSION,
+            crypto_suite: ADDRESS_CRYPTO_SUITE,
             diversifier_index: index,
             diversifier,
             pk_recipient,
@@ -165,7 +171,8 @@ impl AddressKeyMaterial {
 
     pub fn shielded_address(&self) -> ShieldedAddress {
         ShieldedAddress {
-            version: ADDRESS_VERSION,
+            version: self.version,
+            crypto_suite: self.crypto_suite,
             diversifier_index: self.diversifier_index,
             pk_recipient: self.pk_recipient,
             pk_enc: self.keypair.public_key(),
@@ -173,7 +180,11 @@ impl AddressKeyMaterial {
     }
 
     pub fn version(&self) -> u8 {
-        ADDRESS_VERSION
+        self.version
+    }
+
+    pub fn crypto_suite(&self) -> u16 {
+        self.crypto_suite
     }
 
     pub fn secret_key(&self) -> &MlKemSecretKey {

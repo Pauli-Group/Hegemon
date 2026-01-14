@@ -51,10 +51,9 @@
 use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, TelemetrySnapshot};
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
-use codec::Encode;
+use codec::{Decode, Encode};
 use pallet_shielded_pool::types::{
-    BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, ENCRYPTED_NOTE_SIZE,
-    ML_KEM_CIPHERTEXT_LEN,
+    BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof,
 };
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sp_api::ProvideRuntimeApi;
@@ -401,32 +400,16 @@ where
                 .try_into()
                 .map_err(|_| "Failed to convert commitments")?;
 
-        // Convert encrypted notes to EncryptedNote structs
-        // Expected format: [ciphertext][kem_ciphertext]
-        let required_len = ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN;
+        // Convert encrypted notes to EncryptedNote structs (SCALE-encoded)
         let mut enc_notes = Vec::with_capacity(encrypted_notes.len());
         for note_bytes in encrypted_notes {
-            if note_bytes.len() < required_len {
-                return Err(format!(
-                    "Encrypted note too small: {} bytes (need {})",
-                    note_bytes.len(),
-                    required_len
-                ));
+            let mut cursor = &note_bytes[..];
+            let note = EncryptedNote::decode(&mut cursor)
+                .map_err(|_| "Invalid encrypted note encoding")?;
+            if !cursor.is_empty() {
+                return Err("Encrypted note has trailing bytes".to_string());
             }
-
-            let mut ciphertext = [0u8; ENCRYPTED_NOTE_SIZE];
-            ciphertext.copy_from_slice(&note_bytes[..ENCRYPTED_NOTE_SIZE]);
-
-            // ML-KEM-768 ciphertext for key encapsulation
-            let mut kem_ciphertext = [0u8; ML_KEM_CIPHERTEXT_LEN];
-            kem_ciphertext.copy_from_slice(
-                &note_bytes[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN],
-            );
-
-            enc_notes.push(EncryptedNote {
-                ciphertext,
-                kem_ciphertext,
-            });
+            enc_notes.push(note);
         }
 
         let bounded_ciphertexts: frame_support::BoundedVec<

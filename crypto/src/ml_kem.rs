@@ -1,4 +1,4 @@
-//! ML-KEM-768 (FIPS 203) - REAL Post-Quantum Key Encapsulation
+//! ML-KEM-1024 (FIPS 203) - REAL Post-Quantum Key Encapsulation
 //!
 //! This module provides a wrapper around the `ml-kem` crate which implements
 //! the NIST FIPS 203 Module-Lattice-Based Key-Encapsulation Mechanism.
@@ -9,15 +9,15 @@ use crate::error::CryptoError;
 use crate::traits::{KemKeyPair, KemPublicKey};
 use alloc::vec::Vec;
 
-// Re-export the real ML-KEM-768 types from the ml-kem crate
+// Re-export the real ML-KEM-1024 types from the ml-kem crate
 use ml_kem::array::Array;
 use ml_kem::kem::{Decapsulate, DecapsulationKey, EncapsulationKey};
-use ml_kem::{EncodedSizeUser, MlKem768Params};
+use ml_kem::{EncodedSizeUser, MlKem1024Params};
 
-/// ML-KEM-768 parameter sizes (FIPS 203)
-pub const ML_KEM_PUBLIC_KEY_LEN: usize = 1184;
-pub const ML_KEM_SECRET_KEY_LEN: usize = 2400;
-pub const ML_KEM_CIPHERTEXT_LEN: usize = 1088;
+/// ML-KEM-1024 parameter sizes (FIPS 203)
+pub const ML_KEM_PUBLIC_KEY_LEN: usize = 1568;
+pub const ML_KEM_SECRET_KEY_LEN: usize = 3168;
+pub const ML_KEM_CIPHERTEXT_LEN: usize = 1568;
 pub const ML_KEM_SHARED_SECRET_LEN: usize = 32;
 
 /// Ciphertext from ML-KEM encapsulation
@@ -76,7 +76,7 @@ impl MlKemSharedSecret {
     }
 }
 
-/// ML-KEM-768 Public Key (encapsulation key)
+/// ML-KEM-1024 Public Key (encapsulation key)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MlKemPublicKey {
     bytes: [u8; ML_KEM_PUBLIC_KEY_LEN],
@@ -87,9 +87,9 @@ impl MlKemPublicKey {
         &self.bytes
     }
 
-    fn to_inner(&self) -> EncapsulationKey<MlKem768Params> {
+    fn to_inner(&self) -> EncapsulationKey<MlKem1024Params> {
         let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
-        EncapsulationKey::<MlKem768Params>::from_bytes(&arr)
+        EncapsulationKey::<MlKem1024Params>::from_bytes(&arr)
     }
 }
 
@@ -105,7 +105,7 @@ impl KemPublicKey for MlKemPublicKey {
 
         // Derive 32-byte randomness from the seed
         let mut hasher = Sha256::new();
-        hasher.update(b"ml-kem-768-encapsulate");
+        hasher.update(b"ml-kem-1024-encapsulate");
         hasher.update(seed);
         let m: [u8; 32] = hasher.finalize().into();
         let m_array: Array<u8, _> = Array::try_from(m.as_slice()).expect("size mismatch");
@@ -144,7 +144,7 @@ impl KemPublicKey for MlKemPublicKey {
     }
 }
 
-/// ML-KEM-768 Secret Key (decapsulation key)
+/// ML-KEM-1024 Secret Key (decapsulation key)
 #[derive(Clone)]
 pub struct MlKemSecretKey {
     bytes: [u8; ML_KEM_SECRET_KEY_LEN],
@@ -176,9 +176,9 @@ impl MlKemSecretKey {
         Ok(Self { bytes: arr })
     }
 
-    fn to_inner(&self) -> DecapsulationKey<MlKem768Params> {
+    fn to_inner(&self) -> DecapsulationKey<MlKem1024Params> {
         let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
-        DecapsulationKey::<MlKem768Params>::from_bytes(&arr)
+        DecapsulationKey::<MlKem1024Params>::from_bytes(&arr)
     }
 
     /// REAL ML-KEM decapsulation using lattice operations
@@ -212,7 +212,7 @@ impl PartialEq for MlKemSecretKey {
 
 impl Eq for MlKemSecretKey {}
 
-/// ML-KEM-768 Key Pair
+/// ML-KEM-1024 Key Pair
 #[derive(Clone)]
 pub struct MlKemKeyPair {
     secret: MlKemSecretKey,
@@ -254,12 +254,12 @@ impl KemKeyPair for MlKemKeyPair {
         let mut z = [0u8; 32];
 
         let mut hasher = Sha256::new();
-        hasher.update(b"ml-kem-768-d");
+        hasher.update(b"ml-kem-1024-d");
         hasher.update(seed);
         d.copy_from_slice(&hasher.finalize());
 
         let mut hasher = Sha256::new();
-        hasher.update(b"ml-kem-768-z");
+        hasher.update(b"ml-kem-1024-z");
         hasher.update(seed);
         z.copy_from_slice(&hasher.finalize());
 
@@ -271,7 +271,7 @@ impl KemKeyPair for MlKemKeyPair {
             Array::try_from(full_seed.as_slice()).expect("size mismatch");
 
         // REAL ML-KEM key generation using lattice operations
-        let dk = DecapsulationKey::<MlKem768Params>::from(seed_array);
+        let dk = DecapsulationKey::<MlKem1024Params>::from(seed_array);
         let dk_bytes = dk.as_bytes();
 
         let mut secret_bytes = [0u8; ML_KEM_SECRET_KEY_LEN];
@@ -343,10 +343,10 @@ mod tests {
 
     #[test]
     fn test_parameter_sizes() {
-        // Verify FIPS 203 ML-KEM-768 parameter sizes
-        assert_eq!(ML_KEM_PUBLIC_KEY_LEN, 1184);
-        assert_eq!(ML_KEM_SECRET_KEY_LEN, 2400);
-        assert_eq!(ML_KEM_CIPHERTEXT_LEN, 1088);
+        // Verify FIPS 203 ML-KEM-1024 parameter sizes
+        assert_eq!(ML_KEM_PUBLIC_KEY_LEN, 1568);
+        assert_eq!(ML_KEM_SECRET_KEY_LEN, 3168);
+        assert_eq!(ML_KEM_CIPHERTEXT_LEN, 1568);
         assert_eq!(ML_KEM_SHARED_SECRET_LEN, 32);
     }
 

@@ -92,7 +92,7 @@ decl_runtime_apis! {
     /// # Security
     ///
     /// All operations use post-quantum cryptography:
-    /// - ML-KEM-768 for note encryption
+    /// - ML-KEM-1024 for note encryption
     /// - STARK proofs for transaction verification
     /// - Poseidon hash for Merkle tree
     pub trait ShieldedPoolApi {
