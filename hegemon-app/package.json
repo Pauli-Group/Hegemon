@@ -53,6 +53,10 @@
         "to": "bin/walletd"
       },
       {
+        "from": "../config/dev-chainspec.json",
+        "to": "config/dev-chainspec.json"
+      },
+      {
         "from": "build/icon.png",
         "to": "icon.png"
       },
