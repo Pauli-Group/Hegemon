@@ -8,7 +8,7 @@
 //!
 //! 1. **No Pre-funded Accounts**: All funds come from mining rewards
 //! 2. **Real STARK Proofs**: Uses actual Plonky3 prover (not mocks)
-//! 3. **Post-Quantum Security**: ML-KEM-768 for encryption, ML-DSA-65 for signatures
+//! 3. **Post-Quantum Security**: ML-KEM-1024 for encryption, ML-DSA-65 for signatures
 //! 4. **Full Transaction Flow**: Shield → Transfer → Unshield tested end-to-end
 //!
 //! ## Test Scenarios

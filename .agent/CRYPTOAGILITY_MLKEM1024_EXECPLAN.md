@@ -25,13 +25,13 @@ This plan assumes a chain reset (new genesis) is acceptable for this upgrade. Th
 ## Progress
 
 - [x] (2026-01-13 23:02Z) Draft the cryptoagility + ML-KEM-1024 ExecPlan.
-- [ ] Confirm current note-encryption and address formats; write down exact byte layouts and size budgets (completed: none; remaining: all).
-- [ ] Define “crypto suite” IDs and the v2 address / v2 ciphertext formats (completed: none; remaining: all).
-- [ ] Implement ML-KEM-1024 as the default note-encryption KEM (completed: none; remaining: all).
-- [ ] Make ciphertexts self-identifying and domain-separated by suite (completed: none; remaining: all).
-- [ ] Update on-chain `EncryptedNote` encoding + wallet extrinsic encoding to support non-fixed KEM ciphertext lengths safely (completed: none; remaining: all).
-- [ ] Add security hardening checks + tests (downgrade/confusion/DoS parsing) (completed: none; remaining: all).
-- [ ] Update docs + website security table; validate end-to-end on fresh dev chain (completed: none; remaining: all).
+- [x] (2026-01-14 00:39Z) Confirm current note-encryption and address formats; write down exact byte layouts and size budgets.
+- [x] (2026-01-14 00:39Z) Define “crypto suite” IDs and the v2 address / v2 ciphertext formats.
+- [x] (2026-01-14 00:39Z) Implement ML-KEM-1024 as the default note-encryption KEM.
+- [x] (2026-01-14 00:39Z) Make ciphertexts self-identifying and domain-separated by suite.
+- [x] (2026-01-14 00:39Z) Update on-chain `EncryptedNote` encoding + wallet extrinsic encoding to support non-fixed KEM ciphertext lengths safely.
+- [x] (2026-01-14 00:39Z) Add security hardening checks + tests (downgrade/confusion/DoS parsing).
+- [ ] Update docs + website security table; validate end-to-end on fresh dev chain (completed: docs + website + test updates; remaining: dev-chain validation).
 
 ## Surprises & Discoveries
 
@@ -63,7 +63,9 @@ Update this section as implementation uncovers additional constraints (for examp
 
 ## Outcomes & Retrospective
 
-Not yet complete. This section must be filled in as milestones are achieved, including what was delivered, what is still open, and any lessons learned.
+Delivered: ML-KEM-1024 note encryption, crypto-suite-bound address/ciphertext headers, variable-length KEM ciphertext support in the pallet + wallet SCALE encoding, and downgrade/confusion checks across wallet/node/runtime paths. Docs and the website security table are updated; crypto test vectors regenerated.
+
+Open: end-to-end validation on a fresh dev chain and any performance/weight re-checks tied to larger ciphertexts.
 
 ## Context and Orientation
 
@@ -403,4 +405,3 @@ In `wallet/src/address.rs`, ensure `ShieldedAddress` carries `crypto_suite: u16`
 In `pallets/shielded-pool/src/types.rs`, ensure `EncryptedNote` can represent variable-length KEM ciphertext bytes with a strict maximum, and the pallet validates the declared suite and ciphertext length.
 
 When revising this plan, append a short note at the bottom describing what changed and why.
-

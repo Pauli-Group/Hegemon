@@ -12,7 +12,7 @@ This reference summarizes the public APIs of the monorepo components and points 
 - `ml_kem` module
   - `Keypair::encapsulate(&self, rng_seed: &[u8; 32]) -> (Ciphertext, SharedSecret)`
   - `SecretKey::decapsulate(&self, ct: &Ciphertext) -> SharedSecret`
-  - Security margin: ML-KEM-768; shared secrets truncated to 32 bytes.
+  - Security margin: ML-KEM-1024; shared secrets truncated to 32 bytes.
 - `hashes` module
   - `commit_note(message: &[u8], randomness: &[u8]) -> [u8; 48]` (BLAKE3-384 by default) and `commit_note_with(.., CommitmentHash::Sha3)` for SHA3-384 commitments.
   - `sha3_256`, `blake3_256`, `blake3_384`, and Poseidon-style field hashing helpers. `commit_note_with` uses SHA3-384 when requested. BLAKE3-384 is the default digest for commitments/nullifiers, while BLAKE3-256 remains the default for PQ address tagging and other 32-byte identifiers.
