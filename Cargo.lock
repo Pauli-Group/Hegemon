@@ -11971,6 +11971,7 @@ dependencies = [
  "parity-scale-codec",
  "predicates",
  "proptest",
+ "protocol-versioning",
  "rand 0.8.5",
  "rpassword",
  "scale-info",

@@ -37,15 +37,20 @@ pub const BINDING_HASH_SIZE: usize = 64;
 /// Size of the memo field in bytes.
 pub const MEMO_SIZE: usize = 512;
 
+/// Note encryption version used in the ciphertext header.
+pub const NOTE_ENCRYPTION_VERSION: u8 = 2;
+/// Crypto suite identifier for ML-KEM-1024 note encryption.
+pub const CRYPTO_SUITE_GAMMA: u16 = 3;
+
 /// Size of the encrypted note ciphertext container.
-/// Layout: version(1) + diversifier_index(4) + note_len(4) + note_payload +
+/// Layout: version(1) + crypto_suite(2) + diversifier_index(4) + note_len(4) + note_payload +
 /// memo_len(4) + memo_payload + padding.
 pub const ENCRYPTED_NOTE_SIZE: usize = 579;
 
-/// Size of the ML-KEM-768 ciphertext for key encapsulation.
-pub const ML_KEM_CIPHERTEXT_LEN: usize = 1088;
+/// Maximum size of the ML-KEM ciphertext for key encapsulation.
+pub const MAX_KEM_CIPHERTEXT_LEN: u32 = 1568;
 
-/// Diversified address size (post-quantum compatible).
+/// Diversified address size used inside commitments: version(1) + diversifier_index(4) + pk_recipient(32).
 pub const DIVERSIFIED_ADDRESS_SIZE: usize = 37;
 
 /// Commitment bytes (48-byte PQ sponge output).
@@ -112,15 +117,18 @@ impl Note {
 pub struct EncryptedNote {
     /// Encrypted ciphertext containing note data.
     pub ciphertext: [u8; ENCRYPTED_NOTE_SIZE],
-    /// ML-KEM-768 ciphertext for key encapsulation (1088 bytes).
-    pub kem_ciphertext: [u8; ML_KEM_CIPHERTEXT_LEN],
+    /// ML-KEM ciphertext for key encapsulation (suite-dependent length).
+    pub kem_ciphertext: BoundedVec<u8, ConstU32<MAX_KEM_CIPHERTEXT_LEN>>,
 }
 
 impl Default for EncryptedNote {
     fn default() -> Self {
         Self {
             ciphertext: [0u8; ENCRYPTED_NOTE_SIZE],
-            kem_ciphertext: [0u8; ML_KEM_CIPHERTEXT_LEN],
+            kem_ciphertext: BoundedVec::truncate_from(vec![
+                0u8;
+                MAX_KEM_CIPHERTEXT_LEN as usize
+            ]),
         }
     }
 }
@@ -394,7 +402,11 @@ mod tests {
     fn encrypted_note_default_works() {
         let enc = EncryptedNote::default();
         assert_eq!(enc.ciphertext, [0u8; ENCRYPTED_NOTE_SIZE]);
-        assert_eq!(enc.kem_ciphertext, [0u8; ML_KEM_CIPHERTEXT_LEN]);
+        assert_eq!(
+            enc.kem_ciphertext.len(),
+            MAX_KEM_CIPHERTEXT_LEN as usize
+        );
+        assert!(enc.kem_ciphertext.iter().all(|b| *b == 0));
     }
 
     #[test]
@@ -412,17 +424,30 @@ mod tests {
         note.ciphertext[0] = 0xAB;
         note.ciphertext[ENCRYPTED_NOTE_SIZE - 1] = 0xCD;
         note.kem_ciphertext[0] = 0xEF;
-        note.kem_ciphertext[1087] = 0x99;
+        let last = note.kem_ciphertext.len() - 1;
+        note.kem_ciphertext[last] = 0x99;
 
         // Encode it
         let encoded = note.encode();
 
-        // Verify exact size - fixed arrays encode without length prefix
+        let kem_len = note.kem_ciphertext.len();
+        let compact_len_bytes = if kem_len < 0x40 {
+            1
+        } else if kem_len < 0x4000 {
+            2
+        } else if kem_len < 0x4000_0000 {
+            4
+        } else {
+            let bits = 64 - (kem_len as u64).leading_zeros();
+            1 + ((bits + 7) / 8) as usize
+        };
+
+        // Verify exact size - BoundedVec encodes with compact length prefix
         assert_eq!(
             encoded.len(),
-            ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN,
+            ENCRYPTED_NOTE_SIZE + compact_len_bytes + kem_len,
             "EncryptedNote should encode to exactly {} bytes",
-            ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN
+            ENCRYPTED_NOTE_SIZE + compact_len_bytes + kem_len
         );
 
         // Decode it back
@@ -431,19 +456,22 @@ mod tests {
         assert_eq!(decoded.ciphertext[0], 0xAB);
         assert_eq!(decoded.ciphertext[ENCRYPTED_NOTE_SIZE - 1], 0xCD);
         assert_eq!(decoded.kem_ciphertext[0], 0xEF);
-        assert_eq!(decoded.kem_ciphertext[1087], 0x99);
+        assert_eq!(decoded.kem_ciphertext[last], 0x99);
     }
 
     #[test]
     fn encrypted_note_raw_bytes_decode() {
-        // Simulate wallet-style encoding (just concatenating raw bytes)
-        let mut raw_bytes = vec![0u8; ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN];
+        // Simulate wallet-style encoding with compact length prefix.
+        let kem_len = 3usize;
+        let mut raw_bytes = vec![0u8; ENCRYPTED_NOTE_SIZE];
         raw_bytes[0] = 0x42; // first byte of ciphertext
-        raw_bytes[ENCRYPTED_NOTE_SIZE] = 0x43; // first byte of kem_ciphertext
 
-        // This should decode correctly
-        let decoded = EncryptedNote::decode(&mut raw_bytes.as_slice())
-            .expect("Should decode raw concatenated bytes");
+        // Compact length prefix for kem_len = 3 (single-byte mode)
+        raw_bytes.push((kem_len as u8) << 2);
+        raw_bytes.extend_from_slice(&[0x43, 0x44, 0x45]);
+
+        let decoded =
+            EncryptedNote::decode(&mut raw_bytes.as_slice()).expect("Should decode raw bytes");
 
         assert_eq!(decoded.ciphertext[0], 0x42);
         assert_eq!(decoded.kem_ciphertext[0], 0x43);

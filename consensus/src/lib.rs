@@ -27,8 +27,8 @@ pub use proof::{
     commitment_nullifier_lists, verify_commitment_proof_payload,
 };
 pub use protocol_versioning::{
-    CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CircuitVersion, CryptoSuiteId,
-    DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
+    CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CRYPTO_SUITE_GAMMA,
+    CircuitVersion, CryptoSuiteId, DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
 };
 pub use substrate::{BlockOrigin, ImportReceipt, import_pow_block};
 pub use substrate_pow::{

@@ -5,14 +5,17 @@ use synthetic_crypto::{
     ml_kem::{MlKemKeyPair, MlKemPublicKey, ML_KEM_PUBLIC_KEY_LEN},
     traits::{KemKeyPair, KemPublicKey},
 };
+use protocol_versioning::CRYPTO_SUITE_GAMMA;
 
 use crate::error::WalletError;
 
 const ADDRESS_HRP: &str = "shca";
+const SUPPORTED_ADDRESS_VERSION: u8 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShieldedAddress {
     pub version: u8,
+    pub crypto_suite: u16,
     pub diversifier_index: u32,
     #[serde(with = "serde_bytes32")]
     pub pk_recipient: [u8; 32],
@@ -25,7 +28,8 @@ impl Default for ShieldedAddress {
         // Generate a dummy address for testing purposes
         let keypair = MlKemKeyPair::generate_deterministic(b"test-default-address");
         Self {
-            version: 1,
+            version: SUPPORTED_ADDRESS_VERSION,
+            crypto_suite: CRYPTO_SUITE_GAMMA,
             diversifier_index: 0,
             pk_recipient: [0u8; 32],
             pk_enc: keypair.public_key(),
@@ -57,8 +61,9 @@ impl ShieldedAddress {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN);
+        let mut out = Vec::with_capacity(1 + 2 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN);
         out.push(self.version);
+        out.extend_from_slice(&self.crypto_suite.to_le_bytes());
         out.extend_from_slice(&self.diversifier_index.to_le_bytes());
         out.extend_from_slice(&self.pk_recipient);
         out.extend_from_slice(self.pk_enc.as_bytes());
@@ -66,7 +71,7 @@ impl ShieldedAddress {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        let expected_len = 1 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN;
+        let expected_len = 1 + 2 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN;
         if bytes.len() != expected_len {
             return Err(WalletError::AddressEncoding(format!(
                 "invalid address length: expected {} bytes, got {}",
@@ -75,17 +80,29 @@ impl ShieldedAddress {
             )));
         }
         let version = bytes[0];
+        if version != SUPPORTED_ADDRESS_VERSION {
+            return Err(WalletError::AddressEncoding(format!(
+                "unsupported address version: {}",
+                version
+            )));
+        }
+        let crypto_suite = u16::from_le_bytes(
+            bytes[1..3]
+                .try_into()
+                .map_err(|_| WalletError::AddressEncoding("crypto suite parse failed".into()))?,
+        );
         let mut index_bytes = [0u8; 4];
-        index_bytes.copy_from_slice(&bytes[1..5]);
+        index_bytes.copy_from_slice(&bytes[3..7]);
         let diversifier_index = u32::from_le_bytes(index_bytes);
         let mut pk_recipient = [0u8; 32];
-        pk_recipient.copy_from_slice(&bytes[5..37]);
-        let pk_start = 37;
+        pk_recipient.copy_from_slice(&bytes[7..39]);
+        let pk_start = 39;
         let pk_end = pk_start + ML_KEM_PUBLIC_KEY_LEN;
         let pk_enc = MlKemPublicKey::from_bytes(&bytes[pk_start..pk_end])
             .map_err(|err| WalletError::AddressEncoding(err.to_string()))?;
         Ok(Self {
             version,
+            crypto_suite,
             diversifier_index,
             pk_recipient,
             pk_enc,

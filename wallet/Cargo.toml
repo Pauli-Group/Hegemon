@@ -34,6 +34,7 @@ transaction-circuit = { path = "../circuits/transaction", default-features = fal
 disclosure-circuit = { path = "../circuits/disclosure" }
 batch-circuit = { path = "../circuits/batch", default-features = false, features = ["plonky3"], optional = true }
 synthetic-crypto = { path = "../crypto" }
+protocol-versioning = { path = "../protocol/versioning" }
 twox-hash = "1.6"
 zeroize = { version = "1.8", features = ["derive"] }
 

@@ -236,11 +236,12 @@ impl ExtrinsicBuilder {
         // eprintln!("DEBUG CALL: encrypted_notes count = {}", call.encrypted_notes.len());
         encode_compact_len(call.encrypted_notes.len(), &mut encoded);
         for note in &call.encrypted_notes {
-            // The encrypted note must be exactly ciphertext + kem_ciphertext
-            if note.len() != crate::notes::PALLET_ENCRYPTED_NOTE_SIZE {
+            // The encrypted note must include the ciphertext container plus a length-prefixed KEM.
+            let min_len = crate::notes::PALLET_CIPHERTEXT_SIZE + 1;
+            if note.len() < min_len {
                 return Err(WalletError::Serialization(format!(
-                    "Encrypted note wrong size: expected {} bytes, got {}",
-                    crate::notes::PALLET_ENCRYPTED_NOTE_SIZE,
+                    "Encrypted note too small: expected at least {} bytes, got {}",
+                    min_len,
                     note.len()
                 )));
             }
@@ -697,10 +698,11 @@ pub fn encode_batch_shielded_transfer_call(
     // Encode encrypted notes (BoundedVec<EncryptedNote, MaxCommitmentsPerBatch>)
     encode_compact_len(call.encrypted_notes.len(), &mut encoded);
     for note in &call.encrypted_notes {
-        if note.len() != crate::notes::PALLET_ENCRYPTED_NOTE_SIZE {
+        let min_len = crate::notes::PALLET_CIPHERTEXT_SIZE + 1;
+        if note.len() < min_len {
             return Err(WalletError::Serialization(format!(
-                "Encrypted note wrong size: expected {} bytes, got {}",
-                crate::notes::PALLET_ENCRYPTED_NOTE_SIZE,
+                "Encrypted note too small: expected at least {} bytes, got {}",
+                min_len,
                 note.len()
             )));
         }
@@ -776,10 +778,11 @@ pub fn encode_shielded_transfer_unsigned_call(
     // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
     encode_compact_len(call.encrypted_notes.len(), &mut encoded);
     for note in &call.encrypted_notes {
-        if note.len() != crate::notes::PALLET_ENCRYPTED_NOTE_SIZE {
+        let min_len = crate::notes::PALLET_CIPHERTEXT_SIZE + 1;
+        if note.len() < min_len {
             return Err(WalletError::Serialization(format!(
-                "Encrypted note wrong size: expected {} bytes, got {}",
-                crate::notes::PALLET_ENCRYPTED_NOTE_SIZE,
+                "Encrypted note too small: expected at least {} bytes, got {}",
+                min_len,
                 note.len()
             )));
         }

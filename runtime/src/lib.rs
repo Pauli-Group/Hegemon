@@ -1742,7 +1742,7 @@ sp_api::impl_runtime_apis! {
                             encrypted_note.ciphertext.len() + encrypted_note.kem_ciphertext.len()
                         );
                         full_note.extend_from_slice(&encrypted_note.ciphertext);
-                        full_note.extend_from_slice(&encrypted_note.kem_ciphertext);
+                        full_note.extend_from_slice(encrypted_note.kem_ciphertext.as_ref());
                         notes.push((
                             index,
                             full_note,
