@@ -104,7 +104,9 @@ pub const PALLET_CIPHERTEXT_SIZE: usize = 579;
 
 pub(crate) fn expected_kem_ciphertext_len(crypto_suite: u16) -> Result<usize, WalletError> {
     match crypto_suite {
-        protocol_versioning::CRYPTO_SUITE_GAMMA => Ok(synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN),
+        protocol_versioning::CRYPTO_SUITE_GAMMA => {
+            Ok(synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN)
+        }
         _ => Err(WalletError::Serialization(format!(
             "Unsupported crypto suite: {}",
             crypto_suite
@@ -266,8 +268,7 @@ impl NoteCiphertext {
             Vec::new()
         };
 
-        let (kem_len, kem_len_bytes) =
-            decode_compact_len(&bytes[PALLET_CIPHERTEXT_SIZE..])?;
+        let (kem_len, kem_len_bytes) = decode_compact_len(&bytes[PALLET_CIPHERTEXT_SIZE..])?;
         let expected_kem_len = expected_kem_ciphertext_len(crypto_suite)?;
         if kem_len != expected_kem_len {
             return Err(WalletError::Serialization(format!(
@@ -430,9 +431,7 @@ fn encode_compact_u64(value: u64, out: &mut Vec<u8>) {
 
 fn decode_compact_len(data: &[u8]) -> Result<(usize, usize), WalletError> {
     if data.is_empty() {
-        return Err(WalletError::Serialization(
-            "compact length missing".into(),
-        ));
+        return Err(WalletError::Serialization("compact length missing".into()));
     }
     let flag = data[0] & 0x03;
     match flag {
