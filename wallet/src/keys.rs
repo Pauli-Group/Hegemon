@@ -3,13 +3,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use protocol_versioning::CRYPTO_SUITE_GAMMA;
 use synthetic_crypto::{
     deterministic::expand_to_length,
     hashes::{blake3_256, derive_prf_key},
     ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSecretKey, MlKemSharedSecret},
     traits::KemKeyPair,
 };
-use protocol_versioning::CRYPTO_SUITE_GAMMA;
 
 use crate::{address::ShieldedAddress, error::WalletError};
 

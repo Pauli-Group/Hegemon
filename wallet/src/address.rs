@@ -1,11 +1,11 @@
 use bech32::{self, FromBase32, ToBase32, Variant};
 use serde::{Deserialize, Serialize};
 
+use protocol_versioning::CRYPTO_SUITE_GAMMA;
 use synthetic_crypto::{
     ml_kem::{MlKemKeyPair, MlKemPublicKey, ML_KEM_PUBLIC_KEY_LEN},
     traits::{KemKeyPair, KemPublicKey},
 };
-use protocol_versioning::CRYPTO_SUITE_GAMMA;
 
 use crate::error::WalletError;
 

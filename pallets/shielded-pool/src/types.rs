@@ -126,10 +126,7 @@ impl Default for EncryptedNote {
     fn default() -> Self {
         Self {
             ciphertext: [0u8; ENCRYPTED_NOTE_SIZE],
-            kem_ciphertext: BoundedVec::truncate_from(vec![
-                0u8;
-                MAX_KEM_CIPHERTEXT_LEN as usize
-            ]),
+            kem_ciphertext: BoundedVec::truncate_from(vec![0u8; MAX_KEM_CIPHERTEXT_LEN as usize]),
         }
     }
 }
@@ -403,10 +400,7 @@ mod tests {
     fn encrypted_note_default_works() {
         let enc = EncryptedNote::default();
         assert_eq!(enc.ciphertext, [0u8; ENCRYPTED_NOTE_SIZE]);
-        assert_eq!(
-            enc.kem_ciphertext.len(),
-            MAX_KEM_CIPHERTEXT_LEN as usize
-        );
+        assert_eq!(enc.kem_ciphertext.len(), MAX_KEM_CIPHERTEXT_LEN as usize);
         assert!(enc.kem_ciphertext.iter().all(|b| *b == 0));
     }
 
