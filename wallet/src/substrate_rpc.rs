@@ -203,37 +203,36 @@ pub struct TransactionResponse {
 
 /// Parse a NoteCiphertext from the pallet's on-chain format.
 ///
-/// The pallet stores encrypted notes as:
-/// - ciphertext[579]: version(1) + diversifier_index(4) + note_len(4) + note_payload +
-///                    memo_len(4) + memo_payload + padding
-/// - kem_ciphertext[1088]: ML-KEM ciphertext
-///
-/// Total: 1667 bytes
+/// The runtime API returns:
+/// - ciphertext[579]: version(1) + crypto_suite(2) + diversifier_index(4) + note_len(4) +
+///                    note_payload + memo_len(4) + memo_payload + padding
+/// - kem_ciphertext: raw ML-KEM ciphertext bytes (length implied by crypto_suite)
 fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletError> {
     const CIPHERTEXT_SIZE: usize = crate::notes::PALLET_CIPHERTEXT_SIZE;
-    const KEM_CIPHERTEXT_SIZE: usize = crate::notes::PALLET_KEM_CIPHERTEXT_SIZE;
-    const EXPECTED_SIZE: usize = CIPHERTEXT_SIZE + KEM_CIPHERTEXT_SIZE;
-
-    if bytes.len() != EXPECTED_SIZE {
+    if bytes.len() < CIPHERTEXT_SIZE {
         return Err(WalletError::Serialization(format!(
-            "Invalid encrypted note size: expected {}, got {}",
-            EXPECTED_SIZE,
+            "Invalid encrypted note size: expected at least {}, got {}",
+            CIPHERTEXT_SIZE,
             bytes.len()
         )));
     }
 
     let ciphertext_bytes = &bytes[..CIPHERTEXT_SIZE];
-    let kem_ciphertext = bytes[CIPHERTEXT_SIZE..].to_vec();
 
     // Parse the ciphertext portion
     let version = ciphertext_bytes[0];
+    let crypto_suite = u16::from_le_bytes(
+        ciphertext_bytes[1..3]
+            .try_into()
+            .map_err(|_| WalletError::Serialization("crypto suite parse failed".into()))?,
+    );
     let diversifier_index = u32::from_le_bytes(
-        ciphertext_bytes[1..5]
+        ciphertext_bytes[3..7]
             .try_into()
             .map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?,
     );
 
-    let mut offset = 5;
+    let mut offset = 7;
 
     // Note payload length and data
     let note_len = u32::from_le_bytes(
@@ -266,8 +265,20 @@ fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletErr
         Vec::new()
     };
 
+    let expected_kem_len = crate::notes::expected_kem_ciphertext_len(crypto_suite)?;
+    let expected_size = CIPHERTEXT_SIZE + expected_kem_len;
+    if bytes.len() != expected_size {
+        return Err(WalletError::Serialization(format!(
+            "Invalid encrypted note size: expected {}, got {}",
+            expected_size,
+            bytes.len()
+        )));
+    }
+    let kem_ciphertext = bytes[CIPHERTEXT_SIZE..expected_size].to_vec();
+
     Ok(NoteCiphertext {
         version,
+        crypto_suite,
         diversifier_index,
         kem_ciphertext,
         note_payload,

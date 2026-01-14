@@ -8,11 +8,12 @@ use wallet::address::ShieldedAddress;
 
 use crypto::note_encryption::{NoteCiphertext, NotePlaintext};
 
+use frame_support::BoundedVec;
 use pallet_shielded_pool::{
     commitment::{circuit_coinbase_commitment, pk_recipient_from_address},
     types::{
-        CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE,
-        ML_KEM_CIPHERTEXT_LEN,
+        CoinbaseNoteData, EncryptedNote, CRYPTO_SUITE_GAMMA, DIVERSIFIED_ADDRESS_SIZE,
+        ENCRYPTED_NOTE_SIZE, NOTE_ENCRYPTION_VERSION,
     },
 };
 
@@ -58,6 +59,7 @@ pub fn encrypt_coinbase_note(
         &address.pk_enc,
         address.pk_recipient,
         address.version,
+        address.crypto_suite,
         address.diversifier_index,
         &note,
         &kem_randomness,
@@ -104,7 +106,7 @@ fn convert_to_pallet_format(
 ) -> Result<EncryptedNote, CoinbaseEncryptionError> {
     // The pallet format is:
     // ciphertext: [u8; 579] - concatenation of note_payload + memo_payload + metadata
-    // kem_ciphertext: [u8; 1088] - ML-KEM ciphertext
+    // kem_ciphertext: BoundedVec<u8, _> - ML-KEM ciphertext bytes
 
     // Build the main ciphertext field
     let mut ciphertext_bytes = [0u8; ENCRYPTED_NOTE_SIZE];
@@ -113,8 +115,24 @@ fn convert_to_pallet_format(
     //         memo_payload_len(4) + memo_payload
     let mut offset = 0;
 
+    if ciphertext.version != NOTE_ENCRYPTION_VERSION {
+        return Err(CoinbaseEncryptionError::EncryptionFailed(format!(
+            "Unsupported note version: {}",
+            ciphertext.version
+        )));
+    }
+    if ciphertext.crypto_suite != CRYPTO_SUITE_GAMMA {
+        return Err(CoinbaseEncryptionError::EncryptionFailed(format!(
+            "Unsupported crypto suite: {}",
+            ciphertext.crypto_suite
+        )));
+    }
+
     ciphertext_bytes[offset] = ciphertext.version;
     offset += 1;
+
+    ciphertext_bytes[offset..offset + 2].copy_from_slice(&ciphertext.crypto_suite.to_le_bytes());
+    offset += 2;
 
     ciphertext_bytes[offset..offset + 4]
         .copy_from_slice(&ciphertext.diversifier_index.to_le_bytes());
@@ -123,7 +141,7 @@ fn convert_to_pallet_format(
     // Note + memo payloads must fit in the ciphertext container.
     let note_len = ciphertext.note_payload.len();
     let memo_len = ciphertext.memo_payload.len();
-    let max_payload = ENCRYPTED_NOTE_SIZE - 5 - 8;
+    let max_payload = ENCRYPTED_NOTE_SIZE - 7 - 8;
     if note_len + memo_len > max_payload {
         return Err(CoinbaseEncryptionError::EncryptionFailed(format!(
             "Encrypted note payloads too large: note={} memo={} max_total={}",
@@ -154,15 +172,16 @@ fn convert_to_pallet_format(
     }
 
     // KEM ciphertext
-    let mut kem_ciphertext = [0u8; ML_KEM_CIPHERTEXT_LEN];
-    if ciphertext.kem_ciphertext.len() != ML_KEM_CIPHERTEXT_LEN {
+    if ciphertext.kem_ciphertext.len() != crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN {
         return Err(CoinbaseEncryptionError::EncryptionFailed(format!(
             "Invalid KEM ciphertext length: expected {}, got {}",
-            ML_KEM_CIPHERTEXT_LEN,
+            crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN,
             ciphertext.kem_ciphertext.len()
         )));
     }
-    kem_ciphertext.copy_from_slice(&ciphertext.kem_ciphertext);
+    let kem_ciphertext = BoundedVec::try_from(ciphertext.kem_ciphertext.clone()).map_err(|_| {
+        CoinbaseEncryptionError::EncryptionFailed("KEM ciphertext too large".into())
+    })?;
 
     Ok(EncryptedNote {
         ciphertext: ciphertext_bytes,
@@ -172,7 +191,7 @@ fn convert_to_pallet_format(
 
 /// Extract the recipient address in the format the pallet expects
 ///
-/// This is a 43-byte diversified address format used in the commitment
+/// This is a 37-byte diversified address format (version + diversifier_index + pk_recipient).
 fn extract_recipient_address(
     address: &ShieldedAddress,
 ) -> Result<[u8; DIVERSIFIED_ADDRESS_SIZE], CoinbaseEncryptionError> {
@@ -231,7 +250,8 @@ mod tests {
         // Generate a test address
         let keypair = MlKemKeyPair::generate_deterministic(b"test-miner-address");
         let address = ShieldedAddress {
-            version: 1,
+            version: NOTE_ENCRYPTION_VERSION,
+            crypto_suite: CRYPTO_SUITE_GAMMA,
             diversifier_index: 0,
             pk_recipient: [0u8; 32],
             pk_enc: keypair.public_key(),
@@ -265,7 +285,8 @@ mod tests {
         let ciphertext = NoteCiphertext::encrypt(
             &keypair.public_key(),
             [3u8; 32],
-            1,
+            NOTE_ENCRYPTION_VERSION,
+            CRYPTO_SUITE_GAMMA,
             0,
             &note,
             &kem_randomness,

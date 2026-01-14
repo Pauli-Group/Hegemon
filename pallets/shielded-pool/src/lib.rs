@@ -136,6 +136,13 @@ fn is_zero_commitment(cm: &[u8; 48]) -> bool {
     *cm == ZERO_COMMITMENT
 }
 
+fn kem_ciphertext_len_for_suite(crypto_suite: u16) -> Option<usize> {
+    match crypto_suite {
+        crate::types::CRYPTO_SUITE_GAMMA => Some(crate::types::MAX_KEM_CIPHERTEXT_LEN as usize),
+        _ => None,
+    }
+}
+
 /// Weight information for pallet extrinsics.
 pub trait WeightInfo {
     fn shielded_transfer(nullifiers: u32, commitments: u32) -> Weight;
@@ -416,6 +423,12 @@ pub mod pallet {
         InvalidCommitmentCount,
         /// Encrypted notes count doesn't match commitments.
         EncryptedNotesMismatch,
+        /// Encrypted note uses an unsupported version.
+        UnsupportedNoteVersion,
+        /// Encrypted note uses an unsupported crypto suite.
+        UnsupportedNoteCryptoSuite,
+        /// Encrypted note KEM ciphertext length is invalid.
+        InvalidKemCiphertextLength,
         /// Transparent pool operations are disabled (value_balance must be zero).
         TransparentPoolDisabled,
         /// Stablecoin issuance is not allowed in unsigned transactions.
@@ -627,6 +640,9 @@ pub mod pallet {
                 ciphertexts.len() == commitments.len(),
                 Error::<T>::EncryptedNotesMismatch
             );
+            for note in ciphertexts.iter() {
+                Self::validate_encrypted_note(note)?;
+            }
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -904,6 +920,9 @@ pub mod pallet {
                 ciphertexts.len() == commitments.len(),
                 Error::<T>::EncryptedNotesMismatch
             );
+            for note in ciphertexts.iter() {
+                Self::validate_encrypted_note(note)?;
+            }
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1069,6 +1088,9 @@ pub mod pallet {
                 ciphertexts.len() == commitments.len(),
                 Error::<T>::EncryptedNotesMismatch
             );
+            for note in ciphertexts.iter() {
+                Self::validate_encrypted_note(note)?;
+            }
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1212,6 +1234,23 @@ pub mod pallet {
                 &coinbase_data.public_seed,
                 0,
             )
+        }
+
+        fn validate_encrypted_note(note: &EncryptedNote) -> Result<(), Error<T>> {
+            let version = note.ciphertext[0];
+            if version != crate::types::NOTE_ENCRYPTION_VERSION {
+                return Err(Error::<T>::UnsupportedNoteVersion);
+            }
+
+            let crypto_suite = u16::from_le_bytes([note.ciphertext[1], note.ciphertext[2]]);
+            let expected_kem_len = kem_ciphertext_len_for_suite(crypto_suite)
+                .ok_or(Error::<T>::UnsupportedNoteCryptoSuite)?;
+
+            if note.kem_ciphertext.len() != expected_kem_len {
+                return Err(Error::<T>::InvalidKemCiphertextLength);
+            }
+
+            Ok(())
         }
 
         fn ensure_stablecoin_binding(
