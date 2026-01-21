@@ -69,7 +69,10 @@ use sp_core::H256;
 use sp_runtime::generic::Digest;
 use sp_runtime::traits::Header as HeaderT;
 use sp_runtime::DigestItem;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 /// Mining worker configuration
@@ -674,6 +677,8 @@ pub struct MiningWorker<CSP: ChainStateProvider, BB: BlockBroadcaster> {
     chain_state: Arc<CSP>,
     /// Block broadcaster
     broadcaster: Arc<BB>,
+    /// Optional sync status flag (true means pause mining)
+    sync_status: Option<Arc<AtomicBool>>,
     /// Configuration
     config: MiningWorkerConfig,
     /// Statistics
@@ -705,9 +710,16 @@ where
             pow_handle,
             chain_state,
             broadcaster,
+            sync_status: None,
             config,
             stats: Arc::new(parking_lot::RwLock::new(MiningWorkerStats::new())),
         }
+    }
+
+    /// Attach a sync status flag to pause mining while syncing.
+    pub fn with_sync_status(mut self, sync_status: Arc<AtomicBool>) -> Self {
+        self.sync_status = Some(sync_status);
+        self
     }
 
     /// Get current statistics
@@ -729,12 +741,33 @@ where
         let check_interval = Duration::from_millis(self.config.work_check_interval_ms);
         let mut current_template: Option<BlockTemplate> = None;
         let mut last_best_hash = H256::zero();
+        let mut was_syncing = false;
 
         loop {
             // Check if mining is enabled
             if !self.pow_handle.is_mining() {
                 tokio::time::sleep(check_interval).await;
                 continue;
+            }
+
+            let syncing = self
+                .sync_status
+                .as_ref()
+                .map(|flag| flag.load(Ordering::Relaxed))
+                .unwrap_or(false);
+            if syncing {
+                if !was_syncing {
+                    tracing::info!("Sync in progress; pausing mining until catch-up completes");
+                }
+                was_syncing = true;
+                self.pow_handle.clear_work();
+                current_template = None;
+                tokio::time::sleep(check_interval).await;
+                continue;
+            }
+            if was_syncing {
+                tracing::info!("Sync complete; resuming mining");
+                was_syncing = false;
             }
 
             // Check for new work (best block changed)

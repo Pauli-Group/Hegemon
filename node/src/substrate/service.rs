@@ -155,7 +155,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
@@ -2954,6 +2954,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Track PQ network handle for mining worker
     let mut pq_network_handle: Option<PqNetworkHandle> = None;
     let peer_count = Arc::new(AtomicUsize::new(0));
+    let sync_status = Arc::new(AtomicBool::new(false));
 
     tracing::info!(
         chain = %chain_name,
@@ -3143,6 +3144,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let sync_service = Arc::new(Mutex::new(ChainSyncService::new(client.clone())));
                 let sync_service_clone = Arc::clone(&sync_service);
                 let _sync_service_for_handler = Arc::clone(&sync_service);
+                let sync_status_for_events = Arc::clone(&sync_status);
 
                 tracing::info!("Chain sync service created");
 
@@ -3458,6 +3460,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             // Update peer's best height in sync service
                                             let mut sync = sync_service_clone.lock().await;
                                             sync.on_block_announce(peer_id, &announce);
+                                            sync_status_for_events
+                                                .store(sync.is_syncing(), Ordering::Relaxed);
                                         }
                                     }
                                 }
@@ -3476,6 +3480,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // Spawn sync state machine tick task
                 // =======================================================================
                 let sync_service_for_tick = Arc::clone(&sync_service);
+                let sync_status_for_tick = Arc::clone(&sync_status);
 
                 task_manager
                     .spawn_handle()
@@ -3507,6 +3512,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     );
                                 }
                             }
+
+                            sync_status_for_tick.store(sync.is_syncing(), Ordering::Relaxed);
 
                             // Log sync status periodically
                             let state = sync.state();
@@ -4337,6 +4344,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         // Check if we have a PQ network handle for live broadcasting
         if let Some(pq_handle) = pq_network_handle.clone() {
+            let sync_status_for_mining = Arc::clone(&sync_status);
             tracing::info!(
                 threads = worker_config.threads,
                 test_mode = worker_config.test_mode,
@@ -4352,12 +4360,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         chain_state,
                         pq_handle,
                         worker_config,
-                    );
+                    )
+                    .with_sync_status(sync_status_for_mining);
 
                     worker.run().await;
                 },
             );
         } else {
+            let sync_status_for_mining = Arc::clone(&sync_status);
             // Production mode without network broadcasting
             tracing::info!(
                 threads = worker_config.threads,
@@ -4373,7 +4383,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         pow_handle_for_worker,
                         chain_state,
                         worker_config,
-                    );
+                    )
+                    .with_sync_status(sync_status_for_mining);
 
                     worker.run().await;
                 },
@@ -4415,6 +4426,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let rpc_service = Arc::new(ProductionRpcService::new(
         client.clone(),
         Arc::clone(&peer_count),
+        Arc::clone(&sync_status),
     ));
 
     // Create RPC module with all extensions
@@ -4571,6 +4583,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let peer_id_for_rpc = rpc_peer_id;
         let p2p_port = pq_service_config.listen_addr.port();
         let pq_handle_for_rpc = pq_network_handle.clone();
+        let sync_status_for_rpc = Arc::clone(&sync_status);
         task_manager
             .spawn_handle()
             .spawn("system-rpc-handler", Some("rpc"), async move {
@@ -4603,7 +4616,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             };
                             let health = Health {
                                 peers: peer_count,
-                                is_syncing: false,
+                                is_syncing: sync_status_for_rpc.load(Ordering::Relaxed),
                                 should_have_peers: true,
                             };
                             let _ = sender.send(health);

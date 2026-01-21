@@ -65,6 +65,13 @@ All nodes (including boot node) must use the shared chainspec:
 --chain config/dev-chainspec.json   # NOT --chain dev
 ```
 
+### Mining while syncing
+
+When joining an existing testnet, the node pauses mining while the sync service catches up.
+You can keep `HEGEMON_MINE=1`; block production resumes once `system_health.is_syncing` (or
+`hegemon_consensusStatus.syncing`) flips to `false`. If you prefer manual control, start
+with `HEGEMON_MINE=0` and enable mining after heights match.
+
 ## Public RPC Hardening (When RPC Is Internet-Exposed)
 
 If you expose the RPC port to the internet, treat it as a production surface:
