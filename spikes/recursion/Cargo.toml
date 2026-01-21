@@ -6,8 +6,10 @@ edition = "2021"
 [dependencies]
 itertools = "0.14"
 rand = "0.9"
+p3-batch-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-recursion = { git = "https://github.com/Plonky3/Plonky3-recursion.git" }
 p3-circuit = { git = "https://github.com/Plonky3/Plonky3-recursion.git", package = "p3-circuit" }
+p3-circuit-prover = { git = "https://github.com/Plonky3/Plonky3-recursion.git", package = "p3-circuit-prover" }
 p3-fri = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
@@ -20,5 +22,8 @@ p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-matrix = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-poseidon2 = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+transaction-circuit = { path = "../../circuits/transaction" }
+transaction-core = { path = "../../circuits/transaction-core" }
 
 [workspace]
