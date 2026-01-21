@@ -34,7 +34,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! let service = ProductionRpcService::new(client.clone(), peer_count.clone());
+//! let service = ProductionRpcService::new(client.clone(), peer_count.clone(), sync_status.clone());
 //! let rpc_deps = FullDeps {
 //!     service: Arc::new(service),
 //!     pow_handle: pow_handle.clone(),
@@ -61,7 +61,7 @@ use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
 use std::marker::PhantomData;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::Instant;
@@ -86,6 +86,8 @@ where
     client: Arc<C>,
     /// Connected peer count snapshot
     peer_count: Arc<AtomicUsize>,
+    /// Sync status flag (true means syncing)
+    sync_status: Arc<AtomicBool>,
     /// Node start time for uptime calculation
     start_time: Instant,
     /// Phantom data for the block type
@@ -103,10 +105,15 @@ where
     /// # Arguments
     ///
     /// * `client` - Reference to the Substrate client
-    pub fn new(client: Arc<C>, peer_count: Arc<AtomicUsize>) -> Self {
+    pub fn new(
+        client: Arc<C>,
+        peer_count: Arc<AtomicUsize>,
+        sync_status: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             client,
             peer_count,
+            sync_status,
             start_time: Instant::now(),
             _phantom: PhantomData,
         }
@@ -164,7 +171,7 @@ where
             state_root,
             nullifier_root,
             supply_digest,
-            syncing: false, // TODO: Wire to real sync status
+            syncing: self.sync_status.load(Ordering::Relaxed),
             peers: self.peer_count.load(Ordering::Relaxed) as u32,
         }
     }
