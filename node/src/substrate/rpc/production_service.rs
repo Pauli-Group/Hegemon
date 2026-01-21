@@ -105,11 +105,7 @@ where
     /// # Arguments
     ///
     /// * `client` - Reference to the Substrate client
-    pub fn new(
-        client: Arc<C>,
-        peer_count: Arc<AtomicUsize>,
-        sync_status: Arc<AtomicBool>,
-    ) -> Self {
+    pub fn new(client: Arc<C>, peer_count: Arc<AtomicUsize>, sync_status: Arc<AtomicBool>) -> Self {
         Self {
             client,
             peer_count,
