@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use p3_batch_stark::CommonData;
-use p3_circuit::CircuitBuilder;
+use p3_batch_stark::{BatchCommitments, CommonData};
+use p3_circuit::{CircuitBuilder, CircuitError};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::config;
 use p3_circuit_prover::{BatchStarkProver, TablePacking};
@@ -9,7 +9,8 @@ use p3_poseidon2::ExternalLayerConstants;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
-use p3_recursion::{generate_challenges, verify_circuit};
+use p3_recursion::types::{CommitmentTargets, OpenedValuesTargets};
+use p3_recursion::{Recursive, generate_challenges, verify_circuit};
 use p3_uni_stark::get_log_num_quotient_chunks;
 use transaction_circuit::{
     StablecoinPolicyBinding, TransactionAirP3, TransactionProverP3, TransactionWitness,
@@ -21,6 +22,7 @@ use transaction_circuit::{
         default_fri_config,
     },
 };
+use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
 use transaction_core::poseidon2_constants::{EXTERNAL_ROUND_CONSTANTS, INTERNAL_ROUND_CONSTANTS};
 
 type InnerFri = FriProofTargets<
@@ -93,7 +95,7 @@ fn sample_witness() -> TransactionWitness {
 }
 
 #[test]
-#[ignore = "known failure: recursion circuit witness conflict for Goldilocks proofs"]
+#[ignore = "known failure: recursion FRI final polynomial mismatch for Goldilocks proofs"]
 fn aggregate_single_transaction_proof() {
     let witness = sample_witness();
     witness.validate().expect("witness valid");
@@ -107,9 +109,15 @@ fn aggregate_single_transaction_proof() {
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
     let proof = prover.prove(trace, &pub_inputs);
+    verify_transaction_proof_p3(&proof, &pub_inputs).expect("inner proof verifies");
 
     let inner_bytes = postcard::to_allocvec(&proof).expect("serialize inner proof");
-    println!("inner_tx_proof_bytes={}", inner_bytes.len());
+    println!(
+        "inner_tx_proof_bytes={}, degree_bits={}, commit_phase_len={}",
+        inner_bytes.len(),
+        proof.degree_bits,
+        proof.opening_proof.commit_phase_commits.len()
+    );
 
     let perm = {
         let external_constants =
@@ -128,6 +136,10 @@ fn aggregate_single_transaction_proof() {
     let fri_verifier_params = FriVerifierParams::from(&fri_params);
     let pow_bits = fri_params.query_proof_of_work_bits;
     let log_height_max = fri_params.log_final_poly_len + fri_params.log_blowup;
+    println!(
+        "fri_params_log_blowup={}, log_final_poly_len={}, log_height_max={}",
+        fri_params.log_blowup, fri_params.log_final_poly_len, log_height_max
+    );
 
     let mut circuit_builder = CircuitBuilder::new();
     let verifier_inputs =
@@ -157,6 +169,7 @@ fn aggregate_single_transaction_proof() {
     .expect("build recursion verifier circuit");
 
     let circuit = circuit_builder.build().expect("build circuit");
+    let public_rows = circuit.public_rows.clone();
     let all_challenges = generate_challenges(
         &TransactionAirP3,
         &config.config,
@@ -168,6 +181,38 @@ fn aggregate_single_transaction_proof() {
     let num_queries = proof.opening_proof.query_proofs.len();
     let public_inputs =
         verifier_inputs.pack_values(&pub_inputs_vec, &proof, &None, &all_challenges, num_queries);
+    let commitments_no_lookups = BatchCommitments {
+        main: proof.commitments.trace.clone(),
+        permutation: None,
+        quotient_chunks: proof.commitments.quotient_chunks.clone(),
+        random: proof.commitments.random.clone(),
+    };
+    let commitments_len =
+        CommitmentTargets::<Challenge, HashTargets<Val, DIGEST_ELEMS>>::get_values(
+            &commitments_no_lookups,
+        )
+        .len();
+    let opened_values_len = OpenedValuesTargets::<Config>::get_values(&proof.opened_values).len();
+    let opening_proof_len = InnerFri::get_values(&proof.opening_proof).len();
+    let proof_values_len = commitments_len + opened_values_len + opening_proof_len;
+    let fri_commit_phase_len = proof.opening_proof.commit_phase_commits.len() * DIGEST_ELEMS;
+    let fri_commit_pow_len = proof.opening_proof.commit_pow_witnesses.len();
+    let fri_final_poly_len = proof.opening_proof.final_poly.len();
+    let fri_pow_witness_len = 1;
+    let fri_query_len = opening_proof_len
+        .saturating_sub(
+            fri_commit_phase_len + fri_commit_pow_len + fri_final_poly_len + fri_pow_witness_len,
+        );
+    println!(
+        "recursion_public_inputs_len={}, air_public_len={}, proof_values_len={}, challenges_len={}, commitments_len={}, opened_values_len={}, opening_proof_len={}",
+        public_inputs.len(),
+        pub_inputs_vec.len(),
+        proof_values_len,
+        all_challenges.len(),
+        commitments_len,
+        opened_values_len,
+        opening_proof_len
+    );
 
     let table_packing = TablePacking::new(4, 4, 1);
     let (airs_degrees, witness_multiplicities) =
@@ -185,7 +230,87 @@ fn aggregate_single_transaction_proof() {
     runner
         .set_public_inputs(&public_inputs)
         .expect("set public inputs");
-    let traces = runner.run().expect("run recursion circuit");
+    let traces = match runner.run() {
+        Ok(traces) => traces,
+        Err(err) => {
+            if let CircuitError::WitnessConflict {
+                witness_id,
+                existing,
+                new,
+            } = &err
+            {
+                if let Some(pos) = public_rows.iter().position(|id| id == witness_id) {
+                    let air_len = pub_inputs_vec.len();
+                    let challenge_len = all_challenges.len();
+                    let proof_len = proof_values_len;
+                    let mut detail = String::new();
+                    if pos >= air_len && pos < air_len + proof_len {
+                        let pos_in_proof = pos - air_len;
+                        if pos_in_proof < commitments_len {
+                            detail = format!("commitments[{}]", pos_in_proof);
+                        } else if pos_in_proof < commitments_len + opened_values_len {
+                            let idx = pos_in_proof - commitments_len;
+                            detail = format!("opened_values[{}]", idx);
+                        } else {
+                            let pos_in_fri = pos_in_proof - commitments_len - opened_values_len;
+                            if pos_in_fri < fri_commit_phase_len {
+                                detail = format!("fri_commit_phase_commits[{}]", pos_in_fri);
+                            } else if pos_in_fri < fri_commit_phase_len + fri_commit_pow_len {
+                                detail = format!(
+                                    "fri_commit_pow_witnesses[{}]",
+                                    pos_in_fri - fri_commit_phase_len
+                                );
+                            } else if pos_in_fri < fri_commit_phase_len + fri_commit_pow_len + fri_query_len
+                            {
+                                detail = format!(
+                                    "fri_query_proofs[{}]",
+                                    pos_in_fri - fri_commit_phase_len - fri_commit_pow_len
+                                );
+                            } else if pos_in_fri
+                                < fri_commit_phase_len
+                                    + fri_commit_pow_len
+                                    + fri_query_len
+                                    + fri_final_poly_len
+                            {
+                                detail = format!(
+                                    "fri_final_poly[{}]",
+                                    pos_in_fri
+                                        - fri_commit_phase_len
+                                        - fri_commit_pow_len
+                                        - fri_query_len
+                                );
+                            } else {
+                                detail = "fri_pow_witness".to_string();
+                            }
+                        }
+                    }
+                    let segment = if pos < air_len {
+                        "air_public_values"
+                    } else if pos < air_len + proof_len {
+                        "proof_values"
+                    } else if pos < air_len + proof_len + challenge_len {
+                        "challenges"
+                    } else {
+                        "unknown_segment"
+                    };
+                    let value = public_inputs
+                        .get(pos)
+                        .map(|v| format!("{v:?}"))
+                        .unwrap_or_else(|| "<missing>".to_string());
+                    println!(
+                        "witness_conflict_public_input_index={}, segment={}, detail={}, value={}, existing={}, new={}",
+                        pos, segment, detail, value, existing, new
+                    );
+                } else {
+                    println!(
+                        "witness_conflict_non_public witness_id={:?}, existing={}, new={}",
+                        witness_id, existing, new
+                    );
+                }
+            }
+            panic!("run recursion circuit: {err:?}");
+        }
+    };
 
     let outer_prover = BatchStarkProver::new(outer_config).with_table_packing(table_packing);
     let prove_start = Instant::now();

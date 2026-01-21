@@ -35,6 +35,7 @@ The “it works” proof is:
 - [x] (2026-01-21T21:12Z) Aligned workspace Plonky3 dependencies to git rev `7895d23` and updated the poseidon2 constants script dependencies to match.
 - [x] (2026-01-21T21:18Z) Updated `synthetic-crypto` to ML-DSA rc.3 / ML-KEM pre.3 / SLH-DSA rc.2 and fixed API changes; `cargo test -p synthetic-crypto` passes.
 - [ ] Prototyping: attempt recursion verification of a real transaction proof in the new spike (currently fails with witness conflict during circuit execution; see Surprises).
+- [x] (2026-01-21T21:40Z) Diagnosed the recursion failure: conflict occurs on `fri_final_poly[0]` (public input index 8883), implying the in-circuit FRI fold chain disagrees with the proof’s final polynomial even though the inner proof verifies.
 - [ ] Implement an aggregation circuit for the *real* transaction proof (verify 1 proof inside an outer proof).
 - [ ] Scale aggregation to verify a small batch of proofs (start with 2, then 4, then 8, then 16) and measure.
 - [ ] Integrate aggregation into block import so the node verifies the aggregation proof and stops verifying every inner proof on the hot path.
@@ -72,6 +73,9 @@ The “it works” proof is:
 
 - Observation: The attempted recursion verifier for a real transaction proof fails at circuit execution with a `WitnessConflict`, so the outer proof cannot be produced yet.
   Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture` fails with `WitnessConflict { witness_id: WitnessId(9053), ... }` after printing `inner_tx_proof_bytes=87018`.
+
+- Observation: The `WitnessConflict` is specifically on `fri_final_poly[0]`, indicating the recursive FRI arithmetic does not match the real FRI proof (inner proof still verifies).
+  Evidence: The spike prints `detail=fri_final_poly[0]` with `commit_phase_len=13`, `fri_params_log_blowup=3`, `log_final_poly_len=0`; `verify_transaction_proof_p3` succeeds before the recursion circuit run.
 
 Update this section with concrete prototyping results (what worked, what failed, and why) as soon as the first recursion spike is attempted.
 
