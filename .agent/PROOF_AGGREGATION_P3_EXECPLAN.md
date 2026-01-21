@@ -24,8 +24,13 @@ The “it works” proof is:
 ## Progress
 
 - [x] (2026-01-21T00:00Z) Draft proof aggregation ExecPlan (this file).
-- [ ] Confirm current transaction proof sizes and verifier times with `circuits-bench`, and pin the outputs in `Surprises & Discoveries`.
-- [ ] Prototyping: identify whether Plonky3 dependencies in this repo can express “verify a STARK proof inside another proof” at all (even for a toy AIR).
+- [x] (2026-01-21T20:09Z) Ran `cargo test -p plonky3-spike --features plonky3` to confirm the current Plonky3 toolchain builds and executes a basic proof.
+- [x] (2026-01-21T20:09Z) Searched the repo and Cargo.lock for recursion/inner-verifier crates and found only legacy recursion error types, no active recursion implementation.
+- [x] (2026-01-21T20:10Z) Confirmed current transaction proof sizes and verifier times with `circuits-bench` and recorded the output.
+- [x] (2026-01-21T20:18Z) Fetched the Plonky3 recursion repo via a git dependency and ran its recursion Fibonacci test successfully.
+- [x] (2026-01-21T20:21Z) Attempted a compatibility build with `p3-*` patched to the recursion repo’s git rev; build failed in `synthetic-crypto` due to dependency/API mismatches (rand_core / ml-dsa / ml-kem), indicating non-trivial integration work.
+- [x] (2026-01-21T20:22Z) Prototyping: recursion is feasible upstream (Plonky3-recursion Fibonacci test passes) but not available in the current crates.io dependency set; integrating requires dependency alignment.
+- [x] (2026-01-21T20:40Z) Ran the local recursion spike in this repo using Plonky3 git dependencies; Fibonacci recursion test passes once the spike is isolated from the main workspace.
 - [ ] Prototyping: build a minimal “toy recursion” that verifies one small STARK proof inside an outer proof, and measure memory/time.
 - [ ] Implement an aggregation circuit for the *real* transaction proof (verify 1 proof inside an outer proof).
 - [ ] Scale aggregation to verify a small batch of proofs (start with 2, then 4, then 8, then 16) and measure.
@@ -40,6 +45,24 @@ The “it works” proof is:
 
 - Observation: The repo previously attempted recursion with a different STARK backend and explicitly removed it pending a “Plonky3-native recursion design.”
   Evidence: `METHODS.md` notes that recursive epoch proofs were removed and require a Plonky3-native path; `.agent/archive/scalability_architecture_execplan.md` documents the pivot away from recursion.
+
+- Observation: There is no obvious active recursion/inner-verifier crate in the current workspace dependencies.
+  Evidence: `rg -n "recurs" Cargo.toml Cargo.lock -S` returns no recursion dependencies; only legacy error types appear under `circuits/block/src/error.rs`.
+
+- Observation: The current proof throughput is ~0.22 tx/s at smoke settings, with ~31.7 ms verification and ~17.8 s proving per transaction.
+  Evidence: `cargo run -p circuits-bench --release -- --smoke --json --prove` output includes `transactions_per_second: 0.2202`, `verify_ns: 31701208`, `prove_ns: 17799278334`, `tx_proof_bytes_avg: 357130`.
+
+- Observation: The downloaded Plonky3 crates in the cargo registry do not expose any obvious recursion or “verifier-in-circuit” modules.
+  Evidence: `rg -n "recurs|recursion" ~/.cargo/registry/src -g "p3-*" -S` returned no matches.
+
+- Observation: The upstream Plonky3 recursion repo includes a working recursion circuit (Fibonacci test passes) when built against Plonky3 git dependencies.
+  Evidence: `cargo test --manifest-path ~/.cargo/git/checkouts/plonky3-recursion-*/**/Cargo.toml --package p3-recursion --test fibonacci` passes.
+
+- Observation: Aligning our workspace to the recursion repo’s Plonky3 git rev causes build failures in `synthetic-crypto` due to rand_core / ml-dsa / ml-kem API mismatches.
+  Evidence: Building a temporary crate with `[patch.crates-io]` pointing `p3-*` to `https://github.com/Plonky3/Plonky3` `rev=7895d23` fails with errors like `ml_dsa::SigningKey::decode` missing and `rand_core` trait mismatches in `crypto/src/slh_dsa.rs`.
+
+- Observation: A local recursion spike can run in-repo when isolated from the root workspace, confirming the recursion stack compiles outside the main dependency graph.
+  Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test fibonacci -- --nocapture` passes after adding an empty `[workspace]` table to the spike manifest.
 
 Update this section with concrete prototyping results (what worked, what failed, and why) as soon as the first recursion spike is attempted.
 
@@ -213,6 +236,44 @@ Record here, as indented blocks:
 - The JSON bench output for baseline `tx_proof_bytes_avg`.
 - The outer proof size and verify time for N in {1, 2, 4, 8, 16}.
 - A log excerpt showing a corrupted inner proof causes outer verification failure.
+
+  Plonky3 spike test (baseline proof stack):
+
+    cargo test -p plonky3-spike --features plonky3
+    ...
+    test tests::fibonacci_prove_verify ... ok
+
+  Baseline proof size/latency output:
+
+    cargo run -p circuits-bench --release -- --smoke --json --prove
+    {
+      "prove": true,
+      "prove_ns": 17799278334,
+      "verify_ns": 31701208,
+      "commitment_proof_bytes": 228076,
+      "tx_proof_bytes_avg": 357130,
+      "fri_conjectured_soundness_bits": 128,
+      "transactions_per_second": 0.2202218957737747
+    }
+
+  Plonky3 recursion repo Fibonacci test (verifier-in-circuit works upstream):
+
+    cargo test --manifest-path ~/.cargo/git/checkouts/plonky3-recursion-*/**/Cargo.toml --package p3-recursion --test fibonacci -- --nocapture
+    ...
+    test test_fibonacci_verifier ... ok
+
+  Local recursion spike (in-repo):
+
+    cargo test --manifest-path spikes/recursion/Cargo.toml --test fibonacci -- --nocapture
+    ...
+    test recursion_fibonacci_spike ... ok
+
+  Compatibility attempt (git Plonky3 rev in our dependency graph) failed:
+
+    cargo build --manifest-path /tmp/recursion_compat/Cargo.toml
+    ...
+    error[E0599]: no function or associated item named `decode` found for struct `ml_dsa::SigningKey<P>`
+    error[E0277]: the trait bound `SlhCompatibleRng: DerefMut` is not satisfied
 
 ## Interfaces and Dependencies
 
