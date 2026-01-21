@@ -1,0 +1,225 @@
+# Proof Aggregation (Plonky3): Make Block Validity O(1) Proofs
+
+This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
+
+Reference: repository root `.agent/PLANS.md` defines the ExecPlan format and maintenance requirements. Every update to this file must remain consistent with that guidance.
+
+## Purpose / Big Picture
+
+Make Hegemon scalable without trusting provers with user secrets by replacing “verify N transaction proofs” with “verify one small aggregation proof that attests those N proofs were valid.”
+
+This plan is specifically about *non-custodial* scaling: wallets keep generating their own transaction proofs (so they never hand spend secrets to an external prover), and the chain verifies an aggregation proof that compresses many independent transaction proofs.
+
+After this work, a developer can:
+
+1. Generate (or reuse) a set of valid transaction proofs.
+2. Generate a single aggregation proof for those proofs.
+3. Verify only the aggregation proof during block import and still reject any block containing an invalid transaction proof.
+
+The “it works” proof is:
+
+- `cargo run -p circuits-bench --release -- --smoke --json` reports that aggregated verification requires verifying O(1) proofs per block (not O(tx_count)).
+- A dev node mines blocks containing aggregated proof artifacts; block import verifies the aggregation proof and rejects a block where one inner proof is corrupted.
+
+## Progress
+
+- [x] (2026-01-21T00:00Z) Draft proof aggregation ExecPlan (this file).
+- [ ] Confirm current transaction proof sizes and verifier times with `circuits-bench`, and pin the outputs in `Surprises & Discoveries`.
+- [ ] Prototyping: identify whether Plonky3 dependencies in this repo can express “verify a STARK proof inside another proof” at all (even for a toy AIR).
+- [ ] Prototyping: build a minimal “toy recursion” that verifies one small STARK proof inside an outer proof, and measure memory/time.
+- [ ] Implement an aggregation circuit for the *real* transaction proof (verify 1 proof inside an outer proof).
+- [ ] Scale aggregation to verify a small batch of proofs (start with 2, then 4, then 8, then 16) and measure.
+- [ ] Integrate aggregation into block import so the node verifies the aggregation proof and stops verifying every inner proof on the hot path.
+- [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
+- [ ] End-to-end: mine a dev block with an aggregation proof; prove that a corrupted inner proof causes rejection.
+
+## Surprises & Discoveries
+
+- Observation: The current transaction proof is ~357 KiB, which makes “verify every tx proof on L1” a dead end for high throughput even with parallelism.
+  Evidence: `cargo run -p circuits-bench --release -- --smoke --json --prove` reports `tx_proof_bytes_avg` around 357,130 bytes.
+
+- Observation: The repo previously attempted recursion with a different STARK backend and explicitly removed it pending a “Plonky3-native recursion design.”
+  Evidence: `METHODS.md` notes that recursive epoch proofs were removed and require a Plonky3-native path; `.agent/archive/scalability_architecture_execplan.md` documents the pivot away from recursion.
+
+Update this section with concrete prototyping results (what worked, what failed, and why) as soon as the first recursion spike is attempted.
+
+## Decision Log
+
+- Decision: Do not use delegated proving (sending spend witnesses to a prover) as a scalability strategy.
+  Rationale: A prover with spend witnesses can steal funds; that is an unacceptable trust model for “world commerce.” We scale by aggregating *proofs*, not by centralizing *witnesses*.
+  Date/Author: 2026-01-21 / Codex
+
+- Decision: Treat proof aggregation as a feasibility-gated workstream and start with explicit prototyping milestones.
+  Rationale: If the current Plonky3 stack in this repo cannot express recursion at reasonable cost, we must know early and pivot to a different aggregation mechanism (or a different proving stack) rather than building assumptions into the protocol.
+  Date/Author: 2026-01-21 / Codex
+
+## Outcomes & Retrospective
+
+Not started. Update after the first working recursion prototype.
+
+## Context and Orientation
+
+Current proof and verification layout:
+
+- Individual transactions are proven with a Plonky3 STARK and verified by `transaction_core::p3_verifier::verify_transaction_proof_bytes_p3`. The runtime verifier wrapper is in `pallets/shielded-pool/src/verifier.rs` (`StarkVerifier`).
+- There is a block-level “commitment proof” path (see `.agent/archive/scalability_architecture_execplan.md` and `circuits/block`) that can commit to an ordered list of transaction proof hashes and prove nullifier uniqueness, but it does not eliminate the need to verify transaction proofs for soundness.
+- A batch transaction circuit exists (`circuits/batch`) that can prove multiple transactions from the *same prover* in one proof. It helps for wallet self-batching and consolidation, but it does not solve “many users, many independent proofs” without a recursion/aggregation mechanism.
+
+Definitions (avoid jargon):
+
+- “Inner proof”: the existing transaction STARK proof bytes produced by a wallet for one transfer.
+- “Outer proof” / “aggregation proof”: a proof whose statement is “these inner proofs are valid for these public inputs.” The outer proof is what the chain verifies.
+- “Recursion” in this plan means “proof verification inside a proof”: the outer proof’s constraints include the verification logic of the inner proof system.
+
+The security bar for this plan:
+
+- We keep ML‑KEM‑1024 for note encryption unchanged.
+- We keep ≥128-bit post-quantum security targets for hash collision resistance (48-byte digests) and for STARK soundness. If we change FRI parameters, we must re-justify and re-benchmark; we do not lower security.
+
+## Plan of Work
+
+### Milestone 1 (prototyping): Can we do recursion at all?
+
+Goal: determine whether the Plonky3 crates and configurations used in this repo can feasibly express “verify a STARK proof inside another proof.”
+
+Work:
+
+- Inspect the workspace dependencies to find whether any recursion-oriented crates or modules exist. Search for “recursion”, “verifier circuit”, “fri verifier”, and similar in `circuits/` and in Cargo dependencies.
+- If there is no recursion support, decide whether to:
+  - add a Plonky3 recursion crate (if available as a Rust dependency) while keeping the security model hash-based, or
+  - pivot to an alternative aggregation mechanism compatible with the repo’s “hash-only” PQ assumptions.
+
+Acceptance:
+
+- A short note in `Surprises & Discoveries` stating “recursion feasible” or “recursion not currently feasible,” with evidence (buildable code, compile errors, or measured resource requirements).
+
+### Milestone 2 (prototyping): Toy recursion proof that runs end-to-end
+
+Goal: produce a working outer proof that verifies a simple inner proof, using a toy AIR that is already in the repo.
+
+Work:
+
+- Use `circuits/plonky3-spike` as the inner proof system candidate. It already proves and verifies a small Fibonacci AIR.
+- Implement an “outer” circuit that takes the serialized Fibonacci proof bytes and public inputs and verifies them inside the circuit.
+- Keep the toy security parameters aligned with the production posture: use the same digest size (6 Goldilocks limbs = 48 bytes) and do not reduce the soundness target below 128-bit. It is acceptable to reduce *trace size* to keep the prototype fast, but not to reduce hash output sizes or the claimed security level.
+
+Acceptance:
+
+- A new test (or bench binary) that:
+  - generates an inner Fibonacci proof,
+  - generates an outer proof attesting that the inner proof is valid,
+  - and verifies the outer proof.
+
+### Milestone 3: Verify one real transaction proof inside an outer proof
+
+Goal: upgrade from toy recursion to verifying one real shielded transaction proof.
+
+Work:
+
+- Define an “aggregation public inputs” structure that includes:
+  - the transaction public inputs (anchor, nullifiers, commitments, fee, value balance, stablecoin bindings as applicable),
+  - and a digest of the inner proof bytes (so the statement binds to a specific proof).
+- Implement the inner verifier logic inside the outer circuit using the same Plonky3 verification path as `transaction_core::p3_verifier`.
+- Ensure the outer proof binds to the expected AIR hash / circuit ID for the inner transaction proof (no “verify anything” bugs).
+
+Acceptance:
+
+- A reproducible command that:
+  - generates a transaction proof with existing tooling,
+  - generates an aggregation proof for that transaction proof,
+  - verifies the aggregation proof,
+  - and fails if a single byte in the inner proof is flipped.
+
+### Milestone 4: Scale to N inner proofs per outer proof
+
+Goal: aggregate multiple independent transaction proofs (start with N=2 and scale upward).
+
+Work:
+
+- Start with a fixed maximum `MAX_AGGREGATED_PROOFS` (for example 16) and padding rules so the outer circuit has a static shape.
+- Define an ordering rule and commit to it. For example: “inner proofs are ordered by their transaction hash bytes.” The exact choice matters less than determinism and binding.
+- Add benchmarking to measure:
+  - outer proof size in bytes as N increases,
+  - outer verification time,
+  - and prover time/memory.
+
+Acceptance:
+
+- `circuits-bench` gains a new mode (or a separate bench) that prints outer proof size and verification time for N in {1, 2, 4, 8, 16}.
+
+### Milestone 5: Integrate into block import and remove per-tx verification on the hot path
+
+Goal: make block validity depend on the aggregation proof, not on verifying each inner proof during import.
+
+Work:
+
+- Add a way for a block to carry the aggregation proof bytes (as an inherent-style unsigned extrinsic, mirroring `submit_commitment_proof`), and a way to bind it to the block’s transaction list.
+- In the node import pipeline (`node/src/substrate/service.rs`), verify the aggregation proof and reject the block if it fails.
+- Ensure that any existing runtime proof verification is either:
+  - removed (and replaced by deterministic checks that the proof bytes were committed and match the aggregation statement), or
+  - made a “structural check” only, so the heavy crypto verification is not done twice.
+
+Acceptance:
+
+- A dev node mines a block with multiple shielded transfers and an aggregation proof.
+- Corrupting one inner proof causes the block to be rejected, even if everything else is unchanged.
+
+## Concrete Steps
+
+Run the following from the repository root.
+
+0. If this is a fresh clone, install toolchains first:
+
+    make setup
+
+1. Baseline current proof sizes:
+
+    cargo run -p circuits-bench --release -- --smoke --json --prove
+
+2. Identify recursion code or dependencies:
+
+    rg -n "recurs|verifier circuit|fri verifier|verify inside" circuits -S
+    rg -n "recurs" Cargo.toml Cargo.lock -S
+
+3. Run the existing Plonky3 spike test (this confirms the baseline proving stack compiles and runs):
+
+    cargo test -p plonky3-spike --features plonky3
+
+4. After implementing Milestones 2–4, run the new recursion tests/benches and record the output in this plan.
+
+## Validation and Acceptance
+
+Acceptance is defined per-milestone above. The final acceptance for this plan is:
+
+1. A block can carry an aggregation proof that attests validity of N inner transaction proofs.
+2. Block import verifies only the aggregation proof (plus any separate block-level commitment proof) and rejects blocks containing any invalid transaction proof.
+3. The aggregation proof and its public inputs are domain-separated and bind to the expected inner circuit ID / AIR hash (no cross-circuit confusion).
+4. The security targets (ML‑KEM‑1024 note encryption; ≥128-bit PQ hash collision; ≥128-bit STARK soundness) remain unchanged.
+
+## Idempotence and Recovery
+
+Prototyping milestones should be additive. If recursion proves infeasible, do not leave half-integrated consensus code behind. Keep recursion experiments behind a feature flag or in a dedicated crate until the end-to-end path is proven.
+
+If a recursion approach increases proof size or verification time unexpectedly, record the measurements in `Surprises & Discoveries` and decide whether to:
+
+- reduce the number of aggregated proofs per block (and increase block frequency), or
+- introduce a multi-level aggregation tree (aggregate 16 at a time, then aggregate those aggregations), or
+- change the proof system choice (only if it preserves the hash-based PQ posture).
+
+## Artifacts and Notes
+
+Record here, as indented blocks:
+
+- The JSON bench output for baseline `tx_proof_bytes_avg`.
+- The outer proof size and verify time for N in {1, 2, 4, 8, 16}.
+- A log excerpt showing a corrupted inner proof causes outer verification failure.
+
+## Interfaces and Dependencies
+
+At the end of Milestone 5, the repo must have:
+
+- A Rust API for aggregation proving and verification, with stable entry points (example names):
+  - `circuits::aggregate::prove_aggregate(...) -> AggregateProof`
+  - `circuits::aggregate::verify_aggregate(...) -> Result<(), VerifyError>`
+- A node-level block import hook that locates aggregation proof bytes in the block, verifies them, and rejects invalid blocks.
+- A deterministic binding from block transaction ordering to the aggregation statement (so miners cannot “swap proofs”).
