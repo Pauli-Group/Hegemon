@@ -31,7 +31,10 @@ The “it works” proof is:
 - [x] (2026-01-21T20:21Z) Attempted a compatibility build with `p3-*` patched to the recursion repo’s git rev; build failed in `synthetic-crypto` due to dependency/API mismatches (rand_core / ml-dsa / ml-kem), indicating non-trivial integration work.
 - [x] (2026-01-21T20:22Z) Prototyping: recursion is feasible upstream (Plonky3-recursion Fibonacci test passes) but not available in the current crates.io dependency set; integrating requires dependency alignment.
 - [x] (2026-01-21T20:40Z) Ran the local recursion spike in this repo using Plonky3 git dependencies; Fibonacci recursion test passes once the spike is isolated from the main workspace.
-- [ ] Prototyping: build a minimal “toy recursion” that verifies one small STARK proof inside an outer proof, and measure memory/time.
+- [x] (2026-01-21T20:47Z) Prototyping: measured toy recursion (Fibonacci verifier-in-circuit) runtime and memory footprint using the local spike.
+- [x] (2026-01-21T21:12Z) Aligned workspace Plonky3 dependencies to git rev `7895d23` and updated the poseidon2 constants script dependencies to match.
+- [x] (2026-01-21T21:18Z) Updated `synthetic-crypto` to ML-DSA rc.3 / ML-KEM pre.3 / SLH-DSA rc.2 and fixed API changes; `cargo test -p synthetic-crypto` passes.
+- [ ] Prototyping: attempt recursion verification of a real transaction proof in the new spike (currently fails with witness conflict during circuit execution; see Surprises).
 - [ ] Implement an aggregation circuit for the *real* transaction proof (verify 1 proof inside an outer proof).
 - [ ] Scale aggregation to verify a small batch of proofs (start with 2, then 4, then 8, then 16) and measure.
 - [ ] Integrate aggregation into block import so the node verifies the aggregation proof and stops verifying every inner proof on the hot path.
@@ -64,6 +67,12 @@ The “it works” proof is:
 - Observation: A local recursion spike can run in-repo when isolated from the root workspace, confirming the recursion stack compiles outside the main dependency graph.
   Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test fibonacci -- --nocapture` passes after adding an empty `[workspace]` table to the spike manifest.
 
+- Observation: The toy recursion spike (Fibonacci verifier-in-circuit) peaks around 339 MiB RSS in release mode on macOS.
+  Evidence: `/usr/bin/time -l cargo test --manifest-path spikes/recursion/Cargo.toml --test fibonacci --release -- --nocapture` reports `maximum resident set size` of 355,729,408 bytes.
+
+- Observation: The attempted recursion verifier for a real transaction proof fails at circuit execution with a `WitnessConflict`, so the outer proof cannot be produced yet.
+  Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture` fails with `WitnessConflict { witness_id: WitnessId(9053), ... }` after printing `inner_tx_proof_bytes=87018`.
+
 Update this section with concrete prototyping results (what worked, what failed, and why) as soon as the first recursion spike is attempted.
 
 ## Decision Log
@@ -74,6 +83,10 @@ Update this section with concrete prototyping results (what worked, what failed,
 
 - Decision: Treat proof aggregation as a feasibility-gated workstream and start with explicit prototyping milestones.
   Rationale: If the current Plonky3 stack in this repo cannot express recursion at reasonable cost, we must know early and pivot to a different aggregation mechanism (or a different proving stack) rather than building assumptions into the protocol.
+  Date/Author: 2026-01-21 / Codex
+
+- Decision: Move `synthetic-crypto` to ML-DSA rc.3, ML-KEM pre.3, and SLH-DSA rc.2 to align with the dependency graph needed for recursion spikes.
+  Rationale: The recursion spike pulled newer RustCrypto pre-release APIs; updating the wrapper keeps the workspace and spike aligned without pinning old crates.
   Date/Author: 2026-01-21 / Codex
 
 ## Outcomes & Retrospective
@@ -267,6 +280,22 @@ Record here, as indented blocks:
     cargo test --manifest-path spikes/recursion/Cargo.toml --test fibonacci -- --nocapture
     ...
     test recursion_fibonacci_spike ... ok
+
+  Local recursion spike (release build, memory/time):
+
+    /usr/bin/time -l cargo test --manifest-path spikes/recursion/Cargo.toml --test fibonacci --release -- --nocapture
+    ...
+    test recursion_fibonacci_spike ... ok
+           355729408  maximum resident set size
+       17.86 real        46.01 user         3.99 sys
+
+  Transaction aggregation spike (failed at circuit execution):
+
+    cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture
+    ...
+    inner_tx_proof_bytes=87018
+    thread 'aggregate_single_transaction_proof' panicked at tests/transaction_aggregate.rs:188:31:
+    run recursion circuit: WitnessConflict { witness_id: WitnessId(9053), ... }
 
   Compatibility attempt (git Plonky3 rev in our dependency graph) failed:
 
