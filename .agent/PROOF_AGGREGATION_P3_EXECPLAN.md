@@ -38,8 +38,9 @@ The “it works” proof is:
 - [x] (2026-01-21T21:40Z) Diagnosed the recursion failure: conflict occurs on `fri_final_poly[0]` (public input index 8883), implying the in-circuit FRI fold chain disagrees with the proof’s final polynomial even though the inner proof verifies.
 - [x] (2026-01-22T00:30Z) Implemented a single-proof aggregation circuit for a real transaction proof (verify 1 proof inside an outer proof).
 - [x] (2026-01-22T00:30Z) Measured single-proof aggregation (proof sizes, prove/verify times, RSS) via `transaction_aggregate`.
-- [ ] Add a corrupted-proof check for the single-proof aggregation spike (flip a byte, expect outer verification failure).
-- [ ] Scale aggregation to verify a small batch of proofs (start with 2, then 4, then 8, then 16) and measure.
+- [x] (2026-01-22T00:46Z) Added a corrupted-proof check for the single-proof aggregation spike (flip a byte, expect recursion circuit rejection).
+- [x] (2026-01-22T01:19Z) Scaled aggregation to verify 2/4/8/16 proofs in one outer proof and recorded size + prove/verify times.
+- [x] (2026-01-22T01:42Z) Bound recursion proofs to public inputs by including public values in batch-STARK transcripts and verifying with explicit public values.
 - [ ] Integrate aggregation into block import so the node verifies the aggregation proof and stops verifying every inner proof on the hot path.
 - [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
 - [ ] End-to-end: mine a dev block with an aggregation proof; prove that a corrupted inner proof causes rejection.
@@ -76,8 +77,17 @@ The “it works” proof is:
 - Observation: The real-transaction recursion mismatch was caused by transcript divergence when FRI PoW bits are zero; the recursion circuit was still sampling/observing PoW data and sampling `zeta_next`, so the transcript no longer matched the non-recursive verifier.
   Evidence: After aligning the transcript order and deriving `zeta_next` from the trace domain (and skipping PoW challenges when bits=0), the `transaction_aggregate` spike produces and verifies an outer proof.
 
-- Observation: Single-proof aggregation now completes with an outer proof size of ~867 KiB, ~41.3 s proving time, ~0.64 s verify time, and ~234 MiB RSS on macOS debug build.
-  Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture` prints `outer_aggregate_proof_bytes=867227, outer_prove_ms=41338, outer_verify_ms=643`; `/usr/bin/time -l` reports `maximum resident set size` of 245,678,080 bytes and `125.03 real`.
+- Observation: Single-proof aggregation now completes with an outer proof size of ~868 KiB, ~45.3 s proving time, ~0.87 s verify time, and ~234 MiB RSS on macOS debug build.
+  Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate aggregate_single_transaction_proof -- --ignored --nocapture` prints `outer_aggregate_proof_bytes=867857, outer_prove_ms=45331, outer_verify_ms=869`; `/usr/bin/time -l` reports `maximum resident set size` of 245,678,080 bytes and `125.03 real`.
+
+- Observation: A single-byte corruption in the inner proof causes the recursion circuit to reject the public inputs with a witness conflict.
+  Evidence: `corrupted_proof_rejected: WitnessConflict { witness_id: WitnessId(9052), ... }` in `transaction_aggregate`.
+
+- Observation: Aggregated proof size grows from ~0.95 MiB (2 proofs) to ~1.20 MiB (16 proofs), while verify time stays under 1 s and prove time scales roughly linearly.
+  Evidence: `aggregate_count=2 ... outer_aggregate_proof_bytes=945209, outer_prove_ms=78731, outer_verify_ms=702` through `aggregate_count=16 ... outer_aggregate_proof_bytes=1203159, outer_prove_ms=688541, outer_verify_ms=982` in `aggregate_transaction_proof_batch`.
+
+- Observation: Batch-STARK proofs produced by the circuit prover were not binding public inputs because public values were omitted from the transcript; this must be fixed before aggregation proofs can be tied to specific inner proofs.
+  Evidence: Added `PublicAir::trace_to_public_values` and `verify_all_tables_with_public_values` so public inputs are included in the transcript and verification path.
 
 ## Decision Log
 
@@ -97,9 +107,13 @@ The “it works” proof is:
   Rationale: Prevent transcript divergence that caused `fri_final_poly[0]` conflicts and ensure recursive verification matches production parameters (PoW disabled).
   Date/Author: 2026-01-22 / Codex
 
+- Decision: Treat public input binding as mandatory for aggregation proofs and require explicit public values during batch-STARK verification.
+  Rationale: Without transcript binding to public inputs, an aggregation proof could attest to unrelated proofs. The verifier must supply the public values derived from the inner proofs.
+  Date/Author: 2026-01-22 / Codex
+
 ## Outcomes & Retrospective
 
-2026-01-22: Milestone 3 prototyping now produces and verifies an outer proof for a real transaction proof. Measurements recorded for proof size, prove/verify time, and RSS. Remaining work includes the corrupted-proof rejection check, multi-proof aggregation, and block import integration.
+2026-01-22: Milestone 3 prototyping now produces and verifies an outer proof for a real transaction proof. Measurements recorded for proof size, prove/verify time, RSS, corrupted-proof rejection, batch aggregation scaling to 16 proofs, and public-input binding. Remaining work includes block import integration.
 
 ## Context and Orientation
 
@@ -304,8 +318,18 @@ Record here, as indented blocks:
     inner_tx_proof_bytes=87018, degree_bits=13, commit_phase_len=13
     fri_params_log_blowup=3, log_final_poly_len=0, log_height_max=3
     recursion_public_inputs_len=8909, air_public_len=60, proof_values_len=8825, challenges_len=24, commitments_len=12, opened_values_len=280, opening_proof_len=8533
-    outer_aggregate_proof_bytes=867227, outer_prove_ms=41338, outer_verify_ms=643
-    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 123.20s
+    outer_aggregate_proof_bytes=867857, outer_prove_ms=45331, outer_verify_ms=869
+    corrupted_proof_rejected: WitnessConflict { witness_id: WitnessId(9052), ... }
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 132.69s
+
+  Transaction aggregation spike (batch scaling):
+
+    HEGEMON_AGG_COUNTS=2,4,8,16 cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate aggregate_transaction_proof_batch -- --ignored --nocapture
+    ...
+    aggregate_count=2, outer_aggregate_proof_bytes=945209, outer_prove_ms=78731, outer_verify_ms=702
+    aggregate_count=4, outer_aggregate_proof_bytes=1028444, outer_prove_ms=153370, outer_verify_ms=759
+    aggregate_count=8, outer_aggregate_proof_bytes=1113600, outer_prove_ms=338059, outer_verify_ms=903
+    aggregate_count=16, outer_aggregate_proof_bytes=1203159, outer_prove_ms=688541, outer_verify_ms=982
 
   Transaction aggregation spike (memory/time):
 
