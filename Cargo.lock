@@ -6387,7 +6387,6 @@ dependencies = [
 [[package]]
 name = "p3-circuit"
 version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3-recursion?rev=eff9486#eff948682bef512d2e525fcdeccf3a6e6a8209ca"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",
@@ -6412,7 +6411,6 @@ dependencies = [
 [[package]]
 name = "p3-circuit-prover"
 version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3-recursion?rev=eff9486#eff948682bef512d2e525fcdeccf3a6e6a8209ca"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -6678,7 +6676,6 @@ dependencies = [
 [[package]]
 name = "p3-poseidon2-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3-recursion?rev=eff9486#eff948682bef512d2e525fcdeccf3a6e6a8209ca"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -6700,7 +6697,6 @@ dependencies = [
 [[package]]
 name = "p3-recursion"
 version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3-recursion?rev=eff9486#eff948682bef512d2e525fcdeccf3a6e6a8209ca"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",

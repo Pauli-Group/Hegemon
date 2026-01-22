@@ -184,7 +184,7 @@ pub fn verify_aggregation_proof(
             &inner_config.config,
             proof,
             pub_inputs_vec,
-            Some(&[commit_pow_bits, query_pow_bits, log_height_max]),
+            Some(&[query_pow_bits, log_height_max]),
         )
         .map_err(|err| {
             ProofError::AggregationProofVerification(format!(
@@ -257,7 +257,8 @@ pub fn verify_aggregation_proof(
 }
 
 fn flatten_public_values(values: &[Challenge]) -> Vec<Val> {
-    let mut flattened = Vec::with_capacity(values.len() * Challenge::DIMENSION);
+    let mut flattened =
+        Vec::with_capacity(values.len() * <Challenge as BasedVectorSpace<Val>>::DIMENSION);
     for value in values {
         flattened.extend_from_slice(value.as_basis_coefficients_slice());
     }
