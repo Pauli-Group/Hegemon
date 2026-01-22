@@ -34,9 +34,11 @@ The “it works” proof is:
 - [x] (2026-01-21T20:47Z) Prototyping: measured toy recursion (Fibonacci verifier-in-circuit) runtime and memory footprint using the local spike.
 - [x] (2026-01-21T21:12Z) Aligned workspace Plonky3 dependencies to git rev `7895d23` and updated the poseidon2 constants script dependencies to match.
 - [x] (2026-01-21T21:18Z) Updated `synthetic-crypto` to ML-DSA rc.3 / ML-KEM pre.3 / SLH-DSA rc.2 and fixed API changes; `cargo test -p synthetic-crypto` passes.
-- [ ] Prototyping: attempt recursion verification of a real transaction proof in the new spike (currently fails with witness conflict during circuit execution; see Surprises).
+- [x] (2026-01-22T00:30Z) Prototyping: recursion verification of a real transaction proof succeeds in the local spike after aligning the FRI transcript and conditional PoW challenge handling.
 - [x] (2026-01-21T21:40Z) Diagnosed the recursion failure: conflict occurs on `fri_final_poly[0]` (public input index 8883), implying the in-circuit FRI fold chain disagrees with the proof’s final polynomial even though the inner proof verifies.
-- [ ] Implement an aggregation circuit for the *real* transaction proof (verify 1 proof inside an outer proof).
+- [x] (2026-01-22T00:30Z) Implemented a single-proof aggregation circuit for a real transaction proof (verify 1 proof inside an outer proof).
+- [x] (2026-01-22T00:30Z) Measured single-proof aggregation (proof sizes, prove/verify times, RSS) via `transaction_aggregate`.
+- [ ] Add a corrupted-proof check for the single-proof aggregation spike (flip a byte, expect outer verification failure).
 - [ ] Scale aggregation to verify a small batch of proofs (start with 2, then 4, then 8, then 16) and measure.
 - [ ] Integrate aggregation into block import so the node verifies the aggregation proof and stops verifying every inner proof on the hot path.
 - [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
@@ -71,13 +73,11 @@ The “it works” proof is:
 - Observation: The toy recursion spike (Fibonacci verifier-in-circuit) peaks around 339 MiB RSS in release mode on macOS.
   Evidence: `/usr/bin/time -l cargo test --manifest-path spikes/recursion/Cargo.toml --test fibonacci --release -- --nocapture` reports `maximum resident set size` of 355,729,408 bytes.
 
-- Observation: The attempted recursion verifier for a real transaction proof fails at circuit execution with a `WitnessConflict`, so the outer proof cannot be produced yet.
-  Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture` fails with `WitnessConflict { witness_id: WitnessId(9053), ... }` after printing `inner_tx_proof_bytes=87018`.
+- Observation: The real-transaction recursion mismatch was caused by transcript divergence when FRI PoW bits are zero; the recursion circuit was still sampling/observing PoW data and sampling `zeta_next`, so the transcript no longer matched the non-recursive verifier.
+  Evidence: After aligning the transcript order and deriving `zeta_next` from the trace domain (and skipping PoW challenges when bits=0), the `transaction_aggregate` spike produces and verifies an outer proof.
 
-- Observation: The `WitnessConflict` is specifically on `fri_final_poly[0]`, indicating the recursive FRI arithmetic does not match the real FRI proof (inner proof still verifies).
-  Evidence: The spike prints `detail=fri_final_poly[0]` with `commit_phase_len=13`, `fri_params_log_blowup=3`, `log_final_poly_len=0`; `verify_transaction_proof_p3` succeeds before the recursion circuit run.
-
-Update this section with concrete prototyping results (what worked, what failed, and why) as soon as the first recursion spike is attempted.
+- Observation: Single-proof aggregation now completes with an outer proof size of ~867 KiB, ~41.3 s proving time, ~0.64 s verify time, and ~234 MiB RSS on macOS debug build.
+  Evidence: `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture` prints `outer_aggregate_proof_bytes=867227, outer_prove_ms=41338, outer_verify_ms=643`; `/usr/bin/time -l` reports `maximum resident set size` of 245,678,080 bytes and `125.03 real`.
 
 ## Decision Log
 
@@ -93,9 +93,13 @@ Update this section with concrete prototyping results (what worked, what failed,
   Rationale: The recursion spike pulled newer RustCrypto pre-release APIs; updating the wrapper keeps the workspace and spike aligned without pinning old crates.
   Date/Author: 2026-01-21 / Codex
 
+- Decision: Align the recursive verifier transcript with the non-recursive flow by deriving `zeta_next` from the trace domain and skipping FRI PoW witness/challenge sampling when PoW bits are zero.
+  Rationale: Prevent transcript divergence that caused `fri_final_poly[0]` conflicts and ensure recursive verification matches production parameters (PoW disabled).
+  Date/Author: 2026-01-22 / Codex
+
 ## Outcomes & Retrospective
 
-Not started. Update after the first working recursion prototype.
+2026-01-22: Milestone 3 prototyping now produces and verifies an outer proof for a real transaction proof. Measurements recorded for proof size, prove/verify time, and RSS. Remaining work includes the corrupted-proof rejection check, multi-proof aggregation, and block import integration.
 
 ## Context and Orientation
 
@@ -293,13 +297,22 @@ Record here, as indented blocks:
            355729408  maximum resident set size
        17.86 real        46.01 user         3.99 sys
 
-  Transaction aggregation spike (failed at circuit execution):
+  Transaction aggregation spike (single proof succeeds):
 
     cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture
     ...
-    inner_tx_proof_bytes=87018
-    thread 'aggregate_single_transaction_proof' panicked at tests/transaction_aggregate.rs:188:31:
-    run recursion circuit: WitnessConflict { witness_id: WitnessId(9053), ... }
+    inner_tx_proof_bytes=87018, degree_bits=13, commit_phase_len=13
+    fri_params_log_blowup=3, log_final_poly_len=0, log_height_max=3
+    recursion_public_inputs_len=8909, air_public_len=60, proof_values_len=8825, challenges_len=24, commitments_len=12, opened_values_len=280, opening_proof_len=8533
+    outer_aggregate_proof_bytes=867227, outer_prove_ms=41338, outer_verify_ms=643
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 123.20s
+
+  Transaction aggregation spike (memory/time):
+
+    /usr/bin/time -l cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored --nocapture
+    ...
+           245678080  maximum resident set size
+       125.03 real       122.27 user         1.15 sys
 
   Compatibility attempt (git Plonky3 rev in our dependency graph) failed:
 

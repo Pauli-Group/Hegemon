@@ -189,7 +189,7 @@ fn fold_row_chain_host(
 }
 
 #[test]
-#[ignore = "known failure: recursion FRI final polynomial mismatch for Goldilocks proofs"]
+#[ignore = "slow aggregation spike; run with --ignored for metrics"]
 fn aggregate_single_transaction_proof() {
     let witness = sample_witness();
     witness.validate().expect("witness valid");
