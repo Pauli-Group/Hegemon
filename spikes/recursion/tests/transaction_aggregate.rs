@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use p3_batch_stark::{BatchCommitments, CommonData};
@@ -5,13 +6,17 @@ use p3_circuit::{CircuitBuilder, CircuitError};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::config;
 use p3_circuit_prover::{BatchStarkProver, TablePacking};
+use p3_commit::PolynomialSpace;
+use p3_field::coset::TwoAdicMultiplicativeCoset;
+use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
 use p3_poseidon2::ExternalLayerConstants;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::types::{CommitmentTargets, OpenedValuesTargets};
 use p3_recursion::{Recursive, generate_challenges, verify_circuit};
-use p3_uni_stark::get_log_num_quotient_chunks;
+use p3_util::reverse_bits_len;
+use p3_uni_stark::{StarkGenericConfig, get_log_num_quotient_chunks};
 use transaction_circuit::{
     StablecoinPolicyBinding, TransactionAirP3, TransactionProverP3, TransactionWitness,
     hashing_pq::{felts_to_bytes48, merkle_node, note_commitment, HashFelt},
@@ -94,6 +99,95 @@ fn sample_witness() -> TransactionWitness {
     }
 }
 
+type MatOpenings = Vec<(TwoAdicMultiplicativeCoset<Val>, Vec<(Challenge, Vec<Challenge>)>)>;
+
+fn compute_reduced_openings_host(
+    log_global_max_height: usize,
+    index: usize,
+    alpha: Challenge,
+    log_blowup: usize,
+    mats_per_batch: &[MatOpenings],
+    batch_opened_values: &[Vec<Vec<Val>>],
+) -> Vec<(usize, Challenge)> {
+    let mut reduced_openings = BTreeMap::<usize, (Challenge, Challenge)>::new();
+
+    for (mats, batch_openings) in mats_per_batch.iter().zip(batch_opened_values.iter()) {
+        for ((mat_domain, mat_points_and_values), mat_opening) in
+            mats.iter().zip(batch_openings.iter())
+        {
+            let log_height = mat_domain.log_size() + log_blowup;
+            let bits_reduced = log_global_max_height - log_height;
+            let reduced_index = index >> bits_reduced;
+            let rev_reduced_index = reverse_bits_len(reduced_index, log_height);
+
+            let x = Val::GENERATOR
+                * Val::two_adic_generator(log_height).exp_u64(rev_reduced_index as u64);
+            let x_chal = Challenge::from(x);
+
+            let (alpha_pow, ro) = reduced_openings
+                .entry(log_height)
+                .or_insert((Challenge::ONE, Challenge::ZERO));
+
+            for (z, ps_at_z) in mat_points_and_values {
+                let quotient = (*z - x_chal).inverse();
+                for (&p_at_x, &p_at_z) in mat_opening.iter().zip(ps_at_z.iter()) {
+                    let p_at_x_chal = Challenge::from(p_at_x);
+                    *ro += *alpha_pow * (p_at_z - p_at_x_chal) * quotient;
+                    *alpha_pow *= alpha;
+                }
+            }
+        }
+    }
+
+    reduced_openings
+        .into_iter()
+        .rev()
+        .map(|(log_height, (_ap, ro))| (log_height, ro))
+        .collect()
+}
+
+fn fold_row_chain_host(
+    index: usize,
+    log_max_height: usize,
+    betas: &[Challenge],
+    sibling_values: &[Challenge],
+    roll_ins: &[Option<Challenge>],
+    initial_folded_eval: Challenge,
+) -> Challenge {
+    let mut folded = initial_folded_eval;
+    for (i, beta) in betas.iter().enumerate() {
+        let log_folded_height = log_max_height - i - 1;
+        let parent_index = index >> (i + 1);
+        let rev_parent_index = reverse_bits_len(parent_index, log_folded_height);
+        let x0 = Val::two_adic_generator(log_folded_height + 1)
+            .exp_u64(rev_parent_index as u64);
+        let x0_chal = Challenge::from(x0);
+        let x1_chal = -x0_chal;
+
+        let bit = (index >> i) & 1;
+        let sibling_is_right = bit == 0;
+        let e0 = if sibling_is_right {
+            folded
+        } else {
+            sibling_values[i]
+        };
+        let e1 = if sibling_is_right {
+            sibling_values[i]
+        } else {
+            folded
+        };
+
+        let inv = (x1_chal - x0_chal).inverse();
+        folded = e0 + (*beta - x0_chal) * (e1 - e0) * inv;
+
+        if let Some(ro) = roll_ins[i] {
+            folded += beta.square() * ro;
+        }
+    }
+
+    folded
+}
+
 #[test]
 #[ignore = "known failure: recursion FRI final polynomial mismatch for Goldilocks proofs"]
 fn aggregate_single_transaction_proof() {
@@ -134,7 +228,8 @@ fn aggregate_single_transaction_proof() {
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs);
     let fri_params = default_fri_config(challenge_mmcs, log_blowup, FRI_NUM_QUERIES);
     let fri_verifier_params = FriVerifierParams::from(&fri_params);
-    let pow_bits = fri_params.query_proof_of_work_bits;
+    let commit_pow_bits = fri_params.commit_proof_of_work_bits;
+    let query_pow_bits = fri_params.query_proof_of_work_bits;
     let log_height_max = fri_params.log_final_poly_len + fri_params.log_blowup;
     println!(
         "fri_params_log_blowup={}, log_final_poly_len={}, log_height_max={}",
@@ -175,10 +270,136 @@ fn aggregate_single_transaction_proof() {
         &config.config,
         &proof,
         &pub_inputs_vec,
-        Some(&[pow_bits, log_height_max]),
+        Some(&[commit_pow_bits, query_pow_bits, log_height_max]),
     )
     .expect("generate challenges");
+    let num_phases = proof.opening_proof.commit_phase_commits.len();
     let num_queries = proof.opening_proof.query_proofs.len();
+    let has_commit_pow = commit_pow_bits > 0;
+    let has_query_pow = query_pow_bits > 0;
+    let fri_challenges_len = 1
+        + (num_phases * (1 + usize::from(has_commit_pow)))
+        + usize::from(has_query_pow)
+        + num_queries;
+    let fri_start = all_challenges
+        .len()
+        .checked_sub(fri_challenges_len)
+        .expect("fri challenge length underflow");
+    let zeta = all_challenges[fri_start - 1];
+    let fri_alpha = all_challenges[fri_start];
+    let mut cursor = fri_start + 1;
+    let mut betas = Vec::with_capacity(num_phases);
+    for _ in 0..num_phases {
+        if has_commit_pow {
+            let _commit_pow = all_challenges[cursor];
+            cursor += 1;
+        }
+        betas.push(all_challenges[cursor]);
+        cursor += 1;
+    }
+    if has_query_pow {
+        let _query_pow = all_challenges[cursor];
+        cursor += 1;
+    }
+    let query_indices = &all_challenges[cursor..cursor + num_queries];
+    if cursor + num_queries != all_challenges.len() {
+        println!(
+            "fri_challenge_parse_mismatch len={}, expected_end={}",
+            all_challenges.len(),
+            cursor + num_queries
+        );
+    }
+
+    let log_quotient_degree =
+        get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
+    let quotient_degree = 1 << (log_quotient_degree + config.config.is_zk());
+    let trace_domain =
+        TwoAdicMultiplicativeCoset::new(Val::ONE, proof.degree_bits).expect("trace domain");
+    let quotient_domain =
+        trace_domain.create_disjoint_domain(1 << (proof.degree_bits + log_quotient_degree));
+    let quotient_chunks_domains = quotient_domain.split_domains(quotient_degree);
+
+    let degree_bits_minus_zk = proof.degree_bits.saturating_sub(config.config.is_zk());
+    let init_trace_domain = TwoAdicMultiplicativeCoset::new(Val::ONE, degree_bits_minus_zk)
+        .expect("init trace domain");
+    let zeta_next = zeta * Challenge::from(init_trace_domain.subgroup_generator());
+
+    let mut mats_per_batch: Vec<MatOpenings> = Vec::new();
+    mats_per_batch.push(vec![(
+        trace_domain,
+        vec![
+            (zeta, proof.opened_values.trace_local.clone()),
+            (zeta_next, proof.opened_values.trace_next.clone()),
+        ],
+    )]);
+    let quotient_mats = quotient_chunks_domains
+        .iter()
+        .zip(proof.opened_values.quotient_chunks.iter())
+        .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
+        .collect();
+    mats_per_batch.push(quotient_mats);
+
+    let log_global_max_height =
+        num_phases + fri_params.log_blowup + fri_params.log_final_poly_len;
+    for (q, query_proof) in proof.opening_proof.query_proofs.iter().enumerate() {
+        let index_coeffs: &[Val] = query_indices[q].as_basis_coefficients_slice();
+        let index = index_coeffs[0].as_canonical_u64() as usize;
+        let batch_opened_values: Vec<Vec<Vec<Val>>> = query_proof
+            .input_proof
+            .iter()
+            .map(|batch| batch.opened_values.clone())
+            .collect();
+        let reduced_by_height = compute_reduced_openings_host(
+            log_global_max_height,
+            index,
+            fri_alpha,
+            log_blowup,
+            &mats_per_batch,
+            &batch_opened_values,
+        );
+        let initial_folded_eval = reduced_by_height[0].1;
+        let mut roll_ins = vec![None; num_phases];
+        for &(h, ro) in reduced_by_height.iter().skip(1) {
+            let phase = log_global_max_height - 1 - h;
+            if phase < num_phases {
+                roll_ins[phase] = Some(ro);
+            }
+        }
+        let sibling_values: Vec<Challenge> = query_proof
+            .commit_phase_openings
+            .iter()
+            .map(|opening| opening.sibling_value)
+            .collect();
+        let folded_eval = fold_row_chain_host(
+            index,
+            log_global_max_height,
+            &betas,
+            &sibling_values,
+            &roll_ins,
+            initial_folded_eval,
+        );
+
+        let domain_index = index >> num_phases;
+        let x = Val::two_adic_generator(log_global_max_height)
+            .exp_u64(reverse_bits_len(domain_index, log_global_max_height) as u64);
+        let mut final_eval = Challenge::ZERO;
+        for &coeff in proof.opening_proof.final_poly.iter().rev() {
+            final_eval = final_eval * Challenge::from(x) + coeff;
+        }
+
+        if folded_eval != final_eval {
+            println!(
+                "fri_fold_mismatch query={}, index={}, reduced_heights={:?}, folded_eval={:?}, final_eval={:?}, final_poly_len={}",
+                q,
+                index,
+                reduced_by_height.iter().map(|(h, _)| *h).collect::<Vec<_>>(),
+                folded_eval,
+                final_eval,
+                proof.opening_proof.final_poly.len()
+            );
+            break;
+        }
+    }
     let public_inputs =
         verifier_inputs.pack_values(&pub_inputs_vec, &proof, &None, &all_challenges, num_queries);
     let commitments_no_lookups = BatchCommitments {

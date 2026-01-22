@@ -74,8 +74,9 @@ fn recursion_fibonacci_spike() -> Result<(), VerificationError> {
     let log_final_poly_len = 0;
     let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
     let fri_verifier_params = FriVerifierParams::from(&fri_params);
+    let commit_pow_bits = fri_params.commit_proof_of_work_bits;
+    let query_pow_bits = fri_params.query_proof_of_work_bits;
     let log_height_max = fri_params.log_final_poly_len + fri_params.log_blowup;
-    let pow_bits = fri_params.query_proof_of_work_bits;
     let pcs = MyPcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
 
@@ -115,7 +116,13 @@ fn recursion_fibonacci_spike() -> Result<(), VerificationError> {
     let circuit = circuit_builder.build()?;
     let mut runner = circuit.runner();
     let all_challenges =
-        generate_challenges(&air, &config, &proof, &pis, Some(&[pow_bits, log_height_max]))?;
+        generate_challenges(
+            &air,
+            &config,
+            &proof,
+            &pis,
+            Some(&[commit_pow_bits, query_pow_bits, log_height_max]),
+        )?;
     let num_queries = proof.opening_proof.query_proofs.len();
     let public_inputs =
         verifier_inputs.pack_values(&pis, &proof, &None, &all_challenges, num_queries);
