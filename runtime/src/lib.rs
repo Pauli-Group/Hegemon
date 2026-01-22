@@ -1755,6 +1755,24 @@ sp_api::impl_runtime_apis! {
             notes
         }
 
+        fn get_commitments(
+            start: u64,
+            limit: u32,
+        ) -> sp_std::vec::Vec<(u64, [u8; 48])> {
+            let mut commitments = sp_std::vec::Vec::new();
+            let end = start.saturating_add(limit as u64);
+
+            for index in start..end {
+                if let Some(commitment) =
+                    pallet_shielded_pool::Commitments::<Runtime>::get(index)
+                {
+                    commitments.push((index, commitment));
+                }
+            }
+
+            commitments
+        }
+
         fn encrypted_note_count() -> u64 {
             pallet_shielded_pool::CommitmentIndex::<Runtime>::get()
         }

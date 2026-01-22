@@ -54,6 +54,18 @@ Execute a private transfer inside the shielded pool. `stablecoin` is optional an
 ### `shielded_transfer_unsigned(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, stablecoin, fee)`
 Execute an unsigned shielded-to-shielded transfer; `stablecoin` must be `None` and `value_balance` is fixed to 0.
 
+### `shielded_transfer_sidecar(proof, nullifiers, commitments, ciphertext_hashes, ciphertext_sizes, anchor, binding_hash, stablecoin, fee, value_balance)`
+Execute a transfer where ciphertext bytes are supplied out-of-band (DA sidecar). The call carries ciphertext hashes and byte sizes only.
+
+### `shielded_transfer_unsigned_sidecar(proof, nullifiers, commitments, ciphertext_hashes, ciphertext_sizes, anchor, binding_hash, stablecoin, fee)`
+Unsigned sidecar transfer; ciphertext bytes live in the DA sidecar and `stablecoin` must be `None`.
+
+### `submit_commitment_proof(da_root, proof)` (inherent)
+Attach the block commitment proof and the DA root to the block body for node-side verification and DA retrieval.
+
+### `submit_aggregation_proof(proof)` (inherent)
+Attach an aggregation proof over transaction proofs when available.
+
 ### `mint_coinbase(coinbase_data)` (inherent)
 Mint a shielded coinbase note as the only issuance path.
 
