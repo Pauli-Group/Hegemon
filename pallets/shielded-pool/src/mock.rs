@@ -250,6 +250,10 @@ mod tests {
         StarkProof::from_bytes(vec![1u8; 1024])
     }
 
+    fn valid_da_root() -> [u8; 48] {
+        [9u8; 48]
+    }
+
     fn valid_binding_hash() -> BindingHash {
         BindingHash { data: [1u8; 64] }
     }
@@ -347,6 +351,7 @@ mod tests {
     fn validate_unsigned_submit_commitment_proof_is_in_block_only() {
         new_test_ext().execute_with(|| {
             let call = crate::Call::<Test>::submit_commitment_proof {
+                da_root: valid_da_root(),
                 proof: valid_proof(),
             };
 
@@ -367,6 +372,7 @@ mod tests {
     fn validate_unsigned_submit_commitment_proof_rejects_oversized() {
         new_test_ext().execute_with(|| {
             let call = crate::Call::<Test>::submit_commitment_proof {
+                da_root: valid_da_root(),
                 proof: StarkProof {
                     data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
                 },
@@ -388,10 +394,12 @@ mod tests {
         new_test_ext().execute_with(|| {
             assert_ok!(Pallet::<Test>::submit_commitment_proof(
                 RuntimeOrigin::none(),
+                valid_da_root(),
                 valid_proof(),
             ));
 
             let call = crate::Call::<Test>::submit_commitment_proof {
+                da_root: valid_da_root(),
                 proof: valid_proof(),
             };
             let validity_in_block =
@@ -431,17 +439,26 @@ mod tests {
         new_test_ext().execute_with(|| {
             // Signed origin rejected.
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::signed(1), valid_proof(),),
+                Pallet::<Test>::submit_commitment_proof(
+                    RuntimeOrigin::signed(1),
+                    valid_da_root(),
+                    valid_proof(),
+                ),
                 sp_runtime::DispatchError::BadOrigin
             );
 
             // None origin accepted once per block.
             assert_ok!(Pallet::<Test>::submit_commitment_proof(
                 RuntimeOrigin::none(),
+                valid_da_root(),
                 valid_proof(),
             ));
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::none(), valid_proof(),),
+                Pallet::<Test>::submit_commitment_proof(
+                    RuntimeOrigin::none(),
+                    valid_da_root(),
+                    valid_proof(),
+                ),
                 crate::Error::<Test>::CommitmentProofAlreadyProcessed
             );
 
@@ -449,6 +466,7 @@ mod tests {
             Pallet::<Test>::on_initialize(2);
             assert_ok!(Pallet::<Test>::submit_commitment_proof(
                 RuntimeOrigin::none(),
+                valid_da_root(),
                 valid_proof(),
             ));
         });
@@ -461,7 +479,11 @@ mod tests {
                 data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
             };
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::none(), proof),
+                Pallet::<Test>::submit_commitment_proof(
+                    RuntimeOrigin::none(),
+                    valid_da_root(),
+                    proof,
+                ),
                 crate::Error::<Test>::ProofTooLarge
             );
         });

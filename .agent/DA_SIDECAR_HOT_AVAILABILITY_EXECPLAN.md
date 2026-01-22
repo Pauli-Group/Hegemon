@@ -29,8 +29,8 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 - [x] (2026-01-22T19:04Z) Define and implement “multi-page DA encoding” so blocks can commit to blobs larger than 255 shards.
 - [x] (2026-01-22T20:10Z) Make ciphertext bytes bind to transaction validity via ciphertext hashes (prevent miner ciphertext tampering).
 - [x] (2026-01-22T20:55Z) Replace in-memory DA stores with a persistent store + pruning for a hot retention window.
-- [ ] Modify block production/import to use DA sidecars (ciphertexts are no longer in the block body).
-- [ ] Update wallet RPCs to fetch ciphertexts from DA store.
+- [x] (2026-01-23T00:00Z) Modify block production/import to use DA sidecars (ciphertexts are no longer in the block body).
+- [x] (2026-01-23T00:00Z) Update wallet RPCs to fetch ciphertexts from DA store.
 - [ ] End-to-end demo: mine a block, fetch chunks, sync wallet, decrypt note.
 
 ## Surprises & Discoveries
@@ -68,6 +68,10 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 - Decision: Persist DA encodings in a sled-backed store keyed by block number/hash with retention pruning, plus a small in-memory cache for proofs.
   Rationale: The hot window must survive restarts and support wallet sync while keeping disk bounded; the cache avoids re-decoding on every chunk request.
   Date/Author: 2026-01-22 / Codex
+
+- Decision: Include `da_root` explicitly in the `submit_commitment_proof` extrinsic.
+  Rationale: Importers need the DA root before they can fetch sidecar bytes; the proof bytes alone do not expose public inputs.
+  Date/Author: 2026-01-23 / Codex
 
 ## Outcomes & Retrospective
 

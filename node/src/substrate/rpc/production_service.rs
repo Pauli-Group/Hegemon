@@ -55,16 +55,21 @@ use codec::{Decode, Encode};
 use pallet_shielded_pool::types::{
     BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof,
 };
+use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::Instant;
+use parking_lot::Mutex as ParkingMutex;
+
+use crate::substrate::service::{DaChunkStore, PendingCiphertextStore};
 
 /// Default difficulty bits when runtime API query fails
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
@@ -84,6 +89,10 @@ where
 {
     /// Reference to the Substrate client
     client: Arc<C>,
+    /// DA chunk store for ciphertext retrieval
+    da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
+    /// Pending ciphertext store for sidecar submissions
+    pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     /// Connected peer count snapshot
     peer_count: Arc<AtomicUsize>,
     /// Sync status flag (true means syncing)
@@ -105,11 +114,19 @@ where
     /// # Arguments
     ///
     /// * `client` - Reference to the Substrate client
-    pub fn new(client: Arc<C>, peer_count: Arc<AtomicUsize>, sync_status: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        client: Arc<C>,
+        peer_count: Arc<AtomicUsize>,
+        sync_status: Arc<AtomicBool>,
+        da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
+        pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
+    ) -> Self {
         Self {
             client,
             peer_count,
             sync_status,
+            da_chunk_store,
+            pending_ciphertext_store,
             start_time: Instant::now(),
             _phantom: PhantomData,
         }
@@ -240,27 +257,17 @@ where
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
-        match api.get_encrypted_notes(best_hash, start, limit as u32) {
-            Ok(notes) => Ok(notes
-                .into_iter()
-                .enumerate()
-                .map(|(i, (_, _, _, commitment))| (start + i as u64, commitment))
-                .collect()),
+        match api.get_commitments(best_hash, start, limit as u32) {
+            Ok(commitments) => Ok(commitments),
             Err(e) => Err(format!("Runtime API error: {:?}", e)),
         }
     }
 
     fn ciphertext_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, Vec<u8>)>, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-
-        match api.get_encrypted_notes(best_hash, start, limit as u32) {
-            Ok(notes) => Ok(notes
-                .into_iter()
-                .map(|(index, ciphertext, _, _)| (index, ciphertext))
-                .collect()),
-            Err(e) => Err(format!("Runtime API error: {:?}", e)),
-        }
+        self.da_chunk_store
+            .lock()
+            .ciphertext_slice(start, limit)
+            .map_err(|e| format!("DA store error: {e:?}"))
     }
 
     fn nullifier_list(&self) -> Result<Vec<[u8; 48]>, String> {
@@ -329,9 +336,10 @@ where
     }
 
     fn ciphertext_count(&self) -> u64 {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.encrypted_note_count(best_hash).unwrap_or(0)
+        self.da_chunk_store
+            .lock()
+            .ciphertext_count()
+            .unwrap_or(0)
     }
 }
 
@@ -403,8 +411,10 @@ where
                 .try_into()
                 .map_err(|_| "Failed to convert commitments")?;
 
-        // Convert encrypted notes to EncryptedNote structs (SCALE-encoded)
-        let mut enc_notes = Vec::with_capacity(encrypted_notes.len());
+        // Convert encrypted notes to ciphertext hashes + sizes for sidecar submission.
+        let mut ciphertext_hashes = Vec::with_capacity(encrypted_notes.len());
+        let mut ciphertext_sizes = Vec::with_capacity(encrypted_notes.len());
+        let mut ciphertext_bytes = Vec::with_capacity(encrypted_notes.len());
         for note_bytes in encrypted_notes {
             let mut cursor = &note_bytes[..];
             let note = EncryptedNote::decode(&mut cursor)
@@ -412,32 +422,57 @@ where
             if !cursor.is_empty() {
                 return Err("Encrypted note has trailing bytes".to_string());
             }
-            enc_notes.push(note);
+
+            let mut bytes = Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
+            bytes.extend_from_slice(&note.ciphertext);
+            bytes.extend_from_slice(note.kem_ciphertext.as_ref());
+            if bytes.len() > pallet_shielded_pool::types::MAX_CIPHERTEXT_BYTES {
+                return Err("Encrypted note exceeds max ciphertext size".to_string());
+            }
+
+            let hash = ciphertext_hash_bytes(&bytes);
+            ciphertext_hashes.push(hash);
+            ciphertext_sizes.push(bytes.len() as u32);
+            ciphertext_bytes.push((hash, bytes));
         }
 
-        let bounded_ciphertexts: frame_support::BoundedVec<
-            EncryptedNote,
-            runtime::MaxEncryptedNotesPerTx,
-        > = enc_notes
+        let bounded_ciphertext_hashes: frame_support::BoundedVec<
+            [u8; 48],
+            runtime::MaxCommitmentsPerTx,
+        > = ciphertext_hashes
             .try_into()
-            .map_err(|_| "Failed to convert encrypted notes")?;
+            .map_err(|_| "Failed to convert ciphertext hashes")?;
+
+        let bounded_ciphertext_sizes: frame_support::BoundedVec<u32, runtime::MaxCommitmentsPerTx> =
+            ciphertext_sizes
+                .try_into()
+                .map_err(|_| "Failed to convert ciphertext sizes")?;
+
+        {
+            let mut pending = self.pending_ciphertext_store.lock();
+            for (hash, bytes) in ciphertext_bytes {
+                pending.insert(hash, bytes);
+            }
+        }
 
         // Convert binding hash
         let binding = BindingHash { data: binding_hash };
 
         // Build the pallet call
-        let call =
-            runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::shielded_transfer {
+        let call = runtime::RuntimeCall::ShieldedPool(
+            pallet_shielded_pool::Call::shielded_transfer_sidecar {
                 proof: stark_proof,
                 nullifiers: bounded_nullifiers,
                 commitments: bounded_commitments,
-                ciphertexts: bounded_ciphertexts,
+                ciphertext_hashes: bounded_ciphertext_hashes,
+                ciphertext_sizes: bounded_ciphertext_sizes,
                 anchor,
                 binding_hash: binding,
                 stablecoin,
                 fee,
                 value_balance,
-            });
+            },
+        );
 
         // Encode the call
         let encoded_call = call.encode();
@@ -453,7 +488,7 @@ where
             commitments = commitment_count,
             call_size = encoded_call.len(),
             call_hash = %hex::encode(call_hash),
-            "Built shielded_transfer call (Task 11.7.3)"
+            "Built shielded_transfer_sidecar call (Task 11.7.3)"
         );
 
         // Return the encoded call as hex in the "error" field for client to use
@@ -475,8 +510,27 @@ where
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
-        api.get_encrypted_notes(best_hash, start, limit as u32)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
+        let ciphertexts = self
+            .da_chunk_store
+            .lock()
+            .ciphertext_slice(start, limit)
+            .map_err(|e| format!("DA store error: {e:?}"))?;
+
+        let commitments = api
+            .get_commitments(best_hash, start, limit as u32)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?;
+        let commitment_map: HashMap<u64, [u8; 48]> =
+            commitments.into_iter().collect();
+
+        let block_number = self.best_number();
+        let mut notes = Vec::with_capacity(ciphertexts.len());
+        for (index, ciphertext) in ciphertexts {
+            if let Some(commitment) = commitment_map.get(&index) {
+                notes.push((index, ciphertext, block_number, *commitment));
+            }
+        }
+
+        Ok(notes)
     }
 
     fn encrypted_note_count(&self) -> u64 {

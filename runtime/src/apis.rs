@@ -109,6 +109,15 @@ decl_runtime_apis! {
             limit: u32,
         ) -> Vec<(u64, Vec<u8>, u64, [u8; 48])>;
 
+        /// Get commitments in a range.
+        ///
+        /// Returns tuples of (index, commitment).
+        /// This is used by nodes and wallets when ciphertexts live in DA storage.
+        fn get_commitments(
+            start: u64,
+            limit: u32,
+        ) -> Vec<(u64, [u8; 48])>;
+
         /// Get total number of encrypted notes.
         fn encrypted_note_count() -> u64;
 

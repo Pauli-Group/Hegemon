@@ -430,6 +430,14 @@ pub mod pallet {
         InvalidCommitmentCount,
         /// Encrypted notes count doesn't match commitments.
         EncryptedNotesMismatch,
+        /// Ciphertext hash count doesn't match commitments.
+        CiphertextHashCountMismatch,
+        /// Ciphertext size count doesn't match commitments.
+        CiphertextSizeCountMismatch,
+        /// Ciphertext size exceeds allowed bounds.
+        InvalidCiphertextSize,
+        /// Ciphertext hash is zero (padding only).
+        ZeroCiphertextHash,
         /// Encrypted note uses an unsupported version.
         UnsupportedNoteVersion,
         /// Encrypted note uses an unsupported crypto suite.
@@ -591,9 +599,16 @@ pub mod pallet {
         /// commitment proof bytes on-chain so all nodes can verify them during block import.
         ///
         /// The runtime does **not** verify the proof; verification is performed in the node.
+        ///
+        /// The `da_root` is carried explicitly so importers can fetch the DA sidecar before
+        /// reconstructing ciphertexts.
         #[pallet::call_index(1)]
         #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_commitment_proof(origin: OriginFor<T>, proof: StarkProof) -> DispatchResult {
+        pub fn submit_commitment_proof(
+            origin: OriginFor<T>,
+            da_root: [u8; 48],
+            proof: StarkProof,
+        ) -> DispatchResult {
             ensure_none(origin)?;
 
             ensure!(
@@ -605,6 +620,8 @@ pub mod pallet {
                 proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
+
+            let _ = da_root;
 
             CommitmentProofProcessed::<T>::put(true);
             Ok(())
@@ -787,6 +804,171 @@ pub mod pallet {
             for (cm, enc) in commitments.iter().zip(ciphertexts.iter()) {
                 Commitments::<T>::insert(current_index, *cm);
                 EncryptedNotes::<T>::insert(current_index, enc.clone());
+                Self::deposit_event(Event::CommitmentAdded {
+                    index: current_index,
+                    commitment: *cm,
+                });
+                current_index += 1;
+            }
+            CommitmentIndex::<T>::put(current_index);
+
+            // Update Merkle tree root
+            Self::update_merkle_tree(&commitments)?;
+
+            Self::deposit_event(Event::ShieldedTransfer {
+                nullifier_count: nullifiers.len() as u32,
+                commitment_count: commitments.len() as u32,
+                value_balance,
+            });
+
+            Ok(())
+        }
+
+        /// Execute a shielded transfer where ciphertext bytes live in the DA sidecar.
+        ///
+        /// The extrinsic carries ciphertext hashes + sizes, while the ciphertext bytes
+        /// are stored and served out-of-band via the DA layer.
+        #[pallet::call_index(7)]
+        #[pallet::weight(T::WeightInfo::shielded_transfer(
+            nullifiers.len() as u32,
+            commitments.len() as u32
+        ))]
+        pub fn shielded_transfer_sidecar(
+            origin: OriginFor<T>,
+            proof: StarkProof,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_hashes: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_sizes: BoundedVec<u32, T::MaxCommitmentsPerTx>,
+            anchor: [u8; 48],
+            binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
+            fee: u64,
+            value_balance: i128,
+        ) -> DispatchResult {
+            ensure_signed(origin)?;
+
+            // SECURITY: Early size check to prevent DoS via oversized proofs.
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
+
+            // Validate counts
+            ensure!(
+                !nullifiers.is_empty() || !commitments.is_empty(),
+                Error::<T>::InvalidNullifierCount
+            );
+            ensure!(
+                ciphertext_hashes.len() == commitments.len(),
+                Error::<T>::CiphertextHashCountMismatch
+            );
+            ensure!(
+                ciphertext_sizes.len() == commitments.len(),
+                Error::<T>::CiphertextSizeCountMismatch
+            );
+            Self::validate_ciphertext_sizes(ciphertext_sizes.as_slice())?;
+            for hash in ciphertext_hashes.iter() {
+                if *hash == [0u8; 48] {
+                    return Err(Error::<T>::ZeroCiphertextHash.into());
+                }
+            }
+
+            // Check anchor is a valid historical Merkle root
+            ensure!(
+                MerkleRoots::<T>::contains_key(anchor),
+                Error::<T>::InvalidAnchor
+            );
+
+            // No transparent pool: reject any non-zero value balance.
+            ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
+
+            // Stablecoin issuance requires an active policy and fresh commitments.
+            Self::ensure_stablecoin_binding(&stablecoin)?;
+
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    return Err(Error::<T>::ZeroNullifierSubmitted.into());
+                }
+            }
+            for cm in commitments.iter() {
+                if is_zero_commitment(cm) {
+                    return Err(Error::<T>::ZeroCommitmentSubmitted.into());
+                }
+            }
+
+            // Outputs require at least one input nullifier to spend from.
+            if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
+                return Err(Error::<T>::InvalidNullifierCount.into());
+            }
+
+            // Check for duplicate nullifiers in transaction
+            let mut seen_nullifiers = Vec::new();
+            for nf in nullifiers.iter() {
+                if seen_nullifiers.contains(nf) {
+                    return Err(Error::<T>::DuplicateNullifierInTx.into());
+                }
+                seen_nullifiers.push(*nf);
+            }
+
+            // Check nullifiers not already spent
+            for nf in nullifiers.iter() {
+                ensure!(
+                    !Nullifiers::<T>::contains_key(nf),
+                    Error::<T>::NullifierAlreadyExists
+                );
+            }
+
+            // Build verification inputs
+            let inputs = ShieldedTransferInputs {
+                anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
+                fee,
+                value_balance,
+                stablecoin: stablecoin.clone(),
+            };
+
+            // Get verifying key
+            let vk = VerifyingKeyStorage::<T>::get();
+            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
+
+            // Verify ZK proof
+            let verifier = T::ProofVerifier::default();
+            match verifier.verify_stark(&proof, &inputs, &vk) {
+                VerificationResult::Valid => {}
+                VerificationResult::InvalidProofFormat => {
+                    return Err(Error::<T>::InvalidProofFormat.into())
+                }
+                VerificationResult::InvalidPublicInputs => {
+                    return Err(Error::<T>::InvalidProofFormat.into())
+                }
+                VerificationResult::VerificationFailed => {
+                    return Err(Error::<T>::ProofVerificationFailed.into())
+                }
+                VerificationResult::KeyNotFound => {
+                    return Err(Error::<T>::VerifyingKeyNotFound.into())
+                }
+                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
+            }
+
+            // Verify value balance commitment
+            ensure!(
+                verifier.verify_binding_hash(&binding_hash, &inputs),
+                Error::<T>::InvalidBindingHash
+            );
+
+            // Add nullifiers to spent set
+            for nf in nullifiers.iter() {
+                Nullifiers::<T>::insert(nf, ());
+                Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
+            }
+
+            // Add commitments to Merkle tree (ciphertexts live in DA sidecar)
+            let mut current_index = CommitmentIndex::<T>::get();
+            for cm in commitments.iter() {
+                Commitments::<T>::insert(current_index, *cm);
                 Self::deposit_event(Event::CommitmentAdded {
                     index: current_index,
                     commitment: *cm,
@@ -1077,6 +1259,166 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Execute an unsigned shielded transfer where ciphertext bytes live in the DA sidecar.
+        #[pallet::call_index(8)]
+        #[pallet::weight(T::WeightInfo::shielded_transfer(
+            nullifiers.len() as u32,
+            commitments.len() as u32
+        ))]
+        pub fn shielded_transfer_unsigned_sidecar(
+            origin: OriginFor<T>,
+            proof: StarkProof,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_hashes: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_sizes: BoundedVec<u32, T::MaxCommitmentsPerTx>,
+            anchor: [u8; 48],
+            binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
+            fee: u64,
+        ) -> DispatchResult {
+            // This is an unsigned extrinsic - no signer required
+            ensure_none(origin)?;
+
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
+
+            // Pure shielded transfers have value_balance = 0
+            let value_balance: i128 = 0;
+
+            ensure!(stablecoin.is_none(), Error::<T>::StablecoinIssuanceUnsigned);
+
+            // Validate counts
+            ensure!(
+                !nullifiers.is_empty() || !commitments.is_empty(),
+                Error::<T>::InvalidNullifierCount
+            );
+            ensure!(
+                ciphertext_hashes.len() == commitments.len(),
+                Error::<T>::CiphertextHashCountMismatch
+            );
+            ensure!(
+                ciphertext_sizes.len() == commitments.len(),
+                Error::<T>::CiphertextSizeCountMismatch
+            );
+            Self::validate_ciphertext_sizes(ciphertext_sizes.as_slice())?;
+            for hash in ciphertext_hashes.iter() {
+                if *hash == [0u8; 48] {
+                    return Err(Error::<T>::ZeroCiphertextHash.into());
+                }
+            }
+
+            // Check anchor is a valid historical Merkle root
+            ensure!(
+                MerkleRoots::<T>::contains_key(anchor),
+                Error::<T>::InvalidAnchor
+            );
+
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    return Err(Error::<T>::ZeroNullifierSubmitted.into());
+                }
+            }
+            for cm in commitments.iter() {
+                if is_zero_commitment(cm) {
+                    return Err(Error::<T>::ZeroCommitmentSubmitted.into());
+                }
+            }
+
+            // Outputs require at least one input nullifier to spend from.
+            if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
+                return Err(Error::<T>::InvalidNullifierCount.into());
+            }
+
+            // Check for duplicate nullifiers in transaction
+            let mut seen_nullifiers = Vec::new();
+            for nf in nullifiers.iter() {
+                if seen_nullifiers.contains(nf) {
+                    return Err(Error::<T>::DuplicateNullifierInTx.into());
+                }
+                seen_nullifiers.push(*nf);
+            }
+
+            // Check nullifiers not already spent
+            for nf in nullifiers.iter() {
+                ensure!(
+                    !Nullifiers::<T>::contains_key(nf),
+                    Error::<T>::NullifierAlreadyExists
+                );
+            }
+
+            // Build verification inputs
+            let inputs = ShieldedTransferInputs {
+                anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
+                fee,
+                value_balance,
+                stablecoin: None,
+            };
+
+            // Get verifying key
+            let vk = VerifyingKeyStorage::<T>::get();
+            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
+
+            // Verify ZK proof
+            let verifier = T::ProofVerifier::default();
+            match verifier.verify_stark(&proof, &inputs, &vk) {
+                VerificationResult::Valid => {}
+                VerificationResult::InvalidProofFormat => {
+                    return Err(Error::<T>::InvalidProofFormat.into())
+                }
+                VerificationResult::InvalidPublicInputs => {
+                    return Err(Error::<T>::InvalidProofFormat.into())
+                }
+                VerificationResult::VerificationFailed => {
+                    return Err(Error::<T>::ProofVerificationFailed.into())
+                }
+                VerificationResult::KeyNotFound => {
+                    return Err(Error::<T>::VerifyingKeyNotFound.into())
+                }
+                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
+            }
+
+            // Verify binding hash
+            ensure!(
+                verifier.verify_binding_hash(&binding_hash, &inputs),
+                Error::<T>::InvalidBindingHash
+            );
+
+            // Add nullifiers to spent set
+            for nf in nullifiers.iter() {
+                Nullifiers::<T>::insert(nf, ());
+                Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
+            }
+
+            // Add commitments to Merkle tree (ciphertexts live in DA sidecar)
+            let mut current_index = CommitmentIndex::<T>::get();
+            for cm in commitments.iter() {
+                Commitments::<T>::insert(current_index, *cm);
+                Self::deposit_event(Event::CommitmentAdded {
+                    index: current_index,
+                    commitment: *cm,
+                });
+                current_index += 1;
+            }
+            CommitmentIndex::<T>::put(current_index);
+
+            // Update Merkle tree root
+            Self::update_merkle_tree(&commitments)?;
+
+            Self::deposit_event(Event::ShieldedTransfer {
+                nullifier_count: nullifiers.len() as u32,
+                commitment_count: commitments.len() as u32,
+                value_balance,
+            });
+
+            Ok(())
+        }
+
         /// Submit a batch of shielded transfers with a single aggregated proof.
         ///
         /// This extrinsic allows multiple shielded transfers to be submitted together
@@ -1304,6 +1646,15 @@ pub mod pallet {
                 .iter()
                 .map(|note| ciphertext_hash_bytes(&Self::encrypted_note_bytes(note)))
                 .collect()
+        }
+
+        fn validate_ciphertext_sizes(sizes: &[u32]) -> Result<(), Error<T>> {
+            for size in sizes {
+                if *size == 0 || (*size as usize) > types::MAX_CIPHERTEXT_BYTES {
+                    return Err(Error::<T>::InvalidCiphertextSize);
+                }
+            }
+            Ok(())
         }
 
         fn ensure_stablecoin_binding(
@@ -1709,6 +2060,159 @@ pub mod pallet {
 
                     builder.build()
                 }
+                Call::shielded_transfer_unsigned_sidecar {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    binding_hash,
+                    stablecoin,
+                    fee,
+                } => {
+                    log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned_sidecar");
+                    log::info!(target: "shielded-pool", "  proof.len = {}", proof.data.len());
+                    log::info!(target: "shielded-pool", "  nullifiers.len = {}", nullifiers.len());
+                    log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
+                    log::info!(target: "shielded-pool", "  ciphertext_hashes.len = {}", ciphertext_hashes.len());
+                    log::info!(target: "shielded-pool", "  ciphertext_sizes.len = {}", ciphertext_sizes.len());
+                    log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
+                    log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
+                    log::info!(target: "shielded-pool", "  fee = {}", fee);
+
+                    if stablecoin.is_some() {
+                        log::info!(
+                            target: "shielded-pool",
+                            "  REJECTED: stablecoin issuance not allowed in unsigned transfer"
+                        );
+                        return InvalidTransaction::Custom(7).into();
+                    }
+
+                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                        log::info!(target: "shielded-pool", "  REJECTED: Proof exceeds max size");
+                        return InvalidTransaction::ExhaustsResources.into();
+                    }
+
+                    if nullifiers.is_empty() && commitments.is_empty() {
+                        log::info!(target: "shielded-pool", "  REJECTED: Empty nullifiers and commitments");
+                        return InvalidTransaction::Custom(1).into();
+                    }
+                    if !commitments.is_empty() && nullifiers.is_empty() {
+                        log::info!(target: "shielded-pool", "  REJECTED: Missing nullifiers for outputs");
+                        return InvalidTransaction::Custom(1).into();
+                    }
+                    if ciphertext_hashes.len() != commitments.len() {
+                        log::info!(target: "shielded-pool", "  REJECTED: ciphertext_hashes.len != commitments.len");
+                        return InvalidTransaction::Custom(2).into();
+                    }
+                    if ciphertext_sizes.len() != commitments.len() {
+                        log::info!(target: "shielded-pool", "  REJECTED: ciphertext_sizes.len != commitments.len");
+                        return InvalidTransaction::Custom(2).into();
+                    }
+                    if Self::validate_ciphertext_sizes(ciphertext_sizes.as_slice()).is_err() {
+                        log::info!(target: "shielded-pool", "  REJECTED: ciphertext size invalid");
+                        return InvalidTransaction::Custom(2).into();
+                    }
+                    for hash in ciphertext_hashes.iter() {
+                        if *hash == [0u8; 48] {
+                            log::info!(target: "shielded-pool", "  REJECTED: zero ciphertext hash");
+                            return InvalidTransaction::Custom(4).into();
+                        }
+                    }
+
+                    if !MerkleRoots::<T>::contains_key(anchor) {
+                        log::info!(target: "shielded-pool", "  REJECTED: Invalid anchor - not in MerkleRoots");
+                        return InvalidTransaction::Custom(3).into();
+                    }
+                    log::info!(target: "shielded-pool", "  anchor check PASSED");
+
+                    for nf in nullifiers.iter() {
+                        if is_zero_nullifier(nf) {
+                            log::info!(target: "shielded-pool", "  REJECTED: Zero nullifier submitted");
+                            return InvalidTransaction::Custom(4).into();
+                        }
+                    }
+                    for cm in commitments.iter() {
+                        if is_zero_commitment(cm) {
+                            log::info!(target: "shielded-pool", "  REJECTED: Zero commitment submitted");
+                            return InvalidTransaction::Custom(4).into();
+                        }
+                    }
+
+                    let mut seen = Vec::new();
+                    for nf in nullifiers.iter() {
+                        if seen.contains(nf) {
+                            log::info!(target: "shielded-pool", "  REJECTED: Duplicate nullifier in tx");
+                            return InvalidTransaction::Custom(4).into();
+                        }
+                        seen.push(*nf);
+                    }
+
+                    for nf in nullifiers.iter() {
+                        if Nullifiers::<T>::contains_key(nf) {
+                            log::info!(target: "shielded-pool", "  REJECTED: Nullifier already spent");
+                            return InvalidTransaction::Custom(5).into();
+                        }
+                    }
+                    log::info!(target: "shielded-pool", "  nullifier checks PASSED");
+
+                    let vk = VerifyingKeyStorage::<T>::get();
+                    if !vk.enabled {
+                        log::info!(target: "shielded-pool", "  REJECTED: Verifying key not enabled");
+                        return InvalidTransaction::Custom(6).into();
+                    }
+                    log::info!(target: "shielded-pool", "  verifying key check PASSED");
+
+                    let inputs = ShieldedTransferInputs {
+                        anchor: *anchor,
+                        nullifiers: nullifiers.clone().into_inner(),
+                        commitments: commitments.clone().into_inner(),
+                        ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
+                        fee: *fee,
+                        value_balance: 0,
+                        stablecoin: None,
+                    };
+
+                    log::info!(target: "shielded-pool", "  Verifying STARK proof...");
+                    let verifier = T::ProofVerifier::default();
+                    match verifier.verify_stark(proof, &inputs, &vk) {
+                        VerificationResult::Valid => {
+                            log::info!(target: "shielded-pool", "  STARK proof PASSED");
+                        }
+                        other => {
+                            log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
+                            return InvalidTransaction::BadProof.into();
+                        }
+                    }
+
+                    log::info!(target: "shielded-pool", "  Verifying binding hash...");
+                    if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                        log::info!(target: "shielded-pool", "  binding hash FAILED");
+                        return InvalidTransaction::BadSigner.into();
+                    }
+                    log::info!(target: "shielded-pool", "  binding hash PASSED");
+                    log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
+
+                    let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
+                        .priority(100)
+                        .longevity(64)
+                        .propagate(true);
+
+                    let mut provided_any = false;
+                    for nf in nullifiers.iter() {
+                        let mut tag = b"shielded_nf:".to_vec();
+                        tag.extend_from_slice(nf);
+                        builder = builder.and_provides(tag);
+                        provided_any = true;
+                    }
+
+                    if !provided_any {
+                        builder = builder.and_provides(b"shielded_no_nullifiers".to_vec());
+                    }
+
+                    builder.build()
+                }
                 // Inherent call: mint_coinbase
                 // Inherent extrinsics are validated through ProvideInherent::check_inherent
                 // but they still need to pass ValidateUnsigned to be applied.
@@ -1734,7 +2238,7 @@ pub mod pallet {
                         .propagate(false) // Inherents are not propagated
                         .build()
                 }
-                Call::submit_commitment_proof { proof } => {
+                Call::submit_commitment_proof { da_root: _, proof } => {
                     if _source != TransactionSource::InBlock {
                         return InvalidTransaction::Call.into();
                     }

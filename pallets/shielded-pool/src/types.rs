@@ -50,6 +50,8 @@ pub const ENCRYPTED_NOTE_SIZE: usize = 579;
 
 /// Maximum size of the ML-KEM ciphertext for key encapsulation.
 pub const MAX_KEM_CIPHERTEXT_LEN: u32 = 1568;
+/// Maximum total ciphertext bytes (container + KEM ciphertext).
+pub const MAX_CIPHERTEXT_BYTES: usize = ENCRYPTED_NOTE_SIZE + MAX_KEM_CIPHERTEXT_LEN as usize;
 
 /// Diversified address size used inside commitments: version(1) + diversifier_index(4) + pk_recipient(32).
 pub const DIVERSIFIED_ADDRESS_SIZE: usize = 37;
