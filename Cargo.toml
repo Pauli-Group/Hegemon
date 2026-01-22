@@ -9,6 +9,7 @@ members = [
     "circuits/bench",
     "circuits/disclosure",
     "circuits/plonky3-spike",
+    "circuits/aggregation",
     "state/da",
     "state/merkle",
     "consensus",

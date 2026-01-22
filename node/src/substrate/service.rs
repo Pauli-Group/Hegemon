@@ -130,6 +130,7 @@ use crate::substrate::rpc::{
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
+use aggregation_circuit::prove_aggregation;
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
@@ -1030,6 +1031,46 @@ fn build_commitment_block_proof(
     Ok(Some(proof))
 }
 
+#[derive(Clone, Debug, Default)]
+struct AggregationProofOutcome {
+    proof_bytes: Option<Vec<u8>>,
+    attach_extrinsic: bool,
+}
+
+fn build_aggregation_proof(
+    extrinsics: &[Vec<u8>],
+) -> Result<AggregationProofOutcome, String> {
+    let mut decoded = Vec::with_capacity(extrinsics.len());
+    for ext_bytes in extrinsics {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+        decoded.push(extrinsic);
+    }
+
+    let existing = extract_aggregation_proof_bytes(&decoded)?;
+    let (_transactions, proofs) = extract_shielded_transfers_for_parallel_verification(&decoded)?;
+    if proofs.is_empty() {
+        if existing.is_some() {
+            return Err("aggregation proof present for block with no shielded transfers".into());
+        }
+        return Ok(AggregationProofOutcome::default());
+    }
+
+    if let Some(proof_bytes) = existing {
+        return Ok(AggregationProofOutcome {
+            proof_bytes: Some(proof_bytes),
+            attach_extrinsic: false,
+        });
+    }
+
+    let proof_bytes = prove_aggregation(&proofs)
+        .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
+    Ok(AggregationProofOutcome {
+        proof_bytes: Some(proof_bytes),
+        attach_extrinsic: true,
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SubstrateProofHeader {
     da_params: DaParams,
@@ -1173,7 +1214,7 @@ fn extract_shielded_transfers_for_parallel_verification(
             }
             ShieldedPoolCall::batch_shielded_transfer { .. } => {
                 return Err(
-                    "batch shielded transfers are not supported in commitment proofs".into(),
+                    "batch shielded transfers are not supported in block proof generation".into(),
                 );
             }
             _ => {}
@@ -1579,6 +1620,9 @@ pub fn wire_block_builder_api(
     let commitment_block_proofs_enabled = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
+    let aggregation_proofs_enabled = std::env::var("HEGEMON_AGGREGATION_PROOFS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     let requested_commitment_block_fast = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -1832,6 +1876,55 @@ pub fn wire_block_builder_api(
             None
         };
 
+        let aggregation_outcome = if aggregation_proofs_enabled {
+            match build_aggregation_proof(&applied) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    return Err(format!("aggregation proof generation failed: {err}"));
+                }
+            }
+        } else {
+            let mut decoded = Vec::with_capacity(applied.len());
+            for ext_bytes in &applied {
+                let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+                    .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+                decoded.push(extrinsic);
+            }
+            let existing = extract_aggregation_proof_bytes(&decoded)?;
+            AggregationProofOutcome {
+                proof_bytes: existing,
+                attach_extrinsic: false,
+            }
+        };
+
+        if aggregation_outcome.attach_extrinsic {
+            let proof_bytes = aggregation_outcome
+                .proof_bytes
+                .clone()
+                .ok_or_else(|| "aggregation proof bytes missing".to_string())?;
+            let proof_size = proof_bytes.len();
+            let aggregation_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_aggregation_proof {
+                    proof: pallet_shielded_pool::types::StarkProof::from_bytes(proof_bytes),
+                }),
+            );
+            match block_builder.push(aggregation_extrinsic.clone()) {
+                Ok(_) => {
+                    applied.push(aggregation_extrinsic.encode());
+                    tracing::info!(
+                        block_number,
+                        proof_size,
+                        "Aggregation proof extrinsic attached"
+                    );
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "failed to push aggregation proof extrinsic: {e:?}"
+                    ));
+                }
+            }
+        }
+
         // Build the block - this returns BuiltBlock with StorageChanges!
         let built_block = match block_builder.build() {
             Ok(built) => built,
@@ -1869,7 +1962,7 @@ pub fn wire_block_builder_api(
             failed_count: failed,
             storage_changes: Some(storage_changes),
             commitment_proof,
-            aggregation_proof: None,
+            aggregation_proof: aggregation_outcome.proof_bytes,
         })
     });
 

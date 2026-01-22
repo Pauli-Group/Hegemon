@@ -43,3 +43,4 @@ pub use types::{
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};
+pub use aggregation::verify_aggregation_proof;

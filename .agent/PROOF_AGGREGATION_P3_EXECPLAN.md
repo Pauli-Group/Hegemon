@@ -43,6 +43,9 @@ The “it works” proof is:
 - [x] (2026-01-22T01:42Z) Bound recursion proofs to public inputs by including public values in batch-STARK transcripts and verifying with explicit public values.
 - [x] (2026-01-22T02:30Z) Integrated aggregation proof verification into consensus block import; nodes verify aggregation proofs with public-value binding and skip per-transaction STARK verification when present, and `submit_aggregation_proof` now carries aggregation bytes on-chain.
 - [x] (2026-01-22T03:05Z) Re-ran batch aggregation test with public-value binding and recorded updated 2/4/8/16 metrics.
+- [x] (2026-01-22T04:30Z) Added `circuits/aggregation` crate with `prove_aggregation` library entrypoint and `aggregation-prover` CLI that consumes postcard-encoded `TransactionProof` files.
+- [x] (2026-01-22T04:30Z) Wired optional aggregation proof generation into block building behind `HEGEMON_AGGREGATION_PROOFS`, attaching `submit_aggregation_proof` when enabled.
+- [x] (2026-01-22T04:30Z) Added an ignored aggregation roundtrip test that verifies aggregation proofs and rejects corrupted inner proofs.
 - [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
 - [ ] End-to-end: mine a dev block with an aggregation proof; prove that a corrupted inner proof causes rejection.
 
@@ -116,11 +119,21 @@ The “it works” proof is:
   Rationale: `BatchProof` already supports `serde` serialization, while `BatchStarkProof` metadata is derivable from the recursion circuit; explicit public-value binding avoids needing patched verifier internals.
   Date/Author: 2026-01-22 / Codex
 
+- Decision: Ship a standalone aggregation prover CLI that consumes postcard-encoded `TransactionProof` files.
+  Rationale: External prover markets need a clean artifact that takes proof bytes only (no witnesses) and outputs a serialized aggregation proof suitable for `submit_aggregation_proof`.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Gate local aggregation proof generation behind `HEGEMON_AGGREGATION_PROOFS`.
+  Rationale: Aggregation proving is expensive; defaulting it off avoids surprise CPU burn while still allowing explicit opt-in for devnet demos and market-style workflows.
+  Date/Author: 2026-01-22 / Codex
+
 ## Outcomes & Retrospective
 
 2026-01-22: Milestone 3 prototyping now produces and verifies an outer proof for a real transaction proof. Measurements recorded for proof size, prove/verify time, RSS, corrupted-proof rejection, batch aggregation scaling to 16 proofs, and public-input binding. Remaining work includes block import integration.
 
 ## Context and Orientation
+
+This plan follows the design goals in `DESIGN.md §0`: one canonical privacy pool, PQ-only primitives (ML-KEM-1024 with >=128-bit PQ security), transparent hash-based proofs, and scaling by moving work off L1 without outsourcing spend secrets. Aggregation must therefore operate on transaction proof bytes and public inputs only; it must never require spend witnesses.
 
 Current proof and verification layout:
 
@@ -248,7 +261,15 @@ Run the following from the repository root.
 
     cargo test -p plonky3-spike --features plonky3
 
-4. After implementing Milestones 2–4, run the new recursion tests/benches and record the output in this plan.
+4. Generate and verify an aggregation proof roundtrip (ignored by default because it is slow):
+
+    cargo test -p aggregation-circuit --test aggregation -- --ignored --nocapture
+
+5. Use the standalone aggregation prover to emit proof bytes from postcard-encoded `TransactionProof` files:
+
+    cargo run -p aggregation-circuit --bin aggregation-prover -- --proof /path/to/txproof.pcd --out aggregation-proof.bin
+
+6. After implementing Milestones 2–4, run the new recursion tests/benches and record the output in this plan.
 
 ## Validation and Acceptance
 
@@ -258,6 +279,7 @@ Acceptance is defined per-milestone above. The final acceptance for this plan is
 2. Block import verifies only the aggregation proof (plus any separate block-level commitment proof) and rejects blocks containing any invalid transaction proof.
 3. The aggregation proof and its public inputs are domain-separated and bind to the expected inner circuit ID / AIR hash (no cross-circuit confusion).
 4. The security targets (ML‑KEM‑1024 note encryption; ≥128-bit PQ hash collision; ≥128-bit STARK soundness) remain unchanged.
+5. When `HEGEMON_AGGREGATION_PROOFS=1`, mined blocks include a `submit_aggregation_proof` extrinsic (visible via `author_pendingExtrinsics` or `chain_getBlock`).
 
 ## Idempotence and Recovery
 
@@ -354,8 +376,9 @@ Record here, as indented blocks:
 
 At the end of Milestone 5, the repo must have:
 
-- A Rust API for aggregation proving and verification, with stable entry points (example names):
-  - `circuits::aggregate::prove_aggregate(...) -> AggregateProof`
-  - `circuits::aggregate::verify_aggregate(...) -> Result<(), VerifyError>`
+- A Rust API for aggregation proving that accepts `TransactionProof` values and returns postcard-encoded `BatchProof` bytes via `aggregation_circuit::prove_aggregation(...)`.
+- A standalone `aggregation-prover` CLI that accepts postcard-encoded `TransactionProof` files and emits aggregation proof bytes for `submit_aggregation_proof`.
 - A node-level block import hook that locates aggregation proof bytes in the block, verifies them, and rejects invalid blocks.
 - A deterministic binding from block transaction ordering to the aggregation statement (so miners cannot “swap proofs”).
+
+Plan update 2026-01-22: added a design-principles paragraph in Context, recorded the new aggregation prover crate/CLI and block-builder integration behind `HEGEMON_AGGREGATION_PROOFS`, and updated steps/interfaces so future decisions stay grounded in the PQ/transparent/anti-witness-sharing philosophy.
