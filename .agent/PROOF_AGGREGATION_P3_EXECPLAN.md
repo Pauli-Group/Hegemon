@@ -46,6 +46,7 @@ The “it works” proof is:
 - [x] (2026-01-22T04:30Z) Added `circuits/aggregation` crate with `prove_aggregation` library entrypoint and `aggregation-prover` CLI that consumes postcard-encoded `TransactionProof` files.
 - [x] (2026-01-22T04:30Z) Wired optional aggregation proof generation into block building behind `HEGEMON_AGGREGATION_PROOFS`, attaching `submit_aggregation_proof` when enabled.
 - [x] (2026-01-22T04:30Z) Added an ignored aggregation roundtrip test that verifies aggregation proofs and rejects corrupted inner proofs.
+- [x] (2026-01-22T05:20Z) Patched Plonky3 recursion dependencies to a local vendor copy with PoW witness sampling gated on pow bits; aggregation roundtrip test now passes end-to-end.
 - [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
 - [ ] End-to-end: mine a dev block with an aggregation proof; prove that a corrupted inner proof causes rejection.
 
@@ -93,6 +94,9 @@ The “it works” proof is:
 - Observation: Batch-STARK proofs produced by the circuit prover were not binding public inputs because public values were omitted from the transcript; this must be fixed before aggregation proofs can be tied to specific inner proofs.
   Evidence: Added `PublicAir::trace_to_public_values` and `verify_all_tables_with_public_values` so public inputs are included in the transcript and verification path.
 
+- Observation: The upstream recursion circuit always observes PoW witnesses even when pow bits are zero, which diverges from the non-recursive verifier transcript and breaks aggregation proofs.
+  Evidence: Aggregation roundtrip test failed with `WitnessConflict` until switching to a local recursion copy that gates PoW witness sampling on `pow_bits > 0`.
+
 ## Decision Log
 
 - Decision: Do not use delegated proving (sending spend witnesses to a prover) as a scalability strategy.
@@ -125,6 +129,10 @@ The “it works” proof is:
 
 - Decision: Gate local aggregation proof generation behind `HEGEMON_AGGREGATION_PROOFS`.
   Rationale: Aggregation proving is expensive; defaulting it off avoids surprise CPU burn while still allowing explicit opt-in for devnet demos and market-style workflows.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Patch Plonky3 recursion dependencies to a local vendor copy to align PoW witness handling with the non-recursive FRI transcript.
+  Rationale: The upstream recursion transcript observes PoW witnesses even when `pow_bits=0`, which makes aggregated proofs for production parameters unsatisfiable.
   Date/Author: 2026-01-22 / Codex
 
 ## Outcomes & Retrospective

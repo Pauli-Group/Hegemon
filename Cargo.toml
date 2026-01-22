@@ -160,3 +160,8 @@ p3-blake3 = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-circuit = { git = "https://github.com/Plonky3/Plonky3-recursion", rev = "eff9486" }
 p3-circuit-prover = { git = "https://github.com/Plonky3/Plonky3-recursion", rev = "eff9486" }
 p3-recursion = { git = "https://github.com/Plonky3/Plonky3-recursion", rev = "eff9486" }
+
+[patch."https://github.com/Plonky3/Plonky3-recursion"]
+p3-circuit = { path = "spikes/recursion/vendor/plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "spikes/recursion/vendor/plonky3-recursion/circuit-prover" }
+p3-recursion = { path = "spikes/recursion/vendor/plonky3-recursion/recursion" }

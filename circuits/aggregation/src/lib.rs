@@ -200,7 +200,7 @@ pub fn prove_aggregation(
             &inner_config.config,
             proof,
             pub_inputs_vec,
-            Some(&[commit_pow_bits, query_pow_bits, log_height_max]),
+            Some(&[query_pow_bits, log_height_max]),
         )
         .map_err(|err| AggregationError::ChallengeDerivation {
             index,
