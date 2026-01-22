@@ -161,6 +161,7 @@ pub struct Block<BH> {
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
     pub commitment_proof: Option<CommitmentBlockProof>,
+    pub aggregation_proof: Option<Vec<u8>>,
     pub transaction_proofs: Option<Vec<TransactionProof>>,
 }
 
@@ -171,6 +172,7 @@ impl<BH> Block<BH> {
             transactions: self.transactions,
             coinbase: self.coinbase,
             commitment_proof: self.commitment_proof,
+            aggregation_proof: self.aggregation_proof,
             transaction_proofs: self.transaction_proofs,
         }
     }

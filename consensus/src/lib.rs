@@ -12,6 +12,7 @@ pub mod substrate_pow;
 pub mod types;
 pub mod validator;
 pub mod version_policy;
+mod aggregation;
 
 pub use bft::{BftConsensus, ConsensusUpdate};
 pub use commitment_tree::{

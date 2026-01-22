@@ -41,7 +41,8 @@ The “it works” proof is:
 - [x] (2026-01-22T00:46Z) Added a corrupted-proof check for the single-proof aggregation spike (flip a byte, expect recursion circuit rejection).
 - [x] (2026-01-22T01:19Z) Scaled aggregation to verify 2/4/8/16 proofs in one outer proof and recorded size + prove/verify times.
 - [x] (2026-01-22T01:42Z) Bound recursion proofs to public inputs by including public values in batch-STARK transcripts and verifying with explicit public values.
-- [ ] Integrate aggregation into block import so the node verifies the aggregation proof and stops verifying every inner proof on the hot path.
+- [x] (2026-01-22T02:30Z) Integrated aggregation proof verification into consensus block import; nodes verify aggregation proofs with public-value binding and skip per-transaction STARK verification when present, and `submit_aggregation_proof` now carries aggregation bytes on-chain.
+- [x] (2026-01-22T03:05Z) Re-ran batch aggregation test with public-value binding and recorded updated 2/4/8/16 metrics.
 - [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
 - [ ] End-to-end: mine a dev block with an aggregation proof; prove that a corrupted inner proof causes rejection.
 
@@ -83,8 +84,8 @@ The “it works” proof is:
 - Observation: A single-byte corruption in the inner proof causes the recursion circuit to reject the public inputs with a witness conflict.
   Evidence: `corrupted_proof_rejected: WitnessConflict { witness_id: WitnessId(9052), ... }` in `transaction_aggregate`.
 
-- Observation: Aggregated proof size grows from ~0.95 MiB (2 proofs) to ~1.20 MiB (16 proofs), while verify time stays under 1 s and prove time scales roughly linearly.
-  Evidence: `aggregate_count=2 ... outer_aggregate_proof_bytes=945209, outer_prove_ms=78731, outer_verify_ms=702` through `aggregate_count=16 ... outer_aggregate_proof_bytes=1203159, outer_prove_ms=688541, outer_verify_ms=982` in `aggregate_transaction_proof_batch`.
+- Observation: With public-value binding enabled, aggregated proof size grows from ~0.95 MiB (2 proofs) to ~1.20 MiB (16 proofs); verify time rises from ~1.1 s to ~3.3 s; prove time scales roughly linearly.
+  Evidence: `aggregate_count=2 ... outer_aggregate_proof_bytes=945200, outer_prove_ms=90497, outer_verify_ms=1069` through `aggregate_count=16 ... outer_aggregate_proof_bytes=1202506, outer_prove_ms=774136, outer_verify_ms=3333` in `aggregate_transaction_proof_batch`.
 
 - Observation: Batch-STARK proofs produced by the circuit prover were not binding public inputs because public values were omitted from the transcript; this must be fixed before aggregation proofs can be tied to specific inner proofs.
   Evidence: Added `PublicAir::trace_to_public_values` and `verify_all_tables_with_public_values` so public inputs are included in the transcript and verification path.
@@ -109,6 +110,10 @@ The “it works” proof is:
 
 - Decision: Treat public input binding as mandatory for aggregation proofs and require explicit public values during batch-STARK verification.
   Rationale: Without transcript binding to public inputs, an aggregation proof could attest to unrelated proofs. The verifier must supply the public values derived from the inner proofs.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Encode aggregation proofs as serialized `BatchProof` bytes and verify them by feeding explicit public values into `p3_batch_stark::verify_batch` instead of relying on `BatchStarkProver` internals.
+  Rationale: `BatchProof` already supports `serde` serialization, while `BatchStarkProof` metadata is derivable from the recursion circuit; explicit public-value binding avoids needing patched verifier internals.
   Date/Author: 2026-01-22 / Codex
 
 ## Outcomes & Retrospective

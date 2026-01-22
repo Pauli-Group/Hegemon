@@ -1,3 +1,4 @@
+use crate::aggregation::verify_aggregation_proof;
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
@@ -193,6 +194,9 @@ impl ProofVerifier for ParallelProofVerifier {
             if block.commitment_proof.is_some() || block.transaction_proofs.is_some() {
                 return Err(ProofError::CommitmentProofEmptyBlock);
             }
+            if block.aggregation_proof.is_some() {
+                return Err(ProofError::AggregationProofEmptyBlock);
+            }
             return apply_commitments(parent_commitment_tree, &block.transactions);
         }
 
@@ -231,14 +235,31 @@ impl ProofVerifier for ParallelProofVerifier {
             .enumerate()
             .try_for_each(|(index, (proof, tx))| {
                 verify_transaction_proof_inputs(index, tx, proof)?;
-                verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
-                    ProofError::TransactionProofVerification {
-                        index,
-                        message: err.to_string(),
-                    }
-                })?;
                 Ok::<_, ProofError>(())
             })?;
+
+        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref()
+        {
+            verify_aggregation_proof(aggregation_proof, transaction_proofs)?;
+            true
+        } else {
+            false
+        };
+
+        if !aggregation_verified {
+            transaction_proofs
+                .par_iter()
+                .enumerate()
+                .try_for_each(|(index, proof)| {
+                    verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
+                        ProofError::TransactionProofVerification {
+                            index,
+                            message: err.to_string(),
+                        }
+                    })?;
+                    Ok::<_, ProofError>(())
+                })?;
+        }
 
         let anchors: Vec<[u8; 48]> = transaction_proofs
             .iter()
