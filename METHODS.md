@@ -190,6 +190,11 @@ commitment, version commitment, and fork-choice result. Node services call this 
 version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
 receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
 
+On the Substrate runtime side, shielded transfers now accumulate a per-block fee total, and the shielded coinbase extrinsic must
+appear after shielded transfers and mint exactly `subsidy + block_fees`. If a block omits coinbase entirely, the fees are treated
+as burned and tracked on-chain. The node block builder computes the fee total from the included shielded transfers and appends the
+coinbase extrinsic at the end of the block so the runtime can enforce this rule deterministically.
+
 ---
 
 ## 3. The STARK arithmetization

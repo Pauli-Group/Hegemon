@@ -322,6 +322,16 @@ pub mod pallet {
     #[pallet::getter(fn pool_balance)]
     pub type PoolBalance<T: Config> = StorageValue<_, u128, ValueQuery>;
 
+    /// Total shielded fees accumulated in the current block.
+    #[pallet::storage]
+    #[pallet::getter(fn block_fees)]
+    pub type BlockFees<T: Config> = StorageValue<_, u128, ValueQuery>;
+
+    /// Total fees burned because no coinbase claimed them.
+    #[pallet::storage]
+    #[pallet::getter(fn total_fees_burned)]
+    pub type TotalFeesBurned<T: Config> = StorageValue<_, u128, ValueQuery>;
+
     /// Coinbase notes indexed by commitment index (for audit purposes).
     #[pallet::storage]
     #[pallet::getter(fn coinbase_notes)]
@@ -482,8 +492,14 @@ pub mod pallet {
         CommitmentProofAlreadyProcessed,
         /// Aggregation proof already submitted for this block.
         AggregationProofAlreadyProcessed,
-        /// Coinbase amount exceeds the allowed subsidy for this height.
+        /// Coinbase amount exceeds the configured safety cap.
         CoinbaseSubsidyExceedsLimit,
+        /// Coinbase amount does not match the expected subsidy + fees.
+        CoinbaseAmountMismatch,
+        /// Fee accumulator overflowed while recording block fees.
+        FeeOverflow,
+        /// Shielded transfers cannot appear after coinbase in a block.
+        TransfersAfterCoinbase,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
         /// This error indicates a malicious attempt to bypass double-spend protection.
         ZeroNullifierSubmitted,
@@ -583,6 +599,12 @@ pub mod pallet {
         }
 
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
+            let pending_fees = BlockFees::<T>::get();
+            if pending_fees > 0 && !CoinbaseProcessed::<T>::get() {
+                TotalFeesBurned::<T>::mutate(|total| *total = total.saturating_add(pending_fees));
+            }
+
+            BlockFees::<T>::kill();
             // Reset coinbase processed flag at start of each block
             CoinbaseProcessed::<T>::kill();
             CommitmentProofProcessed::<T>::kill();
@@ -674,6 +696,10 @@ pub mod pallet {
             value_balance: i128,
         ) -> DispatchResult {
             ensure_signed(origin)?;
+            ensure!(
+                !CoinbaseProcessed::<T>::get(),
+                Error::<T>::TransfersAfterCoinbase
+            );
 
             // SECURITY: Early size check to prevent DoS via oversized proofs.
             // This is the cheapest possible rejection - no deserialization or crypto ops.
@@ -791,6 +817,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
+            Self::record_fee(u128::from(fee))?;
 
             // Add nullifiers to spent set
             // Note: Zero nullifiers were already rejected above, so no skip needed
@@ -847,6 +874,10 @@ pub mod pallet {
             value_balance: i128,
         ) -> DispatchResult {
             ensure_signed(origin)?;
+            ensure!(
+                !CoinbaseProcessed::<T>::get(),
+                Error::<T>::TransfersAfterCoinbase
+            );
 
             // SECURITY: Early size check to prevent DoS via oversized proofs.
             ensure!(
@@ -958,6 +989,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
+            Self::record_fee(u128::from(fee))?;
 
             // Add nullifiers to spent set
             for nf in nullifiers.iter() {
@@ -1039,8 +1071,14 @@ pub mod pallet {
                 Error::<T>::CoinbaseAlreadyProcessed
             );
 
-            // Enforce subsidy schedule for shielded coinbase.
-            Self::ensure_coinbase_subsidy(coinbase_data.amount)?;
+            let block_number = <frame_system::Pallet<T>>::block_number();
+            let height: u64 = block_number.try_into().unwrap_or(0);
+            let expected_amount =
+                Self::expected_coinbase_amount(height, BlockFees::<T>::get())?;
+            ensure!(
+                coinbase_data.amount == expected_amount,
+                Error::<T>::CoinbaseAmountMismatch
+            );
 
             // Verify the commitment matches the plaintext data
             // This ensures the miner can't claim more than stated
@@ -1073,7 +1111,6 @@ pub mod pallet {
             // Mark as processed
             CoinbaseProcessed::<T>::put(true);
 
-            let block_number = <frame_system::Pallet<T>>::block_number();
             Self::deposit_event(Event::CoinbaseMinted {
                 commitment_index: index,
                 amount: amount as u64,
@@ -1118,6 +1155,10 @@ pub mod pallet {
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
             ensure_none(origin)?;
+            ensure!(
+                !CoinbaseProcessed::<T>::get(),
+                Error::<T>::TransfersAfterCoinbase
+            );
 
             // SECURITY: Early size check to prevent DoS via oversized proofs.
             ensure!(
@@ -1220,6 +1261,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
+            Self::record_fee(u128::from(fee))?;
 
             // Add nullifiers to spent set
             for nf in nullifiers.iter() {
@@ -1279,6 +1321,10 @@ pub mod pallet {
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
             ensure_none(origin)?;
+            ensure!(
+                !CoinbaseProcessed::<T>::get(),
+                Error::<T>::TransfersAfterCoinbase
+            );
 
             ensure!(
                 proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
@@ -1388,6 +1434,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
+            Self::record_fee(u128::from(fee))?;
 
             // Add nullifiers to spent set
             for nf in nullifiers.iter() {
@@ -1454,6 +1501,10 @@ pub mod pallet {
         ) -> DispatchResult {
             // This is an unsigned extrinsic for batch transfers
             ensure_none(origin)?;
+            ensure!(
+                !CoinbaseProcessed::<T>::get(),
+                Error::<T>::TransfersAfterCoinbase
+            );
 
             // Validate batch proof structure
             ensure!(proof.is_valid_batch_size(), Error::<T>::InvalidBatchSize);
@@ -1539,6 +1590,7 @@ pub mod pallet {
                     return Err(Error::<T>::VerifyingKeyNotFound.into());
                 }
             }
+            Self::record_fee(total_fee)?;
 
             // Add nullifiers to spent set (skip zero padding)
             for nf in nullifiers.iter() {
@@ -1586,23 +1638,45 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        /// Ensure the shielded coinbase amount stays within the subsidy schedule.
+        /// Ensure the shielded coinbase amount stays within the safety cap.
         fn ensure_coinbase_subsidy(amount: u64) -> DispatchResult {
-            let block_number = frame_system::Pallet::<T>::block_number();
-            let height: u64 = block_number.try_into().unwrap_or(0);
-            Self::ensure_coinbase_subsidy_for_height(amount, height)
+            Self::ensure_coinbase_cap(amount)
         }
 
         fn ensure_coinbase_subsidy_for_height(amount: u64, height: u64) -> DispatchResult {
-            let max_subsidy = pallet_coinbase::block_subsidy(height);
-            ensure!(
-                amount <= max_subsidy,
-                Error::<T>::CoinbaseSubsidyExceedsLimit
-            );
+            let _ = height;
+            Self::ensure_coinbase_cap(amount)
+        }
+
+        fn ensure_coinbase_cap(amount: u64) -> DispatchResult {
             ensure!(
                 amount <= T::MaxCoinbaseSubsidy::get(),
                 Error::<T>::CoinbaseSubsidyExceedsLimit
             );
+            Ok(())
+        }
+
+        fn expected_coinbase_amount(height: u64, fees: u128) -> Result<u64, Error<T>> {
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let fee_u64 = u64::try_from(fees).map_err(|_| Error::<T>::FeeOverflow)?;
+            let amount = subsidy
+                .checked_add(fee_u64)
+                .ok_or(Error::<T>::FeeOverflow)?;
+            if amount > T::MaxCoinbaseSubsidy::get() {
+                return Err(Error::<T>::CoinbaseSubsidyExceedsLimit);
+            }
+            Ok(amount)
+        }
+
+        fn record_fee(fee: u128) -> Result<(), Error<T>> {
+            if fee == 0 {
+                return Ok(());
+            }
+            BlockFees::<T>::try_mutate(|total| {
+                *total = total.checked_add(fee).ok_or(Error::<T>::FeeOverflow)?;
+                Ok::<(), Error<T>>(())
+            })?;
+            PoolBalance::<T>::mutate(|balance| *balance = balance.saturating_sub(fee));
             Ok(())
         }
 
@@ -1861,8 +1935,8 @@ pub mod pallet {
         ) -> Result<(), Self::Error> {
             // Validate the inherent call
             if let Call::mint_coinbase { coinbase_data } = call {
-                // check_inherent runs against the parent state, so validate against the
-                // next block height instead of the current one.
+                // check_inherent runs against the parent state; enforce only the safety cap
+                // here and validate subsidy + fees inside the call.
                 let parent_height = frame_system::Pallet::<T>::block_number();
                 let height: u64 = parent_height.try_into().unwrap_or(0).saturating_add(1);
                 if Self::ensure_coinbase_subsidy_for_height(coinbase_data.amount, height).is_err() {

@@ -25,7 +25,8 @@ The “it works” proof is:
 ## Progress
 
 - [x] (2026-01-21T00:00Z) Draft censorship resistance + fees ExecPlan (this file).
-- [ ] Confirm the current fee accounting path for shielded transfers (what is enforced vs. only emitted as events).
+- [x] (2026-01-22T20:10Z) Confirm the current fee accounting path for shielded transfers (what is enforced vs. only emitted as events).
+- [x] (2026-01-22T20:40Z) Implement per-block fee accumulation, coinbase fee enforcement, burn accounting, and tests.
 - [ ] Define a protocol fee schedule that prices (a) DA bytes, (b) proof verification, and (c) retention time, and implement it for devnet.
 - [ ] Implement deterministic ordering rules for shielded transfers inside a block (consensus-enforced).
 - [ ] Implement a forced inclusion mechanism with DoS bounds.
@@ -37,7 +38,11 @@ The “it works” proof is:
 - Observation: Shielded transfer calls carry `fee` / `total_fee` fields, but fee *payment* is not obviously enforced at the pallet level; events exist, but “who gets paid” needs auditing.
   Evidence: `pallets/shielded-pool/src/lib.rs` emits `BatchShieldedTransfer { total_fee }` but the shown batch path only stores nullifiers/commitments and updates the Merkle tree.
 
-Update this section after auditing coinbase + fee flows end-to-end.
+- Observation: Runtime transaction fees are charged via `pallet_fee_model`, but the configured `RuntimeFeeCollector` is a no-op, so those fees are effectively burned rather than paid to miners.
+  Evidence: `runtime/src/lib.rs` `RuntimeFeeCollector` implements `OnUnbalanced` with an empty body.
+
+- Observation: The node config includes `min_tx_fee_per_weight`, but the value is not enforced anywhere in the transaction admission path.
+  Evidence: `node/src/config.rs` defines it, but no uses outside config/chain-spec.
 
 ## Decision Log
 
@@ -53,6 +58,14 @@ Update this section after auditing coinbase + fee flows end-to-end.
   Rationale: World commerce requires credible liveness even under adversarial participants. A forced inclusion mechanism creates a hard backstop against sequencer or miner censorship, at the cost of bounded on-chain load.
   Date/Author: 2026-01-21 / Codex
 
+- Decision: Track per-block shielded fees in the shielded pool and require coinbase to mint `subsidy + block_fees`, with fees burned when coinbase is absent.
+  Rationale: This makes fee payment explicit and deterministic without exposing per-tx bidding. It also keeps block validation self-contained: fees are accumulated as transfers execute, and coinbase can be validated against the accumulator.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Enforce “no shielded transfers after coinbase” as a consensus rule.
+  Rationale: The fee accumulator must be complete before coinbase is minted; disallowing transfers after coinbase is a cheap, deterministic ordering rule that makes the fee check enforceable.
+  Date/Author: 2026-01-22 / Codex
+
 ## Outcomes & Retrospective
 
 Not started. Update after deterministic ordering and forced inclusion are live on devnet.
@@ -63,6 +76,8 @@ Actors and where censorship happens:
 
 - On the L1, miners choose which transactions to include in blocks. Even with PoW, a large miner (or cartel) can censor.
 - In a rollup architecture, sequencers choose ordering and can censor long before L1 sees anything.
+
+Design principles that guide this work live in `DESIGN.md §0` (one canonical pool, PQ-only primitives, transparent proofs, and UX-first privacy). Keep those constraints in mind when making fee or ordering changes.
 
 We need two lanes:
 
@@ -98,6 +113,8 @@ Work:
   - Option A: fees are accumulated in a per-block bucket and paid to the miner via the shielded coinbase note.
   - Option B: fees are burned (anti-spam) and miners are paid only by subsidy. This is simpler but reduces long-term miner incentives.
 - Pick one option, implement it, and add a unit/integration test that proves fees are either paid or burned deterministically.
+
+Implementation choice: Option A with a burn fallback. Shielded transfers accumulate `BlockFees`, coinbase must mint `subsidy + BlockFees`, and transfers after coinbase are rejected. If a block omits coinbase entirely, the accumulated fees are marked as burned on the next block initialization.
 
 Acceptance:
 
@@ -214,3 +231,7 @@ At the end of this plan, the repo must include:
 - A runtime-stored fee parameter set (base prices for proof verification and DA bytes) plus an RPC that returns quotes.
 - A consensus-enforced ordering rule for the private lane (implemented in node import).
 - A forced inclusion commitment interface (pallet + RPC + wallet CLI integration).
+
+## Change Log
+
+- (2026-01-22) Audited current fee path, implemented per-block fee accumulation with coinbase enforcement and burn fallback, and added tests; updated the decision log and context accordingly.
