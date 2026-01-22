@@ -39,6 +39,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
+aggregation-circuit = { path = "../circuits/aggregation", optional = true }
 block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
 rand = "0.8"
@@ -157,6 +158,7 @@ substrate = [
     "dep:tower",
     "dep:hyper",
     "dep:block-circuit",
+    "dep:aggregation-circuit",
     "consensus/substrate",
 ]
 
