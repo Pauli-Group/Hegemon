@@ -52,6 +52,14 @@ p budgets.
 - `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
 - The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
 
+## Runtime pallets (shielded pool)
+
+- `pallet-shielded-pool`
+  - `shielded_transfer(...)` / `shielded_transfer_unsigned(...)` submit per-transaction STARK proofs.
+  - `batch_shielded_transfer(...)` submits a batch STARK proof for multiple transfers sharing an anchor.
+  - `submit_commitment_proof(proof: StarkProof)` carries a block commitment proof (verified during node import).
+  - `submit_aggregation_proof(proof: StarkProof)` carries an aggregation proof (outer recursion proof) verified during node import.
+
 ## Runtime pallets (identity, attestations, settlement)
 
 - `pallet-identity`

@@ -176,6 +176,7 @@ impl LegacyNode {
             transactions: Vec::new(),
             coinbase: None,
             commitment_proof: None,
+            aggregation_proof: None,
             transaction_proofs: None,
         };
         let best_hash = block.header.hash()?;

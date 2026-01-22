@@ -175,6 +175,8 @@ pub struct BlockTemplate {
     pub storage_changes: Option<StorageChangesHandle>,
     /// Optional commitment block proof built from shielded transfer extrinsics.
     pub commitment_proof: Option<CommitmentBlockProof>,
+    /// Optional aggregation proof bytes built from transaction proofs.
+    pub aggregation_proof: Option<Vec<u8>>,
 }
 
 impl BlockTemplate {
@@ -200,6 +202,7 @@ impl BlockTemplate {
             extrinsics: Vec::new(),
             storage_changes: None, // Task 11.5.5: Set during block building
             commitment_proof: None,
+            aggregation_proof: None,
         }
     }
 
@@ -257,6 +260,11 @@ impl BlockTemplate {
 
     pub fn with_commitment_proof(mut self, commitment_proof: Option<CommitmentBlockProof>) -> Self {
         self.commitment_proof = commitment_proof;
+        self
+    }
+
+    pub fn with_aggregation_proof(mut self, aggregation_proof: Option<Vec<u8>>) -> Self {
+        self.aggregation_proof = aggregation_proof;
         self
     }
 

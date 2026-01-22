@@ -337,6 +337,12 @@ pub mod pallet {
     #[pallet::storage]
     pub type CommitmentProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
+    /// Whether the aggregation proof was already submitted this block.
+    ///
+    /// Reset on `on_initialize` so exactly one aggregation proof can be attached per block.
+    #[pallet::storage]
+    pub type AggregationProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -465,6 +471,8 @@ pub mod pallet {
         CoinbaseAlreadyProcessed,
         /// Commitment proof already submitted for this block.
         CommitmentProofAlreadyProcessed,
+        /// Aggregation proof already submitted for this block.
+        AggregationProofAlreadyProcessed,
         /// Coinbase amount exceeds the allowed subsidy for this height.
         CoinbaseSubsidyExceedsLimit,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
@@ -569,6 +577,7 @@ pub mod pallet {
             // Reset coinbase processed flag at start of each block
             CoinbaseProcessed::<T>::kill();
             CommitmentProofProcessed::<T>::kill();
+            AggregationProofProcessed::<T>::kill();
             Weight::from_parts(1_000, 0)
         }
     }
@@ -597,6 +606,31 @@ pub mod pallet {
             );
 
             CommitmentProofProcessed::<T>::put(true);
+            Ok(())
+        }
+
+        /// Attach the aggregation proof for this block.
+        ///
+        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
+        /// aggregation proof bytes on-chain so nodes can verify them during block import.
+        ///
+        /// The runtime does **not** verify the proof; verification is performed in the node.
+        #[pallet::call_index(6)]
+        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
+        pub fn submit_aggregation_proof(origin: OriginFor<T>, proof: StarkProof) -> DispatchResult {
+            ensure_none(origin)?;
+
+            ensure!(
+                !AggregationProofProcessed::<T>::get(),
+                Error::<T>::AggregationProofAlreadyProcessed
+            );
+
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
+
+            AggregationProofProcessed::<T>::put(true);
             Ok(())
         }
 
@@ -1693,6 +1727,23 @@ pub mod pallet {
                         .priority(TransactionPriority::MAX)
                         .longevity(1)
                         .and_provides(vec![b"commitment_proof".to_vec()])
+                        .propagate(false)
+                        .build()
+                }
+                Call::submit_aggregation_proof { proof } => {
+                    if _source != TransactionSource::InBlock {
+                        return InvalidTransaction::Call.into();
+                    }
+                    if AggregationProofProcessed::<T>::get() {
+                        return InvalidTransaction::Stale.into();
+                    }
+                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                        return InvalidTransaction::ExhaustsResources.into();
+                    }
+                    ValidTransaction::with_tag_prefix("ShieldedPoolAggregationProof")
+                        .priority(TransactionPriority::MAX)
+                        .longevity(1)
+                        .and_provides(vec![b"aggregation_proof".to_vec()])
                         .propagate(false)
                         .build()
                 }

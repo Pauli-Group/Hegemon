@@ -211,6 +211,7 @@ impl StoredBlock {
             transactions,
             coinbase,
             commitment_proof: None,
+            aggregation_proof: None,
             transaction_proofs: None,
         })
     }

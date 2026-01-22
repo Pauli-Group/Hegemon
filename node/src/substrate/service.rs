@@ -1080,6 +1080,25 @@ fn extract_commitment_proof_bytes(
     Ok(found)
 }
 
+fn extract_aggregation_proof_bytes(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<Option<Vec<u8>>, String> {
+    let mut found: Option<Vec<u8>> = None;
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+
+        if let ShieldedPoolCall::submit_aggregation_proof { proof } = call {
+            if found.is_some() {
+                return Err("multiple submit_aggregation_proof extrinsics in block".into());
+            }
+            found = Some(proof.data.clone());
+        }
+    }
+    Ok(found)
+}
+
 fn extract_shielded_transfers_for_parallel_verification(
     extrinsics: &[runtime::UncheckedExtrinsic],
 ) -> Result<(Vec<consensus::types::Transaction>, Vec<TransactionProof>), String> {
@@ -1348,12 +1367,16 @@ fn verify_proof_carrying_block(
     use consensus::ProofVerifier;
 
     let commitment_proof_bytes = extract_commitment_proof_bytes(extrinsics)?;
+    let aggregation_proof_bytes = extract_aggregation_proof_bytes(extrinsics)?;
     let (transactions, tx_proofs) =
         extract_shielded_transfers_for_parallel_verification(extrinsics)?;
 
     if transactions.is_empty() {
         if commitment_proof_bytes.is_some() {
             return Err("commitment proof present for block with no shielded transfers".into());
+        }
+        if aggregation_proof_bytes.is_some() {
+            return Err("aggregation proof present for block with no shielded transfers".into());
         }
         return Ok(None);
     }
@@ -1375,6 +1398,7 @@ fn verify_proof_carrying_block(
         transactions,
         coinbase: None,
         commitment_proof: Some(commitment_proof.clone()),
+        aggregation_proof: aggregation_proof_bytes,
         transaction_proofs: Some(tx_proofs),
     };
 
@@ -1845,6 +1869,7 @@ pub fn wire_block_builder_api(
             failed_count: failed,
             storage_changes: Some(storage_changes),
             commitment_proof,
+            aggregation_proof: None,
         })
     });
 
