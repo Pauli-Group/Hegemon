@@ -105,6 +105,7 @@ fn arb_witness() -> impl Strategy<Value = TransactionWitness> {
             TransactionWitness {
                 inputs,
                 outputs,
+                ciphertext_hashes: vec![[0u8; 48]; outputs.len()],
                 sk_spend,
                 merkle_root,
                 fee,
@@ -169,6 +170,7 @@ fn witness_rejects_oversized_inputs() {
                 r: [7u8; 32],
             },
         }],
+        ciphertext_hashes: vec![[0u8; 48]; 1],
         sk_spend: [0u8; 32],
         merkle_root: [0u8; 48],
         fee: 0,
@@ -188,6 +190,7 @@ fn witness_rejects_oversized_inputs() {
             },
         },
     );
+    witness.ciphertext_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
     let err = witness.validate().expect_err("too many inputs should fail");
     assert!(matches!(err, TransactionCircuitError::TooManyInputs(_)));
 }

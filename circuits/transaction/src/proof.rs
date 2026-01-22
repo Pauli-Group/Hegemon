@@ -139,6 +139,16 @@ pub fn stark_public_inputs_p3(
             ))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let ciphertext_hashes = proof
+        .public_inputs
+        .ciphertext_hashes
+        .iter()
+        .map(|ct| {
+            bytes48_to_felts(ct).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid ciphertext hash encoding",
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root).ok_or(
         TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
     )?;
@@ -161,6 +171,7 @@ pub fn stark_public_inputs_p3(
         output_flags,
         nullifiers,
         commitments,
+        ciphertext_hashes,
         fee: Goldilocks::from_u64(stark_inputs.fee),
         value_balance_sign: Goldilocks::from_u64(stark_inputs.value_balance_sign as u64),
         value_balance_magnitude: Goldilocks::from_u64(stark_inputs.value_balance_magnitude),
@@ -234,6 +245,11 @@ fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, Transa
     if proof.commitments.len() != MAX_OUTPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "invalid PQ commitment length",
+        ));
+    }
+    if proof.public_inputs.ciphertext_hashes.len() != MAX_OUTPUTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid ciphertext hash length",
         ));
     }
     if proof.balance_slots.len() != BALANCE_SLOTS {

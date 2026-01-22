@@ -2,7 +2,10 @@ use block_circuit::CommitmentBlockProof;
 use crypto::hashes::{blake3_384, sha256};
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
-pub use state_da::{DaChunk, DaChunkProof, DaEncoding, DaError, DaParams, DaRoot};
+pub use state_da::{
+    DaChunk, DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams,
+    DaRoot,
+};
 use transaction_circuit::TransactionProof;
 
 pub type Nullifier = [u8; 48];
@@ -49,12 +52,23 @@ pub fn encode_da_blob(
     state_da::encode_da_blob(&build_da_blob(transactions), params)
 }
 
+pub fn encode_da_blob_multipage(
+    transactions: &[Transaction],
+    params: DaParams,
+) -> Result<DaMultiEncoding, DaError> {
+    state_da::encode_da_blob_multipage(&build_da_blob(transactions), params)
+}
+
 pub fn da_root(transactions: &[Transaction], params: DaParams) -> Result<DaRoot, DaError> {
     state_da::da_root(&build_da_blob(transactions), params)
 }
 
 pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError> {
     state_da::verify_da_chunk(root, proof)
+}
+
+pub fn verify_da_multi_chunk(root: DaRoot, proof: &DaMultiChunkProof) -> Result<(), DaError> {
+    state_da::verify_da_multi_chunk(root, proof)
 }
 
 impl Transaction {

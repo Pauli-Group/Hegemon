@@ -141,22 +141,7 @@ impl NoteCiphertext {
         }
     }
 
-    /// Convert to pallet-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
-    ///
-    /// The pallet's EncryptedNote type uses:
-    /// - ciphertext: [u8; 579] containing version, crypto_suite, diversifier_index, note/memo payloads
-    /// - kem_ciphertext: BoundedVec<u8, _> for ML-KEM ciphertext bytes
-    pub fn to_pallet_bytes(&self) -> Result<Vec<u8>, WalletError> {
-        let expected_kem_len = expected_kem_ciphertext_len(self.crypto_suite)?;
-        if self.kem_ciphertext.len() != expected_kem_len {
-            return Err(WalletError::Serialization(format!(
-                "Invalid KEM ciphertext length: expected {}, got {}",
-                expected_kem_len,
-                self.kem_ciphertext.len()
-            )));
-        }
-
-        // Build the 579-byte ciphertext portion
+    fn build_ciphertext_container(&self) -> Result<[u8; PALLET_CIPHERTEXT_SIZE], WalletError> {
         let mut ciphertext = [0u8; PALLET_CIPHERTEXT_SIZE];
         let mut offset = 0;
 
@@ -201,12 +186,50 @@ impl NoteCiphertext {
             ciphertext[offset..offset + memo_len].copy_from_slice(&self.memo_payload[..memo_len]);
         }
 
+        Ok(ciphertext)
+    }
+
+    /// Convert to pallet-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
+    ///
+    /// The pallet's EncryptedNote type uses:
+    /// - ciphertext: [u8; 579] containing version, crypto_suite, diversifier_index, note/memo payloads
+    /// - kem_ciphertext: BoundedVec<u8, _> for ML-KEM ciphertext bytes
+    pub fn to_pallet_bytes(&self) -> Result<Vec<u8>, WalletError> {
+        let expected_kem_len = expected_kem_ciphertext_len(self.crypto_suite)?;
+        if self.kem_ciphertext.len() != expected_kem_len {
+            return Err(WalletError::Serialization(format!(
+                "Invalid KEM ciphertext length: expected {}, got {}",
+                expected_kem_len,
+                self.kem_ciphertext.len()
+            )));
+        }
+
+        let ciphertext = self.build_ciphertext_container()?;
+
         // Combine ciphertext + SCALE-encoded kem_ciphertext
         let mut result = Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + 5 + self.kem_ciphertext.len());
         result.extend_from_slice(&ciphertext);
         encode_compact_len(self.kem_ciphertext.len(), &mut result);
         result.extend_from_slice(&self.kem_ciphertext);
 
+        Ok(result)
+    }
+
+    pub fn to_da_bytes(&self) -> Result<Vec<u8>, WalletError> {
+        let expected_kem_len = expected_kem_ciphertext_len(self.crypto_suite)?;
+        if self.kem_ciphertext.len() != expected_kem_len {
+            return Err(WalletError::Serialization(format!(
+                "Invalid KEM ciphertext length: expected {}, got {}",
+                expected_kem_len,
+                self.kem_ciphertext.len()
+            )));
+        }
+
+        let ciphertext = self.build_ciphertext_container()?;
+        let mut result =
+            Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + self.kem_ciphertext.len());
+        result.extend_from_slice(&ciphertext);
+        result.extend_from_slice(&self.kem_ciphertext);
         Ok(result)
     }
 

@@ -25,10 +25,10 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 ## Progress
 
 - [x] (2026-01-21T00:00Z) Draft DA sidecar + hot availability ExecPlan (this file).
-- [ ] Record baseline DA parameters and limits (chunk size, sample count, max blob size) with concrete evidence.
-- [ ] Define and implement “multi-page DA encoding” so blocks can commit to blobs larger than 255 shards.
-- [ ] Make ciphertext bytes bind to transaction validity via ciphertext hashes (prevent miner ciphertext tampering).
-- [ ] Replace in-memory DA stores with a persistent store + pruning for a hot retention window.
+- [x] (2026-01-22T18:56Z) Record baseline DA parameters and limits (chunk size, sample count, max blob size) with concrete evidence.
+- [x] (2026-01-22T19:04Z) Define and implement “multi-page DA encoding” so blocks can commit to blobs larger than 255 shards.
+- [x] (2026-01-22T20:10Z) Make ciphertext bytes bind to transaction validity via ciphertext hashes (prevent miner ciphertext tampering).
+- [x] (2026-01-22T20:55Z) Replace in-memory DA stores with a persistent store + pruning for a hot retention window.
 - [ ] Modify block production/import to use DA sidecars (ciphertexts are no longer in the block body).
 - [ ] Update wallet RPCs to fetch ciphertexts from DA store.
 - [ ] End-to-end demo: mine a block, fetch chunks, sync wallet, decrypt note.
@@ -44,6 +44,9 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 - Observation: Chain properties for dev set `daChunkSize = 1024` and `daSampleCount = 80`, which implies very aggressive sampling relative to the maximum shard count of 255.
   Evidence: `config/dev-chainspec.json` under `properties`.
 
+- Observation: With `MAX_SHARDS = 255` and parity `ceil(k/2)`, the maximum data shards is 170, so at `daChunkSize = 1024` the largest single-page blob is 174,080 bytes.
+  Evidence: `state/da/src/lib.rs` (`MAX_SHARDS = 255`, parity `ceil(k/2)`), computed locally with a short script.
+
 ## Decision Log
 
 - Decision: Introduce “multi-page DA encoding” rather than trying to lift the 255-shard ceiling directly.
@@ -57,6 +60,14 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 - Decision: Treat “hot availability” as an enforceable consensus rule for a bounded time window, and treat multi-year storage as a separate “cold archive” product.
   Rationale: Forcing every consensus node to store years of ciphertexts is how chains centralize and die. The protocol must guarantee enough availability for offline receivers (hot window), and then allow optional markets for longer retention.
   Date/Author: 2026-01-21 / Codex
+
+- Decision: Canonicalize ciphertext hashes as 48-byte field encodings derived from BLAKE3-384 limbs.
+  Rationale: Transaction public inputs are field elements; mapping BLAKE3-384 output into canonical 48-byte encodings keeps STARK public inputs valid while preserving domain-separated hash binding to ciphertext bytes.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Persist DA encodings in a sled-backed store keyed by block number/hash with retention pruning, plus a small in-memory cache for proofs.
+  Rationale: The hot window must survive restarts and support wallet sync while keeping disk bounded; the cache avoids re-decoding on every chunk request.
+  Date/Author: 2026-01-22 / Codex
 
 ## Outcomes & Retrospective
 

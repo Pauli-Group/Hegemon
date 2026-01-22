@@ -40,6 +40,7 @@ Each **transaction** includes:
 
   * `nf[0..M-1]` – nullifiers for each consumed note
   * `cm'[0..N-1]` – commitments for each new note
+  * `ct_hash[0..N-1]` – ciphertext hashes for each output note (domain-separated BLAKE3-384)
   * `balance_tag` – a compressed representation of value balance (see below)
   * optional `memo`s, network fee, etc.
   * one or a few STARK proofs
