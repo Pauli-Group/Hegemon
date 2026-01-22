@@ -17,6 +17,8 @@ pub struct TransactionWitness {
     pub inputs: Vec<InputNoteWitness>,
     #[serde(with = "crate::witness::serde_vec_outputs")]
     pub outputs: Vec<OutputNoteWitness>,
+    #[serde(default, with = "crate::public_inputs::serde_vec_bytes48")]
+    pub ciphertext_hashes: Vec<[u8; 48]>,
     #[serde(with = "crate::witness::serde_bytes32")]
     pub sk_spend: [u8; 32],
     #[serde(with = "crate::witness::serde_bytes48")]
@@ -43,6 +45,11 @@ impl TransactionWitness {
         }
         for note in &self.outputs {
             note.validate()?;
+        }
+        if self.ciphertext_hashes.len() != self.outputs.len() {
+            return Err(TransactionCircuitError::CiphertextHashMismatch(
+                self.ciphertext_hashes.len(),
+            ));
         }
 
         // SECURITY: Validate that no nullifier is zero.
@@ -190,11 +197,17 @@ impl TransactionWitness {
             list.resize(MAX_OUTPUTS, [0u8; 48]);
             list
         };
+        let ciphertext_hashes = {
+            let mut list = self.ciphertext_hashes.clone();
+            list.resize(MAX_OUTPUTS, [0u8; 48]);
+            list
+        };
         let balance_slots = self.balance_slots()?;
         TransactionPublicInputs::new(
             self.merkle_root,
             nullifiers,
             commitments,
+            ciphertext_hashes,
             balance_slots,
             self.fee,
             self.value_balance,

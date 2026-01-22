@@ -47,7 +47,7 @@ The “it works” proof is:
 - [x] (2026-01-22T04:30Z) Wired optional aggregation proof generation into block building behind `HEGEMON_AGGREGATION_PROOFS`, attaching `submit_aggregation_proof` when enabled.
 - [x] (2026-01-22T04:30Z) Added an ignored aggregation roundtrip test that verifies aggregation proofs and rejects corrupted inner proofs.
 - [x] (2026-01-22T05:20Z) Patched Plonky3 recursion dependencies to a local vendor copy with PoW witness sampling gated on pow bits; aggregation roundtrip test now passes end-to-end.
-- [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
+- [x] (2026-01-22T18:54Z) Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
 - [x] (2026-01-22T06:20Z) End-to-end: mined a dev block with an aggregation proof attached (block 6 on dev node).
 - [x] (2026-01-22T06:30Z) End-to-end: corrupted aggregation proof causes mined block import rejection.
 
@@ -140,6 +140,10 @@ The “it works” proof is:
 
 - Decision: Patch Plonky3 recursion dependencies to a local vendor copy to align PoW witness handling with the non-recursive FRI transcript.
   Rationale: The upstream recursion transcript observes PoW witnesses even when `pow_bits=0`, which makes aggregated proofs for production parameters unsatisfiable.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Enforce proof verification in production builds even if `HEGEMON_PARALLEL_PROOF_VERIFICATION` is set to disable.
+  Rationale: Consensus-critical verification cannot be optional in production; allow toggling only in non-production builds for local benchmarking.
   Date/Author: 2026-01-22 / Codex
 
 ## Outcomes & Retrospective

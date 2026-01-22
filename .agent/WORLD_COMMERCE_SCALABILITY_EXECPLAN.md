@@ -27,8 +27,8 @@ After this work, a developer can run a local devnet and observe all of the follo
 ## Progress
 
 - [x] (2026-01-21T00:00Z) Draft world-commerce scalability ExecPlan (this file).
-- [ ] Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
-- [ ] Execute `.agent/PROOF_AGGREGATION_P3_EXECPLAN.md` through “end-to-end batch proof on devnet” milestone.
+- [x] (2026-01-22T18:47Z) Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
+- [x] (2026-01-22T18:54Z) Execute `.agent/PROOF_AGGREGATION_P3_EXECPLAN.md` through “end-to-end batch proof on devnet” milestone.
 - [ ] Execute `.agent/DA_SIDECAR_HOT_AVAILABILITY_EXECPLAN.md` through “ciphertexts no longer live in block body” milestone.
 - [ ] Execute `.agent/CENSORSHIP_RESISTANCE_FEES_EXECPLAN.md` through “forced inclusion lane + private fee policy” milestone.
 - [ ] Execute `.agent/COLD_ARCHIVE_RECOVERY_EXECPLAN.md` through “archive contract + wallet recovery flow works” milestone.
@@ -38,6 +38,9 @@ After this work, a developer can run a local devnet and observe all of the follo
 
 - Observation: The current transaction proof is already “real” and already targets ≥128-bit soundness, but it is large enough that the chain cannot scale by “just bigger blocks.”
   Evidence: `cargo run -p circuits-bench --release -- --smoke --json --prove` reports `tx_proof_bytes_avg` around 357,130 bytes and `fri_conjectured_soundness_bits` = 128.
+
+- Observation: Proof generation time is orders of magnitude larger than verification time, so batching is mandatory for throughput.
+  Evidence: local benchmark reports `prove_ns` = 18,453,849,334 (~18.45s) vs `verify_ns` = 32,573,000 (~32.6ms), with `transactions_per_second` = 0.2125.
 
 - Observation: Even if we magically made proofs free, ciphertext bandwidth dominates at “world commerce” scale because ML‑KEM‑1024 ciphertexts are large and non-negotiable.
   Evidence: `pallets/shielded-pool/src/types.rs` defines `ENCRYPTED_NOTE_SIZE = 579` and `MAX_KEM_CIPHERTEXT_LEN = 1568`. One output note is ~2.1 KiB before other overhead; a typical transfer has two outputs.
@@ -68,6 +71,8 @@ After this work, a developer can run a local devnet and observe all of the follo
 Not started. Update this section once the first end-to-end demo is working.
 
 ## Context and Orientation
+
+Design principles for decisions in this plan live in `DESIGN.md §0` (canonical pool, PQ-only primitives, transparent proofs, and UX-first privacy).
 
 Hegemon today is a Substrate-based proof-of-work chain with a shielded pool (Zcash-like “notes” and “nullifiers”) and post-quantum cryptography everywhere:
 
@@ -153,4 +158,3 @@ The concrete ExecPlans will introduce or harden the following interfaces:
 - A DA sidecar interface keyed by `DaRoot` with chunk proofs (`state/da` + `node/src/substrate/network_bridge.rs`).
 - A wallet-facing RPC that can fetch ciphertext ranges from DA data, not from block bodies.
 - A fee model that prices bytes *and* retention time, without relying on public priority bidding.
-

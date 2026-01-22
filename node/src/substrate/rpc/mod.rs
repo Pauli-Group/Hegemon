@@ -92,7 +92,7 @@ pub struct FullDeps<S, P> {
     pub deny_unsafe: bool,
     /// In-memory commitment block proof store
     pub commitment_block_proof_store: Arc<parking_lot::Mutex<CommitmentBlockProofStore>>,
-    /// In-memory DA chunk store
+    /// DA chunk store (persistent + cache)
     pub da_chunk_store: Arc<parking_lot::Mutex<DaChunkStore>>,
     /// DA parameters
     pub da_params: DaParams,

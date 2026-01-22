@@ -9,7 +9,8 @@ use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_co
 use crypto::hashes::blake3_384;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
-use transaction_circuit::constants::MAX_INPUTS;
+use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
+use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify as verify_transaction_proof;
@@ -412,6 +413,19 @@ fn verify_transaction_proof_inputs(
         return Err(ProofError::TransactionProofInputsMismatch {
             index,
             message: "balance tag mismatch".to_string(),
+        });
+    }
+
+    let mut expected_ciphertext_hashes: Vec<[u8; 48]> = tx
+        .ciphertexts
+        .iter()
+        .map(|ct| ciphertext_hash_bytes(ct))
+        .collect();
+    expected_ciphertext_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
+    if expected_ciphertext_hashes != proof.public_inputs.ciphertext_hashes {
+        return Err(ProofError::TransactionProofInputsMismatch {
+            index,
+            message: "ciphertext hash mismatch".to_string(),
         });
     }
 

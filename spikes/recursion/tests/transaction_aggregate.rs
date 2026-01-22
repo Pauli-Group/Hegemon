@@ -91,6 +91,7 @@ fn sample_witness() -> TransactionWitness {
             merkle_path,
         }],
         outputs: vec![OutputNoteWitness { note: output_note }],
+        ciphertext_hashes: vec![[0u8; 48]; 1],
         sk_spend: [8u8; 32],
         merkle_root,
         fee: 0,

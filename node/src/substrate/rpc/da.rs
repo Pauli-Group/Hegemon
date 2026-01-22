@@ -78,11 +78,10 @@ impl DaRpc {
 impl DaApiServer for DaRpc {
     async fn get_chunk(&self, root: String, index: u32) -> RpcResult<Option<DaChunkProofRpc>> {
         let root = parse_da_root(&root)?;
-        let proof = self
-            .store
-            .lock()
-            .get(&root)
-            .map(|encoding| encoding.proof(index));
+        let proof = {
+            let mut store = self.store.lock();
+            store.get(&root).map(|encoding| encoding.proof(index))
+        };
 
         match proof {
             None => Ok(None),

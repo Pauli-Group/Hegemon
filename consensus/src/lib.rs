@@ -38,8 +38,9 @@ pub use substrate_pow::{
 };
 pub use types::{
     BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof,
-    DaEncoding, DaError, DaParams, DaRoot, FeeCommitment, Nullifier, StarkCommitment, SupplyDigest,
-    Transaction, VersionCommitment, build_da_blob, da_root, encode_da_blob, verify_da_chunk,
+    DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot, FeeCommitment,
+    Nullifier, StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob,
+    da_root, encode_da_blob, encode_da_blob_multipage, verify_da_chunk, verify_da_multi_chunk,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

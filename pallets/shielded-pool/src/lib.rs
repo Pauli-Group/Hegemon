@@ -58,6 +58,7 @@ use sp_runtime::transaction_validity::{
 };
 use sp_std::vec;
 use sp_std::vec::Vec;
+use transaction_core::hashing_pq::ciphertext_hash_bytes;
 
 /// Zero nullifier constant.
 ///
@@ -734,10 +735,12 @@ pub mod pallet {
             }
 
             // Build verification inputs
+            let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
             let inputs = ShieldedTransferInputs {
                 anchor,
                 nullifiers: nullifiers.clone().into_inner(),
                 commitments: commitments.clone().into_inner(),
+                ciphertext_hashes,
                 fee,
                 value_balance,
                 stablecoin: stablecoin.clone(),
@@ -993,10 +996,12 @@ pub mod pallet {
             }
 
             // Build verification inputs
+            let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
             let inputs = ShieldedTransferInputs {
                 anchor,
                 nullifiers: nullifiers.clone().into_inner(),
                 commitments: commitments.clone().into_inner(),
+                ciphertext_hashes,
                 fee,
                 value_balance,
                 stablecoin: None,
@@ -1285,6 +1290,20 @@ pub mod pallet {
             }
 
             Ok(())
+        }
+
+        fn encrypted_note_bytes(note: &EncryptedNote) -> Vec<u8> {
+            let mut bytes = Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
+            bytes.extend_from_slice(&note.ciphertext);
+            bytes.extend_from_slice(&note.kem_ciphertext);
+            bytes
+        }
+
+        fn ciphertext_hashes(ciphertexts: &[EncryptedNote]) -> Vec<[u8; 48]> {
+            ciphertexts
+                .iter()
+                .map(|note| ciphertext_hash_bytes(&Self::encrypted_note_bytes(note)))
+                .collect()
         }
 
         fn ensure_stablecoin_binding(
@@ -1631,10 +1650,12 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  verifying key check PASSED");
 
                     // Build verification inputs
+                    let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
                     let inputs = ShieldedTransferInputs {
                         anchor: *anchor,
                         nullifiers: nullifiers.clone().into_inner(),
                         commitments: commitments.clone().into_inner(),
+                        ciphertext_hashes,
                         fee: *fee,
                         value_balance: 0, // Pure shielded transfer
                         stablecoin: None,

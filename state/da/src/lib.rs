@@ -36,6 +36,14 @@ pub struct DaChunkProof {
     pub merkle_path: Vec<DaRoot>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct DaMultiChunkProof {
+    pub page_index: u32,
+    pub page_root: DaRoot,
+    pub page_proof: DaChunkProof,
+    pub page_merkle_path: Vec<DaRoot>,
+}
+
 #[derive(Debug, Error)]
 pub enum DaError {
     #[error("chunk size must be non-zero")]
@@ -54,7 +62,7 @@ pub enum DaError {
     MerkleProof,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 pub struct DaEncoding {
     params: DaParams,
     data_len: usize,
@@ -63,6 +71,15 @@ pub struct DaEncoding {
     chunk_size: usize,
     chunks: Vec<DaChunk>,
     merkle_levels: Vec<Vec<DaRoot>>,
+}
+
+#[derive(Debug, Encode, Decode)]
+pub struct DaMultiEncoding {
+    params: DaParams,
+    page_len: usize,
+    pages: Vec<DaEncoding>,
+    page_roots: Vec<DaRoot>,
+    page_merkle_levels: Vec<Vec<DaRoot>>,
 }
 
 impl DaEncoding {
@@ -121,6 +138,68 @@ impl DaEncoding {
     }
 }
 
+impl DaMultiEncoding {
+    pub fn params(&self) -> DaParams {
+        self.params
+    }
+
+    pub fn page_len(&self) -> usize {
+        self.page_len
+    }
+
+    pub fn pages(&self) -> &[DaEncoding] {
+        &self.pages
+    }
+
+    pub fn root(&self) -> DaRoot {
+        self.page_merkle_levels
+            .last()
+            .and_then(|level| level.first())
+            .copied()
+            .unwrap_or([0u8; 48])
+    }
+
+    pub fn proof(&self, global_index: u32) -> Result<DaMultiChunkProof, DaError> {
+        let global_index = global_index as usize;
+        let page_index = global_index / MAX_SHARDS;
+        let chunk_index = global_index % MAX_SHARDS;
+        if page_index >= self.pages.len() {
+            return Err(DaError::ChunkIndex);
+        }
+        let page = &self.pages[page_index];
+        if chunk_index >= page.chunks().len() {
+            return Err(DaError::ChunkIndex);
+        }
+        let page_proof = page.proof(chunk_index as u32)?;
+        let page_root = self.page_roots[page_index];
+        let page_merkle_path = self.page_merkle_path(page_index)?;
+        Ok(DaMultiChunkProof {
+            page_index: page_index as u32,
+            page_root,
+            page_proof,
+            page_merkle_path,
+        })
+    }
+
+    fn page_merkle_path(&self, page_index: usize) -> Result<Vec<DaRoot>, DaError> {
+        if page_index >= self.page_roots.len() {
+            return Err(DaError::ChunkIndex);
+        }
+        let mut path = Vec::with_capacity(self.page_merkle_levels.len().saturating_sub(1));
+        let mut node_idx = page_index;
+        for level in &self.page_merkle_levels[..self.page_merkle_levels.len().saturating_sub(1)] {
+            let sibling_idx = if node_idx.is_multiple_of(2) {
+                (node_idx + 1).min(level.len() - 1)
+            } else {
+                node_idx - 1
+            };
+            path.push(level[sibling_idx]);
+            node_idx /= 2;
+        }
+        Ok(path)
+    }
+}
+
 pub fn encode_da_blob(blob: &[u8], params: DaParams) -> Result<DaEncoding, DaError> {
     validate_params(params)?;
     let chunk_size = params.chunk_size as usize;
@@ -176,6 +255,31 @@ pub fn encode_da_blob(blob: &[u8], params: DaParams) -> Result<DaEncoding, DaErr
     })
 }
 
+pub fn encode_da_blob_multipage(blob: &[u8], params: DaParams) -> Result<DaMultiEncoding, DaError> {
+    validate_params(params)?;
+    let page_len = max_page_len(params)?;
+    let mut pages = Vec::new();
+
+    if blob.is_empty() {
+        pages.push(encode_da_blob(&[], params)?);
+    } else {
+        for page in blob.chunks(page_len) {
+            pages.push(encode_da_blob(page, params)?);
+        }
+    }
+
+    let page_roots = pages.iter().map(|page| page.root()).collect::<Vec<_>>();
+    let page_merkle_levels = build_page_root_levels(&page_roots);
+
+    Ok(DaMultiEncoding {
+        params,
+        page_len,
+        pages,
+        page_roots,
+        page_merkle_levels,
+    })
+}
+
 pub fn da_root(blob: &[u8], params: DaParams) -> Result<DaRoot, DaError> {
     let encoding = encode_da_blob(blob, params)?;
     Ok(encoding.root())
@@ -205,6 +309,11 @@ pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError
     }
 }
 
+pub fn verify_da_multi_chunk(root: DaRoot, proof: &DaMultiChunkProof) -> Result<(), DaError> {
+    verify_da_chunk(proof.page_root, &proof.page_proof)?;
+    verify_page_root(root, proof.page_index, proof.page_root, &proof.page_merkle_path)
+}
+
 pub fn chunk_count_for_blob(blob_len: usize, params: DaParams) -> Result<usize, DaError> {
     validate_params(params)?;
     let chunk_size = params.chunk_size as usize;
@@ -230,6 +339,26 @@ fn validate_params(params: DaParams) -> Result<(), DaError> {
         return Err(DaError::SampleCountZero);
     }
     Ok(())
+}
+
+fn max_page_len(params: DaParams) -> Result<usize, DaError> {
+    let chunk_size = params.chunk_size as usize;
+    let data_shards = max_data_shards();
+    chunk_size
+        .checked_mul(data_shards)
+        .ok_or(DaError::ShardCountOverflow)
+}
+
+fn max_data_shards() -> usize {
+    let mut data_shards = MAX_SHARDS;
+    while data_shards > 0 {
+        let parity = parity_shards_for_data(data_shards);
+        if data_shards + parity <= MAX_SHARDS {
+            return data_shards;
+        }
+        data_shards -= 1;
+    }
+    1
 }
 
 fn data_shards_for_len(len: usize, chunk_size: usize) -> usize {
@@ -273,6 +402,64 @@ fn build_merkle_levels(chunks: &[DaChunk]) -> Vec<Vec<DaRoot>> {
         levels.push(next);
     }
     levels
+}
+
+fn build_page_root_levels(page_roots: &[DaRoot]) -> Vec<Vec<DaRoot>> {
+    let mut leaves: Vec<DaRoot> = page_roots
+        .iter()
+        .enumerate()
+        .map(|(idx, root)| hash_leaf(idx as u32, root))
+        .collect();
+    if leaves.is_empty() {
+        leaves.push(hash_leaf(0, &[]));
+    }
+    let mut levels = vec![leaves];
+    while levels.last().map(|level| level.len()).unwrap_or(0) > 1 {
+        let prev = levels.last().expect("level exists");
+        let mut next = Vec::with_capacity(prev.len().div_ceil(2));
+        let mut idx = 0usize;
+        while idx < prev.len() {
+            let left = prev[idx];
+            let right = if idx + 1 < prev.len() {
+                prev[idx + 1]
+            } else {
+                prev[idx]
+            };
+            next.push(hash_node(&left, &right));
+            idx += 2;
+        }
+        levels.push(next);
+    }
+    levels
+}
+
+fn verify_page_root(
+    root: DaRoot,
+    page_index: u32,
+    page_root: DaRoot,
+    merkle_path: &[DaRoot],
+) -> Result<(), DaError> {
+    if merkle_path.is_empty() {
+        if hash_leaf(page_index, &page_root) == root {
+            return Ok(());
+        }
+        return Err(DaError::MerkleProof);
+    }
+    let mut hash = hash_leaf(page_index, &page_root);
+    let mut idx = page_index as usize;
+    for sibling in merkle_path {
+        hash = if idx.is_multiple_of(2) {
+            hash_node(&hash, sibling)
+        } else {
+            hash_node(sibling, &hash)
+        };
+        idx /= 2;
+    }
+    if hash == root {
+        Ok(())
+    } else {
+        Err(DaError::MerkleProof)
+    }
 }
 
 fn hash_leaf(index: u32, data: &[u8]) -> DaRoot {
@@ -365,6 +552,21 @@ mod tests {
     }
 
     #[test]
+    fn multipage_encode_and_verify_roundtrip() {
+        let params = DaParams {
+            chunk_size: 64,
+            sample_count: 4,
+        };
+        let page_len = max_page_len(params).expect("page len");
+        let mut blob = vec![0u8; page_len + 1];
+        rand::thread_rng().fill_bytes(&mut blob);
+        let encoding = encode_da_blob_multipage(&blob, params).expect("encode");
+        assert!(encoding.pages().len() > 1);
+        let proof = encoding.proof(MAX_SHARDS as u32).expect("proof");
+        verify_da_multi_chunk(encoding.root(), &proof).expect("verify");
+    }
+
+    #[test]
     fn tampered_chunk_fails() {
         let blob = vec![42u8; 2048];
         let params = DaParams {
@@ -375,6 +577,20 @@ mod tests {
         let mut proof = encoding.proof(1).expect("proof");
         proof.chunk.data[0] ^= 0xFF;
         assert!(verify_da_chunk(encoding.root(), &proof).is_err());
+    }
+
+    #[test]
+    fn multipage_tampered_chunk_fails() {
+        let params = DaParams {
+            chunk_size: 64,
+            sample_count: 4,
+        };
+        let page_len = max_page_len(params).expect("page len");
+        let blob = vec![7u8; page_len + 1];
+        let encoding = encode_da_blob_multipage(&blob, params).expect("encode");
+        let mut proof = encoding.proof(MAX_SHARDS as u32).expect("proof");
+        proof.page_proof.chunk.data[0] ^= 0xFF;
+        assert!(verify_da_multi_chunk(encoding.root(), &proof).is_err());
     }
 
     #[test]
