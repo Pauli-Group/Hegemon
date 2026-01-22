@@ -42,13 +42,14 @@ The “it works” proof is:
 - [x] (2026-01-22T01:19Z) Scaled aggregation to verify 2/4/8/16 proofs in one outer proof and recorded size + prove/verify times.
 - [x] (2026-01-22T01:42Z) Bound recursion proofs to public inputs by including public values in batch-STARK transcripts and verifying with explicit public values.
 - [x] (2026-01-22T02:30Z) Integrated aggregation proof verification into consensus block import; nodes verify aggregation proofs with public-value binding and skip per-transaction STARK verification when present, and `submit_aggregation_proof` now carries aggregation bytes on-chain.
-- [x] (2026-01-22T03:05Z) Re-ran batch aggregation test with public-value binding and recorded updated 2/4/8/16 metrics.
+- [x] (2026-01-22T06:05Z) Re-ran batch aggregation test with public-value binding after the PoW transcript fix and recorded updated 2/4/8/16 metrics.
 - [x] (2026-01-22T04:30Z) Added `circuits/aggregation` crate with `prove_aggregation` library entrypoint and `aggregation-prover` CLI that consumes postcard-encoded `TransactionProof` files.
 - [x] (2026-01-22T04:30Z) Wired optional aggregation proof generation into block building behind `HEGEMON_AGGREGATION_PROOFS`, attaching `submit_aggregation_proof` when enabled.
 - [x] (2026-01-22T04:30Z) Added an ignored aggregation roundtrip test that verifies aggregation proofs and rejects corrupted inner proofs.
 - [x] (2026-01-22T05:20Z) Patched Plonky3 recursion dependencies to a local vendor copy with PoW witness sampling gated on pow bits; aggregation roundtrip test now passes end-to-end.
 - [ ] Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
-- [ ] End-to-end: mine a dev block with an aggregation proof; prove that a corrupted inner proof causes rejection.
+- [x] (2026-01-22T06:20Z) End-to-end: mined a dev block with an aggregation proof attached (block 6 on dev node).
+- [x] (2026-01-22T06:30Z) End-to-end: corrupted aggregation proof causes mined block import rejection.
 
 ## Surprises & Discoveries
 
@@ -88,14 +89,20 @@ The “it works” proof is:
 - Observation: A single-byte corruption in the inner proof causes the recursion circuit to reject the public inputs with a witness conflict.
   Evidence: `corrupted_proof_rejected: WitnessConflict { witness_id: WitnessId(9052), ... }` in `transaction_aggregate`.
 
-- Observation: With public-value binding enabled, aggregated proof size grows from ~0.95 MiB (2 proofs) to ~1.20 MiB (16 proofs); verify time rises from ~1.1 s to ~3.3 s; prove time scales roughly linearly.
-  Evidence: `aggregate_count=2 ... outer_aggregate_proof_bytes=945200, outer_prove_ms=90497, outer_verify_ms=1069` through `aggregate_count=16 ... outer_aggregate_proof_bytes=1202506, outer_prove_ms=774136, outer_verify_ms=3333` in `aggregate_transaction_proof_batch`.
+- Observation: With public-value binding enabled, aggregated proof size grows from ~0.95 MiB (2 proofs) to ~1.20 MiB (16 proofs); verify time rises from ~0.9 s to ~2.6 s; prove time scales roughly linearly (debug build).
+  Evidence: `aggregate_count=2 ... outer_aggregate_proof_bytes=945200, outer_prove_ms=76591, outer_verify_ms=900`; `aggregate_count=4 ... outer_aggregate_proof_bytes=1027153, outer_prove_ms=151774, outer_verify_ms=1173`; `aggregate_count=8 ... outer_aggregate_proof_bytes=1113555, outer_prove_ms=314964, outer_verify_ms=1820`; `aggregate_count=16 ... outer_aggregate_proof_bytes=1202506, outer_prove_ms=778709, outer_verify_ms=2649` in `aggregate_transaction_proof_batch`.
 
 - Observation: Batch-STARK proofs produced by the circuit prover were not binding public inputs because public values were omitted from the transcript; this must be fixed before aggregation proofs can be tied to specific inner proofs.
   Evidence: Added `PublicAir::trace_to_public_values` and `verify_all_tables_with_public_values` so public inputs are included in the transcript and verification path.
 
 - Observation: The upstream recursion circuit always observes PoW witnesses even when pow bits are zero, which diverges from the non-recursive verifier transcript and breaks aggregation proofs.
   Evidence: Aggregation roundtrip test failed with `WitnessConflict` until switching to a local recursion copy that gates PoW witness sampling on `pow_bits > 0`.
+
+- Observation: Dev node mining with aggregation proofs enabled attaches a ~945 KiB aggregation proof for a single shielded transfer.
+  Evidence: `Aggregation proof extrinsic attached block_number=6 proof_size=945469` in `/tmp/hegemon-node-agg-9945.log`.
+
+- Observation: Corrupting the aggregation proof triggers block import rejection during mined block verification.
+  Evidence: `Failed to import mined block error=mined block proof verification failed: proof verification failed: aggregation proof verification failed: ...` in `/tmp/hegemon-node-agg-corrupt.log`.
 
 ## Decision Log
 
