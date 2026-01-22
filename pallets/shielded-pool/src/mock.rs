@@ -414,8 +414,9 @@ mod tests {
     #[test]
     fn mint_coinbase_works() {
         new_test_ext().execute_with(|| {
-            let amount = 1000u64;
-            let coinbase_data = valid_coinbase_data(amount);
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let coinbase_data = valid_coinbase_data(subsidy);
 
             assert_ok!(Pallet::<Test>::mint_coinbase(
                 RuntimeOrigin::none(),
@@ -423,7 +424,7 @@ mod tests {
             ));
 
             // Check pool balance increased
-            assert_eq!(Pallet::<Test>::pool_balance(), amount as u128);
+            assert_eq!(Pallet::<Test>::pool_balance(), subsidy as u128);
 
             // Check commitment was added
             assert!(Pallet::<Test>::commitments(0).is_some());
@@ -431,6 +432,126 @@ mod tests {
             // Check Merkle root was updated
             let tree = MerkleTreeStorage::<Test>::get();
             assert_eq!(tree.len(), 1);
+        });
+    }
+
+    #[test]
+    fn fee_requires_coinbase_amount() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            let fee = 5u64;
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                fee,
+                0,
+            ));
+
+            assert_eq!(Pallet::<Test>::block_fees(), fee as u128);
+
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+
+            let wrong_coinbase = valid_coinbase_data(subsidy);
+            assert_noop!(
+                Pallet::<Test>::mint_coinbase(RuntimeOrigin::none(), wrong_coinbase),
+                crate::Error::<Test>::CoinbaseAmountMismatch
+            );
+
+            let expected = subsidy.saturating_add(fee);
+            let coinbase_data = valid_coinbase_data(expected);
+            assert_ok!(Pallet::<Test>::mint_coinbase(
+                RuntimeOrigin::none(),
+                coinbase_data,
+            ));
+
+            assert_eq!(Pallet::<Test>::pool_balance(), expected as u128);
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_after_coinbase() {
+        new_test_ext().execute_with(|| {
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let coinbase_data = valid_coinbase_data(subsidy);
+            assert_ok!(Pallet::<Test>::mint_coinbase(
+                RuntimeOrigin::none(),
+                coinbase_data,
+            ));
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    None,
+                    0,
+                    0,
+                ),
+                crate::Error::<Test>::TransfersAfterCoinbase
+            );
+        });
+    }
+
+    #[test]
+    fn fees_burned_when_coinbase_missing() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            let fee = 7u64;
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                fee,
+                0,
+            ));
+
+            assert_eq!(Pallet::<Test>::block_fees(), fee as u128);
+            assert_eq!(Pallet::<Test>::total_fees_burned(), 0);
+
+            frame_system::Pallet::<Test>::set_block_number(2);
+            Pallet::<Test>::on_initialize(2);
+
+            assert_eq!(Pallet::<Test>::block_fees(), 0);
+            assert_eq!(Pallet::<Test>::total_fees_burned(), fee as u128);
         });
     }
 

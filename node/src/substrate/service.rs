@@ -2434,6 +2434,33 @@ fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
     )
 }
 
+fn total_shielded_fees(extrinsics: &[Vec<u8>]) -> Result<u128, String> {
+    let mut total: u128 = 0;
+    for ext_bytes in extrinsics {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+        let runtime::RuntimeCall::ShieldedPool(call) = extrinsic.function else {
+            continue;
+        };
+
+        let fee = match call {
+            ShieldedPoolCall::shielded_transfer { fee, .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned { fee, .. }
+            | ShieldedPoolCall::shielded_transfer_sidecar { fee, .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => {
+                u128::from(fee)
+            }
+            ShieldedPoolCall::batch_shielded_transfer { total_fee, .. } => total_fee,
+            _ => continue,
+        };
+
+        total = total
+            .checked_add(fee)
+            .ok_or_else(|| "shielded fee total overflowed".to_string())?;
+    }
+    Ok(total)
+}
+
 // =============================================================================
 // Wire BlockBuilder API with StorageChanges capture
 // =============================================================================
@@ -2557,53 +2584,7 @@ pub fn wire_block_builder_api(
             tracing::warn!(error = ?e, "Failed to provide timestamp inherent data");
         }
 
-        // Add coinbase inherent data (shielded only)
-        if let Some(ref address) = parsed_shielded_address {
-            // Calculate block subsidy for this height using Bitcoin-style halving
-            let subsidy = pallet_coinbase::block_subsidy(block_number);
-
-            // Derive block hash for seed (use parent hash + block number)
-            let mut block_hash_input = [0u8; 40];
-            block_hash_input[..32].copy_from_slice(parent_hash.as_bytes());
-            block_hash_input[32..40].copy_from_slice(&block_number.to_le_bytes());
-            let block_hash: [u8; 32] = blake3::hash(&block_hash_input).into();
-
-            // Encrypt the coinbase note
-            match crate::shielded_coinbase::encrypt_coinbase_note(
-                address,
-                subsidy,
-                &block_hash,
-                block_number,
-            ) {
-                Ok(coinbase_data) => {
-                    tracing::info!(
-                        block_number,
-                        subsidy,
-                        commitment = %hex::encode(&coinbase_data.commitment),
-                        "Encrypting shielded coinbase note"
-                    );
-                    let coinbase_provider = pallet_shielded_pool::ShieldedCoinbaseInherentDataProvider::from_note_data(coinbase_data);
-                    if let Err(e) = futures::executor::block_on(
-                        coinbase_provider.provide_inherent_data(&mut inherent_data)
-                    ) {
-                        tracing::warn!(error = ?e, "Failed to provide shielded coinbase inherent data");
-                    } else {
-                        tracing::info!(
-                            block_number,
-                            subsidy,
-                            "Added shielded coinbase inherent for block reward"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        error = ?e,
-                        block_number,
-                        "Failed to encrypt coinbase note - no reward for this block"
-                    );
-                }
-            }
-        }
+        // Coinbase is attached after transfers so the amount can include per-block fees.
 
         // Create BlockBuilder using the builder pattern
         // This is the sc_block_builder::BlockBuilder, not the runtime API
@@ -2697,6 +2678,73 @@ pub fn wire_block_builder_api(
                 Err(decode_error) => {
                     tracing::warn!(error = ?decode_error, "Failed to decode extrinsic");
                     failed += 1;
+                }
+            }
+        }
+
+        let total_fees = if parsed_shielded_address.is_some() {
+            total_shielded_fees(&applied)?
+        } else {
+            0
+        };
+
+        if let Some(ref address) = parsed_shielded_address {
+            let subsidy = pallet_coinbase::block_subsidy(block_number);
+            let fee_u64 = u64::try_from(total_fees)
+                .map_err(|_| "block fee total exceeds u64".to_string())?;
+            let amount = subsidy
+                .checked_add(fee_u64)
+                .ok_or_else(|| "coinbase amount overflowed".to_string())?;
+
+            let mut block_hash_input = [0u8; 40];
+            block_hash_input[..32].copy_from_slice(parent_hash.as_bytes());
+            block_hash_input[32..40].copy_from_slice(&block_number.to_le_bytes());
+            let block_hash: [u8; 32] = blake3::hash(&block_hash_input).into();
+
+            match crate::shielded_coinbase::encrypt_coinbase_note(
+                address,
+                amount,
+                &block_hash,
+                block_number,
+            ) {
+                Ok(coinbase_data) => {
+                    tracing::info!(
+                        block_number,
+                        subsidy,
+                        fees = total_fees,
+                        amount,
+                        commitment = %hex::encode(&coinbase_data.commitment),
+                        "Encrypting shielded coinbase note"
+                    );
+                    let coinbase_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                        runtime::RuntimeCall::ShieldedPool(
+                            ShieldedPoolCall::mint_coinbase { coinbase_data },
+                        ),
+                    );
+                    match block_builder.push(coinbase_extrinsic.clone()) {
+                        Ok(_) => {
+                            applied.push(coinbase_extrinsic.encode());
+                            tracing::info!(
+                                block_number,
+                                subsidy,
+                                fees = total_fees,
+                                amount,
+                                "Added shielded coinbase extrinsic for block reward"
+                            );
+                        }
+                        Err(e) => {
+                            return Err(format!(
+                                "failed to push shielded coinbase extrinsic: {e:?}"
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = ?e,
+                        block_number,
+                        "Failed to encrypt coinbase note - no reward for this block"
+                    );
                 }
             }
         }
