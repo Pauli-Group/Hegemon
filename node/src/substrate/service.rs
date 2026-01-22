@@ -1058,7 +1058,7 @@ fn build_aggregation_proof(
 
     if let Some(proof_bytes) = existing {
         return Ok(AggregationProofOutcome {
-            proof_bytes: Some(proof_bytes),
+            proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
             attach_extrinsic: false,
         });
     }
@@ -1066,9 +1066,23 @@ fn build_aggregation_proof(
     let proof_bytes = prove_aggregation(&proofs)
         .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
     Ok(AggregationProofOutcome {
-        proof_bytes: Some(proof_bytes),
+        proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
         attach_extrinsic: true,
     })
+}
+
+fn maybe_corrupt_aggregation_proof(mut proof_bytes: Vec<u8>) -> Vec<u8> {
+    let corrupt = std::env::var("HEGEMON_AGGREGATION_PROOF_CORRUPT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !corrupt {
+        return proof_bytes;
+    }
+    if let Some(first) = proof_bytes.first_mut() {
+        *first ^= 0x01;
+        tracing::warn!("Corrupting aggregation proof bytes for test");
+    }
+    proof_bytes
 }
 
 #[derive(Clone, Copy, Debug)]
