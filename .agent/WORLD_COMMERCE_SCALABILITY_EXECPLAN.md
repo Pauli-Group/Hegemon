@@ -37,7 +37,9 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-23T12:30Z) Wired DA policy + hash-only proof binding for sidecar sampling paths; fixed DA ciphertext index reuse on prune; updated runtime API for policy reads.
 - [x] (2026-01-23T12:55Z) Unblocked node build (DA encoding SCALE fixes + archive market RPC dependency) and verified `cargo check -p hegemon-node`.
 - [x] (2026-01-23T13:05Z) Verified shielded-pool pallet tests pass after policy additions (`cargo test -p pallet-shielded-pool`).
-- [ ] (2026-01-23T13:10Z) Ran `cargo test -p consensus` (hit CLI timeout after ~120s; output showed all tests passing up through pow_rules; rerun for a clean exit when convenient).
+- [x] (2026-01-23T13:15Z) `cargo test -p consensus` completed cleanly (all tests pass; heavy parallel proof test remains ignored).
+- [x] (2026-01-23T13:20Z) `cargo test -p state-da` completed cleanly.
+- [x] (2026-01-23T13:30Z) Updated `DESIGN.md` and `METHODS.md` to document DA/ciphertext policy toggles.
 
 ## Surprises & Discoveries
 
