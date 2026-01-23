@@ -1117,6 +1117,9 @@ fn extract_transaction_proofs_from_extrinsics(
         };
 
         match call {
+            ShieldedPoolCall::mint_coinbase { .. } => {
+                let _ = next_resolved_ciphertexts()?;
+            }
             ShieldedPoolCall::shielded_transfer {
                 proof,
                 nullifiers,
@@ -2062,6 +2065,9 @@ fn extract_shielded_transfers_for_parallel_verification(
         };
 
         match call {
+            ShieldedPoolCall::mint_coinbase { .. } => {
+                let _ = next_resolved_ciphertexts()?;
+            }
             ShieldedPoolCall::shielded_transfer {
                 proof,
                 nullifiers,
