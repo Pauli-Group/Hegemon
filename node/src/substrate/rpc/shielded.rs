@@ -120,6 +120,39 @@ pub struct EncryptedNotesResponse {
     pub chain_height: u64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeeQuoteProofKind {
+    Single,
+    Batch,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FeeQuoteRequest {
+    pub ciphertext_bytes: u64,
+    pub proof_kind: FeeQuoteProofKind,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FeeQuoteResponse {
+    pub required_fee: u128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FeeParametersResponse {
+    pub proof_fee: u128,
+    pub batch_proof_fee: u128,
+    pub da_byte_fee: u128,
+    pub retention_byte_fee: u128,
+    pub hot_retention_blocks: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ForcedInclusionEntryResponse {
+    pub commitment: String,
+    pub expiry: u64,
+}
+
 /// Merkle witness for a note
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MerkleWitnessResponse {
@@ -209,6 +242,18 @@ pub trait ShieldedApi {
     /// - `anchor`: Merkle root to check (hex encoded)
     #[method(name = "isValidAnchor")]
     async fn is_valid_anchor(&self, anchor: String) -> RpcResult<bool>;
+
+    /// Fetch the current fee parameters for shielded transfers.
+    #[method(name = "feeParameters")]
+    async fn fee_parameters(&self) -> RpcResult<FeeParametersResponse>;
+
+    /// Quote a fee for a given ciphertext byte count and proof kind.
+    #[method(name = "feeQuote")]
+    async fn fee_quote(&self, request: FeeQuoteRequest) -> RpcResult<FeeQuoteResponse>;
+
+    /// List pending forced inclusion commitments.
+    #[method(name = "forcedInclusions")]
+    async fn forced_inclusions(&self) -> RpcResult<Vec<ForcedInclusionEntryResponse>>;
 }
 
 /// Trait for shielded pool service operations
@@ -256,6 +301,23 @@ pub trait ShieldedPoolService: Send + Sync {
 
     /// Get current chain height
     fn chain_height(&self) -> u64;
+
+    /// Get fee parameters for shielded transfers.
+    fn fee_parameters(
+        &self,
+    ) -> Result<pallet_shielded_pool::types::FeeParameters, String>;
+
+    /// Quote a fee for the given ciphertext byte count and proof kind.
+    fn fee_quote(
+        &self,
+        ciphertext_bytes: u64,
+        proof_kind: pallet_shielded_pool::types::FeeProofKind,
+    ) -> Result<u128, String>;
+
+    /// Fetch pending forced inclusion commitments.
+    fn forced_inclusions(
+        &self,
+    ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String>;
 }
 
 /// Shielded RPC implementation
@@ -543,6 +605,46 @@ where
         })?;
         Ok(self.service.is_valid_anchor(&a))
     }
+
+    async fn fee_parameters(&self) -> RpcResult<FeeParametersResponse> {
+        let params = self.service.fee_parameters().map_err(|e| {
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+        })?;
+        Ok(FeeParametersResponse {
+            proof_fee: params.proof_fee,
+            batch_proof_fee: params.batch_proof_fee,
+            da_byte_fee: params.da_byte_fee,
+            retention_byte_fee: params.retention_byte_fee,
+            hot_retention_blocks: params.hot_retention_blocks,
+        })
+    }
+
+    async fn fee_quote(&self, request: FeeQuoteRequest) -> RpcResult<FeeQuoteResponse> {
+        let proof_kind = match request.proof_kind {
+            FeeQuoteProofKind::Single => pallet_shielded_pool::types::FeeProofKind::Single,
+            FeeQuoteProofKind::Batch => pallet_shielded_pool::types::FeeProofKind::Batch,
+        };
+        let fee = self
+            .service
+            .fee_quote(request.ciphertext_bytes, proof_kind)
+            .map_err(|e| {
+                ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+            })?;
+        Ok(FeeQuoteResponse { required_fee: fee })
+    }
+
+    async fn forced_inclusions(&self) -> RpcResult<Vec<ForcedInclusionEntryResponse>> {
+        let entries = self.service.forced_inclusions().map_err(|e| {
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+        })?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| ForcedInclusionEntryResponse {
+                commitment: hex::encode(entry.commitment),
+                expiry: entry.expiry,
+            })
+            .collect())
+    }
 }
 
 fn hex_to_array48(hex_str: &str) -> Result<[u8; 48], String> {
@@ -636,6 +738,26 @@ mod tests {
 
         fn chain_height(&self) -> u64 {
             100
+        }
+
+        fn fee_parameters(
+            &self,
+        ) -> Result<pallet_shielded_pool::types::FeeParameters, String> {
+            Ok(pallet_shielded_pool::types::FeeParameters::default())
+        }
+
+        fn fee_quote(
+            &self,
+            _ciphertext_bytes: u64,
+            _proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<u128, String> {
+            Ok(0)
+        }
+
+        fn forced_inclusions(
+            &self,
+        ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
+            Ok(Vec::new())
         }
     }
 

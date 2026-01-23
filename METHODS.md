@@ -195,6 +195,22 @@ appear after shielded transfers and mint exactly `subsidy + block_fees`. If a bl
 as burned and tracked on-chain. The node block builder computes the fee total from the included shielded transfers and appends the
 coinbase extrinsic at the end of the block so the runtime can enforce this rule deterministically.
 
+Fee pricing is parameterized on-chain: `fee = proof_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
+with separate `proof_fee` values for single and batch proofs. These parameters live in the shielded pool pallet, can be updated by
+governance, and are exposed via the runtime API and wallet RPC so clients can quote fees without participating in public auctions.
+
+Forced inclusion commitments provide a censorship escape hatch for the private lane. A user can submit a commitment hash
+(`blake2_256` of the SCALE-encoded shielded transfer call), an expiry block, and a bonded amount. The commitment queue is bounded
+(`MaxForcedInclusions`) and the bond is reserved to discourage spam. On block import, nodes require that any pending commitment
+with `expiry <= current_block` appears in the block; the runtime removes satisfied commitments and unreserves the bond, while
+expired commitments are slashed during `on_initialize`. This keeps forced inclusion deterministic while bounding DoS risk.
+Forced inclusion commitments must be submitted before any shielded transfer in the same block; once transfers start (or coinbase
+is minted) the runtime rejects new forced inclusion submissions for that block. This avoids unsatisfiable commitments when a
+transfer appears before its forced inclusion entry.
+
+Within a block, shielded transfer extrinsics must appear in nondecreasing order of the hash of their SCALE-encoded call data.
+Nodes enforce this during block import and local block production so miners do not have discretionary ordering inside the private lane.
+
 ---
 
 ## 3. The STARK arithmetization
