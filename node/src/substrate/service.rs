@@ -1118,7 +1118,7 @@ fn extract_transaction_proofs_from_extrinsics(
 
         match call {
             ShieldedPoolCall::mint_coinbase { .. } => {
-                let _ = next_resolved_ciphertexts()?;
+                // Coinbase ciphertexts are stored separately from the DA blob.
             }
             ShieldedPoolCall::shielded_transfer {
                 proof,
@@ -1364,9 +1364,6 @@ fn build_da_blob_from_extrinsics(
                     .map(encrypted_note_bytes)
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::mint_coinbase { coinbase_data } => {
-                Some(vec![encrypted_note_bytes(&coinbase_data.encrypted_note)])
-            }
             ShieldedPoolCall::shielded_transfer_sidecar {
                 ciphertext_hashes,
                 ciphertext_sizes,
@@ -1470,9 +1467,6 @@ fn da_layout_from_extrinsics(
                     .map(|note| encrypted_note_bytes(note).len())
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::mint_coinbase { coinbase_data } => Some(vec![
-                encrypted_note_bytes(&coinbase_data.encrypted_note).len(),
-            ]),
             ShieldedPoolCall::shielded_transfer_sidecar {
                 ciphertext_sizes,
                 ..
@@ -2066,7 +2060,7 @@ fn extract_shielded_transfers_for_parallel_verification(
 
         match call {
             ShieldedPoolCall::mint_coinbase { .. } => {
-                let _ = next_resolved_ciphertexts()?;
+                // Coinbase ciphertexts are stored separately from the DA blob.
             }
             ShieldedPoolCall::shielded_transfer {
                 proof,
@@ -3460,7 +3454,18 @@ fn wire_pow_block_import(
                 if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
-                    let ciphertexts = flatten_ciphertexts(&build.transactions);
+                    let mut ciphertexts = flatten_ciphertexts(&build.transactions);
+                    let coinbase_ciphertexts = block
+                        .extrinsics()
+                        .iter()
+                        .filter_map(|extrinsic| match &extrinsic.function {
+                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                                coinbase_data,
+                            }) => Some(encrypted_note_bytes(&coinbase_data.encrypted_note)),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    ciphertexts.extend(coinbase_ciphertexts);
                     let ciphertext_count = ciphertexts.len();
                     let mut store = da_chunk_store.lock();
                     if let Err(err) = store.insert(
@@ -3528,7 +3533,18 @@ fn wire_pow_block_import(
                 if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
-                    let ciphertexts = flatten_ciphertexts(&build.transactions);
+                    let mut ciphertexts = flatten_ciphertexts(&build.transactions);
+                    let coinbase_ciphertexts = block
+                        .extrinsics()
+                        .iter()
+                        .filter_map(|extrinsic| match &extrinsic.function {
+                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                                coinbase_data,
+                            }) => Some(encrypted_note_bytes(&coinbase_data.encrypted_note)),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    ciphertexts.extend(coinbase_ciphertexts);
                     let ciphertext_count = ciphertexts.len();
                     let mut store = da_chunk_store.lock();
                     if let Err(err) = store.insert(
