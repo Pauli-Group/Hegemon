@@ -1489,6 +1489,34 @@ parameter_types! {
     pub const MaxArchiveEndpointLen: u32 = 256;
     /// Minimum bond required to register as an archive provider.
     pub const MinArchiveProviderBond: Balance = 100_000_000;
+    /// Maximum active contracts tracked per provider.
+    pub const MaxArchiveContractsPerProvider: u32 = 512;
+    /// Audit period (blocks) for archive challenges.
+    pub const ArchiveAuditPeriod: BlockNumber = 120;
+    /// Response window (blocks) for archive challenges.
+    pub const ArchiveAuditResponseWindow: BlockNumber = 30;
+    /// Maximum contracts to scan when scheduling an audit.
+    pub const MaxArchiveAuditScan: u32 = 16;
+    /// Maximum pending challenges stored on-chain.
+    pub const MaxArchivePendingChallenges: u32 = 256;
+    /// Maximum DA chunk size accepted in proofs.
+    pub const MaxArchiveDaChunkSize: u32 = 4096;
+    /// Maximum Merkle path depth for DA chunk proofs.
+    pub const MaxArchiveDaChunkProofDepth: u32 = 32;
+    /// Maximum Merkle path depth for DA page proofs.
+    pub const MaxArchiveDaPageProofDepth: u32 = 32;
+}
+
+pub struct RuntimeDaCommitmentProvider;
+impl pallet_archive_market::DaCommitmentProvider<BlockNumber> for RuntimeDaCommitmentProvider {
+    fn da_commitment(block: BlockNumber) -> Option<pallet_archive_market::DaCommitment> {
+        pallet_shielded_pool::DaCommitments::<Runtime>::get(block).map(|commitment| {
+            pallet_archive_market::DaCommitment {
+                root: commitment.root,
+                chunk_count: commitment.chunk_count,
+            }
+        })
+    }
 }
 
 pub struct RuntimeStablecoinPolicyProvider;
@@ -1590,9 +1618,18 @@ impl pallet_shielded_pool::Config for Runtime {
 impl pallet_archive_market::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
+    type DaCommitmentProvider = RuntimeDaCommitmentProvider;
     type MinProviderBond = MinArchiveProviderBond;
     type MaxProviders = MaxArchiveProviders;
     type MaxEndpointLen = MaxArchiveEndpointLen;
+    type MaxContractsPerProvider = MaxArchiveContractsPerProvider;
+    type AuditPeriod = ArchiveAuditPeriod;
+    type AuditResponseWindow = ArchiveAuditResponseWindow;
+    type MaxAuditScan = MaxArchiveAuditScan;
+    type MaxPendingChallenges = MaxArchivePendingChallenges;
+    type MaxDaChunkSize = MaxArchiveDaChunkSize;
+    type MaxDaChunkProofDepth = MaxArchiveDaChunkProofDepth;
+    type MaxDaPageProofDepth = MaxArchiveDaPageProofDepth;
     type WeightInfo = ();
 }
 
@@ -1926,6 +1963,23 @@ sp_api::impl_runtime_apis! {
         fn archive_providers(
         ) -> sp_std::vec::Vec<(AccountId, pallet_archive_market::ProviderInfo<Runtime>)> {
             pallet_archive_market::Providers::<Runtime>::iter().collect()
+        }
+
+        fn archive_contract(
+            contract_id: u64,
+        ) -> Option<pallet_archive_market::ArchiveContract<Runtime>> {
+            pallet_archive_market::Contracts::<Runtime>::get(contract_id)
+        }
+
+        fn archive_contracts(
+            provider: AccountId,
+        ) -> sp_std::vec::Vec<pallet_archive_market::ArchiveContract<Runtime>> {
+            pallet_archive_market::ProviderContracts::<Runtime>::get(provider)
+                .into_iter()
+                .filter_map(|contract_id| {
+                    pallet_archive_market::Contracts::<Runtime>::get(contract_id)
+                })
+                .collect()
         }
     }
 }

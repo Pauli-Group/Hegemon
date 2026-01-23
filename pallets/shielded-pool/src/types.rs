@@ -342,6 +342,15 @@ pub struct ForcedInclusionStatus {
     pub expiry: u64,
 }
 
+/// On-chain record of a DA commitment for a block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub struct DaCommitment {
+    pub root: [u8; 48],
+    pub chunk_count: u32,
+}
+
+impl DecodeWithMemTracking for DaCommitment {}
+
 /// Parameters for the STARK verifying key.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
 pub struct VerifyingKeyParams {

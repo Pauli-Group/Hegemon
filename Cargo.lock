@@ -6770,6 +6770,7 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-std",
+ "synthetic-crypto",
 ]
 
 [[package]]

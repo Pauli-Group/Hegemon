@@ -29,9 +29,10 @@ The “it works” proof is:
 - [x] (2026-01-21T00:00Z) Draft cold archive + recovery ExecPlan (this file).
 - [x] (2026-01-23T00:00Z) Define the recovery contract and archive interface (DA chunks + proofs, challenge/response audits).
 - [x] (2026-01-23T02:00Z) Implement archive provider registration + bonding on-chain (pallet + runtime + tests).
-- [ ] Implement archive contracts (purchase, renewal, expiration).
-- [ ] Implement challenge/response auditing using DA chunk proofs (slash on failure).
-- [ ] Implement wallet/RPC integration for selecting providers and retrieving ciphertext ranges.
+- [x] (2026-01-23T03:15Z) Implement archive contracts (purchase, renewal, expiration).
+- [x] (2026-01-23T04:10Z) Implement challenge/response auditing using DA chunk proofs (schedule + respond + slash + failover).
+- [x] (2026-01-23T04:20Z) Expose archive contract listing via RPC (list + get).
+- [ ] Implement wallet/RPC integration for selecting providers and retrieving ciphertext ranges (completed: archive contract listing RPC; remaining: wallet sync fallback + ciphertext range retrieval).
 - [ ] End-to-end demo: prune hot DA, recover via archive provider, decrypt notes.
 - [x] (2026-01-23T02:30Z) Expose archive provider registry via RPC (list + detail).
 
@@ -61,6 +62,22 @@ Update this section after hot DA is implemented and we can meaningfully test arc
 - Decision: Keep the archive market interface generic so that external storage networks can participate as providers without being protocol requirements.
   Rationale: The protocol should specify requirements (what must be retrievable, how to verify) and incentives. Providers can be a local node, a dedicated service, or an adapter to an external network. The chain should not depend on a single external DA vendor.
   Date/Author: 2026-01-21 / Codex
+
+- Decision: Price archive contracts as `price_per_byte_block * byte_count * retention_blocks`, paid up-front to providers, with a caller-specified `bond_stake` carved out of the provider bond for audit slashing.
+  Rationale: The chain needs a simple, deterministic pricing rule and a clear bond-at-risk amount per contract. Paying up-front avoids escrow complexity in the first version while audits later enforce service quality by slashing the committed bond.
+  Date/Author: 2026-01-23 / Codex
+
+- Decision: Track contract IDs globally while keeping a per-provider bounded index list for RPC discovery.
+  Rationale: Global IDs make renewal/expiration calls simple, while per-provider indices make it efficient to list contracts for a provider without scanning the entire chain state.
+  Date/Author: 2026-01-23 / Codex
+
+- Decision: Persist `da_root` plus `chunk_count` per block in `pallet-shielded-pool` so archive audits can pick valid chunk indices.
+  Rationale: The runtime cannot derive chunk counts from the root alone. Storing the count alongside the root keeps audits deterministic and prevents providers from being challenged on out-of-range indices.
+  Date/Author: 2026-01-23 / Codex
+
+- Decision: Schedule at most one audit challenge per `AuditPeriod`, selecting contracts by a rotating cursor and deriving randomness from the previous block hash.
+  Rationale: This keeps per-block work bounded while still providing regular audits. A simple cursor avoids full scans and ensures coverage over time.
+  Date/Author: 2026-01-23 / Codex
 
 ## Outcomes & Retrospective
 

@@ -7,6 +7,8 @@ use sp_runtime::testing::H256;
 use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
 use sp_runtime::BuildStorage;
 use sp_std::vec::Vec;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 frame_support::construct_runtime!(
     pub enum Test {
@@ -22,6 +24,25 @@ parameter_types! {
     pub const MinProviderBond: u128 = 100;
     pub const MaxProviders: u32 = 8;
     pub const MaxEndpointLen: u32 = 64;
+    pub const MaxContractsPerProvider: u32 = 16;
+    pub const AuditPeriod: u64 = 5;
+    pub const AuditResponseWindow: u64 = 3;
+    pub const MaxAuditScan: u32 = 4;
+    pub const MaxPendingChallenges: u32 = 16;
+    pub const MaxDaChunkSize: u32 = 2048;
+    pub const MaxDaChunkProofDepth: u32 = 16;
+    pub const MaxDaPageProofDepth: u32 = 16;
+}
+
+thread_local! {
+    static MOCK_DA: RefCell<BTreeMap<u64, pallet_archive_market::DaCommitment>> = RefCell::new(BTreeMap::new());
+}
+
+pub struct MockDaCommitmentProvider;
+impl pallet_archive_market::DaCommitmentProvider<u64> for MockDaCommitmentProvider {
+    fn da_commitment(block: u64) -> Option<pallet_archive_market::DaCommitment> {
+        MOCK_DA.with(|map| map.borrow().get(&block).copied())
+    }
 }
 
 impl system::Config for Test {
@@ -77,13 +98,23 @@ impl pallet_balances::Config for Test {
 impl pallet_archive_market::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
+    type DaCommitmentProvider = MockDaCommitmentProvider;
     type MinProviderBond = MinProviderBond;
     type MaxProviders = MaxProviders;
     type MaxEndpointLen = MaxEndpointLen;
+    type MaxContractsPerProvider = MaxContractsPerProvider;
+    type AuditPeriod = AuditPeriod;
+    type AuditResponseWindow = AuditResponseWindow;
+    type MaxAuditScan = MaxAuditScan;
+    type MaxPendingChallenges = MaxPendingChallenges;
+    type MaxDaChunkSize = MaxDaChunkSize;
+    type MaxDaChunkProofDepth = MaxDaChunkProofDepth;
+    type MaxDaPageProofDepth = MaxDaPageProofDepth;
     type WeightInfo = ();
 }
 
 pub fn new_test_ext() -> TestExternalities {
+    MOCK_DA.with(|map| map.borrow_mut().clear());
     let mut storage = frame_system::GenesisConfig::<Test>::default()
         .build_storage()
         .expect("system storage");
