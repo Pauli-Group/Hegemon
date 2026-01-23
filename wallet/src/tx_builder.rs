@@ -233,6 +233,27 @@ pub fn build_transaction_with_binding(
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
     for note in plan_inputs.iter() {
+        let expected_commitment =
+            transaction_circuit::hashing_pq::felts_to_bytes48(
+                &note.recovered.note_data.commitment(),
+            );
+        match store.find_commitment_index(expected_commitment)? {
+            Some(index) if index == note.position => {}
+            Some(index) => {
+                return Err(WalletError::InvalidState(Box::leak(
+                    format!(
+                        "commitment index mismatch: note position {} != commitment index {}",
+                        note.position, index
+                    )
+                    .into_boxed_str(),
+                )));
+            }
+            None => {
+                return Err(WalletError::InvalidState(
+                    "note commitment not found in local commitment list",
+                ));
+            }
+        }
         // Get the Merkle authentication path for this note's position
         let auth_path = tree
             .authentication_path(note.position as usize)
@@ -276,7 +297,9 @@ pub fn build_transaction_with_binding(
         // eprintln!("DEBUG: computed_root = {:?}", current);
         // eprintln!("DEBUG: expected_root = {:?}", wallet_root);
         if felts_to_bytes48(&current) != wallet_root {
-            // eprintln!("DEBUG: ROOT MISMATCH!");
+            return Err(WalletError::InvalidState(
+                "merkle path does not match wallet root",
+            ));
         }
 
         // Convert Felt path to MerklePath

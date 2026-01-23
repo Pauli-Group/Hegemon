@@ -850,6 +850,20 @@ where
             commitments.push(limbs);
         }
 
+        let mut ciphertext_hashes = Vec::with_capacity(MAX_OUTPUTS);
+        for _ in 0..MAX_OUTPUTS {
+            let limbs = vec![
+                pv(idx),
+                pv(idx + 1),
+                pv(idx + 2),
+                pv(idx + 3),
+                pv(idx + 4),
+                pv(idx + 5),
+            ];
+            idx += 6;
+            ciphertext_hashes.push(limbs);
+        }
+
         let fee = pv(idx);
         idx += 1;
         let value_balance_sign = pv(idx);
@@ -904,6 +918,10 @@ where
             pv(idx + 4),
             pv(idx + 5),
         ];
+        idx += 6;
+
+        let _ciphertext_hashes = ciphertext_hashes;
+        let _ = idx;
 
         let sbox = |value: AB::Expr| -> AB::Expr {
             let v2 = value.clone() * value.clone();

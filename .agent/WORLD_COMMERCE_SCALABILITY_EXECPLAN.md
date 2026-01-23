@@ -33,7 +33,9 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-23T00:00Z) Execute `.agent/DA_SIDECAR_HOT_AVAILABILITY_EXECPLAN.md` through “ciphertexts no longer live in block body” milestone.
 - [x] (2026-01-23T00:00Z) Execute `.agent/CENSORSHIP_RESISTANCE_FEES_EXECPLAN.md` through “forced inclusion lane + private fee policy” milestone.
 - [x] (2026-01-23T06:10Z) Execute `.agent/COLD_ARCHIVE_RECOVERY_EXECPLAN.md` through “archive contract + wallet recovery flow works” milestone (wallet fallback + archive provider RPC path implemented; runbook prepared for end-to-end demo).
-- [ ] Run an end-to-end local commerce demo (stress send, mine, sync a fresh wallet, recover notes).
+- [ ] Run an end-to-end local commerce demo (stress send, mine, sync a fresh wallet, recover notes). (Blocker cleared: transaction-circuit Plonky3 proofs now pass in e2e debug tests.)
+- [x] (2026-01-23T20:00Z) Fixed Plonky3 public-input parsing to include ciphertext hashes; `prove_verify_roundtrip_p3` passes in `--features plonky3-e2e`.
+- [x] (2026-01-23T20:20Z) Propagated `plonky3-e2e` feature to `transaction-core` so debug e2e tests use production FRI params (log_blowup=4, num_queries=32).
 - [x] (2026-01-23T12:00Z) Added a design-philosophy quick reference in this ExecPlan to anchor decisions.
 - [x] (2026-01-23T12:30Z) Wired DA policy + hash-only proof binding for sidecar sampling paths; fixed DA ciphertext index reuse on prune; updated runtime API for policy reads.
 - [x] (2026-01-23T12:55Z) Unblocked node build (DA encoding SCALE fixes + archive market RPC dependency) and verified `cargo check -p hegemon-node`.
@@ -57,6 +59,13 @@ After this work, a developer can run a local devnet and observe all of the follo
 - Observation: The current runtime is configured for a 4 MiB block body and 60 second blocks. With today’s proof sizes, that implies well under 1 shielded tx/sec.
   Evidence: `runtime/src/lib.rs` defines `RuntimeBlockLength` as `4 * 1024 * 1024` and `PowTargetBlockTime` as `60_000`.
 
+- Observation: Transaction STARK proofs are currently failing verification in Plonky3 e2e mode (`OodEvaluationMismatch`), blocking the end-to-end commerce demo and wallet sends.
+  Evidence: `cargo test -p transaction-circuit proving_and_verification_succeeds --features plonky3-e2e --release` fails with `STARK verification failed: OodEvaluationMismatch`.
+- Observation: The OOD mismatch was caused by the AIR parsing public inputs without the new ciphertext-hash limbs, shifting the merkle-root inputs and failing the merkle-root constraint at row 2175.
+  Evidence: debug `prove_verify_roundtrip_p3` panicked at `p3_air.rs:1425` before the fix; the same test now passes in `--features plonky3-e2e`.
+- Observation: The `plonky3-e2e` feature was not propagating to `transaction-core`, so debug tests still used fast FRI params (log_blowup=3, num_queries=8).
+  Evidence: `prove_verify_roundtrip_p3` printed `log_blowup=3, num_queries=8` before the feature propagation change; after the change it prints `log_blowup=4, num_queries=32`.
+
 ## Decision Log
 
 - Decision: Treat “world commerce” as a data-availability + proving-market problem, not as a block-size tuning exercise.
@@ -74,6 +83,12 @@ After this work, a developer can run a local devnet and observe all of the follo
 - Decision: Make the chain a small PQ validity anchor that can be verified by a commodity server, while allowing specialized markets for DA and proving.
   Rationale: If verifying a block requires storing and recomputing everything, validators trend toward a few data centers. If verifying a block requires only (1) checking a small number of proofs and (2) checking a small number of DA samples, the set of verifiers can be wider, and the heavy lifting becomes a paid service.
   Date/Author: 2026-01-21 / Codex
+- Decision: Keep ciphertext hashes as public inputs for binding and parsing correctness, without adding in-circuit constraints yet.
+  Rationale: The transaction AIR must parse public inputs in the same order as `TransactionPublicInputsP3::to_vec`; binding ciphertext hashes to ciphertext bytes remains an application-level check.
+  Date/Author: 2026-01-23 / Codex
+- Decision: Treat `plonky3-e2e` as the production-parameter test path by forwarding it into `transaction-core`.
+  Rationale: E2E tests must exercise the ≥128-bit soundness configuration to match the security posture we claim.
+  Date/Author: 2026-01-23 / Codex
 
 ## Outcomes & Retrospective
 
