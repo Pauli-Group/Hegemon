@@ -10,6 +10,7 @@ This plan is the top-level “how we get to world commerce” map. It is intenti
 - `.agent/DA_SIDECAR_HOT_AVAILABILITY_EXECPLAN.md` (make data availability real and scalable)
 - `.agent/CENSORSHIP_RESISTANCE_FEES_EXECPLAN.md` (make incentives + fees not destroy privacy)
 - `.agent/COLD_ARCHIVE_RECOVERY_EXECPLAN.md` (make multi-year recovery possible without making every full node store everything)
+- `.agent/CASHVM_BRIDGE_STARK_COVENANT_EXECPLAN.md` (optional: settle/bridge the PQ rollup against a CashVM covenant without CashVM consensus changes)
 
 The work is not “tune some constants.” It is an architecture pivot: the chain becomes a small, verifiable anchor that enforces availability and validity, while high-throughput private commerce happens as batched proofs and batched data.
 
@@ -40,6 +41,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-23T13:15Z) `cargo test -p consensus` completed cleanly (all tests pass; heavy parallel proof test remains ignored).
 - [x] (2026-01-23T13:20Z) `cargo test -p state-da` completed cleanly.
 - [x] (2026-01-23T13:30Z) Updated `DESIGN.md` and `METHODS.md` to document DA/ciphertext policy toggles.
+- [x] (2026-01-23T16:00Z) Drafted `.agent/CASHVM_BRIDGE_STARK_COVENANT_EXECPLAN.md` to answer “CashVM↔Hegemon bridge + covenant rollup” feasibility and link it from this top-level plan.
 
 ## Surprises & Discoveries
 
