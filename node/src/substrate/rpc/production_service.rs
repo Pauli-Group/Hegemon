@@ -48,6 +48,7 @@
 //! let rpc_module = rpc::create_full(rpc_deps)?;
 //! ```
 
+use super::archive::ArchiveMarketService;
 use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, TelemetrySnapshot};
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
@@ -56,7 +57,8 @@ use pallet_shielded_pool::types::{
     BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
 };
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
-use runtime::apis::{ConsensusApi, ShieldedPoolApi};
+use runtime::apis::{ArchiveMarketApi, ConsensusApi, ShieldedPoolApi};
+use runtime::AccountId;
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
@@ -351,7 +353,7 @@ impl<C, Block> ShieldedPoolService for ProductionRpcService<C, Block>
 where
     Block: BlockT,
     C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
-    C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
+    C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block> + ArchiveMarketApi<Block>,
 {
     fn submit_shielded_transfer(
         &self,
@@ -616,6 +618,43 @@ where
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
         api.forced_inclusions(best_hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
+    }
+}
+
+// =============================================================================
+// ArchiveMarketService Implementation
+// =============================================================================
+
+impl<C, Block> ArchiveMarketService for ProductionRpcService<C, Block>
+where
+    Block: BlockT,
+    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
+    C::Api: ArchiveMarketApi<Block>,
+{
+    fn provider_count(&self) -> Result<u32, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.archive_provider_count(best_hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
+    }
+
+    fn provider(
+        &self,
+        provider: AccountId,
+    ) -> Result<Option<pallet_archive_market::ProviderInfo<runtime::Runtime>>, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.archive_provider(best_hash, provider)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
+    }
+
+    fn providers(
+        &self,
+    ) -> Result<Vec<(AccountId, pallet_archive_market::ProviderInfo<runtime::Runtime>)>, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.archive_providers(best_hash)
             .map_err(|e| format!("Runtime API error: {:?}", e))
     }
 }

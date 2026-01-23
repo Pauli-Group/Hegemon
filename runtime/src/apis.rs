@@ -29,6 +29,8 @@
 
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
+use crate::AccountId;
+use pallet_archive_market::ProviderInfo;
 use pallet_shielded_pool::merkle::CompactMerkleTree;
 use pallet_shielded_pool::types::{FeeParameters, FeeProofKind, ForcedInclusionStatus};
 use sp_api::decl_runtime_apis;
@@ -177,5 +179,20 @@ decl_runtime_apis! {
 
         /// Fetch pending forced inclusion commitments.
         fn forced_inclusions() -> Vec<ForcedInclusionStatus>;
+    }
+
+    /// API for archive provider discovery.
+    ///
+    /// Exposes the on-chain provider registry so wallets can discover
+    /// bonded archive providers without scanning raw storage.
+    pub trait ArchiveMarketApi {
+        /// Get the number of registered providers.
+        fn archive_provider_count() -> u32;
+
+        /// Get a single provider by account id.
+        fn archive_provider(provider: AccountId) -> Option<ProviderInfo<crate::Runtime>>;
+
+        /// List all providers.
+        fn archive_providers() -> Vec<(AccountId, ProviderInfo<crate::Runtime>)>;
     }
 }

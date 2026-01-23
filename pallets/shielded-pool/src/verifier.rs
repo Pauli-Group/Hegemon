@@ -1072,8 +1072,14 @@ mod tests {
         let inputs = sample_inputs();
         let encoded = StarkVerifier::encode_public_inputs(&inputs);
 
-        // 1 anchor + 2 nullifiers + 2 commitments + fee + value balance (sign + mag) = 8
-        assert_eq!(encoded.len(), 16);
+        let expected = 1 // anchor
+            + inputs.nullifiers.len()
+            + inputs.commitments.len()
+            + inputs.ciphertext_hashes.len()
+            + 1 // fee
+            + 2 // value balance (sign + magnitude)
+            + 8; // stablecoin metadata fields
+        assert_eq!(encoded.len(), expected);
     }
 
     #[test]

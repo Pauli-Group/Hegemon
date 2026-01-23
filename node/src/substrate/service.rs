@@ -124,8 +124,9 @@ use crate::substrate::mining_worker::{
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
-    BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc, NodeConfigSnapshot,
-    ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
+    ArchiveApiServer, ArchiveRpc, BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer,
+    HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ShieldedApiServer, ShieldedRpc,
+    WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
@@ -6022,6 +6023,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "block_getCommitmentProof",
                             "da_getChunk",
                             "da_getParams",
+                            "archive_listProviders",
+                            "archive_getProvider",
+                            "archive_providerCount",
                             "rpc_methods"
                         ]
                     }));
@@ -6237,7 +6241,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         }
 
         // Add Shielded Pool RPC (STARK proofs, encrypted notes)
-        let shielded_rpc = ShieldedRpc::new(rpc_service);
+        let shielded_rpc = ShieldedRpc::new(rpc_service.clone());
         if let Err(e) = module.merge(shielded_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Shielded RPC");
         } else {
@@ -6258,6 +6262,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::warn!(error = %e, "Failed to merge DA RPC");
         } else {
             tracing::info!("DA RPC wired (da_getChunk, da_getParams)");
+        }
+
+        // Add Archive RPC (provider registry)
+        let archive_rpc = ArchiveRpc::new(rpc_service);
+        if let Err(e) = module.merge(archive_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Archive RPC");
+        } else {
+            tracing::info!("Archive RPC wired (archive_listProviders, archive_getProvider)");
         }
 
         module

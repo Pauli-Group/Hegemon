@@ -1992,7 +1992,7 @@ pub mod pallet {
             Ok(())
         }
 
-        pub fn fee_parameters() -> types::FeeParameters {
+        pub fn current_fee_parameters() -> types::FeeParameters {
             FeeParametersStorage::<T>::get()
         }
 
@@ -2000,7 +2000,7 @@ pub mod pallet {
             ciphertext_bytes: u64,
             proof_kind: types::FeeProofKind,
         ) -> Result<u128, Error<T>> {
-            let params = Self::fee_parameters();
+            let params = Self::current_fee_parameters();
             let base = match proof_kind {
                 types::FeeProofKind::Single => params.proof_fee,
                 types::FeeProofKind::Batch => params.batch_proof_fee,
