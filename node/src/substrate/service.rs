@@ -164,7 +164,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Mutex};
 
 // Import runtime APIs for difficulty queries
-use pallet_shielded_pool::Call as ShieldedPoolCall;
 use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
@@ -174,6 +173,8 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+
+type ShieldedPoolCall = pallet_shielded_pool::Call<runtime::Runtime>;
 
 // Import jsonrpsee for RPC server
 use jsonrpsee::server::ServerBuilder;
@@ -384,9 +385,9 @@ impl DaChunkStore {
         let root = encoding.root();
         let encoded = encoding.encode();
         self.encodings.insert(root, encoded)?;
-        self.block_roots.insert(block_hash, root)?;
+        self.block_roots.insert(block_hash, &root[..])?;
         let block_key = da_block_key(block_number, &block_hash);
-        self.blocks.insert(block_key, root)?;
+        self.blocks.insert(block_key, &root[..])?;
         self.cache_insert(root, encoding);
         self.prune(block_number)?;
         Ok(())
@@ -433,13 +434,13 @@ impl DaChunkStore {
 
         let new_count = start_index + ciphertexts.len() as u64;
         self.meta
-            .insert(CIPHERTEXT_COUNT_KEY, new_count.to_be_bytes())?;
+            .insert(CIPHERTEXT_COUNT_KEY, &new_count.to_be_bytes())?;
 
         let mut range = [0u8; 16];
         range[..8].copy_from_slice(&start_index.to_be_bytes());
         range[8..].copy_from_slice(&(ciphertexts.len() as u64).to_be_bytes());
         let block_key = da_block_key(block_number, &block_hash);
-        self.ciphertext_ranges.insert(block_key, range)?;
+        self.ciphertext_ranges.insert(block_key, &range[..])?;
 
         Ok(())
     }
@@ -986,7 +987,7 @@ fn build_transaction_proof(
     }
     let padded_nullifiers = pad_commitments(nullifiers, MAX_INPUTS, "nullifiers")?;
     let padded_commitments = pad_commitments(commitments, MAX_OUTPUTS, "commitments")?;
-    let mut ciphertext_hashes: Vec<[u8; 48]> = ciphertexts
+    let ciphertext_hashes: Vec<[u8; 48]> = ciphertexts
         .iter()
         .map(|ct| ciphertext_hash_bytes(ct))
         .collect();
@@ -1090,7 +1091,7 @@ fn build_transaction_proof_with_hashes(
 
 fn extract_transaction_proofs_from_extrinsics(
     extrinsics: &[Vec<u8>],
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>>]>,
+    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
 ) -> Result<Vec<TransactionProof>, String> {
     let mut proofs = Vec::new();
     let mut ciphertext_cursor = 0usize;
@@ -1189,8 +1190,8 @@ fn extract_transaction_proofs_from_extrinsics(
                     Some(ciphertexts) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
+                            &ciphertext_sizes,
+                            &ciphertext_hashes,
                         )?;
                         build_transaction_proof(
                             proof.data.clone(),
@@ -1207,7 +1208,7 @@ fn extract_transaction_proofs_from_extrinsics(
                         proof.data.clone(),
                         nullifiers.iter().copied().collect(),
                         commitments.iter().copied().collect(),
-                        ciphertext_hashes,
+                        &ciphertext_hashes,
                         anchor,
                         stablecoin.clone(),
                         fee,
@@ -1235,8 +1236,8 @@ fn extract_transaction_proofs_from_extrinsics(
                     Some(ciphertexts) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
+                            &ciphertext_sizes,
+                            &ciphertext_hashes,
                         )?;
                         build_transaction_proof(
                             proof.data.clone(),
@@ -1253,7 +1254,7 @@ fn extract_transaction_proofs_from_extrinsics(
                         proof.data.clone(),
                         nullifiers.iter().copied().collect(),
                         commitments.iter().copied().collect(),
-                        ciphertext_hashes,
+                        &ciphertext_hashes,
                         anchor,
                         None,
                         fee,
@@ -1373,7 +1374,7 @@ fn build_da_blob_from_extrinsics(
                 let pending = pending_ciphertexts
                     .ok_or_else(|| "pending ciphertext store missing".to_string())?;
                 let hashes = ciphertext_hashes.as_slice();
-                let mut ciphertexts = pending.get_many(hashes)?;
+                let ciphertexts = pending.get_many(hashes)?;
                 validate_ciphertexts_against_hashes(&ciphertexts, ciphertext_sizes, hashes)?;
                 used_ciphertext_hashes.extend_from_slice(hashes);
                 Some(ciphertexts)
@@ -1857,7 +1858,7 @@ fn build_commitment_block_proof(
     extrinsics: &[Vec<u8>],
     da_params: DaParams,
     da_root_override: Option<DaRoot>,
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>>]>,
+    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
     _fast: bool,
 ) -> Result<Option<CommitmentBlockProof>, String> {
     let proofs = extract_transaction_proofs_from_extrinsics(extrinsics, resolved_ciphertexts)?;
@@ -1897,7 +1898,7 @@ struct AggregationProofOutcome {
 
 fn build_aggregation_proof(
     extrinsics: &[Vec<u8>],
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>>]>,
+    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
 ) -> Result<AggregationProofOutcome, String> {
     let mut decoded = Vec::with_capacity(extrinsics.len());
     for ext_bytes in extrinsics {
@@ -2030,7 +2031,7 @@ fn extract_aggregation_proof_bytes(
 
 fn extract_shielded_transfers_for_parallel_verification(
     extrinsics: &[runtime::UncheckedExtrinsic],
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>>]>,
+    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
 ) -> Result<(Vec<consensus::types::Transaction>, Vec<TransactionProof>), String> {
     let mut transactions = Vec::new();
     let mut proofs = Vec::new();
@@ -2453,7 +2454,7 @@ fn verify_proof_carrying_block(
     extrinsics: &[runtime::UncheckedExtrinsic],
     da_params: DaParams,
     da_policy: pallet_shielded_pool::types::DaAvailabilityPolicy,
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>>]>,
+    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
 ) -> Result<Option<CommitmentBlockProof>, String> {
     use consensus::ProofVerifier;
 
@@ -2485,10 +2486,7 @@ fn verify_proof_carrying_block(
         if transactions.iter().any(|tx| tx.ciphertexts.is_empty() && !tx.ciphertext_hashes.is_empty()) {
             return Err("full DA policy requires resolved ciphertext bytes".to_string());
         }
-        let expected_encoding = consensus::encode_da_blob(
-            &consensus::build_da_blob(&transactions),
-            da_params,
-        )
+        let expected_encoding = consensus::encode_da_blob(&transactions, da_params)
         .map_err(|err| format!("commitment proof da_root encoding failed: {err}"))?;
         let expected_da_root = expected_encoding.root();
         let expected_chunk_count = expected_encoding.chunks().len() as u32;
@@ -4513,7 +4511,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let da_store_capacity = load_da_store_capacity();
     let da_retention_blocks = load_da_retention_blocks();
     let da_sample_timeout = load_da_sample_timeout();
-    let da_store_path = da_store_path(config);
+    let da_store_path = da_store_path(&config);
     let pending_ciphertext_capacity = load_pending_ciphertext_capacity();
     let commitment_block_proof_store_capacity = load_commitment_proof_store_capacity();
     let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> = Arc::new(ParkingMutex::new(
@@ -5254,13 +5252,23 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
                                 let mut da_build = if requires_sidecar {
-                                    let payload = match extract_commitment_proof_payload(&extrinsics)? {
-                                        Some(payload) => payload,
-                                        None => {
+                                    let payload = match extract_commitment_proof_payload(&extrinsics) {
+                                        Ok(Some(payload)) => payload,
+                                        Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
                                                 "Rejecting synced block (missing commitment proof)"
+                                            );
+                                            blocks_failed += 1;
+                                            continue;
+                                        }
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&downloaded.from_peer),
+                                                block_number,
+                                                error = %err,
+                                                "Rejecting synced block (failed to parse commitment proof payload)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -5716,13 +5724,23 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
                                 let mut da_build = if requires_sidecar {
-                                    let payload = match extract_commitment_proof_payload(&extrinsics)? {
-                                        Some(payload) => payload,
-                                        None => {
+                                    let payload = match extract_commitment_proof_payload(&extrinsics) {
+                                        Ok(Some(payload)) => payload,
+                                        Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&peer_id),
                                                 block_number,
                                                 "Rejecting announced block (missing commitment proof)"
+                                            );
+                                            blocks_failed += 1;
+                                            continue;
+                                        }
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&peer_id),
+                                                block_number,
+                                                error = %err,
+                                                "Rejecting announced block (failed to parse commitment proof payload)"
                                             );
                                             blocks_failed += 1;
                                             continue;

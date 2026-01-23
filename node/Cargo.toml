@@ -95,6 +95,9 @@ runtime = { path = "../runtime", optional = true }
 # Shielded pool pallet (for RPC types)
 pallet-shielded-pool = { path = "../pallets/shielded-pool", optional = true }
 
+# Archive market pallet (for RPC types)
+pallet-archive-market = { path = "../pallets/archive-market", optional = true }
+
 # Frame support (for BoundedVec in RPC)
 frame-support = { workspace = true, features = ["std"], optional = true }
 
@@ -154,6 +157,7 @@ substrate = [
     "dep:pallet-timestamp",
     "dep:pallet-coinbase",
     "dep:pallet-shielded-pool",
+    "dep:pallet-archive-market",
     "dep:frame-support",
     "dep:tower",
     "dep:hyper",

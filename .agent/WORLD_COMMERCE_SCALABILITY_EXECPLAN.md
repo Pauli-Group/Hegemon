@@ -35,6 +35,9 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [ ] Run an end-to-end local commerce demo (stress send, mine, sync a fresh wallet, recover notes).
 - [x] (2026-01-23T12:00Z) Added a design-philosophy quick reference in this ExecPlan to anchor decisions.
 - [x] (2026-01-23T12:30Z) Wired DA policy + hash-only proof binding for sidecar sampling paths; fixed DA ciphertext index reuse on prune; updated runtime API for policy reads.
+- [x] (2026-01-23T12:55Z) Unblocked node build (DA encoding SCALE fixes + archive market RPC dependency) and verified `cargo check -p hegemon-node`.
+- [x] (2026-01-23T13:05Z) Verified shielded-pool pallet tests pass after policy additions (`cargo test -p pallet-shielded-pool`).
+- [ ] (2026-01-23T13:10Z) Ran `cargo test -p consensus` (hit CLI timeout after ~120s; output showed all tests passing up through pow_rules; rerun for a clean exit when convenient).
 
 ## Surprises & Discoveries
 
