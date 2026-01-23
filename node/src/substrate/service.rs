@@ -1361,6 +1361,9 @@ fn build_da_blob_from_extrinsics(
                     .map(encrypted_note_bytes)
                     .collect::<Vec<_>>(),
             ),
+            ShieldedPoolCall::mint_coinbase { coinbase_data } => {
+                Some(vec![encrypted_note_bytes(&coinbase_data.encrypted_note)])
+            }
             ShieldedPoolCall::shielded_transfer_sidecar {
                 ciphertext_hashes,
                 ciphertext_sizes,
@@ -1464,6 +1467,9 @@ fn da_layout_from_extrinsics(
                     .map(|note| encrypted_note_bytes(note).len())
                     .collect::<Vec<_>>(),
             ),
+            ShieldedPoolCall::mint_coinbase { coinbase_data } => Some(vec![
+                encrypted_note_bytes(&coinbase_data.encrypted_note).len(),
+            ]),
             ShieldedPoolCall::shielded_transfer_sidecar {
                 ciphertext_sizes,
                 ..

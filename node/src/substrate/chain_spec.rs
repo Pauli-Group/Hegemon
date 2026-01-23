@@ -66,6 +66,9 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
                     "active": false
                 }
             ]
+        },
+        "archiveMarket": {
+            "phantom": null
         }
     });
 
