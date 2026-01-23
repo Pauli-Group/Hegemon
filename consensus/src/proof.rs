@@ -416,11 +416,22 @@ fn verify_transaction_proof_inputs(
         });
     }
 
-    let mut expected_ciphertext_hashes: Vec<[u8; 48]> = tx
-        .ciphertexts
-        .iter()
-        .map(|ct| ciphertext_hash_bytes(ct))
-        .collect();
+    if !tx.ciphertexts.is_empty() {
+        let mut derived_hashes: Vec<[u8; 48]> = tx
+            .ciphertexts
+            .iter()
+            .map(|ct| ciphertext_hash_bytes(ct))
+            .collect();
+        derived_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
+        if derived_hashes != proof.public_inputs.ciphertext_hashes {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index,
+                message: "ciphertext hash mismatch".to_string(),
+            });
+        }
+    }
+
+    let mut expected_ciphertext_hashes = tx.ciphertext_hashes.clone();
     expected_ciphertext_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
     if expected_ciphertext_hashes != proof.public_inputs.ciphertext_hashes {
         return Err(ProofError::TransactionProofInputsMismatch {

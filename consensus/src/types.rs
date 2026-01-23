@@ -6,7 +6,7 @@ pub use state_da::{
     DaChunk, DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams,
     DaRoot,
 };
-use transaction_circuit::TransactionProof;
+use transaction_circuit::{hashing_pq::ciphertext_hash_bytes, TransactionProof};
 
 pub type Nullifier = [u8; 48];
 pub type Commitment = [u8; 48];
@@ -30,6 +30,7 @@ pub struct Transaction {
     pub balance_tag: BalanceTag,
     pub version: VersionBinding,
     pub ciphertexts: Vec<Vec<u8>>,
+    pub ciphertext_hashes: Vec<[u8; 48]>,
 }
 
 pub fn build_da_blob(transactions: &[Transaction]) -> Vec<u8> {
@@ -79,12 +80,16 @@ impl Transaction {
         version: VersionBinding,
         ciphertexts: Vec<Vec<u8>>,
     ) -> Self {
+        let ciphertext_hashes = ciphertexts
+            .iter()
+            .map(|ct| ciphertext_hash_bytes(ct))
+            .collect::<Vec<_>>();
         let id = compute_transaction_id(
             &nullifiers,
             &commitments,
             &balance_tag,
             version,
-            &ciphertexts,
+            &ciphertext_hashes,
         );
         Self {
             id,
@@ -93,6 +98,32 @@ impl Transaction {
             balance_tag,
             version,
             ciphertexts,
+            ciphertext_hashes,
+        }
+    }
+
+    pub fn new_with_hashes(
+        nullifiers: Vec<Nullifier>,
+        commitments: Vec<Commitment>,
+        balance_tag: BalanceTag,
+        version: VersionBinding,
+        ciphertext_hashes: Vec<[u8; 48]>,
+    ) -> Self {
+        let id = compute_transaction_id(
+            &nullifiers,
+            &commitments,
+            &balance_tag,
+            version,
+            &ciphertext_hashes,
+        );
+        Self {
+            id,
+            nullifiers,
+            commitments,
+            balance_tag,
+            version,
+            ciphertexts: Vec::new(),
+            ciphertext_hashes,
         }
     }
 
@@ -102,7 +133,7 @@ impl Transaction {
             &self.commitments,
             &self.balance_tag,
             self.version,
-            &self.ciphertexts,
+            &self.ciphertext_hashes,
         )
     }
 }
@@ -147,7 +178,7 @@ fn compute_transaction_id(
     commitments: &[Commitment],
     balance_tag: &BalanceTag,
     version: VersionBinding,
-    ciphertexts: &[Vec<u8>],
+    ciphertext_hashes: &[[u8; 48]],
 ) -> BlockHash {
     let mut hasher = Sha384::new();
     hasher.update(version.circuit.to_le_bytes());
@@ -158,9 +189,8 @@ fn compute_transaction_id(
     for cm in commitments {
         hasher.update(cm);
     }
-    for ct in ciphertexts {
-        hasher.update((ct.len() as u32).to_le_bytes());
-        hasher.update(ct);
+    for ct_hash in ciphertext_hashes {
+        hasher.update(ct_hash);
     }
     hasher.update(balance_tag);
     let digest = hasher.finalize();

@@ -1924,6 +1924,14 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys().collect()
         }
 
+        fn da_policy() -> pallet_shielded_pool::types::DaAvailabilityPolicy {
+            pallet_shielded_pool::DaPolicyStorage::<Runtime>::get()
+        }
+
+        fn ciphertext_policy() -> pallet_shielded_pool::types::CiphertextPolicy {
+            pallet_shielded_pool::CiphertextPolicyStorage::<Runtime>::get()
+        }
+
         fn compact_merkle_tree() -> pallet_shielded_pool::merkle::CompactMerkleTree {
             pallet_shielded_pool::MerkleTree::<Runtime>::get()
         }

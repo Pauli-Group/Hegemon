@@ -159,6 +159,12 @@ decl_runtime_apis! {
         /// Used by wallets to detect which of their notes have been spent.
         fn list_nullifiers() -> Vec<[u8; 48]>;
 
+        /// Get the DA availability policy (full fetch vs sampling).
+        fn da_policy() -> pallet_shielded_pool::types::DaAvailabilityPolicy;
+
+        /// Get the ciphertext policy (inline vs sidecar-only).
+        fn ciphertext_policy() -> pallet_shielded_pool::types::CiphertextPolicy;
+
         /// Fetch the compact Merkle tree state used for commitment-root computation.
         ///
         /// This is used by the node during block import to derive the expected commitment tree
