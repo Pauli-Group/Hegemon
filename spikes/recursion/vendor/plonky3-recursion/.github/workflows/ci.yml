@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "*" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 1
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-latest
+            features: "+avx2"
+          - os: macos-latest
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    if: "! contains(toJSON(github.event.commits.*.message), '[skip-ci]')"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: rs-stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: rust-${{ steps.rs-stable.outputs.rustc_hash }}-${{ matrix.os }}-${{ matrix.features }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Set flags
+        if: ${{ matrix.features }}
+        run: |
+          echo "RUSTFLAGS=-Ctarget-feature=${{ matrix.features }}" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --verbose --all-targets
+
+      - name: Test
+        run: cargo test --verbose --all-targets
+
+      - name: Check (release)
+        run: cargo check --verbose --all-targets --release
+
+      - name: Test documentation
+        run: cargo test --verbose --doc
+
+      - name: Run examples
+        run: |
+          cargo run --package p3-circuit-prover --example fibonacci
+          cargo run --package p3-circuit-prover --example poseidon2_perm_chain
+          cargo run --package p3-circuit-prover --example poseidon2_perm_merkle
+          
+      - name: Run allocation_log example with debug logging
+        env:
+          RUST_LOG: debug
+        run: cargo run --package p3-circuit --example allocation_log
+
+  check_embedded:
+    name: Build embedded
+    runs-on: ubuntu-latest
+    if: "! contains(toJSON(github.event.commits.*.message), '[skip-ci]')"
+
+    env:
+      target: thumbv7em-none-eabi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.target }}
+        id: rs-stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: rust-${{ steps.rs-stable.outputs.rustc_hash }}-${{ env.target }}-${{ hashFiles('**/Cargo.toml') }}
+
+      # NB: Some crates are currently skipped as unimplemented.
+      - name: Build
+        run: |
+          # cargo build --verbose --target ${{ env.target }} -p p3-challenger-air
+          cargo build --verbose --target ${{ env.target }} -p p3-circuit
+          cargo build --verbose --target ${{ env.target }} -p p3-circuit-prover
+          # cargo build --verbose --target ${{ env.target }} -p p3-field-air
+          # cargo build --verbose --target ${{ env.target }} -p p3-fri-air
+          # cargo build --verbose --target ${{ env.target }} -p p3-interpolation-air
+          cargo build --verbose --target ${{ env.target }} -p p3-poseidon2-circuit-air
+          cargo build --verbose --target ${{ env.target }} -p p3-symmetric-air
+          cargo build --verbose --target ${{ env.target }} -p p3-recursion
+
+  lint:
+    name: Formatting and Clippy
+    runs-on: ubuntu-latest
+    if: "! contains(toJSON(github.event.commits.*.message), '[skip-ci]')"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+        id: rs-stable
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Install cargo-sort
+        run: cargo install cargo-sort
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: rust-${{ steps.rs-stable.outputs.rustc_hash }}-${{ hashFiles('**/Cargo.toml') }}
+        
+      - name: Sort Cargo.toml
+        run: cargo +stable sort --workspace --grouped --check
+
+      - name: Clippy
+        run: cargo +stable clippy --all-targets -- -D warnings
+
+      - name: Format
+        run: cargo +nightly fmt --all -- --check
