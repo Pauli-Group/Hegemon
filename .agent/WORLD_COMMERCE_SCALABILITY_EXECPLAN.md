@@ -34,6 +34,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-23T06:10Z) Execute `.agent/COLD_ARCHIVE_RECOVERY_EXECPLAN.md` through “archive contract + wallet recovery flow works” milestone (wallet fallback + archive provider RPC path implemented; runbook prepared for end-to-end demo).
 - [ ] Run an end-to-end local commerce demo (stress send, mine, sync a fresh wallet, recover notes).
 - [x] (2026-01-23T12:00Z) Added a design-philosophy quick reference in this ExecPlan to anchor decisions.
+- [x] (2026-01-23T12:30Z) Wired DA policy + hash-only proof binding for sidecar sampling paths; fixed DA ciphertext index reuse on prune; updated runtime API for policy reads.
 
 ## Surprises & Discoveries
 
