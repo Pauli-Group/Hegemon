@@ -1,5 +1,10 @@
 # Always Be Shipping
 
+## Operator runbook updates
+
+- When documenting mining setup, always include guidance to set `HEGEMON_SEEDS` with the currently approved seed list and note that miners must share the same seeds to avoid forks.
+- Remind operators to enable time sync (NTP/chrony) because PoW timestamps are rejected if they exceed the future-skew bound.
+
 The product must be made real, not a mock up. DON'T BE A SYCOPHANT.
 
 # ExecPlans
