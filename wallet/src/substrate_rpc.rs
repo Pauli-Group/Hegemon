@@ -45,6 +45,8 @@ use transaction_circuit::StablecoinPolicyBinding;
 pub struct SubstrateRpcConfig {
     /// WebSocket endpoint URL (e.g., "ws://127.0.0.1:9944")
     pub endpoint: String,
+    /// Optional archive provider endpoint (WebSocket URL)
+    pub archive_endpoint: Option<String>,
     /// Connection timeout
     pub connection_timeout: Duration,
     /// Request timeout
@@ -59,6 +61,7 @@ impl Default for SubstrateRpcConfig {
     fn default() -> Self {
         Self {
             endpoint: "ws://127.0.0.1:9944".to_string(),
+            archive_endpoint: None,
             connection_timeout: Duration::from_secs(30),
             request_timeout: Duration::from_secs(60),
             max_reconnect_attempts: 5,
@@ -117,6 +120,16 @@ pub struct CommitmentWireEntry {
     pub index: u64,
     /// Commitment value (hex encoded)
     pub value: String,
+}
+
+/// Archive provider entry from archive RPC.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArchiveProviderEntry {
+    pub provider: String,
+    pub bond: u128,
+    pub price_per_byte_block: u128,
+    pub min_duration_blocks: u64,
+    pub endpoint: String,
 }
 
 /// Ciphertext entry from the node
@@ -295,6 +308,26 @@ pub struct CiphertextEntry {
     pub ciphertext: NoteCiphertext,
 }
 
+fn decode_ciphertext_entries(
+    entries: Vec<CiphertextEntryWire>,
+) -> Result<Vec<CiphertextEntry>, WalletError> {
+    let mut decoded = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &entry.ciphertext,
+        )
+        .map_err(|e| WalletError::Serialization(format!("Invalid base64 ciphertext: {}", e)))?;
+
+        let ciphertext = parse_pallet_encrypted_note(&bytes)?;
+        decoded.push(CiphertextEntry {
+            index: entry.index,
+            ciphertext,
+        });
+    }
+    Ok(decoded)
+}
+
 /// Substrate WebSocket RPC client for wallet operations
 ///
 /// This client connects to a Substrate node via WebSocket and provides
@@ -302,8 +335,16 @@ pub struct CiphertextEntry {
 pub struct SubstrateRpcClient {
     /// The underlying WebSocket client
     client: Arc<RwLock<WsClient>>,
+    /// Optional archive provider WebSocket client
+    archive_client: Arc<RwLock<Option<ArchiveRpcState>>>,
     /// Client configuration
     config: SubstrateRpcConfig,
+}
+
+#[derive(Debug)]
+struct ArchiveRpcState {
+    endpoint: String,
+    client: WsClient,
 }
 
 impl SubstrateRpcClient {
@@ -323,28 +364,42 @@ impl SubstrateRpcClient {
     /// # }
     /// ```
     pub async fn connect(endpoint: &str) -> Result<Self, WalletError> {
-        let config = SubstrateRpcConfig::with_endpoint(endpoint);
+        let mut config = SubstrateRpcConfig::with_endpoint(endpoint);
+        if config.archive_endpoint.is_none() {
+            config.archive_endpoint = std::env::var("HEGEMON_WALLET_ARCHIVE_WS_URL").ok();
+        }
         Self::connect_with_config(config).await
     }
 
     /// Connect with custom configuration
-    pub async fn connect_with_config(config: SubstrateRpcConfig) -> Result<Self, WalletError> {
+    pub async fn connect_with_config(
+        mut config: SubstrateRpcConfig,
+    ) -> Result<Self, WalletError> {
+        if config.archive_endpoint.is_none() {
+            config.archive_endpoint = std::env::var("HEGEMON_WALLET_ARCHIVE_WS_URL").ok();
+        }
         let client = Self::build_client(&config).await?;
         Ok(Self {
             client: Arc::new(RwLock::new(client)),
+            archive_client: Arc::new(RwLock::new(None)),
             config,
         })
     }
 
     async fn build_client(config: &SubstrateRpcConfig) -> Result<WsClient, WalletError> {
+        Self::build_client_for_endpoint(&config.endpoint, config).await
+    }
+
+    async fn build_client_for_endpoint(
+        endpoint: &str,
+        config: &SubstrateRpcConfig,
+    ) -> Result<WsClient, WalletError> {
         WsClientBuilder::default()
             .connection_timeout(config.connection_timeout)
             .request_timeout(config.request_timeout)
-            .build(&config.endpoint)
+            .build(endpoint)
             .await
-            .map_err(|e| {
-                WalletError::Rpc(format!("Failed to connect to {}: {}", config.endpoint, e))
-            })
+            .map_err(|e| WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e)))
     }
 
     /// Ensure connection is alive, reconnect if needed
@@ -373,6 +428,58 @@ impl SubstrateRpcClient {
                 }
             }
         }
+    }
+
+    async fn ensure_archive_connected(&self) -> Result<Option<()>, WalletError> {
+        {
+            let guard = self.archive_client.read().await;
+            if let Some(state) = guard.as_ref() {
+                if state.client.is_connected() {
+                    return Ok(Some(()));
+                }
+            }
+        }
+
+        let mut endpoint = {
+            let guard = self.archive_client.read().await;
+            guard.as_ref().map(|state| state.endpoint.clone())
+        };
+
+        if endpoint.is_none() {
+            endpoint = self.config.archive_endpoint.clone();
+        }
+
+        if endpoint.is_none() {
+            endpoint = self.discover_archive_endpoint().await?;
+        }
+
+        let Some(endpoint) = endpoint else {
+            return Ok(None);
+        };
+
+        let client = Self::build_client_for_endpoint(&endpoint, &self.config).await?;
+        let mut guard = self.archive_client.write().await;
+        *guard = Some(ArchiveRpcState { endpoint, client });
+        Ok(Some(()))
+    }
+
+    async fn discover_archive_endpoint(&self) -> Result<Option<String>, WalletError> {
+        let providers = self.archive_providers().await?;
+        let endpoint = providers
+            .into_iter()
+            .map(|provider| provider.endpoint)
+            .find(|endpoint| endpoint.trim_start().starts_with("ws"));
+        Ok(endpoint)
+    }
+
+    /// List archive providers from the chain.
+    pub async fn archive_providers(&self) -> Result<Vec<ArchiveProviderEntry>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .request("archive_listProviders", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("archive_listProviders failed: {}", e)))
     }
 
     /// Get wallet note status (commitment tree info)
@@ -453,24 +560,40 @@ impl SubstrateRpcClient {
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCiphertexts failed: {}", e)))?;
 
-        // Decode base64 ciphertexts and parse pallet format
-        let mut entries = Vec::with_capacity(response.entries.len());
-        for entry in response.entries {
-            let bytes = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                &entry.ciphertext,
-            )
-            .map_err(|e| WalletError::Serialization(format!("Invalid base64 ciphertext: {}", e)))?;
+        decode_ciphertext_entries(response.entries)
+    }
 
-            // Parse the pallet's packed format (ciphertext + kem_ciphertext)
-            let ciphertext = parse_pallet_encrypted_note(&bytes)?;
-            entries.push(CiphertextEntry {
-                index: entry.index,
-                ciphertext,
-            });
+    /// Get ciphertext entries from archive provider (if configured or discoverable).
+    pub async fn archive_ciphertexts(
+        &self,
+        start: u64,
+        limit: usize,
+    ) -> Result<Vec<CiphertextEntry>, WalletError> {
+        if self.ensure_archive_connected().await?.is_none() {
+            return Err(WalletError::Rpc(
+                "archive provider unavailable; configure HEGEMON_WALLET_ARCHIVE_WS_URL or register a provider".to_string(),
+            ));
         }
 
-        Ok(entries)
+        let guard = self.archive_client.read().await;
+        let Some(state) = guard.as_ref() else {
+            return Err(WalletError::Rpc(
+                "archive provider unavailable; no client".to_string(),
+            ));
+        };
+
+        let params = PaginationParams {
+            start,
+            limit: limit as u64,
+        };
+
+        let response: CiphertextResponse = state
+            .client
+            .request("hegemon_walletCiphertexts", rpc_params![params])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("archive walletCiphertexts failed: {}", e)))?;
+
+        decode_ciphertext_entries(response.entries)
     }
 
     /// Get all spent nullifiers

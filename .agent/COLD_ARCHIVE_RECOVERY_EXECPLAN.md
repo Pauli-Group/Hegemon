@@ -32,7 +32,7 @@ The “it works” proof is:
 - [x] (2026-01-23T03:15Z) Implement archive contracts (purchase, renewal, expiration).
 - [x] (2026-01-23T04:10Z) Implement challenge/response auditing using DA chunk proofs (schedule + respond + slash + failover).
 - [x] (2026-01-23T04:20Z) Expose archive contract listing via RPC (list + get).
-- [ ] Implement wallet/RPC integration for selecting providers and retrieving ciphertext ranges (completed: archive contract listing RPC; remaining: wallet sync fallback + ciphertext range retrieval).
+- [x] (2026-01-23T06:00Z) Implement wallet/RPC integration for selecting providers and retrieving ciphertext ranges (wallet sync falls back to archive provider endpoint; provider discovery via `archive_listProviders` or env override).
 - [ ] End-to-end demo: prune hot DA, recover via archive provider, decrypt notes.
 - [x] (2026-01-23T02:30Z) Expose archive provider registry via RPC (list + detail).
 
@@ -62,6 +62,10 @@ Update this section after hot DA is implemented and we can meaningfully test arc
 - Decision: Keep the archive market interface generic so that external storage networks can participate as providers without being protocol requirements.
   Rationale: The protocol should specify requirements (what must be retrievable, how to verify) and incentives. Providers can be a local node, a dedicated service, or an adapter to an external network. The chain should not depend on a single external DA vendor.
   Date/Author: 2026-01-21 / Codex
+
+- Decision: For the first recovery milestone, archive providers serve the standard wallet ciphertext RPC (`hegemon_walletCiphertexts`) on a WS endpoint; the wallet discovers providers via `archive_listProviders` or an explicit env override.
+  Rationale: This keeps the demo simple and uses existing wallet decoding logic while leaving room for a dedicated archive RPC later.
+  Date/Author: 2026-01-23 / Codex
 
 - Decision: Price archive contracts as `price_per_byte_block * byte_count * retention_blocks`, paid up-front to providers, with a caller-specified `bond_stake` carved out of the provider bond for audit slashing.
   Rationale: The chain needs a simple, deterministic pricing rule and a clear bond-at-risk amount per contract. Paying up-front avoids escrow complexity in the first version while audits later enforce service quality by slashing the committed bond.

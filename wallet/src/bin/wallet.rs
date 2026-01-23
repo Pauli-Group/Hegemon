@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes},
+    hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, is_canonical_bytes48, note_commitment_bytes},
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
     StablecoinPolicyBinding,
@@ -511,9 +511,17 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
             note: note.to_note_data(address.pk_recipient),
         });
     }
+    let ciphertext_hashes = ciphertexts
+        .iter()
+        .map(|ciphertext| {
+            let bytes = map_wallet(ciphertext.to_da_bytes())?;
+            Ok(ciphertext_hash_bytes(&bytes))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let witness = TransactionWitness {
         inputs,
         outputs,
+        ciphertext_hashes,
         sk_spend: keys.view.nullifier_key(),
         merkle_root: parse_merkle_root(params.merkle_root)?,
         fee: params.fee,
