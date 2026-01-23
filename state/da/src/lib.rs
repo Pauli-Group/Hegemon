@@ -65,10 +65,10 @@ pub enum DaError {
 #[derive(Debug, Encode, Decode)]
 pub struct DaEncoding {
     params: DaParams,
-    data_len: usize,
-    data_shards: usize,
-    parity_shards: usize,
-    chunk_size: usize,
+    data_len: u64,
+    data_shards: u64,
+    parity_shards: u64,
+    chunk_size: u64,
     chunks: Vec<DaChunk>,
     merkle_levels: Vec<Vec<DaRoot>>,
 }
@@ -76,7 +76,7 @@ pub struct DaEncoding {
 #[derive(Debug, Encode, Decode)]
 pub struct DaMultiEncoding {
     params: DaParams,
-    page_len: usize,
+    page_len: u64,
     pages: Vec<DaEncoding>,
     page_roots: Vec<DaRoot>,
     page_merkle_levels: Vec<Vec<DaRoot>>,
@@ -87,19 +87,19 @@ impl DaEncoding {
         self.params
     }
 
-    pub fn data_len(&self) -> usize {
+    pub fn data_len(&self) -> u64 {
         self.data_len
     }
 
-    pub fn data_shards(&self) -> usize {
+    pub fn data_shards(&self) -> u64 {
         self.data_shards
     }
 
-    pub fn parity_shards(&self) -> usize {
+    pub fn parity_shards(&self) -> u64 {
         self.parity_shards
     }
 
-    pub fn chunk_size(&self) -> usize {
+    pub fn chunk_size(&self) -> u64 {
         self.chunk_size
     }
 
@@ -143,7 +143,7 @@ impl DaMultiEncoding {
         self.params
     }
 
-    pub fn page_len(&self) -> usize {
+    pub fn page_len(&self) -> u64 {
         self.page_len
     }
 
@@ -246,10 +246,10 @@ pub fn encode_da_blob(blob: &[u8], params: DaParams) -> Result<DaEncoding, DaErr
 
     Ok(DaEncoding {
         params,
-        data_len,
-        data_shards,
-        parity_shards,
-        chunk_size,
+        data_len: data_len as u64,
+        data_shards: data_shards as u64,
+        parity_shards: parity_shards as u64,
+        chunk_size: chunk_size as u64,
         chunks,
         merkle_levels,
     })
@@ -273,7 +273,7 @@ pub fn encode_da_blob_multipage(blob: &[u8], params: DaParams) -> Result<DaMulti
 
     Ok(DaMultiEncoding {
         params,
-        page_len,
+        page_len: page_len as u64,
         pages,
         page_roots,
         page_merkle_levels,
@@ -600,7 +600,7 @@ mod tests {
             sample_count: 1,
         };
         let encoding = encode_da_blob(&[], params).expect("encode");
-        assert_eq!(encoding.data_shards(), 1);
+        assert_eq!(encoding.data_shards(), 1u64);
         assert_eq!(encoding.chunks().len(), 2);
     }
 
