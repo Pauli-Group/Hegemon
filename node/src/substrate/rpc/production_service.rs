@@ -657,6 +657,26 @@ where
         api.archive_providers(best_hash)
             .map_err(|e| format!("Runtime API error: {:?}", e))
     }
+
+    fn contract(
+        &self,
+        contract_id: u64,
+    ) -> Result<Option<pallet_archive_market::ArchiveContract<runtime::Runtime>>, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.archive_contract(best_hash, contract_id)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
+    }
+
+    fn contracts(
+        &self,
+        provider: AccountId,
+    ) -> Result<Vec<pallet_archive_market::ArchiveContract<runtime::Runtime>>, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.archive_contracts(best_hash, provider)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
+    }
 }
 
 #[cfg(test)]

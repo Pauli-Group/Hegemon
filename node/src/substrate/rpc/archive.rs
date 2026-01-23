@@ -7,7 +7,7 @@ use jsonrpsee::types::ErrorObjectOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use pallet_archive_market::ProviderInfo;
+use pallet_archive_market::{ArchiveContract, ContractStatus, ProviderInfo};
 use runtime::{AccountId, Runtime};
 
 /// Archive provider entry returned by RPC.
@@ -20,11 +20,43 @@ pub struct ArchiveProviderEntry {
     pub endpoint: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveContractStatus {
+    Active,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArchiveContractEntry {
+    pub contract_id: u64,
+    pub buyer: String,
+    pub provider: String,
+    pub start_block: u64,
+    pub end_block: u64,
+    pub retention_blocks: u64,
+    pub expires_at: u64,
+    pub byte_count: u64,
+    pub price_per_byte_block: u128,
+    pub total_cost: u128,
+    pub bond_stake: u128,
+    pub created_at: u64,
+    pub status: ArchiveContractStatus,
+}
+
 /// Trait for archive market queries.
 pub trait ArchiveMarketService: Send + Sync {
     fn provider_count(&self) -> Result<u32, String>;
     fn provider(&self, provider: AccountId) -> Result<Option<ProviderInfo<Runtime>>, String>;
     fn providers(&self) -> Result<Vec<(AccountId, ProviderInfo<Runtime>)>, String>;
+    fn contract(
+        &self,
+        contract_id: u64,
+    ) -> Result<Option<ArchiveContract<Runtime>>, String>;
+    fn contracts(
+        &self,
+        provider: AccountId,
+    ) -> Result<Vec<ArchiveContract<Runtime>>, String>;
 }
 
 #[rpc(server, client, namespace = "archive")]
@@ -40,6 +72,14 @@ pub trait ArchiveApi {
     /// Return the number of registered providers.
     #[method(name = "providerCount")]
     async fn provider_count(&self) -> RpcResult<u32>;
+
+    /// List contracts for a provider (hex-encoded).
+    #[method(name = "listContracts")]
+    async fn list_contracts(&self, provider: String) -> RpcResult<Vec<ArchiveContractEntry>>;
+
+    /// Fetch a single contract by id.
+    #[method(name = "getContract")]
+    async fn get_contract(&self, contract_id: u64) -> RpcResult<Option<ArchiveContractEntry>>;
 }
 
 pub struct ArchiveRpc<S> {
@@ -87,6 +127,27 @@ where
             .provider_count()
             .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))
     }
+
+    async fn list_contracts(&self, provider: String) -> RpcResult<Vec<ArchiveContractEntry>> {
+        let provider_id = parse_account_id(&provider)?;
+        let contracts = self
+            .service
+            .contracts(provider_id)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+
+        Ok(contracts
+            .into_iter()
+            .map(to_contract_entry)
+            .collect())
+    }
+
+    async fn get_contract(&self, contract_id: u64) -> RpcResult<Option<ArchiveContractEntry>> {
+        let contract = self
+            .service
+            .contract(contract_id)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+        Ok(contract.map(to_contract_entry))
+    }
 }
 
 fn to_entry(provider: AccountId, info: ProviderInfo<Runtime>) -> ArchiveProviderEntry {
@@ -100,6 +161,28 @@ fn to_entry(provider: AccountId, info: ProviderInfo<Runtime>) -> ArchiveProvider
         price_per_byte_block: info.price_per_byte_block,
         min_duration_blocks: info.min_duration_blocks,
         endpoint,
+    }
+}
+
+fn to_contract_entry(contract: ArchiveContract<Runtime>) -> ArchiveContractEntry {
+    let status = match contract.status {
+        ContractStatus::Active => ArchiveContractStatus::Active,
+        ContractStatus::Failed => ArchiveContractStatus::Failed,
+    };
+    ArchiveContractEntry {
+        contract_id: contract.contract_id,
+        buyer: format!("0x{}", hex::encode(contract.buyer.as_ref())),
+        provider: format!("0x{}", hex::encode(contract.provider.as_ref())),
+        start_block: contract.start_block,
+        end_block: contract.end_block,
+        retention_blocks: contract.retention_blocks,
+        expires_at: contract.expires_at,
+        byte_count: contract.byte_count,
+        price_per_byte_block: contract.price_per_byte_block,
+        total_cost: contract.total_cost,
+        bond_stake: contract.bond_stake,
+        created_at: contract.created_at,
+        status,
     }
 }
 

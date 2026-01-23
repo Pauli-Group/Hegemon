@@ -60,8 +60,8 @@ Execute a transfer where ciphertext bytes are supplied out-of-band (DA sidecar).
 ### `shielded_transfer_unsigned_sidecar(proof, nullifiers, commitments, ciphertext_hashes, ciphertext_sizes, anchor, binding_hash, stablecoin, fee)`
 Unsigned sidecar transfer; ciphertext bytes live in the DA sidecar and `stablecoin` must be `None`.
 
-### `submit_commitment_proof(da_root, proof)` (inherent)
-Attach the block commitment proof and the DA root to the block body for node-side verification and DA retrieval.
+### `submit_commitment_proof(da_root, chunk_count, proof)` (inherent)
+Attach the block commitment proof, DA root, and DA chunk count to the block body for node-side verification and archive auditing.
 
 ### `submit_aggregation_proof(proof)` (inherent)
 Attach an aggregation proof over transaction proofs when available.

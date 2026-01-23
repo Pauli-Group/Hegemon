@@ -30,7 +30,7 @@
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
 use crate::AccountId;
-use pallet_archive_market::ProviderInfo;
+use pallet_archive_market::{ArchiveContract, ProviderInfo};
 use pallet_shielded_pool::merkle::CompactMerkleTree;
 use pallet_shielded_pool::types::{FeeParameters, FeeProofKind, ForcedInclusionStatus};
 use sp_api::decl_runtime_apis;
@@ -194,5 +194,11 @@ decl_runtime_apis! {
 
         /// List all providers.
         fn archive_providers() -> Vec<(AccountId, ProviderInfo<crate::Runtime>)>;
+
+        /// Fetch a single archive contract by id.
+        fn archive_contract(contract_id: u64) -> Option<ArchiveContract<crate::Runtime>>;
+
+        /// List all contracts for a provider.
+        fn archive_contracts(provider: AccountId) -> Vec<ArchiveContract<crate::Runtime>>;
     }
 }

@@ -1852,6 +1852,7 @@ impl HeaderProofExt for SubstrateProofHeader {
 
 struct CommitmentProofPayload {
     da_root: DaRoot,
+    da_chunk_count: u32,
     proof_bytes: Vec<u8>,
 }
 
@@ -1864,12 +1865,17 @@ fn extract_commitment_proof_payload(
             continue;
         };
 
-        if let ShieldedPoolCall::submit_commitment_proof { da_root, proof } = call {
+        if let ShieldedPoolCall::submit_commitment_proof {
+            da_root,
+            chunk_count,
+            proof,
+        } = call {
             if found.is_some() {
                 return Err("multiple submit_commitment_proof extrinsics in block".into());
             }
             found = Some(CommitmentProofPayload {
                 da_root: *da_root,
+                da_chunk_count: *chunk_count,
                 proof_bytes: proof.data.clone(),
             });
         }
@@ -2290,10 +2296,18 @@ fn verify_proof_carrying_block(
     let payload = commitment_payload
         .ok_or_else(|| "missing submit_commitment_proof extrinsic".to_string())?;
 
-    let expected_da_root = consensus::da_root(&transactions, da_params)
-        .map_err(|err| format!("commitment proof da_root encoding failed: {err}"))?;
+    let expected_encoding = consensus::encode_da_blob(
+        &consensus::build_da_blob(&transactions),
+        da_params,
+    )
+    .map_err(|err| format!("commitment proof da_root encoding failed: {err}"))?;
+    let expected_da_root = expected_encoding.root();
+    let expected_chunk_count = expected_encoding.chunks().len() as u32;
     if expected_da_root != payload.da_root {
         return Err("commitment proof da_root mismatch".to_string());
+    }
+    if expected_chunk_count != payload.da_chunk_count {
+        return Err("commitment proof da_chunk_count mismatch".to_string());
     }
 
     let parent_tree = load_parent_commitment_tree_state(client, parent_hash)?;
@@ -2873,12 +2887,14 @@ pub fn wire_block_builder_api(
 
         let resolved_ciphertexts =
             da_blob_build.as_ref().map(|build| build.transactions.as_slice());
+        let mut da_chunk_count_override = None;
         let da_root_override = if commitment_block_proofs_enabled {
             if let Some(build) = da_blob_build.as_ref() {
-                Some(
-                    state_da::da_root(&build.blob, da_params)
-                        .map_err(|err| format!("da_root encoding failed: {err}"))?,
-                )
+                let encoding = state_da::encode_da_blob(&build.blob, da_params)
+                    .map_err(|err| format!("da_root encoding failed: {err}"))?;
+                let root = encoding.root();
+                da_chunk_count_override = Some(encoding.chunks().len() as u32);
+                Some(root)
             } else {
                 None
             }
@@ -2899,10 +2915,13 @@ pub fn wire_block_builder_api(
                 commitment_block_fast,
             ) {
                 Ok(Some(proof)) => {
+                    let chunk_count_for_commitment = da_chunk_count_override
+                        .ok_or_else(|| "missing da_chunk_count for commitment proof".to_string())?;
                     let commitment_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
                         runtime::RuntimeCall::ShieldedPool(
                             ShieldedPoolCall::submit_commitment_proof {
                                 da_root: da_root_for_commitment,
+                                chunk_count: chunk_count_for_commitment,
                                 proof: pallet_shielded_pool::types::StarkProof::from_bytes(
                                     proof.proof_bytes.clone(),
                                 ),
@@ -6026,6 +6045,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "archive_listProviders",
                             "archive_getProvider",
                             "archive_providerCount",
+                            "archive_listContracts",
+                            "archive_getContract",
                             "rpc_methods"
                         ]
                     }));

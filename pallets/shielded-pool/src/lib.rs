@@ -406,6 +406,12 @@ pub mod pallet {
     #[pallet::storage]
     pub type AggregationProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
+    /// DA commitments per block (da_root + chunk count) for archive audits.
+    #[pallet::storage]
+    #[pallet::getter(fn da_commitment)]
+    pub type DaCommitments<T: Config> =
+        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -597,6 +603,8 @@ pub mod pallet {
         /// Proof exceeds maximum allowed size.
         /// This prevents DoS attacks via oversized proofs that consume verification resources.
         ProofTooLarge,
+        /// DA chunk count is invalid for this block.
+        InvalidDaChunkCount,
         /// Invalid batch size (must be power of 2: 2, 4, 8, or 16).
         InvalidBatchSize,
         // ========================================
@@ -750,6 +758,7 @@ pub mod pallet {
         pub fn submit_commitment_proof(
             origin: OriginFor<T>,
             da_root: [u8; 48],
+            chunk_count: u32,
             proof: StarkProof,
         ) -> DispatchResult {
             ensure_none(origin)?;
@@ -764,8 +773,16 @@ pub mod pallet {
                 Error::<T>::ProofTooLarge
             );
 
-            let _ = da_root;
+            ensure!(chunk_count > 0, Error::<T>::InvalidDaChunkCount);
 
+            let block_number = frame_system::Pallet::<T>::block_number();
+            DaCommitments::<T>::insert(
+                block_number,
+                types::DaCommitment {
+                    root: da_root,
+                    chunk_count,
+                },
+            );
             CommitmentProofProcessed::<T>::put(true);
             Ok(())
         }
@@ -2719,7 +2736,11 @@ pub mod pallet {
                         .propagate(false) // Inherents are not propagated
                         .build()
                 }
-                Call::submit_commitment_proof { da_root: _, proof } => {
+                Call::submit_commitment_proof {
+                    da_root: _,
+                    chunk_count,
+                    proof,
+                } => {
                     if _source != TransactionSource::InBlock {
                         return InvalidTransaction::Call.into();
                     }
@@ -2728,6 +2749,9 @@ pub mod pallet {
                     }
                     if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
                         return InvalidTransaction::ExhaustsResources.into();
+                    }
+                    if *chunk_count == 0 {
+                        return InvalidTransaction::Custom(10).into();
                     }
                     ValidTransaction::with_tag_prefix("ShieldedPoolCommitmentProof")
                         .priority(TransactionPriority::MAX)
