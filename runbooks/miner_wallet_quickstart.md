@@ -57,6 +57,20 @@ HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
   --rpc-port 9944
 ```
 
+### 4a. Configure seed peers (recommended for real mining)
+
+To avoid forks caused by low peer counts, configure multiple reachable seeds. Use a comma-separated list in `HEGEMON_SEEDS`:
+
+```bash
+export HEGEMON_SEEDS="158.69.222.121:30333,75.155.93.185:30333"
+```
+
+Ensure TCP/30333 is open on each seed and that every miner shares the same seed list. Avoid single-point seeds.
+
+### 4b. Ensure time sync (recommended)
+
+PoW blocks reject timestamps more than 90 seconds in the future. Enable NTP/chrony on every miner to prevent timestamp rejection.
+
 The `--dev` flag pre-funds test accounts and enables fast block times. Block rewards (~4.98 HEG per block) are minted as shielded notes only your wallet can spend.
 
 ## 5. Verify the node is running
@@ -95,6 +109,8 @@ curl -s -H "Content-Type: application/json" \
   -d '{"id":1, "jsonrpc":"2.0", "method": "system_peers"}' \
   http://127.0.0.1:9944
 ```
+
+If the node runs with `--rpc-methods safe`, `system_peers` is blocked. In that case, use `system_health` or check TCP connections on port 30333.
 
 Both nodes should see each other as peers and sync blocks.
 
