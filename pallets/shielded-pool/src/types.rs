@@ -296,7 +296,20 @@ pub enum FeeProofKind {
 }
 
 /// Fee schedule parameters for shielded transfers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct FeeParameters {
     /// Base fee charged per single-transfer proof.
     pub proof_fee: u128,

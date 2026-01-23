@@ -27,12 +27,13 @@ The “it works” proof is:
 ## Progress
 
 - [x] (2026-01-21T00:00Z) Draft cold archive + recovery ExecPlan (this file).
-- [ ] Define the recovery contract: exactly what data is covered, what is paid for, what is guaranteed, and what is not.
-- [ ] Implement archive provider registration + bonding on-chain.
+- [x] (2026-01-23T00:00Z) Define the recovery contract and archive interface (DA chunks + proofs, challenge/response audits).
+- [x] (2026-01-23T02:00Z) Implement archive provider registration + bonding on-chain (pallet + runtime + tests).
 - [ ] Implement archive contracts (purchase, renewal, expiration).
 - [ ] Implement challenge/response auditing using DA chunk proofs (slash on failure).
 - [ ] Implement wallet/RPC integration for selecting providers and retrieving ciphertext ranges.
 - [ ] End-to-end demo: prune hot DA, recover via archive provider, decrypt notes.
+- [x] (2026-01-23T02:30Z) Expose archive provider registry via RPC (list + detail).
 
 ## Surprises & Discoveries
 
@@ -50,6 +51,12 @@ Update this section after hot DA is implemented and we can meaningfully test arc
 - Decision: Enforce archive provider behavior with a challenge/response audit mechanism built on existing DA chunk proofs.
   Rationale: “Proving non-response” is hard, but we can prove “can respond to random challenges.” If a provider cannot produce valid chunk proofs for randomly chosen indices over time, they are not storing/serving data reliably and should lose their bond.
   Date/Author: 2026-01-21 / Codex
+
+- Decision: Archive providers must serve DA chunks + proofs keyed by `(da_root, global_chunk_index)`; wallet-facing “ciphertext range”
+  APIs are layered convenience, not consensus requirements.
+  Rationale: DA chunks are already committed and verifiable on-chain, making audits and slashing unambiguous without reintroducing
+  block-body dependence.
+  Date/Author: 2026-01-23 / Codex
 
 - Decision: Keep the archive market interface generic so that external storage networks can participate as providers without being protocol requirements.
   Rationale: The protocol should specify requirements (what must be retrievable, how to verify) and incentives. Providers can be a local node, a dedicated service, or an adapter to an external network. The chain should not depend on a single external DA vendor.

@@ -1481,6 +1481,16 @@ parameter_types! {
         pallet_shielded_pool::types::FeeParameters::default();
 }
 
+// === Archive Market Configuration ===
+parameter_types! {
+    /// Maximum archive providers registered on-chain.
+    pub const MaxArchiveProviders: u32 = 64;
+    /// Maximum endpoint metadata length (bytes).
+    pub const MaxArchiveEndpointLen: u32 = 256;
+    /// Minimum bond required to register as an archive provider.
+    pub const MinArchiveProviderBond: Balance = 100_000_000;
+}
+
 pub struct RuntimeStablecoinPolicyProvider;
 impl pallet_shielded_pool::StablecoinPolicyProvider<u32, u32, u64, BlockNumber>
     for RuntimeStablecoinPolicyProvider
@@ -1577,6 +1587,15 @@ impl pallet_shielded_pool::Config for Runtime {
     type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
 }
 
+impl pallet_archive_market::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type Currency = Balances;
+    type MinProviderBond = MinArchiveProviderBond;
+    type MaxProviders = MaxArchiveProviders;
+    type MaxEndpointLen = MaxArchiveEndpointLen;
+    type WeightInfo = ();
+}
+
 construct_runtime!(
     pub enum Runtime {
         System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
@@ -1600,6 +1619,7 @@ construct_runtime!(
         FeeModel: pallet_fee_model::{Pallet, Storage, Event<T>},
         Observability: pallet_observability::{Pallet, Call, Storage, Event<T>},
         ShieldedPool: pallet_shielded_pool::{Pallet, Call, Storage, Event<T>, Config<T>, Inherent, ValidateUnsigned},
+        ArchiveMarket: pallet_archive_market::{Pallet, Call, Storage, Event<T>, Config<T>},
     }
 );
 
@@ -1889,6 +1909,23 @@ sp_api::impl_runtime_apis! {
 
         fn forced_inclusions() -> sp_std::vec::Vec<pallet_shielded_pool::types::ForcedInclusionStatus> {
             pallet_shielded_pool::Pallet::<Runtime>::forced_inclusions()
+        }
+    }
+
+    impl apis::ArchiveMarketApi<Block> for Runtime {
+        fn archive_provider_count() -> u32 {
+            pallet_archive_market::ProviderCount::<Runtime>::get()
+        }
+
+        fn archive_provider(
+            provider: AccountId,
+        ) -> Option<pallet_archive_market::ProviderInfo<Runtime>> {
+            pallet_archive_market::Providers::<Runtime>::get(provider)
+        }
+
+        fn archive_providers(
+        ) -> sp_std::vec::Vec<(AccountId, pallet_archive_market::ProviderInfo<Runtime>)> {
+            pallet_archive_market::Providers::<Runtime>::iter().collect()
         }
     }
 }

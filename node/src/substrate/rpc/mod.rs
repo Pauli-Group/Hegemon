@@ -55,6 +55,7 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod archive;
 pub mod block;
 pub mod da;
 pub mod hegemon;
@@ -152,3 +153,4 @@ pub fn create_minimal() -> Result<RpcModule<()>, Box<dyn std::error::Error + Sen
 
     Ok(module)
 }
+pub use archive::{ArchiveApiServer, ArchiveMarketService, ArchiveRpc};
