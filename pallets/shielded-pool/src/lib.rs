@@ -149,6 +149,8 @@ pub trait WeightInfo {
     fn shielded_transfer(nullifiers: u32, commitments: u32) -> Weight;
     fn mint_coinbase() -> Weight;
     fn update_verifying_key() -> Weight;
+    fn set_da_policy() -> Weight;
+    fn set_ciphertext_policy() -> Weight;
 }
 
 /// Default weight implementation.
@@ -168,6 +170,14 @@ impl WeightInfo for DefaultWeightInfo {
     }
 
     fn update_verifying_key() -> Weight {
+        Weight::from_parts(10_000, 0)
+    }
+
+    fn set_da_policy() -> Weight {
+        Weight::from_parts(10_000, 0)
+    }
+
+    fn set_ciphertext_policy() -> Weight {
         Weight::from_parts(10_000, 0)
     }
 }
@@ -412,6 +422,18 @@ pub mod pallet {
     pub type DaCommitments<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
 
+    /// DA availability policy (full fetch vs sampling).
+    #[pallet::storage]
+    #[pallet::getter(fn da_policy)]
+    pub type DaPolicyStorage<T: Config> =
+        StorageValue<_, types::DaAvailabilityPolicy, ValueQuery>;
+
+    /// Ciphertext policy (inline vs sidecar-only).
+    #[pallet::storage]
+    #[pallet::getter(fn ciphertext_policy)]
+    pub type CiphertextPolicyStorage<T: Config> =
+        StorageValue<_, types::CiphertextPolicy, ValueQuery>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -471,6 +493,14 @@ pub mod pallet {
             commitment_count: u32,
             /// Total fee across all transactions.
             total_fee: u128,
+        },
+        /// DA availability policy updated.
+        DaPolicyUpdated {
+            policy: types::DaAvailabilityPolicy,
+        },
+        /// Ciphertext policy updated.
+        CiphertextPolicyUpdated {
+            policy: types::CiphertextPolicy,
         },
         /// Fee parameters were updated.
         FeeParametersUpdated {
@@ -603,6 +633,8 @@ pub mod pallet {
         /// Proof exceeds maximum allowed size.
         /// This prevents DoS attacks via oversized proofs that consume verification resources.
         ProofTooLarge,
+        /// Inline ciphertexts are disabled; sidecar-only is enforced.
+        InlineCiphertextsDisabled,
         /// DA chunk count is invalid for this block.
         InvalidDaChunkCount,
         /// Invalid batch size (must be power of 2: 2, 4, 8, or 16).
@@ -834,6 +866,13 @@ pub mod pallet {
             value_balance: i128,
         ) -> DispatchResult {
             ensure_signed(origin)?;
+            ensure!(
+                matches!(
+                    CiphertextPolicyStorage::<T>::get(),
+                    types::CiphertextPolicy::InlineAllowed
+                ),
+                Error::<T>::InlineCiphertextsDisabled
+            );
             ensure!(
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::TransfersAfterCoinbase
@@ -1228,6 +1267,36 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Update the DA availability policy (full fetch vs sampling).
+        ///
+        /// Can only be called by AdminOrigin (governance).
+        #[pallet::call_index(11)]
+        #[pallet::weight(T::WeightInfo::set_da_policy())]
+        pub fn set_da_policy(
+            origin: OriginFor<T>,
+            policy: types::DaAvailabilityPolicy,
+        ) -> DispatchResult {
+            T::AdminOrigin::ensure_origin(origin)?;
+            DaPolicyStorage::<T>::put(policy);
+            Self::deposit_event(Event::DaPolicyUpdated { policy });
+            Ok(())
+        }
+
+        /// Update the ciphertext policy (inline vs sidecar-only).
+        ///
+        /// Can only be called by AdminOrigin (governance).
+        #[pallet::call_index(12)]
+        #[pallet::weight(T::WeightInfo::set_ciphertext_policy())]
+        pub fn set_ciphertext_policy(
+            origin: OriginFor<T>,
+            policy: types::CiphertextPolicy,
+        ) -> DispatchResult {
+            T::AdminOrigin::ensure_origin(origin)?;
+            CiphertextPolicyStorage::<T>::put(policy);
+            Self::deposit_event(Event::CiphertextPolicyUpdated { policy });
+            Ok(())
+        }
+
         /// Update the fee parameters for shielded transfers.
         #[pallet::call_index(9)]
         #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Operational, Pays::No))]
@@ -1414,6 +1483,13 @@ pub mod pallet {
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
             ensure_none(origin)?;
+            ensure!(
+                matches!(
+                    CiphertextPolicyStorage::<T>::get(),
+                    types::CiphertextPolicy::InlineAllowed
+                ),
+                Error::<T>::InlineCiphertextsDisabled
+            );
             ensure!(
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::TransfersAfterCoinbase
@@ -1804,6 +1880,13 @@ pub mod pallet {
         ) -> DispatchResult {
             // This is an unsigned extrinsic for batch transfers
             ensure_none(origin)?;
+            ensure!(
+                matches!(
+                    CiphertextPolicyStorage::<T>::get(),
+                    types::CiphertextPolicy::InlineAllowed
+                ),
+                Error::<T>::InlineCiphertextsDisabled
+            );
             ensure!(
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::TransfersAfterCoinbase

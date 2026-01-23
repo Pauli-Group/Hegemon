@@ -198,6 +198,58 @@ pub struct StablecoinPolicyBinding {
     pub policy_version: u32,
 }
 
+/// Data availability validation policy for block import.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+)]
+pub enum DaAvailabilityPolicy {
+    /// Require full DA fetch and verify `da_root` against the reconstructed blob.
+    FullFetch,
+    /// Require only randomized sampling of DA chunks (no full reconstruction).
+    Sampling,
+}
+
+impl Default for DaAvailabilityPolicy {
+    fn default() -> Self {
+        DaAvailabilityPolicy::FullFetch
+    }
+}
+
+/// Policy for allowing inline ciphertext bytes inside extrinsics.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+)]
+pub enum CiphertextPolicy {
+    /// Inline ciphertexts are permitted (legacy path).
+    InlineAllowed,
+    /// Inline ciphertexts are rejected; sidecar-only is enforced.
+    SidecarOnly,
+}
+
+impl Default for CiphertextPolicy {
+    fn default() -> Self {
+        CiphertextPolicy::InlineAllowed
+    }
+}
+
 impl Default for StablecoinPolicyBinding {
     fn default() -> Self {
         Self {

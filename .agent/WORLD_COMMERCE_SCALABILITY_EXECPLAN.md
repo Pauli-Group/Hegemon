@@ -33,6 +33,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-23T00:00Z) Execute `.agent/CENSORSHIP_RESISTANCE_FEES_EXECPLAN.md` through “forced inclusion lane + private fee policy” milestone.
 - [x] (2026-01-23T06:10Z) Execute `.agent/COLD_ARCHIVE_RECOVERY_EXECPLAN.md` through “archive contract + wallet recovery flow works” milestone (wallet fallback + archive provider RPC path implemented; runbook prepared for end-to-end demo).
 - [ ] Run an end-to-end local commerce demo (stress send, mine, sync a fresh wallet, recover notes).
+- [x] (2026-01-23T12:00Z) Added a design-philosophy quick reference in this ExecPlan to anchor decisions.
 
 ## Surprises & Discoveries
 
@@ -73,6 +74,15 @@ Not started. Update this section once the first end-to-end demo is working.
 ## Context and Orientation
 
 Design principles for decisions in this plan live in `DESIGN.md §0` (canonical pool, PQ-only primitives, transparent proofs, and UX-first privacy).
+
+### Design Philosophy & Principles (Quick Reference)
+
+- One canonical privacy pool: avoid multiple pools or migration cliffs.
+- PQ-first, ≥128-bit security everywhere (ML-KEM-1024, ML-DSA, hash-based commitments).
+- Transparent proofs only; no trusted setup.
+- Chain is the minimal PQ validity/availability anchor; bulk throughput and storage are paid services.
+- Availability is enforced at acceptance; archival is explicit, priced, and optional.
+- UX and recovery matter: wallet sync must remain viable as the network scales.
 
 Hegemon today is a Substrate-based proof-of-work chain with a shielded pool (Zcash-like “notes” and “nullifiers”) and post-quantum cryptography everywhere:
 

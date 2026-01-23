@@ -49,6 +49,8 @@ struct StoredTransaction {
     version_circuit: u16,
     version_crypto: u16,
     ciphertexts: Vec<Vec<u8>>,
+    #[serde(default)]
+    ciphertext_hashes: Vec<[u8; 48]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -126,6 +128,7 @@ impl From<&ConsensusBlock> for StoredBlock {
                 version_circuit: tx.version.circuit,
                 version_crypto: tx.version.crypto,
                 ciphertexts: tx.ciphertexts.clone(),
+                ciphertext_hashes: tx.ciphertext_hashes.clone(),
             })
             .collect();
         let coinbase = block.coinbase.as_ref().map(|cb| StoredCoinbase {
@@ -186,15 +189,31 @@ impl StoredBlock {
             .into_iter()
             .map(|stored| {
                 let version = VersionBinding::new(stored.version_circuit, stored.version_crypto);
-                Transaction::new(
-                    stored.nullifiers,
-                    stored.commitments,
-                    stored.balance_tag,
-                    version,
-                    stored.ciphertexts,
-                )
+                if stored.ciphertexts.is_empty() && !stored.ciphertext_hashes.is_empty() {
+                    Ok(Transaction::new_with_hashes(
+                        stored.nullifiers,
+                        stored.commitments,
+                        stored.balance_tag,
+                        version,
+                        stored.ciphertext_hashes,
+                    ))
+                } else {
+                    let tx = Transaction::new(
+                        stored.nullifiers,
+                        stored.commitments,
+                        stored.balance_tag,
+                        version,
+                        stored.ciphertexts,
+                    );
+                    if !stored.ciphertext_hashes.is_empty()
+                        && stored.ciphertext_hashes != tx.ciphertext_hashes
+                    {
+                        return Err(NodeError::Invalid("ciphertext hash mismatch"));
+                    }
+                    Ok(tx)
+                }
             })
-            .collect();
+            .collect::<NodeResult<Vec<_>>>()?;
         let coinbase = self.coinbase.map(|cb| CoinbaseData {
             minted: cb.minted,
             fees: cb.fees,
@@ -291,6 +310,7 @@ impl From<&Transaction> for StoredTransaction {
             version_circuit: tx.version.circuit,
             version_crypto: tx.version.crypto,
             ciphertexts: tx.ciphertexts.clone(),
+            ciphertext_hashes: tx.ciphertext_hashes.clone(),
         }
     }
 }
