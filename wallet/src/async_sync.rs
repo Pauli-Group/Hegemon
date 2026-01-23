@@ -139,12 +139,39 @@ impl AsyncWalletSyncEngine {
         // Sync ciphertexts and attempt decryption
         let mut ciphertext_cursor = self.store.next_ciphertext_index()?;
         while ciphertext_cursor < note_status.next_index {
-            let entries = self
+            let mut entries = self
                 .client
                 .ciphertexts(ciphertext_cursor, self.page_limit)
                 .await?;
             if entries.is_empty() {
+                if let Ok(archive_entries) = self
+                    .client
+                    .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                    .await
+                {
+                    entries = archive_entries;
+                }
+            }
+            if entries.is_empty() {
                 break;
+            }
+            if entries.first().map(|entry| entry.index) != Some(ciphertext_cursor) {
+                entries = self
+                    .client
+                    .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                    .await
+                    .map_err(|err| {
+                        WalletError::Rpc(format!(
+                            "ciphertext gap at index {}: {}",
+                            ciphertext_cursor, err
+                        ))
+                    })?;
+                if entries.is_empty() {
+                    return Err(WalletError::Rpc(format!(
+                        "ciphertext gap at index {}: archive provider returned no data",
+                        ciphertext_cursor
+                    )));
+                }
             }
 
             let start_index = ciphertext_cursor;
