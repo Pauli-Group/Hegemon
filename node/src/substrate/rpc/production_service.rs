@@ -134,6 +134,13 @@ where
         }
     }
 
+}
+
+impl<C, Block> ProductionRpcService<C, Block>
+where
+    Block: BlockT,
+    C: HeaderBackend<Block>,
+{
     /// Get the best block hash for runtime API calls.
     fn best_hash(&self) -> Block::Hash {
         self.client.info().best_hash

@@ -155,8 +155,9 @@ fn to_entry(provider: AccountId, info: ProviderInfo<Runtime>) -> ArchiveProvider
     let endpoint = String::from_utf8(endpoint_bytes.clone())
         .unwrap_or_else(|_| format!("0x{}", hex::encode(endpoint_bytes)));
 
+    let provider_bytes: &[u8; 32] = provider.as_ref();
     ArchiveProviderEntry {
-        provider: format!("0x{}", hex::encode(provider.as_ref())),
+        provider: format!("0x{}", hex::encode(provider_bytes)),
         bond: info.bond,
         price_per_byte_block: info.price_per_byte_block,
         min_duration_blocks: info.min_duration_blocks,
@@ -169,10 +170,12 @@ fn to_contract_entry(contract: ArchiveContract<Runtime>) -> ArchiveContractEntry
         ContractStatus::Active => ArchiveContractStatus::Active,
         ContractStatus::Failed => ArchiveContractStatus::Failed,
     };
+    let buyer_bytes: &[u8; 32] = contract.buyer.as_ref();
+    let provider_bytes: &[u8; 32] = contract.provider.as_ref();
     ArchiveContractEntry {
         contract_id: contract.contract_id,
-        buyer: format!("0x{}", hex::encode(contract.buyer.as_ref())),
-        provider: format!("0x{}", hex::encode(contract.provider.as_ref())),
+        buyer: format!("0x{}", hex::encode(buyer_bytes)),
+        provider: format!("0x{}", hex::encode(provider_bytes)),
         start_block: contract.start_block,
         end_block: contract.end_block,
         retention_blocks: contract.retention_blocks,
