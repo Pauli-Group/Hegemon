@@ -1470,6 +1470,15 @@ parameter_types! {
     pub const MaxCommitmentsPerBatch: u32 = 32;
     /// Number of historical Merkle roots to keep for anchor validation.
     pub const MerkleRootHistorySize: u32 = 100;
+    /// Maximum forced inclusion commitments stored at once.
+    pub const MaxForcedInclusions: u32 = 16;
+    /// Maximum number of blocks a forced inclusion can remain pending.
+    pub const MaxForcedInclusionWindow: BlockNumber = 20;
+    /// Minimum bond required for forced inclusion.
+    pub const MinForcedInclusionBond: Balance = 100_000_000;
+    /// Default fee schedule parameters for shielded transfers.
+    pub DefaultFeeParameters: pallet_shielded_pool::types::FeeParameters =
+        pallet_shielded_pool::types::FeeParameters::default();
 }
 
 pub struct RuntimeStablecoinPolicyProvider;
@@ -1545,6 +1554,11 @@ impl pallet_shielded_pool::AttestationCommitmentProvider<u64, BlockNumber>
 impl pallet_shielded_pool::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+    type DefaultFeeParameters = DefaultFeeParameters;
+    type Currency = Balances;
+    type MaxForcedInclusions = MaxForcedInclusions;
+    type MaxForcedInclusionWindow = MaxForcedInclusionWindow;
+    type MinForcedInclusionBond = MinForcedInclusionBond;
     type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
     type BatchProofVerifier = pallet_shielded_pool::verifier::StarkBatchVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
@@ -1859,6 +1873,22 @@ sp_api::impl_runtime_apis! {
 
         fn merkle_root_history() -> sp_std::vec::Vec<[u8; 48]> {
             pallet_shielded_pool::MerkleRootHistory::<Runtime>::get().into_inner()
+        }
+
+        fn fee_parameters() -> pallet_shielded_pool::types::FeeParameters {
+            pallet_shielded_pool::FeeParametersStorage::<Runtime>::get()
+        }
+
+        fn fee_quote(
+            ciphertext_bytes: u64,
+            proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<u128, ()> {
+            pallet_shielded_pool::Pallet::<Runtime>::quote_fee(ciphertext_bytes, proof_kind)
+                .map_err(|_| ())
+        }
+
+        fn forced_inclusions() -> sp_std::vec::Vec<pallet_shielded_pool::types::ForcedInclusionStatus> {
+            pallet_shielded_pool::Pallet::<Runtime>::forced_inclusions()
         }
     }
 }

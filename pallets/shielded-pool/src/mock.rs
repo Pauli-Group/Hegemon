@@ -177,11 +177,20 @@ parameter_types! {
     pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
+    pub const MaxForcedInclusions: u32 = 8;
+    pub const MaxForcedInclusionWindow: u64 = 10;
+    pub const MinForcedInclusionBond: u128 = 50;
+    pub DefaultFeeParameters: crate::types::FeeParameters = crate::types::FeeParameters::default();
 }
 
 impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type AdminOrigin = frame_system::EnsureRoot<u64>;
+    type DefaultFeeParameters = DefaultFeeParameters;
+    type Currency = Balances;
+    type MaxForcedInclusions = MaxForcedInclusions;
+    type MaxForcedInclusionWindow = MaxForcedInclusionWindow;
+    type MinForcedInclusionBond = MinForcedInclusionBond;
     type ProofVerifier = TestProofVerifier;
     type BatchProofVerifier = TestBatchProofVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
@@ -236,9 +245,10 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{
-        BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA,
-        NOTE_ENCRYPTION_VERSION,
+        BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding,
+        StarkProof, CRYPTO_SUITE_GAMMA, NOTE_ENCRYPTION_VERSION,
     };
+    use codec::Encode;
     use frame_support::traits::Hooks;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
@@ -479,6 +489,171 @@ mod tests {
             ));
 
             assert_eq!(Pallet::<Test>::pool_balance(), expected as u128);
+        });
+    }
+
+    #[test]
+    fn fee_schedule_rejects_low_fee() {
+        new_test_ext().execute_with(|| {
+            let params = FeeParameters {
+                proof_fee: 10,
+                batch_proof_fee: 5,
+                da_byte_fee: 1,
+                retention_byte_fee: 0,
+                hot_retention_blocks: 0,
+            };
+            assert_ok!(Pallet::<Test>::set_fee_parameters(
+                RuntimeOrigin::root(),
+                params
+            ));
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let ciphertext_bytes: u64 = ciphertexts
+                .iter()
+                .map(|note| (note.ciphertext.len() + note.kem_ciphertext.len()) as u64)
+                .sum();
+            let required = Pallet::<Test>::quote_fee(ciphertext_bytes, FeeProofKind::Single)
+                .unwrap();
+            let low_fee = required.saturating_sub(1) as u64;
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    None,
+                    low_fee,
+                    0,
+                ),
+                crate::Error::<Test>::FeeTooLow
+            );
+        });
+    }
+
+    #[test]
+    fn forced_inclusion_satisfied_returns_bond() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            let proof = valid_proof();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertexts: ciphertexts.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+            let commitment = sp_core::hashing::blake2_256(&call.encode());
+
+            let now = frame_system::Pallet::<Test>::block_number();
+            let expiry = now + 5;
+            let bond = MinForcedInclusionBond::get();
+
+            assert_ok!(Pallet::<Test>::submit_forced_inclusion(
+                RuntimeOrigin::signed(1),
+                commitment,
+                expiry,
+                bond,
+            ));
+
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), bond);
+
+            assert_ok!(Pallet::<Test>::shielded_transfer_unsigned(
+                RuntimeOrigin::none(),
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                binding_hash,
+                None,
+                0,
+            ));
+
+            assert!(Pallet::<Test>::forced_inclusion_queue().is_empty());
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), 0);
+        });
+    }
+
+    #[test]
+    fn forced_inclusion_expiry_slashes_bond() {
+        new_test_ext().execute_with(|| {
+            let commitment = [9u8; 32];
+            let bond = MinForcedInclusionBond::get();
+            let now = frame_system::Pallet::<Test>::block_number();
+            let expiry = now + 1;
+
+            assert_ok!(Pallet::<Test>::submit_forced_inclusion(
+                RuntimeOrigin::signed(1),
+                commitment,
+                expiry,
+                bond,
+            ));
+
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), bond);
+
+            let next = expiry + 1;
+            frame_system::Pallet::<Test>::set_block_number(next);
+            Pallet::<Test>::on_initialize(next);
+
+            assert!(Pallet::<Test>::forced_inclusion_queue().is_empty());
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), 0);
+        });
+    }
+
+    #[test]
+    fn forced_inclusion_rejects_after_transfer() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_ok!(Pallet::<Test>::shielded_transfer_unsigned(
+                RuntimeOrigin::none(),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                0,
+            ));
+
+            assert_noop!(
+                Pallet::<Test>::submit_forced_inclusion(
+                    RuntimeOrigin::signed(1),
+                    [7u8; 32],
+                    frame_system::Pallet::<Test>::block_number() + 5,
+                    MinForcedInclusionBond::get(),
+                ),
+                crate::Error::<Test>::ForcedInclusionAfterTransfers
+            );
         });
     }
 

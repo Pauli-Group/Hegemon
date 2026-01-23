@@ -53,7 +53,7 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::{Decode, Encode};
 use pallet_shielded_pool::types::{
-    BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof,
+    BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
 };
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
@@ -589,6 +589,34 @@ where
 
     fn chain_height(&self) -> u64 {
         self.best_number()
+    }
+
+    fn fee_parameters(&self) -> Result<FeeParameters, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.fee_parameters(best_hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
+    }
+
+    fn fee_quote(
+        &self,
+        ciphertext_bytes: u64,
+        proof_kind: FeeProofKind,
+    ) -> Result<u128, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.fee_quote(best_hash, ciphertext_bytes, proof_kind)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?
+            .map_err(|_| "Fee quote failed".to_string())
+    }
+
+    fn forced_inclusions(
+        &self,
+    ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.forced_inclusions(best_hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
     }
 }
 

@@ -288,6 +288,47 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     pub value_balance: i128,
 }
 
+/// Proof kinds used for fee quotes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub enum FeeProofKind {
+    Single,
+    Batch,
+}
+
+/// Fee schedule parameters for shielded transfers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub struct FeeParameters {
+    /// Base fee charged per single-transfer proof.
+    pub proof_fee: u128,
+    /// Base fee charged per batch proof.
+    pub batch_proof_fee: u128,
+    /// Fee per ciphertext byte for DA publication.
+    pub da_byte_fee: u128,
+    /// Fee per ciphertext byte per block of hot retention.
+    pub retention_byte_fee: u128,
+    /// Hot retention window in blocks used for fee quotes.
+    pub hot_retention_blocks: u32,
+}
+
+impl Default for FeeParameters {
+    fn default() -> Self {
+        Self {
+            proof_fee: 0,
+            batch_proof_fee: 0,
+            da_byte_fee: 0,
+            retention_byte_fee: 0,
+            hot_retention_blocks: 0,
+        }
+    }
+}
+
+/// Public view of a forced inclusion commitment.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub struct ForcedInclusionStatus {
+    pub commitment: [u8; 32],
+    pub expiry: u64,
+}
+
 /// Parameters for the STARK verifying key.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
 pub struct VerifyingKeyParams {

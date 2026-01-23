@@ -47,7 +47,7 @@ use verifier::{
 
 use frame_support::dispatch::{DispatchClass, DispatchResult, Pays};
 use frame_support::pallet_prelude::*;
-use frame_support::traits::StorageVersion;
+use frame_support::traits::{Currency, ReservableCurrency, StorageVersion};
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
@@ -185,6 +185,18 @@ pub mod pallet {
     #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
+    type BalanceOf<T> = <<T as Config>::Currency as Currency<
+        <T as frame_system::Config>::AccountId,
+    >>::Balance;
+
+    #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+    pub struct ForcedInclusionEntry<AccountId, Balance, BlockNumber> {
+        pub commitment: [u8; 32],
+        pub expiry: BlockNumber,
+        pub submitter: AccountId,
+        pub bond: Balance,
+    }
+
     #[pallet::config]
     pub trait Config: frame_system::Config {
         /// The overarching event type.
@@ -193,6 +205,25 @@ pub mod pallet {
 
         /// Origin that can update verifying keys.
         type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+
+        /// Default fee schedule parameters for the shielded pool.
+        #[pallet::constant]
+        type DefaultFeeParameters: Get<types::FeeParameters>;
+
+        /// Currency for forced inclusion bonds.
+        type Currency: ReservableCurrency<Self::AccountId>;
+
+        /// Maximum forced inclusion commitments stored at once.
+        #[pallet::constant]
+        type MaxForcedInclusions: Get<u32>;
+
+        /// Maximum number of blocks a forced inclusion can remain pending.
+        #[pallet::constant]
+        type MaxForcedInclusionWindow: Get<BlockNumberFor<Self>>;
+
+        /// Minimum bond required for forced inclusion.
+        #[pallet::constant]
+        type MinForcedInclusionBond: Get<BalanceOf<Self>>;
 
         /// Proof verifier implementation.
         type ProofVerifier: ProofVerifier + Default;
@@ -322,6 +353,23 @@ pub mod pallet {
     #[pallet::getter(fn pool_balance)]
     pub type PoolBalance<T: Config> = StorageValue<_, u128, ValueQuery>;
 
+    /// Fee parameters for shielded transfers.
+    #[pallet::storage]
+    #[pallet::getter(fn fee_parameters)]
+    pub type FeeParametersStorage<T: Config> = StorageValue<_, types::FeeParameters, ValueQuery>;
+
+    /// Forced inclusion commitments pending satisfaction.
+    #[pallet::storage]
+    #[pallet::getter(fn forced_inclusion_queue)]
+    pub type ForcedInclusionQueue<T: Config> = StorageValue<
+        _,
+        BoundedVec<
+            ForcedInclusionEntry<T::AccountId, BalanceOf<T>, BlockNumberFor<T>>,
+            T::MaxForcedInclusions,
+        >,
+        ValueQuery,
+    >;
+
     /// Total shielded fees accumulated in the current block.
     #[pallet::storage]
     #[pallet::getter(fn block_fees)]
@@ -341,6 +389,10 @@ pub mod pallet {
     /// Whether coinbase was already processed this block (prevents double-mint).
     #[pallet::storage]
     pub type CoinbaseProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
+
+    /// Whether any shielded transfers have been processed this block.
+    #[pallet::storage]
+    pub type ShieldedTransfersProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
     /// Whether the commitment proof was already submitted this block.
     ///
@@ -413,6 +465,29 @@ pub mod pallet {
             commitment_count: u32,
             /// Total fee across all transactions.
             total_fee: u128,
+        },
+        /// Fee parameters were updated.
+        FeeParametersUpdated {
+            /// New fee parameters.
+            params: types::FeeParameters,
+        },
+        /// A forced inclusion commitment was submitted.
+        ForcedInclusionSubmitted {
+            commitment: [u8; 32],
+            expiry: BlockNumberFor<T>,
+            submitter: T::AccountId,
+            bond: BalanceOf<T>,
+        },
+        /// A forced inclusion commitment was satisfied.
+        ForcedInclusionSatisfied {
+            commitment: [u8; 32],
+            submitter: T::AccountId,
+        },
+        /// A forced inclusion commitment expired and was slashed.
+        ForcedInclusionExpired {
+            commitment: [u8; 32],
+            submitter: T::AccountId,
+            bond: BalanceOf<T>,
         },
     }
 
@@ -500,6 +575,20 @@ pub mod pallet {
         FeeOverflow,
         /// Shielded transfers cannot appear after coinbase in a block.
         TransfersAfterCoinbase,
+        /// Provided fee is below the required minimum.
+        FeeTooLow,
+        /// Forced inclusion queue is full.
+        ForcedInclusionQueueFull,
+        /// Forced inclusion commitment already exists.
+        ForcedInclusionDuplicate,
+        /// Forced inclusion expiry is invalid (past or too far in the future).
+        ForcedInclusionExpiryInvalid,
+        /// Forced inclusion bond is below the minimum.
+        ForcedInclusionBondTooLow,
+        /// Failed to reserve the forced inclusion bond.
+        ForcedInclusionBondReserveFailed,
+        /// Forced inclusion commitments must be submitted before any shielded transfer in a block.
+        ForcedInclusionAfterTransfers,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
         /// This error indicates a malicious attempt to bypass double-spend protection.
         ZeroNullifierSubmitted,
@@ -520,6 +609,8 @@ pub mod pallet {
     pub struct GenesisConfig<T: Config> {
         /// Initial verifying key.
         pub verifying_key: Option<VerifyingKey>,
+        /// Initial fee parameters.
+        pub fee_parameters: Option<types::FeeParameters>,
         /// Phantom data.
         #[serde(skip)]
         pub _phantom: PhantomData<T>,
@@ -550,6 +641,11 @@ pub mod pallet {
                     activated_at: 0,
                 });
             }
+
+            let fee_parameters = self
+                .fee_parameters
+                .unwrap_or_else(T::DefaultFeeParameters::get);
+            FeeParametersStorage::<T>::put(fee_parameters);
         }
     }
 
@@ -598,15 +694,40 @@ pub mod pallet {
             }
         }
 
-        fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
+        fn on_initialize(n: BlockNumberFor<T>) -> Weight {
             let pending_fees = BlockFees::<T>::get();
             if pending_fees > 0 && !CoinbaseProcessed::<T>::get() {
                 TotalFeesBurned::<T>::mutate(|total| *total = total.saturating_add(pending_fees));
             }
 
+            let mut queue = ForcedInclusionQueue::<T>::get();
+            if !queue.is_empty() {
+                let mut expired = Vec::new();
+                queue.retain(|entry| {
+                    if entry.expiry < n {
+                        expired.push((entry.commitment, entry.submitter.clone(), entry.bond));
+                        false
+                    } else {
+                        true
+                    }
+                });
+
+                for (commitment, submitter, bond) in expired {
+                    let _ = T::Currency::slash_reserved(&submitter, bond);
+                    Self::deposit_event(Event::ForcedInclusionExpired {
+                        commitment,
+                        submitter,
+                        bond,
+                    });
+                }
+
+                ForcedInclusionQueue::<T>::put(queue);
+            }
+
             BlockFees::<T>::kill();
             // Reset coinbase processed flag at start of each block
             CoinbaseProcessed::<T>::kill();
+            ShieldedTransfersProcessed::<T>::kill();
             CommitmentProofProcessed::<T>::kill();
             AggregationProofProcessed::<T>::kill();
             Weight::from_parts(1_000, 0)
@@ -721,6 +842,10 @@ pub mod pallet {
             for note in ciphertexts.iter() {
                 Self::validate_encrypted_note(note)?;
             }
+            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
+            let required_fee =
+                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -848,6 +973,24 @@ pub mod pallet {
                 value_balance,
             });
 
+            ShieldedTransfersProcessed::<T>::put(true);
+
+            if !ForcedInclusionQueue::<T>::get().is_empty() {
+                let call = Call::<T>::shielded_transfer {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    binding_hash,
+                    stablecoin,
+                    fee,
+                    value_balance,
+                };
+                let commitment = sp_core::hashing::blake2_256(&call.encode());
+                Self::satisfy_forced_inclusion(commitment);
+            }
+
             Ok(())
         }
 
@@ -904,6 +1047,11 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroCiphertextHash.into());
                 }
             }
+            let ciphertext_bytes =
+                Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
+            let required_fee =
+                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1018,6 +1166,25 @@ pub mod pallet {
                 value_balance,
             });
 
+            ShieldedTransfersProcessed::<T>::put(true);
+
+            if !ForcedInclusionQueue::<T>::get().is_empty() {
+                let call = Call::<T>::shielded_transfer_sidecar {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    binding_hash,
+                    stablecoin,
+                    fee,
+                    value_balance,
+                };
+                let commitment = sp_core::hashing::blake2_256(&call.encode());
+                Self::satisfy_forced_inclusion(commitment);
+            }
+
             Ok(())
         }
 
@@ -1041,6 +1208,80 @@ pub mod pallet {
 
             Self::deposit_event(Event::VerifyingKeyUpdated { key_id: new_key.id });
 
+            Ok(())
+        }
+
+        /// Update the fee parameters for shielded transfers.
+        #[pallet::call_index(9)]
+        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Operational, Pays::No))]
+        pub fn set_fee_parameters(
+            origin: OriginFor<T>,
+            params: types::FeeParameters,
+        ) -> DispatchResult {
+            T::AdminOrigin::ensure_origin(origin)?;
+            FeeParametersStorage::<T>::put(params);
+            Self::deposit_event(Event::FeeParametersUpdated { params });
+            Ok(())
+        }
+
+        /// Submit a forced inclusion commitment with a bonded expiry window.
+        #[pallet::call_index(10)]
+        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        pub fn submit_forced_inclusion(
+            origin: OriginFor<T>,
+            commitment: [u8; 32],
+            expiry: BlockNumberFor<T>,
+            bond: BalanceOf<T>,
+        ) -> DispatchResult {
+            let submitter = ensure_signed(origin)?;
+
+            ensure!(
+                !ShieldedTransfersProcessed::<T>::get(),
+                Error::<T>::ForcedInclusionAfterTransfers
+            );
+
+            ensure!(
+                bond >= T::MinForcedInclusionBond::get(),
+                Error::<T>::ForcedInclusionBondTooLow
+            );
+
+            let now = <frame_system::Pallet<T>>::block_number();
+            let max_expiry = now.saturating_add(T::MaxForcedInclusionWindow::get());
+            ensure!(expiry > now && expiry <= max_expiry, Error::<T>::ForcedInclusionExpiryInvalid);
+
+            let mut queue = ForcedInclusionQueue::<T>::get();
+            ensure!(
+                queue.len() < T::MaxForcedInclusions::get() as usize,
+                Error::<T>::ForcedInclusionQueueFull
+            );
+            ensure!(
+                !queue.iter().any(|entry| entry.commitment == commitment),
+                Error::<T>::ForcedInclusionDuplicate
+            );
+
+            T::Currency::reserve(&submitter, bond)
+                .map_err(|_| Error::<T>::ForcedInclusionBondReserveFailed)?;
+
+            if queue
+                .try_push(ForcedInclusionEntry {
+                    commitment,
+                    expiry,
+                    submitter: submitter.clone(),
+                    bond,
+                })
+                .is_err()
+            {
+                T::Currency::unreserve(&submitter, bond);
+                return Err(Error::<T>::ForcedInclusionQueueFull.into());
+            }
+
+            ForcedInclusionQueue::<T>::put(queue);
+            Self::deposit_event(Event::ForcedInclusionSubmitted {
+                commitment,
+                expiry,
+                submitter,
+                bond,
+            });
             Ok(())
         }
 
@@ -1110,6 +1351,7 @@ pub mod pallet {
 
             // Mark as processed
             CoinbaseProcessed::<T>::put(true);
+            ShieldedTransfersProcessed::<T>::put(true);
 
             Self::deposit_event(Event::CoinbaseMinted {
                 commitment_index: index,
@@ -1183,6 +1425,10 @@ pub mod pallet {
             for note in ciphertexts.iter() {
                 Self::validate_encrypted_note(note)?;
             }
+            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
+            let required_fee =
+                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1298,6 +1544,23 @@ pub mod pallet {
                 commitments.len()
             );
 
+            ShieldedTransfersProcessed::<T>::put(true);
+
+            if !ForcedInclusionQueue::<T>::get().is_empty() {
+                let call = Call::<T>::shielded_transfer_unsigned {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    binding_hash,
+                    stablecoin,
+                    fee,
+                };
+                let commitment = sp_core::hashing::blake2_256(&call.encode());
+                Self::satisfy_forced_inclusion(commitment);
+            }
+
             Ok(())
         }
 
@@ -1355,6 +1618,11 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroCiphertextHash.into());
                 }
             }
+            let ciphertext_bytes =
+                Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
+            let required_fee =
+                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1463,6 +1731,24 @@ pub mod pallet {
                 value_balance,
             });
 
+            ShieldedTransfersProcessed::<T>::put(true);
+
+            if !ForcedInclusionQueue::<T>::get().is_empty() {
+                let call = Call::<T>::shielded_transfer_unsigned_sidecar {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    binding_hash,
+                    stablecoin,
+                    fee,
+                };
+                let commitment = sp_core::hashing::blake2_256(&call.encode());
+                Self::satisfy_forced_inclusion(commitment);
+            }
+
             Ok(())
         }
 
@@ -1523,6 +1809,10 @@ pub mod pallet {
             for note in ciphertexts.iter() {
                 Self::validate_encrypted_note(note)?;
             }
+            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
+            let required_fee =
+                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Batch)?;
+            Self::ensure_fee_sufficient(total_fee, required_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1633,6 +1923,21 @@ pub mod pallet {
                 commitments.len()
             );
 
+            ShieldedTransfersProcessed::<T>::put(true);
+
+            if !ForcedInclusionQueue::<T>::get().is_empty() {
+                let call = Call::<T>::batch_shielded_transfer {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    total_fee,
+                };
+                let commitment = sp_core::hashing::blake2_256(&call.encode());
+                Self::satisfy_forced_inclusion(commitment);
+            }
+
             Ok(())
         }
     }
@@ -1678,6 +1983,84 @@ pub mod pallet {
             })?;
             PoolBalance::<T>::mutate(|balance| *balance = balance.saturating_sub(fee));
             Ok(())
+        }
+
+        fn ensure_fee_sufficient(provided: u128, required: u128) -> Result<(), Error<T>> {
+            if provided < required {
+                return Err(Error::<T>::FeeTooLow);
+            }
+            Ok(())
+        }
+
+        pub fn fee_parameters() -> types::FeeParameters {
+            FeeParametersStorage::<T>::get()
+        }
+
+        pub fn quote_fee(
+            ciphertext_bytes: u64,
+            proof_kind: types::FeeProofKind,
+        ) -> Result<u128, Error<T>> {
+            let params = Self::fee_parameters();
+            let base = match proof_kind {
+                types::FeeProofKind::Single => params.proof_fee,
+                types::FeeProofKind::Batch => params.batch_proof_fee,
+            };
+            let bytes = u128::from(ciphertext_bytes);
+            let da_fee = bytes
+                .checked_mul(params.da_byte_fee)
+                .ok_or(Error::<T>::FeeOverflow)?;
+            let retention_blocks = u128::from(params.hot_retention_blocks);
+            let retention_fee = bytes
+                .checked_mul(params.retention_byte_fee)
+                .and_then(|value| value.checked_mul(retention_blocks))
+                .ok_or(Error::<T>::FeeOverflow)?;
+            base.checked_add(da_fee)
+                .and_then(|value| value.checked_add(retention_fee))
+                .ok_or(Error::<T>::FeeOverflow)
+        }
+
+        pub fn forced_inclusions() -> Vec<types::ForcedInclusionStatus> {
+            ForcedInclusionQueue::<T>::get()
+                .into_iter()
+                .map(|entry| types::ForcedInclusionStatus {
+                    commitment: entry.commitment,
+                    expiry: entry.expiry.try_into().unwrap_or(0u64),
+                })
+                .collect()
+        }
+
+        fn satisfy_forced_inclusion(commitment: [u8; 32]) {
+            let mut queue = ForcedInclusionQueue::<T>::get();
+            if let Some(position) = queue.iter().position(|entry| entry.commitment == commitment) {
+                let entry = queue.remove(position);
+                T::Currency::unreserve(&entry.submitter, entry.bond);
+                ForcedInclusionQueue::<T>::put(queue);
+                Self::deposit_event(Event::ForcedInclusionSatisfied {
+                    commitment,
+                    submitter: entry.submitter,
+                });
+            }
+        }
+
+        fn ciphertext_bytes_total(ciphertexts: &[EncryptedNote]) -> Result<u64, Error<T>> {
+            let mut total: u64 = 0;
+            for note in ciphertexts {
+                let len = note.ciphertext.len() + note.kem_ciphertext.len();
+                total = total
+                    .checked_add(len as u64)
+                    .ok_or(Error::<T>::FeeOverflow)?;
+            }
+            Ok(total)
+        }
+
+        fn ciphertext_sizes_total(ciphertext_sizes: &[u32]) -> Result<u64, Error<T>> {
+            let mut total: u64 = 0;
+            for size in ciphertext_sizes {
+                total = total
+                    .checked_add(*size as u64)
+                    .ok_or(Error::<T>::FeeOverflow)?;
+            }
+            Ok(total)
         }
 
         fn expected_coinbase_commitment(coinbase_data: &types::CoinbaseNoteData) -> [u8; 48] {
@@ -2026,6 +2409,18 @@ pub mod pallet {
                         log::info!(target: "shielded-pool", "  REJECTED: ciphertexts.len != commitments.len");
                         return InvalidTransaction::Custom(2).into();
                     }
+                    let ciphertext_bytes =
+                        Self::ciphertext_bytes_total(ciphertexts.as_slice())
+                            .map_err(|_| InvalidTransaction::Custom(8))?;
+                    let required_fee = Self::quote_fee(
+                        ciphertext_bytes,
+                        types::FeeProofKind::Single,
+                    )
+                    .map_err(|_| InvalidTransaction::Custom(8))?;
+                    if u128::from(*fee) < required_fee {
+                        log::info!(target: "shielded-pool", "  REJECTED: fee below minimum");
+                        return InvalidTransaction::Custom(8).into();
+                    }
 
                     // Check anchor is valid (historical Merkle root)
                     if !MerkleRoots::<T>::contains_key(anchor) {
@@ -2193,6 +2588,18 @@ pub mod pallet {
                             log::info!(target: "shielded-pool", "  REJECTED: zero ciphertext hash");
                             return InvalidTransaction::Custom(4).into();
                         }
+                    }
+                    let ciphertext_bytes =
+                        Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())
+                            .map_err(|_| InvalidTransaction::Custom(8))?;
+                    let required_fee = Self::quote_fee(
+                        ciphertext_bytes,
+                        types::FeeProofKind::Single,
+                    )
+                    .map_err(|_| InvalidTransaction::Custom(8))?;
+                    if u128::from(*fee) < required_fee {
+                        log::info!(target: "shielded-pool", "  REJECTED: fee below minimum");
+                        return InvalidTransaction::Custom(8).into();
                     }
 
                     if !MerkleRoots::<T>::contains_key(anchor) {

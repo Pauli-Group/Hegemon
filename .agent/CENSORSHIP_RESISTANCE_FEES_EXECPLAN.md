@@ -27,10 +27,10 @@ The “it works” proof is:
 - [x] (2026-01-21T00:00Z) Draft censorship resistance + fees ExecPlan (this file).
 - [x] (2026-01-22T20:10Z) Confirm the current fee accounting path for shielded transfers (what is enforced vs. only emitted as events).
 - [x] (2026-01-22T20:40Z) Implement per-block fee accumulation, coinbase fee enforcement, burn accounting, and tests.
-- [ ] Define a protocol fee schedule that prices (a) DA bytes, (b) proof verification, and (c) retention time, and implement it for devnet.
-- [ ] Implement deterministic ordering rules for shielded transfers inside a block (consensus-enforced).
-- [ ] Implement a forced inclusion mechanism with DoS bounds.
-- [ ] Add wallet/RPC support for fee quoting and forced inclusion flow.
+- [x] (2026-01-22T21:30Z) Define fee parameters, add fee quote RPC, and enforce minimum fees for shielded transfers.
+- [x] (2026-01-22T22:00Z) Implement deterministic ordering rules for shielded transfers inside a block (consensus-enforced).
+- [x] (2026-01-23T00:00Z) Implement a forced inclusion mechanism with DoS bounds.
+- [x] (2026-01-23T00:00Z) Add wallet/RPC support for fee quoting and forced inclusion flow.
 - [ ] End-to-end demo: censoring miner/Sequencer fails to exclude a forced-inclusion transfer.
 
 ## Surprises & Discoveries
@@ -65,6 +65,21 @@ The “it works” proof is:
 - Decision: Enforce “no shielded transfers after coinbase” as a consensus rule.
   Rationale: The fee accumulator must be complete before coinbase is minted; disallowing transfers after coinbase is a cheap, deterministic ordering rule that makes the fee check enforceable.
   Date/Author: 2026-01-22 / Codex
+
+- Decision: Store fee parameters in the shielded pool and expose them via runtime API + RPC, with governance updates and a zero-default dev value.
+  Rationale: The fee schedule must be explicit and queryable by wallets, but defaults should not break existing tests or devnet flows until governance sets real prices.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Order shielded transfers by the hash of their SCALE-encoded call data.
+  Rationale: The call payload is already committed to in the block body, does not require sidecar fetches, and is deterministic across nodes.
+  Date/Author: 2026-01-22 / Codex
+
+- Decision: Forced inclusion commitments use `blake2_256(call.encode)` and are enforced at block import when `expiry <= current_block`,
+  with bounded queues and bonded submissions; satisfied commitments unreserve bonds and expired commitments are slashed. Submissions
+  are required before any shielded transfer in a block to avoid unsatisfiable commitments.
+  Rationale: Using the same call hash as the ordering key keeps inclusion deterministic and cheap, while queue limits and bonds
+  bound DoS risk without requiring proof verification at submission time.
+  Date/Author: 2026-01-23 / Codex
 
 ## Outcomes & Retrospective
 
@@ -235,3 +250,5 @@ At the end of this plan, the repo must include:
 ## Change Log
 
 - (2026-01-22) Audited current fee path, implemented per-block fee accumulation with coinbase enforcement and burn fallback, and added tests; updated the decision log and context accordingly.
+- (2026-01-22) Added fee parameters, fee quote RPC, and minimum-fee enforcement for shielded transfers; defaulted parameters to zero and documented the decision.
+- (2026-01-22) Enforced deterministic ordering of shielded transfers by call hash in block import and block building.

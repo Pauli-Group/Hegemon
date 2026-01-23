@@ -30,6 +30,7 @@
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
 use pallet_shielded_pool::merkle::CompactMerkleTree;
+use pallet_shielded_pool::types::{FeeParameters, FeeProofKind, ForcedInclusionStatus};
 use sp_api::decl_runtime_apis;
 use sp_core::U256;
 use sp_std::vec::Vec;
@@ -167,5 +168,14 @@ decl_runtime_apis! {
         /// This mirrors `pallet_shielded_pool::MerkleRootHistory` and is used by the node to
         /// validate transaction anchors during block import.
         fn merkle_root_history() -> Vec<[u8; 48]>;
+
+        /// Fetch the current fee parameters for shielded transfers.
+        fn fee_parameters() -> FeeParameters;
+
+        /// Quote a fee for the given ciphertext byte count and proof kind.
+        fn fee_quote(ciphertext_bytes: u64, proof_kind: FeeProofKind) -> Result<u128, ()>;
+
+        /// Fetch pending forced inclusion commitments.
+        fn forced_inclusions() -> Vec<ForcedInclusionStatus>;
     }
 }

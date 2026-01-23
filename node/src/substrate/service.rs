@@ -2262,6 +2262,7 @@ fn verify_proof_carrying_block(
     verifier: &ParallelProofVerifier,
     client: &HegemonFullClient,
     parent_hash: H256,
+    block_number: u64,
     extrinsics: &[runtime::UncheckedExtrinsic],
     da_params: DaParams,
     resolved_ciphertexts: Option<&[Vec<Vec<u8>>>]>,
@@ -2270,6 +2271,8 @@ fn verify_proof_carrying_block(
 
     let commitment_payload = extract_commitment_proof_payload(extrinsics)?;
     let aggregation_proof_bytes = extract_aggregation_proof_bytes(extrinsics)?;
+    ensure_shielded_transfer_ordering(extrinsics)?;
+    ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
     let (transactions, tx_proofs) =
         extract_shielded_transfers_for_parallel_verification(extrinsics, resolved_ciphertexts)?;
 
@@ -2432,6 +2435,107 @@ fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
             | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
             | ShieldedPoolCall::batch_shielded_transfer { .. }
     )
+}
+
+fn shielded_transfer_order_key(call: &ShieldedPoolCall) -> [u8; 32] {
+    sp_core::hashing::blake2_256(&call.encode())
+}
+
+fn shielded_transfer_key_from_extrinsic(
+    extrinsic: &runtime::UncheckedExtrinsic,
+) -> Option<[u8; 32]> {
+    let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        return None;
+    };
+    match call {
+        ShieldedPoolCall::shielded_transfer { .. }
+        | ShieldedPoolCall::shielded_transfer_unsigned { .. }
+        | ShieldedPoolCall::shielded_transfer_sidecar { .. }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+        | ShieldedPoolCall::batch_shielded_transfer { .. } => {
+            Some(shielded_transfer_order_key(call))
+        }
+        _ => None,
+    }
+}
+
+fn ensure_shielded_transfer_ordering(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<(), String> {
+    let mut prev: Option<[u8; 32]> = None;
+    for extrinsic in extrinsics {
+        let Some(key) = shielded_transfer_key_from_extrinsic(extrinsic) else {
+            continue;
+        };
+        if let Some(prev_key) = prev {
+            if key < prev_key {
+                return Err("shielded transfer ordering violation".to_string());
+            }
+        }
+        prev = Some(key);
+    }
+    Ok(())
+}
+
+fn ensure_forced_inclusions(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    block_number: u64,
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<(), String> {
+    let api = client.runtime_api();
+    let pending = api
+        .forced_inclusions(parent_hash)
+        .map_err(|err| format!("forced inclusion query failed: {err}"))?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    let mut included = std::collections::HashSet::new();
+    for extrinsic in extrinsics {
+        if let Some(key) = shielded_transfer_key_from_extrinsic(extrinsic) {
+            included.insert(key);
+        }
+    }
+
+    for entry in pending {
+        if entry.expiry <= block_number && !included.contains(&entry.commitment) {
+            return Err("forced inclusion missing in block".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn reorder_shielded_transfers(extrinsics: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, String> {
+    let mut shielded = Vec::new();
+    let mut is_shielded = Vec::with_capacity(extrinsics.len());
+
+    for ext_bytes in extrinsics {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+        if let Some(key) = shielded_transfer_key_from_extrinsic(&extrinsic) {
+            shielded.push((key, ext_bytes.clone()));
+            is_shielded.push(true);
+        } else {
+            is_shielded.push(false);
+        }
+    }
+
+    shielded.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut shielded_iter = shielded.into_iter();
+    let mut out = Vec::with_capacity(extrinsics.len());
+    for (ext_bytes, flagged) in extrinsics.iter().zip(is_shielded.iter()) {
+        if *flagged {
+            let (_, bytes) = shielded_iter
+                .next()
+                .ok_or_else(|| "shielded transfer ordering mismatch".to_string())?;
+            out.push(bytes);
+        } else {
+            out.push(ext_bytes.clone());
+        }
+    }
+    Ok(out)
 }
 
 fn total_shielded_fees(extrinsics: &[Vec<u8>]) -> Result<u128, String> {
@@ -2648,7 +2752,8 @@ pub fn wire_block_builder_api(
 
         // Push user extrinsics
         let mut failed = 0usize;
-        for ext_bytes in extrinsics {
+        let ordered_extrinsics = reorder_shielded_transfers(&extrinsics)?;
+        for ext_bytes in ordered_extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
                     let is_shielded = is_shielded_transfer_call(&extrinsic.function);
@@ -3072,6 +3177,7 @@ fn wire_pow_block_import(
                 &parallel_verifier,
                 block_import.as_ref(),
                 template.parent_hash,
+                template.number as u64,
                 &encoded_extrinsics,
                 da_params,
                 resolved_ciphertexts,
@@ -4994,6 +5100,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         &parallel_verifier,
                                         block_import_client.as_ref(),
                                         parent_hash,
+                                        block_number,
                                         &extrinsics,
                                         da_params_for_import,
                                         resolved_ciphertexts,
@@ -5400,6 +5507,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         &parallel_verifier,
                                         block_import_client.as_ref(),
                                         parent_hash,
+                                        block_number,
                                         &extrinsics,
                                         da_params_for_import,
                                         resolved_ciphertexts,
