@@ -120,6 +120,29 @@ impl ShieldedTransferCall {
     }
 }
 
+/// Unsigned shielded transfer call data (DA sidecar variant).
+#[derive(Clone, Debug)]
+pub struct ShieldedTransferSidecarCall {
+    /// STARK proof bytes
+    pub proof: Vec<u8>,
+    /// Nullifiers (spent note identifiers)
+    pub nullifiers: Vec<[u8; 48]>,
+    /// New note commitments
+    pub commitments: Vec<[u8; 48]>,
+    /// Ciphertext hashes for each output note (48 bytes each)
+    pub ciphertext_hashes: Vec<[u8; 48]>,
+    /// Ciphertext sizes for each output note (bytes)
+    pub ciphertext_sizes: Vec<u32>,
+    /// Merkle tree anchor (root hash)
+    pub anchor: [u8; 48],
+    /// Binding signature
+    pub binding_hash: [u8; 64],
+    /// Optional stablecoin policy binding (must be None for unsigned calls)
+    pub stablecoin: Option<StablecoinPolicyBinding>,
+    /// Native fee encoded in the proof.
+    pub fee: u64,
+}
+
 /// Extrinsic builder for signed transactions
 pub struct ExtrinsicBuilder {
     /// ML-DSA signing key
@@ -813,6 +836,76 @@ pub fn encode_shielded_transfer_unsigned_call(
     Ok(encoded)
 }
 
+/// Encode an unsigned `shielded_transfer_unsigned_sidecar` call.
+pub fn encode_shielded_transfer_unsigned_sidecar_call(
+    call: &ShieldedTransferSidecarCall,
+    call_index: RuntimeCallIndex,
+) -> Result<Vec<u8>, WalletError> {
+    if call.ciphertext_hashes.len() != call.commitments.len() {
+        return Err(WalletError::Serialization(
+            "ciphertext_hashes count must match commitments".into(),
+        ));
+    }
+    if call.ciphertext_sizes.len() != call.commitments.len() {
+        return Err(WalletError::Serialization(
+            "ciphertext_sizes count must match commitments".into(),
+        ));
+    }
+
+    let mut encoded = Vec::new();
+
+    // Pallet and call indices resolved from runtime metadata.
+    encoded.push(call_index.pallet_index);
+    encoded.push(call_index.call_index);
+
+    // Encode proof (StarkProof is Vec<u8>)
+    encode_compact_vec(&call.proof, &mut encoded);
+
+    // Encode nullifiers (BoundedVec<[u8;48], _>)
+    encode_compact_len(call.nullifiers.len(), &mut encoded);
+    for nullifier in &call.nullifiers {
+        encoded.extend_from_slice(nullifier);
+    }
+
+    // Encode commitments (BoundedVec<[u8;48], _>)
+    encode_compact_len(call.commitments.len(), &mut encoded);
+    for commitment in &call.commitments {
+        encoded.extend_from_slice(commitment);
+    }
+
+    // Encode ciphertext hashes (BoundedVec<[u8;48], _>)
+    encode_compact_len(call.ciphertext_hashes.len(), &mut encoded);
+    for hash in &call.ciphertext_hashes {
+        encoded.extend_from_slice(hash);
+    }
+
+    // Encode ciphertext sizes (BoundedVec<u32, _>)
+    encode_compact_len(call.ciphertext_sizes.len(), &mut encoded);
+    for size in &call.ciphertext_sizes {
+        encoded.extend_from_slice(&size.to_le_bytes());
+    }
+
+    // Encode anchor ([u8; 48])
+    encoded.extend_from_slice(&call.anchor);
+
+    // Encode binding hash (BindingHash { data: [u8; 64] })
+    encoded.extend_from_slice(&call.binding_hash);
+
+    if call.stablecoin.is_some() {
+        return Err(WalletError::Serialization(
+            "stablecoin binding not allowed in unsigned sidecar transfers".into(),
+        ));
+    }
+
+    // Encode stablecoin binding (Option<StablecoinPolicyBinding>)
+    encode_stablecoin_binding(&call.stablecoin, &mut encoded)?;
+
+    // Encode fee (u64, little-endian)
+    encoded.extend_from_slice(&call.fee.to_le_bytes());
+
+    Ok(encoded)
+}
+
 /// Build an unsigned extrinsic for a pure shielded-to-shielded transfer
 ///
 /// Unsigned extrinsics have a simpler format:
@@ -844,6 +937,23 @@ pub fn build_unsigned_shielded_transfer(
     // eprintln!("DEBUG: Built unsigned extrinsic: {} bytes", result.len());
     // eprintln!("DEBUG: First 20 bytes: {}", hex::encode(&result[..20.min(result.len())]));
 
+    Ok(result)
+}
+
+/// Build an unsigned extrinsic for `shielded_transfer_unsigned_sidecar`.
+pub fn build_unsigned_shielded_transfer_sidecar(
+    call: &ShieldedTransferSidecarCall,
+    call_index: RuntimeCallIndex,
+) -> Result<Vec<u8>, WalletError> {
+    let encoded_call = encode_shielded_transfer_unsigned_sidecar_call(call, call_index)?;
+
+    let mut extrinsic = Vec::new();
+    extrinsic.push(0x04);
+    extrinsic.extend_from_slice(&encoded_call);
+
+    let mut result = Vec::new();
+    encode_compact_len(extrinsic.len(), &mut result);
+    result.extend_from_slice(&extrinsic);
     Ok(result)
 }
 

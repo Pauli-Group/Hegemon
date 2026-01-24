@@ -6636,7 +6636,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         }
 
         // Add DA RPC (chunk retrieval + params)
-        let da_rpc = DaRpc::new(Arc::clone(&da_chunk_store), da_params);
+        let da_rpc = DaRpc::new(
+            Arc::clone(&da_chunk_store),
+            Arc::clone(&pending_ciphertext_store),
+            da_params,
+        );
         if let Err(e) = module.merge(da_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge DA RPC");
         } else {

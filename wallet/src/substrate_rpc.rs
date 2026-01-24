@@ -1223,6 +1223,103 @@ impl SubstrateRpcClient {
         self.submit_extrinsic(&extrinsic).await
     }
 
+    /// Submit a pure shielded-to-shielded transfer (unsigned, DA sidecar variant).
+    ///
+    /// This stages ciphertext bytes in the node's pending sidecar pool via
+    /// `da_submitCiphertexts`, then submits `shielded_transfer_unsigned_sidecar`
+    /// (hashes + sizes only) via `author_submitExtrinsic`.
+    pub async fn submit_shielded_transfer_unsigned_sidecar(
+        &self,
+        bundle: &TransactionBundle,
+    ) -> Result<[u8; 32], WalletError> {
+        use crate::extrinsic::{build_unsigned_shielded_transfer_sidecar, ShieldedTransferSidecarCall};
+        use base64::Engine;
+        use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
+
+        // Verify this is a pure shielded transfer (value_balance = 0).
+        if bundle.value_balance != 0 {
+            return Err(WalletError::InvalidArgument(
+                "Unsigned shielded transfers require value_balance = 0",
+            ));
+        }
+        if bundle.stablecoin.enabled {
+            return Err(WalletError::InvalidArgument(
+                "stablecoin binding not allowed in unsigned transfers",
+            ));
+        }
+
+        let notes = bundle.decode_notes()?;
+        if notes.len() != bundle.commitments.len() {
+            return Err(WalletError::InvalidState(
+                "ciphertexts count must match commitments count",
+            ));
+        }
+
+        let mut ciphertext_payloads = Vec::with_capacity(notes.len());
+        let mut ciphertext_hashes = Vec::with_capacity(notes.len());
+        let mut ciphertext_sizes = Vec::with_capacity(notes.len());
+        for note in &notes {
+            let bytes = note.to_da_bytes()?;
+            ciphertext_payloads
+                .push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+            ciphertext_hashes.push(ciphertext_hash_bytes(&bytes));
+            ciphertext_sizes.push(u32::try_from(bytes.len()).unwrap_or(u32::MAX));
+        }
+
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        let uploaded: Vec<DaSubmitCiphertextsEntry> = client
+            .request(
+                "da_submitCiphertexts",
+                rpc_params![DaSubmitCiphertextsRequest {
+                    ciphertexts: ciphertext_payloads,
+                }],
+            )
+            .await
+            .map_err(|e| WalletError::Rpc(format!("da_submitCiphertexts failed: {}", e)))?;
+
+        if uploaded.len() != ciphertext_hashes.len() {
+            return Err(WalletError::Rpc(format!(
+                "da_submitCiphertexts returned {} entries (expected {})",
+                uploaded.len(),
+                ciphertext_hashes.len()
+            )));
+        }
+        for (index, (entry, expected_hash)) in uploaded.iter().zip(&ciphertext_hashes).enumerate()
+        {
+            let observed_hash = hex_to_array48(&entry.hash)?;
+            if &observed_hash != expected_hash {
+                return Err(WalletError::Rpc(format!(
+                    "da_submitCiphertexts hash mismatch at index {index}"
+                )));
+            }
+            if entry.size != ciphertext_sizes[index] {
+                return Err(WalletError::Rpc(format!(
+                    "da_submitCiphertexts size mismatch at index {index}"
+                )));
+            }
+        }
+
+        let call_indices = self.get_shielded_pool_call_indices().await?;
+        let call = ShieldedTransferSidecarCall {
+            proof: bundle.proof_bytes.clone(),
+            nullifiers: bundle.nullifiers.clone(),
+            commitments: bundle.commitments.clone(),
+            ciphertext_hashes,
+            ciphertext_sizes,
+            anchor: bundle.anchor,
+            binding_hash: bundle.binding_hash,
+            stablecoin: None,
+            fee: bundle.fee,
+        };
+
+        let extrinsic = build_unsigned_shielded_transfer_sidecar(
+            &call,
+            call_indices.shielded_transfer_unsigned_sidecar,
+        )?;
+        self.submit_extrinsic(&extrinsic).await
+    }
+
     /// Submit a batch of shielded transfers with a single proof
     ///
     /// This submits multiple shielded transactions aggregated into a single
@@ -1376,6 +1473,17 @@ impl SubstrateRpcClient {
             .map(Some)
             .map_err(|e| WalletError::Rpc(format!("asset details decode failed: {}", e)))
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitCiphertextsRequest {
+    ciphertexts: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DaSubmitCiphertextsEntry {
+    hash: String,
+    size: u32,
 }
 
 /// Shielded transfer request matching `hegemon_submitShieldedTransfer` RPC
