@@ -50,6 +50,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-24T00:00Z) Added per-block “aggregation mode” marker (`ShieldedPool::enable_aggregation_mode`) so the runtime can skip per-tx proof verification while the node verifies commitment + aggregation proofs during import.
 - [x] (2026-01-24T00:00Z) Re-ran end-to-end throughput bench with proof sidecar enabled and recorded 8/16 transfer per block payload sizes + verify times.
 - [x] (2026-01-24T00:00Z) Stabilized local verification: cached aggregation verifier artifacts (avoid rebuilding recursion circuit/airs on every block) and capped default rayon threads in `--dev` to reduce macOS “watchdog wedge” risk under memory pressure (override with `HEGEMON_RAYON_THREADS`/`RAYON_NUM_THREADS`).
+- [x] (2026-01-24T00:00Z) Measured aggregation verification breakdown: steady-state `verify_batch` is ~30ms, while first-seen batch sizes pay a one-time recursion circuit build cost (~5.4s for 8, ~10.4s for 16) (`aggregation_verify_breakdown_metrics`).
 
 ## Surprises & Discoveries
 
@@ -76,12 +77,13 @@ After this work, a developer can run a local devnet and observe all of the follo
   Evidence: tx_count=8 block: `extrinsics_bytes_total=1461413`, `commitment_proof_bytes=253476`, `aggregation_proof_bytes=1202537`, `ciphertext_bytes_total=34352` (`block_payload_size_metrics`).
   Evidence: tx_count=16 block: `extrinsics_bytes_total=1584473`, `commitment_proof_bytes=280412`, `aggregation_proof_bytes=1295629`, `ciphertext_bytes_total=68704` (`block_payload_size_metrics`).
 
-- Observation: Aggregation proof verification is currently multi-second even in a release node and scales roughly linearly with tx_count (too slow for short block times).
-  Evidence: tx_count=8: `aggregation_verify_ms=5500`, `total_verify_ms=5653`.
-  Evidence: tx_count=16: `aggregation_verify_ms=10369`, `total_verify_ms=10659`.
+- Observation: The aggregation verification *steady-state* is fast (tens of ms), but the current implementation pays a one-time cost to build the recursion verifier circuit/airs per `(tx_count, pub_inputs_len, proof_shape)`; that build dominates the first-seen block’s “verification time.”
+  Evidence: tx_count=8: `aggregation_verify_ms=5442` with `cache_build_ms=5404`, `verify_batch_ms=31` (`aggregation_verify_breakdown_metrics`).
+  Evidence: tx_count=16: `aggregation_verify_ms=10436` with `cache_build_ms=10392`, `verify_batch_ms=33` (`aggregation_verify_breakdown_metrics`).
+  Consequence: to get short block times under sustained load, the sequencer should target a stable batch size (so caches stay hot), and nodes should treat the one-time circuit build as an amortized startup/warmup cost, not a per-block cost.
 
-- Observation: Aggregation verification work is currently doing avoidable per-block setup (recursion circuit/air build), which can cause large RAM spikes on laptops; caching reduces overhead but does not yet solve the dominant multi-second `verify_batch` cost.
-  Evidence: `consensus/src/aggregation.rs` now caches verifier artifacts keyed by (tx_count, public_inputs_len, proof shape).
+- Observation: Aggregation verification work included avoidable per-block setup (recursion circuit/air build), which can cause large RAM spikes on laptops; caching moves that cost to a one-time warmup per batch shape, and the remaining steady-state verification cost is tens of ms.
+  Evidence: `consensus/src/aggregation.rs` caches verifier artifacts keyed by (tx_count, public_inputs_len, proof shape), and `aggregation_verify_breakdown_metrics` shows `verify_batch_ms≈31–33ms` once the cache is built.
 
 - Observation: Transaction STARK proofs are currently failing verification in Plonky3 e2e mode (`OodEvaluationMismatch`), blocking the end-to-end commerce demo and wallet sends.
   Evidence: `cargo test -p transaction-circuit proving_and_verification_succeeds --features plonky3-e2e --release` fails with `STARK verification failed: OodEvaluationMismatch`.

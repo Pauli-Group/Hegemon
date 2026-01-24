@@ -115,6 +115,10 @@ The “it works” proof is:
   Evidence: tx_count=8: `aggregation_proof_bytes=1202537`, `extrinsics_bytes_total=1461413`.
   Evidence: tx_count=16: `aggregation_proof_bytes=1295629`, `extrinsics_bytes_total=1584473`.
 
+- Observation: Aggregation verification “time” in block import is dominated by a one-time recursion verifier circuit build per batch size; steady-state verification is tens of ms once the verifier artifacts are cached.
+  Evidence: tx_count=8: `cache_build_ms=5404`, `verify_batch_ms=31` (`aggregation_verify_breakdown_metrics`).
+  Evidence: tx_count=16: `cache_build_ms=10392`, `verify_batch_ms=33` (`aggregation_verify_breakdown_metrics`).
+
 - Observation: Corrupting the aggregation proof triggers block import rejection during mined block verification.
   Evidence: `Failed to import mined block error=mined block proof verification failed: proof verification failed: aggregation proof verification failed: ...` in `/tmp/hegemon-node-agg-corrupt.log`.
 
