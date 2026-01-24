@@ -31,7 +31,8 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 - [x] (2026-01-22T20:55Z) Replace in-memory DA stores with a persistent store + pruning for a hot retention window.
 - [x] (2026-01-23T00:00Z) Modify block production/import to use DA sidecars (ciphertexts are no longer in the block body).
 - [x] (2026-01-23T00:00Z) Update wallet RPCs to fetch ciphertexts from DA store.
-- [ ] End-to-end demo: mine a block, fetch chunks, sync wallet, decrypt note.
+- [x] (2026-01-23T23:55Z) End-to-end demo: mine blocks, fetch chunks via `da_getChunk`, sync wallets, decrypt an incoming note (DA-backed RPC path works).
+- [ ] End-to-end demo (sidecar extrinsics): mine a block where shielded transfers carry only ciphertext hashes/sizes and ciphertext bytes live only in the DA store (not in the block body).
 
 ## Surprises & Discoveries
 
@@ -46,6 +47,12 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 
 - Observation: With `MAX_SHARDS = 255` and parity `ceil(k/2)`, the maximum data shards is 170, so at `daChunkSize = 1024` the largest single-page blob is 174,080 bytes.
   Evidence: `state/da/src/lib.rs` (`MAX_SHARDS = 255`, parity `ceil(k/2)`), computed locally with a short script.
+
+- Observation: Mined block import can fail with `commitment proof da_root mismatch` if block-production DA encoding includes data that consensus verification excludes (for example, including coinbase ciphertexts in the DA blob when consensus computes `da_root` from shielded transfers only).
+  Evidence: Prior to the fix, mining logs showed repeated rejections with `mined block proof verification failed: commitment proof da_root mismatch`. After excluding coinbase ciphertexts from the DA blob and persisting them separately, blocks import successfully and log `DA encoding stored for imported block` plus `Commitment block proof stored for imported block`.
+
+- Observation: Wallet tooling currently submits `shielded_transfer_unsigned` with inline ciphertext bytes, so block bodies are still large even though DA retrieval works; the remaining work is to exercise the unsigned sidecar path end-to-end.
+  Evidence: Devnet logs show `Validating shielded_transfer_unsigned` and `Broadcasting mined block ... data_len=546026` for a 1-transfer block; `shielded_transfer_unsigned_sidecar` exists in the runtime but requires a way to stage ciphertext bytes into the node’s pending sidecar pool.
 
 ## Decision Log
 
@@ -71,6 +78,10 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 
 - Decision: Include `da_root` explicitly in the `submit_commitment_proof` extrinsic.
   Rationale: Importers need the DA root before they can fetch sidecar bytes; the proof bytes alone do not expose public inputs.
+  Date/Author: 2026-01-23 / Codex
+
+- Decision: Exclude coinbase ciphertexts from the DA blob committed by `da_root` and commitment proofs; store coinbase ciphertexts separately for wallet recovery.
+  Rationale: Consensus verification computes `da_root` from shielded transfers, not coinbase. Including coinbase ciphertexts in the DA blob causes block import failures (`commitment proof da_root mismatch`). Coinbase ciphertexts are small (one per block) and can be persisted separately without affecting validity, while keeping DA commitments stable and unambiguous.
   Date/Author: 2026-01-23 / Codex
 
 ## Outcomes & Retrospective

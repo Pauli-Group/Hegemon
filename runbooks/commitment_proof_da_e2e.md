@@ -46,6 +46,12 @@ HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n
 ## 3. Start the dev node with commitment proofs enabled
 
 ```bash
+RPC_PORT=9944
+# If 9944 is already in use on your machine, pick another port (example: 9955)
+# and substitute it everywhere below (WS + HTTP URLs).
+#
+#   RPC_PORT=9955
+#
 RUST_LOG=info HEGEMON_MINE=1 \
   HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
   HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST=1 \
@@ -53,7 +59,7 @@ RUST_LOG=info HEGEMON_MINE=1 \
   HEGEMON_ACCEPT_FAST_PROOFS=1 \
   HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK=1 \
   HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
-  ./target/release/hegemon-node --dev --tmp
+  ./target/release/hegemon-node --dev --tmp --rpc-port "$RPC_PORT"
 ```
 
 Tip: for background runs, redirect logs to a file so you can capture the `DA encoding stored` lines.
@@ -61,7 +67,7 @@ Tip: for background runs, redirect logs to a file so you can capture the `DA enc
 ## 4. Sync the miner wallet
 
 ```bash
-printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":true}}\n' "testwallet1" \
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:'"$RPC_PORT"'","force_rescan":true}}\n' "testwallet1" \
   | HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
 ```
 
@@ -93,7 +99,7 @@ EOF
 ## 6. Send a shielded transfer
 
 ```bash
-REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --argjson recipients "$(jq -c '.' /tmp/hegemon-recipients-e2e.json)" \
+REQ=$(jq -nc --arg ws "ws://127.0.0.1:'"$RPC_PORT"'" --argjson recipients "$(jq -c '.' /tmp/hegemon-recipients-e2e.json)" \
   '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
 printf '%s\n%s\n' "testwallet1" "$REQ" \
   | HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
@@ -121,7 +127,7 @@ Fetch the block hash for that block number:
 ```bash
 curl -s -H "Content-Type: application/json" \
   -d '{"id":1,"jsonrpc":"2.0","method":"chain_getBlockHash","params":[N]}' \
-  http://127.0.0.1:9944
+  http://127.0.0.1:"$RPC_PORT"
 ```
 
 ## 8. Query commitment proof + DA RPC endpoints
@@ -131,7 +137,7 @@ Commitment proof:
 ```bash
 curl -s -H "Content-Type: application/json" \
   -d '{"id":1,"jsonrpc":"2.0","method":"block_getCommitmentProof","params":["<BLOCK_HASH>"]}' \
-  http://127.0.0.1:9944
+  http://127.0.0.1:"$RPC_PORT"
 ```
 
 DA parameters (global; no params):
@@ -139,7 +145,7 @@ DA parameters (global; no params):
 ```bash
 curl -s -H "Content-Type: application/json" \
   -d '{"id":1,"jsonrpc":"2.0","method":"da_getParams","params":[]}' \
-  http://127.0.0.1:9944
+  http://127.0.0.1:"$RPC_PORT"
 ```
 
 DA chunk (keyed by `da_root`; index 0 is a simple smoke check):
@@ -147,13 +153,13 @@ DA chunk (keyed by `da_root`; index 0 is a simple smoke check):
 ```bash
 curl -s -H "Content-Type: application/json" \
   -d '{"id":1,"jsonrpc":"2.0","method":"da_getChunk","params":["<DA_ROOT>",0]}' \
-  http://127.0.0.1:9944
+  http://127.0.0.1:"$RPC_PORT"
 ```
 
 ## 9. Verify recipient saw the note (optional)
 
 ```bash
-printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":true}}\n' "testwallet2" \
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:'"$RPC_PORT"'","force_rescan":true}}\n' "testwallet2" \
   | HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-b --mode open
 ```
 

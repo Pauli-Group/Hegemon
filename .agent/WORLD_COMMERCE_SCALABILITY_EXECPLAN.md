@@ -33,7 +33,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-23T00:00Z) Execute `.agent/DA_SIDECAR_HOT_AVAILABILITY_EXECPLAN.md` through “ciphertexts no longer live in block body” milestone.
 - [x] (2026-01-23T00:00Z) Execute `.agent/CENSORSHIP_RESISTANCE_FEES_EXECPLAN.md` through “forced inclusion lane + private fee policy” milestone.
 - [x] (2026-01-23T06:10Z) Execute `.agent/COLD_ARCHIVE_RECOVERY_EXECPLAN.md` through “archive contract + wallet recovery flow works” milestone (wallet fallback + archive provider RPC path implemented; runbook prepared for end-to-end demo).
-- [ ] Run an end-to-end local commerce demo (stress send, mine, sync a fresh wallet, recover notes). (Blocker cleared: transaction-circuit Plonky3 proofs now pass in e2e debug tests.)
+- [x] (2026-01-23T23:55Z) Run an end-to-end local commerce demo: mine coinbase, sync miner wallet, send a shielded transfer, mine/include it, verify `block_getCommitmentProof` + `da_getChunk`, sync recipient wallet.
 - [x] (2026-01-23T20:00Z) Fixed Plonky3 public-input parsing to include ciphertext hashes; `prove_verify_roundtrip_p3` passes in `--features plonky3-e2e`.
 - [x] (2026-01-23T20:20Z) Propagated `plonky3-e2e` feature to `transaction-core` so debug e2e tests use production FRI params (log_blowup=4, num_queries=32).
 - [x] (2026-01-23T12:00Z) Added a design-philosophy quick reference in this ExecPlan to anchor decisions.
