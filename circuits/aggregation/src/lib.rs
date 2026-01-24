@@ -4,7 +4,7 @@
 //! transaction proofs were verified inside a recursion circuit.
 
 use p3_batch_stark::CommonData;
-use p3_circuit::CircuitBuilder;
+use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::{BatchStarkProver, TablePacking, config as circuit_config};
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
@@ -230,10 +230,12 @@ pub fn prove_aggregation(
     let outer_config = circuit_config::goldilocks().build();
     let common = CommonData::from_airs_and_degrees(&outer_config, &mut airs, &degrees);
 
-    let mut runner = circuit.runner();
+    let mut runner = circuit.clone().runner();
     runner
         .set_public_inputs(&recursion_public_inputs)
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
+    set_fri_query_witnesses(&circuit, &mut runner, &verifier_inputs, &inner_proofs)
+        .map_err(|err| AggregationError::CircuitRun(format!("set query witnesses: {err:?}")))?;
     let traces = runner
         .run()
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
@@ -244,4 +246,83 @@ pub fn prove_aggregation(
         .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))?;
 
     postcard::to_allocvec(&outer_proof.proof).map_err(|_| AggregationError::SerializeFailed)
+}
+
+fn set_target(
+    circuit: &Circuit<Challenge>,
+    runner: &mut CircuitRunner<Challenge>,
+    target: p3_recursion::Target,
+    value: Challenge,
+) -> Result<(), CircuitError> {
+    let witness_id = circuit
+        .expr_to_widx
+        .get(&target)
+        .copied()
+        .ok_or(CircuitError::ExprIdNotFound { expr_id: target })?;
+    runner.set_witness_value(witness_id, value)
+}
+
+fn set_fri_query_witnesses(
+    circuit: &Circuit<Challenge>,
+    runner: &mut CircuitRunner<Challenge>,
+    verifier_inputs: &[StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>],
+    proofs: &[TransactionProofP3],
+) -> Result<(), CircuitError> {
+    for (inputs, proof) in verifier_inputs.iter().zip(proofs.iter()) {
+        let fri_targets = &inputs.proof_targets.opening_proof;
+        for (query_targets, query_proof) in fri_targets
+            .query_proofs
+            .iter()
+            .zip(proof.opening_proof.query_proofs.iter())
+        {
+            // Input proofs (MMCS openings).
+            for (batch_targets, batch_proof) in query_targets
+                .input_proof
+                .iter()
+                .zip(query_proof.input_proof.iter())
+            {
+                for (row_targets, row_values) in batch_targets
+                    .opened_values
+                    .iter()
+                    .zip(batch_proof.opened_values.iter())
+                {
+                    for (t, v) in row_targets.iter().zip(row_values.iter()) {
+                        set_target(circuit, runner, *t, Challenge::from(*v))?;
+                    }
+                }
+
+                for (hash_targets, hash_values) in batch_targets
+                    .opening_proof
+                    .hash_proof_targets
+                    .iter()
+                    .zip(batch_proof.opening_proof.iter())
+                {
+                    for (t, v) in hash_targets.iter().zip(hash_values.iter()) {
+                        set_target(circuit, runner, *t, Challenge::from(*v))?;
+                    }
+                }
+            }
+
+            // Commit phase openings.
+            for (step_targets, step_proof) in query_targets
+                .commit_phase_openings
+                .iter()
+                .zip(query_proof.commit_phase_openings.iter())
+            {
+                set_target(circuit, runner, step_targets.sibling_value, step_proof.sibling_value)?;
+
+                for (hash_targets, hash_values) in step_targets
+                    .opening_proof
+                    .hash_proof_targets
+                    .iter()
+                    .zip(step_proof.opening_proof.iter())
+                {
+                    for (t, v) in hash_targets.iter().zip(hash_values.iter()) {
+                        set_target(circuit, runner, *t, Challenge::from(*v))?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }

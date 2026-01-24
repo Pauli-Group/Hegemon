@@ -75,7 +75,9 @@ pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
 
-use crate::substrate::service::{CommitmentBlockProofStore, DaChunkStore, PendingCiphertextStore};
+use crate::substrate::service::{
+    CommitmentBlockProofStore, DaChunkStore, PendingCiphertextStore, PendingProofStore,
+};
 use state_da::DaParams;
 
 /// Dependency container for RPC handlers.
@@ -97,6 +99,8 @@ pub struct FullDeps<S, P> {
     pub da_chunk_store: Arc<parking_lot::Mutex<DaChunkStore>>,
     /// Pending sidecar ciphertext pool.
     pub pending_ciphertext_store: Arc<parking_lot::Mutex<PendingCiphertextStore>>,
+    /// Pending transaction proof pool (rollup sidecar).
+    pub pending_proof_store: Arc<parking_lot::Mutex<PendingProofStore>>,
     /// DA parameters
     pub da_params: DaParams,
 }
@@ -142,6 +146,7 @@ where
     let da_rpc = DaRpc::new(
         Arc::clone(&deps.da_chunk_store),
         Arc::clone(&deps.pending_ciphertext_store),
+        Arc::clone(&deps.pending_proof_store),
         deps.da_params,
     );
     module.merge(da_rpc.into_rpc())?;

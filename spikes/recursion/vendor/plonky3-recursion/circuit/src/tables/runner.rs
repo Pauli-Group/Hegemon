@@ -93,6 +93,13 @@ impl<F: CircuitField> CircuitRunner<F> {
         Ok(())
     }
 
+    /// Sets a witness value directly.
+    ///
+    /// This is intended for prover-only witness assignments (non-public inputs).
+    pub fn set_witness_value(&mut self, widx: WitnessId, value: F) -> Result<(), CircuitError> {
+        self.set_witness(widx, value)
+    }
+
     /// Sets private data for a non-primitive operation.
     pub fn set_private_data(
         &mut self,

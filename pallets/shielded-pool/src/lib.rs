@@ -416,6 +416,15 @@ pub mod pallet {
     #[pallet::storage]
     pub type AggregationProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
+    /// Whether this block is operating in "aggregation required" mode.
+    ///
+    /// When enabled, shielded transfers may omit per-transaction proof verification in the runtime
+    /// (the node is expected to verify an aggregation proof during block import).
+    ///
+    /// Reset on `on_initialize` so it must be explicitly enabled per block.
+    #[pallet::storage]
+    pub type AggregationProofRequired<T: Config> = StorageValue<_, bool, ValueQuery>;
+
     /// DA commitments per block (da_root + chunk count) for archive audits.
     #[pallet::storage]
     #[pallet::getter(fn da_commitment)]
@@ -603,6 +612,10 @@ pub mod pallet {
         CommitmentProofAlreadyProcessed,
         /// Aggregation proof already submitted for this block.
         AggregationProofAlreadyProcessed,
+        /// Aggregation proof mode was already enabled for this block.
+        AggregationModeAlreadyEnabled,
+        /// Aggregation proof mode must be enabled before transfers.
+        AggregationModeAfterTransfers,
         /// Coinbase amount exceeds the configured safety cap.
         CoinbaseSubsidyExceedsLimit,
         /// Coinbase amount does not match the expected subsidy + fees.
@@ -770,12 +783,41 @@ pub mod pallet {
             ShieldedTransfersProcessed::<T>::kill();
             CommitmentProofProcessed::<T>::kill();
             AggregationProofProcessed::<T>::kill();
+            AggregationProofRequired::<T>::kill();
             Weight::from_parts(1_000, 0)
         }
     }
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
+        /// Enable aggregation-required mode for this block.
+        ///
+        /// This is an inherent-style unsigned extrinsic (`None` origin) used to mark that
+        /// shielded transfers in this block are validated by an aggregation proof verified in the
+        /// node's import pipeline (not by per-transaction proof verification in the runtime).
+        ///
+        /// The node is responsible for ensuring the corresponding aggregation proof is present
+        /// and verified during block import.
+        #[pallet::call_index(13)]
+        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
+        pub fn enable_aggregation_mode(origin: OriginFor<T>) -> DispatchResult {
+            ensure_none(origin)?;
+
+            ensure!(
+                !AggregationProofRequired::<T>::get(),
+                Error::<T>::AggregationModeAlreadyEnabled
+            );
+
+            // This marker must appear before any transfers that rely on it.
+            ensure!(
+                !ShieldedTransfersProcessed::<T>::get(),
+                Error::<T>::AggregationModeAfterTransfers
+            );
+
+            AggregationProofRequired::<T>::put(true);
+            Ok(())
+        }
+
         /// Attach the commitment proof for this block.
         ///
         /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
@@ -1692,6 +1734,8 @@ pub mod pallet {
 
             ensure!(stablecoin.is_none(), Error::<T>::StablecoinIssuanceUnsigned);
 
+            let aggregation_mode = AggregationProofRequired::<T>::get();
+
             // Validate counts
             ensure!(
                 !nullifiers.is_empty() || !commitments.is_empty(),
@@ -1767,27 +1811,30 @@ pub mod pallet {
                 stablecoin: None,
             };
 
-            // Get verifying key
-            let vk = VerifyingKeyStorage::<T>::get();
-            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
-
-            // Verify ZK proof
             let verifier = T::ProofVerifier::default();
-            match verifier.verify_stark(&proof, &inputs, &vk) {
-                VerificationResult::Valid => {}
-                VerificationResult::InvalidProofFormat => {
-                    return Err(Error::<T>::InvalidProofFormat.into())
+
+            if !aggregation_mode {
+                // Get verifying key
+                let vk = VerifyingKeyStorage::<T>::get();
+                ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
+
+                // Verify ZK proof (standard L1 mode).
+                match verifier.verify_stark(&proof, &inputs, &vk) {
+                    VerificationResult::Valid => {}
+                    VerificationResult::InvalidProofFormat => {
+                        return Err(Error::<T>::InvalidProofFormat.into())
+                    }
+                    VerificationResult::InvalidPublicInputs => {
+                        return Err(Error::<T>::InvalidProofFormat.into())
+                    }
+                    VerificationResult::VerificationFailed => {
+                        return Err(Error::<T>::ProofVerificationFailed.into())
+                    }
+                    VerificationResult::KeyNotFound => {
+                        return Err(Error::<T>::VerifyingKeyNotFound.into())
+                    }
+                    _ => return Err(Error::<T>::ProofVerificationFailed.into()),
                 }
-                VerificationResult::InvalidPublicInputs => {
-                    return Err(Error::<T>::InvalidProofFormat.into())
-                }
-                VerificationResult::VerificationFailed => {
-                    return Err(Error::<T>::ProofVerificationFailed.into())
-                }
-                VerificationResult::KeyNotFound => {
-                    return Err(Error::<T>::VerifyingKeyNotFound.into())
-                }
-                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
             }
 
             // Verify binding hash
@@ -2755,15 +2802,19 @@ pub mod pallet {
                         stablecoin: None,
                     };
 
-                    log::info!(target: "shielded-pool", "  Verifying STARK proof...");
                     let verifier = T::ProofVerifier::default();
-                    match verifier.verify_stark(proof, &inputs, &vk) {
-                        VerificationResult::Valid => {
-                            log::info!(target: "shielded-pool", "  STARK proof PASSED");
-                        }
-                        other => {
-                            log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
-                            return InvalidTransaction::BadProof.into();
+
+                    let aggregation_mode = AggregationProofRequired::<T>::get();
+                    if !aggregation_mode {
+                        log::info!(target: "shielded-pool", "  Verifying STARK proof...");
+                        match verifier.verify_stark(proof, &inputs, &vk) {
+                            VerificationResult::Valid => {
+                                log::info!(target: "shielded-pool", "  STARK proof PASSED");
+                            }
+                            other => {
+                                log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
+                                return InvalidTransaction::BadProof.into();
+                            }
                         }
                     }
 
@@ -2778,7 +2829,7 @@ pub mod pallet {
                     let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
                         .priority(100)
                         .longevity(64)
-                        .propagate(true);
+                        .propagate(!proof.data.is_empty());
 
                     let mut provided_any = false;
                     for nf in nullifiers.iter() {
@@ -2793,6 +2844,24 @@ pub mod pallet {
                     }
 
                     builder.build()
+                }
+                Call::enable_aggregation_mode {} => {
+                    if _source != TransactionSource::InBlock {
+                        return InvalidTransaction::Call.into();
+                    }
+                    if AggregationProofRequired::<T>::get() {
+                        return InvalidTransaction::Stale.into();
+                    }
+                    if ShieldedTransfersProcessed::<T>::get() {
+                        return InvalidTransaction::Custom(11).into();
+                    }
+
+                    ValidTransaction::with_tag_prefix("ShieldedPoolAggregationMode")
+                        .priority(TransactionPriority::MAX)
+                        .longevity(1)
+                        .and_provides(vec![b"aggregation_mode".to_vec()])
+                        .propagate(false)
+                        .build()
                 }
                 // Inherent call: mint_coinbase
                 // Inherent extrinsics are validated through ProvideInherent::check_inherent

@@ -189,6 +189,17 @@ None of these tricks negate the inherent bandwidth hit of transparent proofs, bu
 
 The `circuits/formal/transaction_balance.tla` model captures the MASP balance rules (nullifier uniqueness + per-asset conservation) using a compact TLA+ spec. Any change to the AIR/witness layout must update that spec plus rerun TLC/Apalache, recording the outcome in the associated README and in `docs/SECURITY_REVIEWS.md`. On the implementation side, `circuits/transaction/tests/security_fuzz.rs` performs property-based fuzzing of `TransactionWitness::balance_slots` and `public_inputs` to catch serialization edge cases. Both the formal model and the fuzz harness are wired into the `security-adversarial` CI job, so contributors get immediate feedback when the balance/tag logic drifts.
 
+### 2.6 Aggregation mode (proofless L1 lane)
+
+Per-transaction transparent STARK proofs are too large to ship in every transfer extrinsic if the goal is “world commerce.” The chain therefore supports a per-block **aggregation mode** that moves per-tx proof bytes off-chain while keeping block validity enforced during import:
+
+* Block authors include `pallet_shielded_pool::Call::enable_aggregation_mode` as a **mandatory unsigned** extrinsic early in the block.
+* In aggregation mode, `shielded_transfer_unsigned_sidecar` may omit `proof.data` and the runtime skips `verify_stark` (it still enforces binding hashes, nullifier uniqueness, anchor checks, and fee rules).
+* Proof bytes are staged to the block author via `da_submitProofs` keyed by the transaction `binding_hash` (wallets can enable this behavior via `HEGEMON_WALLET_PROOF_SIDECAR=1`).
+* The node’s import pipeline verifies the commitment proof + aggregation proof and rejects any block with an invalid inner transaction proof.
+
+This preserves the PQ security bar while shifting “lots of proofs” work off-chain and reducing the on-chain payload to O(1) proofs per block.
+
 ---
 
 ## 3. Ledger model: one PQ shielded pool, no transparent pool

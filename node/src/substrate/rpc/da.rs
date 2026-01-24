@@ -1,6 +1,7 @@
 //! Data-availability RPC endpoints.
 
-use crate::substrate::service::{DaChunkStore, PendingCiphertextStore};
+use crate::substrate::service::{DaChunkStore, PendingCiphertextStore, PendingProofStore};
+use crypto::hashes::blake3_384;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
@@ -65,6 +66,26 @@ pub struct SubmitCiphertextsEntry {
     pub size: u32,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitProofsRequest {
+    pub proofs: Vec<SubmitProofsItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitProofsItem {
+    /// Binding hash bytes (0x-prefixed hex).
+    pub binding_hash: String,
+    /// Proof bytes (base64, or 0x-prefixed hex).
+    pub proof: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitProofsEntry {
+    pub binding_hash: String,
+    pub proof_hash: String,
+    pub size: u32,
+}
+
 #[rpc(server, client, namespace = "da")]
 pub trait DaApi {
     /// Get a DA chunk proof by root and chunk index.
@@ -85,11 +106,23 @@ pub trait DaApi {
         &self,
         request: SubmitCiphertextsRequest,
     ) -> RpcResult<Vec<SubmitCiphertextsEntry>>;
+
+    /// Stage transaction proof bytes in the node's pending sidecar pool.
+    ///
+    /// In rollup/aggregation mode, shielded transfer extrinsics may omit the per-tx proof bytes
+    /// from the block body; the block author assembles an aggregation proof using these staged
+    /// proofs.
+    #[method(name = "submitProofs")]
+    async fn submit_proofs(
+        &self,
+        request: SubmitProofsRequest,
+    ) -> RpcResult<Vec<SubmitProofsEntry>>;
 }
 
 pub struct DaRpc {
     store: Arc<Mutex<DaChunkStore>>,
     pending_ciphertexts: Arc<Mutex<PendingCiphertextStore>>,
+    pending_proofs: Arc<Mutex<PendingProofStore>>,
     params: DaParams,
 }
 
@@ -97,11 +130,13 @@ impl DaRpc {
     pub fn new(
         store: Arc<Mutex<DaChunkStore>>,
         pending_ciphertexts: Arc<Mutex<PendingCiphertextStore>>,
+        pending_proofs: Arc<Mutex<PendingProofStore>>,
         params: DaParams,
     ) -> Self {
         Self {
             store,
             pending_ciphertexts,
+            pending_proofs,
             params,
         }
     }
@@ -191,6 +226,67 @@ impl DaApiServer for DaRpc {
 
         Ok(entries)
     }
+
+    async fn submit_proofs(
+        &self,
+        request: SubmitProofsRequest,
+    ) -> RpcResult<Vec<SubmitProofsEntry>> {
+        const MAX_PROOFS_PER_REQUEST: usize = 64;
+        const MAX_TOTAL_BYTES_PER_REQUEST: usize = 16 * 1024 * 1024;
+
+        if request.proofs.len() > MAX_PROOFS_PER_REQUEST {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                format!("too many proofs (max {})", MAX_PROOFS_PER_REQUEST),
+                None::<()>,
+            ));
+        }
+
+        let mut total_bytes = 0usize;
+        let mut entries = Vec::with_capacity(request.proofs.len());
+        let mut pending = self.pending_proofs.lock();
+
+        for item in request.proofs {
+            let binding_hash = parse_binding_hash(&item.binding_hash)?;
+            let bytes = parse_bytes(&item.proof)?;
+
+            if bytes.is_empty() {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    "proof bytes empty",
+                    None::<()>,
+                ));
+            }
+
+            if bytes.len() > pallet_shielded_pool::types::STARK_PROOF_MAX_SIZE {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    "proof exceeds STARK_PROOF_MAX_SIZE",
+                    None::<()>,
+                ));
+            }
+
+            total_bytes = total_bytes.saturating_add(bytes.len());
+            if total_bytes > MAX_TOTAL_BYTES_PER_REQUEST {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("request too large (max {} bytes)", MAX_TOTAL_BYTES_PER_REQUEST),
+                    None::<()>,
+                ));
+            }
+
+            let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+            let proof_hash = blake3_384(&bytes);
+            pending.insert(binding_hash, bytes);
+            entries.push(SubmitProofsEntry {
+                binding_hash: format!("0x{}", hex::encode(binding_hash)),
+                proof_hash: format!("0x{}", hex::encode(proof_hash)),
+                size,
+            });
+        }
+
+        Ok(entries)
+    }
 }
 
 fn parse_da_root(value: &str) -> Result<DaRoot, ErrorObjectOwned> {
@@ -210,6 +306,31 @@ fn parse_da_root(value: &str) -> Result<DaRoot, ErrorObjectOwned> {
         ));
     }
     let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn parse_binding_hash(value: &str) -> Result<[u8; 64], ErrorObjectOwned> {
+    let trimmed = value.trim_start_matches("0x");
+    let bytes = hex::decode(trimmed).map_err(|err| {
+        ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            format!("invalid hex: {err}"),
+            None::<()>,
+        )
+    })?;
+    if bytes.len() != pallet_shielded_pool::types::BINDING_HASH_SIZE {
+        return Err(ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            format!(
+                "expected {}-byte binding hash, got {}",
+                pallet_shielded_pool::types::BINDING_HASH_SIZE,
+                bytes.len()
+            ),
+            None::<()>,
+        ));
+    }
+    let mut out = [0u8; pallet_shielded_pool::types::BINDING_HASH_SIZE];
     out.copy_from_slice(&bytes);
     Ok(out)
 }
