@@ -105,6 +105,15 @@ printf '%s\n%s\n' "testwallet1" "$REQ" \
   | HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
 ```
 
+To exercise the unsigned DA-sidecar path (ciphertext bytes are staged out-of-band and the on-chain
+extrinsic carries only ciphertext hashes/sizes), add `HEGEMON_WALLET_DA_SIDECAR=1`:
+
+```bash
+printf '%s\n%s\n' "testwallet1" "$REQ" \
+  | HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 \
+    ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
+```
+
 Unset `HEGEMON_WALLET_PROVER_FAST` and `HEGEMON_ACCEPT_FAST_PROOFS` to use full-security proving parameters.
 
 Wait for the next mined block to include the transaction. Commitment proof generation should be fast

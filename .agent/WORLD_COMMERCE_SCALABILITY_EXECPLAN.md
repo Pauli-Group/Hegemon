@@ -31,6 +31,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-22T18:47Z) Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
 - [x] (2026-01-22T18:54Z) Execute `.agent/PROOF_AGGREGATION_P3_EXECPLAN.md` through “end-to-end batch proof on devnet” milestone.
 - [x] (2026-01-23T00:00Z) Execute `.agent/DA_SIDECAR_HOT_AVAILABILITY_EXECPLAN.md` through “ciphertexts no longer live in block body” milestone.
+- [x] (2026-01-23T17:30Z) Proved unsigned DA-sidecar submission end-to-end (`da_submitCiphertexts` + `shielded_transfer_unsigned_sidecar`) and recovered the note via DA-backed wallet sync.
 - [x] (2026-01-23T00:00Z) Execute `.agent/CENSORSHIP_RESISTANCE_FEES_EXECPLAN.md` through “forced inclusion lane + private fee policy” milestone.
 - [x] (2026-01-23T06:10Z) Execute `.agent/COLD_ARCHIVE_RECOVERY_EXECPLAN.md` through “archive contract + wallet recovery flow works” milestone (wallet fallback + archive provider RPC path implemented; runbook prepared for end-to-end demo).
 - [x] (2026-01-23T23:55Z) Run an end-to-end local commerce demo: mine coinbase, sync miner wallet, send a shielded transfer, mine/include it, verify `block_getCommitmentProof` + `da_getChunk`, sync recipient wallet.
