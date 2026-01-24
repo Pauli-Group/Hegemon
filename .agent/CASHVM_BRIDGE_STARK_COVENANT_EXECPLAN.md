@@ -21,6 +21,7 @@ After this work, a developer can:
 ## Progress
 
 - [x] (2026-01-23T16:00Z) Draft CashVM↔Hegemon STARK covenant ExecPlan (this file).
+- [x] (2026-01-24T00:00Z) Clarified “cacheable success” note to avoid implying “rejection is forever”; timelock-style rejections can become valid later, while success remains stable unless double-spent.
 - [ ] Pin down the *exact* 2026 CashVM standardness limits to enforce in tests (transaction size, per-input unlocking bytecode, any limits on pushdata/witness, and any “density” execution caps).
 - [ ] Prototyping: add a Rust “CashVM transaction + script” harness under `spikes/cashvm-covenant/` that can execute the covenant bytecode against a fully-resolved spending transaction.
 - [ ] Define the rollup state format, intent format, and canonical digests (hashes) used to bind proofs to on‑chain data.
@@ -35,8 +36,8 @@ After this work, a developer can:
 - Observation: Current Hegemon non-aggregated transaction proofs are on the order of hundreds of kilobytes; CashVM standardness caps require the *on‑chain* proof to be either much smaller or verified across multiple simultaneous transactions.
   Evidence: `circuits-bench --smoke --json --prove` in `.agent/WORLD_COMMERCE_SCALABILITY_EXECPLAN.md` records ~357 KiB per transfer for the current Plonky3 transaction proof.
 
-- Observation: If CashVM script evaluation is truly “cacheable success” (pure function of the resolved spending transaction), then we must avoid any covenant design that depends on block height/time (timelocks, challenge windows) unless those are represented inside the spending transaction itself.
-  Evidence: CashVM fact pattern in the problem statement: “outputs are pure functions accepting the spending transaction… only UTXO spentness must be rechecked.”
+- Observation: Treat “cacheable success” as *monotonic validity*: once a spend becomes valid, it stays valid forever unless double-spent. However, some *rejections* may be transient (for example, timelock-style constraints): they are fast to recheck later and can flip from invalid→valid as chain height/time advances. Design must never assume “rejection is final,” and must not rely on time-based challenge windows for security.
+  Evidence: The challenge statement explicitly calls out “cacheable success” (suggesting stable acceptance), while timelock semantics in UTXO systems are typically monotonic (invalid now, valid later, then valid forever).
 
 ## Decision Log
 
@@ -69,7 +70,7 @@ Not started (this plan is design-first).
 This plan is written to the CashVM challenge constraints:
 
 1. CashVM is computationally universal and “gas-free” (bounded by density/standardness rules).
-2. UTXO validation is modeled as: each spent output runs a pure function of the *resolved spending transaction* (and its own locking state), returning reject or cacheable success.
+2. UTXO validation is modeled as: each spent output runs a function of the *resolved spending transaction* (and its own locking state), returning reject or cacheable success. “Cacheable success” should be read as “once valid, stays valid” (except for double-spentness); do not assume rejects are final if the system includes monotonic predicates such as timelocks.
 3. We must not require any further CashVM consensus changes or custom node patches.
 4. We must not introduce protocol rents: aggregators are replaceable and are paid only by explicit per‑activity fees chosen by users.
 5. No UI and no specification of the out‑of‑band message layer are in scope.
@@ -314,3 +315,4 @@ The goal of these interfaces is not to perfectly emulate CashVM; it is to be str
 ## Change Notes
 
 2026-01-23: Initial draft created to answer the CashVM bridge/covenant challenge and to map the existing Hegemon privacy kernel onto a covenant-based settlement model.
+2026-01-24: Clarified the “cacheable success” observation to distinguish stable success from potentially transient failures (e.g., timelocks), per reviewer feedback.
