@@ -2484,6 +2484,30 @@ fn verify_proof_carrying_block(
     let payload = commitment_payload
         .ok_or_else(|| "missing submit_commitment_proof extrinsic".to_string())?;
 
+    {
+        let extrinsics_bytes_total: usize =
+            extrinsics.iter().map(|ext| ext.encode().len()).sum();
+        let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
+            .map(|layouts| da_blob_len_from_layouts(&layouts))
+            .unwrap_or(0);
+        let tx_proof_bytes_total: usize = tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
+        let aggregation_proof_bytes_len = aggregation_proof_bytes.as_ref().map(|bytes| bytes.len()).unwrap_or(0);
+        tracing::info!(
+            target: "node::metrics",
+            block_number,
+            tx_count = transactions.len(),
+            extrinsics_bytes_total,
+            da_blob_bytes_estimate,
+            tx_proof_bytes_total,
+            commitment_proof_bytes = payload.proof_bytes.len(),
+            aggregation_proof_bytes = aggregation_proof_bytes_len,
+            da_chunk_count = payload.da_chunk_count,
+            da_root = %hex::encode(payload.da_root),
+            da_policy = ?da_policy,
+            "block_payload_size_metrics"
+        );
+    }
+
     let requires_full_fetch = matches!(
         da_policy,
         pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch
@@ -2525,9 +2549,18 @@ fn verify_proof_carrying_block(
         transaction_proofs: Some(tx_proofs),
     };
 
+    let start_verify = Instant::now();
     verifier
         .verify_block(&block, &parent_tree)
         .map_err(|err| format!("proof verification failed: {err}"))?;
+    let verify_ms = start_verify.elapsed().as_millis();
+    tracing::info!(
+        target: "node::metrics",
+        block_number,
+        verify_ms,
+        aggregation_proof_present = block.aggregation_proof.is_some(),
+        "block_import_verify_time_ms"
+    );
 
     Ok(Some(commitment_proof))
 }

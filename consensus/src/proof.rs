@@ -9,6 +9,7 @@ use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_co
 use crypto::hashes::blake3_384;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
+use std::time::Instant;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 use transaction_circuit::hashing_pq::felts_to_bytes48;
@@ -191,6 +192,25 @@ impl ProofVerifier for ParallelProofVerifier {
     where
         BH: HeaderProofExt,
     {
+        let start_total = Instant::now();
+        let tx_count = block.transactions.len();
+        let commitment_proof_bytes = block
+            .commitment_proof
+            .as_ref()
+            .map(|proof| proof.proof_bytes.len())
+            .unwrap_or(0);
+        let aggregation_proof_bytes = block
+            .aggregation_proof
+            .as_ref()
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
+        let ciphertext_bytes_total: usize = block
+            .transactions
+            .iter()
+            .flat_map(|tx| tx.ciphertexts.iter())
+            .map(|ct| ct.len())
+            .sum();
+
         if block.transactions.is_empty() {
             if block.commitment_proof.is_some() || block.transaction_proofs.is_some() {
                 return Err(ProofError::CommitmentProofEmptyBlock);
@@ -209,6 +229,11 @@ impl ProofVerifier for ParallelProofVerifier {
             .transaction_proofs
             .as_ref()
             .ok_or(ProofError::MissingTransactionProofs)?;
+
+        let tx_proof_bytes_total: usize = transaction_proofs
+            .iter()
+            .map(|proof| proof.stark_proof.len())
+            .sum();
         if transaction_proofs.len() != block.transactions.len() {
             return Err(ProofError::TransactionProofCountMismatch {
                 expected: block.transactions.len(),
@@ -216,7 +241,9 @@ impl ProofVerifier for ParallelProofVerifier {
             });
         }
 
+        let start_commitment = Instant::now();
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
+        let commitment_verify_ms = start_commitment.elapsed().as_millis();
 
         let proof_hashes = proof_hashes_from_transaction_proofs(transaction_proofs)?;
         let expected_commitment =
@@ -230,24 +257,30 @@ impl ProofVerifier for ParallelProofVerifier {
             ));
         }
 
-        transaction_proofs
-            .par_iter()
-            .zip(&block.transactions)
-            .enumerate()
-            .try_for_each(|(index, (proof, tx))| {
-                verify_transaction_proof_inputs(index, tx, proof)?;
-                Ok::<_, ProofError>(())
-            })?;
+            transaction_proofs
+                .par_iter()
+                .zip(&block.transactions)
+                .enumerate()
+                .try_for_each(|(index, (proof, tx))| {
+                    verify_transaction_proof_inputs(index, tx, proof)?;
+                    Ok::<_, ProofError>(())
+                })?;
 
-        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref()
-        {
-            verify_aggregation_proof(aggregation_proof, transaction_proofs)?;
-            true
-        } else {
-            false
-        };
+        let mut aggregation_verify_ms = 0u128;
+        let mut tx_verify_ms = 0u128;
+
+        let aggregation_verified =
+            if let Some(aggregation_proof) = block.aggregation_proof.as_ref() {
+                let start_agg = Instant::now();
+                verify_aggregation_proof(aggregation_proof, transaction_proofs)?;
+                aggregation_verify_ms = start_agg.elapsed().as_millis();
+                true
+            } else {
+                false
+            };
 
         if !aggregation_verified {
+            let start_tx = Instant::now();
             transaction_proofs
                 .par_iter()
                 .enumerate()
@@ -260,6 +293,7 @@ impl ProofVerifier for ParallelProofVerifier {
                     })?;
                     Ok::<_, ProofError>(())
                 })?;
+            tx_verify_ms = start_tx.elapsed().as_millis();
         }
 
         let anchors: Vec<[u8; 48]> = transaction_proofs
@@ -270,13 +304,30 @@ impl ProofVerifier for ParallelProofVerifier {
         let proof_starting_root =
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
         let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
-        verify_and_apply_tree_transition(
+        let result = verify_and_apply_tree_transition(
             parent_commitment_tree,
             proof_starting_root,
             proof_ending_root,
             &block.transactions,
             &anchors,
-        )
+        )?;
+
+        tracing::info!(
+            target: "consensus::metrics",
+            tx_count,
+            tx_proof_bytes_total,
+            commitment_proof_bytes,
+            aggregation_proof_bytes,
+            ciphertext_bytes_total,
+            commitment_verify_ms,
+            aggregation_verify_ms,
+            tx_verify_ms,
+            total_verify_ms = start_total.elapsed().as_millis(),
+            aggregation_verified,
+            "block_proof_verification_metrics"
+        );
+
+        Ok(result)
     }
 }
 

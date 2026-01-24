@@ -750,13 +750,20 @@ where
         let mut current_template: Option<BlockTemplate> = None;
         let mut last_best_hash = H256::zero();
         let mut was_syncing = false;
+        let mut was_mining = false;
 
         loop {
             // Check if mining is enabled
             if !self.pow_handle.is_mining() {
+                if was_mining {
+                    self.pow_handle.clear_work();
+                    current_template = None;
+                    was_mining = false;
+                }
                 tokio::time::sleep(check_interval).await;
                 continue;
             }
+            was_mining = true;
 
             let syncing = self
                 .sync_status
