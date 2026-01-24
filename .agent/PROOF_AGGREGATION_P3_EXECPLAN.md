@@ -43,6 +43,7 @@ The “it works” proof is:
 - [x] (2026-01-22T01:42Z) Bound recursion proofs to public inputs by including public values in batch-STARK transcripts and verifying with explicit public values.
 - [x] (2026-01-22T02:30Z) Integrated aggregation proof verification into consensus block import; nodes verify aggregation proofs with public-value binding and skip per-transaction STARK verification when present, and `submit_aggregation_proof` now carries aggregation bytes on-chain.
 - [x] (2026-01-22T06:05Z) Re-ran batch aggregation test with public-value binding after the PoW transcript fix and recorded updated 2/4/8/16 metrics.
+- [x] (2026-01-23T23:40Z) Re-ran batch aggregation test after the ciphertext-hash public-input update and recorded refreshed 2/4/8/16 metrics (release build).
 - [x] (2026-01-22T04:30Z) Added `circuits/aggregation` crate with `prove_aggregation` library entrypoint and `aggregation-prover` CLI that consumes postcard-encoded `TransactionProof` files.
 - [x] (2026-01-22T04:30Z) Wired optional aggregation proof generation into block building behind `HEGEMON_AGGREGATION_PROOFS`, attaching `submit_aggregation_proof` when enabled.
 - [x] (2026-01-22T04:30Z) Added an ignored aggregation roundtrip test that verifies aggregation proofs and rejects corrupted inner proofs.
@@ -91,6 +92,9 @@ The “it works” proof is:
 
 - Observation: With public-value binding enabled, aggregated proof size grows from ~0.95 MiB (2 proofs) to ~1.20 MiB (16 proofs); verify time rises from ~0.9 s to ~2.6 s; prove time scales roughly linearly (debug build).
   Evidence: `aggregate_count=2 ... outer_aggregate_proof_bytes=945200, outer_prove_ms=76591, outer_verify_ms=900`; `aggregate_count=4 ... outer_aggregate_proof_bytes=1027153, outer_prove_ms=151774, outer_verify_ms=1173`; `aggregate_count=8 ... outer_aggregate_proof_bytes=1113555, outer_prove_ms=314964, outer_verify_ms=1820`; `aggregate_count=16 ... outer_aggregate_proof_bytes=1202506, outer_prove_ms=778709, outer_verify_ms=2649` in `aggregate_transaction_proof_batch`.
+
+- Observation: Re-running the batch aggregation spike in release mode with the current public-input layout yields much faster proving and verification, while proof sizes remain ~1.0–1.3 MiB.
+  Evidence: `aggregate_count=2 ... outer_aggregate_proof_bytes=1028257, outer_prove_ms=7157, outer_verify_ms=56`; `aggregate_count=4 ... outer_aggregate_proof_bytes=1113894, outer_prove_ms=12989, outer_verify_ms=81`; `aggregate_count=8 ... outer_aggregate_proof_bytes=1202976, outer_prove_ms=24844, outer_verify_ms=139`; `aggregate_count=16 ... outer_aggregate_proof_bytes=1295516, outer_prove_ms=71732, outer_verify_ms=372` from `HEGEMON_AGG_COUNTS=2,4,8,16 cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate aggregate_transaction_proof_batch --release -- --ignored --nocapture`.
 
 - Observation: Batch-STARK proofs produced by the circuit prover were not binding public inputs because public values were omitted from the transcript; this must be fixed before aggregation proofs can be tied to specific inner proofs.
   Evidence: Added `PublicAir::trace_to_public_values` and `verify_all_tables_with_public_values` so public inputs are included in the transcript and verification path.
