@@ -45,6 +45,11 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-23T13:20Z) `cargo test -p state-da` completed cleanly.
 - [x] (2026-01-23T13:30Z) Updated `DESIGN.md` and `METHODS.md` to document DA/ciphertext policy toggles.
 - [x] (2026-01-23T16:00Z) Drafted `.agent/CASHVM_BRIDGE_STARK_COVENANT_EXECPLAN.md` to answer “CashVM↔Hegemon bridge + covenant rollup” feasibility and link it from this top-level plan.
+- [x] (2026-01-24T00:00Z) Benchmarked end-to-end block payload size + proof verification time for sidecar submission + aggregation (2/4/8/16 attempts) using `scripts/throughput_sidecar_aggregation_tmux.sh` and recorded the breakpoint where block resource limits dominate.
+- [x] (2026-01-24T00:00Z) Implemented proof sidecar staging (`da_submitProofs`) + wallet integration (`HEGEMON_WALLET_PROOF_SIDECAR=1`) so shielded transfer extrinsics can omit per-tx proof bytes in rollup/aggregation mode.
+- [x] (2026-01-24T00:00Z) Added per-block “aggregation mode” marker (`ShieldedPool::enable_aggregation_mode`) so the runtime can skip per-tx proof verification while the node verifies commitment + aggregation proofs during import.
+- [x] (2026-01-24T00:00Z) Re-ran end-to-end throughput bench with proof sidecar enabled and recorded 8/16 transfer per block payload sizes + verify times.
+- [x] (2026-01-24T00:00Z) Stabilized local verification: cached aggregation verifier artifacts (avoid rebuilding recursion circuit/airs on every block) and capped default rayon threads in `--dev` to reduce macOS “watchdog wedge” risk under memory pressure (override with `HEGEMON_RAYON_THREADS`/`RAYON_NUM_THREADS`).
 
 ## Surprises & Discoveries
 
@@ -59,6 +64,24 @@ After this work, a developer can run a local devnet and observe all of the follo
 
 - Observation: The current runtime is configured for a 4 MiB block body and 60 second blocks. With today’s proof sizes, that implies well under 1 shielded tx/sec.
   Evidence: `runtime/src/lib.rs` defines `RuntimeBlockLength` as `4 * 1024 * 1024` and `PowTargetBlockTime` as `60_000`.
+
+- Observation: With sidecar ciphertexts enabled, the block body is still dominated by transaction proof bytes; aggregation currently *adds* ~1.0–1.2 MiB more bytes per block and becomes impossible to include once you reach 8 transfers/block under current limits.
+  Evidence: at tx_count=4, a block carried `tx_proof_bytes_total=1429209`, `commitment_proof_bytes=228076`, `aggregation_proof_bytes=1112644`, `extrinsics_bytes_total=2773829`, and `verify_ms=3163` in `/tmp/hegemon-throughput-4.log`.
+  Evidence: at tx_count=8, a block carried `tx_proof_bytes_total=2857875`, `commitment_proof_bytes=253476`, `extrinsics_bytes_total=3116776`, and attempting to attach `proof_size=1202209` bytes for `submit_aggregation_proof` hit `InvalidTransaction::ExhaustsResources` and was omitted in `/tmp/hegemon-throughput-8b.log`.
+
+- Observation: With today’s on-chain transaction format (tx proofs inside each transfer), the practical upper bound is 8 transfers per block (16 submitted still yields a block with tx_count=8).
+  Evidence: `/tmp/hegemon-throughput-16.log` shows `block_payload_size_metrics ... tx_count=8` after submitting 16 sidecar transfers.
+
+- Observation: With proof sidecar enabled (proof bytes omitted from each transfer), block bodies scale with *O(1) proofs per block* (commitment proof + aggregation proof), not O(tx_count) proof bytes.
+  Evidence: tx_count=8 block: `extrinsics_bytes_total=1461413`, `commitment_proof_bytes=253476`, `aggregation_proof_bytes=1202537`, `ciphertext_bytes_total=34352` (`block_payload_size_metrics`).
+  Evidence: tx_count=16 block: `extrinsics_bytes_total=1584473`, `commitment_proof_bytes=280412`, `aggregation_proof_bytes=1295629`, `ciphertext_bytes_total=68704` (`block_payload_size_metrics`).
+
+- Observation: Aggregation proof verification is currently multi-second even in a release node and scales roughly linearly with tx_count (too slow for short block times).
+  Evidence: tx_count=8: `aggregation_verify_ms=5500`, `total_verify_ms=5653`.
+  Evidence: tx_count=16: `aggregation_verify_ms=10369`, `total_verify_ms=10659`.
+
+- Observation: Aggregation verification work is currently doing avoidable per-block setup (recursion circuit/air build), which can cause large RAM spikes on laptops; caching reduces overhead but does not yet solve the dominant multi-second `verify_batch` cost.
+  Evidence: `consensus/src/aggregation.rs` now caches verifier artifacts keyed by (tx_count, public_inputs_len, proof shape).
 
 - Observation: Transaction STARK proofs are currently failing verification in Plonky3 e2e mode (`OodEvaluationMismatch`), blocking the end-to-end commerce demo and wallet sends.
   Evidence: `cargo test -p transaction-circuit proving_and_verification_succeeds --features plonky3-e2e --release` fails with `STARK verification failed: OodEvaluationMismatch`.
@@ -90,6 +113,10 @@ After this work, a developer can run a local devnet and observe all of the follo
 - Decision: Treat `plonky3-e2e` as the production-parameter test path by forwarding it into `transaction-core`.
   Rationale: E2E tests must exercise the ≥128-bit soundness configuration to match the security posture we claim.
   Date/Author: 2026-01-23 / Codex
+
+- Decision: Treat per-transaction proof bytes as sidecar-only in aggregation mode (bound by `binding_hash`), and keep only O(1) block proofs on-chain.
+  Rationale: Per-tx transparent proof bytes are hundreds of KiB and dominate block propagation. Sidecar staging preserves the PQ security bar while bounding block bodies; future work can either (a) make proofs available via DA sampling or (b) make the aggregation proof truly self-contained (no inner proof bytes required to verify).
+  Date/Author: 2026-01-24 / Codex
 
 ## Outcomes & Retrospective
 

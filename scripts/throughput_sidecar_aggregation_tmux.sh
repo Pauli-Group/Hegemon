@@ -17,6 +17,18 @@ COINBASE_BLOCKS="${HEGEMON_TP_COINBASE_BLOCKS:-$((TX_COUNT + 3))}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
 
+# Guard rails: proving/aggregation is CPU+RAM heavy. Defaults are laptop-safe; override explicitly.
+RAYON_THREADS="${HEGEMON_TP_RAYON_THREADS:-4}"
+CARGO_JOBS="${HEGEMON_TP_CARGO_JOBS:-4}"
+export RAYON_NUM_THREADS="$RAYON_THREADS"
+export CARGO_BUILD_JOBS="$CARGO_JOBS"
+
+if [ "${HEGEMON_TP_UNSAFE:-0}" != "1" ] && [ "$FAST" != "1" ] && [ "$TX_COUNT" -gt 32 ]; then
+  echo "Refusing TX_COUNT=${TX_COUNT} without HEGEMON_TP_UNSAFE=1 (can wedge macOS during proving)." >&2
+  echo "Hint: set HEGEMON_TP_FAST=1 for dev-only proofs, or run on a beefier machine." >&2
+  exit 1
+fi
+
 WALLET_A="${HEGEMON_TP_WALLET_A:-/tmp/hegemon-throughput-wallet-a}"
 WALLET_B="${HEGEMON_TP_WALLET_B:-/tmp/hegemon-throughput-wallet-b}"
 PASS_A="${HEGEMON_TP_PASS_A:-testwallet1}"
@@ -61,14 +73,8 @@ else
   fi
 fi
 
-if [ ! -x ./target/release/wallet ]; then
-  echo "Building wallet..." >&2
-  if [ "$FAST" = "1" ]; then
-    cargo build --release -p wallet
-  else
-    cargo build --release -p wallet
-  fi
-fi
+echo "Building wallet..." >&2
+cargo build --release -p wallet
 
 if [ -d "$WALLET_A" ] || [ -d "$WALLET_B" ]; then
   echo "Wallet stores already exist; delete them or set HEGEMON_TP_FORCE=1:" >&2
@@ -191,7 +197,7 @@ env $WALLET_FAST_ENV ./target/release/wallet substrate-sync \
 echo "Submitting ${TX_COUNT} sidecar transfers (this may take a while)..." >&2
 for i in $(seq 1 "$TX_COUNT"); do
   echo "  sending ${i}/${TX_COUNT}..." >&2
-  env HEGEMON_WALLET_DA_SIDECAR=1 $WALLET_FAST_ENV ./target/release/wallet substrate-send \
+  env HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROOF_SIDECAR=1 $WALLET_FAST_ENV ./target/release/wallet substrate-send \
     --store "$WALLET_A" --passphrase "$PASS_A" \
     --recipients "$RECIPIENTS_JSON" \
     --ws-url "$RPC_WS" \

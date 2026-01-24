@@ -1300,9 +1300,58 @@ impl SubstrateRpcClient {
             }
         }
 
+        let use_proof_sidecar = std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
+
+        let mut proof_bytes = bundle.proof_bytes.clone();
+        if use_proof_sidecar {
+            let binding_hash_hex = format!("0x{}", hex::encode(bundle.binding_hash));
+            let proof_payload =
+                base64::engine::general_purpose::STANDARD.encode(&bundle.proof_bytes);
+
+            let uploaded: Vec<DaSubmitProofsEntry> = client
+                .request(
+                    "da_submitProofs",
+                    rpc_params![DaSubmitProofsRequest {
+                        proofs: vec![DaSubmitProofsItem {
+                            binding_hash: binding_hash_hex.clone(),
+                            proof: proof_payload,
+                        }],
+                    }],
+                )
+                .await
+                .map_err(|e| WalletError::Rpc(format!("da_submitProofs failed: {}", e)))?;
+
+            if uploaded.len() != 1 {
+                return Err(WalletError::Rpc(format!(
+                    "da_submitProofs returned {} entries (expected 1)",
+                    uploaded.len()
+                )));
+            }
+            let entry = &uploaded[0];
+            let observed_binding = hex_to_array64(&entry.binding_hash)?;
+            if observed_binding != bundle.binding_hash {
+                return Err(WalletError::Rpc(
+                    "da_submitProofs binding hash mismatch".to_string(),
+                ));
+            }
+            if entry.size != u32::try_from(bundle.proof_bytes.len()).unwrap_or(u32::MAX) {
+                return Err(WalletError::Rpc("da_submitProofs size mismatch".to_string()));
+            }
+
+            proof_bytes = Vec::new();
+        }
+
         let call_indices = self.get_shielded_pool_call_indices().await?;
         let call = ShieldedTransferSidecarCall {
-            proof: bundle.proof_bytes.clone(),
+            proof: proof_bytes,
             nullifiers: bundle.nullifiers.clone(),
             commitments: bundle.commitments.clone(),
             ciphertext_hashes,
@@ -1486,6 +1535,23 @@ struct DaSubmitCiphertextsEntry {
     size: u32,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitProofsRequest {
+    proofs: Vec<DaSubmitProofsItem>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitProofsItem {
+    binding_hash: String,
+    proof: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DaSubmitProofsEntry {
+    binding_hash: String,
+    size: u32,
+}
+
 /// Shielded transfer request matching `hegemon_submitShieldedTransfer` RPC
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ShieldedTransferRequest {
@@ -1607,6 +1673,18 @@ fn hex_to_array48(hex_str: &str) -> Result<[u8; 48], WalletError> {
         return Err(WalletError::Serialization("expected 48-byte hash".into()));
     }
     let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn hex_to_array64(hex_str: &str) -> Result<[u8; 64], WalletError> {
+    let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(trimmed)
+        .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
+    if bytes.len() != 64 {
+        return Err(WalletError::Serialization("expected 64-byte hash".into()));
+    }
+    let mut out = [0u8; 64];
     out.copy_from_slice(&bytes);
     Ok(out)
 }

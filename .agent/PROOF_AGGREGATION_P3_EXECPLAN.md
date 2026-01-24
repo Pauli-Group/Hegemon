@@ -51,6 +51,9 @@ The “it works” proof is:
 - [x] (2026-01-22T18:54Z) Security hardening: remove any “optional” gates for consensus‑critical proof verification in production builds.
 - [x] (2026-01-22T06:20Z) End-to-end: mined a dev block with an aggregation proof attached (block 6 on dev node).
 - [x] (2026-01-22T06:30Z) End-to-end: corrupted aggregation proof causes mined block import rejection.
+- [x] (2026-01-24T00:00Z) Benchmarked on-chain aggregation proof inclusion at 2/4/8 transfers per block and fixed a node crash when the aggregation extrinsic exceeds block resources (omit aggregation proof instead of panicking).
+- [x] (2026-01-24T00:00Z) Integrated proof sidecar staging so tx proofs can be omitted from each transfer extrinsic while still generating/verifying an aggregation proof per block (benchmarked 8/16 transfers).
+- [x] (2026-01-24T00:00Z) Reduced per-block overhead: cached the aggregation verifier circuit/airs/common in `consensus::aggregation::verify_aggregation_proof` and set a dev-mode default rayon thread cap in the node to reduce macOS “watchdog wedge” risk during heavy recursion verification.
 
 ## Surprises & Discoveries
 
@@ -104,6 +107,13 @@ The “it works” proof is:
 
 - Observation: Dev node mining with aggregation proofs enabled attaches a ~945 KiB aggregation proof for a single shielded transfer.
   Evidence: `Aggregation proof extrinsic attached block_number=6 proof_size=945469` in `/tmp/hegemon-node-agg-9945.log`.
+
+- Observation: With the current “tx proofs inside each transfer” block format, aggregation proofs quickly become unshippable on-chain: at 8 transfers, attaching the ~1.20 MiB aggregation proof exhausts block resources.
+  Evidence: `/tmp/hegemon-throughput-8b.log` shows `tx_count=8`, `tx_proof_bytes_total=2857875`, `commitment_proof_bytes=253476`, and `proof_size=1202209` for `submit_aggregation_proof` failing with `InvalidTransaction::ExhaustsResources`.
+
+- Observation: After moving per-tx proofs off-chain (proof sidecar), the aggregation proof becomes the dominant fixed on-chain cost (~1.20 MiB at 8, ~1.30 MiB at 16), and blocks can include it again under the same runtime limits.
+  Evidence: tx_count=8: `aggregation_proof_bytes=1202537`, `extrinsics_bytes_total=1461413`.
+  Evidence: tx_count=16: `aggregation_proof_bytes=1295629`, `extrinsics_bytes_total=1584473`.
 
 - Observation: Corrupting the aggregation proof triggers block import rejection during mined block verification.
   Evidence: `Failed to import mined block error=mined block proof verification failed: proof verification failed: aggregation proof verification failed: ...` in `/tmp/hegemon-node-agg-corrupt.log`.

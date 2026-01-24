@@ -14,11 +14,50 @@ use p3_symmetric::Permutation;
 use super::compiler::{ExpressionLowerer, Optimizer};
 use super::{BuilderConfig, ExpressionBuilder, PublicInputTracker};
 use crate::circuit::Circuit;
-use crate::op::{NonPrimitiveExecutor, NonPrimitiveOpType};
+use crate::op::{ExecutionContext, NonPrimitiveExecutor, NonPrimitiveOpType};
 use crate::ops::Poseidon2Params;
 use crate::tables::TraceGeneratorFn;
 use crate::types::{ExprId, NonPrimitiveOpId, WitnessAllocator, WitnessId};
 use crate::{CircuitBuilderError, CircuitError, CircuitField};
+
+#[derive(Debug, Clone)]
+struct WitnessInputExecutor {
+    op_type: NonPrimitiveOpType,
+}
+
+impl WitnessInputExecutor {
+    pub const fn new() -> Self {
+        Self {
+            op_type: NonPrimitiveOpType::Unconstrained,
+        }
+    }
+}
+
+impl<F: Field + Send + Sync + 'static> NonPrimitiveExecutor<F> for WitnessInputExecutor {
+    fn execute(
+        &self,
+        _inputs: &[Vec<WitnessId>],
+        outputs: &[Vec<WitnessId>],
+        ctx: &mut ExecutionContext<'_, F>,
+    ) -> Result<(), CircuitError> {
+        for out in outputs.iter().flatten() {
+            ctx.get_witness(*out)?;
+        }
+        Ok(())
+    }
+
+    fn op_type(&self) -> &NonPrimitiveOpType {
+        &self.op_type
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn boxed(&self) -> Box<dyn NonPrimitiveExecutor<F>> {
+        Box::new(self.clone())
+    }
+}
 
 /// Builder for constructing circuits.
 pub struct CircuitBuilder<F: Field> {
@@ -226,6 +265,34 @@ where
     /// Allocates multiple public inputs with a descriptive label.
     pub fn alloc_public_inputs(&mut self, count: usize, label: &'static str) -> Vec<ExprId> {
         (0..count).map(|_| self.alloc_public_input(label)).collect()
+    }
+
+    /// Allocates witness-only inputs (not part of the public input bus).
+    ///
+    /// The prover must populate these witness slots before executing the circuit runner.
+    pub fn alloc_witness_inputs(&mut self, count: usize, label: &'static str) -> Vec<ExprId> {
+        let (_op_id, _call_expr_id, outputs) =
+            self.push_unconstrained_op(vec![Vec::new()], count, WitnessInputExecutor::new(), label);
+        outputs
+            .into_iter()
+            .map(|expr| expr.expect("witness inputs must allocate output ExprIds"))
+            .collect()
+    }
+
+    /// Allocates a single witness-only input (not part of the public input bus).
+    pub fn alloc_witness_input(&mut self, label: &'static str) -> ExprId {
+        self.alloc_witness_inputs(1, label)
+            .into_iter()
+            .next()
+            .expect("witness input allocation returned no ExprIds")
+    }
+
+    /// Allocates a fixed-size array of witness-only inputs (not part of the public input bus).
+    pub fn alloc_witness_input_array<const N: usize>(&mut self, label: &'static str) -> [ExprId; N] {
+        let inputs = self.alloc_witness_inputs(N, label);
+        inputs
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected {N} witness inputs"))
     }
 
     /// Allocates a fixed-size array of public inputs with a descriptive label.

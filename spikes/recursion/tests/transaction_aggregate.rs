@@ -653,7 +653,19 @@ fn aggregate_transaction_proof_batch() {
         })
         .unwrap_or_else(|| vec![2, 4, 8, 16]);
 
+    let allow_large = std::env::var("HEGEMON_AGG_ALLOW_LARGE")
+        .ok()
+        .map(|raw| matches!(raw.trim(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+
     for count in counts {
+        if count > 64 && !allow_large {
+            println!(
+                "Skipping aggregate_count={} (set HEGEMON_AGG_ALLOW_LARGE=1 to run; may exhaust RAM on laptops)",
+                count
+            );
+            continue;
+        }
         let mut circuit_builder = CircuitBuilder::new();
         let mut verifier_inputs = Vec::with_capacity(count);
         for _ in 0..count {

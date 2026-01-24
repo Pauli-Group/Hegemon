@@ -145,15 +145,11 @@ impl<
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        InputProof::get_values(&input.input_proof)
-            .into_iter()
-            .chain(
-                input
-                    .commit_phase_openings
-                    .iter()
-                    .flat_map(|o| CommitPhaseProofStepTargets::<_, _, RecMmcs>::get_values(o)),
-            )
-            .collect()
+        // Query proofs are witness-only in our recursion circuits to keep public inputs small.
+        // Their correctness is enforced by constraints; they are not part of the aggregation
+        // statement.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -176,7 +172,7 @@ impl<F: Field, EF: ExtensionField<F>, RecMmcs: RecursiveExtensionMmcs<F, EF>> Re
     type Input = CommitPhaseProofStep<EF, RecMmcs::Input>;
 
     fn new(circuit: &mut CircuitBuilder<EF>, input: &Self::Input) -> Self {
-        let sibling_value = circuit.alloc_public_input("FRI commit phase sibling value");
+        let sibling_value = circuit.alloc_witness_input("FRI commit phase sibling value");
         let opening_proof = RecMmcs::Proof::new(circuit, &input.opening_proof);
         Self {
             sibling_value,
@@ -186,14 +182,9 @@ impl<F: Field, EF: ExtensionField<F>, RecMmcs: RecursiveExtensionMmcs<F, EF>> Re
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        let CommitPhaseProofStep {
-            sibling_value,
-            opening_proof,
-        } = input;
-
-        let mut values = vec![*sibling_value];
-        values.extend(RecMmcs::Proof::get_values(opening_proof));
-        values
+        // Commit-phase openings live inside query proofs and are witness-only.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -215,7 +206,7 @@ impl<F: Field, EF: ExtensionField<F>, Inner: RecursiveMmcs<F, EF>> Recursive<EF>
         let opened_values = input
             .opened_values
             .iter()
-            .map(|values| circuit.alloc_public_inputs(values.len(), "batch opened values"))
+            .map(|values| circuit.alloc_witness_inputs(values.len(), "batch opened values"))
             .collect();
 
         let opening_proof = Inner::Proof::new(circuit, &input.opening_proof);
@@ -227,16 +218,9 @@ impl<F: Field, EF: ExtensionField<F>, Inner: RecursiveMmcs<F, EF>> Recursive<EF>
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        let BatchOpening {
-            opened_values,
-            opening_proof,
-        } = input;
-
-        opened_values
-            .iter()
-            .flat_map(|inner| inner.iter().map(|v| EF::from(*v)))
-            .chain(Inner::Proof::get_values(opening_proof))
-            .collect()
+        // Batch openings are witness-only inputs used inside FRI query proofs.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -292,7 +276,7 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
         let proof_len = input.len();
         let mut proof = Vec::with_capacity(proof_len);
         for _ in 0..proof_len {
-            proof.push(circuit.alloc_public_input_array("Merkle proof hash"));
+            proof.push(circuit.alloc_witness_input_array("Merkle proof hash"));
         }
 
         Self {
@@ -302,10 +286,9 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        input
-            .iter()
-            .flat_map(|h| h.iter().map(|v| EF::from(*v)))
-            .collect()
+        // Merkle proofs are witness-only.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -403,12 +386,9 @@ impl<F: Field, EF: ExtensionField<F>, Inner: RecursiveMmcs<F, EF>> Recursive<EF>
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        input
-            .iter()
-            .flat_map(|batch_opening| {
-                BatchOpeningTargets::<F, EF, Inner>::get_values(batch_opening)
-            })
-            .collect()
+        // Input proofs are witness-only (they are the Merkle openings queried by FRI).
+        let _ = input;
+        Vec::new()
     }
 }
 

@@ -211,6 +211,15 @@ transfer appears before its forced inclusion entry.
 Within a block, shielded transfer extrinsics must appear in nondecreasing order of the hash of their SCALE-encoded call data.
 Nodes enforce this during block import and local block production so miners do not have discretionary ordering inside the private lane.
 
+### Aggregation mode and proof sidecar (rollup path)
+
+For scalability, the system supports a per-block “aggregation mode” that allows shielded transfer extrinsics to omit the per-transaction STARK proof bytes and rely on a single aggregation proof checked during block import:
+
+* Block authors include `ShieldedPool::enable_aggregation_mode` early in the block.
+* In this mode, `shielded_transfer_unsigned_sidecar` skips runtime proof verification and only enforces binding hashes + non-ZK checks (nullifiers, anchors, fee floor).
+* Proof bytes are staged off-chain via `da_submitProofs` keyed by the transaction `binding_hash`; wallets can enable this by setting `HEGEMON_WALLET_PROOF_SIDECAR=1`.
+* The node verifies the commitment proof + aggregation proof during import and rejects any block whose aggregated transactions are invalid.
+
 ---
 
 ## 3. The STARK arithmetization
