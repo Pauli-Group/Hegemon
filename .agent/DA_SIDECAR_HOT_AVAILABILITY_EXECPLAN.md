@@ -32,7 +32,7 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 - [x] (2026-01-23T00:00Z) Modify block production/import to use DA sidecars (ciphertexts are no longer in the block body).
 - [x] (2026-01-23T00:00Z) Update wallet RPCs to fetch ciphertexts from DA store.
 - [x] (2026-01-23T23:55Z) End-to-end demo: mine blocks, fetch chunks via `da_getChunk`, sync wallets, decrypt an incoming note (DA-backed RPC path works).
-- [ ] End-to-end demo (sidecar extrinsics): mine a block where shielded transfers carry only ciphertext hashes/sizes and ciphertext bytes live only in the DA store (not in the block body).
+- [x] (2026-01-23T17:30Z) End-to-end demo (sidecar extrinsics): mine a block where shielded transfers carry only ciphertext hashes/sizes and ciphertext bytes live only in the DA store (not in the block body).
 
 ## Surprises & Discoveries
 
@@ -51,8 +51,8 @@ This plan keeps post-quantum security intact. It does not change ML‑KEM‑1024
 - Observation: Mined block import can fail with `commitment proof da_root mismatch` if block-production DA encoding includes data that consensus verification excludes (for example, including coinbase ciphertexts in the DA blob when consensus computes `da_root` from shielded transfers only).
   Evidence: Prior to the fix, mining logs showed repeated rejections with `mined block proof verification failed: commitment proof da_root mismatch`. After excluding coinbase ciphertexts from the DA blob and persisting them separately, blocks import successfully and log `DA encoding stored for imported block` plus `Commitment block proof stored for imported block`.
 
-- Observation: Wallet tooling currently submits `shielded_transfer_unsigned` with inline ciphertext bytes, so block bodies are still large even though DA retrieval works; the remaining work is to exercise the unsigned sidecar path end-to-end.
-  Evidence: Devnet logs show `Validating shielded_transfer_unsigned` and `Broadcasting mined block ... data_len=546026` for a 1-transfer block; `shielded_transfer_unsigned_sidecar` exists in the runtime but requires a way to stage ciphertext bytes into the node’s pending sidecar pool.
+- Observation: The default wallet submission path uses inline ciphertext bytes, but the repo now also supports an unsigned sidecar submission path (`da_submitCiphertexts` + `shielded_transfer_unsigned_sidecar`) that keeps ciphertext bytes out of the block body.
+  Evidence: Devnet logs show `Validating shielded_transfer_unsigned_sidecar` and the recipient wallet recovered the incoming note via DA-backed sync (see `Artifacts and Notes`).
 
 ## Decision Log
 
@@ -250,6 +250,15 @@ Record here as indented blocks:
 - A multi-page encoding test output showing a blob spanning >1 page.
 - A `da_getChunk` RPC response from a real mined block.
 - A rejection log for a block whose ciphertext bytes do not match committed hashes.
+- Sidecar extrinsics end-to-end evidence (devnet):
+
+    Node log excerpt:
+      2026-01-23 17:26:46 Validating shielded_transfer_unsigned_sidecar
+      2026-01-23 17:27:00 DA encoding stored for imported block block_number=9 da_root=e8c75d2056dc8cd369adf93048077e7f226a009ffd7bea2566f569f4275c537df06f8480e51f5c65ec7850425d6fbc1a da_chunks=8
+      2026-01-23 17:27:00 Broadcasting mined block via PQ network block_number=9 block_hash=bb3213f50dd71d5ebf79b94e54009407063ff56125fcb89d195d0f070f1659e9 has_body=true data_len=541562
+
+    Recipient wallet sync (after tx mined):
+      {"ciphertexts":17,"commitments":17,"newHeight":15,"recovered":1,"spent":0}
 
 ## Interfaces and Dependencies
 
