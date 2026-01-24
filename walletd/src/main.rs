@@ -853,9 +853,19 @@ fn tx_send(
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        let result = client
-            .submit_shielded_transfer_unsigned(&built.bundle)
-            .await;
+        let use_da_sidecar = std::env::var("HEGEMON_WALLET_DA_SIDECAR")
+            .ok()
+            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        let result = if use_da_sidecar {
+            client
+                .submit_shielded_transfer_unsigned_sidecar(&built.bundle)
+                .await
+        } else {
+            client
+                .submit_shielded_transfer_unsigned(&built.bundle)
+                .await
+        };
 
         match result {
             Ok(tx_hash) => {

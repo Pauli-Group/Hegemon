@@ -14,6 +14,7 @@ pub struct RuntimeCallIndex {
 pub struct ShieldedPoolCallIndices {
     pub shielded_transfer: RuntimeCallIndex,
     pub shielded_transfer_unsigned: RuntimeCallIndex,
+    pub shielded_transfer_unsigned_sidecar: RuntimeCallIndex,
     pub batch_shielded_transfer: RuntimeCallIndex,
 }
 
@@ -27,6 +28,11 @@ pub fn lookup_shielded_pool_call_indices(
             &metadata,
             "ShieldedPool",
             "shielded_transfer_unsigned",
+        )?,
+        shielded_transfer_unsigned_sidecar: lookup_call_index(
+            &metadata,
+            "ShieldedPool",
+            "shielded_transfer_unsigned_sidecar",
         )?,
         batch_shielded_transfer: lookup_call_index(
             &metadata,
