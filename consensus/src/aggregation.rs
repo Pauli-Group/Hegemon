@@ -12,6 +12,7 @@ use p3_uni_stark::get_log_num_quotient_chunks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
     TransactionAirP3, TransactionProof,
@@ -69,6 +70,12 @@ static AGGREGATION_VERIFIER_CACHE: OnceLock<
 fn aggregation_verifier_cache(
 ) -> &'static Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>> {
     AGGREGATION_VERIFIER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct AggregationCacheResult {
+    entry: Arc<AggregationVerifierCacheEntry>,
+    cache_hit: bool,
+    cache_build_ms: u128,
 }
 
 fn build_aggregation_verifier_cache_entry(
@@ -177,24 +184,36 @@ fn build_aggregation_verifier_cache_entry(
 fn get_or_build_aggregation_verifier_cache_entry(
     key: AggregationVerifierKey,
     representative_proof: &TransactionProofP3,
-) -> Result<Arc<AggregationVerifierCacheEntry>, ProofError> {
+) -> Result<AggregationCacheResult, ProofError> {
     let cache = aggregation_verifier_cache();
     if let Some(entry) = cache.lock().get(&key).cloned() {
-        return Ok(entry);
+        return Ok(AggregationCacheResult {
+            entry,
+            cache_hit: true,
+            cache_build_ms: 0,
+        });
     }
 
+    let start_build = Instant::now();
     let built = Arc::new(build_aggregation_verifier_cache_entry(
         key,
         representative_proof,
     )?);
+    let build_ms = start_build.elapsed().as_millis();
     let mut guard = cache.lock();
-    Ok(guard.entry(key).or_insert_with(|| built.clone()).clone())
+    Ok(AggregationCacheResult {
+        entry: guard.entry(key).or_insert_with(|| built.clone()).clone(),
+        cache_hit: false,
+        cache_build_ms: build_ms,
+    })
 }
 
 pub fn verify_aggregation_proof(
     aggregation_proof: &[u8],
     transaction_proofs: &[TransactionProof],
 ) -> Result<(), ProofError> {
+    let start_total = Instant::now();
+
     if transaction_proofs.is_empty() {
         return Err(ProofError::AggregationProofEmptyBlock);
     }
@@ -279,29 +298,33 @@ pub fn verify_aggregation_proof(
         log_blowup,
         shape,
     };
-    let cache_entry = get_or_build_aggregation_verifier_cache_entry(
+    let cache_result = get_or_build_aggregation_verifier_cache_entry(
         cache_key,
         inner_proofs
             .first()
             .ok_or(ProofError::AggregationProofEmptyBlock)?,
     )?;
 
+    let start_pack = Instant::now();
     let mut recursion_public_inputs = Vec::new();
     for (index, (proof, pub_inputs_vec)) in inner_proofs.iter().zip(public_inputs.iter()).enumerate()
     {
         let challenges = generate_challenges(
             &TransactionAirP3,
-            &cache_entry.inner_config.config,
+            &cache_result.entry.inner_config.config,
             proof,
             pub_inputs_vec,
-            Some(&[cache_entry.query_pow_bits, cache_entry.log_height_max]),
+            Some(&[
+                cache_result.entry.query_pow_bits,
+                cache_result.entry.log_height_max,
+            ]),
         )
         .map_err(|err| {
             ProofError::AggregationProofVerification(format!(
                 "transaction proof {index} challenge derivation failed: {err:?}"
             ))
         })?;
-        let packed = cache_entry.verifier_inputs[index].pack_values(
+        let packed = cache_result.entry.verifier_inputs[index].pack_values(
             pub_inputs_vec,
             proof,
             &None,
@@ -310,6 +333,7 @@ pub fn verify_aggregation_proof(
         );
         recursion_public_inputs.extend(packed);
     }
+    let pack_ms = start_pack.elapsed().as_millis();
 
     let outer_proof: BatchProof<circuit_config::GoldilocksConfig> =
         postcard::from_bytes(aggregation_proof).map_err(|_| {
@@ -319,23 +343,37 @@ pub fn verify_aggregation_proof(
         })?;
 
     let public_values = flatten_public_values(&recursion_public_inputs);
-    let mut public_values_by_air = vec![Vec::new(); cache_entry.airs.len()];
-    for idx in cache_entry.public_table_indices.iter().copied() {
+    let mut public_values_by_air = vec![Vec::new(); cache_result.entry.airs.len()];
+    for idx in cache_result.entry.public_table_indices.iter().copied() {
         public_values_by_air[idx] = public_values.clone();
     }
 
+    let start_verify = Instant::now();
     verify_batch(
-        &cache_entry.outer_config,
-        &cache_entry.airs,
+        &cache_result.entry.outer_config,
+        &cache_result.entry.airs,
         &outer_proof,
         &public_values_by_air,
-        &cache_entry.common,
+        &cache_result.entry.common,
     )
     .map_err(|err| {
         ProofError::AggregationProofVerification(format!(
             "aggregation proof verification failed: {err:?}"
         ))
     })?;
+    let verify_batch_ms = start_verify.elapsed().as_millis();
+
+    tracing::info!(
+        target: "consensus::metrics",
+        tx_count = transaction_proofs.len(),
+        pub_inputs_len,
+        cache_hit = cache_result.cache_hit,
+        cache_build_ms = cache_result.cache_build_ms,
+        pack_ms,
+        verify_batch_ms,
+        total_ms = start_total.elapsed().as_millis(),
+        "aggregation_verify_breakdown_metrics"
+    );
 
     Ok(())
 }
