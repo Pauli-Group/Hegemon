@@ -196,7 +196,10 @@ Per-transaction transparent STARK proofs are too large to ship in every transfer
 * Block authors include `pallet_shielded_pool::Call::enable_aggregation_mode` as a **mandatory unsigned** extrinsic early in the block.
 * A chain-level `ProofAvailabilityPolicy` governs whether per-tx proof bytes must be inline (`InlineRequired`) or may be provided via DA (`DaRequired`).
 * In aggregation mode + `DaRequired`, `shielded_transfer_unsigned_sidecar` may omit `proof.data` and the runtime skips `verify_stark` (it still enforces binding hashes, nullifier uniqueness, anchor checks, and fee rules).
-* Proof bytes are staged to the block author via `da_submitProofs` keyed by the transaction `binding_hash` (wallets can enable this behavior via `HEGEMON_WALLET_PROOF_SIDECAR=1`) and then committed on-chain via `submit_proof_da_commitment(da_root, chunk_count)` so importers can fetch them.
+* Proof bytes are staged to the block author via `da_submitProofs` keyed by the transaction `binding_hash` (wallets can enable this behavior via `HEGEMON_WALLET_PROOF_SIDECAR=1`) and then committed on-chain via:
+
+  * `submit_proof_da_commitment(da_root, chunk_count)` to bind the erasure-coded proof-DA blob, and
+  * `submit_proof_da_manifest(manifest)` to bind `binding_hash -> (proof_hash, proof_len, proof_offset)` so verifiers can compute `tx_proofs_commitment` without downloading proof bytes and can fetch individual missing proofs by range.
 * The node’s import pipeline verifies the commitment proof + aggregation proof and rejects any block with an invalid inner transaction proof (Phase A fetches per-tx proofs from DA; Phase C removes this dependency).
 
 This preserves the PQ security bar while shifting “lots of proofs” work off-chain and reducing the on-chain payload to O(1) proofs per block.

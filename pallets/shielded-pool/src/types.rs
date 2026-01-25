@@ -290,6 +290,32 @@ impl Default for ProofAvailabilityPolicy {
     }
 }
 
+/// On-chain manifest entry for locating per-transaction proof bytes in proof-DA.
+///
+/// The `binding_hash` identifies the transfer this proof belongs to. The `(proof_len, proof_offset)`
+/// pair describes where the proof bytes live inside the proof-DA blob committed by
+/// `submit_proof_da_commitment`.
+///
+/// The `proof_hash` (BLAKE3-384) is committed on-chain so verifiers can bind commitment proofs and
+/// other block-level commitments without downloading the proof bytes.
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+)]
+pub struct ProofDaManifestEntry {
+    pub binding_hash: BindingHash,
+    pub proof_hash: [u8; 48],
+    pub proof_len: u32,
+    pub proof_offset: u32,
+}
+
 impl Default for StablecoinPolicyBinding {
     fn default() -> Self {
         Self {

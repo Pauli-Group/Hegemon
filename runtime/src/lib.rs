@@ -1468,6 +1468,8 @@ parameter_types! {
     pub const MaxNullifiersPerBatch: u32 = 32;
     /// Maximum commitments per batch (16 txs * 2 commitments each).
     pub const MaxCommitmentsPerBatch: u32 = 32;
+    /// Maximum proof-DA manifest entries per block (bounds on-chain manifest size).
+    pub const MaxProofDaManifestEntries: u32 = 4096;
     /// Number of historical Merkle roots to keep for anchor validation.
     pub const MerkleRootHistorySize: u32 = 100;
     /// Maximum forced inclusion commitments stored at once.
@@ -1604,6 +1606,7 @@ impl pallet_shielded_pool::Config for Runtime {
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
+    type MaxProofDaManifestEntries = MaxProofDaManifestEntries;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxSubsidy;
     type StablecoinAssetId = u32;
