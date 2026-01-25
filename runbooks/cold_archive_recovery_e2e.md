@@ -14,7 +14,7 @@ cargo build --release -p walletd
 
 ```bash
 RUST_LOG=info HEGEMON_MINE=1 \
-  HEGEMON_DA_RETENTION_BLOCKS=8 \
+  HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS=8 \
   HEGEMON_DA_STORE_CAPACITY=64 \
   HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
   HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST=1 \
@@ -38,7 +38,7 @@ Replace `<PEER_ID>` with the value from the previous step.
 
 ```bash
 RUST_LOG=info \
-  HEGEMON_DA_RETENTION_BLOCKS=2048 \
+  HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS=2048 \
   HEGEMON_DA_STORE_CAPACITY=512 \
   ./target/release/hegemon-node --dev --base-path /tmp/hegemon-archive \
   --rpc-port 9945 --listen-addr /ip4/127.0.0.1/tcp/30334 \
@@ -108,7 +108,7 @@ Wait until the transfer is mined. Note the block number from logs.
 
 ## 7) Wait for hot retention to prune ciphertexts
 
-With `HEGEMON_DA_RETENTION_BLOCKS=8`, wait for at least ~10 blocks to pass.
+With `HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS=8` (or legacy `HEGEMON_DA_RETENTION_BLOCKS=8`), wait for at least ~10 blocks to pass.
 
 ## 8) Recover via archive provider
 

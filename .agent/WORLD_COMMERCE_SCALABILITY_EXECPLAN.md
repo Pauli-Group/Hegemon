@@ -53,6 +53,11 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-24T00:00Z) Stabilized local verification: cached aggregation verifier artifacts (avoid rebuilding recursion circuit/airs on every block) and capped default rayon threads in `--dev` to reduce macOS “watchdog wedge” risk under memory pressure (override with `HEGEMON_RAYON_THREADS`/`RAYON_NUM_THREADS`).
 - [x] (2026-01-24T00:00Z) Measured aggregation verification breakdown: steady-state `verify_batch` is ~30ms, while first-seen batch sizes pay a one-time recursion circuit build cost (~5.4s for 8, ~10.4s for 16) (`aggregation_verify_breakdown_metrics`).
 - [x] (2026-01-24T00:00Z) Documented the phase activation “switchboard” (on-chain policies + per-block markers + protocol versioning) and the “fresh genesis per major phase” strategy for 0.8.0 (A) and 0.9.0 (optional C).
+- [x] (2026-01-25T00:00Z) Added an on-chain proof-DA manifest (`submit_proof_da_manifest`) and switched commitment-proof binding to use per-tx proof hashes (from the manifest) so verifiers don’t download proof-DA just to compute `tx_proofs_commitment`.
+- [x] (2026-01-25T00:00Z) Made proof-DA random-access + streamable: importers fetch only the required byte ranges (per proof) using manifest offsets, not full multi‑MiB blobs.
+- [x] (2026-01-25T00:00Z) Split ciphertext vs proof DA retention knobs (`HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS`, `HEGEMON_PROOF_DA_RETENTION_BLOCKS`) so ciphertexts can remain “hot” while proofs become “archive-grade” quickly.
+- [x] (2026-01-25T00:00Z) Hardened proof-DA invariants with adversarial unit tests (duplicate/missing extrinsics, chunk_count mismatch, missing bindings, non-contiguous offsets).
+- [x] (2026-01-25T00:00Z) Added a 2-node e2e harness to exercise ciphertext-DA + proof-DA network fetch and record metrics (`scripts/two_node_sidecar_da_e2e_tmux.sh`).
 
 ## Surprises & Discoveries
 
@@ -136,9 +141,24 @@ After this work, a developer can run a local devnet and observe all of the follo
   Tradeoff: Larger chunks make future sampling more expensive (bytes per sampled shard scale with `chunk_size`). Phase B/C should either separate ciphertext vs proof DA params or reduce sampling intensity once proofs are self-contained.
   Date/Author: 2026-01-24 / Codex
 
+- Decision: Commit per-tx proof hashes on-chain via a proof-DA manifest, and derive `tx_proofs_commitment` from those hashes (not from proof bytes).
+  Rationale: Verifiers must be able to derive commitment-proof public inputs without downloading proof bytes; proof-DA becomes an availability object, not a required commitment input.
+  Date/Author: 2026-01-25 / Codex
+
+- Decision: Make proof-DA random-access using on-chain offsets and range-based DA shard fetching.
+  Rationale: Proof blobs can be multi‑MiB; fetching one missing proof should not require reconstructing the entire blob.
+  Date/Author: 2026-01-25 / Codex
+
+- Decision: Split proof retention from ciphertext retention at the node.
+  Rationale: Wallet UX requires ciphertext availability; proof bytes are only needed for Phase A verification and can drop to “archive-grade” quickly.
+  Date/Author: 2026-01-25 / Codex
+
 ## Outcomes & Retrospective
 
-Not started. Update this section once the first end-to-end demo is working.
+Phase A (0.8.0) is demonstrable locally:
+
+- Single-node throughput + aggregation: `scripts/throughput_sidecar_aggregation_tmux.sh`
+- Two-node DA fetch (miner ↔ verifier): `scripts/two_node_sidecar_da_e2e_tmux.sh`
 
 ## Context and Orientation
 
@@ -164,12 +184,15 @@ We use three classes of “switch,” each with a distinct purpose:
    - Already present:
      - `DaAvailabilityPolicy`: `FullFetch` vs `Sampling` (DA acceptance rules).
      - `CiphertextPolicy`: `InlineAllowed` vs `SidecarOnly` (block payload rules).
-   - To add for Phase A:
-     - `ProofAvailabilityPolicy`: how/where per-transaction proof bytes must be available when aggregation mode is used.
+     - `ProofAvailabilityPolicy`: `InlineRequired` vs `DaRequired` (where per-tx proof bytes live when aggregation mode is used).
 
 2. Per-block markers (mandatory unsigned extrinsics). These are for “what validation mode is this block using?” and are used so block authors can explicitly opt into a mode while verifiers can reject blocks that use the mode incorrectly.
 
    - Already present:
+     - `ShieldedPool::submit_commitment_proof`: binds ciphertext-DA root + `chunk_count` plus the `CommitmentBlockProof` bytes.
+     - `ShieldedPool::submit_proof_da_commitment`: binds proof-DA root + `chunk_count` for per-tx proof bytes in Phase A.
+     - `ShieldedPool::submit_proof_da_manifest`: binds `binding_hash -> (proof_hash, len, offset)` so commitments can be computed without fetching proof bytes.
+     - `ShieldedPool::submit_aggregation_proof`: supplies the block’s aggregation proof bytes (verified during import).
      - `ShieldedPool::enable_aggregation_mode`: indicates per-tx verification may be skipped in the runtime for this block (the node must verify aggregated validity during import).
 
 3. Protocol versioning (code-level change gates). These are for “the format changed” or “verification logic changed” and must be activated by a version schedule, not by a mutable runtime toggle.
