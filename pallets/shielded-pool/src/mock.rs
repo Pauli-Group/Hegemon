@@ -245,8 +245,8 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{
-        BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding,
-        StarkProof, CRYPTO_SUITE_GAMMA, NOTE_ENCRYPTION_VERSION,
+        BindingHash, EncryptedNote, FeeParameters, FeeProofKind, ProofAvailabilityPolicy,
+        StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA, NOTE_ENCRYPTION_VERSION,
     };
     use codec::Encode;
     use frame_support::traits::Hooks;
@@ -1684,6 +1684,171 @@ mod tests {
                 ),
                 crate::Error::<Test>::DuplicateNullifierInTx
             );
+        });
+    }
+
+    #[test]
+    fn proofless_sidecar_rejected_without_aggregation_mode() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            let proof = StarkProof::from_bytes(Vec::new());
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertext_hashes: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[3u8; 48]].try_into().unwrap();
+            let ciphertext_sizes: BoundedVec<u32, MaxCommitmentsPerTx> =
+                vec![1u32].try_into().unwrap();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned_sidecar {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                ciphertext_sizes: ciphertext_sizes.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Custom(12)
+                ))
+            ));
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer_unsigned_sidecar(
+                    RuntimeOrigin::none(),
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    binding_hash,
+                    None,
+                    0,
+                ),
+                crate::Error::<Test>::ProofBytesRequired
+            );
+        });
+    }
+
+    #[test]
+    fn proofless_sidecar_rejected_when_policy_inline() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            assert_ok!(Pallet::<Test>::enable_aggregation_mode(RuntimeOrigin::none()));
+
+            let proof = StarkProof::from_bytes(Vec::new());
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertext_hashes: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[3u8; 48]].try_into().unwrap();
+            let ciphertext_sizes: BoundedVec<u32, MaxCommitmentsPerTx> =
+                vec![1u32].try_into().unwrap();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned_sidecar {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                ciphertext_sizes: ciphertext_sizes.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Custom(12)
+                ))
+            ));
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer_unsigned_sidecar(
+                    RuntimeOrigin::none(),
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    binding_hash,
+                    None,
+                    0,
+                ),
+                crate::Error::<Test>::ProofBytesRequired
+            );
+        });
+    }
+
+    #[test]
+    fn proofless_sidecar_allowed_with_da_policy_and_aggregation_mode() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            assert_ok!(Pallet::<Test>::enable_aggregation_mode(RuntimeOrigin::none()));
+            assert_ok!(Pallet::<Test>::set_proof_availability_policy(
+                RuntimeOrigin::root(),
+                ProofAvailabilityPolicy::DaRequired,
+            ));
+
+            let proof = StarkProof::from_bytes(Vec::new());
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertext_hashes: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[3u8; 48]].try_into().unwrap();
+            let ciphertext_sizes: BoundedVec<u32, MaxCommitmentsPerTx> =
+                vec![1u32].try_into().unwrap();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned_sidecar {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                ciphertext_sizes: ciphertext_sizes.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(validity.is_ok());
+
+            assert_ok!(Pallet::<Test>::shielded_transfer_unsigned_sidecar(
+                RuntimeOrigin::none(),
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                binding_hash,
+                None,
+                0,
+            ));
         });
     }
 }

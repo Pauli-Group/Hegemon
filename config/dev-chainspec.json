@@ -8,7 +8,7 @@
   "telemetryEndpoints": null,
   "protocolId": null,
   "properties": {
-    "daChunkSize": 1024,
+    "daChunkSize": 65536,
     "daSampleCount": 80,
     "ss58Format": 42,
     "tokenDecimals": 12,

@@ -51,6 +51,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-24T00:00Z) Re-ran end-to-end throughput bench with proof sidecar enabled and recorded 8/16 transfer per block payload sizes + verify times.
 - [x] (2026-01-24T00:00Z) Stabilized local verification: cached aggregation verifier artifacts (avoid rebuilding recursion circuit/airs on every block) and capped default rayon threads in `--dev` to reduce macOS “watchdog wedge” risk under memory pressure (override with `HEGEMON_RAYON_THREADS`/`RAYON_NUM_THREADS`).
 - [x] (2026-01-24T00:00Z) Measured aggregation verification breakdown: steady-state `verify_batch` is ~30ms, while first-seen batch sizes pay a one-time recursion circuit build cost (~5.4s for 8, ~10.4s for 16) (`aggregation_verify_breakdown_metrics`).
+- [x] (2026-01-24T00:00Z) Documented the phase activation “switchboard” (on-chain policies + per-block markers + protocol versioning) and the “fresh genesis per major phase” strategy for 0.8.0 (A) and 0.9.0 (optional C).
 
 ## Surprises & Discoveries
 
@@ -120,6 +121,19 @@ After this work, a developer can run a local devnet and observe all of the follo
   Rationale: Per-tx transparent proof bytes are hundreds of KiB and dominate block propagation. Sidecar staging preserves the PQ security bar while bounding block bodies; future work can either (a) make proofs available via DA sampling or (b) make the aggregation proof truly self-contained (no inner proof bytes required to verify).
   Date/Author: 2026-01-24 / Codex
 
+- Decision: Implement the A → C roadmap as deterministic, explicitly documented switches (on-chain policies + per-block markers + protocol versioning), never as node-local env vars; ship 0.8.0 (A) and 0.9.0 (optional C) from fresh genesis to keep the upgrade surface small.
+  Rationale: Consensus behavior must be the same for all nodes; switches must be visible on-chain or in blocks. Fresh genesis avoids partial-upgrade failure modes and keeps early-network operations simple while the architecture remains maximally malleable.
+  Date/Author: 2026-01-24 / Codex
+
+- Decision: For 0.8.0 (Phase A), treat per-transaction proofs as a DA blob with its own on-chain commitment (`submit_proof_da_commitment`) when `ProofAvailabilityPolicy=DaRequired`.
+  Rationale: Aggregation verification currently still needs the per-tx proof bytes (`verify_aggregation_proof` depends on them). Putting proof bytes in DA keeps block bodies bounded while preserving strict validity.
+  Date/Author: 2026-01-24 / Codex
+
+- Decision: Increase `daChunkSize` default to 65,536 bytes for 0.8.0 so proof-DA blobs fit under the 255-shard erasure-coding limit.
+  Rationale: With current Plonky3 transaction proofs in the hundreds-of-KiB range, even small batches exceed the shard limit at 1 KiB chunks. Larger chunks reduce shard count; Phase A starts with `DaAvailabilityPolicy=FullFetch`, so sampling bandwidth isn’t the immediate bottleneck.
+  Tradeoff: Larger chunks make future sampling more expensive (bytes per sampled shard scale with `chunk_size`). Phase B/C should either separate ciphertext vs proof DA params or reduce sampling intensity once proofs are self-contained.
+  Date/Author: 2026-01-24 / Codex
+
 ## Outcomes & Retrospective
 
 Not started. Update this section once the first end-to-end demo is working.
@@ -136,6 +150,37 @@ Design principles for decisions in this plan live in `DESIGN.md §0` (canonical 
 - Chain is the minimal PQ validity/availability anchor; bulk throughput and storage are paid services.
 - Availability is enforced at acceptance; archival is explicit, priced, and optional.
 - UX and recovery matter: wallet sync must remain viable as the network scales.
+
+### Activation Switchboard (A → C roadmap)
+
+This plan deliberately evolves the system through phases (A: “proof bytes are available”, C: “proof bytes are not required to verify”). To keep this evolution safe and operable, each phase boundary must be activated by **deterministic switches** that every honest node can compute the same way. We do **not** rely on node-local env vars for consensus behavior.
+
+We use three classes of “switch,” each with a distinct purpose:
+
+1. On-chain policies (governance-set, read via runtime API during import). These are for “how strict should we be right now?” and are designed to be changeable without code changes.
+
+   - Already present:
+     - `DaAvailabilityPolicy`: `FullFetch` vs `Sampling` (DA acceptance rules).
+     - `CiphertextPolicy`: `InlineAllowed` vs `SidecarOnly` (block payload rules).
+   - To add for Phase A:
+     - `ProofAvailabilityPolicy`: how/where per-transaction proof bytes must be available when aggregation mode is used.
+
+2. Per-block markers (mandatory unsigned extrinsics). These are for “what validation mode is this block using?” and are used so block authors can explicitly opt into a mode while verifiers can reject blocks that use the mode incorrectly.
+
+   - Already present:
+     - `ShieldedPool::enable_aggregation_mode`: indicates per-tx verification may be skipped in the runtime for this block (the node must verify aggregated validity during import).
+
+3. Protocol versioning (code-level change gates). These are for “the format changed” or “verification logic changed” and must be activated by a version schedule, not by a mutable runtime toggle.
+
+   - Already present:
+     - Transaction-level `VersionBinding` commitments exist, and consensus can enforce activation schedules.
+   - For Phase C:
+     - Aggregation-proof format changes must be versioned (a node cannot be expected to verify a proof format it does not implement).
+
+Genesis strategy for this roadmap:
+
+- For 0.8.0, we intentionally ship Phase A with a **fresh genesis** so we can change block validity semantics (proof availability) without carrying legacy state or compatibility baggage.
+- For 0.9.0, if we move directly to Phase C (self-contained aggregation), we will again start from a **fresh genesis** (per product intent) to keep operational complexity low and avoid partial-upgrade failure modes.
 
 Hegemon today is a Substrate-based proof-of-work chain with a shielded pool (Zcash-like “notes” and “nullifiers”) and post-quantum cryptography everywhere:
 

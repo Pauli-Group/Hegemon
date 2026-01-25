@@ -1932,6 +1932,10 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::CiphertextPolicyStorage::<Runtime>::get()
         }
 
+        fn proof_availability_policy() -> pallet_shielded_pool::types::ProofAvailabilityPolicy {
+            pallet_shielded_pool::ProofAvailabilityPolicyStorage::<Runtime>::get()
+        }
+
         fn compact_merkle_tree() -> pallet_shielded_pool::merkle::CompactMerkleTree {
             pallet_shielded_pool::MerkleTree::<Runtime>::get()
         }

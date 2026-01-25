@@ -151,6 +151,7 @@ pub trait WeightInfo {
     fn update_verifying_key() -> Weight;
     fn set_da_policy() -> Weight;
     fn set_ciphertext_policy() -> Weight;
+    fn set_proof_availability_policy() -> Weight;
 }
 
 /// Default weight implementation.
@@ -178,6 +179,10 @@ impl WeightInfo for DefaultWeightInfo {
     }
 
     fn set_ciphertext_policy() -> Weight {
+        Weight::from_parts(10_000, 0)
+    }
+
+    fn set_proof_availability_policy() -> Weight {
         Weight::from_parts(10_000, 0)
     }
 }
@@ -410,6 +415,12 @@ pub mod pallet {
     #[pallet::storage]
     pub type CommitmentProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
+    /// Whether the proof DA commitment was already submitted this block.
+    ///
+    /// Reset on `on_initialize` so exactly one proof DA commitment can be attached per block.
+    #[pallet::storage]
+    pub type ProofDaCommitmentProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
+
     /// Whether the aggregation proof was already submitted this block.
     ///
     /// Reset on `on_initialize` so exactly one aggregation proof can be attached per block.
@@ -431,6 +442,12 @@ pub mod pallet {
     pub type DaCommitments<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
 
+    /// Proof DA commitments per block (da_root + chunk count) for aggregation import.
+    #[pallet::storage]
+    #[pallet::getter(fn proof_da_commitment)]
+    pub type ProofDaCommitments<T: Config> =
+        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
+
     /// DA availability policy (full fetch vs sampling).
     #[pallet::storage]
     #[pallet::getter(fn da_policy)]
@@ -442,6 +459,12 @@ pub mod pallet {
     #[pallet::getter(fn ciphertext_policy)]
     pub type CiphertextPolicyStorage<T: Config> =
         StorageValue<_, types::CiphertextPolicy, ValueQuery>;
+
+    /// Proof availability policy (inline vs DA-available in aggregation mode).
+    #[pallet::storage]
+    #[pallet::getter(fn proof_availability_policy)]
+    pub type ProofAvailabilityPolicyStorage<T: Config> =
+        StorageValue<_, types::ProofAvailabilityPolicy, ValueQuery>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -510,6 +533,10 @@ pub mod pallet {
         /// Ciphertext policy updated.
         CiphertextPolicyUpdated {
             policy: types::CiphertextPolicy,
+        },
+        /// Proof availability policy updated.
+        ProofAvailabilityPolicyUpdated {
+            policy: types::ProofAvailabilityPolicy,
         },
         /// Fee parameters were updated.
         FeeParametersUpdated {
@@ -610,6 +637,8 @@ pub mod pallet {
         CoinbaseAlreadyProcessed,
         /// Commitment proof already submitted for this block.
         CommitmentProofAlreadyProcessed,
+        /// Proof DA commitment already submitted for this block.
+        ProofDaCommitmentAlreadyProcessed,
         /// Aggregation proof already submitted for this block.
         AggregationProofAlreadyProcessed,
         /// Aggregation proof mode was already enabled for this block.
@@ -646,6 +675,8 @@ pub mod pallet {
         /// Proof exceeds maximum allowed size.
         /// This prevents DoS attacks via oversized proofs that consume verification resources.
         ProofTooLarge,
+        /// Proof bytes are required by policy but missing.
+        ProofBytesRequired,
         /// Inline ciphertexts are disabled; sidecar-only is enforced.
         InlineCiphertextsDisabled,
         /// DA chunk count is invalid for this block.
@@ -664,6 +695,12 @@ pub mod pallet {
         pub verifying_key: Option<VerifyingKey>,
         /// Initial fee parameters.
         pub fee_parameters: Option<types::FeeParameters>,
+        /// Initial DA policy (full fetch vs sampling).
+        pub da_policy: Option<types::DaAvailabilityPolicy>,
+        /// Initial ciphertext policy (inline vs sidecar-only).
+        pub ciphertext_policy: Option<types::CiphertextPolicy>,
+        /// Initial proof availability policy.
+        pub proof_availability_policy: Option<types::ProofAvailabilityPolicy>,
         /// Phantom data.
         #[serde(skip)]
         pub _phantom: PhantomData<T>,
@@ -699,6 +736,12 @@ pub mod pallet {
                 .fee_parameters
                 .unwrap_or_else(T::DefaultFeeParameters::get);
             FeeParametersStorage::<T>::put(fee_parameters);
+
+            DaPolicyStorage::<T>::put(self.da_policy.unwrap_or_default());
+            CiphertextPolicyStorage::<T>::put(self.ciphertext_policy.unwrap_or_default());
+            ProofAvailabilityPolicyStorage::<T>::put(
+                self.proof_availability_policy.unwrap_or_default(),
+            );
         }
     }
 
@@ -782,6 +825,7 @@ pub mod pallet {
             CoinbaseProcessed::<T>::kill();
             ShieldedTransfersProcessed::<T>::kill();
             CommitmentProofProcessed::<T>::kill();
+            ProofDaCommitmentProcessed::<T>::kill();
             AggregationProofProcessed::<T>::kill();
             AggregationProofRequired::<T>::kill();
             Weight::from_parts(1_000, 0)
@@ -858,6 +902,40 @@ pub mod pallet {
                 },
             );
             CommitmentProofProcessed::<T>::put(true);
+            Ok(())
+        }
+
+        /// Attach the proof DA commitment (root + chunk count) for this block.
+        ///
+        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
+        /// proof-DA root on-chain so importers can fetch per-transaction proof bytes when
+        /// aggregation mode allows transfers to omit proof bytes from extrinsics.
+        #[pallet::call_index(15)]
+        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
+        pub fn submit_proof_da_commitment(
+            origin: OriginFor<T>,
+            da_root: [u8; 48],
+            chunk_count: u32,
+        ) -> DispatchResult {
+            ensure_none(origin)?;
+
+            ensure!(
+                !ProofDaCommitmentProcessed::<T>::get(),
+                Error::<T>::ProofDaCommitmentAlreadyProcessed
+            );
+
+            ensure!(chunk_count > 0, Error::<T>::InvalidDaChunkCount);
+
+            let block_number = frame_system::Pallet::<T>::block_number();
+            ProofDaCommitments::<T>::insert(
+                block_number,
+                types::DaCommitment {
+                    root: da_root,
+                    chunk_count,
+                },
+            );
+
+            ProofDaCommitmentProcessed::<T>::put(true);
             Ok(())
         }
 
@@ -1339,6 +1417,21 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Update the proof availability policy (inline vs DA required in aggregation mode).
+        ///
+        /// Can only be called by AdminOrigin (governance).
+        #[pallet::call_index(14)]
+        #[pallet::weight(T::WeightInfo::set_proof_availability_policy())]
+        pub fn set_proof_availability_policy(
+            origin: OriginFor<T>,
+            policy: types::ProofAvailabilityPolicy,
+        ) -> DispatchResult {
+            T::AdminOrigin::ensure_origin(origin)?;
+            ProofAvailabilityPolicyStorage::<T>::put(policy);
+            Self::deposit_event(Event::ProofAvailabilityPolicyUpdated { policy });
+            Ok(())
+        }
+
         /// Update the fee parameters for shielded transfers.
         #[pallet::call_index(9)]
         #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Operational, Pays::No))]
@@ -1735,6 +1828,17 @@ pub mod pallet {
             ensure!(stablecoin.is_none(), Error::<T>::StablecoinIssuanceUnsigned);
 
             let aggregation_mode = AggregationProofRequired::<T>::get();
+            let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
+
+            if proof.data.is_empty() {
+                // Proof bytes cannot be omitted unless aggregation mode is enabled and the
+                // on-chain policy allows DA-provided proofs.
+                ensure!(aggregation_mode, Error::<T>::ProofBytesRequired);
+                ensure!(
+                    matches!(proof_policy, types::ProofAvailabilityPolicy::DaRequired),
+                    Error::<T>::ProofBytesRequired
+                );
+            }
 
             // Validate counts
             ensure!(
@@ -2805,6 +2909,25 @@ pub mod pallet {
                     let verifier = T::ProofVerifier::default();
 
                     let aggregation_mode = AggregationProofRequired::<T>::get();
+                    let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
+
+                    if proof.data.is_empty() {
+                        if !aggregation_mode {
+                            log::info!(
+                                target: "shielded-pool",
+                                "  REJECTED: proof bytes missing outside aggregation mode"
+                            );
+                            return InvalidTransaction::Custom(12).into();
+                        }
+
+                        if !matches!(proof_policy, types::ProofAvailabilityPolicy::DaRequired) {
+                            log::info!(
+                                target: "shielded-pool",
+                                "  REJECTED: proof bytes required by policy"
+                            );
+                            return InvalidTransaction::Custom(12).into();
+                        }
+                    }
                     if !aggregation_mode {
                         log::info!(target: "shielded-pool", "  Verifying STARK proof...");
                         match verifier.verify_stark(proof, &inputs, &vk) {
@@ -2909,6 +3032,26 @@ pub mod pallet {
                         .priority(TransactionPriority::MAX)
                         .longevity(1)
                         .and_provides(vec![b"commitment_proof".to_vec()])
+                        .propagate(false)
+                        .build()
+                }
+                Call::submit_proof_da_commitment {
+                    da_root: _,
+                    chunk_count,
+                } => {
+                    if _source != TransactionSource::InBlock {
+                        return InvalidTransaction::Call.into();
+                    }
+                    if ProofDaCommitmentProcessed::<T>::get() {
+                        return InvalidTransaction::Stale.into();
+                    }
+                    if *chunk_count == 0 {
+                        return InvalidTransaction::Custom(13).into();
+                    }
+                    ValidTransaction::with_tag_prefix("ShieldedPoolProofDaCommitment")
+                        .priority(TransactionPriority::MAX)
+                        .longevity(1)
+                        .and_provides(vec![b"proof_da_commitment".to_vec()])
                         .propagate(false)
                         .build()
                 }

@@ -216,8 +216,9 @@ Nodes enforce this during block import and local block production so miners do n
 For scalability, the system supports a per-block “aggregation mode” that allows shielded transfer extrinsics to omit the per-transaction STARK proof bytes and rely on a single aggregation proof checked during block import:
 
 * Block authors include `ShieldedPool::enable_aggregation_mode` early in the block.
-* In this mode, `shielded_transfer_unsigned_sidecar` skips runtime proof verification and only enforces binding hashes + non-ZK checks (nullifiers, anchors, fee floor).
-* Proof bytes are staged off-chain via `da_submitProofs` keyed by the transaction `binding_hash`; wallets can enable this by setting `HEGEMON_WALLET_PROOF_SIDECAR=1`.
+* A chain-level `ProofAvailabilityPolicy` gates whether per-tx proofs must be inline (`InlineRequired`) or may be in DA (`DaRequired`).
+* In aggregation mode + `DaRequired`, `shielded_transfer_unsigned_sidecar` may omit proof bytes; the runtime skips `verify_stark` and only enforces binding hashes + non-ZK checks (nullifiers, anchors, fee floor).
+* Proof bytes are staged off-chain via `da_submitProofs` keyed by the transaction `binding_hash`; block authors then include `submit_proof_da_commitment(da_root, chunk_count)` so importers can fetch the proof bytes from DA.
 * The node verifies the commitment proof + aggregation proof during import and rejects any block whose aggregated transactions are invalid.
 
 ---
