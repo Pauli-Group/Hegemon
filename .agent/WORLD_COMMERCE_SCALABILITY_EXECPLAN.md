@@ -49,6 +49,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-24T00:00Z) Implemented proof sidecar staging (`da_submitProofs`) + wallet integration (`HEGEMON_WALLET_PROOF_SIDECAR=1`) so shielded transfer extrinsics can omit per-tx proof bytes in rollup/aggregation mode.
 - [x] (2026-01-24T00:00Z) Added per-block “aggregation mode” marker (`ShieldedPool::enable_aggregation_mode`) so the runtime can skip per-tx proof verification while the node verifies commitment + aggregation proofs during import.
 - [x] (2026-01-24T00:00Z) Re-ran end-to-end throughput bench with proof sidecar enabled and recorded 8/16 transfer per block payload sizes + verify times.
+- [x] (2026-01-25T00:00Z) Re-ran the throughput bench under the new proof-DA/public-values binding path and recorded refreshed 4/8/16 payload + verify metrics; fixed the bench script so it actually waits for the intended number of coinbase blocks.
 - [x] (2026-01-24T00:00Z) Stabilized local verification: cached aggregation verifier artifacts (avoid rebuilding recursion circuit/airs on every block) and capped default rayon threads in `--dev` to reduce macOS “watchdog wedge” risk under memory pressure (override with `HEGEMON_RAYON_THREADS`/`RAYON_NUM_THREADS`).
 - [x] (2026-01-24T00:00Z) Measured aggregation verification breakdown: steady-state `verify_batch` is ~30ms, while first-seen batch sizes pay a one-time recursion circuit build cost (~5.4s for 8, ~10.4s for 16) (`aggregation_verify_breakdown_metrics`).
 - [x] (2026-01-24T00:00Z) Documented the phase activation “switchboard” (on-chain policies + per-block markers + protocol versioning) and the “fresh genesis per major phase” strategy for 0.8.0 (A) and 0.9.0 (optional C).
@@ -67,16 +68,17 @@ After this work, a developer can run a local devnet and observe all of the follo
 - Observation: The current runtime is configured for a 4 MiB block body and 60 second blocks. With today’s proof sizes, that implies well under 1 shielded tx/sec.
   Evidence: `runtime/src/lib.rs` defines `RuntimeBlockLength` as `4 * 1024 * 1024` and `PowTargetBlockTime` as `60_000`.
 
-- Observation: With sidecar ciphertexts enabled, the block body is still dominated by transaction proof bytes; aggregation currently *adds* ~1.0–1.2 MiB more bytes per block and becomes impossible to include once you reach 8 transfers/block under current limits.
-  Evidence: at tx_count=4, a block carried `tx_proof_bytes_total=1429209`, `commitment_proof_bytes=228076`, `aggregation_proof_bytes=1112644`, `extrinsics_bytes_total=2773829`, and `verify_ms=3163` in `/tmp/hegemon-throughput-4.log`.
-  Evidence: at tx_count=8, a block carried `tx_proof_bytes_total=2857875`, `commitment_proof_bytes=253476`, `extrinsics_bytes_total=3116776`, and attempting to attach `proof_size=1202209` bytes for `submit_aggregation_proof` hit `InvalidTransaction::ExhaustsResources` and was omitted in `/tmp/hegemon-throughput-8b.log`.
+- Observation: Without proof sidecar, even with ciphertext sidecar enabled, the block body is still dominated by per-transaction proof bytes; aggregation currently *adds* ~1.0–1.2 MiB more bytes per block and becomes impossible to include once you reach 8 transfers/block under current limits.
+  Evidence (historical, pre proof-sidecar): at tx_count=4, a block carried `tx_proof_bytes_total≈1.43MiB`, `commitment_proof_bytes≈228KiB`, `aggregation_proof_bytes≈1.11MiB`, `extrinsics_bytes_total≈2.77MiB`, and `verify_ms≈3163`.
+  Evidence (historical, pre proof-sidecar): at tx_count=8, a block carried `tx_proof_bytes_total≈2.86MiB`, `commitment_proof_bytes≈253KiB`, `extrinsics_bytes_total≈3.12MiB`, and attempting to attach `proof_size≈1.20MiB` bytes for `submit_aggregation_proof` hit `InvalidTransaction::ExhaustsResources` and was omitted.
 
-- Observation: With today’s on-chain transaction format (tx proofs inside each transfer), the practical upper bound is 8 transfers per block (16 submitted still yields a block with tx_count=8).
-  Evidence: `/tmp/hegemon-throughput-16.log` shows `block_payload_size_metrics ... tx_count=8` after submitting 16 sidecar transfers.
+- Observation: With the on-chain transaction format that embeds tx proofs inside each transfer, the practical upper bound is 8 transfers per block (16 submitted still yields a block with tx_count=8).
+  Evidence (historical, pre proof-sidecar): the 16-transfer bench produced a block with `tx_count=8` after 16 sidecar transfers were submitted.
 
 - Observation: With proof sidecar enabled (proof bytes omitted from each transfer), block bodies scale with *O(1) proofs per block* (commitment proof + aggregation proof), not O(tx_count) proof bytes.
-  Evidence: tx_count=8 block: `extrinsics_bytes_total=1461413`, `commitment_proof_bytes=253476`, `aggregation_proof_bytes=1202537`, `ciphertext_bytes_total=34352` (`block_payload_size_metrics`).
-  Evidence: tx_count=16 block: `extrinsics_bytes_total=1584473`, `commitment_proof_bytes=280412`, `aggregation_proof_bytes=1295629`, `ciphertext_bytes_total=68704` (`block_payload_size_metrics`).
+  Evidence: tx_count=4 block: `extrinsics_bytes_total=1345549`, `commitment_proof_bytes=228076`, `aggregation_proof_bytes=1113533`, `verify_ms=2735`, `proof_da_blob_bytes_estimate=1429114`, `proof_da_chunk_count=33` (`/tmp/hegemon-throughput-4.log`).
+  Evidence: tx_count=8 block: `extrinsics_bytes_total=1461345`, `commitment_proof_bytes=253476`, `aggregation_proof_bytes=1202413`, `verify_ms=5496`, `proof_da_blob_bytes_estimate=2857679`, `proof_da_chunk_count=66` (`/tmp/hegemon-throughput-8.log`).
+  Evidence: tx_count=16 block: `extrinsics_bytes_total=1584742`, `commitment_proof_bytes=280412`, `aggregation_proof_bytes=1295842`, `verify_ms=10791`, `proof_da_blob_bytes_estimate=5716900`, `proof_da_chunk_count=132` (`/tmp/hegemon-throughput-16.log`).
 
 - Observation: The aggregation verification *steady-state* is fast (tens of ms), but the current implementation pays a one-time cost to build the recursion verifier circuit/airs per `(tx_count, pub_inputs_len, proof_shape)`; that build dominates the first-seen block’s “verification time.”
   Evidence: tx_count=8: `aggregation_verify_ms=5442` with `cache_build_ms=5404`, `verify_batch_ms=31` (`aggregation_verify_breakdown_metrics`).

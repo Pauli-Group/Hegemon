@@ -2922,6 +2922,29 @@ fn verify_proof_carrying_block(
         let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
             .map(|layouts| da_blob_len_from_layouts(&layouts))
             .unwrap_or(0);
+        let missing_proof_hashes = missing_proof_binding_hashes(extrinsics);
+        let proof_da_payload = extract_proof_da_commitment_payload(extrinsics).ok().flatten();
+        let proof_da_blob_bytes_estimate = if missing_proof_hashes.is_empty() {
+            0usize
+        } else {
+            let pending = pending_proofs.ok_or_else(|| {
+                "proof bytes missing but pending proof store not provided".to_string()
+            })?;
+            let mut total = 4usize; // entry count
+            for binding_hash in &missing_proof_hashes {
+                let proof_bytes = pending.get(binding_hash).ok_or_else(|| {
+                    format!(
+                        "missing proof bytes for binding hash {}",
+                        hex::encode(binding_hash)
+                    )
+                })?;
+                total = total
+                    .saturating_add(64) // binding hash bytes
+                    .saturating_add(4) // proof len
+                    .saturating_add(proof_bytes.len());
+            }
+            total
+        };
         let tx_proof_bytes_total: usize = tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
         let aggregation_proof_bytes_len = aggregation_proof_bytes.as_ref().map(|bytes| bytes.len()).unwrap_or(0);
         tracing::info!(
@@ -2930,11 +2953,15 @@ fn verify_proof_carrying_block(
             tx_count = transactions.len(),
             extrinsics_bytes_total,
             da_blob_bytes_estimate,
+            proof_da_blob_bytes_estimate,
+            proof_da_entry_count = missing_proof_hashes.len(),
             tx_proof_bytes_total,
             commitment_proof_bytes = payload.proof_bytes.len(),
             aggregation_proof_bytes = aggregation_proof_bytes_len,
             da_chunk_count = payload.da_chunk_count,
             da_root = %hex::encode(payload.da_root),
+            proof_da_chunk_count = proof_da_payload.as_ref().map(|payload| payload.da_chunk_count).unwrap_or(0),
+            proof_da_root = %proof_da_payload.as_ref().map(|payload| hex::encode(payload.da_root)).unwrap_or_default(),
             da_policy = ?da_policy,
             "block_payload_size_metrics"
         );
