@@ -14,12 +14,13 @@ TX_COUNT="${HEGEMON_TP_TX_COUNT:-8}"
 VALUE="${HEGEMON_TP_VALUE:-100000000}" # 1.0 HGM (8 decimals)
 FEE="${HEGEMON_TP_FEE:-0}"
 COINBASE_BLOCKS="${HEGEMON_TP_COINBASE_BLOCKS:-$((TX_COUNT + 3))}"
+MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
 
 # Guard rails: proving/aggregation is CPU+RAM heavy. Defaults are laptop-safe; override explicitly.
-RAYON_THREADS="${HEGEMON_TP_RAYON_THREADS:-4}"
-CARGO_JOBS="${HEGEMON_TP_CARGO_JOBS:-4}"
+RAYON_THREADS="${HEGEMON_TP_RAYON_THREADS:-2}"
+CARGO_JOBS="${HEGEMON_TP_CARGO_JOBS:-1}"
 export RAYON_NUM_THREADS="$RAYON_THREADS"
 export CARGO_BUILD_JOBS="$CARGO_JOBS"
 
@@ -159,30 +160,21 @@ curl -s -H "Content-Type: application/json" \
   "$RPC_HTTP" >/dev/null
 
 echo "Waiting for >= ${COINBASE_BLOCKS} blocks..." >&2
-for i in $(seq 1 600); do
+for i in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
   HEADER_JSON="$(curl -s -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
     "$RPC_HTTP" || true)"
-  BLOCK_NUM="$(python3 - <<'PY'
-import json,sys
-data = sys.stdin.read()
-try:
-    obj = json.loads(data) if data.strip() else {}
-except Exception:
-    obj = {}
-hdr = obj.get("result") or {}
-num = hdr.get("number")
-try:
-    print(int(num, 16) if isinstance(num, str) else 0)
-except Exception:
-    print(0)
-PY
-  <<<"$HEADER_JSON")"
+  BLOCK_NUM="$(python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; num=(obj.get("result") or {}).get("number"); print(int(num,16) if isinstance(num,str) else 0)' <<<"$HEADER_JSON")"
   if [ "$BLOCK_NUM" -ge "$COINBASE_BLOCKS" ]; then
     break
   fi
   sleep 1
 done
+if [ "$BLOCK_NUM" -lt "$COINBASE_BLOCKS" ]; then
+  echo "Timed out waiting for >= ${COINBASE_BLOCKS} blocks after ${MAX_BLOCK_WAIT_SECS}s (got ${BLOCK_NUM})." >&2
+  echo "Hint: increase HEGEMON_TP_MAX_BLOCK_WAIT_SECS or lower HEGEMON_TP_VALUE/HEGEMON_TP_TX_COUNT." >&2
+  exit 1
+fi
 
 echo "Stopping mining so transfers accumulate in the pool..." >&2
 curl -s -H "Content-Type: application/json" \
@@ -227,15 +219,7 @@ if [ -z "$FOUND" ]; then
   exit 1
 fi
 
-BLOCK_NUMBER="$(
-  python3 - <<'PY'
-import re,sys
-s = sys.stdin.read()
-m = re.search(r"\\bblock_number=(\\d+)\\b", s)
-print(m.group(1) if m else "")
-PY
-  <<<"$FOUND"
-)"
+BLOCK_NUMBER="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\\bblock_number=(\\d+)\\b", s); print(m.group(1) if m else "")' <<<"$FOUND")"
 
 VERIFY_LINE=""
 CONS_LINE=""

@@ -51,7 +51,8 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "initialBits": 0x1d1a_d7f2_u32
         },
         "shieldedPool": {
-            "verifyingKey": verifying_key_value
+            "verifyingKey": verifying_key_value,
+            "proofAvailabilityPolicy": "DaRequired"
         },
         "stablecoinPolicy": {
             "policies": [
