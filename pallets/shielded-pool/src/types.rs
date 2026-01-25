@@ -210,6 +210,8 @@ pub struct StablecoinPolicyBinding {
     DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub enum DaAvailabilityPolicy {
     /// Require full DA fetch and verify `da_root` against the reconstructed blob.
@@ -236,6 +238,8 @@ impl Default for DaAvailabilityPolicy {
     DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub enum CiphertextPolicy {
     /// Inline ciphertexts are permitted (legacy path).
@@ -247,6 +251,42 @@ pub enum CiphertextPolicy {
 impl Default for CiphertextPolicy {
     fn default() -> Self {
         CiphertextPolicy::InlineAllowed
+    }
+}
+
+/// Policy for how per-transaction proof bytes are made available to verifiers.
+///
+/// This matters only in "aggregation mode", where the runtime may skip per-transaction proof
+/// verification and instead rely on an aggregation proof verified during block import.
+///
+/// In Phase A ("proof availability by DA"), we allow transfers to omit proof bytes from the
+/// extrinsic, but we require the block to commit to the proof bytes via a DA root so other
+/// validators can retrieve them and verify the aggregation proof deterministically.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum ProofAvailabilityPolicy {
+    /// Each transfer extrinsic must carry its STARK proof bytes (legacy path).
+    InlineRequired,
+    /// Transfer extrinsics may omit proof bytes in aggregation mode, but proof bytes must be made
+    /// available via a DA commitment during block import.
+    DaRequired,
+}
+
+impl Default for ProofAvailabilityPolicy {
+    fn default() -> Self {
+        ProofAvailabilityPolicy::InlineRequired
     }
 }
 

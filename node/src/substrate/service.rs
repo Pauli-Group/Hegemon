@@ -324,7 +324,7 @@ pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
     changes
 }
 
-const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
+const DEFAULT_DA_CHUNK_SIZE: u32 = 65536;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 const DEFAULT_DA_STORE_CAPACITY: usize = 128;
 const DEFAULT_DA_RETENTION_BLOCKS: u64 = 128;
@@ -334,13 +334,25 @@ const DEFAULT_PENDING_CIPHERTEXTS_CAPACITY: usize = 4096;
 const DEFAULT_PENDING_PROOFS_CAPACITY: usize = 256;
 const CIPHERTEXT_COUNT_KEY: &[u8] = b"ciphertext_count";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaRootKind {
+    Ciphertexts = 0,
+    Proofs = 1,
+}
+
+impl DaRootKind {
+    fn byte(self) -> u8 {
+        self as u8
+    }
+}
+
 #[derive(Debug)]
 pub struct DaChunkStore {
     cache_capacity: usize,
     retention_blocks: u64,
     cache_order: VecDeque<DaRoot>,
     cache_entries: HashMap<DaRoot, DaEncoding>,
-    db: sled::Db,
+    _db: sled::Db,
     encodings: sled::Tree,
     blocks: sled::Tree,
     block_roots: sled::Tree,
@@ -367,7 +379,7 @@ impl DaChunkStore {
             retention_blocks,
             cache_order: VecDeque::new(),
             cache_entries: HashMap::new(),
-            db,
+            _db: db,
             encodings,
             blocks,
             block_roots,
@@ -377,8 +389,9 @@ impl DaChunkStore {
         })
     }
 
-    pub fn insert(
+    fn insert(
         &mut self,
+        kind: DaRootKind,
         block_number: u64,
         block_hash: [u8; 32],
         encoding: DaEncoding,
@@ -386,8 +399,10 @@ impl DaChunkStore {
         let root = encoding.root();
         let encoded = encoding.encode();
         self.encodings.insert(root, encoded)?;
-        self.block_roots.insert(block_hash, &root[..])?;
-        let block_key = da_block_key(block_number, &block_hash);
+        if matches!(kind, DaRootKind::Ciphertexts) {
+            self.block_roots.insert(block_hash, &root[..])?;
+        }
+        let block_key = da_block_key_with_kind(kind, block_number, &block_hash);
         self.blocks.insert(block_key, &root[..])?;
         self.cache_insert(root, encoding);
         self.prune(block_number)?;
@@ -527,6 +542,9 @@ impl DaChunkStore {
         }
 
         for (key, value) in to_remove {
+            let kind = key.get(40).copied().unwrap_or(DaRootKind::Ciphertexts.byte());
+            let base_key = if key.len() >= 40 { &key[..40] } else { &key[..] };
+
             if let Some(root) = da_root_from_bytes(&value) {
                 self.encodings.remove(root)?;
                 self.cache_remove(&root);
@@ -534,17 +552,19 @@ impl DaChunkStore {
             if key.len() >= 8 + 32 {
                 self.block_roots.remove(&key[8..8 + 32])?;
             }
-            if let Some(range) = self.ciphertext_ranges.remove(&key)? {
-                let bytes = range.as_ref();
-                if bytes.len() == 16 {
-                    let mut start_bytes = [0u8; 8];
-                    let mut count_bytes = [0u8; 8];
-                    start_bytes.copy_from_slice(&bytes[..8]);
-                    count_bytes.copy_from_slice(&bytes[8..]);
-                    let start = u64::from_be_bytes(start_bytes);
-                    let count = u64::from_be_bytes(count_bytes);
-                    for index in start..start.saturating_add(count) {
-                        self.ciphertexts.remove(index.to_be_bytes())?;
+            if kind == DaRootKind::Ciphertexts.byte() {
+                if let Some(range) = self.ciphertext_ranges.remove(base_key)? {
+                    let bytes = range.as_ref();
+                    if bytes.len() == 16 {
+                        let mut start_bytes = [0u8; 8];
+                        let mut count_bytes = [0u8; 8];
+                        start_bytes.copy_from_slice(&bytes[..8]);
+                        count_bytes.copy_from_slice(&bytes[8..]);
+                        let start = u64::from_be_bytes(start_bytes);
+                        let count = u64::from_be_bytes(count_bytes);
+                        for index in start..start.saturating_add(count) {
+                            self.ciphertexts.remove(index.to_be_bytes())?;
+                        }
                     }
                 }
             }
@@ -559,6 +579,18 @@ fn da_block_key(block_number: u64, block_hash: &[u8; 32]) -> [u8; 40] {
     let mut out = [0u8; 40];
     out[..8].copy_from_slice(&block_number.to_be_bytes());
     out[8..].copy_from_slice(block_hash);
+    out
+}
+
+fn da_block_key_with_kind(
+    kind: DaRootKind,
+    block_number: u64,
+    block_hash: &[u8; 32],
+) -> [u8; 41] {
+    let mut out = [0u8; 41];
+    out[..8].copy_from_slice(&block_number.to_be_bytes());
+    out[8..40].copy_from_slice(block_hash);
+    out[40] = kind.byte();
     out
 }
 
@@ -922,6 +954,15 @@ fn fetch_da_policy(
     let api = client.runtime_api();
     api.da_policy(at_hash)
         .unwrap_or(pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch)
+}
+
+fn fetch_proof_availability_policy(
+    client: &HegemonFullClient,
+    at_hash: H256,
+) -> Result<pallet_shielded_pool::types::ProofAvailabilityPolicy, String> {
+    let api = client.runtime_api();
+    api.proof_availability_policy(at_hash)
+        .map_err(|e| format!("runtime api error (proof_availability_policy): {e:?}"))
 }
 
 fn load_da_sample_timeout() -> Duration {
@@ -1536,6 +1577,100 @@ fn build_da_encoding_from_extrinsics(
     })
 }
 
+struct ProofDaBlobBuild {
+    blob: Vec<u8>,
+    used_binding_hashes: Vec<[u8; 64]>,
+}
+
+fn build_proof_da_blob_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+    pending_proofs: Option<&PendingProofStore>,
+) -> Result<ProofDaBlobBuild, String> {
+    let mut entries: Vec<([u8; 64], Vec<u8>)> = Vec::new();
+
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+
+        match call {
+            ShieldedPoolCall::shielded_transfer {
+                proof, binding_hash, ..
+            }
+            | ShieldedPoolCall::shielded_transfer_unsigned {
+                proof, binding_hash, ..
+            }
+            | ShieldedPoolCall::shielded_transfer_sidecar {
+                proof, binding_hash, ..
+            }
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+                proof, binding_hash, ..
+            } => {
+                if proof.data.is_empty() {
+                    let proof_bytes =
+                        resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
+                    entries.push((binding_hash.data, proof_bytes));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut blob = Vec::new();
+    blob.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for (binding_hash, proof_bytes) in &entries {
+        blob.extend_from_slice(binding_hash);
+        blob.extend_from_slice(&(proof_bytes.len() as u32).to_le_bytes());
+        blob.extend_from_slice(proof_bytes);
+    }
+
+    Ok(ProofDaBlobBuild {
+        blob,
+        used_binding_hashes: entries.into_iter().map(|(bh, _)| bh).collect(),
+    })
+}
+
+fn parse_proof_da_blob(
+    blob: &[u8],
+) -> Result<(HashMap<[u8; 64], Vec<u8>>, usize), String> {
+    fn read_u32(cursor: &mut &[u8]) -> Result<u32, String> {
+        if cursor.len() < 4 {
+            return Err("proof DA blob truncated".to_string());
+        }
+        let (head, rest) = cursor.split_at(4);
+        *cursor = rest;
+        Ok(u32::from_le_bytes(head.try_into().expect("4 bytes")))
+    }
+
+    let mut cursor = blob;
+    let count = read_u32(&mut cursor)? as usize;
+    let mut out = HashMap::with_capacity(count);
+
+    for _ in 0..count {
+        if cursor.len() < 64 {
+            return Err("proof DA blob truncated".to_string());
+        }
+        let (bh_bytes, rest) = cursor.split_at(64);
+        cursor = rest;
+        let mut binding_hash = [0u8; 64];
+        binding_hash.copy_from_slice(bh_bytes);
+
+        let len = read_u32(&mut cursor)? as usize;
+        if cursor.len() < len {
+            return Err("proof DA blob truncated".to_string());
+        }
+        let (data, rest) = cursor.split_at(len);
+        cursor = rest;
+
+        if out.insert(binding_hash, data.to_vec()).is_some() {
+            return Err("duplicate binding hash in proof DA blob".to_string());
+        }
+    }
+
+    let consumed = blob.len().saturating_sub(cursor.len());
+    Ok((out, consumed))
+}
+
 struct DaTxLayout {
     ciphertext_sizes: Vec<usize>,
 }
@@ -1691,6 +1826,27 @@ fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) ->
     out
 }
 
+fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
+    let mut out = Vec::new();
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+        match call {
+            ShieldedPoolCall::shielded_transfer { proof, binding_hash, .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned { proof, binding_hash, .. }
+            | ShieldedPoolCall::shielded_transfer_sidecar { proof, binding_hash, .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { proof, binding_hash, .. } => {
+                if proof.data.is_empty() {
+                    out.push(binding_hash.data);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
@@ -1719,6 +1875,29 @@ fn da_shard_counts_for_len(len: usize, params: DaParams) -> Result<(usize, usize
         ));
     }
     Ok((data_shards, total_shards))
+}
+
+fn da_data_shards_for_total_shards(total_shards: usize) -> Result<usize, String> {
+    if total_shards == 0 {
+        return Err("DA shard count is zero".to_string());
+    }
+    if total_shards > DA_MAX_SHARDS {
+        return Err(format!(
+            "DA shard count {} exceeds max {}",
+            total_shards, DA_MAX_SHARDS
+        ));
+    }
+
+    for data_shards in 1..=total_shards {
+        if data_shards + da_parity_shards_for_data(data_shards) == total_shards {
+            return Ok(data_shards);
+        }
+    }
+
+    Err(format!(
+        "invalid DA shard count {} (no matching data/parity split)",
+        total_shards
+    ))
 }
 
 async fn request_da_samples(
@@ -1860,6 +2039,67 @@ async fn fetch_da_for_block(
         transactions,
         used_ciphertext_hashes: Vec::new(),
     })
+}
+
+async fn fetch_proof_da_for_root(
+    peer_id: network::PeerId,
+    da_root: DaRoot,
+    chunk_count: u32,
+    params: DaParams,
+    handle: &PqNetworkHandle,
+    tracker: &Arc<ParkingMutex<DaRequestTracker>>,
+    timeout: Duration,
+) -> Result<(DaEncoding, HashMap<[u8; 64], Vec<u8>>), String> {
+    if chunk_count == 0 {
+        return Err("DA chunk count is zero".to_string());
+    }
+
+    let total_shards = chunk_count as usize;
+    let data_shards = da_data_shards_for_total_shards(total_shards)?;
+    let indices: Vec<u32> = (0..data_shards as u32).collect();
+
+    let proofs = request_da_samples(peer_id, da_root, &indices, handle, tracker, timeout).await?;
+    if proofs.len() != indices.len() {
+        return Err("missing DA chunk proofs".to_string());
+    }
+
+    for proof in &proofs {
+        state_da::verify_da_chunk(da_root, proof)
+            .map_err(|err| format!("invalid DA chunk proof: {err}"))?;
+    }
+
+    let chunk_size = params.chunk_size as usize;
+    let mut padded_blob = vec![0u8; data_shards.saturating_mul(chunk_size)];
+
+    for proof in proofs {
+        let idx = proof.chunk.index as usize;
+        if idx >= data_shards {
+            return Err(format!("unexpected parity shard index {}", idx));
+        }
+        let start = idx.saturating_mul(chunk_size);
+        let end = start.saturating_add(chunk_size);
+        if proof.chunk.data.len() < chunk_size {
+            return Err("DA chunk truncated".to_string());
+        }
+        padded_blob[start..end].copy_from_slice(&proof.chunk.data[..chunk_size]);
+    }
+
+    let (proof_map, consumed_len) = parse_proof_da_blob(&padded_blob)?;
+    let blob = padded_blob
+        .get(..consumed_len)
+        .ok_or_else(|| "proof DA blob consumed length out of range".to_string())?;
+
+    let encoding = state_da::encode_da_blob(blob, params)
+        .map_err(|err| format!("da encoding failed: {err}"))?;
+    let computed_root = encoding.root();
+    if computed_root != da_root {
+        return Err("DA root mismatch for fetched blob".to_string());
+    }
+    if encoding.chunks().len() as u32 != chunk_count {
+        return Err("DA chunk_count mismatch for fetched blob".to_string());
+    }
+
+    Ok((encoding, proof_map))
 }
 
 async fn sample_da_for_root(
@@ -2129,6 +2369,11 @@ struct CommitmentProofPayload {
     proof_bytes: Vec<u8>,
 }
 
+struct ProofDaCommitmentPayload {
+    da_root: DaRoot,
+    da_chunk_count: u32,
+}
+
 fn extract_commitment_proof_payload(
     extrinsics: &[runtime::UncheckedExtrinsic],
 ) -> Result<Option<CommitmentProofPayload>, String> {
@@ -2150,6 +2395,32 @@ fn extract_commitment_proof_payload(
                 da_root: *da_root,
                 da_chunk_count: *chunk_count,
                 proof_bytes: proof.data.clone(),
+            });
+        }
+    }
+    Ok(found)
+}
+
+fn extract_proof_da_commitment_payload(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<Option<ProofDaCommitmentPayload>, String> {
+    let mut found: Option<ProofDaCommitmentPayload> = None;
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+
+        if let ShieldedPoolCall::submit_proof_da_commitment {
+            da_root,
+            chunk_count,
+        } = call
+        {
+            if found.is_some() {
+                return Err("multiple submit_proof_da_commitment extrinsics in block".into());
+            }
+            found = Some(ProofDaCommitmentPayload {
+                da_root: *da_root,
+                da_chunk_count: *chunk_count,
             });
         }
     }
@@ -3433,6 +3704,54 @@ pub fn wire_block_builder_api(
             }
         }
 
+        // If any shielded transfers omitted proof bytes, publish those bytes via a DA commitment.
+        let mut decoded_for_proof_da = Vec::with_capacity(applied.len());
+        for ext_bytes in &applied {
+            let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+                .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+            decoded_for_proof_da.push(extrinsic);
+        }
+        let missing_proof_hashes = missing_proof_binding_hashes(&decoded_for_proof_da);
+        if !missing_proof_hashes.is_empty() {
+            let build = {
+                let pending_guard = pending_proof_store.lock();
+                build_proof_da_blob_from_extrinsics(&decoded_for_proof_da, Some(&*pending_guard))
+            }
+            .map_err(|err| format!("failed to build proof DA blob for block: {err}"))?;
+
+            let encoding = state_da::encode_da_blob(&build.blob, da_params)
+                .map_err(|err| format!("proof DA encoding failed: {err}"))?;
+            let proof_da_root = encoding.root();
+            let proof_da_chunk_count = encoding.chunks().len() as u32;
+
+            let proof_da_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                runtime::RuntimeCall::ShieldedPool(
+                    ShieldedPoolCall::submit_proof_da_commitment {
+                        da_root: proof_da_root,
+                        chunk_count: proof_da_chunk_count,
+                    },
+                ),
+            );
+
+            match block_builder.push(proof_da_extrinsic.clone()) {
+                Ok(_) => {
+                    applied.push(proof_da_extrinsic.encode());
+                    tracing::info!(
+                        block_number,
+                        missing_proof_count = missing_proof_hashes.len(),
+                        proof_da_chunk_count,
+                        proof_da_root = %hex::encode(proof_da_root),
+                        "Proof DA commitment extrinsic attached"
+                    );
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "failed to push proof DA commitment extrinsic: {e:?}"
+                    ));
+                }
+            }
+        }
+
         // Build the block - this returns BuiltBlock with StorageChanges!
         let built_block = match block_builder.build() {
             Ok(built) => built,
@@ -3618,6 +3937,33 @@ fn wire_pow_block_import(
             )
         };
 
+        let missing_proof_hashes = missing_proof_binding_hashes(&encoded_extrinsics);
+        let mut proof_da_build: Option<DaEncoding> = None;
+        if !missing_proof_hashes.is_empty() {
+            let payload = extract_proof_da_commitment_payload(&encoded_extrinsics)?
+                .ok_or_else(|| "missing submit_proof_da_commitment extrinsic".to_string())?;
+            let pending_proofs_guard = pending_proof_store.lock();
+            let build = build_proof_da_blob_from_extrinsics(
+                &encoded_extrinsics,
+                Some(&*pending_proofs_guard),
+            )
+            .map_err(|err| format!("failed to build proof DA blob for mined block: {err}"))?;
+
+            if build.used_binding_hashes != missing_proof_hashes {
+                return Err("proof DA blob missing expected binding hashes".to_string());
+            }
+
+            let encoding = state_da::encode_da_blob(&build.blob, da_params)
+                .map_err(|err| format!("proof DA encoding failed: {err}"))?;
+            if encoding.root() != payload.da_root {
+                return Err("proof DA root mismatch for mined block".to_string());
+            }
+            if encoding.chunks().len() as u32 != payload.da_chunk_count {
+                return Err("proof DA chunk_count mismatch for mined block".to_string());
+            }
+            proof_da_build = Some(encoding);
+        }
+
         if proof_verification_enabled {
             let da_policy = fetch_da_policy(block_import.as_ref(), template.parent_hash);
             let resolved_ciphertexts =
@@ -3702,6 +4048,7 @@ fn wire_pow_block_import(
                     let ciphertext_count = ciphertexts.len();
                     let mut store = da_chunk_store.lock();
                     if let Err(err) = store.insert(
+                        DaRootKind::Ciphertexts,
                         template.number as u64,
                         block_hash_bytes,
                         build.encoding,
@@ -3740,6 +4087,31 @@ fn wire_pow_block_import(
                     pending_ciphertext_store
                         .lock()
                         .remove_many(&build.used_ciphertext_hashes);
+                }
+                if let Some(encoding) = proof_da_build.take() {
+                    let proof_da_root = encoding.root();
+                    let proof_da_chunks = encoding.chunks().len();
+                    let mut store = da_chunk_store.lock();
+                    if let Err(err) = store.insert(
+                        DaRootKind::Proofs,
+                        template.number as u64,
+                        block_hash_bytes,
+                        encoding,
+                    ) {
+                        tracing::warn!(
+                            block_number = template.number,
+                            da_root = %hex::encode(proof_da_root),
+                            error = %err,
+                            "Failed to persist proof DA encoding for imported block"
+                        );
+                    } else {
+                        tracing::info!(
+                            block_number = template.number,
+                            da_root = %hex::encode(proof_da_root),
+                            da_chunks = proof_da_chunks,
+                            "Proof DA encoding stored for imported block"
+                        );
+                    }
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
@@ -3787,6 +4159,7 @@ fn wire_pow_block_import(
                     let ciphertext_count = ciphertexts.len();
                     let mut store = da_chunk_store.lock();
                     if let Err(err) = store.insert(
+                        DaRootKind::Ciphertexts,
                         template.number as u64,
                         block_hash_bytes,
                         build.encoding,
@@ -3825,6 +4198,31 @@ fn wire_pow_block_import(
                     pending_ciphertext_store
                         .lock()
                         .remove_many(&build.used_ciphertext_hashes);
+                }
+                if let Some(encoding) = proof_da_build.take() {
+                    let proof_da_root = encoding.root();
+                    let proof_da_chunks = encoding.chunks().len();
+                    let mut store = da_chunk_store.lock();
+                    if let Err(err) = store.insert(
+                        DaRootKind::Proofs,
+                        template.number as u64,
+                        block_hash_bytes,
+                        encoding,
+                    ) {
+                        tracing::warn!(
+                            block_number = template.number,
+                            da_root = %hex::encode(proof_da_root),
+                            error = %err,
+                            "Failed to persist proof DA encoding for known block"
+                        );
+                    } else {
+                        tracing::info!(
+                            block_number = template.number,
+                            da_root = %hex::encode(proof_da_root),
+                            da_chunks = proof_da_chunks,
+                            "Proof DA encoding stored for known block"
+                        );
+                    }
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
@@ -5653,8 +6051,131 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 };
 
+                                let missing_proof_hashes = missing_proof_binding_hashes(&extrinsics);
+                                let mut proof_da_build: Option<DaEncoding> = None;
+                                let mut proof_store: Option<PendingProofStore> = None;
+
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
+                                    if !missing_proof_hashes.is_empty() {
+                                        let policy = match fetch_proof_availability_policy(
+                                            block_import_client.as_ref(),
+                                            parent_hash,
+                                        ) {
+                                            Ok(policy) => policy,
+                                            Err(err) => {
+                                                if err.contains("UnknownBlock") {
+                                                    tracing::debug!(
+                                                        peer = %hex::encode(&downloaded.from_peer),
+                                                        block_number,
+                                                        parent = %hex::encode(parent_hash.as_bytes()),
+                                                        error = %err,
+                                                        "Deferring synced block (parent state not ready for proof availability policy)"
+                                                    );
+                                                    deferred_blocks.push(downloaded);
+                                                    continue;
+                                                }
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    error = %err,
+                                                    "Rejecting synced block (failed to read proof availability policy)"
+                                                );
+                                                blocks_failed += 1;
+                                                continue;
+                                            }
+                                        };
+
+                                        if !matches!(
+                                            policy,
+                                            pallet_shielded_pool::types::ProofAvailabilityPolicy::DaRequired
+                                        ) {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&downloaded.from_peer),
+                                                block_number,
+                                                policy = ?policy,
+                                                "Rejecting synced block (missing proof bytes but proofs not allowed in DA)"
+                                            );
+                                            blocks_failed += 1;
+                                            continue;
+                                        }
+
+                                        let payload = match extract_proof_da_commitment_payload(
+                                            &extrinsics,
+                                        ) {
+                                            Ok(Some(payload)) => payload,
+                                            Ok(None) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    "Rejecting synced block (missing submit_proof_da_commitment)"
+                                                );
+                                                blocks_failed += 1;
+                                                continue;
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    error = %err,
+                                                    "Rejecting synced block (failed to parse submit_proof_da_commitment payload)"
+                                                );
+                                                blocks_failed += 1;
+                                                continue;
+                                            }
+                                        };
+
+                                        match fetch_proof_da_for_root(
+                                            downloaded.from_peer,
+                                            payload.da_root,
+                                            payload.da_chunk_count,
+                                            da_params_for_import,
+                                            &pq_handle_for_da_import,
+                                            &da_request_tracker_for_import,
+                                            da_sample_timeout_for_import,
+                                        )
+                                        .await
+                                        {
+                                            Ok((encoding, mut proof_map)) => {
+                                                let mut store =
+                                                    PendingProofStore::new(missing_proof_hashes.len());
+                                                let mut missing = None;
+                                                for binding_hash in &missing_proof_hashes {
+                                                    match proof_map.remove(binding_hash) {
+                                                        Some(bytes) => store.insert(*binding_hash, bytes),
+                                                        None => {
+                                                            missing = Some(*binding_hash);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                if let Some(binding_hash) = missing {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(&downloaded.from_peer),
+                                                        block_number,
+                                                        binding_hash = %hex::encode(binding_hash),
+                                                        "Rejecting synced block (proof DA blob missing required proof bytes)"
+                                                    );
+                                                    blocks_failed += 1;
+                                                    continue;
+                                                }
+                                                proof_store = Some(store);
+                                                proof_da_build = Some(encoding);
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    da_root = %hex::encode(payload.da_root),
+                                                    error = %err,
+                                                    "Rejecting synced block (proof DA fetch failed)"
+                                                );
+                                                blocks_failed += 1;
+                                                continue;
+                                            }
+                                        }
+                                    }
+
                                     let resolved_ciphertexts =
                                         da_build.as_ref().map(|build| build.transactions.as_slice());
                                     commitment_block_proof = match verify_proof_carrying_block(
@@ -5666,7 +6187,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
-                                        None,
+                                        proof_store.as_ref(),
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
@@ -5755,45 +6276,76 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
-                                        if let Some(build) = da_build.take() {
-                                            let da_root = build.encoding.root();
-                                            let da_chunks = build.encoding.chunks().len();
-                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                            let ciphertext_count = ciphertexts.len();
+                                        if da_build.is_some() || proof_da_build.is_some() {
                                             let mut store = da_chunk_store_for_import.lock();
-                                            if let Err(err) = store
-                                                .insert(block_number as u64, block_hash, build.encoding)
-                                            {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    error = %err,
-                                                    "Failed to persist DA encoding for synced block"
-                                                );
-                                            } else {
-                                                tracing::info!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    da_chunks,
-                                                    "DA encoding stored for synced block"
-                                                );
+
+                                            if let Some(build) = da_build.take() {
+                                                let da_root = build.encoding.root();
+                                                let da_chunks = build.encoding.chunks().len();
+                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                                let ciphertext_count = ciphertexts.len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Ciphertexts,
+                                                    block_number as u64,
+                                                    block_hash,
+                                                    build.encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist DA encoding for synced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "DA encoding stored for synced block"
+                                                    );
+                                                }
+                                                if let Err(err) = store.append_ciphertexts(
+                                                    block_number as u64,
+                                                    block_hash,
+                                                    &ciphertexts,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        error = %err,
+                                                        "Failed to persist ciphertexts for synced block"
+                                                    );
+                                                } else if ciphertext_count > 0 {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Ciphertexts stored for synced block"
+                                                    );
+                                                }
                                             }
-                                            if let Err(err) = store.append_ciphertexts(
-                                                block_number as u64,
-                                                block_hash,
-                                                &ciphertexts,
-                                            ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    error = %err,
-                                                    "Failed to persist ciphertexts for synced block"
-                                                );
-                                            } else if ciphertext_count > 0 {
-                                                tracing::info!(
-                                                    block_number,
-                                                    ciphertext_count,
-                                                    "Ciphertexts stored for synced block"
-                                                );
+
+                                            if let Some(encoding) = proof_da_build.take() {
+                                                let da_root = encoding.root();
+                                                let da_chunks = encoding.chunks().len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Proofs,
+                                                    block_number as u64,
+                                                    block_hash,
+                                                    encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist proof DA encoding for synced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "Proof DA encoding stored for synced block"
+                                                    );
+                                                }
                                             }
                                         }
 
@@ -5836,45 +6388,76 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
-                                        if let Some(build) = da_build.take() {
-                                            let da_root = build.encoding.root();
-                                            let da_chunks = build.encoding.chunks().len();
-                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                            let ciphertext_count = ciphertexts.len();
+                                        if da_build.is_some() || proof_da_build.is_some() {
                                             let mut store = da_chunk_store_for_import.lock();
-                                            if let Err(err) = store
-                                                .insert(block_number as u64, block_hash, build.encoding)
-                                            {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    error = %err,
-                                                    "Failed to persist DA encoding for known synced block"
-                                                );
-                                            } else {
-                                                tracing::info!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    da_chunks,
-                                                    "DA encoding stored for known synced block"
-                                                );
+
+                                            if let Some(build) = da_build.take() {
+                                                let da_root = build.encoding.root();
+                                                let da_chunks = build.encoding.chunks().len();
+                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                                let ciphertext_count = ciphertexts.len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Ciphertexts,
+                                                    block_number as u64,
+                                                    block_hash,
+                                                    build.encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist DA encoding for known synced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "DA encoding stored for known synced block"
+                                                    );
+                                                }
+                                                if let Err(err) = store.append_ciphertexts(
+                                                    block_number as u64,
+                                                    block_hash,
+                                                    &ciphertexts,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        error = %err,
+                                                        "Failed to persist ciphertexts for known synced block"
+                                                    );
+                                                } else if ciphertext_count > 0 {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Ciphertexts stored for known synced block"
+                                                    );
+                                                }
                                             }
-                                            if let Err(err) = store.append_ciphertexts(
-                                                block_number as u64,
-                                                block_hash,
-                                                &ciphertexts,
-                                            ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    error = %err,
-                                                    "Failed to persist ciphertexts for known synced block"
-                                                );
-                                            } else if ciphertext_count > 0 {
-                                                tracing::info!(
-                                                    block_number,
-                                                    ciphertext_count,
-                                                    "Ciphertexts stored for known synced block"
-                                                );
+
+                                            if let Some(encoding) = proof_da_build.take() {
+                                                let da_root = encoding.root();
+                                                let da_chunks = encoding.chunks().len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Proofs,
+                                                    block_number as u64,
+                                                    block_hash,
+                                                    encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist proof DA encoding for known synced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "Proof DA encoding stored for known synced block"
+                                                    );
+                                                }
                                             }
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
@@ -6126,8 +6709,121 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 };
 
+                                let missing_proof_hashes = missing_proof_binding_hashes(&extrinsics);
+                                let mut proof_da_build: Option<DaEncoding> = None;
+                                let mut proof_store: Option<PendingProofStore> = None;
+
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
+                                    if !missing_proof_hashes.is_empty() {
+                                        let policy =
+                                            match fetch_proof_availability_policy(
+                                                block_import_client.as_ref(),
+                                                parent_hash,
+                                            ) {
+                                                Ok(policy) => policy,
+                                                Err(err) => {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(&peer_id),
+                                                        block_number,
+                                                        error = %err,
+                                                        "Rejecting announced block (failed to read proof availability policy)"
+                                                    );
+                                                    blocks_failed += 1;
+                                                    continue;
+                                                }
+                                            };
+
+                                        if !matches!(
+                                            policy,
+                                            pallet_shielded_pool::types::ProofAvailabilityPolicy::DaRequired
+                                        ) {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&peer_id),
+                                                block_number,
+                                                policy = ?policy,
+                                                "Rejecting announced block (missing proof bytes but proofs not allowed in DA)"
+                                            );
+                                            blocks_failed += 1;
+                                            continue;
+                                        }
+
+                                        let payload = match extract_proof_da_commitment_payload(
+                                            &extrinsics,
+                                        ) {
+                                            Ok(Some(payload)) => payload,
+                                            Ok(None) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&peer_id),
+                                                    block_number,
+                                                    "Rejecting announced block (missing submit_proof_da_commitment)"
+                                                );
+                                                blocks_failed += 1;
+                                                continue;
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&peer_id),
+                                                    block_number,
+                                                    error = %err,
+                                                    "Rejecting announced block (failed to parse submit_proof_da_commitment payload)"
+                                                );
+                                                blocks_failed += 1;
+                                                continue;
+                                            }
+                                        };
+
+                                        match fetch_proof_da_for_root(
+                                            peer_id,
+                                            payload.da_root,
+                                            payload.da_chunk_count,
+                                            da_params_for_import,
+                                            &pq_handle_for_da_import,
+                                            &da_request_tracker_for_import,
+                                            da_sample_timeout_for_import,
+                                        )
+                                        .await
+                                        {
+                                            Ok((encoding, mut proof_map)) => {
+                                                let mut store =
+                                                    PendingProofStore::new(missing_proof_hashes.len());
+                                                let mut missing = None;
+                                                for binding_hash in &missing_proof_hashes {
+                                                    match proof_map.remove(binding_hash) {
+                                                        Some(bytes) => store.insert(*binding_hash, bytes),
+                                                        None => {
+                                                            missing = Some(*binding_hash);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                if let Some(binding_hash) = missing {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(&peer_id),
+                                                        block_number,
+                                                        binding_hash = %hex::encode(binding_hash),
+                                                        "Rejecting announced block (proof DA blob missing required proof bytes)"
+                                                    );
+                                                    blocks_failed += 1;
+                                                    continue;
+                                                }
+                                                proof_store = Some(store);
+                                                proof_da_build = Some(encoding);
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&peer_id),
+                                                    block_number,
+                                                    da_root = %hex::encode(payload.da_root),
+                                                    error = %err,
+                                                    "Rejecting announced block (proof DA fetch failed)"
+                                                );
+                                                blocks_failed += 1;
+                                                continue;
+                                            }
+                                        }
+                                    }
+
                                     let resolved_ciphertexts =
                                         da_build.as_ref().map(|build| build.transactions.as_slice());
                                     commitment_block_proof = match verify_proof_carrying_block(
@@ -6139,7 +6835,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
-                                        None,
+                                        proof_store.as_ref(),
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
@@ -6204,47 +6900,76 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
                                         blocks_imported += 1;
-                                        if let Some(build) = da_build.take() {
-                                            let da_root = build.encoding.root();
-                                            let da_chunks = build.encoding.chunks().len();
-                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                            let ciphertext_count = ciphertexts.len();
+                                        if da_build.is_some() || proof_da_build.is_some() {
                                             let mut store = da_chunk_store_for_import.lock();
-                                            if let Err(err) = store.insert(
-                                                block_number as u64,
-                                                block_hash_bytes,
-                                                build.encoding,
-                                            ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    error = %err,
-                                                    "Failed to persist DA encoding for announced block"
-                                                );
-                                            } else {
-                                                tracing::info!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    da_chunks,
-                                                    "DA encoding stored for announced block"
-                                                );
+
+                                            if let Some(build) = da_build.take() {
+                                                let da_root = build.encoding.root();
+                                                let da_chunks = build.encoding.chunks().len();
+                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                                let ciphertext_count = ciphertexts.len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Ciphertexts,
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                    build.encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist DA encoding for announced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "DA encoding stored for announced block"
+                                                    );
+                                                }
+                                                if let Err(err) = store.append_ciphertexts(
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                    &ciphertexts,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        error = %err,
+                                                        "Failed to persist ciphertexts for announced block"
+                                                    );
+                                                } else if ciphertext_count > 0 {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Ciphertexts stored for announced block"
+                                                    );
+                                                }
                                             }
-                                            if let Err(err) = store.append_ciphertexts(
-                                                block_number as u64,
-                                                block_hash_bytes,
-                                                &ciphertexts,
-                                            ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    error = %err,
-                                                    "Failed to persist ciphertexts for announced block"
-                                                );
-                                            } else if ciphertext_count > 0 {
-                                                tracing::info!(
-                                                    block_number,
-                                                    ciphertext_count,
-                                                    "Ciphertexts stored for announced block"
-                                                );
+
+                                            if let Some(encoding) = proof_da_build.take() {
+                                                let da_root = encoding.root();
+                                                let da_chunks = encoding.chunks().len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Proofs,
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                    encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist proof DA encoding for announced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "Proof DA encoding stored for announced block"
+                                                    );
+                                                }
                                             }
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
@@ -6271,47 +6996,76 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
-                                        if let Some(build) = da_build.take() {
-                                            let da_root = build.encoding.root();
-                                            let da_chunks = build.encoding.chunks().len();
-                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                            let ciphertext_count = ciphertexts.len();
+                                        if da_build.is_some() || proof_da_build.is_some() {
                                             let mut store = da_chunk_store_for_import.lock();
-                                            if let Err(err) = store.insert(
-                                                block_number as u64,
-                                                block_hash_bytes,
-                                                build.encoding,
-                                            ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    error = %err,
-                                                    "Failed to persist DA encoding for known announced block"
-                                                );
-                                            } else {
-                                                tracing::info!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    da_chunks,
-                                                    "DA encoding stored for known announced block"
-                                                );
+
+                                            if let Some(build) = da_build.take() {
+                                                let da_root = build.encoding.root();
+                                                let da_chunks = build.encoding.chunks().len();
+                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                                let ciphertext_count = ciphertexts.len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Ciphertexts,
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                    build.encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist DA encoding for known announced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "DA encoding stored for known announced block"
+                                                    );
+                                                }
+                                                if let Err(err) = store.append_ciphertexts(
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                    &ciphertexts,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        error = %err,
+                                                        "Failed to persist ciphertexts for known announced block"
+                                                    );
+                                                } else if ciphertext_count > 0 {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Ciphertexts stored for known announced block"
+                                                    );
+                                                }
                                             }
-                                            if let Err(err) = store.append_ciphertexts(
-                                                block_number as u64,
-                                                block_hash_bytes,
-                                                &ciphertexts,
-                                            ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    error = %err,
-                                                    "Failed to persist ciphertexts for known announced block"
-                                                );
-                                            } else if ciphertext_count > 0 {
-                                                tracing::info!(
-                                                    block_number,
-                                                    ciphertext_count,
-                                                    "Ciphertexts stored for known announced block"
-                                                );
+
+                                            if let Some(encoding) = proof_da_build.take() {
+                                                let da_root = encoding.root();
+                                                let da_chunks = encoding.chunks().len();
+                                                if let Err(err) = store.insert(
+                                                    DaRootKind::Proofs,
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                    encoding,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to persist proof DA encoding for known announced block"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        da_chunks,
+                                                        "Proof DA encoding stored for known announced block"
+                                                    );
+                                                }
                                             }
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
@@ -7048,6 +7802,50 @@ mod tests {
         let config = PqServiceConfig::default();
         assert!(!config.verbose_logging);
         assert_eq!(config.max_peers, 50);
+    }
+
+    #[test]
+    fn proof_da_blob_parses_with_padding() {
+        let binding_hash_a = [1u8; 64];
+        let binding_hash_b = [2u8; 64];
+        let proof_a = vec![3u8; 10];
+        let proof_b = vec![4u8; 5];
+
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&2u32.to_le_bytes());
+
+        blob.extend_from_slice(&binding_hash_a);
+        blob.extend_from_slice(&(proof_a.len() as u32).to_le_bytes());
+        blob.extend_from_slice(&proof_a);
+
+        blob.extend_from_slice(&binding_hash_b);
+        blob.extend_from_slice(&(proof_b.len() as u32).to_le_bytes());
+        blob.extend_from_slice(&proof_b);
+
+        let mut padded = blob.clone();
+        padded.extend_from_slice(&[0u8; 32]);
+
+        let (parsed, consumed) = parse_proof_da_blob(&padded).expect("parse");
+        assert_eq!(consumed, blob.len());
+        assert_eq!(parsed.get(&binding_hash_a).cloned(), Some(proof_a));
+        assert_eq!(parsed.get(&binding_hash_b).cloned(), Some(proof_b));
+    }
+
+    #[test]
+    fn proof_da_blob_rejects_duplicate_binding_hash() {
+        let binding_hash = [9u8; 64];
+        let proof = vec![1u8; 3];
+
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&2u32.to_le_bytes());
+        for _ in 0..2 {
+            blob.extend_from_slice(&binding_hash);
+            blob.extend_from_slice(&(proof.len() as u32).to_le_bytes());
+            blob.extend_from_slice(&proof);
+        }
+
+        let err = parse_proof_da_blob(&blob).expect_err("should reject");
+        assert!(err.contains("duplicate binding hash"));
     }
 }
 

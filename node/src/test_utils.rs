@@ -13,7 +13,7 @@ use crate::config::NodeConfig;
 use crate::error::NodeResult;
 use crate::storage::{self, StorageMeta, StorageState};
 
-const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
+const DEFAULT_DA_CHUNK_SIZE: u32 = 65536;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 
 #[derive(Clone, Copy, Debug)]

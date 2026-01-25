@@ -194,9 +194,10 @@ The `circuits/formal/transaction_balance.tla` model captures the MASP balance ru
 Per-transaction transparent STARK proofs are too large to ship in every transfer extrinsic if the goal is “world commerce.” The chain therefore supports a per-block **aggregation mode** that moves per-tx proof bytes off-chain while keeping block validity enforced during import:
 
 * Block authors include `pallet_shielded_pool::Call::enable_aggregation_mode` as a **mandatory unsigned** extrinsic early in the block.
-* In aggregation mode, `shielded_transfer_unsigned_sidecar` may omit `proof.data` and the runtime skips `verify_stark` (it still enforces binding hashes, nullifier uniqueness, anchor checks, and fee rules).
-* Proof bytes are staged to the block author via `da_submitProofs` keyed by the transaction `binding_hash` (wallets can enable this behavior via `HEGEMON_WALLET_PROOF_SIDECAR=1`).
-* The node’s import pipeline verifies the commitment proof + aggregation proof and rejects any block with an invalid inner transaction proof.
+* A chain-level `ProofAvailabilityPolicy` governs whether per-tx proof bytes must be inline (`InlineRequired`) or may be provided via DA (`DaRequired`).
+* In aggregation mode + `DaRequired`, `shielded_transfer_unsigned_sidecar` may omit `proof.data` and the runtime skips `verify_stark` (it still enforces binding hashes, nullifier uniqueness, anchor checks, and fee rules).
+* Proof bytes are staged to the block author via `da_submitProofs` keyed by the transaction `binding_hash` (wallets can enable this behavior via `HEGEMON_WALLET_PROOF_SIDECAR=1`) and then committed on-chain via `submit_proof_da_commitment(da_root, chunk_count)` so importers can fetch them.
+* The node’s import pipeline verifies the commitment proof + aggregation proof and rejects any block with an invalid inner transaction proof (Phase A fetches per-tx proofs from DA; Phase C removes this dependency).
 
 This preserves the PQ security bar while shifting “lots of proofs” work off-chain and reducing the on-chain payload to O(1) proofs per block.
 
