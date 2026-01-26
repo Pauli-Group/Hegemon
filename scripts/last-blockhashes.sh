@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Print the last N block hashes with heights from the node RPC (default N=3).
+# Usage: RPC_URL=http://127.0.0.1:9944 ./scripts/last-blockhashes.sh [count]
 set -euo pipefail
 
 RPC_URL="${RPC_URL:-http://127.0.0.1:9944}"
