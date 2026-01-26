@@ -40,5 +40,5 @@ for i in range(count):
     if height < 0:
         break
     block_hash = rpc("chain_getBlockHash", [height], rpc_id=2 + i)
-    print(block_hash)
+    print(f"{height}. {block_hash}")
 PY
