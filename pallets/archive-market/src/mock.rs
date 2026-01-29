@@ -35,7 +35,8 @@ parameter_types! {
 }
 
 thread_local! {
-    static MOCK_DA: RefCell<BTreeMap<u64, pallet_archive_market::DaCommitment>> = RefCell::new(BTreeMap::new());
+    static MOCK_DA: RefCell<BTreeMap<u64, pallet_archive_market::DaCommitment>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub struct MockDaCommitmentProvider;
@@ -119,9 +120,7 @@ pub fn new_test_ext() -> TestExternalities {
         .build_storage()
         .expect("system storage");
 
-    let balances: Vec<(u64, u128)> = (1u64..=9u64)
-        .map(|id| (id, 1_000_000u128))
-        .collect();
+    let balances: Vec<(u64, u128)> = (1u64..=9u64).map(|id| (id, 1_000_000u128)).collect();
     pallet_balances::GenesisConfig::<Test> {
         balances,
         dev_accounts: None,

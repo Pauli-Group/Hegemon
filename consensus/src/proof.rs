@@ -264,26 +264,27 @@ impl ProofVerifier for ParallelProofVerifier {
             ));
         }
 
-            transaction_proofs
-                .par_iter()
-                .zip(&block.transactions)
-                .enumerate()
-                .try_for_each(|(index, (proof, tx))| {
-                    verify_transaction_proof_inputs(index, tx, proof)?;
-                    Ok::<_, ProofError>(())
-                })?;
+        transaction_proofs
+            .par_iter()
+            .zip(&block.transactions)
+            .enumerate()
+            .try_for_each(|(index, (proof, tx))| {
+                verify_transaction_proof_inputs(index, tx, proof)?;
+                Ok::<_, ProofError>(())
+            })?;
 
         let mut aggregation_verify_ms = 0u128;
         let mut tx_verify_ms = 0u128;
 
         let mut aggregation_cache_hit = None;
         let mut aggregation_cache_build_ms = None;
-        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref() {
-            if let Some(representative) = transaction_proofs.first() {
-                if let Ok(warmup) = warm_aggregation_cache(representative, tx_count) {
-                    aggregation_cache_hit = Some(warmup.cache_hit);
-                    aggregation_cache_build_ms = Some(warmup.cache_build_ms);
-                }
+        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref()
+        {
+            if let Some(representative) = transaction_proofs.first()
+                && let Ok(warmup) = warm_aggregation_cache(representative, tx_count)
+            {
+                aggregation_cache_hit = Some(warmup.cache_hit);
+                aggregation_cache_build_ms = Some(warmup.cache_build_ms);
             }
 
             let start_agg = Instant::now();

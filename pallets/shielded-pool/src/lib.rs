@@ -200,9 +200,8 @@ pub mod pallet {
     #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
-    type BalanceOf<T> = <<T as Config>::Currency as Currency<
-        <T as frame_system::Config>::AccountId,
-    >>::Balance;
+    type BalanceOf<T> =
+        <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
     #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
     pub struct ForcedInclusionEntry<AccountId, Balance, BlockNumber> {
@@ -464,8 +463,7 @@ pub mod pallet {
     /// DA availability policy (full fetch vs sampling).
     #[pallet::storage]
     #[pallet::getter(fn da_policy)]
-    pub type DaPolicyStorage<T: Config> =
-        StorageValue<_, types::DaAvailabilityPolicy, ValueQuery>;
+    pub type DaPolicyStorage<T: Config> = StorageValue<_, types::DaAvailabilityPolicy, ValueQuery>;
 
     /// Ciphertext policy (inline vs sidecar-only).
     #[pallet::storage]
@@ -540,13 +538,9 @@ pub mod pallet {
             total_fee: u128,
         },
         /// DA availability policy updated.
-        DaPolicyUpdated {
-            policy: types::DaAvailabilityPolicy,
-        },
+        DaPolicyUpdated { policy: types::DaAvailabilityPolicy },
         /// Ciphertext policy updated.
-        CiphertextPolicyUpdated {
-            policy: types::CiphertextPolicy,
-        },
+        CiphertextPolicyUpdated { policy: types::CiphertextPolicy },
         /// Proof availability policy updated.
         ProofAvailabilityPolicyUpdated {
             policy: types::ProofAvailabilityPolicy,
@@ -1066,8 +1060,7 @@ pub mod pallet {
                 Self::validate_encrypted_note(note)?;
             }
             let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_fee =
-                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
             Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
@@ -1270,10 +1263,8 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroCiphertextHash.into());
                 }
             }
-            let ciphertext_bytes =
-                Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
-            let required_fee =
-                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
             Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
@@ -1515,7 +1506,10 @@ pub mod pallet {
 
             let now = <frame_system::Pallet<T>>::block_number();
             let max_expiry = now.saturating_add(T::MaxForcedInclusionWindow::get());
-            ensure!(expiry > now && expiry <= max_expiry, Error::<T>::ForcedInclusionExpiryInvalid);
+            ensure!(
+                expiry > now && expiry <= max_expiry,
+                Error::<T>::ForcedInclusionExpiryInvalid
+            );
 
             let mut queue = ForcedInclusionQueue::<T>::get();
             ensure!(
@@ -1582,8 +1576,7 @@ pub mod pallet {
 
             let block_number = <frame_system::Pallet<T>>::block_number();
             let height: u64 = block_number.try_into().unwrap_or(0);
-            let expected_amount =
-                Self::expected_coinbase_amount(height, BlockFees::<T>::get())?;
+            let expected_amount = Self::expected_coinbase_amount(height, BlockFees::<T>::get())?;
             ensure!(
                 coinbase_data.amount == expected_amount,
                 Error::<T>::CoinbaseAmountMismatch
@@ -1701,8 +1694,7 @@ pub mod pallet {
                 Self::validate_encrypted_note(note)?;
             }
             let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_fee =
-                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
             Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
@@ -1906,10 +1898,8 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroCiphertextHash.into());
                 }
             }
-            let ciphertext_bytes =
-                Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
-            let required_fee =
-                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
+            let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
             Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
 
             // Check anchor is a valid historical Merkle root
@@ -2108,8 +2098,7 @@ pub mod pallet {
                 Self::validate_encrypted_note(note)?;
             }
             let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_fee =
-                Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Batch)?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Batch)?;
             Self::ensure_fee_sufficient(total_fee, required_fee)?;
 
             // Check anchor is a valid historical Merkle root
@@ -2324,7 +2313,10 @@ pub mod pallet {
 
         fn satisfy_forced_inclusion(commitment: [u8; 32]) {
             let mut queue = ForcedInclusionQueue::<T>::get();
-            if let Some(position) = queue.iter().position(|entry| entry.commitment == commitment) {
+            if let Some(position) = queue
+                .iter()
+                .position(|entry| entry.commitment == commitment)
+            {
                 let entry = queue.remove(position);
                 T::Currency::unreserve(&entry.submitter, entry.bond);
                 ForcedInclusionQueue::<T>::put(queue);
@@ -2686,14 +2678,11 @@ pub mod pallet {
                         log::info!(target: "shielded-pool", "  REJECTED: ciphertexts.len != commitments.len");
                         return InvalidTransaction::Custom(2).into();
                     }
-                    let ciphertext_bytes =
-                        Self::ciphertext_bytes_total(ciphertexts.as_slice())
+                    let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())
+                        .map_err(|_| InvalidTransaction::Custom(8))?;
+                    let required_fee =
+                        Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
                             .map_err(|_| InvalidTransaction::Custom(8))?;
-                    let required_fee = Self::quote_fee(
-                        ciphertext_bytes,
-                        types::FeeProofKind::Single,
-                    )
-                    .map_err(|_| InvalidTransaction::Custom(8))?;
                     if u128::from(*fee) < required_fee {
                         log::info!(target: "shielded-pool", "  REJECTED: fee below minimum");
                         return InvalidTransaction::Custom(8).into();
@@ -2869,11 +2858,9 @@ pub mod pallet {
                     let ciphertext_bytes =
                         Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())
                             .map_err(|_| InvalidTransaction::Custom(8))?;
-                    let required_fee = Self::quote_fee(
-                        ciphertext_bytes,
-                        types::FeeProofKind::Single,
-                    )
-                    .map_err(|_| InvalidTransaction::Custom(8))?;
+                    let required_fee =
+                        Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
+                            .map_err(|_| InvalidTransaction::Custom(8))?;
                     if u128::from(*fee) < required_fee {
                         log::info!(target: "shielded-pool", "  REJECTED: fee below minimum");
                         return InvalidTransaction::Custom(8).into();

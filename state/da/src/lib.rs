@@ -311,7 +311,12 @@ pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError
 
 pub fn verify_da_multi_chunk(root: DaRoot, proof: &DaMultiChunkProof) -> Result<(), DaError> {
     verify_da_chunk(proof.page_root, &proof.page_proof)?;
-    verify_page_root(root, proof.page_index, proof.page_root, &proof.page_merkle_path)
+    verify_page_root(
+        root,
+        proof.page_index,
+        proof.page_root,
+        &proof.page_merkle_path,
+    )
 }
 
 pub fn chunk_count_for_blob(blob_len: usize, params: DaParams) -> Result<usize, DaError> {
