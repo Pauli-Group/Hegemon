@@ -141,8 +141,7 @@ impl KemPublicKey for MlKemPublicKey {
         }
         let mut arr = [0u8; ML_KEM_PUBLIC_KEY_LEN];
         arr.copy_from_slice(bytes);
-        let arr_checked: Array<u8, _> =
-            Array::try_from(arr.as_slice()).expect("size mismatch");
+        let arr_checked: Array<u8, _> = Array::try_from(arr.as_slice()).expect("size mismatch");
         EncapsulationKey::<MlKem1024Params>::from_bytes(&arr_checked)
             .map_err(|_| CryptoError::InvalidKey)?;
         Ok(Self { bytes: arr })
@@ -178,8 +177,7 @@ impl MlKemSecretKey {
         }
         let mut arr = [0u8; ML_KEM_SECRET_KEY_LEN];
         arr.copy_from_slice(bytes);
-        let arr_checked: Array<u8, _> =
-            Array::try_from(arr.as_slice()).expect("size mismatch");
+        let arr_checked: Array<u8, _> = Array::try_from(arr.as_slice()).expect("size mismatch");
         DecapsulationKey::<MlKem1024Params>::from_bytes(&arr_checked)
             .map_err(|_| CryptoError::InvalidKey)?;
         Ok(Self { bytes: arr })

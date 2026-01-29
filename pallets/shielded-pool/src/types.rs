@@ -299,15 +299,7 @@ impl Default for ProofAvailabilityPolicy {
 /// The `proof_hash` (BLAKE3-384) is committed on-chain so verifiers can bind commitment proofs and
 /// other block-level commitments without downloading the proof bytes.
 #[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
 )]
 pub struct ProofDaManifestEntry {
     pub binding_hash: BindingHash,

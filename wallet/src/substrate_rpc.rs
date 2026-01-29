@@ -372,9 +372,7 @@ impl SubstrateRpcClient {
     }
 
     /// Connect with custom configuration
-    pub async fn connect_with_config(
-        mut config: SubstrateRpcConfig,
-    ) -> Result<Self, WalletError> {
+    pub async fn connect_with_config(mut config: SubstrateRpcConfig) -> Result<Self, WalletError> {
         if config.archive_endpoint.is_none() {
             config.archive_endpoint = std::env::var("HEGEMON_WALLET_ARCHIVE_WS_URL").ok();
         }
@@ -1232,7 +1230,9 @@ impl SubstrateRpcClient {
         &self,
         bundle: &TransactionBundle,
     ) -> Result<[u8; 32], WalletError> {
-        use crate::extrinsic::{build_unsigned_shielded_transfer_sidecar, ShieldedTransferSidecarCall};
+        use crate::extrinsic::{
+            build_unsigned_shielded_transfer_sidecar, ShieldedTransferSidecarCall,
+        };
         use base64::Engine;
         use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
@@ -1260,8 +1260,7 @@ impl SubstrateRpcClient {
         let mut ciphertext_sizes = Vec::with_capacity(notes.len());
         for note in &notes {
             let bytes = note.to_da_bytes()?;
-            ciphertext_payloads
-                .push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+            ciphertext_payloads.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
             ciphertext_hashes.push(ciphertext_hash_bytes(&bytes));
             ciphertext_sizes.push(u32::try_from(bytes.len()).unwrap_or(u32::MAX));
         }
@@ -1285,8 +1284,7 @@ impl SubstrateRpcClient {
                 ciphertext_hashes.len()
             )));
         }
-        for (index, (entry, expected_hash)) in uploaded.iter().zip(&ciphertext_hashes).enumerate()
-        {
+        for (index, (entry, expected_hash)) in uploaded.iter().zip(&ciphertext_hashes).enumerate() {
             let observed_hash = hex_to_array48(&entry.hash)?;
             if &observed_hash != expected_hash {
                 return Err(WalletError::Rpc(format!(
@@ -1343,7 +1341,9 @@ impl SubstrateRpcClient {
                 ));
             }
             if entry.size != u32::try_from(bundle.proof_bytes.len()).unwrap_or(u32::MAX) {
-                return Err(WalletError::Rpc("da_submitProofs size mismatch".to_string()));
+                return Err(WalletError::Rpc(
+                    "da_submitProofs size mismatch".to_string(),
+                ));
             }
 
             proof_bytes = Vec::new();

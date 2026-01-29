@@ -6,7 +6,7 @@ pub use state_da::{
     DaChunk, DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams,
     DaRoot,
 };
-use transaction_circuit::{hashing_pq::ciphertext_hash_bytes, TransactionProof};
+use transaction_circuit::{TransactionProof, hashing_pq::ciphertext_hash_bytes};
 
 pub type Nullifier = [u8; 48];
 pub type Commitment = [u8; 48];

@@ -6,7 +6,7 @@
 use p3_batch_stark::CommonData;
 use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
-use p3_circuit_prover::{BatchStarkProver, TablePacking, config as circuit_config};
+use p3_circuit_prover::{config as circuit_config, BatchStarkProver, TablePacking};
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
@@ -15,11 +15,11 @@ use p3_uni_stark::get_log_num_quotient_chunks;
 use thiserror::Error;
 use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
-    TransactionAirP3, TransactionProof,
     p3_config::{
-        Challenge, Compress, Config, DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS,
-        Hash, POSEIDON2_RATE, TransactionProofP3, Val, config_with_fri,
+        config_with_fri, Challenge, Compress, Config, Hash, TransactionProofP3, Val, DIGEST_ELEMS,
+        FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS, POSEIDON2_RATE,
     },
+    TransactionAirP3, TransactionProof,
 };
 
 type InnerFri = FriProofTargets<
@@ -95,12 +95,11 @@ pub fn prove_aggregation(
         if proof.stark_proof.is_empty() {
             return Err(AggregationError::MissingProof { index });
         }
-        let pub_inputs = stark_public_inputs_p3(proof).map_err(|err| {
-            AggregationError::InvalidPublicInputs {
+        let pub_inputs =
+            stark_public_inputs_p3(proof).map_err(|err| AggregationError::InvalidPublicInputs {
                 index,
                 message: err.to_string(),
-            }
-        })?;
+            })?;
         let pub_inputs_vec = pub_inputs.to_vec();
 
         if let Some(expected) = expected_inputs_len {
@@ -138,8 +137,7 @@ pub fn prove_aggregation(
     }
 
     let pub_inputs_len = expected_inputs_len.ok_or(AggregationError::EmptyBatch)?;
-    let log_chunks =
-        get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
+    let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let inner_config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
     let final_poly_len = expected_shape
@@ -193,7 +191,8 @@ pub fn prove_aggregation(
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
 
     let mut recursion_public_inputs = Vec::new();
-    for (index, (proof, pub_inputs_vec)) in inner_proofs.iter().zip(public_inputs.iter()).enumerate()
+    for (index, (proof, pub_inputs_vec)) in
+        inner_proofs.iter().zip(public_inputs.iter()).enumerate()
     {
         let challenges = generate_challenges(
             &TransactionAirP3,
@@ -218,13 +217,12 @@ pub fn prove_aggregation(
     }
 
     let table_packing = TablePacking::new(4, 4, 1);
-    let (airs_degrees, witness_multiplicities) =
-        get_airs_and_degrees_with_prep::<circuit_config::GoldilocksConfig, _, 2>(
-            &circuit,
-            table_packing,
-            None,
-        )
-        .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    let (airs_degrees, witness_multiplicities) = get_airs_and_degrees_with_prep::<
+        circuit_config::GoldilocksConfig,
+        _,
+        2,
+    >(&circuit, table_packing, None)
+    .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
     let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
 
     let outer_config = circuit_config::goldilocks().build();
@@ -265,7 +263,11 @@ fn set_target(
 fn set_fri_query_witnesses(
     circuit: &Circuit<Challenge>,
     runner: &mut CircuitRunner<Challenge>,
-    verifier_inputs: &[StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>],
+    verifier_inputs: &[StarkVerifierInputsBuilder<
+        Config,
+        HashTargets<Val, DIGEST_ELEMS>,
+        InnerFri,
+    >],
     proofs: &[TransactionProofP3],
 ) -> Result<(), CircuitError> {
     for (inputs, proof) in verifier_inputs.iter().zip(proofs.iter()) {
@@ -309,7 +311,12 @@ fn set_fri_query_witnesses(
                 .iter()
                 .zip(query_proof.commit_phase_openings.iter())
             {
-                set_target(circuit, runner, step_targets.sibling_value, step_proof.sibling_value)?;
+                set_target(
+                    circuit,
+                    runner,
+                    step_targets.sibling_value,
+                    step_proof.sibling_value,
+                )?;
 
                 for (hash_targets, hash_values) in step_targets
                     .opening_proof

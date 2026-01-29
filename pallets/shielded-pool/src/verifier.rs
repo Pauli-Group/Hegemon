@@ -589,8 +589,7 @@ impl StarkVerifier {
 
     fn binding_hash_message(inputs: &ShieldedTransferInputs) -> Vec<u8> {
         let mut message = sp_std::vec::Vec::with_capacity(
-            48
-                + inputs.nullifiers.len() * 48
+            48 + inputs.nullifiers.len() * 48
                 + inputs.commitments.len() * 48
                 + inputs.ciphertext_hashes.len() * 48
                 + 24,

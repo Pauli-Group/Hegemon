@@ -1,3 +1,4 @@
+mod aggregation;
 pub mod bft;
 pub mod commitment_tree;
 pub mod error;
@@ -12,8 +13,11 @@ pub mod substrate_pow;
 pub mod types;
 pub mod validator;
 pub mod version_policy;
-mod aggregation;
 
+pub use aggregation::{
+    AggregationCacheWarmup, aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes,
+    verify_aggregation_proof, warm_aggregation_cache,
+};
 pub use bft::{BftConsensus, ConsensusUpdate};
 pub use commitment_tree::{
     COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT,
@@ -44,7 +48,3 @@ pub use types::{
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};
-pub use aggregation::{
-    AggregationCacheWarmup, aggregation_proof_uncompressed_len,
-    encode_aggregation_proof_bytes, verify_aggregation_proof, warm_aggregation_cache,
-};

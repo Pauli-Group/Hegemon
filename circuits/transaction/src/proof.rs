@@ -106,9 +106,13 @@ impl TransactionProof {
 pub fn stark_public_inputs_p3(
     proof: &TransactionProof,
 ) -> Result<TransactionPublicInputsP3, TransactionCircuitError> {
-    let stark_inputs = proof.stark_public_inputs.as_ref().ok_or(
-        TransactionCircuitError::ConstraintViolation("missing STARK public inputs"),
-    )?;
+    let stark_inputs =
+        proof
+            .stark_public_inputs
+            .as_ref()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "missing STARK public inputs",
+            ))?;
 
     let input_flags = stark_inputs
         .input_flags

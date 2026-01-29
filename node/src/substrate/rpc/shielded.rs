@@ -303,9 +303,7 @@ pub trait ShieldedPoolService: Send + Sync {
     fn chain_height(&self) -> u64;
 
     /// Get fee parameters for shielded transfers.
-    fn fee_parameters(
-        &self,
-    ) -> Result<pallet_shielded_pool::types::FeeParameters, String>;
+    fn fee_parameters(&self) -> Result<pallet_shielded_pool::types::FeeParameters, String>;
 
     /// Quote a fee for the given ciphertext byte count and proof kind.
     fn fee_quote(
@@ -740,9 +738,7 @@ mod tests {
             100
         }
 
-        fn fee_parameters(
-            &self,
-        ) -> Result<pallet_shielded_pool::types::FeeParameters, String> {
+        fn fee_parameters(&self) -> Result<pallet_shielded_pool::types::FeeParameters, String> {
             Ok(pallet_shielded_pool::types::FeeParameters::default())
         }
 

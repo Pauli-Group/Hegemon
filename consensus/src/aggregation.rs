@@ -74,8 +74,8 @@ const AGGREGATION_PROOF_HEADER_LEN: usize = 4 + 1 + 4;
 const AGGREGATION_PROOF_ZSTD_LEVEL: i32 = 3;
 const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 
-fn aggregation_verifier_cache(
-) -> &'static Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>> {
+fn aggregation_verifier_cache()
+-> &'static Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>> {
     AGGREGATION_VERIFIER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -326,17 +326,16 @@ pub fn warm_aggregation_cache(
 
     let inner_proof: TransactionProofP3 = postcard::from_bytes(&representative_proof.stark_proof)
         .map_err(|_| {
-            ProofError::AggregationProofInputsMismatch(
-                "transaction proof encoding invalid".to_string(),
-            )
-        })?;
+        ProofError::AggregationProofInputsMismatch("transaction proof encoding invalid".to_string())
+    })?;
     let shape = ProofShape {
         degree_bits: inner_proof.degree_bits,
         commit_phase_len: inner_proof.opening_proof.commit_phase_commits.len(),
         final_poly_len: inner_proof.opening_proof.final_poly.len(),
         query_count: inner_proof.opening_proof.query_proofs.len(),
     };
-    let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
+    let log_chunks =
+        get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let cache_key = AggregationVerifierKey {
         tx_count,
@@ -396,13 +395,12 @@ pub fn verify_aggregation_proof(
             expected_inputs_len = Some(pub_inputs_vec.len());
         }
 
-        let inner_proof: TransactionProofP3 = postcard::from_bytes(&proof.stark_proof).map_err(
-            |_| {
+        let inner_proof: TransactionProofP3 =
+            postcard::from_bytes(&proof.stark_proof).map_err(|_| {
                 ProofError::AggregationProofInputsMismatch(format!(
                     "transaction proof {index} encoding invalid"
                 ))
-            },
-        )?;
+            })?;
 
         let shape = ProofShape {
             degree_bits: inner_proof.degree_bits,
@@ -433,8 +431,7 @@ pub fn verify_aggregation_proof(
         "no transaction proof shape found".to_string(),
     ))?;
 
-    let log_chunks =
-        get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
+    let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let cache_key = AggregationVerifierKey {
         tx_count: inner_proofs.len(),
@@ -451,7 +448,8 @@ pub fn verify_aggregation_proof(
 
     let start_pack = Instant::now();
     let mut recursion_public_inputs = Vec::new();
-    for (index, (proof, pub_inputs_vec)) in inner_proofs.iter().zip(public_inputs.iter()).enumerate()
+    for (index, (proof, pub_inputs_vec)) in
+        inner_proofs.iter().zip(public_inputs.iter()).enumerate()
     {
         let challenges = generate_challenges(
             &TransactionAirP3,
