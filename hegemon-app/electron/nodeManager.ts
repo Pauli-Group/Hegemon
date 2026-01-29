@@ -21,9 +21,19 @@ export class NodeManager extends EventEmitter {
   private rpcPort = DEFAULT_RPC_PORT;
   private logs: string[] = [];
   private requestId = 0;
+  private managedConnectionId: string | null = null;
 
   getLogs(): string[] {
     return [...this.logs];
+  }
+
+  getManagedStatus(): { managed: boolean; connectionId: string | null; pid: number | null; rpcPort: number | null } {
+    return {
+      managed: Boolean(this.process),
+      connectionId: this.managedConnectionId,
+      pid: this.process?.pid ?? null,
+      rpcPort: this.rpcPort ?? null
+    };
   }
 
   async startNode(options: NodeStartOptions): Promise<void> {
@@ -58,6 +68,28 @@ export class NodeManager extends EventEmitter {
       this.rpcPort = DEFAULT_RPC_PORT;
     }
 
+    // Guard rail: if something is already answering JSON-RPC on this port, starting a node will
+    // either fail to bind (and the UI will misleadingly keep showing the existing node), or worse,
+    // connect to a forwarded/remote node that the app cannot stop.
+    const preflightUrl = `http://127.0.0.1:${this.rpcPort}`;
+    const alreadyServing = await this.ping(preflightUrl);
+    if (alreadyServing) {
+      const version = await this.safeRpcCall('system_version', [], preflightUrl);
+      const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], preflightUrl);
+      const identity = [
+        version ? `version=${String(version)}` : null,
+        genesisHash ? `genesis=${String(genesisHash)}` : null
+      ]
+        .filter(Boolean)
+        .join(' ');
+      this.appendLogs(
+        `Refusing to start node: RPC port ${this.rpcPort} is already serving JSON-RPC${identity ? ` (${identity})` : ''}`
+      );
+      throw new Error(
+        `RPC port ${this.rpcPort} is already in use by a node. Pick another RPC port (e.g. 9955) or stop the existing process.`
+      );
+    }
+
     if (options.listenAddr) {
       args.push('--listen-addr', options.listenAddr);
     } else if (options.p2pPort) {
@@ -89,6 +121,7 @@ export class NodeManager extends EventEmitter {
     };
 
     this.process = spawn(nodePath, args, { env });
+    this.managedConnectionId = options.connectionId ?? null;
 
     this.process.stdout.on('data', (data) => this.appendLogs(data.toString()));
     this.process.stderr.on('data', (data) => this.appendLogs(data.toString()));
@@ -99,19 +132,30 @@ export class NodeManager extends EventEmitter {
           : `Node failed to start: ${error.message}`;
       this.appendLogs(message);
       this.process = null;
+      this.managedConnectionId = null;
     });
     this.process.on('exit', (code) => {
       this.appendLogs(`Node exited with code ${code ?? 'unknown'}`);
       this.process = null;
+      this.managedConnectionId = null;
     });
   }
 
   async stopNode(): Promise<void> {
-    if (!this.process) {
+    const proc = this.process;
+    if (!proc) {
       return;
     }
-    this.process.kill('SIGINT');
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 5_000);
+      proc.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      proc.kill('SIGINT');
+    });
     this.process = null;
+    this.managedConnectionId = null;
   }
 
   async getSummary(request: NodeSummaryRequest): Promise<NodeSummary> {
@@ -124,6 +168,7 @@ export class NodeManager extends EventEmitter {
         label: request.label,
         reachable: false,
         isLocal,
+        nodeVersion: null,
         peers: null,
         isSyncing: null,
         bestBlock: null,
@@ -147,6 +192,7 @@ export class NodeManager extends EventEmitter {
     const consensus = await this.safeRpcCall('hegemon_consensusStatus', [], request.httpUrl);
     const mining = await this.safeRpcCall('hegemon_miningStatus', [], request.httpUrl);
     const health = await this.safeRpcCall('system_health', [], request.httpUrl);
+    const nodeVersion = await this.safeRpcCall('system_version', [], request.httpUrl);
     const storage = await this.safeRpcCall('hegemon_storageFootprint', [], request.httpUrl);
     const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
     const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
@@ -157,6 +203,7 @@ export class NodeManager extends EventEmitter {
       label: request.label,
       reachable: true,
       isLocal,
+      nodeVersion: nodeVersion ? String(nodeVersion) : null,
       peers: Math.max(Number(consensus?.peers ?? 0), Number(health?.peers ?? 0)),
       isSyncing: Boolean(consensus?.syncing ?? health?.isSyncing ?? false),
       bestBlock: consensus?.best_hash ?? null,
