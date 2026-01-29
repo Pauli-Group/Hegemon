@@ -59,6 +59,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-01-25T00:00Z) Split ciphertext vs proof DA retention knobs (`HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS`, `HEGEMON_PROOF_DA_RETENTION_BLOCKS`) so ciphertexts can remain “hot” while proofs become “archive-grade” quickly.
 - [x] (2026-01-25T00:00Z) Hardened proof-DA invariants with adversarial unit tests (duplicate/missing extrinsics, chunk_count mismatch, missing bindings, non-contiguous offsets).
 - [x] (2026-01-25T00:00Z) Added a 2-node e2e harness to exercise ciphertext-DA + proof-DA network fetch and record metrics (`scripts/two_node_sidecar_da_e2e_tmux.sh`).
+- [x] (2026-01-29T01:10Z) Compressed aggregation proof bytes (zstd), added uncompressed-size metrics, and exposed cache warmup helpers to keep aggregation verification steady-state fast.
 
 ## Surprises & Discoveries
 

@@ -44,4 +44,7 @@ pub use types::{
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};
-pub use aggregation::verify_aggregation_proof;
+pub use aggregation::{
+    AggregationCacheWarmup, aggregation_proof_uncompressed_len,
+    encode_aggregation_proof_bytes, verify_aggregation_proof, warm_aggregation_cache,
+};
