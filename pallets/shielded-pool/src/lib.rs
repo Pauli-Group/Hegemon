@@ -2246,11 +2246,6 @@ pub mod pallet {
             Self::ensure_coinbase_cap(amount)
         }
 
-        fn ensure_coinbase_subsidy_for_height(amount: u64, height: u64) -> DispatchResult {
-            let _ = height;
-            Self::ensure_coinbase_cap(amount)
-        }
-
         fn ensure_coinbase_cap(amount: u64) -> DispatchResult {
             ensure!(
                 amount <= T::MaxCoinbaseSubsidy::get(),
@@ -2587,8 +2582,16 @@ pub mod pallet {
     }
 
     // =========================================================================
-    // INHERENT PROVIDER IMPLEMENTATION (for shielded coinbase)
+    // INHERENT PROVIDER IMPLEMENTATION (disabled for shielded coinbase)
     // =========================================================================
+    //
+    // Substrate enforces that inherents must appear first in the block.
+    // Hegemon’s shielded coinbase must run *after* fee accumulation (so it can include
+    // per-block fees), therefore `mint_coinbase` cannot be treated as an inherent.
+    //
+    // We keep a `ProvideInherent` implementation because the runtime includes `Inherent`
+    // for this pallet in `construct_runtime!`, but we intentionally do not create or
+    // classify any calls as inherents here.
 
     #[pallet::inherent]
     impl<T: Config> ProvideInherent for Pallet<T> {
@@ -2596,48 +2599,24 @@ pub mod pallet {
         type Error = sp_inherents::MakeFatalError<()>;
         const INHERENT_IDENTIFIER: [u8; 8] = *b"shldcoin";
 
-        fn create_inherent(data: &sp_inherents::InherentData) -> Option<Self::Call> {
-            // Extract shielded coinbase data from inherent data
-            let coinbase_data: Option<crate::inherent::ShieldedCoinbaseInherentData> =
-                data.get_data(&Self::INHERENT_IDENTIFIER).ok().flatten();
-
-            coinbase_data.map(|cb| Call::mint_coinbase {
-                coinbase_data: cb.note_data,
-            })
+        fn create_inherent(_data: &sp_inherents::InherentData) -> Option<Self::Call> {
+            None
         }
 
-        fn is_inherent(call: &Self::Call) -> bool {
-            matches!(call, Call::mint_coinbase { .. })
+        fn is_inherent(_call: &Self::Call) -> bool {
+            false
         }
 
         fn check_inherent(
-            call: &Self::Call,
+            _call: &Self::Call,
             _data: &sp_inherents::InherentData,
         ) -> Result<(), Self::Error> {
-            // Validate the inherent call
-            if let Call::mint_coinbase { coinbase_data } = call {
-                // check_inherent runs against the parent state; enforce only the safety cap
-                // here and validate subsidy + fees inside the call.
-                let parent_height = frame_system::Pallet::<T>::block_number();
-                let height: u64 = parent_height.try_into().unwrap_or(0).saturating_add(1);
-                if Self::ensure_coinbase_subsidy_for_height(coinbase_data.amount, height).is_err() {
-                    return Err(sp_inherents::MakeFatalError::from(()));
-                }
-
-                // Verify commitment matches plaintext data
-                let expected = Self::expected_coinbase_commitment(coinbase_data);
-                if coinbase_data.commitment != expected {
-                    return Err(sp_inherents::MakeFatalError::from(()));
-                }
-            }
             Ok(())
         }
 
         fn is_inherent_required(
             _data: &sp_inherents::InherentData,
         ) -> Result<Option<Self::Error>, Self::Error> {
-            // Shielded coinbase is NOT strictly required - blocks without rewards are valid
-            // (though economically pointless for miners)
             Ok(None)
         }
     }

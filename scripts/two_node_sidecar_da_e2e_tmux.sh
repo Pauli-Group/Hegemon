@@ -246,7 +246,7 @@ if [ -z "$FOUND" ]; then
   exit 1
 fi
 
-BLOCK_NUMBER="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\\bblock_number=(\\d+)\\b", s); print(m.group(1) if m else \"\")' <<<"$FOUND")"
+BLOCK_NUMBER="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\\bblock_number=(\\d+)\\b", s); print(m.group(1) if m else "")' <<<"$FOUND")"
 VERIFY_LINE=""
 if [ -n "$BLOCK_NUMBER" ]; then
   for i in $(seq 1 60); do
