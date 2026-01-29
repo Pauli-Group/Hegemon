@@ -1,4 +1,6 @@
-use crate::aggregation::verify_aggregation_proof;
+use crate::aggregation::{
+    aggregation_proof_uncompressed_len, verify_aggregation_proof, warm_aggregation_cache,
+};
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
@@ -204,6 +206,11 @@ impl ProofVerifier for ParallelProofVerifier {
             .as_ref()
             .map(|bytes| bytes.len())
             .unwrap_or(0);
+        let aggregation_proof_uncompressed_bytes = block
+            .aggregation_proof
+            .as_ref()
+            .map(|bytes| aggregation_proof_uncompressed_len(bytes))
+            .unwrap_or(0);
         let ciphertext_bytes_total: usize = block
             .transactions
             .iter()
@@ -269,15 +276,23 @@ impl ProofVerifier for ParallelProofVerifier {
         let mut aggregation_verify_ms = 0u128;
         let mut tx_verify_ms = 0u128;
 
-        let aggregation_verified =
-            if let Some(aggregation_proof) = block.aggregation_proof.as_ref() {
-                let start_agg = Instant::now();
-                verify_aggregation_proof(aggregation_proof, transaction_proofs)?;
-                aggregation_verify_ms = start_agg.elapsed().as_millis();
-                true
-            } else {
-                false
-            };
+        let mut aggregation_cache_hit = None;
+        let mut aggregation_cache_build_ms = None;
+        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref() {
+            if let Some(representative) = transaction_proofs.first() {
+                if let Ok(warmup) = warm_aggregation_cache(representative, tx_count) {
+                    aggregation_cache_hit = Some(warmup.cache_hit);
+                    aggregation_cache_build_ms = Some(warmup.cache_build_ms);
+                }
+            }
+
+            let start_agg = Instant::now();
+            verify_aggregation_proof(aggregation_proof, transaction_proofs)?;
+            aggregation_verify_ms = start_agg.elapsed().as_millis();
+            true
+        } else {
+            false
+        };
 
         if !aggregation_verified {
             let start_tx = Instant::now();
@@ -318,9 +333,12 @@ impl ProofVerifier for ParallelProofVerifier {
             tx_proof_bytes_total,
             commitment_proof_bytes,
             aggregation_proof_bytes,
+            aggregation_proof_uncompressed_bytes,
             ciphertext_bytes_total,
             commitment_verify_ms,
             aggregation_verify_ms,
+            aggregation_cache_hit = aggregation_cache_hit.unwrap_or(false),
+            aggregation_cache_build_ms = aggregation_cache_build_ms.unwrap_or(0),
             tx_verify_ms,
             total_verify_ms = start_total.elapsed().as_millis(),
             aggregation_verified,

@@ -21,6 +21,7 @@ use transaction_circuit::{
         Hash, POSEIDON2_RATE, TransactionProofP3, TransactionStarkConfig, Val, config_with_fri,
     },
 };
+use zstd::stream::{decode_all, encode_all};
 
 type InnerFri = FriProofTargets<
     Val,
@@ -67,6 +68,12 @@ static AGGREGATION_VERIFIER_CACHE: OnceLock<
     Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>>,
 > = OnceLock::new();
 
+const AGGREGATION_PROOF_MAGIC: [u8; 4] = *b"HGA0";
+const AGGREGATION_PROOF_VERSION: u8 = 1;
+const AGGREGATION_PROOF_HEADER_LEN: usize = 4 + 1 + 4;
+const AGGREGATION_PROOF_ZSTD_LEVEL: i32 = 3;
+const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
+
 fn aggregation_verifier_cache(
 ) -> &'static Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>> {
     AGGREGATION_VERIFIER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -76,6 +83,12 @@ struct AggregationCacheResult {
     entry: Arc<AggregationVerifierCacheEntry>,
     cache_hit: bool,
     cache_build_ms: u128,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AggregationCacheWarmup {
+    pub cache_hit: bool,
+    pub cache_build_ms: u128,
 }
 
 fn build_aggregation_verifier_cache_entry(
@@ -208,6 +221,137 @@ fn get_or_build_aggregation_verifier_cache_entry(
     })
 }
 
+pub fn encode_aggregation_proof_bytes(raw_bytes: Vec<u8>) -> Vec<u8> {
+    if raw_bytes.is_empty() {
+        return raw_bytes;
+    }
+    let compressed = match encode_all(raw_bytes.as_slice(), AGGREGATION_PROOF_ZSTD_LEVEL) {
+        Ok(bytes) => bytes,
+        Err(_) => return raw_bytes,
+    };
+    if compressed.is_empty() {
+        return raw_bytes;
+    }
+
+    let mut encoded = Vec::with_capacity(AGGREGATION_PROOF_HEADER_LEN + compressed.len());
+    encoded.extend_from_slice(&AGGREGATION_PROOF_MAGIC);
+    encoded.push(AGGREGATION_PROOF_VERSION);
+    encoded.extend_from_slice(&(raw_bytes.len() as u32).to_le_bytes());
+    encoded.extend_from_slice(&compressed);
+
+    if encoded.len() < raw_bytes.len() {
+        encoded
+    } else {
+        raw_bytes
+    }
+}
+
+pub fn aggregation_proof_uncompressed_len(bytes: &[u8]) -> usize {
+    if bytes.len() < AGGREGATION_PROOF_HEADER_LEN {
+        return bytes.len();
+    }
+    if &bytes[..4] != AGGREGATION_PROOF_MAGIC.as_slice() {
+        return bytes.len();
+    }
+    if bytes[4] != AGGREGATION_PROOF_VERSION {
+        return bytes.len();
+    }
+    let mut len_bytes = [0u8; 4];
+    len_bytes.copy_from_slice(&bytes[5..9]);
+    let length = u32::from_le_bytes(len_bytes) as usize;
+    if length == 0 || length > MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN {
+        return bytes.len();
+    }
+    length
+}
+
+fn decode_aggregation_proof_bytes(bytes: &[u8]) -> Result<Vec<u8>, ProofError> {
+    if bytes.len() < AGGREGATION_PROOF_HEADER_LEN {
+        return Ok(bytes.to_vec());
+    }
+    if &bytes[..4] != AGGREGATION_PROOF_MAGIC.as_slice() {
+        return Ok(bytes.to_vec());
+    }
+    if bytes[4] != AGGREGATION_PROOF_VERSION {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "aggregation proof compression version mismatch".to_string(),
+        ));
+    }
+    let mut len_bytes = [0u8; 4];
+    len_bytes.copy_from_slice(&bytes[5..9]);
+    let expected_len = u32::from_le_bytes(len_bytes) as usize;
+    if expected_len == 0 || expected_len > MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "aggregation proof uncompressed length invalid".to_string(),
+        ));
+    }
+    let compressed = &bytes[AGGREGATION_PROOF_HEADER_LEN..];
+    if compressed.is_empty() {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "aggregation proof compressed payload missing".to_string(),
+        ));
+    }
+    let decoded = decode_all(compressed).map_err(|err| {
+        ProofError::AggregationProofInputsMismatch(format!(
+            "aggregation proof decompression failed: {err}"
+        ))
+    })?;
+    if decoded.len() != expected_len {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "aggregation proof decompressed length mismatch".to_string(),
+        ));
+    }
+    Ok(decoded)
+}
+
+pub fn warm_aggregation_cache(
+    representative_proof: &TransactionProof,
+    tx_count: usize,
+) -> Result<AggregationCacheWarmup, ProofError> {
+    if tx_count == 0 {
+        return Err(ProofError::AggregationProofEmptyBlock);
+    }
+    if representative_proof.stark_proof.is_empty() {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "transaction proof missing STARK proof bytes".to_string(),
+        ));
+    }
+
+    let pub_inputs = stark_public_inputs_p3(representative_proof).map_err(|err| {
+        ProofError::AggregationProofInputsMismatch(format!(
+            "transaction proof public inputs invalid: {err}"
+        ))
+    })?;
+    let pub_inputs_vec = pub_inputs.to_vec();
+
+    let inner_proof: TransactionProofP3 = postcard::from_bytes(&representative_proof.stark_proof)
+        .map_err(|_| {
+            ProofError::AggregationProofInputsMismatch(
+                "transaction proof encoding invalid".to_string(),
+            )
+        })?;
+    let shape = ProofShape {
+        degree_bits: inner_proof.degree_bits,
+        commit_phase_len: inner_proof.opening_proof.commit_phase_commits.len(),
+        final_poly_len: inner_proof.opening_proof.final_poly.len(),
+        query_count: inner_proof.opening_proof.query_proofs.len(),
+    };
+    let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
+    let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+    let cache_key = AggregationVerifierKey {
+        tx_count,
+        pub_inputs_len: pub_inputs_vec.len(),
+        log_blowup,
+        shape,
+    };
+
+    let cache_result = get_or_build_aggregation_verifier_cache_entry(cache_key, &inner_proof)?;
+    Ok(AggregationCacheWarmup {
+        cache_hit: cache_result.cache_hit,
+        cache_build_ms: cache_result.cache_build_ms,
+    })
+}
+
 pub fn verify_aggregation_proof(
     aggregation_proof: &[u8],
     transaction_proofs: &[TransactionProof],
@@ -335,8 +479,9 @@ pub fn verify_aggregation_proof(
     }
     let pack_ms = start_pack.elapsed().as_millis();
 
+    let decoded_aggregation_proof = decode_aggregation_proof_bytes(aggregation_proof)?;
     let outer_proof: BatchProof<circuit_config::GoldilocksConfig> =
-        postcard::from_bytes(aggregation_proof).map_err(|_| {
+        postcard::from_bytes(&decoded_aggregation_proof).map_err(|_| {
             ProofError::AggregationProofInputsMismatch(
                 "aggregation proof encoding invalid".to_string(),
             )
@@ -385,4 +530,25 @@ fn flatten_public_values(values: &[Challenge]) -> Vec<Val> {
         flattened.extend_from_slice(value.as_basis_coefficients_slice());
     }
     flattened
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregation_proof_compression_roundtrip() {
+        let raw = vec![42u8; 64 * 1024];
+        let encoded = encode_aggregation_proof_bytes(raw.clone());
+        let decoded = decode_aggregation_proof_bytes(&encoded).expect("decode");
+        assert_eq!(decoded, raw);
+        assert_eq!(aggregation_proof_uncompressed_len(&encoded), raw.len());
+    }
+
+    #[test]
+    fn aggregation_proof_decode_passthrough() {
+        let raw = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9];
+        let decoded = decode_aggregation_proof_bytes(&raw).expect("decode");
+        assert_eq!(decoded, raw);
+    }
 }

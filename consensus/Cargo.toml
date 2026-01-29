@@ -31,6 +31,7 @@ tracing = "0.1"
 protocol-versioning = { path = "../protocol/versioning" }
 serde = { version = "1", features = ["derive"] }
 transaction-circuit = { path = "../circuits/transaction" }
+zstd = { version = "0.13", default-features = false, features = ["std"] }
 
 # Substrate PoW consensus (optional, for full Substrate integration)
 sc-consensus-pow = { workspace = true, optional = true }

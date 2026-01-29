@@ -136,7 +136,10 @@ use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlock
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
-use consensus::{Blake3Algorithm, Blake3Seal, ParallelProofVerifier};
+use consensus::{
+    Blake3Algorithm, Blake3Seal, ParallelProofVerifier, aggregation_proof_uncompressed_len,
+    encode_aggregation_proof_bytes,
+};
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
 use network::{
@@ -4014,18 +4017,25 @@ pub fn wire_block_builder_api(
                 .proof_bytes
                 .clone()
                 .ok_or_else(|| "aggregation proof bytes missing".to_string())?;
-            let proof_size = proof_bytes.len();
+            let encoded_proof_bytes = encode_aggregation_proof_bytes(proof_bytes);
+            let proof_size = encoded_proof_bytes.len();
+            let proof_size_uncompressed =
+                aggregation_proof_uncompressed_len(&encoded_proof_bytes);
             let aggregation_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
                 runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_aggregation_proof {
-                    proof: pallet_shielded_pool::types::StarkProof::from_bytes(proof_bytes),
+                    proof: pallet_shielded_pool::types::StarkProof::from_bytes(
+                        encoded_proof_bytes.clone(),
+                    ),
                 }),
             );
             match block_builder.push(aggregation_extrinsic.clone()) {
                 Ok(_) => {
                     applied.push(aggregation_extrinsic.encode());
+                    aggregation_outcome.proof_bytes = Some(encoded_proof_bytes);
                     tracing::info!(
                         block_number,
                         proof_size,
+                        proof_size_uncompressed,
                         "Aggregation proof extrinsic attached"
                     );
                 }
