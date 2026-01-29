@@ -192,8 +192,9 @@ receipt alongside miner telemetry to keep the Go benchmarking harness under `con
 
 On the Substrate runtime side, shielded transfers now accumulate a per-block fee total, and the shielded coinbase extrinsic must
 appear after shielded transfers and mint exactly `subsidy + block_fees`. If a block omits coinbase entirely, the fees are treated
-as burned and tracked on-chain. The node block builder computes the fee total from the included shielded transfers and appends the
-coinbase extrinsic at the end of the block so the runtime can enforce this rule deterministically.
+as burned and tracked on-chain. Because Substrate requires inherents to appear first in the block, `mint_coinbase` is treated as a
+mandatory unsigned extrinsic (not an inherent) and is appended by the node block builder at the end of the block so the runtime can
+enforce this rule deterministically.
 
 Fee pricing is parameterized on-chain: `fee = proof_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
 with separate `proof_fee` values for single and batch proofs. These parameters live in the shielded pool pallet, can be updated by
