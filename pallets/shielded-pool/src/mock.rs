@@ -525,8 +525,8 @@ mod tests {
                 .iter()
                 .map(|note| (note.ciphertext.len() + note.kem_ciphertext.len()) as u64)
                 .sum();
-            let required = Pallet::<Test>::quote_fee(ciphertext_bytes, FeeProofKind::Single)
-                .unwrap();
+            let required =
+                Pallet::<Test>::quote_fee(ciphertext_bytes, FeeProofKind::Single).unwrap();
             let low_fee = required.saturating_sub(1) as u64;
 
             assert_noop!(
@@ -1750,7 +1750,9 @@ mod tests {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            assert_ok!(Pallet::<Test>::enable_aggregation_mode(RuntimeOrigin::none()));
+            assert_ok!(Pallet::<Test>::enable_aggregation_mode(
+                RuntimeOrigin::none()
+            ));
 
             let proof = StarkProof::from_bytes(Vec::new());
             let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
@@ -1807,7 +1809,9 @@ mod tests {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            assert_ok!(Pallet::<Test>::enable_aggregation_mode(RuntimeOrigin::none()));
+            assert_ok!(Pallet::<Test>::enable_aggregation_mode(
+                RuntimeOrigin::none()
+            ));
             assert_ok!(Pallet::<Test>::set_proof_availability_policy(
                 RuntimeOrigin::root(),
                 ProofAvailabilityPolicy::DaRequired,

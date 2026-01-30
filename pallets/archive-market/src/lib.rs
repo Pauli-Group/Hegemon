@@ -220,8 +220,13 @@ pub mod pallet {
 
     #[pallet::storage]
     #[pallet::getter(fn provider_contracts)]
-    pub type ProviderContracts<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, BoundedVec<u64, T::MaxContractsPerProvider>, ValueQuery>;
+    pub type ProviderContracts<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        T::AccountId,
+        BoundedVec<u64, T::MaxContractsPerProvider>,
+        ValueQuery,
+    >;
 
     #[pallet::storage]
     #[pallet::getter(fn next_challenge_id)]
@@ -491,8 +496,11 @@ pub mod pallet {
             ensure!(!bond_stake.is_zero(), Error::<T>::BondStakeZero);
             ensure!(bond_stake <= info.bond, Error::<T>::BondStakeTooHigh);
 
-            let total_cost =
-                Self::compute_contract_cost(info.price_per_byte_block, byte_count, retention_blocks)?;
+            let total_cost = Self::compute_contract_cost(
+                info.price_per_byte_block,
+                byte_count,
+                retention_blocks,
+            )?;
             ensure!(total_cost <= max_price, Error::<T>::PriceTooHigh);
 
             BondCommitted::<T>::try_mutate(&provider, |committed| -> Result<(), Error<T>> {
@@ -513,12 +521,15 @@ pub mod pallet {
                     .map_err(|_| Error::<T>::ContractListFull)
             })?;
 
-            ActiveContracts::<T>::mutate(&provider, |count| {
-                *count = count.saturating_add(1)
-            });
+            ActiveContracts::<T>::mutate(&provider, |count| *count = count.saturating_add(1));
 
-            T::Currency::transfer(&buyer, &provider, total_cost, ExistenceRequirement::AllowDeath)
-                .map_err(|_| Error::<T>::PaymentFailed)?;
+            T::Currency::transfer(
+                &buyer,
+                &provider,
+                total_cost,
+                ExistenceRequirement::AllowDeath,
+            )
+            .map_err(|_| Error::<T>::PaymentFailed)?;
 
             let expires_at = end_block
                 .checked_add(&retention_blocks)
@@ -572,7 +583,10 @@ pub mod pallet {
             Contracts::<T>::try_mutate(contract_id, |entry| -> DispatchResult {
                 let contract = entry.as_mut().ok_or(Error::<T>::ContractNotFound)?;
                 ensure!(contract.buyer == buyer, Error::<T>::NotContractBuyer);
-                ensure!(contract.status == ContractStatus::Active, Error::<T>::ContractFailed);
+                ensure!(
+                    contract.status == ContractStatus::Active,
+                    Error::<T>::ContractFailed
+                );
 
                 let now = frame_system::Pallet::<T>::block_number();
                 ensure!(now <= contract.expires_at, Error::<T>::ContractExpired);
@@ -631,12 +645,15 @@ pub mod pallet {
             ActiveContracts::<T>::mutate(&contract.provider, |count| {
                 *count = count.saturating_sub(1)
             });
-            BondCommitted::<T>::try_mutate(&contract.provider, |committed| -> Result<(), Error<T>> {
-                *committed = committed
-                    .checked_sub(&contract.bond_stake)
-                    .ok_or(Error::<T>::BondCommitmentUnderflow)?;
-                Ok(())
-            })?;
+            BondCommitted::<T>::try_mutate(
+                &contract.provider,
+                |committed| -> Result<(), Error<T>> {
+                    *committed = committed
+                        .checked_sub(&contract.bond_stake)
+                        .ok_or(Error::<T>::BondCommitmentUnderflow)?;
+                    Ok(())
+                },
+            )?;
 
             Self::deposit_event(Event::ContractExpired {
                 contract_id,
@@ -657,12 +674,15 @@ pub mod pallet {
             let now = frame_system::Pallet::<T>::block_number();
             let challenge =
                 Challenges::<T>::get(challenge_id).ok_or(Error::<T>::ChallengeNotFound)?;
-            ensure!(provider == challenge.provider, Error::<T>::ChallengeUnauthorized);
+            ensure!(
+                provider == challenge.provider,
+                Error::<T>::ChallengeUnauthorized
+            );
             ensure!(now <= challenge.deadline, Error::<T>::ChallengeExpired);
 
             Self::ensure_proof_bounds(&proof)?;
-            let global_index = Self::global_chunk_index(&proof)
-                .ok_or(Error::<T>::ChallengeIndexMismatch)?;
+            let global_index =
+                Self::global_chunk_index(&proof).ok_or(Error::<T>::ChallengeIndexMismatch)?;
             ensure!(
                 global_index == challenge.global_chunk_index,
                 Error::<T>::ChallengeIndexMismatch
@@ -749,12 +769,14 @@ pub mod pallet {
             Ok(())
         }
 
-        fn verify_da_multi_chunk(
-            root: DaRoot,
-            proof: &DaMultiChunkProof,
-        ) -> Result<(), Error<T>> {
+        fn verify_da_multi_chunk(root: DaRoot, proof: &DaMultiChunkProof) -> Result<(), Error<T>> {
             Self::verify_da_chunk(proof.page_root, &proof.page_proof)?;
-            Self::verify_page_root(root, proof.page_index, proof.page_root, &proof.page_merkle_path)
+            Self::verify_page_root(
+                root,
+                proof.page_index,
+                proof.page_root,
+                &proof.page_merkle_path,
+            )
         }
 
         fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), Error<T>> {
@@ -838,7 +860,7 @@ pub mod pallet {
             let audit_period = T::AuditPeriod::get();
             let period_u64: u64 = audit_period.saturated_into();
             let now_u64: u64 = now.saturated_into();
-            if period_u64 == 0 || now_u64 % period_u64 != 0 {
+            if period_u64 == 0 || !now_u64.is_multiple_of(period_u64) {
                 return Weight::zero();
             }
 
@@ -879,10 +901,10 @@ pub mod pallet {
             if commitment.chunk_count == 0 {
                 return Weight::zero();
             }
-            let chunk_seed = Self::challenge_entropy(&block_seed, contract.contract_id.wrapping_add(1));
-            let chunk_index = (Self::entropy_u64(&chunk_seed)
-                % u64::from(commitment.chunk_count))
-                as u32;
+            let chunk_seed =
+                Self::challenge_entropy(&block_seed, contract.contract_id.wrapping_add(1));
+            let chunk_index =
+                (Self::entropy_u64(&chunk_seed) % u64::from(commitment.chunk_count)) as u32;
 
             let deadline = match now.checked_add(&T::AuditResponseWindow::get()) {
                 Some(deadline) => deadline,

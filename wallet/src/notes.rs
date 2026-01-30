@@ -226,8 +226,7 @@ impl NoteCiphertext {
         }
 
         let ciphertext = self.build_ciphertext_container()?;
-        let mut result =
-            Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + self.kem_ciphertext.len());
+        let mut result = Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + self.kem_ciphertext.len());
         result.extend_from_slice(&ciphertext);
         result.extend_from_slice(&self.kem_ciphertext);
         Ok(result)

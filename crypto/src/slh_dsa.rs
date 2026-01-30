@@ -8,8 +8,8 @@ use slh_dsa::signature::{Keypair, Signer, Verifier};
 use slh_dsa::Shake128f;
 
 // Re-export rand_core from slh-dsa for compatible RNG traits
-use slh_dsa::signature::rand_core as slh_rand_core;
 use core::convert::Infallible;
+use slh_dsa::signature::rand_core as slh_rand_core;
 
 /// Public key length for SLH-DSA-SHAKE-128f (FIPS 205)
 pub const SLH_DSA_PUBLIC_KEY_LEN: usize = 32;

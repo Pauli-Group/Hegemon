@@ -855,7 +855,12 @@ fn tx_send(
 
         let use_da_sidecar = std::env::var("HEGEMON_WALLET_DA_SIDECAR")
             .ok()
-            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false);
         let result = if use_da_sidecar {
             client

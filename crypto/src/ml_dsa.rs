@@ -197,11 +197,12 @@ impl SigningKeyTrait for MlDsaSecretKey {
         let mut arr = [0u8; ML_DSA_SECRET_KEY_LEN];
         arr.copy_from_slice(bytes);
 
-        let expanded = ExpandedSigningKey::<MlDsa65>::try_from(arr.as_slice())
-            .map_err(|_| CryptoError::InvalidLength {
+        let expanded = ExpandedSigningKey::<MlDsa65>::try_from(arr.as_slice()).map_err(|_| {
+            CryptoError::InvalidLength {
                 expected: ML_DSA_SECRET_KEY_LEN,
                 actual: arr.len(),
-            })?;
+            }
+        })?;
         #[allow(deprecated)]
         let _ = ml_dsa::SigningKey::<MlDsa65>::from_expanded(&expanded);
 

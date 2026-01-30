@@ -39,8 +39,12 @@ fn build_two_leaf_merkle_tree(
     }
 
     (
-        MerklePath { siblings: siblings0 },
-        MerklePath { siblings: siblings1 },
+        MerklePath {
+            siblings: siblings0,
+        },
+        MerklePath {
+            siblings: siblings1,
+        },
         current,
     )
 }
@@ -63,8 +67,7 @@ fn sample_witness() -> TransactionWitness {
 
     let leaf0 = input_note_native.commitment();
     let leaf1 = input_note_asset.commitment();
-    let (merkle_path0, merkle_path1, merkle_root) =
-        build_two_leaf_merkle_tree(leaf0, leaf1);
+    let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
     assert_eq!(
         compute_merkle_root(leaf0, 0, &merkle_path0.siblings),
         merkle_root
@@ -130,8 +133,7 @@ fn aggregation_proof_roundtrip() {
     let proofs = vec![proof.clone(), proof.clone()];
     let aggregation_bytes = prove_aggregation(&proofs).expect("generate aggregation proof");
 
-    verify_aggregation_proof(&aggregation_bytes, &proofs)
-        .expect("verify aggregation proof");
+    verify_aggregation_proof(&aggregation_bytes, &proofs).expect("verify aggregation proof");
 
     let mut corrupted = proofs.clone();
     corrupted[0].stark_proof[0] ^= 0x01;

@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, is_canonical_bytes48, note_commitment_bytes},
+    hashing_pq::{
+        bytes48_to_felts, ciphertext_hash_bytes, is_canonical_bytes48, note_commitment_bytes,
+    },
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
     StablecoinPolicyBinding,
@@ -1654,7 +1656,9 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                 .submit_shielded_transfer_unsigned_sidecar(&built.bundle)
                 .await
         } else {
-            client.submit_shielded_transfer_unsigned(&built.bundle).await
+            client
+                .submit_shielded_transfer_unsigned(&built.bundle)
+                .await
         };
 
         match result {
