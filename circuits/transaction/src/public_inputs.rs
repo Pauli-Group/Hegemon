@@ -46,6 +46,8 @@ pub struct TransactionPublicInputs {
     pub nullifiers: Vec<Commitment>,
     #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
     pub commitments: Vec<Commitment>,
+    #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
+    pub ciphertext_hashes: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
     pub native_fee: u64,
     #[serde(default)]
@@ -62,6 +64,7 @@ impl Default for TransactionPublicInputs {
     fn default() -> Self {
         let nullifiers = vec![[0u8; 48]; MAX_INPUTS];
         let commitments = vec![[0u8; 48]; MAX_OUTPUTS];
+        let ciphertext_hashes = vec![[0u8; 48]; MAX_OUTPUTS];
         let balance_slots = (0..BALANCE_SLOTS)
             .map(|_| BalanceSlot {
                 asset_id: u64::MAX,
@@ -73,6 +76,7 @@ impl Default for TransactionPublicInputs {
             merkle_root: [0u8; 48],
             nullifiers,
             commitments,
+            ciphertext_hashes,
             balance_slots,
             native_fee: 0,
             value_balance: 0,
@@ -89,6 +93,7 @@ impl TransactionPublicInputs {
         merkle_root: Commitment,
         nullifiers: Vec<Commitment>,
         commitments: Vec<Commitment>,
+        ciphertext_hashes: Vec<Commitment>,
         balance_slots: Vec<BalanceSlot>,
         native_fee: u64,
         value_balance: i128,
@@ -101,6 +106,11 @@ impl TransactionPublicInputs {
         if commitments.len() != MAX_OUTPUTS {
             return Err(TransactionCircuitError::CommitmentMismatch(
                 commitments.len(),
+            ));
+        }
+        if ciphertext_hashes.len() != MAX_OUTPUTS {
+            return Err(TransactionCircuitError::CiphertextHashMismatch(
+                ciphertext_hashes.len(),
             ));
         }
         if balance_slots.len() != BALANCE_SLOTS {
@@ -128,6 +138,14 @@ impl TransactionPublicInputs {
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "commitment encoding is non-canonical",
+            ));
+        }
+        if ciphertext_hashes
+            .iter()
+            .any(|ct| !transaction_core::hashing_pq::is_canonical_bytes48(ct))
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "ciphertext hash encoding is non-canonical",
             ));
         }
         if stablecoin.enabled {
@@ -183,6 +201,7 @@ impl TransactionPublicInputs {
             merkle_root,
             nullifiers,
             commitments,
+            ciphertext_hashes,
             balance_slots,
             native_fee,
             value_balance,

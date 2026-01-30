@@ -77,6 +77,8 @@ pub struct ShieldedTransferInputs {
     pub nullifiers: Vec<[u8; 48]>,
     /// Commitments for new notes.
     pub commitments: Vec<[u8; 48]>,
+    /// Ciphertext hashes for new notes.
+    pub ciphertext_hashes: Vec<[u8; 48]>,
     /// Native fee encoded in the circuit.
     pub fee: u64,
     /// Net value balance (transparent component).
@@ -282,6 +284,11 @@ impl StarkVerifier {
             encoded.push(*cm);
         }
 
+        // Ciphertext hashes
+        for ct in &inputs.ciphertext_hashes {
+            encoded.push(*ct);
+        }
+
         // Fee (u64, canonical field encoding)
         encoded.push(Self::encode_u64(inputs.fee));
 
@@ -419,6 +426,12 @@ impl StarkVerifier {
         if inputs.commitments.len() > Self::MAX_OUTPUTS {
             return false;
         }
+        if inputs.ciphertext_hashes.len() > Self::MAX_OUTPUTS {
+            return false;
+        }
+        if inputs.ciphertext_hashes.len() != inputs.commitments.len() {
+            return false;
+        }
         if inputs.nullifiers.is_empty() && inputs.commitments.is_empty() {
             return false;
         }
@@ -436,6 +449,13 @@ impl StarkVerifier {
             .commitments
             .iter()
             .any(|cm| !Self::is_canonical_felt(cm) || *cm == [0u8; 48])
+        {
+            return false;
+        }
+        if inputs
+            .ciphertext_hashes
+            .iter()
+            .any(|ct| !Self::is_canonical_felt(ct))
         {
             return false;
         }
@@ -569,7 +589,10 @@ impl StarkVerifier {
 
     fn binding_hash_message(inputs: &ShieldedTransferInputs) -> Vec<u8> {
         let mut message = sp_std::vec::Vec::with_capacity(
-            48 + inputs.nullifiers.len() * 48 + inputs.commitments.len() * 48 + 24,
+            48 + inputs.nullifiers.len() * 48
+                + inputs.commitments.len() * 48
+                + inputs.ciphertext_hashes.len() * 48
+                + 24,
         );
         message.extend_from_slice(&inputs.anchor);
         for nf in &inputs.nullifiers {
@@ -577,6 +600,9 @@ impl StarkVerifier {
         }
         for cm in &inputs.commitments {
             message.extend_from_slice(cm);
+        }
+        for ct in &inputs.ciphertext_hashes {
+            message.extend_from_slice(ct);
         }
         message.extend_from_slice(&inputs.fee.to_le_bytes());
         message.extend_from_slice(&inputs.value_balance.to_le_bytes());
@@ -644,6 +670,15 @@ impl StarkVerifier {
             output_flags.push(transaction_core::Felt::ZERO);
         }
 
+        let mut ciphertext_hashes = Vec::with_capacity(Self::MAX_OUTPUTS);
+        for ct in inputs.ciphertext_hashes.iter().take(Self::MAX_OUTPUTS) {
+            let felt = transaction_core::hashing_pq::bytes48_to_felts(ct)?;
+            ciphertext_hashes.push(felt);
+        }
+        while ciphertext_hashes.len() < Self::MAX_OUTPUTS {
+            ciphertext_hashes.push([transaction_core::Felt::ZERO; 6]);
+        }
+
         let merkle_root = transaction_core::hashing_pq::bytes48_to_felts(&inputs.anchor)?;
 
         let (value_balance_sign, value_balance_magnitude) =
@@ -697,6 +732,7 @@ impl StarkVerifier {
             output_flags,
             nullifiers,
             commitments,
+            ciphertext_hashes,
             fee: transaction_core::Felt::from_u64(inputs.fee),
             value_balance_sign,
             value_balance_magnitude,
@@ -980,6 +1016,7 @@ mod tests {
             anchor: canonical_byte(1),
             nullifiers: vec![canonical_byte(2), canonical_byte(3)],
             commitments: vec![canonical_byte(4), canonical_byte(5)],
+            ciphertext_hashes: vec![canonical_byte(6), canonical_byte(7)],
             fee: 0,
             value_balance: 0,
             stablecoin: None,
@@ -1034,8 +1071,14 @@ mod tests {
         let inputs = sample_inputs();
         let encoded = StarkVerifier::encode_public_inputs(&inputs);
 
-        // 1 anchor + 2 nullifiers + 2 commitments + fee + value balance (sign + mag) = 8
-        assert_eq!(encoded.len(), 16);
+        let expected = 1 // anchor
+            + inputs.nullifiers.len()
+            + inputs.commitments.len()
+            + inputs.ciphertext_hashes.len()
+            + 1 // fee
+            + 2 // value balance (sign + magnitude)
+            + 8; // stablecoin metadata fields
+        assert_eq!(encoded.len(), expected);
     }
 
     #[test]
@@ -1222,6 +1265,7 @@ mod tests {
             anchor: [1u8; 48],
             nullifiers: vec![], // Empty
             commitments: vec![[4u8; 48]],
+            ciphertext_hashes: vec![[5u8; 48]],
             fee: 0,
             value_balance: 1000, // Minting 1000
             stablecoin: None,
@@ -1243,6 +1287,7 @@ mod tests {
             anchor: [1u8; 48],
             nullifiers: vec![[2u8; 48]],
             commitments: vec![[4u8; 48]],
+            ciphertext_hashes: vec![[5u8; 48]],
             fee: 0,
             value_balance: i128::MAX,
             stablecoin: None,
@@ -1252,6 +1297,7 @@ mod tests {
             anchor: [1u8; 48],
             nullifiers: vec![[2u8; 48]],
             commitments: vec![[4u8; 48]],
+            ciphertext_hashes: vec![[5u8; 48]],
             fee: 0,
             value_balance: i128::MIN,
             stablecoin: None,

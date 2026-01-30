@@ -1,6 +1,6 @@
 [package]
 name = "hegemon-node"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 authors = ["Pauli Group Inc."]
 description = "Hegemon PQ-secure blockchain node"
@@ -39,6 +39,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
+aggregation-circuit = { path = "../circuits/aggregation", optional = true }
 block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
 rand = "0.8"
@@ -93,6 +94,9 @@ runtime = { path = "../runtime", optional = true }
 
 # Shielded pool pallet (for RPC types)
 pallet-shielded-pool = { path = "../pallets/shielded-pool", optional = true }
+
+# Archive market pallet (for RPC types)
+pallet-archive-market = { path = "../pallets/archive-market", optional = true }
 
 # Frame support (for BoundedVec in RPC)
 frame-support = { workspace = true, features = ["std"], optional = true }
@@ -153,10 +157,12 @@ substrate = [
     "dep:pallet-timestamp",
     "dep:pallet-coinbase",
     "dep:pallet-shielded-pool",
+    "dep:pallet-archive-market",
     "dep:frame-support",
     "dep:tower",
     "dep:hyper",
     "dep:block-circuit",
+    "dep:aggregation-circuit",
     "consensus/substrate",
 ]
 

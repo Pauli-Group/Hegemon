@@ -1,5 +1,6 @@
 import type {
   NodeMiningRequest,
+  NodeManagedStatus,
   NodeStartOptions,
   NodeSummary,
   NodeSummaryRequest,
@@ -22,6 +23,7 @@ export type HegemonApi = {
     summary: (request: NodeSummaryRequest) => Promise<NodeSummary>;
     setMining: (request: NodeMiningRequest) => Promise<void>;
     logs: () => Promise<string[]>;
+    managedStatus: () => Promise<NodeManagedStatus>;
   };
   wallet: {
     init: (storePath: string, passphrase: string) => Promise<WalletStatus>;

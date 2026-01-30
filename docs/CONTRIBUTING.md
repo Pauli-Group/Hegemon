@@ -47,6 +47,7 @@ Three benchmarking harnesses exist to make performance work repeatable:
 1. `cargo run -p circuits-bench -- --smoke` – exercises circuit witness generation and proof verification loops with bounded rows, reporting hash rounds per second.
 2. `go run ./cmd/netbench --smoke` (inside `consensus/bench`) – simulates miner gossip and reports achieved messages/second given synthetic PQ signature sizes and payload targets.
 3. `cargo run -p wallet-bench -- --smoke` – constructs shielded notes, derives nullifiers, and signs view keys to report wallet ops/second.
+4. `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored` – measures aggregation proof size/prove/verify time (not in CI; update ExecPlan notes when metrics change).
 
 Each harness supports `--iterations <N>` and `--prove/--no-prove` toggles for deeper profiling. Capture benchmark deltas in pull requests when you optimize anything in the hot path.
 

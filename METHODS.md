@@ -40,6 +40,7 @@ Each **transaction** includes:
 
   * `nf[0..M-1]` – nullifiers for each consumed note
   * `cm'[0..N-1]` – commitments for each new note
+  * `ct_hash[0..N-1]` – ciphertext hashes for each output note (domain-separated BLAKE3-384)
   * `balance_tag` – a compressed representation of value balance (see below)
   * optional `memo`s, network fee, etc.
   * one or a few STARK proofs
@@ -188,6 +189,41 @@ state machine with a Substrate-friendly `BlockOrigin` tag and returns an `Import
 commitment, version commitment, and fork-choice result. Node services call this helper inside their block intake path so the
 version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
 receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
+
+On the Substrate runtime side, shielded transfers now accumulate a per-block fee total, and the shielded coinbase extrinsic must
+appear after shielded transfers and mint exactly `subsidy + block_fees`. If a block omits coinbase entirely, the fees are treated
+as burned and tracked on-chain. Because Substrate requires inherents to appear first in the block, `mint_coinbase` is treated as a
+mandatory unsigned extrinsic (not an inherent) and is appended by the node block builder at the end of the block so the runtime can
+enforce this rule deterministically.
+
+Fee pricing is parameterized on-chain: `fee = proof_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
+with separate `proof_fee` values for single and batch proofs. These parameters live in the shielded pool pallet, can be updated by
+governance, and are exposed via the runtime API and wallet RPC so clients can quote fees without participating in public auctions.
+
+Forced inclusion commitments provide a censorship escape hatch for the private lane. A user can submit a commitment hash
+(`blake2_256` of the SCALE-encoded shielded transfer call), an expiry block, and a bonded amount. The commitment queue is bounded
+(`MaxForcedInclusions`) and the bond is reserved to discourage spam. On block import, nodes require that any pending commitment
+with `expiry <= current_block` appears in the block; the runtime removes satisfied commitments and unreserves the bond, while
+expired commitments are slashed during `on_initialize`. This keeps forced inclusion deterministic while bounding DoS risk.
+Forced inclusion commitments must be submitted before any shielded transfer in the same block; once transfers start (or coinbase
+is minted) the runtime rejects new forced inclusion submissions for that block. This avoids unsatisfiable commitments when a
+transfer appears before its forced inclusion entry.
+
+Within a block, shielded transfer extrinsics must appear in nondecreasing order of the hash of their SCALE-encoded call data.
+Nodes enforce this during block import and local block production so miners do not have discretionary ordering inside the private lane.
+
+### Aggregation mode and proof sidecar (rollup path)
+
+For scalability, the system supports a per-block “aggregation mode” that allows shielded transfer extrinsics to omit the per-transaction STARK proof bytes and rely on a single aggregation proof checked during block import:
+
+* Block authors include `ShieldedPool::enable_aggregation_mode` early in the block.
+* A chain-level `ProofAvailabilityPolicy` gates whether per-tx proofs must be inline (`InlineRequired`) or may be in DA (`DaRequired`).
+* In aggregation mode + `DaRequired`, `shielded_transfer_unsigned_sidecar` may omit proof bytes; the runtime skips `verify_stark` and only enforces binding hashes + non-ZK checks (nullifiers, anchors, fee floor).
+* Proof bytes are staged off-chain via `da_submitProofs` keyed by the transaction `binding_hash`; block authors then include:
+
+  * `submit_proof_da_commitment(da_root, chunk_count)` to bind the proof-DA blob, and
+  * `submit_proof_da_manifest(manifest)` to bind `binding_hash -> (proof_hash, proof_len, proof_offset)` so verifiers can compute commitment-proof inputs without downloading proof bytes and can fetch individual proofs by range.
+* The node verifies the commitment proof + aggregation proof during import and rejects any block whose aggregated transactions are invalid.
 
 ---
 
@@ -797,13 +833,19 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 #### 6.3 Block circuit and proof
 
-The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside parallel transaction-proof verification. Recursive proofs are currently removed; recursion runbooks are archived pending a Plonky3-native path.
+The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside per-transaction input checks. When a block carries an aggregation proof (via `submit_aggregation_proof`), nodes verify the aggregated recursion proof with explicit public-value binding and skip per-transaction STARK verification; otherwise they fall back to parallel verification of every transaction proof. Recursive epoch proofs remain removed; aggregation proofs are the only recursion path in the live system today.
 
-The commitment proof binds `tx_proofs_commitment` (derived from the ordered list of transaction proof hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness.
+Aggregation proofs are produced from transaction proof bytes alone, never from spend witnesses. Block producers can either attach a proof generated locally (the node can build one when `HEGEMON_AGGREGATION_PROOFS` is enabled) or include a proof generated by an external prover market. The reference aggregation prover lives in `circuits/aggregation` and emits postcard-encoded `BatchProof` bytes suitable for `submit_aggregation_proof`.
+
+The commitment proof binds `tx_proofs_commitment` (derived from the ordered list of transaction proof hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness. On Substrate, the `submit_commitment_proof` extrinsic carries the computed `da_root` plus `chunk_count` explicitly so importers can fetch DA chunks before reconstructing ciphertexts and archive audits can select valid chunk indices.
 
 Data availability uses a dedicated encoder in `state/da`. The block’s ciphertext blob is serialized as a length-prefixed stream of ciphertexts (ordered by transaction order, then ciphertext order) and erasure-encoded into `k` data shards of size `da_params.chunk_size` plus `p = ceil(k/2)` parity shards. The Merkle root `da_root` commits to all `n = k + p` shards using BLAKE3 with domain tags `da-leaf` and `da-node`. Consensus recomputes `da_root` from the transaction list and rejects any mismatch before verifying proofs. Sampling is per-node randomized: each validator chooses `da_params.sample_count` shard indices, fetches the chunk and Merkle path over P2P, and rejects the block if any sampled proof fails.
 
-`verify_block` expects miners to supply the current tree state. It verifies the commitment proof once via `circuits/block::commitment_verifier::verify_block_commitment`, recomputes the transaction-ordered nullifier list (padding each transaction to `MAX_INPUTS`) to ensure the proof’s public inputs match the block’s transactions, checks the `tx_proofs_commitment` against the transaction list, verifies all transaction proofs in parallel, and updates the tree to the expected ending root. Solo miners follow a simple operational loop: sync the tree, run the block verifier on any candidate they plan to extend, update their local `VersionSchedule`, and only then start hashing on top of the verified root. Mining pauses while the node is catching up to peers so local hashing never races against historical imports. Pools do the same before paying shares or relaying templates so that all PoW-only participants agree on state transitions without any staking-committee style coordination. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check without per-transaction recursion.
+Two on-chain policies gate these checks: `DaAvailabilityPolicy` selects between `FullFetch` (reconstruct and verify `da_root`) and `Sampling` (verify randomized chunks against the commitment payload’s `da_root`/`chunk_count` without full reconstruction), and `CiphertextPolicy` toggles whether inline ciphertext bytes are accepted or sidecar-only submissions are enforced. The node consults the runtime API for the active policy on import, so the network can start with full storage and migrate to sampling + sidecar enforcement as the prover/DA markets mature.
+
+Operationally, the node persists DA encodings and ciphertext bytes for a bounded “hot” retention window and prunes old entries by block number. Ciphertext and proof retention are separate knobs: ciphertexts default to `HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS` (falling back to legacy `HEGEMON_DA_RETENTION_BLOCKS`), while proofs default to `HEGEMON_PROOF_DA_RETENTION_BLOCKS` (short by design so proof bytes become “archive-grade” quickly in Phase A).
+
+`verify_block` expects miners to supply the current tree state. It verifies the commitment proof once via `circuits/block::commitment_verifier::verify_block_commitment`, recomputes the transaction-ordered nullifier list (padding each transaction to `MAX_INPUTS`) to ensure the proof’s public inputs match the block’s transactions, checks the `tx_proofs_commitment` against the transaction list, verifies the aggregation proof if present (or verifies all transaction proofs in parallel when it is not), and updates the tree to the expected ending root. Solo miners follow a simple operational loop: sync the tree, run the block verifier on any candidate they plan to extend, update their local `VersionSchedule`, and only then start hashing on top of the verified root. Mining pauses while the node is catching up to peers so local hashing never races against historical imports. Pools do the same before paying shares or relaying templates so that all PoW-only participants agree on state transitions without any staking-committee style coordination. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check without per-transaction recursion.
 
 Define a block commitment circuit `C_commitment` with
 

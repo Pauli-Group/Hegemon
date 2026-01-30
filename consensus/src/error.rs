@@ -90,6 +90,8 @@ pub enum ProofError {
     CommitmentProofVerification(String),
     #[error("missing commitment proof payload")]
     MissingCommitmentProof,
+    #[error("missing aggregation proof payload")]
+    MissingAggregationProof,
     #[error("missing transaction proofs")]
     MissingTransactionProofs,
     #[error("transaction proof count mismatch: expected {expected}, got {observed}")]
@@ -98,6 +100,12 @@ pub enum ProofError {
     TransactionProofInputsMismatch { index: usize, message: String },
     #[error("transaction proof verification failed at index {index}: {message}")]
     TransactionProofVerification { index: usize, message: String },
+    #[error("aggregation proof requires at least one transaction")]
+    AggregationProofEmptyBlock,
+    #[error("aggregation proof inputs mismatch: {0}")]
+    AggregationProofInputsMismatch(String),
+    #[error("aggregation proof verification failed: {0}")]
+    AggregationProofVerification(String),
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]
