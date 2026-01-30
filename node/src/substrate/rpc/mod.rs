@@ -55,6 +55,7 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod archive;
 pub mod block;
 pub mod da;
 pub mod hegemon;
@@ -74,7 +75,9 @@ pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
 
-use crate::substrate::service::{CommitmentBlockProofStore, DaChunkStore};
+use crate::substrate::service::{
+    CommitmentBlockProofStore, DaChunkStore, PendingCiphertextStore, PendingProofStore,
+};
 use state_da::DaParams;
 
 /// Dependency container for RPC handlers.
@@ -92,8 +95,12 @@ pub struct FullDeps<S, P> {
     pub deny_unsafe: bool,
     /// In-memory commitment block proof store
     pub commitment_block_proof_store: Arc<parking_lot::Mutex<CommitmentBlockProofStore>>,
-    /// In-memory DA chunk store
+    /// DA chunk store (persistent + cache)
     pub da_chunk_store: Arc<parking_lot::Mutex<DaChunkStore>>,
+    /// Pending sidecar ciphertext pool.
+    pub pending_ciphertext_store: Arc<parking_lot::Mutex<PendingCiphertextStore>>,
+    /// Pending transaction proof pool (rollup sidecar).
+    pub pending_proof_store: Arc<parking_lot::Mutex<PendingProofStore>>,
     /// DA parameters
     pub da_params: DaParams,
 }
@@ -135,8 +142,13 @@ where
     let block_rpc = BlockRpc::new(Arc::clone(&deps.commitment_block_proof_store));
     module.merge(block_rpc.into_rpc())?;
 
-    // Add DA RPC (chunk proofs)
-    let da_rpc = DaRpc::new(Arc::clone(&deps.da_chunk_store), deps.da_params);
+    // Add DA RPC (chunk proofs + staging)
+    let da_rpc = DaRpc::new(
+        Arc::clone(&deps.da_chunk_store),
+        Arc::clone(&deps.pending_ciphertext_store),
+        Arc::clone(&deps.pending_proof_store),
+        deps.da_params,
+    );
     module.merge(da_rpc.into_rpc())?;
 
     tracing::info!("RPC extensions initialized (Phase 13 - Shielded Wallet Integration)");
@@ -152,3 +164,4 @@ pub fn create_minimal() -> Result<RpcModule<()>, Box<dyn std::error::Error + Sen
 
     Ok(module)
 }
+pub use archive::{ArchiveApiServer, ArchiveMarketService, ArchiveRpc};

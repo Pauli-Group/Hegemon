@@ -1,0 +1,389 @@
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::ops::{Add, Mul, Sub};
+
+use hashbrown::HashMap;
+use p3_field::Field;
+use strum::EnumCount;
+
+use crate::CircuitError;
+use crate::op::{
+    NonPrimitiveOpConfig, NonPrimitiveOpType, NonPrimitivePreprocessedMap, Op, PrimitiveOpType,
+};
+use crate::tables::{CircuitRunner, TraceGeneratorFn};
+use crate::types::{ExprId, NonPrimitiveOpId, WitnessId};
+
+/// Trait encapsulating the required field operations for circuits
+pub trait CircuitField:
+    Clone
+    + Default
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + PartialEq
+    + Debug
+    + Field
+{
+}
+
+impl<F> CircuitField for F where
+    F: Clone
+        + Default
+        + Add<Output = F>
+        + Sub<Output = F>
+        + Mul<Output = F>
+        + PartialEq
+        + Debug
+        + Field
+{
+}
+
+/// Preprocessed data for primitive and non-primitive operation tables.
+pub struct PreprocessedColumns<F> {
+    pub primitive: Vec<Vec<F>>,
+    pub non_primitive: NonPrimitivePreprocessedMap<F>,
+}
+
+/// Static circuit specification containing constraint system and metadata
+///
+/// This represents the compiled output of a `CircuitBuilder`. It contains:
+/// - Primitive operations (add, multiply, subtract, constants, public inputs)
+/// - Non-primitive operations (complex operations like MMCS verification)
+/// - Public input metadata and witness table structure
+///
+/// The circuit is static and serializable. Use `.runner()` to create
+/// a `CircuitRunner` for execution with specific input values.
+#[derive(Debug)]
+pub struct Circuit<F> {
+    /// Number of witness table rows
+    pub witness_count: u32,
+    /// Operations in execution order (primitive + non-primitive).
+    pub ops: Vec<Op<F>>,
+    /// Public input witness indices
+    pub public_rows: Vec<WitnessId>,
+    /// Total number of public field elements
+    pub public_flat_len: usize,
+    /// Enabled non-primitive operation types with their respective configuration
+    pub enabled_ops: HashMap<NonPrimitiveOpType, NonPrimitiveOpConfig<F>>,
+    /// Expression to witness index map
+    pub expr_to_widx: HashMap<ExprId, WitnessId>,
+    /// Registered non-primitive trace generators.
+    pub non_primitive_trace_generators: HashMap<NonPrimitiveOpType, TraceGeneratorFn<F>>,
+    /// Tag to witness index mapping for probing values by name.
+    pub tag_to_witness: HashMap<String, WitnessId>,
+    /// Tag to non-primitive operation ID mapping.
+    pub tag_to_op_id: HashMap<String, NonPrimitiveOpId>,
+}
+
+impl<F: Field + Clone> Clone for Circuit<F> {
+    fn clone(&self) -> Self {
+        Self {
+            witness_count: self.witness_count,
+            ops: self.ops.clone(),
+            public_rows: self.public_rows.clone(),
+            public_flat_len: self.public_flat_len,
+            enabled_ops: self.enabled_ops.clone(),
+            expr_to_widx: self.expr_to_widx.clone(),
+            non_primitive_trace_generators: self.non_primitive_trace_generators.clone(),
+            tag_to_witness: self.tag_to_witness.clone(),
+            tag_to_op_id: self.tag_to_op_id.clone(),
+        }
+    }
+}
+
+impl<F: Field> Circuit<F> {
+    /// Create a new circuit with the given witness count and expression to witness index map.
+    pub fn new(witness_count: u32, expr_to_widx: HashMap<ExprId, WitnessId>) -> Self {
+        Self {
+            witness_count,
+            ops: Vec::new(),
+            public_rows: Vec::new(),
+            public_flat_len: 0,
+            enabled_ops: HashMap::new(),
+            expr_to_widx,
+            non_primitive_trace_generators: HashMap::new(),
+            tag_to_witness: HashMap::new(),
+            tag_to_op_id: HashMap::new(),
+        }
+    }
+
+    /// Generates preprocessed columns for all primitive operation types.
+    ///
+    /// Returns a [`PreprocessedColumns`] with one primitive entry per [`PrimitiveOpType`]:
+    ///
+    /// | Index | Operation | Column Layout                             | Width (per op) |
+    /// |-------|-----------|-------------------------------------------|----------------|
+    /// | 0     | Witness   | `[idx_0, mul_0, idx_1, mul_1, ...]`       | 2              |
+    /// | 1     | Const     | `[out_0, out_1, ...]`                     | 1              |
+    /// | 2     | Public    | `[out_0, out_1, ...]`                     | 1              |
+    /// | 3     | Add       | `[a_0, b_0, out_0, a_1, b_1, out_1, ...]` | 3              |
+    /// | 4     | Mul       | `[a_0, b_0, out_0, a_1, b_1, out_1, ...]` | 3              |
+    ///
+    /// Note that `mul_i` in the Witness table preprocessed column indicates how many times
+    /// each witness index appears in the circuit.
+    /// We do not generate multiplicities for the other tables, as the multiplicity is always 1 for active operations
+    /// (0 for padding). Multiplicities are therefore generated by the tables themselves.
+    ///
+    // TODO: Centralize the multiplicity logic to make reads/writes less error-prone.
+    pub fn generate_preprocessed_columns(&self) -> Result<PreprocessedColumns<F>, CircuitError> {
+        // Allocate one empty vector per primitive operation type (Witness, Const, Public, Add, Mul).
+        let mut preprocessed = vec![vec![]; PrimitiveOpType::COUNT];
+        let mut non_primitive_preprocessed = NonPrimitivePreprocessedMap::new();
+
+        // We know that the Witness table has at least one entry for index 0 (multiplicity 0 at the start).
+        preprocessed[PrimitiveOpType::Witness as usize].push(F::ZERO);
+        let witness_table_idx = PrimitiveOpType::Witness as usize;
+
+        // Process each primitive operation, extracting its witness indices.
+        for op in &self.ops {
+            match op {
+                // Const: stores a constant value at witness[out].
+                // Preprocessed data: the output witness index.
+                Op::Const { out, .. } => {
+                    let table_idx = PrimitiveOpType::Const as usize;
+                    preprocessed[table_idx].extend(&[F::from_u32(out.0)]);
+
+                    // Since the values in `PublicAir` are looked up in `WitnessAir`,
+                    // we need to take the values into account in `WitnessAir`s preprocessed multiplicities.
+                    if out.0 >= preprocessed[witness_table_idx].len() as u32 {
+                        preprocessed[witness_table_idx].resize(out.0 as usize + 1, F::from_u32(0));
+                    }
+                    preprocessed[witness_table_idx][out.0 as usize] += F::ONE;
+                }
+                // Public: loads a public input into witness[out].
+                // Preprocessed data: the output witness index.
+                Op::Public { out, .. } => {
+                    let table_idx = PrimitiveOpType::Public as usize;
+                    preprocessed[table_idx].extend(&[F::from_u32(out.0)]);
+
+                    // Since the values in `PublicAir` are looked up in `WitnessAir`,
+                    // we need to take the values into account in `WitnessAir`s preprocessed multiplicities.
+                    if out.0 >= preprocessed[witness_table_idx].len() as u32 {
+                        preprocessed[witness_table_idx].resize(out.0 as usize + 1, F::from_u32(0));
+                    }
+                    preprocessed[witness_table_idx][out.0 as usize] += F::ONE;
+                }
+                // Add: computes witness[out] = witness[a] + witness[b].
+                // Preprocessed data: input indices a, b and output index out.
+                Op::Add { a, b, out } => {
+                    let table_idx = PrimitiveOpType::Add as usize;
+                    preprocessed[table_idx].extend(&[
+                        F::from_u32(a.0),
+                        F::from_u32(b.0),
+                        F::from_u32(out.0),
+                    ]);
+
+                    // We need to update the multiplicities for `a`, `b`, and `out` in `WitnessAir`.
+                    for &widx in &[a.0, b.0, out.0] {
+                        if widx >= preprocessed[witness_table_idx].len() as u32 {
+                            preprocessed[witness_table_idx]
+                                .resize(widx as usize + 1, F::from_u32(0));
+                        }
+                        preprocessed[witness_table_idx][widx as usize] += F::ONE;
+                    }
+                }
+
+                // Mul: computes witness[out] = witness[a] * witness[b].
+                // Preprocessed data: input indices a, b and output index out.
+                Op::Mul { a, b, out } => {
+                    let table_idx = PrimitiveOpType::Mul as usize;
+                    preprocessed[table_idx].extend(&[
+                        F::from_u32(a.0),
+                        F::from_u32(b.0),
+                        F::from_u32(out.0),
+                    ]);
+
+                    // We need to update the multiplicities for `a`, `b`, and `out` in `WitnessAir`.
+                    for &widx in &[a.0, b.0, out.0] {
+                        if widx >= preprocessed[witness_table_idx].len() as u32 {
+                            preprocessed[witness_table_idx]
+                                .resize(widx as usize + 1, F::from_u32(0));
+                        }
+                        preprocessed[witness_table_idx][widx as usize] += F::ONE;
+                    }
+                }
+                Op::NonPrimitiveOpWithExecutor {
+                    executor,
+                    inputs,
+                    outputs,
+                    ..
+                } => {
+                    // Delegate preprocessing to the non-primitive operation.
+                    executor.preprocess(
+                        inputs,
+                        outputs,
+                        &mut preprocessed,
+                        &mut non_primitive_preprocessed,
+                    );
+                }
+            }
+        }
+
+        Ok(PreprocessedColumns {
+            primitive: preprocessed,
+            non_primitive: non_primitive_preprocessed,
+        })
+    }
+}
+
+impl<F: CircuitField> Circuit<F> {
+    /// Create a circuit runner for execution and trace generation
+    pub fn runner(self) -> CircuitRunner<F> {
+        CircuitRunner::new(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use hashbrown::HashMap;
+    use p3_baby_bear::BabyBear;
+    use p3_field::PrimeCharacteristicRing;
+    use strum::EnumCount;
+
+    use super::*;
+    use crate::op::PrimitiveOpType;
+    use crate::types::WitnessId;
+
+    type F = BabyBear;
+
+    fn make_circuit(ops: Vec<Op<F>>) -> Circuit<F> {
+        let mut circuit = Circuit::new(0, HashMap::new());
+        circuit.ops = ops;
+        circuit
+    }
+
+    #[test]
+    fn test_empty_circuit() {
+        let circuit: Circuit<F> = make_circuit(vec![]);
+        let result = circuit.generate_preprocessed_columns().unwrap();
+
+        assert_eq!(result.primitive.len(), PrimitiveOpType::COUNT);
+        assert_eq!(
+            result.primitive[PrimitiveOpType::Witness as usize],
+            vec![F::ZERO]
+        );
+        assert!(result.primitive[PrimitiveOpType::Const as usize].is_empty());
+        assert!(result.primitive[PrimitiveOpType::Public as usize].is_empty());
+        assert!(result.primitive[PrimitiveOpType::Add as usize].is_empty());
+        assert!(result.primitive[PrimitiveOpType::Mul as usize].is_empty());
+    }
+
+    #[test]
+    fn test_mixed_operations() {
+        // Test covering various operation types and behaviors:
+        // - Each operation type populates its correct column
+        // - Multiplicities in Witness table are accurate
+        // - Column data preserves operation order
+        // - Unconstrained affects the Witness table preprocessing but produces no column data
+        let ops = vec![
+            Op::Const {
+                out: WitnessId(0),
+                val: F::from_u64(100),
+            },
+            Op::Public {
+                out: WitnessId(1),
+                public_pos: 0,
+            },
+            Op::Const {
+                out: WitnessId(2),
+                val: F::from_u64(200),
+            },
+            Op::Add {
+                a: WitnessId(0),
+                b: WitnessId(1),
+                out: WitnessId(3),
+            },
+            Op::Add {
+                a: WitnessId(3),
+                b: WitnessId(2),
+                out: WitnessId(4),
+            },
+            Op::Mul {
+                a: WitnessId(4),
+                b: WitnessId(2),
+                out: WitnessId(5),
+            },
+        ];
+
+        let circuit = make_circuit(ops);
+        let result = circuit.generate_preprocessed_columns().unwrap();
+
+        // Const column: output indices in order
+        assert_eq!(
+            result.primitive[PrimitiveOpType::Const as usize],
+            vec![F::ZERO, F::from_u32(2)]
+        );
+
+        // Public column: output index
+        assert_eq!(
+            result.primitive[PrimitiveOpType::Public as usize],
+            vec![F::from_u32(1)]
+        );
+
+        // Add column: (a, b, out) triplets concatenated
+        assert_eq!(
+            result.primitive[PrimitiveOpType::Add as usize],
+            vec![
+                F::ZERO,
+                F::from_u32(1),
+                F::from_u32(3),
+                F::from_u32(3),
+                F::from_u32(2),
+                F::from_u32(4)
+            ]
+        );
+
+        // Mul column: (a, b, out) triplet
+        assert_eq!(
+            result.primitive[PrimitiveOpType::Mul as usize],
+            vec![F::from_u32(4), F::from_u32(2), F::from_u32(5)]
+        );
+
+        // We should have the following multiplicities in the Witness table, for indices 0 to 10:
+        // 2, 2, 3, 2, 2, 1
+        let expected_multiplicities = vec![
+            F::from_u16(2),
+            F::from_u16(2),
+            F::from_u16(3),
+            F::from_u16(2),
+            F::from_u16(2),
+            F::from_u16(1),
+        ];
+        assert_eq!(
+            result.primitive[PrimitiveOpType::Witness as usize],
+            expected_multiplicities
+        );
+    }
+
+    #[test]
+    fn test_input_indices_contribute_to_max_idx() {
+        // Ensures input indices that exceed outputs are tracked for witness table size
+        let ops = vec![Op::Add {
+            a: WitnessId(0),
+            b: WitnessId(15), // Highest index is an input, not output
+            out: WitnessId(5),
+        }];
+
+        let circuit = make_circuit(ops);
+        let result = circuit.generate_preprocessed_columns().unwrap();
+
+        // Elements 0, 15 and 5 have multiplicity 1; others 0.
+        let expected_witness: Vec<F> = (0..=15)
+            .map(|i| {
+                if i == 0 || i == 5 || i == 15 {
+                    F::ONE
+                } else {
+                    F::ZERO
+                }
+            })
+            .collect();
+        assert_eq!(
+            result.primitive[PrimitiveOpType::Witness as usize],
+            expected_witness
+        );
+    }
+}

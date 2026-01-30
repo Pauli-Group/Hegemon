@@ -1,6 +1,8 @@
 use rand::rngs::OsRng;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
-use transaction_circuit::hashing_pq::{bytes48_to_felts, felts_to_bytes48, merkle_node};
+use transaction_circuit::hashing_pq::{
+    bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, merkle_node,
+};
 use transaction_circuit::note::OutputNoteWitness;
 use transaction_circuit::witness::TransactionWitness;
 use transaction_circuit::StablecoinPolicyBinding;
@@ -231,6 +233,26 @@ pub fn build_transaction_with_binding(
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
     for note in plan_inputs.iter() {
+        let expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+            &note.recovered.note_data.commitment(),
+        );
+        match store.find_commitment_index(expected_commitment)? {
+            Some(index) if index == note.position => {}
+            Some(index) => {
+                return Err(WalletError::InvalidState(Box::leak(
+                    format!(
+                        "commitment index mismatch: note position {} != commitment index {}",
+                        note.position, index
+                    )
+                    .into_boxed_str(),
+                )));
+            }
+            None => {
+                return Err(WalletError::InvalidState(
+                    "note commitment not found in local commitment list",
+                ));
+            }
+        }
         // Get the Merkle authentication path for this note's position
         let auth_path = tree
             .authentication_path(note.position as usize)
@@ -274,7 +296,9 @@ pub fn build_transaction_with_binding(
         // eprintln!("DEBUG: computed_root = {:?}", current);
         // eprintln!("DEBUG: expected_root = {:?}", wallet_root);
         if felts_to_bytes48(&current) != wallet_root {
-            // eprintln!("DEBUG: ROOT MISMATCH!");
+            return Err(WalletError::InvalidState(
+                "merkle path does not match wallet root",
+            ));
         }
 
         // Convert Felt path to MerklePath
@@ -287,9 +311,14 @@ pub fn build_transaction_with_binding(
 
         nullifiers.push(fvk.compute_nullifier(&note.recovered.note.rho, note.position));
     }
+    let ciphertext_hashes = ciphertexts
+        .iter()
+        .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+        .collect::<Result<Vec<_>, _>>()?;
     let witness = TransactionWitness {
         inputs,
         outputs,
+        ciphertext_hashes: ciphertext_hashes.clone(),
         sk_spend: derived.view.nullifier_key(),
         merkle_root: tree.root(),
         fee,
@@ -328,6 +357,7 @@ pub fn build_transaction_with_binding(
         &proof_result.anchor,
         &proof_result.nullifiers,
         &proof_result.commitments,
+        &ciphertext_hashes,
         proof_result.fee,
         proof_result.value_balance,
     );
@@ -510,9 +540,14 @@ pub fn build_stablecoin_burn(
         nullifiers.push(fvk.compute_nullifier(&note.recovered.note.rho, note.position));
     }
 
+    let ciphertext_hashes = ciphertexts
+        .iter()
+        .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+        .collect::<Result<Vec<_>, _>>()?;
     let witness = TransactionWitness {
         inputs,
         outputs,
+        ciphertext_hashes: ciphertext_hashes.clone(),
         sk_spend: derived.view.nullifier_key(),
         merkle_root: tree.root(),
         fee,
@@ -528,6 +563,7 @@ pub fn build_stablecoin_burn(
         &proof_result.anchor,
         &proof_result.nullifiers,
         &proof_result.commitments,
+        &ciphertext_hashes,
         proof_result.fee,
         proof_result.value_balance,
     );
@@ -643,9 +679,11 @@ pub fn build_consolidation_transaction(
         nullifiers.push(fvk.compute_nullifier(&note.recovered.note.rho, note.position));
     }
 
+    let ciphertext_hashes = vec![ciphertext_hash_bytes(&ciphertext.to_da_bytes()?)];
     let witness = TransactionWitness {
         inputs,
         outputs: vec![output],
+        ciphertext_hashes: ciphertext_hashes.clone(),
         sk_spend: derived.view.nullifier_key(),
         merkle_root: tree.root(),
         fee,
@@ -661,6 +699,7 @@ pub fn build_consolidation_transaction(
         &proof_result.anchor,
         &proof_result.nullifiers,
         &proof_result.commitments,
+        &ciphertext_hashes,
         proof_result.fee,
         proof_result.value_balance,
     );
@@ -693,6 +732,7 @@ fn compute_binding_hash(
     anchor: &[u8; 48],
     nullifiers: &[[u8; 48]],
     commitments: &[[u8; 48]],
+    ciphertext_hashes: &[[u8; 48]],
     fee: u64,
     value_balance: i128,
 ) -> [u8; 64] {
@@ -715,6 +755,9 @@ fn compute_binding_hash(
     }
     for cm in commitments {
         data.extend_from_slice(cm);
+    }
+    for ct in ciphertext_hashes {
+        data.extend_from_slice(ct);
     }
     data.extend_from_slice(&fee.to_le_bytes());
     data.extend_from_slice(&value_balance.to_le_bytes());

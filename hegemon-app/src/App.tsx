@@ -3,6 +3,7 @@ import { HashRouter, Link, NavLink, Navigate, Route, Routes } from 'react-router
 import type {
   Contact,
   NodeConnection,
+  NodeManagedStatus,
   NodeSummary,
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
@@ -431,6 +432,7 @@ export default function App() {
   const [walletConnectionId, setWalletConnectionId] = useState('');
   const [nodeSummaries, setNodeSummaries] = useState<Record<string, NodeSummary>>({});
   const [nodeLogs, setNodeLogs] = useState<string[]>([]);
+  const [nodeManagedStatus, setNodeManagedStatus] = useState<NodeManagedStatus | null>(null);
   const [nodeBusy, setNodeBusy] = useState(false);
   const [nodeTransition, setNodeTransition] = useState<NodeTransition | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
@@ -745,6 +747,7 @@ export default function App() {
             label: connection.label,
             reachable: false,
             isLocal: connection.mode === 'local',
+            nodeVersion: null,
             peers: null,
             isSyncing: null,
             bestBlock: null,
@@ -782,8 +785,15 @@ export default function App() {
       } catch (error) {
         setNodeLogs((prev) => prev);
       }
+      try {
+        const managed = await window.hegemon.node.managedStatus();
+        setNodeManagedStatus(managed);
+      } catch {
+        setNodeManagedStatus(null);
+      }
     } else {
       setNodeLogs([]);
+      setNodeManagedStatus(null);
     }
   };
 
@@ -880,6 +890,14 @@ export default function App() {
   const handleNodeStop = async () => {
     if (!activeConnection || activeConnection.mode !== 'local') {
       setNodeError('Select a local connection to stop a node.');
+      return;
+    }
+    if (!nodeManagedStatus?.managed) {
+      setNodeError('This app is not managing a node process. Stop the node (or port-forward) outside of Hegemon Core.');
+      return;
+    }
+    if (nodeManagedStatus.connectionId && nodeManagedStatus.connectionId !== activeConnection.id) {
+      setNodeError('The running node was started from a different local connection profile. Switch to that profile to stop it.');
       return;
     }
     setNodeTransition({ action: 'stopping', connectionId: activeConnection.id, startedAt: Date.now() });
@@ -1394,7 +1412,10 @@ export default function App() {
   const nodeTransitionAction =
     nodeTransition && activeConnection && nodeTransition.connectionId === activeConnection.id ? nodeTransition.action : null;
   const nodeIsRunning = nodeIsLocal && Boolean(activeSummary?.reachable);
-  const nodeToggleDisabled = nodeBusy || !nodeIsLocal || nodeTransitionAction !== null;
+  const nodeIsManaged =
+    Boolean(nodeManagedStatus?.managed) &&
+    (!nodeManagedStatus?.connectionId || nodeManagedStatus.connectionId === activeConnection?.id);
+  const nodeToggleDisabled = nodeBusy || !nodeIsLocal || nodeTransitionAction !== null || (nodeIsRunning && !nodeIsManaged);
   const nodeToggleClass = nodeIsRunning || nodeTransitionAction === 'stopping' ? 'secondary' : 'primary';
   const nodeToggleLabel = nodeTransitionAction ? (
     <span className="inline-flex items-center gap-1">
@@ -1404,7 +1425,7 @@ export default function App() {
       </span>
     </span>
   ) : nodeIsRunning ? (
-    'Stop node'
+    nodeIsManaged ? 'Stop node' : 'Stop unavailable (external node)'
   ) : (
     'Start node'
   );
@@ -1629,6 +1650,10 @@ export default function App() {
           <p className="text-xs text-surfaceMuted/70 mt-0.5">
             Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
           </p>
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">
+            Version {activeSummary?.nodeVersion ?? 'N/A'}
+            {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? ' · External RPC (not managed by app)' : ''}
+          </p>
         </div>
         <div className="status-group">
           <p className="label">Wallet</p>
@@ -1772,6 +1797,12 @@ export default function App() {
             </Link>
           </div>
           {sendBlockedReason ? <p className="text-xs text-amber">{sendBlockedReason}</p> : null}
+          {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? (
+            <p className="text-xs text-amber">
+              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.8.0 node on a different RPC
+              port (e.g. 9955) and update this connection’s URLs to regain start/stop control.
+            </p>
+          ) : null}
         </section>
 
         <section className="card space-y-4">
@@ -2911,7 +2942,7 @@ export default function App() {
         </div>
         <button
           className="secondary px-3 py-1 text-xs"
-          onClick={refreshDisclosureRecords}
+          onClick={() => void refreshDisclosureRecords()}
           disabled={!walletReady || walletBusy || disclosureListBusy}
         >
           {disclosureListBusy ? 'Refreshing...' : 'Refresh'}

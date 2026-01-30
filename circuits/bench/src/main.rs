@@ -307,9 +307,11 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         },
     ];
 
+    let ciphertext_hashes = vec![[0u8; 48]; outputs.len()];
     TransactionWitness {
         inputs: input_witnesses,
         outputs,
+        ciphertext_hashes,
         sk_spend: random_bytes(rng),
         merkle_root,
         fee,

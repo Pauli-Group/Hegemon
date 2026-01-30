@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 
 // Re-export the real ML-DSA-65 types from the ml-dsa crate
 use ml_dsa::signature::{Signer, Verifier};
-use ml_dsa::{MlDsa65, B32};
+use ml_dsa::{ExpandedSigningKey, MlDsa65, B32};
 
 /// ML-DSA-65 parameter sizes (FIPS 204)
 pub const ML_DSA_PUBLIC_KEY_LEN: usize = 1952;
@@ -125,7 +125,11 @@ pub struct MlDsaSecretKey {
 
 impl MlDsaSecretKey {
     fn to_inner(&self) -> ml_dsa::SigningKey<MlDsa65> {
-        ml_dsa::SigningKey::<MlDsa65>::decode(&self.bytes.into())
+        let expanded = ExpandedSigningKey::<MlDsa65>::try_from(self.bytes.as_slice())
+            .expect("ML-DSA secret key length mismatch");
+        #[allow(deprecated)]
+        let sk = ml_dsa::SigningKey::<MlDsa65>::from_expanded(&expanded);
+        sk
     }
 }
 
@@ -160,7 +164,8 @@ impl SigningKeyTrait for MlDsaSecretKey {
 
         // REAL ML-DSA key generation using lattice operations
         let sk = ml_dsa::SigningKey::<MlDsa65>::from_seed(&seed_b32);
-        let sk_bytes = sk.encode();
+        #[allow(deprecated)]
+        let sk_bytes = sk.to_expanded();
 
         let mut bytes = [0u8; ML_DSA_SECRET_KEY_LEN];
         bytes.copy_from_slice(sk_bytes.as_ref());
@@ -192,8 +197,14 @@ impl SigningKeyTrait for MlDsaSecretKey {
         let mut arr = [0u8; ML_DSA_SECRET_KEY_LEN];
         arr.copy_from_slice(bytes);
 
-        // Validate it can be decoded
-        let _ = ml_dsa::SigningKey::<MlDsa65>::decode(&arr.into());
+        let expanded = ExpandedSigningKey::<MlDsa65>::try_from(arr.as_slice()).map_err(|_| {
+            CryptoError::InvalidLength {
+                expected: ML_DSA_SECRET_KEY_LEN,
+                actual: arr.len(),
+            }
+        })?;
+        #[allow(deprecated)]
+        let _ = ml_dsa::SigningKey::<MlDsa65>::from_expanded(&expanded);
 
         Ok(Self { bytes: arr })
     }

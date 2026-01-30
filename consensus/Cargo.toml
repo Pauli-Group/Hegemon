@@ -14,6 +14,13 @@ crypto = { package = "synthetic-crypto", path = "../crypto" }
 num-bigint = "0.4"
 num-traits = "0.2"
 parking_lot = "0.12"
+p3-batch-stark = { workspace = true }
+p3-circuit = { workspace = true }
+p3-circuit-prover = { workspace = true }
+p3-field = { workspace = true }
+p3-recursion = { workspace = true }
+p3-uni-stark = { workspace = true }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 rayon = "1"
 state-da = { path = "../state/da" }
 sha2 = "0.10"
@@ -24,6 +31,7 @@ tracing = "0.1"
 protocol-versioning = { path = "../protocol/versioning" }
 serde = { version = "1", features = ["derive"] }
 transaction-circuit = { path = "../circuits/transaction" }
+zstd = { version = "0.13", default-features = false }
 
 # Substrate PoW consensus (optional, for full Substrate integration)
 sc-consensus-pow = { workspace = true, optional = true }

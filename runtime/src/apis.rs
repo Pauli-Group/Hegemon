@@ -29,7 +29,10 @@
 
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
+use crate::AccountId;
+use pallet_archive_market::{ArchiveContract, ProviderInfo};
 use pallet_shielded_pool::merkle::CompactMerkleTree;
+use pallet_shielded_pool::types::{FeeParameters, FeeProofKind, ForcedInclusionStatus};
 use sp_api::decl_runtime_apis;
 use sp_core::U256;
 use sp_std::vec::Vec;
@@ -109,6 +112,15 @@ decl_runtime_apis! {
             limit: u32,
         ) -> Vec<(u64, Vec<u8>, u64, [u8; 48])>;
 
+        /// Get commitments in a range.
+        ///
+        /// Returns tuples of (index, commitment).
+        /// This is used by nodes and wallets when ciphertexts live in DA storage.
+        fn get_commitments(
+            start: u64,
+            limit: u32,
+        ) -> Vec<(u64, [u8; 48])>;
+
         /// Get total number of encrypted notes.
         fn encrypted_note_count() -> u64;
 
@@ -147,6 +159,15 @@ decl_runtime_apis! {
         /// Used by wallets to detect which of their notes have been spent.
         fn list_nullifiers() -> Vec<[u8; 48]>;
 
+        /// Get the DA availability policy (full fetch vs sampling).
+        fn da_policy() -> pallet_shielded_pool::types::DaAvailabilityPolicy;
+
+        /// Get the ciphertext policy (inline vs sidecar-only).
+        fn ciphertext_policy() -> pallet_shielded_pool::types::CiphertextPolicy;
+
+        /// Get the proof availability policy (inline vs DA required in aggregation mode).
+        fn proof_availability_policy() -> pallet_shielded_pool::types::ProofAvailabilityPolicy;
+
         /// Fetch the compact Merkle tree state used for commitment-root computation.
         ///
         /// This is used by the node during block import to derive the expected commitment tree
@@ -158,5 +179,36 @@ decl_runtime_apis! {
         /// This mirrors `pallet_shielded_pool::MerkleRootHistory` and is used by the node to
         /// validate transaction anchors during block import.
         fn merkle_root_history() -> Vec<[u8; 48]>;
+
+        /// Fetch the current fee parameters for shielded transfers.
+        fn fee_parameters() -> FeeParameters;
+
+        /// Quote a fee for the given ciphertext byte count and proof kind.
+        #[allow(clippy::result_unit_err)]
+        fn fee_quote(ciphertext_bytes: u64, proof_kind: FeeProofKind) -> Result<u128, ()>;
+
+        /// Fetch pending forced inclusion commitments.
+        fn forced_inclusions() -> Vec<ForcedInclusionStatus>;
+    }
+
+    /// API for archive provider discovery.
+    ///
+    /// Exposes the on-chain provider registry so wallets can discover
+    /// bonded archive providers without scanning raw storage.
+    pub trait ArchiveMarketApi {
+        /// Get the number of registered providers.
+        fn archive_provider_count() -> u32;
+
+        /// Get a single provider by account id.
+        fn archive_provider(provider: AccountId) -> Option<ProviderInfo<crate::Runtime>>;
+
+        /// List all providers.
+        fn archive_providers() -> Vec<(AccountId, ProviderInfo<crate::Runtime>)>;
+
+        /// Fetch a single archive contract by id.
+        fn archive_contract(contract_id: u64) -> Option<ArchiveContract<crate::Runtime>>;
+
+        /// List all contracts for a provider.
+        fn archive_contracts(provider: AccountId) -> Vec<ArchiveContract<crate::Runtime>>;
     }
 }

@@ -88,6 +88,7 @@ fn make_valid_witness(seed: u64, tree: &mut CommitmentTree) -> TransactionWitnes
             },
         ],
         outputs: vec![output_native, output_asset],
+        ciphertext_hashes: vec![[0u8; 48]; 2],
         sk_spend: [seed as u8 + 15; 32],
         merkle_root,
         fee: 5,

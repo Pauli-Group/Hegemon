@@ -43,6 +43,11 @@ fn base_config(path: &std::path::Path) -> NodeConfig {
 }
 
 fn sample_bundle(root: Commitment) -> TransactionBundle {
+    let ciphertexts = vec![vec![0u8; 32]];
+    let ciphertext_hashes: Vec<[u8; 48]> = ciphertexts
+        .iter()
+        .map(|ct| transaction_circuit::hashing_pq::ciphertext_hash_bytes(ct))
+        .collect();
     let witness = TransactionWitness {
         inputs: vec![InputNoteWitness {
             note: NoteData {
@@ -65,6 +70,7 @@ fn sample_bundle(root: Commitment) -> TransactionBundle {
                 r: [23u8; 32],
             },
         }],
+        ciphertext_hashes,
         sk_spend: [42u8; 32],
         merkle_root: root,
         fee: 1,
@@ -88,7 +94,6 @@ fn sample_bundle(root: Commitment) -> TransactionBundle {
         .copied()
         .filter(|value| *value != zero)
         .collect();
-    let ciphertexts = vec![vec![0u8; 32]; commitments.len()];
     let anchor = witness.merkle_root;
     let mut message = Vec::new();
     message.extend_from_slice(&anchor);
@@ -97,6 +102,9 @@ fn sample_bundle(root: Commitment) -> TransactionBundle {
     }
     for cm in &commitments {
         message.extend_from_slice(cm);
+    }
+    for ct_hash in &witness.ciphertext_hashes {
+        message.extend_from_slice(ct_hash);
     }
     message.extend_from_slice(&witness.fee.to_le_bytes());
     message.extend_from_slice(&witness.value_balance.to_le_bytes());
