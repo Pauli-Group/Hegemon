@@ -8,6 +8,7 @@ use slh_dsa::signature::{Keypair, Signer, Verifier};
 use slh_dsa::Shake128f;
 
 // Re-export rand_core from slh-dsa for compatible RNG traits
+use core::convert::Infallible;
 use slh_dsa::signature::rand_core as slh_rand_core;
 
 /// Public key length for SLH-DSA-SHAKE-128f (FIPS 205)
@@ -52,26 +53,29 @@ impl SlhCompatibleRng {
     }
 }
 
-impl slh_rand_core::RngCore for SlhCompatibleRng {
-    fn next_u32(&mut self) -> u32 {
+impl slh_rand_core::TryRngCore for SlhCompatibleRng {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         let mut buf = [0u8; 4];
         self.fill_bytes_internal(&mut buf);
-        u32::from_le_bytes(buf)
+        Ok(u32::from_le_bytes(buf))
     }
 
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         let mut buf = [0u8; 8];
         self.fill_bytes_internal(&mut buf);
-        u64::from_le_bytes(buf)
+        Ok(u64::from_le_bytes(buf))
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         self.fill_bytes_internal(dest);
+        Ok(())
     }
 }
 
 // Mark as cryptographically secure (it uses SHA-256 which is safe for this purpose)
-impl slh_rand_core::CryptoRng for SlhCompatibleRng {}
+impl slh_rand_core::TryCryptoRng for SlhCompatibleRng {}
 
 /// SLH-DSA signature wrapper
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -254,6 +254,10 @@ ipcMain.handle('node:stop', async () => {
   await nodeManager.stopNode();
 });
 
+ipcMain.handle('node:managedStatus', async () => {
+  return nodeManager.getManagedStatus();
+});
+
 ipcMain.handle('node:summary', async (_event, request: NodeSummaryRequest) => {
   return nodeManager.getSummary(request);
 });

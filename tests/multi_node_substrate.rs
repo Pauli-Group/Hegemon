@@ -322,6 +322,7 @@ mod substrate_tests {
                 failed_count: 0,
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
 
@@ -368,6 +369,7 @@ mod substrate_tests {
                 failed_count: failed.len(),
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
 
@@ -414,6 +416,7 @@ mod substrate_tests {
                 failed_count: 0,
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
 
@@ -476,6 +479,7 @@ mod substrate_tests {
                 failed_count: 0,
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
 
@@ -547,6 +551,7 @@ mod substrate_tests {
                 failed_count: 0,
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
         assert!(provider.has_state_execution());

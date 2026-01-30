@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Contact,
   NodeMiningRequest,
+  NodeManagedStatus,
   NodeStartOptions,
   NodeSummaryRequest,
   WalletSendPlanRequest,
@@ -14,7 +15,8 @@ contextBridge.exposeInMainWorld('hegemon', {
     stop: () => ipcRenderer.invoke('node:stop'),
     summary: (request: NodeSummaryRequest) => ipcRenderer.invoke('node:summary', request),
     setMining: (request: NodeMiningRequest) => ipcRenderer.invoke('node:setMining', request),
-    logs: () => ipcRenderer.invoke('node:logs')
+    logs: () => ipcRenderer.invoke('node:logs'),
+    managedStatus: () => ipcRenderer.invoke('node:managedStatus') as Promise<NodeManagedStatus>
   },
   wallet: {
     init: (storePath: string, passphrase: string) => ipcRenderer.invoke('wallet:init', storePath, passphrase),

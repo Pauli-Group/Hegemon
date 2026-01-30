@@ -100,6 +100,103 @@ impl TransactionProof {
     }
 }
 
+/// Reconstruct the Plonky3 public inputs from a transaction proof.
+///
+/// This is useful when callers need the STARK public inputs without re-verifying the proof.
+pub fn stark_public_inputs_p3(
+    proof: &TransactionProof,
+) -> Result<TransactionPublicInputsP3, TransactionCircuitError> {
+    let stark_inputs =
+        proof
+            .stark_public_inputs
+            .as_ref()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "missing STARK public inputs",
+            ))?;
+
+    let input_flags = stark_inputs
+        .input_flags
+        .iter()
+        .map(|flag| Goldilocks::from_u64(*flag as u64))
+        .collect();
+    let output_flags = stark_inputs
+        .output_flags
+        .iter()
+        .map(|flag| Goldilocks::from_u64(*flag as u64))
+        .collect();
+
+    let nullifiers = proof
+        .nullifiers
+        .iter()
+        .map(|nf| {
+            bytes48_to_felts(nf).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid PQ nullifier encoding",
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let commitments = proof
+        .commitments
+        .iter()
+        .map(|cm| {
+            bytes48_to_felts(cm).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid PQ commitment encoding",
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let ciphertext_hashes = proof
+        .public_inputs
+        .ciphertext_hashes
+        .iter()
+        .map(|ct| {
+            bytes48_to_felts(ct).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid ciphertext hash encoding",
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
+    )?;
+    let stablecoin_policy_hash = bytes48_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
+    )?;
+    let stablecoin_oracle_commitment = bytes48_to_felts(&stark_inputs.stablecoin_oracle_commitment)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "invalid stablecoin oracle commitment encoding",
+        ))?;
+    let stablecoin_attestation_commitment = bytes48_to_felts(
+        &stark_inputs.stablecoin_attestation_commitment,
+    )
+    .ok_or(TransactionCircuitError::ConstraintViolation(
+        "invalid stablecoin attestation commitment encoding",
+    ))?;
+
+    Ok(TransactionPublicInputsP3 {
+        input_flags,
+        output_flags,
+        nullifiers,
+        commitments,
+        ciphertext_hashes,
+        fee: Goldilocks::from_u64(stark_inputs.fee),
+        value_balance_sign: Goldilocks::from_u64(stark_inputs.value_balance_sign as u64),
+        value_balance_magnitude: Goldilocks::from_u64(stark_inputs.value_balance_magnitude),
+        merkle_root,
+        stablecoin_enabled: Goldilocks::from_u64(stark_inputs.stablecoin_enabled as u64),
+        stablecoin_asset: Goldilocks::from_u64(stark_inputs.stablecoin_asset_id),
+        stablecoin_policy_version: Goldilocks::from_u64(
+            stark_inputs.stablecoin_policy_version as u64,
+        ),
+        stablecoin_issuance_sign: Goldilocks::from_u64(
+            stark_inputs.stablecoin_issuance_sign as u64,
+        ),
+        stablecoin_issuance_magnitude: Goldilocks::from_u64(
+            stark_inputs.stablecoin_issuance_magnitude,
+        ),
+        stablecoin_policy_hash,
+        stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment,
+    })
+}
+
 /// Generate a real STARK proof for a transaction (Plonky3 backend).
 pub fn prove(
     witness: &TransactionWitness,
@@ -154,6 +251,11 @@ fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, Transa
             "invalid PQ commitment length",
         ));
     }
+    if proof.public_inputs.ciphertext_hashes.len() != MAX_OUTPUTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid ciphertext hash length",
+        ));
+    }
     if proof.balance_slots.len() != BALANCE_SLOTS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "invalid balance slot length",
@@ -170,77 +272,7 @@ fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, Transa
         ));
     }
 
-    let stark_inputs = proof.stark_public_inputs.as_ref().expect("checked above");
-    let input_flags = stark_inputs
-        .input_flags
-        .iter()
-        .map(|flag| Goldilocks::from_u64(*flag as u64))
-        .collect();
-    let output_flags = stark_inputs
-        .output_flags
-        .iter()
-        .map(|flag| Goldilocks::from_u64(*flag as u64))
-        .collect();
-
-    let nullifiers = proof
-        .nullifiers
-        .iter()
-        .map(|nf| {
-            bytes48_to_felts(nf).ok_or(TransactionCircuitError::ConstraintViolation(
-                "invalid PQ nullifier encoding",
-            ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let commitments = proof
-        .commitments
-        .iter()
-        .map(|cm| {
-            bytes48_to_felts(cm).ok_or(TransactionCircuitError::ConstraintViolation(
-                "invalid PQ commitment encoding",
-            ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root).ok_or(
-        TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
-    )?;
-    let stablecoin_policy_hash = bytes48_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or(
-        TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
-    )?;
-    let stablecoin_oracle_commitment = bytes48_to_felts(&stark_inputs.stablecoin_oracle_commitment)
-        .ok_or(TransactionCircuitError::ConstraintViolation(
-            "invalid stablecoin oracle commitment encoding",
-        ))?;
-    let stablecoin_attestation_commitment = bytes48_to_felts(
-        &stark_inputs.stablecoin_attestation_commitment,
-    )
-    .ok_or(TransactionCircuitError::ConstraintViolation(
-        "invalid stablecoin attestation commitment encoding",
-    ))?;
-
-    let stark_pub_inputs = TransactionPublicInputsP3 {
-        input_flags,
-        output_flags,
-        nullifiers,
-        commitments,
-        fee: Goldilocks::from_u64(stark_inputs.fee),
-        value_balance_sign: Goldilocks::from_u64(stark_inputs.value_balance_sign as u64),
-        value_balance_magnitude: Goldilocks::from_u64(stark_inputs.value_balance_magnitude),
-        merkle_root,
-        stablecoin_enabled: Goldilocks::from_u64(stark_inputs.stablecoin_enabled as u64),
-        stablecoin_asset: Goldilocks::from_u64(stark_inputs.stablecoin_asset_id),
-        stablecoin_policy_version: Goldilocks::from_u64(
-            stark_inputs.stablecoin_policy_version as u64,
-        ),
-        stablecoin_issuance_sign: Goldilocks::from_u64(
-            stark_inputs.stablecoin_issuance_sign as u64,
-        ),
-        stablecoin_issuance_magnitude: Goldilocks::from_u64(
-            stark_inputs.stablecoin_issuance_magnitude,
-        ),
-        stablecoin_policy_hash,
-        stablecoin_oracle_commitment,
-        stablecoin_attestation_commitment,
-    };
+    let stark_pub_inputs = stark_public_inputs_p3(proof)?;
 
     match verify_transaction_proof_bytes_p3(&proof.stark_proof, &stark_pub_inputs) {
         Ok(()) => Ok(VerificationReport { verified: true }),

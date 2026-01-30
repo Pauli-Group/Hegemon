@@ -6,7 +6,7 @@ use pallet_shielded_pool::verifier::StarkVerifier;
 use runtime::WASM_BINARY;
 use sc_service::ChainType;
 
-const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
+const DEFAULT_DA_CHUNK_SIZE: u32 = 65536;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 
 /// Specialized `ChainSpec` for the Hegemon runtime.
@@ -51,7 +51,8 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "initialBits": 0x1d1a_d7f2_u32
         },
         "shieldedPool": {
-            "verifyingKey": verifying_key_value
+            "verifyingKey": verifying_key_value,
+            "proofAvailabilityPolicy": "DaRequired"
         },
         "stablecoinPolicy": {
             "policies": [
@@ -66,6 +67,9 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
                     "active": false
                 }
             ]
+        },
+        "archiveMarket": {
+            "phantom": null
         }
     });
 

@@ -1,3 +1,4 @@
+mod aggregation;
 pub mod bft;
 pub mod commitment_tree;
 pub mod error;
@@ -13,6 +14,10 @@ pub mod types;
 pub mod validator;
 pub mod version_policy;
 
+pub use aggregation::{
+    AggregationCacheWarmup, aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes,
+    verify_aggregation_proof, warm_aggregation_cache,
+};
 pub use bft::{BftConsensus, ConsensusUpdate};
 pub use commitment_tree::{
     COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT,
@@ -37,8 +42,9 @@ pub use substrate_pow::{
 };
 pub use types::{
     BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof,
-    DaEncoding, DaError, DaParams, DaRoot, FeeCommitment, Nullifier, StarkCommitment, SupplyDigest,
-    Transaction, VersionCommitment, build_da_blob, da_root, encode_da_blob, verify_da_chunk,
+    DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot, FeeCommitment,
+    Nullifier, StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob,
+    da_root, encode_da_blob, encode_da_blob_multipage, verify_da_chunk, verify_da_multi_chunk,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

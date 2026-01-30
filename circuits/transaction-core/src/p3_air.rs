@@ -279,6 +279,7 @@ pub struct TransactionPublicInputsP3 {
     pub output_flags: Vec<Felt>,
     pub nullifiers: Vec<[Felt; 6]>,
     pub commitments: Vec<[Felt; 6]>,
+    pub ciphertext_hashes: Vec<[Felt; 6]>,
     pub fee: Felt,
     pub value_balance_sign: Felt,
     pub value_balance_magnitude: Felt,
@@ -301,6 +302,7 @@ impl Default for TransactionPublicInputsP3 {
             output_flags: vec![Felt::ZERO; MAX_OUTPUTS],
             nullifiers: vec![zero6; MAX_INPUTS],
             commitments: vec![zero6; MAX_OUTPUTS],
+            ciphertext_hashes: vec![zero6; MAX_OUTPUTS],
             fee: Felt::ZERO,
             value_balance_sign: Felt::ZERO,
             value_balance_magnitude: Felt::ZERO,
@@ -319,7 +321,11 @@ impl Default for TransactionPublicInputsP3 {
 
 impl TransactionPublicInputsP3 {
     pub const fn expected_len() -> usize {
-        (MAX_INPUTS + MAX_OUTPUTS) * (1 + POSEIDON2_RATE) + 32
+        MAX_INPUTS
+            + MAX_OUTPUTS
+            + (MAX_INPUTS * POSEIDON2_RATE)
+            + (MAX_OUTPUTS * POSEIDON2_RATE * 2)
+            + 32
     }
 
     pub fn to_vec(&self) -> Vec<Felt> {
@@ -331,6 +337,9 @@ impl TransactionPublicInputsP3 {
         }
         for cm in &self.commitments {
             elements.extend_from_slice(cm);
+        }
+        for ct in &self.ciphertext_hashes {
+            elements.extend_from_slice(ct);
         }
         elements.push(self.fee);
         elements.push(self.value_balance_sign);
@@ -379,6 +388,12 @@ impl TransactionPublicInputsP3 {
             commitments.push([cm[0], cm[1], cm[2], cm[3], cm[4], cm[5]]);
         }
 
+        let mut ciphertext_hashes = Vec::with_capacity(MAX_OUTPUTS);
+        for _ in 0..MAX_OUTPUTS {
+            let ct = take(elements, &mut idx, 6);
+            ciphertext_hashes.push([ct[0], ct[1], ct[2], ct[3], ct[4], ct[5]]);
+        }
+
         let fee = elements[idx];
         idx += 1;
         let value_balance_sign = elements[idx];
@@ -420,6 +435,7 @@ impl TransactionPublicInputsP3 {
             output_flags,
             nullifiers,
             commitments,
+            ciphertext_hashes,
             fee,
             value_balance_sign,
             value_balance_magnitude,
@@ -447,6 +463,9 @@ impl TransactionPublicInputsP3 {
         }
         if self.commitments.len() != MAX_OUTPUTS {
             return Err("commitments length mismatch".into());
+        }
+        if self.ciphertext_hashes.len() != MAX_OUTPUTS {
+            return Err("ciphertext hash length mismatch".into());
         }
 
         let zero = Felt::ZERO;
@@ -476,6 +495,10 @@ impl TransactionPublicInputsP3 {
             }
             if *flag == one && is_zero_hash(cm) {
                 return Err("active output has zero commitment".into());
+            }
+            let ct = &self.ciphertext_hashes[idx];
+            if *flag == zero && !is_zero_hash(ct) {
+                return Err("inactive output has non-zero ciphertext hash".into());
             }
         }
 
@@ -827,6 +850,20 @@ where
             commitments.push(limbs);
         }
 
+        let mut ciphertext_hashes = Vec::with_capacity(MAX_OUTPUTS);
+        for _ in 0..MAX_OUTPUTS {
+            let limbs = vec![
+                pv(idx),
+                pv(idx + 1),
+                pv(idx + 2),
+                pv(idx + 3),
+                pv(idx + 4),
+                pv(idx + 5),
+            ];
+            idx += 6;
+            ciphertext_hashes.push(limbs);
+        }
+
         let fee = pv(idx);
         idx += 1;
         let value_balance_sign = pv(idx);
@@ -881,6 +918,10 @@ where
             pv(idx + 4),
             pv(idx + 5),
         ];
+        idx += 6;
+
+        let _ciphertext_hashes = ciphertext_hashes;
+        let _ = idx;
 
         let sbox = |value: AB::Expr| -> AB::Expr {
             let v2 = value.clone() * value.clone();

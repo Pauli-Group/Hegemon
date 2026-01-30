@@ -32,6 +32,9 @@ pub enum TransactionCircuitError {
     #[error("commitment mismatch at index {0}")]
     CommitmentMismatch(usize),
 
+    #[error("ciphertext hash mismatch at index {0}")]
+    CiphertextHashMismatch(usize),
+
     #[error(
         "zero nullifier produced at index {0} - this indicates malicious witness construction"
     )]
