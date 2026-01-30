@@ -269,10 +269,7 @@ fn expire_contract_clears_state() {
         ));
 
         frame_system::Pallet::<Test>::set_block_number(17);
-        assert_ok!(ArchiveMarket::expire_contract(
-            RuntimeOrigin::signed(3),
-            0
-        ));
+        assert_ok!(ArchiveMarket::expire_contract(RuntimeOrigin::signed(3), 0));
 
         assert!(Contracts::<Test>::get(0).is_none());
         assert_eq!(ActiveContracts::<Test>::get(1), 0);

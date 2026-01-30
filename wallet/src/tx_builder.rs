@@ -233,10 +233,9 @@ pub fn build_transaction_with_binding(
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
     for note in plan_inputs.iter() {
-        let expected_commitment =
-            transaction_circuit::hashing_pq::felts_to_bytes48(
-                &note.recovered.note_data.commitment(),
-            );
+        let expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+            &note.recovered.note_data.commitment(),
+        );
         match store.find_commitment_index(expected_commitment)? {
             Some(index) if index == note.position => {}
             Some(index) => {

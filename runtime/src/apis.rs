@@ -184,6 +184,7 @@ decl_runtime_apis! {
         fn fee_parameters() -> FeeParameters;
 
         /// Quote a fee for the given ciphertext byte count and proof kind.
+        #[allow(clippy::result_unit_err)]
         fn fee_quote(ciphertext_bytes: u64, proof_kind: FeeProofKind) -> Result<u128, ()>;
 
         /// Fetch pending forced inclusion commitments.

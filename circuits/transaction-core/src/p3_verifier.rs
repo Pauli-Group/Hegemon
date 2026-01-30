@@ -3,7 +3,7 @@
 use alloc::{format, string::String};
 
 use crate::p3_air::{TransactionAirP3, TransactionPublicInputsP3};
-use crate::p3_config::{config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3, Val};
+use crate::p3_config::{config_with_fri, TransactionProofP3, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
 use p3_uni_stark::{get_log_num_quotient_chunks, verify};
 
 pub fn verify_transaction_proof_p3(
@@ -19,13 +19,8 @@ pub fn verify_transaction_proof_p3(
         get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
-    verify(
-        &config.config,
-        &TransactionAirP3,
-        proof,
-        &pub_inputs_vec,
-    )
-    .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
+    verify(&config.config, &TransactionAirP3, proof, &pub_inputs_vec)
+        .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
 }
 
 pub fn verify_transaction_proof_bytes_p3(

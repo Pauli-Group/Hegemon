@@ -49,14 +49,8 @@ pub trait ArchiveMarketService: Send + Sync {
     fn provider_count(&self) -> Result<u32, String>;
     fn provider(&self, provider: AccountId) -> Result<Option<ProviderInfo<Runtime>>, String>;
     fn providers(&self) -> Result<Vec<(AccountId, ProviderInfo<Runtime>)>, String>;
-    fn contract(
-        &self,
-        contract_id: u64,
-    ) -> Result<Option<ArchiveContract<Runtime>>, String>;
-    fn contracts(
-        &self,
-        provider: AccountId,
-    ) -> Result<Vec<ArchiveContract<Runtime>>, String>;
+    fn contract(&self, contract_id: u64) -> Result<Option<ArchiveContract<Runtime>>, String>;
+    fn contracts(&self, provider: AccountId) -> Result<Vec<ArchiveContract<Runtime>>, String>;
 }
 
 #[rpc(server, client, namespace = "archive")]
@@ -135,10 +129,7 @@ where
             .contracts(provider_id)
             .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
 
-        Ok(contracts
-            .into_iter()
-            .map(to_contract_entry)
-            .collect())
+        Ok(contracts.into_iter().map(to_contract_entry).collect())
     }
 
     async fn get_contract(&self, contract_id: u64) -> RpcResult<Option<ArchiveContractEntry>> {

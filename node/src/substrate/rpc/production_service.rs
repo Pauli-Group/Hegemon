@@ -56,7 +56,7 @@ use codec::{Decode, Encode};
 use pallet_shielded_pool::types::{
     BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
 };
-use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
+use parking_lot::Mutex as ParkingMutex;
 use runtime::apis::{ArchiveMarketApi, ConsensusApi, ShieldedPoolApi};
 use runtime::AccountId;
 use sp_api::ProvideRuntimeApi;
@@ -69,7 +69,7 @@ use std::sync::{
     Arc,
 };
 use std::time::Instant;
-use parking_lot::Mutex as ParkingMutex;
+use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
 use crate::substrate::service::{DaChunkStore, PendingCiphertextStore};
 
@@ -133,7 +133,6 @@ where
             _phantom: PhantomData,
         }
     }
-
 }
 
 impl<C, Block> ProductionRpcService<C, Block>
@@ -345,10 +344,7 @@ where
     }
 
     fn ciphertext_count(&self) -> u64 {
-        self.da_chunk_store
-            .lock()
-            .ciphertext_count()
-            .unwrap_or(0)
+        self.da_chunk_store.lock().ciphertext_count().unwrap_or(0)
     }
 }
 
@@ -528,8 +524,7 @@ where
         let commitments = api
             .get_commitments(best_hash, start, limit as u32)
             .map_err(|e| format!("Runtime API error: {:?}", e))?;
-        let commitment_map: HashMap<u64, [u8; 48]> =
-            commitments.into_iter().collect();
+        let commitment_map: HashMap<u64, [u8; 48]> = commitments.into_iter().collect();
 
         let block_number = self.best_number();
         let mut notes = Vec::with_capacity(ciphertexts.len());
@@ -607,11 +602,7 @@ where
             .map_err(|e| format!("Runtime API error: {:?}", e))
     }
 
-    fn fee_quote(
-        &self,
-        ciphertext_bytes: u64,
-        proof_kind: FeeProofKind,
-    ) -> Result<u128, String> {
+    fn fee_quote(&self, ciphertext_bytes: u64, proof_kind: FeeProofKind) -> Result<u128, String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
         api.fee_quote(best_hash, ciphertext_bytes, proof_kind)
@@ -658,7 +649,13 @@ where
 
     fn providers(
         &self,
-    ) -> Result<Vec<(AccountId, pallet_archive_market::ProviderInfo<runtime::Runtime>)>, String> {
+    ) -> Result<
+        Vec<(
+            AccountId,
+            pallet_archive_market::ProviderInfo<runtime::Runtime>,
+        )>,
+        String,
+    > {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
         api.archive_providers(best_hash)

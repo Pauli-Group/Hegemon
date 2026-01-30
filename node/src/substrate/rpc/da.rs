@@ -176,10 +176,7 @@ impl DaApiServer for DaRpc {
         if request.ciphertexts.len() > MAX_CIPHERTEXTS_PER_REQUEST {
             return Err(ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
-                format!(
-                    "too many ciphertexts (max {})",
-                    MAX_CIPHERTEXTS_PER_REQUEST
-                ),
+                format!("too many ciphertexts (max {})", MAX_CIPHERTEXTS_PER_REQUEST),
                 None::<()>,
             ));
         }
@@ -270,7 +267,10 @@ impl DaApiServer for DaRpc {
             if total_bytes > MAX_TOTAL_BYTES_PER_REQUEST {
                 return Err(ErrorObjectOwned::owned(
                     INVALID_PARAMS_CODE,
-                    format!("request too large (max {} bytes)", MAX_TOTAL_BYTES_PER_REQUEST),
+                    format!(
+                        "request too large (max {} bytes)",
+                        MAX_TOTAL_BYTES_PER_REQUEST
+                    ),
                     None::<()>,
                 ));
             }
