@@ -96,11 +96,18 @@ impl AsyncWalletSyncEngine {
             // Try to set genesis hash (will fail if mismatched)
             self.store.set_genesis_hash(metadata.genesis_hash)?;
         } else {
-            // Force rescan mode: reset if genesis changed
-            if !self.store.check_genesis_hash(&metadata.genesis_hash)? {
-                eprintln!("Chain genesis mismatch detected, resetting wallet sync state...");
-                self.store.reset_sync_state()?;
-                self.store.set_genesis_hash(metadata.genesis_hash)?;
+            // Force rescan mode: reset if genesis changed, but also ensure we record
+            // the genesis hash even if this wallet has never synced before.
+            match self.store.genesis_hash()? {
+                None => {
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                }
+                Some(existing) if existing != metadata.genesis_hash => {
+                    eprintln!("Chain genesis mismatch detected, resetting wallet sync state...");
+                    self.store.reset_sync_state()?;
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                }
+                _ => {}
             }
         }
 
@@ -108,17 +115,24 @@ impl AsyncWalletSyncEngine {
         let note_status = self.client.note_status().await?;
         self.store.set_tree_depth(note_status.depth as u32)?;
 
-        // Detect if our cursor is ahead of the chain (chain was reset)
-        let commitment_cursor = self.store.next_commitment_index()?;
+        // Detect if our cursor is ahead of the chain (chain was reset). In force-rescan mode,
+        // treat this as a reset signal and wipe sync state automatically.
+        let mut commitment_cursor = self.store.next_commitment_index()?;
         if commitment_cursor > note_status.leaf_count {
-            return Err(WalletError::ChainMismatch {
-                expected: format!("chain with >= {} commitments", commitment_cursor),
-                actual: format!("chain with {} commitments", note_status.leaf_count),
-            });
+            if self.skip_genesis_check {
+                eprintln!("Wallet cursor ahead of chain; resetting wallet sync state...");
+                self.store.reset_sync_state()?;
+                self.store.set_genesis_hash(metadata.genesis_hash)?;
+                commitment_cursor = 0;
+            } else {
+                return Err(WalletError::ChainMismatch {
+                    expected: format!("chain with >= {} commitments", commitment_cursor),
+                    actual: format!("chain with {} commitments", note_status.leaf_count),
+                });
+            }
         }
 
         // Sync commitments
-        let mut commitment_cursor = commitment_cursor;
         while commitment_cursor < note_status.leaf_count {
             let entries = self
                 .client
@@ -139,12 +153,39 @@ impl AsyncWalletSyncEngine {
         // Sync ciphertexts and attempt decryption
         let mut ciphertext_cursor = self.store.next_ciphertext_index()?;
         while ciphertext_cursor < note_status.next_index {
-            let entries = self
+            let mut entries = self
                 .client
                 .ciphertexts(ciphertext_cursor, self.page_limit)
                 .await?;
             if entries.is_empty() {
+                if let Ok(archive_entries) = self
+                    .client
+                    .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                    .await
+                {
+                    entries = archive_entries;
+                }
+            }
+            if entries.is_empty() {
                 break;
+            }
+            if entries.first().map(|entry| entry.index) != Some(ciphertext_cursor) {
+                entries = self
+                    .client
+                    .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                    .await
+                    .map_err(|err| {
+                        WalletError::Rpc(format!(
+                            "ciphertext gap at index {}: {}",
+                            ciphertext_cursor, err
+                        ))
+                    })?;
+                if entries.is_empty() {
+                    return Err(WalletError::Rpc(format!(
+                        "ciphertext gap at index {}: archive provider returned no data",
+                        ciphertext_cursor
+                    )));
+                }
             }
 
             let start_index = ciphertext_cursor;

@@ -2,8 +2,11 @@ use block_circuit::CommitmentBlockProof;
 use crypto::hashes::{blake3_384, sha256};
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
-pub use state_da::{DaChunk, DaChunkProof, DaEncoding, DaError, DaParams, DaRoot};
-use transaction_circuit::TransactionProof;
+pub use state_da::{
+    DaChunk, DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams,
+    DaRoot,
+};
+use transaction_circuit::{TransactionProof, hashing_pq::ciphertext_hash_bytes};
 
 pub type Nullifier = [u8; 48];
 pub type Commitment = [u8; 48];
@@ -27,6 +30,7 @@ pub struct Transaction {
     pub balance_tag: BalanceTag,
     pub version: VersionBinding,
     pub ciphertexts: Vec<Vec<u8>>,
+    pub ciphertext_hashes: Vec<[u8; 48]>,
 }
 
 pub fn build_da_blob(transactions: &[Transaction]) -> Vec<u8> {
@@ -49,12 +53,23 @@ pub fn encode_da_blob(
     state_da::encode_da_blob(&build_da_blob(transactions), params)
 }
 
+pub fn encode_da_blob_multipage(
+    transactions: &[Transaction],
+    params: DaParams,
+) -> Result<DaMultiEncoding, DaError> {
+    state_da::encode_da_blob_multipage(&build_da_blob(transactions), params)
+}
+
 pub fn da_root(transactions: &[Transaction], params: DaParams) -> Result<DaRoot, DaError> {
     state_da::da_root(&build_da_blob(transactions), params)
 }
 
 pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError> {
     state_da::verify_da_chunk(root, proof)
+}
+
+pub fn verify_da_multi_chunk(root: DaRoot, proof: &DaMultiChunkProof) -> Result<(), DaError> {
+    state_da::verify_da_multi_chunk(root, proof)
 }
 
 impl Transaction {
@@ -65,12 +80,16 @@ impl Transaction {
         version: VersionBinding,
         ciphertexts: Vec<Vec<u8>>,
     ) -> Self {
+        let ciphertext_hashes = ciphertexts
+            .iter()
+            .map(|ct| ciphertext_hash_bytes(ct))
+            .collect::<Vec<_>>();
         let id = compute_transaction_id(
             &nullifiers,
             &commitments,
             &balance_tag,
             version,
-            &ciphertexts,
+            &ciphertext_hashes,
         );
         Self {
             id,
@@ -79,6 +98,32 @@ impl Transaction {
             balance_tag,
             version,
             ciphertexts,
+            ciphertext_hashes,
+        }
+    }
+
+    pub fn new_with_hashes(
+        nullifiers: Vec<Nullifier>,
+        commitments: Vec<Commitment>,
+        balance_tag: BalanceTag,
+        version: VersionBinding,
+        ciphertext_hashes: Vec<[u8; 48]>,
+    ) -> Self {
+        let id = compute_transaction_id(
+            &nullifiers,
+            &commitments,
+            &balance_tag,
+            version,
+            &ciphertext_hashes,
+        );
+        Self {
+            id,
+            nullifiers,
+            commitments,
+            balance_tag,
+            version,
+            ciphertexts: Vec::new(),
+            ciphertext_hashes,
         }
     }
 
@@ -88,7 +133,7 @@ impl Transaction {
             &self.commitments,
             &self.balance_tag,
             self.version,
-            &self.ciphertexts,
+            &self.ciphertext_hashes,
         )
     }
 }
@@ -133,7 +178,7 @@ fn compute_transaction_id(
     commitments: &[Commitment],
     balance_tag: &BalanceTag,
     version: VersionBinding,
-    ciphertexts: &[Vec<u8>],
+    ciphertext_hashes: &[[u8; 48]],
 ) -> BlockHash {
     let mut hasher = Sha384::new();
     hasher.update(version.circuit.to_le_bytes());
@@ -144,9 +189,8 @@ fn compute_transaction_id(
     for cm in commitments {
         hasher.update(cm);
     }
-    for ct in ciphertexts {
-        hasher.update((ct.len() as u32).to_le_bytes());
-        hasher.update(ct);
+    for ct_hash in ciphertext_hashes {
+        hasher.update(ct_hash);
     }
     hasher.update(balance_tag);
     let digest = hasher.finalize();
@@ -161,6 +205,7 @@ pub struct Block<BH> {
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
     pub commitment_proof: Option<CommitmentBlockProof>,
+    pub aggregation_proof: Option<Vec<u8>>,
     pub transaction_proofs: Option<Vec<TransactionProof>>,
 }
 
@@ -171,6 +216,7 @@ impl<BH> Block<BH> {
             transactions: self.transactions,
             coinbase: self.coinbase,
             commitment_proof: self.commitment_proof,
+            aggregation_proof: self.aggregation_proof,
             transaction_proofs: self.transaction_proofs,
         }
     }

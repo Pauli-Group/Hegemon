@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes},
+    hashing_pq::{
+        bytes48_to_felts, ciphertext_hash_bytes, is_canonical_bytes48, note_commitment_bytes,
+    },
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
     StablecoinPolicyBinding,
@@ -511,9 +513,17 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
             note: note.to_note_data(address.pk_recipient),
         });
     }
+    let ciphertext_hashes = ciphertexts
+        .iter()
+        .map(|ciphertext| {
+            let bytes = map_wallet(ciphertext.to_da_bytes())?;
+            Ok(ciphertext_hash_bytes(&bytes))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let witness = TransactionWitness {
         inputs,
         outputs,
+        ciphertext_hashes,
         sk_spend: keys.view.nullifier_key(),
         merkle_root: parse_merkle_root(params.merkle_root)?,
         fee: params.fee,
@@ -1629,11 +1639,27 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
 
         let outgoing_disclosures = built.outgoing_disclosures.clone();
-        println!("Submitting unsigned shielded-to-shielded transfer...");
-        println!("  (No transparent account required - ZK proof authenticates the spend)");
-        let result = client
-            .submit_shielded_transfer_unsigned(&built.bundle)
-            .await;
+        let use_da_sidecar = std::env::var("HEGEMON_WALLET_DA_SIDECAR")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if use_da_sidecar {
+            println!("Submitting unsigned shielded-to-shielded transfer (DA sidecar)...");
+            println!("  (Ciphertexts uploaded out-of-band via da_submitCiphertexts)");
+            println!("  (No transparent account required - ZK proof authenticates the spend)");
+        } else {
+            println!("Submitting unsigned shielded-to-shielded transfer...");
+            println!("  (No transparent account required - ZK proof authenticates the spend)");
+        }
+
+        let result = if use_da_sidecar {
+            client
+                .submit_shielded_transfer_unsigned_sidecar(&built.bundle)
+                .await
+        } else {
+            client
+                .submit_shielded_transfer_unsigned(&built.bundle)
+                .await
+        };
 
         match result {
             Ok(tx_hash) => {

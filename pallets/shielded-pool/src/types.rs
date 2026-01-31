@@ -50,6 +50,8 @@ pub const ENCRYPTED_NOTE_SIZE: usize = 579;
 
 /// Maximum size of the ML-KEM ciphertext for key encapsulation.
 pub const MAX_KEM_CIPHERTEXT_LEN: u32 = 1568;
+/// Maximum total ciphertext bytes (container + KEM ciphertext).
+pub const MAX_CIPHERTEXT_BYTES: usize = ENCRYPTED_NOTE_SIZE + MAX_KEM_CIPHERTEXT_LEN as usize;
 
 /// Diversified address size used inside commitments: version(1) + diversifier_index(4) + pk_recipient(32).
 pub const DIVERSIFIED_ADDRESS_SIZE: usize = 37;
@@ -196,6 +198,116 @@ pub struct StablecoinPolicyBinding {
     pub policy_version: u32,
 }
 
+/// Data availability validation policy for block import.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum DaAvailabilityPolicy {
+    /// Require full DA fetch and verify `da_root` against the reconstructed blob.
+    FullFetch,
+    /// Require only randomized sampling of DA chunks (no full reconstruction).
+    Sampling,
+}
+
+impl Default for DaAvailabilityPolicy {
+    fn default() -> Self {
+        DaAvailabilityPolicy::FullFetch
+    }
+}
+
+/// Policy for allowing inline ciphertext bytes inside extrinsics.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum CiphertextPolicy {
+    /// Inline ciphertexts are permitted (legacy path).
+    InlineAllowed,
+    /// Inline ciphertexts are rejected; sidecar-only is enforced.
+    SidecarOnly,
+}
+
+impl Default for CiphertextPolicy {
+    fn default() -> Self {
+        CiphertextPolicy::InlineAllowed
+    }
+}
+
+/// Policy for how per-transaction proof bytes are made available to verifiers.
+///
+/// This matters only in "aggregation mode", where the runtime may skip per-transaction proof
+/// verification and instead rely on an aggregation proof verified during block import.
+///
+/// In Phase A ("proof availability by DA"), we allow transfers to omit proof bytes from the
+/// extrinsic, but we require the block to commit to the proof bytes via a DA root so other
+/// validators can retrieve them and verify the aggregation proof deterministically.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum ProofAvailabilityPolicy {
+    /// Each transfer extrinsic must carry its STARK proof bytes (legacy path).
+    InlineRequired,
+    /// Transfer extrinsics may omit proof bytes in aggregation mode, but proof bytes must be made
+    /// available via a DA commitment during block import.
+    DaRequired,
+}
+
+impl Default for ProofAvailabilityPolicy {
+    fn default() -> Self {
+        ProofAvailabilityPolicy::InlineRequired
+    }
+}
+
+/// On-chain manifest entry for locating per-transaction proof bytes in proof-DA.
+///
+/// The `binding_hash` identifies the transfer this proof belongs to. The `(proof_len, proof_offset)`
+/// pair describes where the proof bytes live inside the proof-DA blob committed by
+/// `submit_proof_da_commitment`.
+///
+/// The `proof_hash` (BLAKE3-384) is committed on-chain so verifiers can bind commitment proofs and
+/// other block-level commitments without downloading the proof bytes.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
+)]
+pub struct ProofDaManifestEntry {
+    pub binding_hash: BindingHash,
+    pub proof_hash: [u8; 48],
+    pub proof_len: u32,
+    pub proof_offset: u32,
+}
+
 impl Default for StablecoinPolicyBinding {
     fn default() -> Self {
         Self {
@@ -285,6 +397,69 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     /// Net value change (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
 }
+
+/// Proof kinds used for fee quotes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub enum FeeProofKind {
+    Single,
+    Batch,
+}
+
+/// Fee schedule parameters for shielded transfers.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct FeeParameters {
+    /// Base fee charged per single-transfer proof.
+    pub proof_fee: u128,
+    /// Base fee charged per batch proof.
+    pub batch_proof_fee: u128,
+    /// Fee per ciphertext byte for DA publication.
+    pub da_byte_fee: u128,
+    /// Fee per ciphertext byte per block of hot retention.
+    pub retention_byte_fee: u128,
+    /// Hot retention window in blocks used for fee quotes.
+    pub hot_retention_blocks: u32,
+}
+
+impl Default for FeeParameters {
+    fn default() -> Self {
+        Self {
+            proof_fee: 0,
+            batch_proof_fee: 0,
+            da_byte_fee: 0,
+            retention_byte_fee: 0,
+            hot_retention_blocks: 0,
+        }
+    }
+}
+
+/// Public view of a forced inclusion commitment.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub struct ForcedInclusionStatus {
+    pub commitment: [u8; 32],
+    pub expiry: u64,
+}
+
+/// On-chain record of a DA commitment for a block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub struct DaCommitment {
+    pub root: [u8; 48],
+    pub chunk_count: u32,
+}
+
+impl DecodeWithMemTracking for DaCommitment {}
 
 /// Parameters for the STARK verifying key.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]

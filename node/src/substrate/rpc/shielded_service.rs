@@ -38,7 +38,7 @@
 //! - Extrinsic submission for shielded transfers
 
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
-use pallet_shielded_pool::types::StablecoinPolicyBinding;
+use pallet_shielded_pool::types::{FeeParameters, FeeProofKind, StablecoinPolicyBinding};
 use std::sync::{Arc, RwLock};
 
 /// Mock implementation for testing without a real client
@@ -221,6 +221,20 @@ impl ShieldedPoolService for MockShieldedPoolService {
     fn chain_height(&self) -> u64 {
         *self.height.read().expect("height lock poisoned")
     }
+
+    fn fee_parameters(&self) -> Result<FeeParameters, String> {
+        Ok(FeeParameters::default())
+    }
+
+    fn fee_quote(&self, _ciphertext_bytes: u64, _proof_kind: FeeProofKind) -> Result<u128, String> {
+        Ok(0)
+    }
+
+    fn forced_inclusions(
+        &self,
+    ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
+        Ok(Vec::new())
+    }
 }
 
 /// Thread-safe wrapper for testing
@@ -373,6 +387,33 @@ where
 
     fn chain_height(&self) -> u64 {
         self.client.info().best_number.try_into().unwrap_or(0)
+    }
+
+    fn fee_parameters(&self) -> Result<FeeParameters, String> {
+        let api = self.client.runtime_api();
+        let hash = self.best_hash();
+
+        api.fee_parameters(hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
+    }
+
+    fn fee_quote(&self, ciphertext_bytes: u64, proof_kind: FeeProofKind) -> Result<u128, String> {
+        let api = self.client.runtime_api();
+        let hash = self.best_hash();
+
+        api.fee_quote(hash, ciphertext_bytes, proof_kind)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?
+            .map_err(|_| "Fee quote failed".to_string())
+    }
+
+    fn forced_inclusions(
+        &self,
+    ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
+        let api = self.client.runtime_api();
+        let hash = self.best_hash();
+
+        api.forced_inclusions(hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))
     }
 }
 

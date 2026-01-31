@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.8.0 - 2026-01-23
+- Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.8.0`.
+
 ## v0.7.1 - 2026-01-14
 - Version bump: `hegemon-node` and `wallet` are now `0.7.1`.
 - Core console: always pass `--dev` when the dev toggle is enabled, resolve chain spec paths reliably, and bundle the dev chainspec in packaged builds.

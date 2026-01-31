@@ -9,6 +9,7 @@ members = [
     "circuits/bench",
     "circuits/disclosure",
     "circuits/plonky3-spike",
+    "circuits/aggregation",
     "state/da",
     "state/merkle",
     "consensus",
@@ -30,9 +31,11 @@ members = [
     "pallets/coinbase",
     "pallets/stablecoin-policy",
     "pallets/shielded-pool",
+    "pallets/archive-market",
     "tests", "node",
     "runtime",
 ]
+exclude = ["spikes/recursion"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -141,16 +144,25 @@ codec = { package = "parity-scale-codec", version = "3", default-features = fals
 scale-info = { version = "2", default-features = false, features = ["derive"] }
 
 # --- Plonky3 Dependencies ---
-p3-air = "0.4.2"
-p3-field = "0.4.2"
-p3-goldilocks = "0.4.2"
-p3-matrix = "0.4.2"
-p3-challenger = "0.4.2"
-p3-commit = "0.4.2"
-p3-fri = "0.4.2"
-p3-dft = "0.4.2"
-p3-merkle-tree = "0.4.2"
-p3-uni-stark = "0.4.2"
-p3-symmetric = "0.4.2"
-p3-poseidon2 = "0.4.2"
-p3-blake3 = "0.4.2"
+p3-air = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-batch-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-matrix = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-commit = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-fri = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-dft = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-poseidon2 = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-blake3 = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-circuit = { git = "https://github.com/Plonky3/Plonky3-recursion", rev = "eff9486" }
+p3-circuit-prover = { git = "https://github.com/Plonky3/Plonky3-recursion", rev = "eff9486" }
+p3-recursion = { git = "https://github.com/Plonky3/Plonky3-recursion", rev = "eff9486" }
+
+[patch."https://github.com/Plonky3/Plonky3-recursion"]
+p3-circuit = { path = "spikes/recursion/vendor/plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "spikes/recursion/vendor/plonky3-recursion/circuit-prover" }
+p3-recursion = { path = "spikes/recursion/vendor/plonky3-recursion/recursion" }

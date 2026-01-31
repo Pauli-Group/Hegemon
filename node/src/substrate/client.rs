@@ -512,6 +512,8 @@ pub struct StateExecutionResult {
     pub storage_changes: Option<StorageChangesHandle>,
     /// Optional commitment proof built from shielded transfer extrinsics.
     pub commitment_proof: Option<CommitmentBlockProof>,
+    /// Optional aggregation proof bytes built from transaction proofs.
+    pub aggregation_proof: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -644,6 +646,7 @@ impl ProductionChainStateProvider {
     ///         failed_count: result.failed,
     ///         storage_changes: None,
     ///         commitment_proof: None,
+    ///         aggregation_proof: None,
     ///     })
     /// });
     /// ```
@@ -709,6 +712,7 @@ impl ProductionChainStateProvider {
                 failed_count: 0,
                 storage_changes: None, // No storage changes in mock mode
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -858,6 +862,7 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         result.storage_changes,
                     )
                     .with_commitment_proof(result.commitment_proof)
+                    .with_aggregation_proof(result.aggregation_proof)
             }
             Err(e) => {
                 tracing::error!(
@@ -1211,6 +1216,7 @@ mod tests {
                 failed_count: 0,
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
 
@@ -1243,6 +1249,7 @@ mod tests {
                 failed_count: 0,
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
 
@@ -1272,6 +1279,7 @@ mod tests {
                 failed_count: 0,
                 storage_changes: None,
                 commitment_proof: None,
+                aggregation_proof: None,
             })
         });
 

@@ -526,6 +526,19 @@ impl TransactionProverP3 {
             commitments.push([Val::ZERO; 6]);
         }
 
+        let mut ciphertext_hashes: Vec<HashFelt> = witness
+            .ciphertext_hashes
+            .iter()
+            .map(|ct| {
+                bytes48_to_felts(ct).ok_or(TransactionCircuitError::ConstraintViolation(
+                    "invalid ciphertext hash encoding",
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+        while ciphertext_hashes.len() < MAX_OUTPUTS {
+            ciphertext_hashes.push([Val::ZERO; 6]);
+        }
+
         let merkle_root = bytes48_to_felts(&witness.merkle_root).ok_or(
             TransactionCircuitError::ConstraintViolation("invalid merkle root encoding"),
         )?;
@@ -539,6 +552,7 @@ impl TransactionProverP3 {
             output_flags,
             nullifiers,
             commitments,
+            ciphertext_hashes,
             fee: Val::from_u64(witness.fee),
             value_balance_sign: vb_sign,
             value_balance_magnitude: vb_mag,
@@ -613,6 +627,8 @@ impl TransactionProverP3 {
             commitments.push(cm);
         }
 
+        let ciphertext_hashes = vec![[Val::ZERO; 6]; MAX_OUTPUTS];
+
         let merkle_root = if trace_len > 0 {
             let row = merkle_root_output_row(0);
             if row < trace_len {
@@ -630,6 +646,7 @@ impl TransactionProverP3 {
             output_flags,
             nullifiers,
             commitments,
+            ciphertext_hashes,
             fee: get_trace(trace, COL_FEE, final_row),
             value_balance_sign: get_trace(trace, COL_VALUE_BALANCE_SIGN, final_row),
             value_balance_magnitude: get_trace(trace, COL_VALUE_BALANCE_MAG, final_row),
@@ -1086,6 +1103,7 @@ mod tests {
                 merkle_path,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
+            ciphertext_hashes: vec![[0u8; 48]; 1],
             sk_spend: [8u8; 32],
             merkle_root,
             fee: 0,

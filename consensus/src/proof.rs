@@ -1,3 +1,6 @@
+use crate::aggregation::{
+    aggregation_proof_uncompressed_len, verify_aggregation_proof, warm_aggregation_cache,
+};
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
@@ -8,7 +11,9 @@ use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_co
 use crypto::hashes::blake3_384;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
-use transaction_circuit::constants::MAX_INPUTS;
+use std::time::Instant;
+use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
+use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify as verify_transaction_proof;
@@ -189,9 +194,36 @@ impl ProofVerifier for ParallelProofVerifier {
     where
         BH: HeaderProofExt,
     {
+        let start_total = Instant::now();
+        let tx_count = block.transactions.len();
+        let commitment_proof_bytes = block
+            .commitment_proof
+            .as_ref()
+            .map(|proof| proof.proof_bytes.len())
+            .unwrap_or(0);
+        let aggregation_proof_bytes = block
+            .aggregation_proof
+            .as_ref()
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
+        let aggregation_proof_uncompressed_bytes = block
+            .aggregation_proof
+            .as_ref()
+            .map(|bytes| aggregation_proof_uncompressed_len(bytes))
+            .unwrap_or(0);
+        let ciphertext_bytes_total: usize = block
+            .transactions
+            .iter()
+            .flat_map(|tx| tx.ciphertexts.iter())
+            .map(|ct| ct.len())
+            .sum();
+
         if block.transactions.is_empty() {
             if block.commitment_proof.is_some() || block.transaction_proofs.is_some() {
                 return Err(ProofError::CommitmentProofEmptyBlock);
+            }
+            if block.aggregation_proof.is_some() {
+                return Err(ProofError::AggregationProofEmptyBlock);
             }
             return apply_commitments(parent_commitment_tree, &block.transactions);
         }
@@ -204,6 +236,11 @@ impl ProofVerifier for ParallelProofVerifier {
             .transaction_proofs
             .as_ref()
             .ok_or(ProofError::MissingTransactionProofs)?;
+
+        let tx_proof_bytes_total: usize = transaction_proofs
+            .iter()
+            .map(|proof| proof.stark_proof.len())
+            .sum();
         if transaction_proofs.len() != block.transactions.len() {
             return Err(ProofError::TransactionProofCountMismatch {
                 expected: block.transactions.len(),
@@ -211,7 +248,9 @@ impl ProofVerifier for ParallelProofVerifier {
             });
         }
 
+        let start_commitment = Instant::now();
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
+        let commitment_verify_ms = start_commitment.elapsed().as_millis();
 
         let proof_hashes = proof_hashes_from_transaction_proofs(transaction_proofs)?;
         let expected_commitment =
@@ -231,14 +270,47 @@ impl ProofVerifier for ParallelProofVerifier {
             .enumerate()
             .try_for_each(|(index, (proof, tx))| {
                 verify_transaction_proof_inputs(index, tx, proof)?;
-                verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
-                    ProofError::TransactionProofVerification {
-                        index,
-                        message: err.to_string(),
-                    }
-                })?;
                 Ok::<_, ProofError>(())
             })?;
+
+        let mut aggregation_verify_ms = 0u128;
+        let mut tx_verify_ms = 0u128;
+
+        let mut aggregation_cache_hit = None;
+        let mut aggregation_cache_build_ms = None;
+        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref()
+        {
+            if let Some(representative) = transaction_proofs.first()
+                && let Ok(warmup) = warm_aggregation_cache(representative, tx_count)
+            {
+                aggregation_cache_hit = Some(warmup.cache_hit);
+                aggregation_cache_build_ms = Some(warmup.cache_build_ms);
+            }
+
+            let start_agg = Instant::now();
+            verify_aggregation_proof(aggregation_proof, transaction_proofs)?;
+            aggregation_verify_ms = start_agg.elapsed().as_millis();
+            true
+        } else {
+            false
+        };
+
+        if !aggregation_verified {
+            let start_tx = Instant::now();
+            transaction_proofs
+                .par_iter()
+                .enumerate()
+                .try_for_each(|(index, proof)| {
+                    verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
+                        ProofError::TransactionProofVerification {
+                            index,
+                            message: err.to_string(),
+                        }
+                    })?;
+                    Ok::<_, ProofError>(())
+                })?;
+            tx_verify_ms = start_tx.elapsed().as_millis();
+        }
 
         let anchors: Vec<[u8; 48]> = transaction_proofs
             .iter()
@@ -248,13 +320,33 @@ impl ProofVerifier for ParallelProofVerifier {
         let proof_starting_root =
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
         let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
-        verify_and_apply_tree_transition(
+        let result = verify_and_apply_tree_transition(
             parent_commitment_tree,
             proof_starting_root,
             proof_ending_root,
             &block.transactions,
             &anchors,
-        )
+        )?;
+
+        tracing::info!(
+            target: "consensus::metrics",
+            tx_count,
+            tx_proof_bytes_total,
+            commitment_proof_bytes,
+            aggregation_proof_bytes,
+            aggregation_proof_uncompressed_bytes,
+            ciphertext_bytes_total,
+            commitment_verify_ms,
+            aggregation_verify_ms,
+            aggregation_cache_hit = aggregation_cache_hit.unwrap_or(false),
+            aggregation_cache_build_ms = aggregation_cache_build_ms.unwrap_or(0),
+            tx_verify_ms,
+            total_verify_ms = start_total.elapsed().as_millis(),
+            aggregation_verified,
+            "block_proof_verification_metrics"
+        );
+
+        Ok(result)
     }
 }
 
@@ -391,6 +483,30 @@ fn verify_transaction_proof_inputs(
         return Err(ProofError::TransactionProofInputsMismatch {
             index,
             message: "balance tag mismatch".to_string(),
+        });
+    }
+
+    if !tx.ciphertexts.is_empty() {
+        let mut derived_hashes: Vec<[u8; 48]> = tx
+            .ciphertexts
+            .iter()
+            .map(|ct| ciphertext_hash_bytes(ct))
+            .collect();
+        derived_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
+        if derived_hashes != proof.public_inputs.ciphertext_hashes {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index,
+                message: "ciphertext hash mismatch".to_string(),
+            });
+        }
+    }
+
+    let mut expected_ciphertext_hashes = tx.ciphertext_hashes.clone();
+    expected_ciphertext_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
+    if expected_ciphertext_hashes != proof.public_inputs.ciphertext_hashes {
+        return Err(ProofError::TransactionProofInputsMismatch {
+            index,
+            message: "ciphertext hash mismatch".to_string(),
         });
     }
 

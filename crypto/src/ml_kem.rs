@@ -90,6 +90,7 @@ impl MlKemPublicKey {
     fn to_inner(&self) -> EncapsulationKey<MlKem1024Params> {
         let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
         EncapsulationKey::<MlKem1024Params>::from_bytes(&arr)
+            .expect("invalid ML-KEM public key bytes")
     }
 }
 
@@ -140,6 +141,9 @@ impl KemPublicKey for MlKemPublicKey {
         }
         let mut arr = [0u8; ML_KEM_PUBLIC_KEY_LEN];
         arr.copy_from_slice(bytes);
+        let arr_checked: Array<u8, _> = Array::try_from(arr.as_slice()).expect("size mismatch");
+        EncapsulationKey::<MlKem1024Params>::from_bytes(&arr_checked)
+            .map_err(|_| CryptoError::InvalidKey)?;
         Ok(Self { bytes: arr })
     }
 }
@@ -154,7 +158,7 @@ impl MlKemSecretKey {
     pub fn public_key(&self) -> MlKemPublicKey {
         let dk = self.to_inner();
         let ek = dk.encapsulation_key();
-        let ek_bytes = ek.as_bytes();
+        let ek_bytes = ek.to_bytes();
         let mut pk_bytes = [0u8; ML_KEM_PUBLIC_KEY_LEN];
         pk_bytes.copy_from_slice(ek_bytes.as_ref());
         MlKemPublicKey { bytes: pk_bytes }
@@ -173,12 +177,16 @@ impl MlKemSecretKey {
         }
         let mut arr = [0u8; ML_KEM_SECRET_KEY_LEN];
         arr.copy_from_slice(bytes);
+        let arr_checked: Array<u8, _> = Array::try_from(arr.as_slice()).expect("size mismatch");
+        DecapsulationKey::<MlKem1024Params>::from_bytes(&arr_checked)
+            .map_err(|_| CryptoError::InvalidKey)?;
         Ok(Self { bytes: arr })
     }
 
     fn to_inner(&self) -> DecapsulationKey<MlKem1024Params> {
         let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
         DecapsulationKey::<MlKem1024Params>::from_bytes(&arr)
+            .expect("invalid ML-KEM secret key bytes")
     }
 
     /// REAL ML-KEM decapsulation using lattice operations
@@ -272,7 +280,7 @@ impl KemKeyPair for MlKemKeyPair {
 
         // REAL ML-KEM key generation using lattice operations
         let dk = DecapsulationKey::<MlKem1024Params>::from(seed_array);
-        let dk_bytes = dk.as_bytes();
+        let dk_bytes = dk.to_bytes();
 
         let mut secret_bytes = [0u8; ML_KEM_SECRET_KEY_LEN];
         secret_bytes.copy_from_slice(dk_bytes.as_ref());
