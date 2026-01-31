@@ -330,8 +330,8 @@ pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
 const DEFAULT_DA_CHUNK_SIZE: u32 = 65536;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 const DEFAULT_DA_STORE_CAPACITY: usize = 128;
-const DEFAULT_DA_RETENTION_BLOCKS: u64 = 128;
-const DEFAULT_PROOF_DA_RETENTION_BLOCKS: u64 = 16;
+const DEFAULT_DA_RETENTION_BLOCKS: u64 = 0;
+const DEFAULT_PROOF_DA_RETENTION_BLOCKS: u64 = 0;
 const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY: usize = 128;
 const DEFAULT_PENDING_CIPHERTEXTS_CAPACITY: usize = 4096;
@@ -943,11 +943,7 @@ fn load_ciphertext_da_retention_blocks() -> u64 {
         .or_else(|| env_u64("HEGEMON_DA_RETENTION_BLOCKS"))
         .unwrap_or(DEFAULT_DA_RETENTION_BLOCKS);
     if retention == 0 {
-        tracing::warn!(
-            "Ciphertext DA retention is zero; falling back to {}",
-            DEFAULT_DA_RETENTION_BLOCKS
-        );
-        return DEFAULT_DA_RETENTION_BLOCKS;
+        tracing::info!("Ciphertext DA retention disabled; keeping all ciphertexts");
     }
     retention
 }
@@ -956,11 +952,7 @@ fn load_proof_da_retention_blocks() -> u64 {
     let retention =
         env_u64("HEGEMON_PROOF_DA_RETENTION_BLOCKS").unwrap_or(DEFAULT_PROOF_DA_RETENTION_BLOCKS);
     if retention == 0 {
-        tracing::warn!(
-            "Proof DA retention is zero; falling back to {}",
-            DEFAULT_PROOF_DA_RETENTION_BLOCKS
-        );
-        return DEFAULT_PROOF_DA_RETENTION_BLOCKS;
+        tracing::info!("Proof DA retention disabled; keeping all proof DA blobs");
     }
     retention
 }

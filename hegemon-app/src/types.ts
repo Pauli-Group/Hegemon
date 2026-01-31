@@ -21,6 +21,8 @@ export type NodeConnection = {
   rpcExternal?: boolean;
   rpcMethods?: 'safe' | 'unsafe';
   nodeName?: string;
+  ciphertextDaRetentionBlocks?: number;
+  daStoreCapacity?: number;
 };
 
 export type NodeStorageFootprint = {
@@ -203,6 +205,8 @@ export type NodeStartOptions = {
   rpcExternal?: boolean;
   rpcMethods?: 'safe' | 'unsafe';
   nodeName?: string;
+  ciphertextDaRetentionBlocks?: number;
+  daStoreCapacity?: number;
 };
 
 export type NodeSummaryRequest = {

@@ -1,6 +1,6 @@
 {
-  "name": "Hegemon",
-  "id": "hegemon",
+  "name": "Hegemon Testnet",
+  "id": "hegemon-testnet",
   "chainType": "Live",
   "bootNodes": [
     "/ip4/127.0.0.1/tcp/30333/p2p/12D3KooWRQ3Qvpm7iTTZPJv2Fme49GERkRn6zMFTxYTPVx92eq6N"
