@@ -1237,9 +1237,9 @@ mod serde_bytes_vec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notes::NotePlaintext;
-    use crate::notes::NoteCiphertext;
     use crate::notes::MemoPlaintext;
+    use crate::notes::NoteCiphertext;
+    use crate::notes::NotePlaintext;
     use rand::{rngs::StdRng, SeedableRng};
     use tempfile::tempdir;
     use transaction_circuit::hashing_pq::felts_to_bytes48;

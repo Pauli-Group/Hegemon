@@ -104,7 +104,9 @@ impl AsyncWalletSyncEngine {
                         self.store.set_genesis_hash(metadata.genesis_hash)?;
                     }
                     Some(existing) if existing != metadata.genesis_hash => {
-                        eprintln!("Chain genesis mismatch detected, resetting wallet sync state...");
+                        eprintln!(
+                            "Chain genesis mismatch detected, resetting wallet sync state..."
+                        );
                         self.store.reset_sync_state()?;
                         self.store.set_genesis_hash(metadata.genesis_hash)?;
                     }
@@ -240,10 +242,7 @@ impl AsyncWalletSyncEngine {
 
                 for entry in entries {
                     if entry.index != expected {
-                        eprintln!(
-                            "Ciphertext gap detected at index {} (skipping).",
-                            expected
-                        );
+                        eprintln!("Ciphertext gap detected at index {} (skipping).", expected);
                         break;
                     }
                     outcome.ciphertexts += 1;
