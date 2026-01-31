@@ -656,20 +656,60 @@ pub fn build_consolidation_transaction(
     }];
 
     let tree = store.commitment_tree()?;
+    let wallet_root = tree.root();
 
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
     for note in [note_a.clone(), note_b.clone()] {
+        let expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+            &note.recovered.note_data.commitment(),
+        );
+        match store.find_commitment_index(expected_commitment)? {
+            Some(index) if index == note.position => {}
+            Some(index) => {
+                return Err(WalletError::InvalidState(Box::leak(
+                    format!(
+                        "commitment index mismatch: note position {} != commitment index {}",
+                        note.position, index
+                    )
+                    .into_boxed_str(),
+                )));
+            }
+            None => {
+                return Err(WalletError::InvalidState(
+                    "note commitment not found in local commitment list",
+                ));
+            }
+        }
+
         let auth_path = tree
             .authentication_path(note.position as usize)
-            .map_err(|e| WalletError::Serialization(format!("merkle path error: {e}")))?;
+            .map_err(|e| {
+                WalletError::InvalidState(Box::leak(
+                    format!("merkle path error: {}", e).into_boxed_str(),
+                ))
+            })?;
 
         let mut siblings = Vec::with_capacity(auth_path.len());
+        let mut current = note.recovered.note_data.commitment();
+        let mut pos = note.position;
         for sibling in auth_path.iter() {
             let felts = bytes48_to_felts(sibling).ok_or(WalletError::InvalidState(
                 "non-canonical merkle sibling encoding",
             ))?;
             siblings.push(felts);
+            let (left, right) = if pos & 1 == 0 {
+                (current, felts)
+            } else {
+                (felts, current)
+            };
+            current = merkle_node(left, right);
+            pos >>= 1;
+        }
+        if felts_to_bytes48(&current) != wallet_root {
+            return Err(WalletError::InvalidState(
+                "merkle path does not match wallet root",
+            ));
         }
 
         let merkle_path = transaction_circuit::note::MerklePath { siblings };

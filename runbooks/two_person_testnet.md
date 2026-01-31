@@ -102,6 +102,20 @@ To connect to the boot node, set `BOOTNODE` before running:
 BOOTNODE="hegemon.pauli.group:30333" ./scripts/start-mining.sh
 ```
 
+### ⚠️ Ciphertext Retention (Required on Testnet)
+
+Shielded wallets **cannot recover notes** if ciphertexts are pruned. On testnet, keep everything
+indefinitely until the network explicitly relaxes retention policies.
+
+Set these on **every node** (boot + peers):
+
+```bash
+HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS=0
+HEGEMON_PROOF_DA_RETENTION_BLOCKS=0
+```
+
+`0` means **no pruning**. When you want to relax, set finite block counts.
+
 ---
 
 ## Manual Setup (Alice - Boot Node)

@@ -8,7 +8,8 @@ import type {
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
-  WalletStatus
+  WalletStatus,
+  WalletSyncResult
 } from './types';
 
 const defaultStorePath = '~/.hegemon-wallet';
@@ -396,6 +397,8 @@ const buildDefaultConnection = (): NodeConnection => ({
   p2pPort: 30333,
   mineThreads: 1,
   miningIntent: false,
+  ciphertextDaRetentionBlocks: 4096,
+  daStoreCapacity: 1024,
   rpcMethods: 'safe',
   seeds: 'hegemon.pauli.group'
 });
@@ -413,6 +416,8 @@ const buildTestnetConnection = (): NodeConnection => ({
   p2pPort: 30333,
   mineThreads: 1,
   miningIntent: false,
+  ciphertextDaRetentionBlocks: 4096,
+  daStoreCapacity: 1024,
   rpcMethods: 'safe',
   chainSpecPath: 'testnet',
   seeds: 'hegemon.pauli.group'
@@ -981,7 +986,9 @@ export default function App() {
         seeds: activeConnection.seeds || undefined,
         rpcExternal: activeConnection.rpcExternal,
         rpcMethods: activeConnection.rpcMethods,
-        nodeName: activeConnection.nodeName || undefined
+        nodeName: activeConnection.nodeName || undefined,
+        ciphertextDaRetentionBlocks: activeConnection.ciphertextDaRetentionBlocks,
+        daStoreCapacity: activeConnection.daStoreCapacity
       });
       await refreshNode();
     } catch (error) {
@@ -1200,8 +1207,40 @@ export default function App() {
   };
 
   const handleWalletSync = async (forceOverride?: boolean) => {
-    setWalletBusy(true);
     setWalletError(null);
+    const targetWs = wsUrl.trim();
+    if (!targetWs) {
+      setWalletError('WebSocket URL is required.');
+      return;
+    }
+    const toHttpUrl = (value: string) => {
+      if (value.startsWith('ws://')) {
+        return `http://${value.slice(5)}`;
+      }
+      if (value.startsWith('wss://')) {
+        return `https://${value.slice(6)}`;
+      }
+      return null;
+    };
+    const httpUrl = toHttpUrl(targetWs);
+    if (httpUrl) {
+      try {
+        const summary = await window.hegemon.node.summary({
+          connectionId: 'wallet-sync',
+          label: 'Wallet sync target',
+          isLocal: false,
+          httpUrl
+        });
+        if (!summary.reachable) {
+          setWalletError('Wallet connection is offline. Check the WebSocket URL.');
+          return;
+        }
+      } catch {
+        setWalletError('Wallet connection is offline. Check the WebSocket URL.');
+        return;
+      }
+    }
+    setWalletBusy(true);
     try {
       const rescan = forceOverride ?? forceRescan;
       if (forceOverride) {
@@ -1209,7 +1248,27 @@ export default function App() {
       }
       const passphrase = requireActivePassphrase();
       const resolvedStorePath = resolveStorePath();
-      const result = await window.hegemon.wallet.sync(resolvedStorePath, passphrase, wsUrl, rescan);
+      const syncPromise = window.hegemon.wallet.sync(resolvedStorePath, passphrase, targetWs, rescan);
+      const timeoutMs = 90_000;
+      const result = await new Promise<WalletSyncResult>((resolve, reject) => {
+        const timeout = window.setTimeout(async () => {
+          try {
+            await window.hegemon.wallet.lock();
+          } catch {
+            // Ignore lock failures; we'll surface a timeout error.
+          }
+          reject(new Error('Wallet sync timed out. Check the WebSocket URL and try again.'));
+        }, timeoutMs);
+        syncPromise
+          .then((value) => {
+            window.clearTimeout(timeout);
+            resolve(value);
+          })
+          .catch((error) => {
+            window.clearTimeout(timeout);
+            reject(error);
+          });
+      });
       setWalletSyncOutput(JSON.stringify(result, null, 2));
       await refreshWalletStatus();
       await refreshDisclosureRecords();
@@ -1217,6 +1276,18 @@ export default function App() {
       setWalletError(error instanceof Error ? error.message : 'Wallet sync failed.');
     } finally {
       setWalletBusy(false);
+    }
+  };
+
+  const handleWalletCancel = async () => {
+    try {
+      await window.hegemon.wallet.lock();
+    } catch {
+      // Ignore lock errors; we still want to clear the busy flag.
+    } finally {
+      setWalletBusy(false);
+      setWalletSyncQueued(false);
+      setWalletError('Wallet sync canceled.');
     }
   };
 
@@ -1904,7 +1975,7 @@ export default function App() {
           {sendBlockedReason ? <p className="text-xs text-amber">{sendBlockedReason}</p> : null}
           {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? (
             <p className="text-xs text-amber">
-              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.8.0 node on a different RPC
+              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.8.1 node on a different RPC
               port (e.g. 9955) and update this connection’s URLs to regain start/stop control.
             </p>
           ) : null}
@@ -2099,6 +2170,30 @@ export default function App() {
                       const nextPort = Number.parseInt(event.target.value, 10);
                       updateActiveConnection({ p2pPort: Number.isNaN(nextPort) ? undefined : nextPort });
                     }}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="label">Ciphertext retention (blocks)</span>
+                  <input
+                    value={activeConnection.ciphertextDaRetentionBlocks?.toString() ?? ''}
+                    onChange={(event) => {
+                      const nextValue = Number.parseInt(event.target.value, 10);
+                      updateActiveConnection({
+                        ciphertextDaRetentionBlocks: Number.isNaN(nextValue) ? undefined : nextValue
+                      });
+                    }}
+                    placeholder="4096"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="label">DA store capacity</span>
+                  <input
+                    value={activeConnection.daStoreCapacity?.toString() ?? ''}
+                    onChange={(event) => {
+                      const nextValue = Number.parseInt(event.target.value, 10);
+                      updateActiveConnection({ daStoreCapacity: Number.isNaN(nextValue) ? undefined : nextValue });
+                    }}
+                    placeholder="1024"
                   />
                 </label>
                 <label className="space-y-2">
@@ -2598,6 +2693,18 @@ export default function App() {
             <input value={wsUrl} onChange={(event) => setWsUrl(event.target.value)} />
           </label>
         </div>
+        {walletConnection?.wsUrl && wsUrl.trim() && wsUrl.trim() !== walletConnection.wsUrl.trim() ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-amber">
+            <span>Wallet sync URL does not match the selected connection.</span>
+            <button
+              className="action-link secondary"
+              type="button"
+              onClick={() => setWsUrl(walletConnection.wsUrl)}
+            >
+              Use selected node
+            </button>
+          </div>
+        ) : null}
         <label className="flex items-center gap-2 text-sm text-surfaceMuted">
           <input type="checkbox" checked={forceRescan} onChange={(event) => setForceRescan(event.target.checked)} />
           Force rescan on next sync
@@ -2618,6 +2725,11 @@ export default function App() {
             <button className="secondary" onClick={handleWalletLock} disabled={walletBusy || !activePassphrase}>
               Lock wallet
             </button>
+            {walletBusy ? (
+              <button className="secondary" onClick={handleWalletCancel}>
+                Cancel
+              </button>
+            ) : null}
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="flex items-center gap-2 text-sm text-surfaceMuted">

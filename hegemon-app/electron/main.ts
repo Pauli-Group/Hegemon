@@ -27,6 +27,7 @@ const walletdClient = new WalletdClient();
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const contactsFileName = 'contacts.json';
 let contactsWriteQueue: Promise<void> = Promise.resolve();
+let shutdownInProgress = false;
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.hegemon.desktop');
@@ -216,6 +217,10 @@ const createWindow = () => {
   }
 };
 
+const stopManagedServices = async () => {
+  await Promise.allSettled([nodeManager.stopNode(), walletdClient.stop()]);
+};
+
 app.whenReady().then(() => {
   app.setAboutPanelOptions({
     applicationName: 'Hegemon',
@@ -241,9 +246,19 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  void stopManagedServices();
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', (event) => {
+  if (shutdownInProgress) {
+    return;
+  }
+  shutdownInProgress = true;
+  event.preventDefault();
+  void stopManagedServices().finally(() => app.quit());
 });
 
 ipcMain.handle('node:start', async (_event, options: NodeStartOptions) => {

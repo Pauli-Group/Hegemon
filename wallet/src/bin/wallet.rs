@@ -104,6 +104,9 @@ enum Commands {
     /// Print account ID (hex) for signed extrinsics
     #[command(name = "account-id")]
     AccountId(StoreArgs),
+    /// Reset wallet sync state (keeps keys and addresses)
+    #[command(name = "reset-sync")]
+    ResetSync(StoreArgs),
     /// Send using Substrate WebSocket RPC
     #[command(name = "substrate-send")]
     SubstrateSend(SubstrateSendArgs),
@@ -452,6 +455,7 @@ fn main() -> Result<()> {
         Commands::SubstrateDaemon(args) => cmd_substrate_daemon(args),
         Commands::Status(args) => cmd_status(args),
         Commands::AccountId(args) => cmd_account_id(args),
+        Commands::ResetSync(args) => cmd_reset_sync(args),
         Commands::SubstrateSend(args) => cmd_substrate_send(args),
         Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
         Commands::StablecoinMint(args) => cmd_stablecoin_mint(args),
@@ -643,6 +647,14 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
         Some(&metadata_map)
     };
     show_status(&store, metadata)
+}
+
+fn cmd_reset_sync(args: StoreArgs) -> Result<()> {
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
+    store.reset_sync_state()?;
+    println!("wallet sync state reset (keys preserved)");
+    Ok(())
 }
 
 fn show_status(store: &WalletStore, metadata: Option<&BTreeMap<u64, String>>) -> Result<()> {
