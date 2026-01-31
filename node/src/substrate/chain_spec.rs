@@ -37,13 +37,6 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "balances": [],
             "devAccounts": null
         },
-        "sudo": {
-            "key": null
-        },
-        "session": {
-            "keys": [],
-            "nonAuthorityKeys": []
-        },
         "difficulty": {
             // GENESIS_BITS = 0x1d1ad7f2 encodes target = MAX_U256 / 160,000,000
             // For 5-second blocks at ~32 MH/s (4 threads on M-series MacBook)

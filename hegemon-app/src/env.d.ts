@@ -1,4 +1,5 @@
 import type {
+  DialogOpenOptions,
   NodeMiningRequest,
   NodeManagedStatus,
   NodeStartOptions,
@@ -51,6 +52,9 @@ export type HegemonApi = {
   contacts: {
     list: () => Promise<Contact[] | null>;
     save: (contacts: Contact[]) => Promise<void>;
+  };
+  dialog: {
+    openPath: (options: DialogOpenOptions) => Promise<string | null>;
   };
 };
 

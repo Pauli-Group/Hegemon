@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HashRouter, Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import type {
   Contact,
+  DialogOpenOptions,
   NodeConnection,
   NodeManagedStatus,
   NodeSummary,
@@ -397,7 +398,8 @@ const buildDefaultConnection = (): NodeConnection => ({
   p2pPort: 30333,
   mineThreads: 1,
   miningIntent: false,
-  ciphertextDaRetentionBlocks: 4096,
+  ciphertextDaRetentionBlocks: 0,
+  proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
   seeds: 'hegemon.pauli.group'
@@ -416,7 +418,8 @@ const buildTestnetConnection = (): NodeConnection => ({
   p2pPort: 30333,
   mineThreads: 1,
   miningIntent: false,
-  ciphertextDaRetentionBlocks: 4096,
+  ciphertextDaRetentionBlocks: 0,
+  proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
   chainSpecPath: 'testnet',
@@ -458,7 +461,6 @@ export default function App() {
   const [nodeBusy, setNodeBusy] = useState(false);
   const [nodeTransition, setNodeTransition] = useState<NodeTransition | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
-  const [showAdvancedNode, setShowAdvancedNode] = useState(false);
   const [logFilterInfo, setLogFilterInfo] = useState(true);
   const [logFilterWarn, setLogFilterWarn] = useState(true);
   const [logFilterError, setLogFilterError] = useState(true);
@@ -716,6 +718,55 @@ export default function App() {
       })
     );
   };
+
+  const openDialogPath = useCallback(async (options: DialogOpenOptions) => {
+    try {
+      return await window.hegemon.dialog.openPath(options);
+    } catch (error) {
+      console.warn('Failed to open file dialog.', error);
+      return null;
+    }
+  }, []);
+
+  const handlePickChainSpec = useCallback(async () => {
+    if (!activeConnection) {
+      return;
+    }
+    const selection = await openDialogPath({
+      title: 'Select chain spec',
+      defaultPath: activeConnection.chainSpecPath?.trim() || undefined,
+      properties: ['openFile'],
+      filters: [{ name: 'Chain spec', extensions: ['json'] }]
+    });
+    if (selection) {
+      updateActiveConnection({ chainSpecPath: selection });
+    }
+  }, [activeConnection, openDialogPath, updateActiveConnection]);
+
+  const handlePickBasePath = useCallback(async () => {
+    if (!activeConnection) {
+      return;
+    }
+    const selection = await openDialogPath({
+      title: 'Select base path',
+      defaultPath: activeConnection.basePath?.trim() || undefined,
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (selection) {
+      updateActiveConnection({ basePath: selection });
+    }
+  }, [activeConnection, openDialogPath, updateActiveConnection]);
+
+  const handlePickWalletStorePath = useCallback(async () => {
+    const selection = await openDialogPath({
+      title: 'Select wallet store',
+      defaultPath: storePath.trim() || undefined,
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (selection) {
+      setStorePath(selection);
+    }
+  }, [openDialogPath, storePath]);
 
   const activeSummary = activeConnection ? nodeSummaries[activeConnection.id] : null;
 
@@ -988,6 +1039,7 @@ export default function App() {
         rpcMethods: activeConnection.rpcMethods,
         nodeName: activeConnection.nodeName || undefined,
         ciphertextDaRetentionBlocks: activeConnection.ciphertextDaRetentionBlocks,
+        proofDaRetentionBlocks: activeConnection.proofDaRetentionBlocks,
         daStoreCapacity: activeConnection.daStoreCapacity
       });
       await refreshNode();
@@ -2012,7 +2064,7 @@ export default function App() {
   );
 
   const NodeConnectionsSection = (
-    <section className="card space-y-6">
+    <section className="card space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="label">Node</p>
@@ -2024,7 +2076,7 @@ export default function App() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2">
         <label className="space-y-2">
           <span className="label">Active connection</span>
           <select
@@ -2088,208 +2140,257 @@ export default function App() {
       ) : null}
 
       {activeConnection?.mode === 'local' && (
-        <div className="space-y-4">
-          <button
-            className="secondary"
-            onClick={() => setShowAdvancedNode((prev) => !prev)}
-          >
-            {showAdvancedNode ? 'Hide advanced settings' : 'Show advanced settings'}
-          </button>
+        <div className="space-y-6">
+          <div className="panel space-y-4">
+            <div>
+              <p className="label">Paths</p>
+              <p className="text-sm text-surfaceMuted/80">Chain spec and storage locations.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-2 md:col-span-2">
+                <span className="label">Chain spec (path or name)</span>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-surfaceMuted/70">
+                    JSON file or built-in name (e.g. <span className="mono">testnet</span>).
+                  </span>
+                  <button className="secondary text-xs px-3" type="button" onClick={handlePickChainSpec}>
+                    Browse
+                  </button>
+                </div>
+                <input
+                  className="mono"
+                  value={activeConnection.chainSpecPath ?? ''}
+                  onChange={(event) => updateActiveConnection({ chainSpecPath: event.target.value })}
+                  placeholder="config/dev-chainspec.json"
+                  spellCheck={false}
+                  title={activeConnection.chainSpecPath ?? ''}
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="label">Base path</span>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-surfaceMuted/70">Choose the folder that holds node data.</span>
+                  <button className="secondary text-xs px-3" type="button" onClick={handlePickBasePath}>
+                    Browse
+                  </button>
+                </div>
+                <input
+                  className="mono"
+                  value={activeConnection.basePath ?? ''}
+                  onChange={(event) => updateActiveConnection({ basePath: event.target.value })}
+                  placeholder="~/.hegemon-node"
+                  spellCheck={false}
+                  title={activeConnection.basePath ?? ''}
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="label">Node name</span>
+                <input
+                  value={activeConnection.nodeName ?? ''}
+                  onChange={(event) => updateActiveConnection({ nodeName: event.target.value })}
+                  placeholder="AliceBootNode"
+                />
+              </label>
+            </div>
+          </div>
 
-          {showAdvancedNode && (
-            <>
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2">
-                  <span className="label">Chain spec (path or name)</span>
-                  <input
-                    value={activeConnection.chainSpecPath ?? ''}
-                    onChange={(event) => updateActiveConnection({ chainSpecPath: event.target.value })}
-                    placeholder="config/dev-chainspec.json"
-                  />
-                </label>
-                <label className="space-y-2">
-                  <span className="label">Base path</span>
-                  <input
-                    value={activeConnection.basePath ?? ''}
-                    onChange={(event) => updateActiveConnection({ basePath: event.target.value })}
-                    placeholder="~/.hegemon-node"
-                  />
-                </label>
-                <label className="space-y-2">
-                  <span className="label">Node name</span>
-                  <input
-                    value={activeConnection.nodeName ?? ''}
-                    onChange={(event) => updateActiveConnection({ nodeName: event.target.value })}
-                    placeholder="AliceBootNode"
-                  />
-                </label>
-                <label className="space-y-2">
-                  <span className="label">RPC port</span>
-                  <input
-                    value={activeConnection.rpcPort?.toString() ?? ''}
-                    onChange={(event) => {
-                      const nextPort = Number.parseInt(event.target.value, 10);
-                      updateActiveConnection((conn) => {
-                        const port = Number.isNaN(nextPort) ? undefined : nextPort;
-                        const updates: Partial<NodeConnection> = { rpcPort: port };
-                        if (conn.wsUrl.startsWith('ws://127.0.0.1:') || conn.wsUrl.startsWith('ws://localhost:')) {
-                          const host = conn.wsUrl.includes('localhost') ? 'localhost' : '127.0.0.1';
-                          if (port) {
-                            updates.wsUrl = `ws://${host}:${port}`;
-                            updates.httpUrl = `http://${host}:${port}`;
-                          }
+          <div className="panel space-y-4">
+            <div>
+              <p className="label">Networking</p>
+              <p className="text-sm text-surfaceMuted/80">RPC, P2P, and peer discovery.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="label">RPC port</span>
+                <input
+                  value={activeConnection.rpcPort?.toString() ?? ''}
+                  onChange={(event) => {
+                    const nextPort = Number.parseInt(event.target.value, 10);
+                    updateActiveConnection((conn) => {
+                      const port = Number.isNaN(nextPort) ? undefined : nextPort;
+                      const updates: Partial<NodeConnection> = { rpcPort: port };
+                      if (conn.wsUrl.startsWith('ws://127.0.0.1:') || conn.wsUrl.startsWith('ws://localhost:')) {
+                        const host = conn.wsUrl.includes('localhost') ? 'localhost' : '127.0.0.1';
+                        if (port) {
+                          updates.wsUrl = `ws://${host}:${port}`;
+                          updates.httpUrl = `http://${host}:${port}`;
                         }
-                        return updates;
-                      });
-                    }}
+                      }
+                      return updates;
+                    });
+                  }}
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="label">P2P port</span>
+                <input
+                  value={activeConnection.p2pPort?.toString() ?? ''}
+                  onChange={(event) => {
+                    const nextPort = Number.parseInt(event.target.value, 10);
+                    updateActiveConnection({ p2pPort: Number.isNaN(nextPort) ? undefined : nextPort });
+                  }}
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="label">Listen address</span>
+                <input
+                  value={activeConnection.listenAddr ?? ''}
+                  onChange={(event) => updateActiveConnection({ listenAddr: event.target.value })}
+                  placeholder="/ip4/0.0.0.0/tcp/30333"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeConnection.rpcExternal)}
+                  onChange={(event) => updateActiveConnection({ rpcExternal: event.target.checked })}
+                />
+                RPC external (exposes HTTP to network)
+              </label>
+              <label className="space-y-2">
+                <span className="label">RPC methods</span>
+                <select
+                  value={activeConnection.rpcMethods ?? 'safe'}
+                  onChange={(event) => updateActiveConnection({ rpcMethods: event.target.value as NodeConnection['rpcMethods'] })}
+                >
+                  <option value="safe">safe</option>
+                  <option value="unsafe">unsafe</option>
+                </select>
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="label">Seeds (HEGEMON_SEEDS)</span>
+                <input
+                  value={activeConnection.seeds ?? ''}
+                  onChange={(event) => updateActiveConnection({ seeds: event.target.value })}
+                  placeholder="1.2.3.4:30333,5.6.7.8:30333"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="panel space-y-4">
+            <div>
+              <p className="label">Mining + retention</p>
+              <p className="text-sm text-surfaceMuted/80">Mining controls and DA retention policies.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-2 md:col-span-2">
+                <span className="label">Miner address</span>
+                <input
+                  value={activeConnection.minerAddress ?? ''}
+                  onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
+                  placeholder="shca1..."
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="label">Mine threads</span>
+                <input
+                  value={activeConnection.mineThreads?.toString() ?? ''}
+                  onChange={(event) => {
+                    const nextValue = Number.parseInt(event.target.value, 10);
+                    updateActiveConnection({ mineThreads: Number.isNaN(nextValue) ? undefined : nextValue });
+                  }}
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="label">Ciphertext retention (blocks)</span>
+                <input
+                  value={activeConnection.ciphertextDaRetentionBlocks?.toString() ?? ''}
+                  onChange={(event) => {
+                    const nextValue = Number.parseInt(event.target.value, 10);
+                    updateActiveConnection({
+                      ciphertextDaRetentionBlocks: Number.isNaN(nextValue) ? undefined : nextValue
+                    });
+                  }}
+                  placeholder="0 (infinite)"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="label">Proof DA retention (blocks)</span>
+                <input
+                  value={activeConnection.proofDaRetentionBlocks?.toString() ?? ''}
+                  onChange={(event) => {
+                    const nextValue = Number.parseInt(event.target.value, 10);
+                    updateActiveConnection({
+                      proofDaRetentionBlocks: Number.isNaN(nextValue) ? undefined : nextValue
+                    });
+                  }}
+                  placeholder="0"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="label">DA store capacity</span>
+                <input
+                  value={activeConnection.daStoreCapacity?.toString() ?? ''}
+                  onChange={(event) => {
+                    const nextValue = Number.parseInt(event.target.value, 10);
+                    updateActiveConnection({ daStoreCapacity: Number.isNaN(nextValue) ? undefined : nextValue });
+                  }}
+                  placeholder="1024"
+                />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2 md:col-span-2">
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(activeConnection.dev)}
+                    onChange={(event) => updateActiveConnection({ dev: event.target.checked })}
                   />
+                  Dev mode
                 </label>
                 <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
                     type="checkbox"
-                    checked={Boolean(activeConnection.rpcExternal)}
-                    onChange={(event) => updateActiveConnection({ rpcExternal: event.target.checked })}
+                    checked={Boolean(activeConnection.tmp)}
+                    onChange={(event) => updateActiveConnection({ tmp: event.target.checked })}
                   />
-                  RPC external (exposes HTTP to network)
+                  Temp storage
                 </label>
-                <label className="space-y-2">
-                  <span className="label">RPC methods</span>
-                  <select
-                    value={activeConnection.rpcMethods ?? 'safe'}
-                    onChange={(event) => updateActiveConnection({ rpcMethods: event.target.value as NodeConnection['rpcMethods'] })}
-                  >
-                    <option value="safe">safe</option>
-                    <option value="unsafe">unsafe</option>
-                  </select>
-                </label>
-                <label className="space-y-2">
-                  <span className="label">P2P port</span>
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
-                    value={activeConnection.p2pPort?.toString() ?? ''}
-                    onChange={(event) => {
-                      const nextPort = Number.parseInt(event.target.value, 10);
-                      updateActiveConnection({ p2pPort: Number.isNaN(nextPort) ? undefined : nextPort });
-                    }}
+                    type="checkbox"
+                    checked={Boolean(activeConnection.miningIntent)}
+                    onChange={(event) => updateActiveConnection({ miningIntent: event.target.checked })}
                   />
+                  Auto-start mining
                 </label>
-                <label className="space-y-2">
-                  <span className="label">Ciphertext retention (blocks)</span>
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
-                    value={activeConnection.ciphertextDaRetentionBlocks?.toString() ?? ''}
-                    onChange={(event) => {
-                      const nextValue = Number.parseInt(event.target.value, 10);
-                      updateActiveConnection({
-                        ciphertextDaRetentionBlocks: Number.isNaN(nextValue) ? undefined : nextValue
-                      });
-                    }}
-                    placeholder="4096"
+                    type="checkbox"
+                    checked={blockAlertEnabled}
+                    onChange={(event) => setBlockAlertEnabled(event.target.checked)}
                   />
+                  Play block alerts
                 </label>
-                <label className="space-y-2">
-                  <span className="label">DA store capacity</span>
-                  <input
-                    value={activeConnection.daStoreCapacity?.toString() ?? ''}
-                    onChange={(event) => {
-                      const nextValue = Number.parseInt(event.target.value, 10);
-                      updateActiveConnection({ daStoreCapacity: Number.isNaN(nextValue) ? undefined : nextValue });
-                    }}
-                    placeholder="1024"
-                  />
-                </label>
-                <label className="space-y-2">
-                  <span className="label">Listen address</span>
-                  <input
-                    value={activeConnection.listenAddr ?? ''}
-                    onChange={(event) => updateActiveConnection({ listenAddr: event.target.value })}
-                    placeholder="/ip4/0.0.0.0/tcp/30333"
-                  />
-                </label>
-                <label className="space-y-2 md:col-span-2">
-                  <span className="label">Seeds (HEGEMON_SEEDS)</span>
-                  <input
-                    value={activeConnection.seeds ?? ''}
-                    onChange={(event) => updateActiveConnection({ seeds: event.target.value })}
-                    placeholder="1.2.3.4:30333,5.6.7.8:30333"
-                  />
-                </label>
-                <label className="space-y-2 md:col-span-2">
-                  <span className="label">Miner address</span>
-                  <input
-                    value={activeConnection.minerAddress ?? ''}
-                    onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
-                    placeholder="shca1..."
-                  />
-                </label>
-                <label className="space-y-2">
-                  <span className="label">Mine threads</span>
-                  <input
-                    value={activeConnection.mineThreads?.toString() ?? ''}
-                    onChange={(event) => {
-                      const nextValue = Number.parseInt(event.target.value, 10);
-                      updateActiveConnection({ mineThreads: Number.isNaN(nextValue) ? undefined : nextValue });
-                    }}
-                  />
-                </label>
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(activeConnection.dev)}
-                      onChange={(event) => updateActiveConnection({ dev: event.target.checked })}
-                    />
-                    Dev mode
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(activeConnection.tmp)}
-                      onChange={(event) => updateActiveConnection({ tmp: event.target.checked })}
-                    />
-                    Temp storage
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(activeConnection.miningIntent)}
-                      onChange={(event) => updateActiveConnection({ miningIntent: event.target.checked })}
-                    />
-                    Auto-start mining
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                    <input
-                      type="checkbox"
-                      checked={blockAlertEnabled}
-                      onChange={(event) => setBlockAlertEnabled(event.target.checked)}
-                    />
-                    Play block alerts
-                  </label>
-                </div>
-                <p className="text-xs text-surfaceMuted md:col-span-2">
-                  Alerts play a short tone when you mine a block or when the node imports a block from someone else.
-                </p>
               </div>
-              {activeConnection.dev && !activeConnection.chainSpecPath ? (
-                <p className="text-sm text-surfaceMuted">
-                  Multi-machine networks require a shared chainspec. See runbooks/two_person_testnet.md for details.
-                </p>
-              ) : null}
-              {activeConnection.listenAddr ? (
-                <p className="text-sm text-surfaceMuted">
-                  Listen address overrides the P2P port setting.
-                </p>
-              ) : null}
-              {activeConnection.rpcExternal || activeConnection.rpcMethods === 'unsafe' ? (
-                <p className="text-sm text-guard">
-                  External RPC and unsafe methods expose control surfaces. Restrict with firewalls and only use on trusted networks.
-                </p>
-              ) : null}
-              {activeConnection.tmp ? (
-                <p className="text-sm text-guard">
-                  Temp storage deletes chain data on shutdown. Use a base path for persistence.
-                </p>
-              ) : null}
-            </>
-          )}
+              <p className="text-xs text-surfaceMuted md:col-span-2">
+                Alerts play a short tone when you mine a block or when the node imports a block from someone else.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {activeConnection.dev && !activeConnection.chainSpecPath ? (
+              <p className="text-sm text-surfaceMuted">
+                Multi-machine networks require a shared chainspec. See runbooks/two_person_testnet.md for details.
+              </p>
+            ) : null}
+            {activeConnection.listenAddr ? (
+              <p className="text-sm text-surfaceMuted">
+                Listen address overrides the P2P port setting.
+              </p>
+            ) : null}
+            {activeConnection.rpcExternal || activeConnection.rpcMethods === 'unsafe' ? (
+              <p className="text-sm text-guard">
+                External RPC and unsafe methods expose control surfaces. Restrict with firewalls and only use on trusted networks.
+              </p>
+            ) : null}
+            {activeConnection.tmp ? (
+              <p className="text-sm text-guard">
+                Temp storage deletes chain data on shutdown. Use a base path for persistence.
+              </p>
+            ) : null}
+          </div>
         </div>
       )}
     </section>
@@ -2610,19 +2711,31 @@ export default function App() {
   );
 
   const WalletStoreSection = (
-    <section className="card space-y-6">
+    <section className="card space-y-8">
       <div>
         <p className="label">Wallet</p>
         <h2 className="text-title font-semibold">Shielded Store</h2>
       </div>
 
-      <div className="grid gap-4">
+      <div className="grid gap-6">
         <label className="space-y-2">
           <span className="label">Store path</span>
-          <input value={storePath} onChange={(event) => setStorePath(event.target.value)} />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-surfaceMuted/70">Select a folder for the wallet store.</span>
+            <button className="secondary text-xs px-3" type="button" onClick={handlePickWalletStorePath}>
+              Browse
+            </button>
+          </div>
+          <input
+            className="mono"
+            value={storePath}
+            onChange={(event) => setStorePath(event.target.value)}
+            spellCheck={false}
+            title={storePath}
+          />
         </label>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="panel space-y-3">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="panel space-y-4">
             <div>
               <p className="label">Create wallet</p>
               <p className="text-sm text-surfaceMuted">New store with a strong passphrase.</p>
@@ -2658,7 +2771,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className="panel space-y-3">
+          <div className="panel space-y-4">
             <div>
               <p className="label">Open wallet</p>
               <p className="text-sm text-surfaceMuted">Unlock an existing store to sync and send.</p>
@@ -3320,18 +3433,18 @@ export default function App() {
   );
 
   const NodeWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
+    <div className="mx-auto w-full max-w-7xl space-y-8">
       <header className="space-y-3">
         <p className="label">Node</p>
         <h1 className="text-headline font-semibold tracking-tight">Operate + Observe</h1>
         <p className="text-surfaceMuted max-w-2xl">Run local nodes, manage connections, and monitor telemetry.</p>
       </header>
-      <div className="grid gap-6 xl:grid-cols-3">
-        <div className="space-y-6 xl:col-span-1">
+      <div className="grid gap-6 2xl:grid-cols-[minmax(480px,1fr)_minmax(0,2fr)]">
+        <div className="space-y-6">
           {NodeConnectionsSection}
           {ConnectionHealthSection}
         </div>
-        <div className="space-y-6 xl:col-span-2">
+        <div className="space-y-6">
           {NodeOperationsSection}
         </div>
       </div>
