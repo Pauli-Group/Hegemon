@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 use core::convert::{TryFrom, TryInto};
 
+use blake3::Hasher as Blake3Hasher;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 
 use crate::constants::{
@@ -13,6 +14,8 @@ use crate::types::BalanceSlot;
 
 pub type HashFelt = [Felt; 6];
 pub type Commitment = [u8; 48];
+
+pub const CIPHERTEXT_HASH_DOMAIN: &[u8] = b"ct-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BalanceCommitmentError {
@@ -187,6 +190,22 @@ pub fn balance_commitment_bytes(
         native_delta,
         slots,
     )?))
+}
+
+pub fn ciphertext_hash_bytes(ciphertext: &[u8]) -> Commitment {
+    let mut hasher = Blake3Hasher::new();
+    hasher.update(CIPHERTEXT_HASH_DOMAIN);
+    hasher.update(ciphertext);
+    let mut digest = [0u8; 48];
+    hasher.finalize_xof().fill(&mut digest);
+
+    let mut felts = [Felt::ZERO; 6];
+    for (idx, chunk) in digest.chunks(8).enumerate() {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(chunk);
+        felts[idx] = Felt::from_u64(u64::from_be_bytes(buf));
+    }
+    felts_to_bytes48(&felts)
 }
 
 /// Split a signed balance into a sign flag and magnitude field element.

@@ -1468,8 +1468,57 @@ parameter_types! {
     pub const MaxNullifiersPerBatch: u32 = 32;
     /// Maximum commitments per batch (16 txs * 2 commitments each).
     pub const MaxCommitmentsPerBatch: u32 = 32;
+    /// Maximum proof-DA manifest entries per block (bounds on-chain manifest size).
+    pub const MaxProofDaManifestEntries: u32 = 4096;
     /// Number of historical Merkle roots to keep for anchor validation.
     pub const MerkleRootHistorySize: u32 = 100;
+    /// Maximum forced inclusion commitments stored at once.
+    pub const MaxForcedInclusions: u32 = 16;
+    /// Maximum number of blocks a forced inclusion can remain pending.
+    pub const MaxForcedInclusionWindow: BlockNumber = 20;
+    /// Minimum bond required for forced inclusion.
+    pub const MinForcedInclusionBond: Balance = 100_000_000;
+    /// Default fee schedule parameters for shielded transfers.
+    pub DefaultFeeParameters: pallet_shielded_pool::types::FeeParameters =
+        pallet_shielded_pool::types::FeeParameters::default();
+}
+
+// === Archive Market Configuration ===
+parameter_types! {
+    /// Maximum archive providers registered on-chain.
+    pub const MaxArchiveProviders: u32 = 64;
+    /// Maximum endpoint metadata length (bytes).
+    pub const MaxArchiveEndpointLen: u32 = 256;
+    /// Minimum bond required to register as an archive provider.
+    pub const MinArchiveProviderBond: Balance = 100_000_000;
+    /// Maximum active contracts tracked per provider.
+    pub const MaxArchiveContractsPerProvider: u32 = 512;
+    /// Audit period (blocks) for archive challenges.
+    pub const ArchiveAuditPeriod: BlockNumber = 120;
+    /// Response window (blocks) for archive challenges.
+    pub const ArchiveAuditResponseWindow: BlockNumber = 30;
+    /// Maximum contracts to scan when scheduling an audit.
+    pub const MaxArchiveAuditScan: u32 = 16;
+    /// Maximum pending challenges stored on-chain.
+    pub const MaxArchivePendingChallenges: u32 = 256;
+    /// Maximum DA chunk size accepted in proofs.
+    pub const MaxArchiveDaChunkSize: u32 = 4096;
+    /// Maximum Merkle path depth for DA chunk proofs.
+    pub const MaxArchiveDaChunkProofDepth: u32 = 32;
+    /// Maximum Merkle path depth for DA page proofs.
+    pub const MaxArchiveDaPageProofDepth: u32 = 32;
+}
+
+pub struct RuntimeDaCommitmentProvider;
+impl pallet_archive_market::DaCommitmentProvider<BlockNumber> for RuntimeDaCommitmentProvider {
+    fn da_commitment(block: BlockNumber) -> Option<pallet_archive_market::DaCommitment> {
+        pallet_shielded_pool::DaCommitments::<Runtime>::get(block).map(|commitment| {
+            pallet_archive_market::DaCommitment {
+                root: commitment.root,
+                chunk_count: commitment.chunk_count,
+            }
+        })
+    }
 }
 
 pub struct RuntimeStablecoinPolicyProvider;
@@ -1545,6 +1594,11 @@ impl pallet_shielded_pool::AttestationCommitmentProvider<u64, BlockNumber>
 impl pallet_shielded_pool::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+    type DefaultFeeParameters = DefaultFeeParameters;
+    type Currency = Balances;
+    type MaxForcedInclusions = MaxForcedInclusions;
+    type MaxForcedInclusionWindow = MaxForcedInclusionWindow;
+    type MinForcedInclusionBond = MinForcedInclusionBond;
     type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
     type BatchProofVerifier = pallet_shielded_pool::verifier::StarkBatchVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
@@ -1552,6 +1606,7 @@ impl pallet_shielded_pool::Config for Runtime {
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
+    type MaxProofDaManifestEntries = MaxProofDaManifestEntries;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxSubsidy;
     type StablecoinAssetId = u32;
@@ -1561,6 +1616,24 @@ impl pallet_shielded_pool::Config for Runtime {
     type OracleCommitmentProvider = RuntimeOracleCommitmentProvider;
     type AttestationCommitmentProvider = RuntimeAttestationCommitmentProvider;
     type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
+}
+
+impl pallet_archive_market::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type Currency = Balances;
+    type DaCommitmentProvider = RuntimeDaCommitmentProvider;
+    type MinProviderBond = MinArchiveProviderBond;
+    type MaxProviders = MaxArchiveProviders;
+    type MaxEndpointLen = MaxArchiveEndpointLen;
+    type MaxContractsPerProvider = MaxArchiveContractsPerProvider;
+    type AuditPeriod = ArchiveAuditPeriod;
+    type AuditResponseWindow = ArchiveAuditResponseWindow;
+    type MaxAuditScan = MaxArchiveAuditScan;
+    type MaxPendingChallenges = MaxArchivePendingChallenges;
+    type MaxDaChunkSize = MaxArchiveDaChunkSize;
+    type MaxDaChunkProofDepth = MaxArchiveDaChunkProofDepth;
+    type MaxDaPageProofDepth = MaxArchiveDaPageProofDepth;
+    type WeightInfo = ();
 }
 
 construct_runtime!(
@@ -1586,6 +1659,7 @@ construct_runtime!(
         FeeModel: pallet_fee_model::{Pallet, Storage, Event<T>},
         Observability: pallet_observability::{Pallet, Call, Storage, Event<T>},
         ShieldedPool: pallet_shielded_pool::{Pallet, Call, Storage, Event<T>, Config<T>, Inherent, ValidateUnsigned},
+        ArchiveMarket: pallet_archive_market::{Pallet, Call, Storage, Event<T>, Config<T>},
     }
 );
 
@@ -1755,6 +1829,24 @@ sp_api::impl_runtime_apis! {
             notes
         }
 
+        fn get_commitments(
+            start: u64,
+            limit: u32,
+        ) -> sp_std::vec::Vec<(u64, [u8; 48])> {
+            let mut commitments = sp_std::vec::Vec::new();
+            let end = start.saturating_add(limit as u64);
+
+            for index in start..end {
+                if let Some(commitment) =
+                    pallet_shielded_pool::Commitments::<Runtime>::get(index)
+                {
+                    commitments.push((index, commitment));
+                }
+            }
+
+            commitments
+        }
+
         fn encrypted_note_count() -> u64 {
             pallet_shielded_pool::CommitmentIndex::<Runtime>::get()
         }
@@ -1835,12 +1927,74 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys().collect()
         }
 
+        fn da_policy() -> pallet_shielded_pool::types::DaAvailabilityPolicy {
+            pallet_shielded_pool::DaPolicyStorage::<Runtime>::get()
+        }
+
+        fn ciphertext_policy() -> pallet_shielded_pool::types::CiphertextPolicy {
+            pallet_shielded_pool::CiphertextPolicyStorage::<Runtime>::get()
+        }
+
+        fn proof_availability_policy() -> pallet_shielded_pool::types::ProofAvailabilityPolicy {
+            pallet_shielded_pool::ProofAvailabilityPolicyStorage::<Runtime>::get()
+        }
+
         fn compact_merkle_tree() -> pallet_shielded_pool::merkle::CompactMerkleTree {
             pallet_shielded_pool::MerkleTree::<Runtime>::get()
         }
 
         fn merkle_root_history() -> sp_std::vec::Vec<[u8; 48]> {
             pallet_shielded_pool::MerkleRootHistory::<Runtime>::get().into_inner()
+        }
+
+        fn fee_parameters() -> pallet_shielded_pool::types::FeeParameters {
+            pallet_shielded_pool::FeeParametersStorage::<Runtime>::get()
+        }
+
+        fn fee_quote(
+            ciphertext_bytes: u64,
+            proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<u128, ()> {
+            pallet_shielded_pool::Pallet::<Runtime>::quote_fee(ciphertext_bytes, proof_kind)
+                .map_err(|_| ())
+        }
+
+        fn forced_inclusions() -> sp_std::vec::Vec<pallet_shielded_pool::types::ForcedInclusionStatus> {
+            pallet_shielded_pool::Pallet::<Runtime>::forced_inclusions()
+        }
+    }
+
+    impl apis::ArchiveMarketApi<Block> for Runtime {
+        fn archive_provider_count() -> u32 {
+            pallet_archive_market::ProviderCount::<Runtime>::get()
+        }
+
+        fn archive_provider(
+            provider: AccountId,
+        ) -> Option<pallet_archive_market::ProviderInfo<Runtime>> {
+            pallet_archive_market::Providers::<Runtime>::get(provider)
+        }
+
+        fn archive_providers(
+        ) -> sp_std::vec::Vec<(AccountId, pallet_archive_market::ProviderInfo<Runtime>)> {
+            pallet_archive_market::Providers::<Runtime>::iter().collect()
+        }
+
+        fn archive_contract(
+            contract_id: u64,
+        ) -> Option<pallet_archive_market::ArchiveContract<Runtime>> {
+            pallet_archive_market::Contracts::<Runtime>::get(contract_id)
+        }
+
+        fn archive_contracts(
+            provider: AccountId,
+        ) -> sp_std::vec::Vec<pallet_archive_market::ArchiveContract<Runtime>> {
+            pallet_archive_market::ProviderContracts::<Runtime>::get(provider)
+                .into_iter()
+                .filter_map(|contract_id| {
+                    pallet_archive_market::Contracts::<Runtime>::get(contract_id)
+                })
+                .collect()
         }
     }
 }

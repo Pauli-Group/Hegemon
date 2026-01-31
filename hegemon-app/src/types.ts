@@ -61,6 +61,7 @@ export type NodeSummary = {
   label: string;
   reachable: boolean;
   isLocal: boolean;
+  nodeVersion: string | null;
   peers: number | null;
   isSyncing: boolean | null;
   bestBlock: string | null;
@@ -78,6 +79,13 @@ export type NodeSummary = {
   config: NodeConfigSnapshot | null;
   updatedAt: string;
   error?: string | null;
+};
+
+export type NodeManagedStatus = {
+  managed: boolean;
+  connectionId: string | null;
+  pid: number | null;
+  rpcPort: number | null;
 };
 
 export type WalletBalance = {

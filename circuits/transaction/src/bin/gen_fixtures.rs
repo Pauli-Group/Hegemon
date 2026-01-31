@@ -94,6 +94,7 @@ fn sample_witness() -> TransactionWitness {
     TransactionWitness {
         inputs: vec![input_note_native, input_note_asset],
         outputs: vec![output_native, output_asset],
+        ciphertext_hashes: vec![[1u8; 48]; 2],
         sk_spend: [42u8; 32],
         merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,

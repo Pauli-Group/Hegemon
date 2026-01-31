@@ -16,9 +16,9 @@ rand_chacha = { version = "0.9", default-features = false }
 rand_core = { version = "0.9", default-features = false }
 
 # REAL Post-Quantum Cryptography (FIPS 203/204/205)
-ml-kem = { version = "0.3.0-pre.2", default-features = false, features = ["deterministic"] }
-ml-dsa = { version = "0.1.0-rc.2", default-features = false }
-slh-dsa = { version = "0.2.0-rc.1", default-features = false }
+ml-kem = { version = "0.3.0-pre.3", default-features = false, features = ["deterministic"] }
+ml-dsa = { version = "0.1.0-rc.3", default-features = false }
+slh-dsa = { version = "0.2.0-rc.2", default-features = false }
 
 # AEAD for note encryption
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

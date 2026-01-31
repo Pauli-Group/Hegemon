@@ -1,0 +1,20 @@
+[package]
+name = "aggregation-circuit"
+version = "0.1.0"
+edition = "2021"
+
+description = "Aggregation proof builder for Hegemon transaction proofs"
+
+[dependencies]
+p3-batch-stark = { workspace = true }
+p3-circuit = { workspace = true }
+p3-circuit-prover = { workspace = true }
+p3-recursion = { workspace = true }
+p3-field = { workspace = true }
+p3-uni-stark = { workspace = true }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+thiserror = "1.0"
+transaction-circuit = { path = "../transaction", package = "transaction-circuit" }
+
+[dev-dependencies]
+consensus = { path = "../../consensus" }

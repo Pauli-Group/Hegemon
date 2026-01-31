@@ -42,7 +42,7 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
-    hashing_pq::bytes48_to_felts,
+    hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes},
     note::OutputNoteWitness,
     witness::TransactionWitness,
     StablecoinPolicyBinding,
@@ -263,9 +263,21 @@ impl<'a> ShieldedTxBuilder<'a> {
             self.build_outputs(&derived, &selection, required_value, fee, &mut rng)?;
         stats.encryption_time = encryption_start.elapsed();
 
+        let ciphertext_hashes = ciphertexts
+            .iter()
+            .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+            .collect::<Result<Vec<_>, _>>()?;
+
         // Build witness
         let witness_start = Instant::now();
-        let witness = self.build_witness(&derived, &fvk, &selection, output_witnesses, fee)?;
+        let witness = self.build_witness(
+            &derived,
+            &fvk,
+            &selection,
+            output_witnesses,
+            ciphertext_hashes.clone(),
+            fee,
+        )?;
         stats.witness_build_time = witness_start.elapsed();
 
         // Generate STARK proof
@@ -284,6 +296,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             &proof_result.anchor,
             &proof_result.nullifiers,
             &proof_result.commitments,
+            &ciphertext_hashes,
             proof_result.fee,
             proof_result.value_balance,
         );
@@ -450,6 +463,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         _fvk: &FullViewingKey,
         selection: &[SpendableNote],
         outputs: Vec<OutputNoteWitness>,
+        ciphertext_hashes: Vec<[u8; 48]>,
         fee: u64,
     ) -> Result<TransactionWitness, WalletError> {
         // Get Merkle tree for authentication paths
@@ -487,6 +501,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         Ok(TransactionWitness {
             inputs,
             outputs,
+            ciphertext_hashes,
             sk_spend: derived.view.nullifier_key(),
             merkle_root: tree.root(),
             fee,
@@ -505,6 +520,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         anchor: &[u8; 48],
         nullifiers: &[[u8; 48]],
         commitments: &[[u8; 48]],
+        ciphertext_hashes: &[[u8; 48]],
         fee: u64,
         value_balance: i128,
     ) -> [u8; 64] {
@@ -515,6 +531,9 @@ impl<'a> ShieldedTxBuilder<'a> {
         }
         for cm in commitments {
             data.extend_from_slice(cm);
+        }
+        for ct in ciphertext_hashes {
+            data.extend_from_slice(ct);
         }
         data.extend_from_slice(&fee.to_le_bytes());
         data.extend_from_slice(&value_balance.to_le_bytes());

@@ -175,13 +175,23 @@ parameter_types! {
     pub const MaxEncryptedNotesPerTx: u32 = 2;
     pub const MaxNullifiersPerBatch: u32 = 32;  // 16 txs * 2 nullifiers
     pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
+    pub const MaxProofDaManifestEntries: u32 = 1024;
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
+    pub const MaxForcedInclusions: u32 = 8;
+    pub const MaxForcedInclusionWindow: u64 = 10;
+    pub const MinForcedInclusionBond: u128 = 50;
+    pub DefaultFeeParameters: crate::types::FeeParameters = crate::types::FeeParameters::default();
 }
 
 impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type AdminOrigin = frame_system::EnsureRoot<u64>;
+    type DefaultFeeParameters = DefaultFeeParameters;
+    type Currency = Balances;
+    type MaxForcedInclusions = MaxForcedInclusions;
+    type MaxForcedInclusionWindow = MaxForcedInclusionWindow;
+    type MinForcedInclusionBond = MinForcedInclusionBond;
     type ProofVerifier = TestProofVerifier;
     type BatchProofVerifier = TestBatchProofVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
@@ -189,6 +199,7 @@ impl pallet_shielded_pool::Config for Test {
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
+    type MaxProofDaManifestEntries = MaxProofDaManifestEntries;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxCoinbaseSubsidy;
     type StablecoinAssetId = u32;
@@ -236,9 +247,10 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{
-        BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA,
-        NOTE_ENCRYPTION_VERSION,
+        BindingHash, EncryptedNote, FeeParameters, FeeProofKind, ProofAvailabilityPolicy,
+        StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA, NOTE_ENCRYPTION_VERSION,
     };
+    use codec::Encode;
     use frame_support::traits::Hooks;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
@@ -248,6 +260,10 @@ mod tests {
 
     fn valid_proof() -> StarkProof {
         StarkProof::from_bytes(vec![1u8; 1024])
+    }
+
+    fn valid_da_root() -> [u8; 48] {
+        [9u8; 48]
     }
 
     fn valid_binding_hash() -> BindingHash {
@@ -347,6 +363,8 @@ mod tests {
     fn validate_unsigned_submit_commitment_proof_is_in_block_only() {
         new_test_ext().execute_with(|| {
             let call = crate::Call::<Test>::submit_commitment_proof {
+                da_root: valid_da_root(),
+                chunk_count: 1,
                 proof: valid_proof(),
             };
 
@@ -367,6 +385,8 @@ mod tests {
     fn validate_unsigned_submit_commitment_proof_rejects_oversized() {
         new_test_ext().execute_with(|| {
             let call = crate::Call::<Test>::submit_commitment_proof {
+                da_root: valid_da_root(),
+                chunk_count: 1,
                 proof: StarkProof {
                     data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
                 },
@@ -388,10 +408,14 @@ mod tests {
         new_test_ext().execute_with(|| {
             assert_ok!(Pallet::<Test>::submit_commitment_proof(
                 RuntimeOrigin::none(),
+                valid_da_root(),
+                1,
                 valid_proof(),
             ));
 
             let call = crate::Call::<Test>::submit_commitment_proof {
+                da_root: valid_da_root(),
+                chunk_count: 1,
                 proof: valid_proof(),
             };
             let validity_in_block =
@@ -406,8 +430,9 @@ mod tests {
     #[test]
     fn mint_coinbase_works() {
         new_test_ext().execute_with(|| {
-            let amount = 1000u64;
-            let coinbase_data = valid_coinbase_data(amount);
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let coinbase_data = valid_coinbase_data(subsidy);
 
             assert_ok!(Pallet::<Test>::mint_coinbase(
                 RuntimeOrigin::none(),
@@ -415,7 +440,7 @@ mod tests {
             ));
 
             // Check pool balance increased
-            assert_eq!(Pallet::<Test>::pool_balance(), amount as u128);
+            assert_eq!(Pallet::<Test>::pool_balance(), subsidy as u128);
 
             // Check commitment was added
             assert!(Pallet::<Test>::commitments(0).is_some());
@@ -427,21 +452,318 @@ mod tests {
     }
 
     #[test]
+    fn fee_requires_coinbase_amount() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            let fee = 5u64;
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                fee,
+                0,
+            ));
+
+            assert_eq!(Pallet::<Test>::block_fees(), fee as u128);
+
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+
+            let wrong_coinbase = valid_coinbase_data(subsidy);
+            assert_noop!(
+                Pallet::<Test>::mint_coinbase(RuntimeOrigin::none(), wrong_coinbase),
+                crate::Error::<Test>::CoinbaseAmountMismatch
+            );
+
+            let expected = subsidy.saturating_add(fee);
+            let coinbase_data = valid_coinbase_data(expected);
+            assert_ok!(Pallet::<Test>::mint_coinbase(
+                RuntimeOrigin::none(),
+                coinbase_data,
+            ));
+
+            assert_eq!(Pallet::<Test>::pool_balance(), expected as u128);
+        });
+    }
+
+    #[test]
+    fn fee_schedule_rejects_low_fee() {
+        new_test_ext().execute_with(|| {
+            let params = FeeParameters {
+                proof_fee: 10,
+                batch_proof_fee: 5,
+                da_byte_fee: 1,
+                retention_byte_fee: 0,
+                hot_retention_blocks: 0,
+            };
+            assert_ok!(Pallet::<Test>::set_fee_parameters(
+                RuntimeOrigin::root(),
+                params
+            ));
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let ciphertext_bytes: u64 = ciphertexts
+                .iter()
+                .map(|note| (note.ciphertext.len() + note.kem_ciphertext.len()) as u64)
+                .sum();
+            let required =
+                Pallet::<Test>::quote_fee(ciphertext_bytes, FeeProofKind::Single).unwrap();
+            let low_fee = required.saturating_sub(1) as u64;
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    None,
+                    low_fee,
+                    0,
+                ),
+                crate::Error::<Test>::FeeTooLow
+            );
+        });
+    }
+
+    #[test]
+    fn forced_inclusion_satisfied_returns_bond() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            let proof = valid_proof();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertexts: ciphertexts.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+            let commitment = sp_core::hashing::blake2_256(&call.encode());
+
+            let now = frame_system::Pallet::<Test>::block_number();
+            let expiry = now + 5;
+            let bond = MinForcedInclusionBond::get();
+
+            assert_ok!(Pallet::<Test>::submit_forced_inclusion(
+                RuntimeOrigin::signed(1),
+                commitment,
+                expiry,
+                bond,
+            ));
+
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), bond);
+
+            assert_ok!(Pallet::<Test>::shielded_transfer_unsigned(
+                RuntimeOrigin::none(),
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                binding_hash,
+                None,
+                0,
+            ));
+
+            assert!(Pallet::<Test>::forced_inclusion_queue().is_empty());
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), 0);
+        });
+    }
+
+    #[test]
+    fn forced_inclusion_expiry_slashes_bond() {
+        new_test_ext().execute_with(|| {
+            let commitment = [9u8; 32];
+            let bond = MinForcedInclusionBond::get();
+            let now = frame_system::Pallet::<Test>::block_number();
+            let expiry = now + 1;
+
+            assert_ok!(Pallet::<Test>::submit_forced_inclusion(
+                RuntimeOrigin::signed(1),
+                commitment,
+                expiry,
+                bond,
+            ));
+
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), bond);
+
+            let next = expiry + 1;
+            frame_system::Pallet::<Test>::set_block_number(next);
+            Pallet::<Test>::on_initialize(next);
+
+            assert!(Pallet::<Test>::forced_inclusion_queue().is_empty());
+            assert_eq!(pallet_balances::Pallet::<Test>::reserved_balance(1), 0);
+        });
+    }
+
+    #[test]
+    fn forced_inclusion_rejects_after_transfer() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_ok!(Pallet::<Test>::shielded_transfer_unsigned(
+                RuntimeOrigin::none(),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                0,
+            ));
+
+            assert_noop!(
+                Pallet::<Test>::submit_forced_inclusion(
+                    RuntimeOrigin::signed(1),
+                    [7u8; 32],
+                    frame_system::Pallet::<Test>::block_number() + 5,
+                    MinForcedInclusionBond::get(),
+                ),
+                crate::Error::<Test>::ForcedInclusionAfterTransfers
+            );
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_after_coinbase() {
+        new_test_ext().execute_with(|| {
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let coinbase_data = valid_coinbase_data(subsidy);
+            assert_ok!(Pallet::<Test>::mint_coinbase(
+                RuntimeOrigin::none(),
+                coinbase_data,
+            ));
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    None,
+                    0,
+                    0,
+                ),
+                crate::Error::<Test>::TransfersAfterCoinbase
+            );
+        });
+    }
+
+    #[test]
+    fn fees_burned_when_coinbase_missing() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            let fee = 7u64;
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                fee,
+                0,
+            ));
+
+            assert_eq!(Pallet::<Test>::block_fees(), fee as u128);
+            assert_eq!(Pallet::<Test>::total_fees_burned(), 0);
+
+            frame_system::Pallet::<Test>::set_block_number(2);
+            Pallet::<Test>::on_initialize(2);
+
+            assert_eq!(Pallet::<Test>::block_fees(), 0);
+            assert_eq!(Pallet::<Test>::total_fees_burned(), fee as u128);
+        });
+    }
+
+    #[test]
     fn submit_commitment_proof_requires_none_origin_and_is_singleton() {
         new_test_ext().execute_with(|| {
             // Signed origin rejected.
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::signed(1), valid_proof(),),
+                Pallet::<Test>::submit_commitment_proof(
+                    RuntimeOrigin::signed(1),
+                    valid_da_root(),
+                    1,
+                    valid_proof(),
+                ),
                 sp_runtime::DispatchError::BadOrigin
             );
 
             // None origin accepted once per block.
             assert_ok!(Pallet::<Test>::submit_commitment_proof(
                 RuntimeOrigin::none(),
+                valid_da_root(),
+                1,
                 valid_proof(),
             ));
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::none(), valid_proof(),),
+                Pallet::<Test>::submit_commitment_proof(
+                    RuntimeOrigin::none(),
+                    valid_da_root(),
+                    1,
+                    valid_proof(),
+                ),
                 crate::Error::<Test>::CommitmentProofAlreadyProcessed
             );
 
@@ -449,6 +771,8 @@ mod tests {
             Pallet::<Test>::on_initialize(2);
             assert_ok!(Pallet::<Test>::submit_commitment_proof(
                 RuntimeOrigin::none(),
+                valid_da_root(),
+                1,
                 valid_proof(),
             ));
         });
@@ -461,7 +785,12 @@ mod tests {
                 data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
             };
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::none(), proof),
+                Pallet::<Test>::submit_commitment_proof(
+                    RuntimeOrigin::none(),
+                    valid_da_root(),
+                    1,
+                    proof,
+                ),
                 crate::Error::<Test>::ProofTooLarge
             );
         });
@@ -1357,6 +1686,175 @@ mod tests {
                 ),
                 crate::Error::<Test>::DuplicateNullifierInTx
             );
+        });
+    }
+
+    #[test]
+    fn proofless_sidecar_rejected_without_aggregation_mode() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            let proof = StarkProof::from_bytes(Vec::new());
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertext_hashes: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[3u8; 48]].try_into().unwrap();
+            let ciphertext_sizes: BoundedVec<u32, MaxCommitmentsPerTx> =
+                vec![1u32].try_into().unwrap();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned_sidecar {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                ciphertext_sizes: ciphertext_sizes.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Custom(12)
+                ))
+            ));
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer_unsigned_sidecar(
+                    RuntimeOrigin::none(),
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    binding_hash,
+                    None,
+                    0,
+                ),
+                crate::Error::<Test>::ProofBytesRequired
+            );
+        });
+    }
+
+    #[test]
+    fn proofless_sidecar_rejected_when_policy_inline() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            assert_ok!(Pallet::<Test>::enable_aggregation_mode(
+                RuntimeOrigin::none()
+            ));
+
+            let proof = StarkProof::from_bytes(Vec::new());
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertext_hashes: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[3u8; 48]].try_into().unwrap();
+            let ciphertext_sizes: BoundedVec<u32, MaxCommitmentsPerTx> =
+                vec![1u32].try_into().unwrap();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned_sidecar {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                ciphertext_sizes: ciphertext_sizes.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Custom(12)
+                ))
+            ));
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer_unsigned_sidecar(
+                    RuntimeOrigin::none(),
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    binding_hash,
+                    None,
+                    0,
+                ),
+                crate::Error::<Test>::ProofBytesRequired
+            );
+        });
+    }
+
+    #[test]
+    fn proofless_sidecar_allowed_with_da_policy_and_aggregation_mode() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            assert_ok!(Pallet::<Test>::enable_aggregation_mode(
+                RuntimeOrigin::none()
+            ));
+            assert_ok!(Pallet::<Test>::set_proof_availability_policy(
+                RuntimeOrigin::root(),
+                ProofAvailabilityPolicy::DaRequired,
+            ));
+
+            let proof = StarkProof::from_bytes(Vec::new());
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertext_hashes: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[3u8; 48]].try_into().unwrap();
+            let ciphertext_sizes: BoundedVec<u32, MaxCommitmentsPerTx> =
+                vec![1u32].try_into().unwrap();
+            let binding_hash = valid_binding_hash();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned_sidecar {
+                proof: proof.clone(),
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                ciphertext_sizes: ciphertext_sizes.clone(),
+                anchor,
+                binding_hash: binding_hash.clone(),
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(validity.is_ok());
+
+            assert_ok!(Pallet::<Test>::shielded_transfer_unsigned_sidecar(
+                RuntimeOrigin::none(),
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                binding_hash,
+                None,
+                0,
+            ));
         });
     }
 }
