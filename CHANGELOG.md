@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.8.1 - 2026-01-31
+- Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.8.1`.
+
 ## v0.8.0 - 2026-01-23
 - Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.8.0`.
 

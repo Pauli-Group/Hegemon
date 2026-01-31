@@ -271,6 +271,42 @@ impl WalletStore {
         })
     }
 
+    /// Advance the ciphertext cursor to a later index (used to skip pruned gaps).
+    pub fn advance_ciphertext_cursor(&self, new_index: u64) -> Result<(), WalletError> {
+        self.with_mut(|state| {
+            if new_index < state.next_ciphertext_index {
+                return Err(WalletError::InvalidState("ciphertext index rewind"));
+            }
+            state.next_ciphertext_index = new_index;
+            Ok(())
+        })
+    }
+
+    /// Repair note positions by re-mapping commitments to indices.
+    /// Returns the number of notes whose position was updated.
+    pub fn repair_note_positions(&self) -> Result<usize, WalletError> {
+        self.with_mut(|state| {
+            let mut updated = 0usize;
+            for note in &mut state.notes {
+                let expected = transaction_circuit::hashing_pq::felts_to_bytes48(
+                    &note.note.note_data.commitment(),
+                );
+                let position = state
+                    .commitments
+                    .iter()
+                    .position(|value| *value == expected)
+                    .ok_or(WalletError::InvalidState(
+                        "note commitment not found in local commitment list",
+                    ))? as u64;
+                if note.position != position {
+                    note.position = position;
+                    updated = updated.saturating_add(1);
+                }
+            }
+            Ok(updated)
+        })
+    }
+
     pub fn append_commitments(&self, entries: &[(u64, Commitment)]) -> Result<(), WalletError> {
         if entries.is_empty() {
             return Ok(());
@@ -336,14 +372,24 @@ impl WalletStore {
                 }
 
                 if let Some(note) = maybe_note {
-                    if !state.notes.iter().any(|n| n.position == index) {
+                    let expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+                        &note.note_data.commitment(),
+                    );
+                    let position = state
+                        .commitments
+                        .iter()
+                        .position(|value| *value == expected_commitment)
+                        .ok_or(WalletError::InvalidState(
+                            "note commitment not found in local commitment list",
+                        ))? as u64;
+                    if !state.notes.iter().any(|n| n.position == position) {
                         let nullifier = state
                             .full_viewing_key
                             .as_ref()
-                            .map(|fvk| fvk.compute_nullifier(&note.note.rho, index));
+                            .map(|fvk| fvk.compute_nullifier(&note.note.rho, position));
                         state.notes.push(TrackedNote {
                             note,
-                            position: index,
+                            position,
                             ciphertext_index: index,
                             nullifier,
                             spent: false,
@@ -505,6 +551,30 @@ impl WalletStore {
                     .map_err(|_| WalletError::InvalidState("tree overflow"))?;
             }
             Ok(tree)
+        })
+    }
+
+    /// Validate that tracked notes match the local commitment list.
+    /// Returns an error if any note's commitment cannot be found at its position.
+    pub fn validate_notes_against_commitments(&self) -> Result<(), WalletError> {
+        self.with_state(|state| {
+            for note in &state.notes {
+                let idx = note.position as usize;
+                let Some(commitment) = state.commitments.get(idx) else {
+                    return Err(WalletError::InvalidState(
+                        "note position beyond commitment list",
+                    ));
+                };
+                let expected = transaction_circuit::hashing_pq::felts_to_bytes48(
+                    &note.note.note_data.commitment(),
+                );
+                if *commitment != expected {
+                    return Err(WalletError::InvalidState(
+                        "note commitment mismatch at recorded position",
+                    ));
+                }
+            }
+            Ok(())
         })
     }
 
@@ -717,6 +787,26 @@ impl WalletStore {
             // Remove expired transactions (iterate in reverse to preserve indexes)
             for i in expired_indexes.into_iter().rev() {
                 state.pending.remove(i);
+            }
+
+            // Release any notes marked pending that are not referenced by a pending tx.
+            // This can happen if a submit failed or the process crashed before recording.
+            let mut referenced: HashSet<usize> = HashSet::new();
+            for tx in &state.pending {
+                referenced.extend(tx.spent_note_indexes.iter().copied());
+            }
+            let mut released = 0usize;
+            for (idx, note) in state.notes.iter_mut().enumerate() {
+                if note.pending_spend && !note.spent && !referenced.contains(&idx) {
+                    note.pending_spend = false;
+                    released = released.saturating_add(1);
+                }
+            }
+            if released > 0 && std::env::var("WALLET_DEBUG_PENDING").is_ok() {
+                eprintln!(
+                    "[DEBUG refresh_pending] released {} orphaned pending notes",
+                    released
+                );
             }
 
             Ok(())
@@ -1147,9 +1237,12 @@ mod serde_bytes_vec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notes::MemoPlaintext;
+    use crate::notes::NoteCiphertext;
     use crate::notes::NotePlaintext;
     use rand::{rngs::StdRng, SeedableRng};
     use tempfile::tempdir;
+    use transaction_circuit::hashing_pq::felts_to_bytes48;
 
     #[test]
     fn create_and_open_round_trip() {
@@ -1186,5 +1279,101 @@ mod tests {
         assert_eq!(notes.len(), 1);
         store.mark_notes_pending(&[notes[0].index], true).unwrap();
         assert!(store.spendable_notes(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn orphaned_pending_notes_are_released() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let note1 = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext1 = NoteCiphertext::encrypt(&address, &note1, &mut rng).unwrap();
+        let recovered1 = ivk.decrypt_note(&ciphertext1).unwrap();
+        let commitment1 = felts_to_bytes48(&recovered1.note_data.commitment());
+
+        let note2 = NotePlaintext::random(20, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext2 = NoteCiphertext::encrypt(&address, &note2, &mut rng).unwrap();
+        let recovered2 = ivk.decrypt_note(&ciphertext2).unwrap();
+        let commitment2 = felts_to_bytes48(&recovered2.note_data.commitment());
+
+        store
+            .append_commitments(&[(0, commitment1), (1, commitment2)])
+            .unwrap();
+        store.register_ciphertext_index(0).unwrap();
+        store.record_recovered_note(recovered1, 0, 0).unwrap();
+        store.register_ciphertext_index(1).unwrap();
+        store.record_recovered_note(recovered2, 1, 1).unwrap();
+
+        let notes = store.spendable_notes(0).unwrap();
+        assert_eq!(notes.len(), 2);
+        let idx0 = notes[0].index;
+        let idx1 = notes[1].index;
+
+        store.mark_notes_pending(&[idx0, idx1], true).unwrap();
+        store
+            .record_pending_submission([1u8; 32], vec![[2u8; 48]], vec![idx0], vec![], 0)
+            .unwrap();
+
+        store.refresh_pending(1, &HashSet::new()).unwrap();
+        let pending = store.pending_spend_notes(0).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].index, idx0);
+    }
+
+    #[test]
+    fn recovered_note_uses_commitment_index_as_position() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(77);
+
+        let note_a = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let note_b = NotePlaintext::random(20, 0, MemoPlaintext::default(), &mut rng);
+        let ct_a = NoteCiphertext::encrypt(&address, &note_a, &mut rng).unwrap();
+        let ct_b = NoteCiphertext::encrypt(&address, &note_b, &mut rng).unwrap();
+        let rec_a = ivk.decrypt_note(&ct_a).unwrap();
+        let rec_b = ivk.decrypt_note(&ct_b).unwrap();
+
+        let cm_a = felts_to_bytes48(&rec_a.note_data.commitment());
+        let cm_b = felts_to_bytes48(&rec_b.note_data.commitment());
+        store.append_commitments(&[(0, cm_a), (1, cm_b)]).unwrap();
+
+        let recovered = vec![Some(rec_b), None];
+        let added = store.apply_ciphertext_batch(0, recovered).unwrap();
+        assert_eq!(added, 1);
+
+        let notes = store.spendable_notes(0).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].position, 1);
+    }
+
+    #[test]
+    fn repair_note_positions_updates_mismatched_notes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(91);
+
+        let note = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+
+        store.append_commitments(&[(0, commitment)]).unwrap();
+        store.register_ciphertext_index(0).unwrap();
+        store.record_recovered_note(recovered, 5, 0).unwrap();
+
+        assert!(store.validate_notes_against_commitments().is_err());
+        let updated = store.repair_note_positions().unwrap();
+        assert_eq!(updated, 1);
+        assert!(store.validate_notes_against_commitments().is_ok());
     }
 }
