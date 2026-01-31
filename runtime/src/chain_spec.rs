@@ -1,8 +1,8 @@
 use sp_core::H256;
 
 use crate::{
-    AccountId, Balance, BalancesConfig, DifficultyConfig, DummySessionKeys, PowDifficulty,
-    RuntimeGenesisConfig, SessionConfig, ShieldedPoolConfig, SudoConfig, SystemConfig,
+    AccountId, Balance, BalancesConfig, DifficultyConfig, PowDifficulty, RuntimeGenesisConfig,
+    ShieldedPoolConfig, SystemConfig,
 };
 use pallet_shielded_pool::verifier::StarkVerifier;
 
@@ -21,25 +21,12 @@ pub struct ChainSpec {
 const DEFAULT_DA_CHUNK_SIZE: u32 = 65536;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 
-fn account(seed: u8) -> AccountId {
-    AccountId::new([seed; 32])
-}
-
-fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGenesisConfig {
-    let validators: Vec<AccountId> = endowed.iter().map(|(account, _)| account.clone()).collect();
+fn base_genesis(endowed: &[(AccountId, Balance)]) -> RuntimeGenesisConfig {
     RuntimeGenesisConfig {
         system: SystemConfig::default(),
         balances: BalancesConfig {
             balances: endowed.to_vec(),
             dev_accounts: None,
-        },
-        sudo: SudoConfig { key: Some(sudo) },
-        session: SessionConfig {
-            non_authority_keys: Vec::new(),
-            keys: validators
-                .iter()
-                .map(|validator| (validator.clone(), validator.clone(), DummySessionKeys))
-                .collect(),
         },
         difficulty: DifficultyConfig::default(),
         shielded_pool: ShieldedPoolConfig {
@@ -51,7 +38,6 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
 }
 
 pub fn development_config() -> ChainSpec {
-    let sudo = account(1);
     // No pre-mine. All issuance from mining rewards only.
     let endowed: Vec<(AccountId, Balance)> = vec![];
     ChainSpec {
@@ -62,12 +48,11 @@ pub fn development_config() -> ChainSpec {
         pow_bits: PowDifficulty::get(),
         da_chunk_size: DEFAULT_DA_CHUNK_SIZE,
         da_sample_count: DEFAULT_DA_SAMPLE_COUNT,
-        genesis: base_genesis(&endowed, sudo),
+        genesis: base_genesis(&endowed),
     }
 }
 
 pub fn testnet_config() -> ChainSpec {
-    let sudo = account(42);
     // No pre-mine. All issuance from mining rewards only.
     let endowed: Vec<(AccountId, Balance)> = vec![];
     ChainSpec {
@@ -81,7 +66,7 @@ pub fn testnet_config() -> ChainSpec {
         pow_bits: PowDifficulty::get(),
         da_chunk_size: DEFAULT_DA_CHUNK_SIZE,
         da_sample_count: DEFAULT_DA_SAMPLE_COUNT,
-        genesis: base_genesis(&endowed, sudo),
+        genesis: base_genesis(&endowed),
     }
 }
 

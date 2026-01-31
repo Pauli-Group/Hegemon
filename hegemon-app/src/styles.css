@@ -24,7 +24,7 @@ body {
 }
 
 input, textarea, select {
-  @apply bg-surfaceMuted/10 border border-surfaceMuted/20 text-surface rounded-lg px-3 py-2 outline-none ring-1 ring-transparent w-full;
+  @apply bg-surfaceMuted/10 border border-surfaceMuted/20 text-surface rounded-lg px-4 py-2 outline-none ring-1 ring-transparent w-full;
   transition: border-color var(--transition-base), box-shadow var(--transition-base), background-color var(--transition-fast);
 }
 
@@ -87,7 +87,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .card {
-  @apply bg-surfaceMuted/5 border border-surfaceMuted/10 rounded-2xl p-6 shadow-panel backdrop-blur-sm;
+  @apply bg-surfaceMuted/5 border border-surfaceMuted/10 rounded-2xl p-8 shadow-panel backdrop-blur-sm;
   transition: border-color var(--transition-base), box-shadow var(--transition-slow);
 }
 
@@ -96,7 +96,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .panel {
-  @apply rounded-xl bg-midnight/50 border border-surfaceMuted/10 p-4;
+  @apply rounded-xl bg-midnight/50 border border-surfaceMuted/10 p-6;
   transition: background-color var(--transition-fast), border-color var(--transition-base);
 }
 
@@ -109,7 +109,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .app-sidebar {
-  @apply w-full lg:w-64 shrink-0 border-b lg:border-b-0 lg:border-r border-surfaceMuted/10 bg-midnight/80 backdrop-blur-2xl p-6 space-y-6 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto;
+  @apply w-full lg:w-64 shrink-0 border-b lg:border-b-0 lg:border-r border-surfaceMuted/10 bg-midnight/80 backdrop-blur-2xl p-8 space-y-6 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto;
 }
 
 .app-sidebar::before {

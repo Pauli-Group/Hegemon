@@ -22,7 +22,23 @@ export type NodeConnection = {
   rpcMethods?: 'safe' | 'unsafe';
   nodeName?: string;
   ciphertextDaRetentionBlocks?: number;
+  proofDaRetentionBlocks?: number;
   daStoreCapacity?: number;
+};
+
+export type DialogOpenOptions = {
+  title?: string;
+  defaultPath?: string;
+  buttonLabel?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+  properties?: Array<
+    | 'openFile'
+    | 'openDirectory'
+    | 'multiSelections'
+    | 'showHiddenFiles'
+    | 'createDirectory'
+    | 'promptToCreate'
+  >;
 };
 
 export type NodeStorageFootprint = {
@@ -206,6 +222,7 @@ export type NodeStartOptions = {
   rpcMethods?: 'safe' | 'unsafe';
   nodeName?: string;
   ciphertextDaRetentionBlocks?: number;
+  proofDaRetentionBlocks?: number;
   daStoreCapacity?: number;
 };
 

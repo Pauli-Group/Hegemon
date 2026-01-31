@@ -25,6 +25,11 @@ Everything else is negotiable.
 
 ---
 
+### 0.2 Admin posture (production/testnet)
+
+* **No sudo or session pallets** in production/testnet genesis. The PoW chain runs without validator sessions.
+* Any privileged changes must flow through governance pallets or runtime upgrades, not a built‑in superuser key.
+
 ### 0.1 Explicit overheads relative to Zcash
 
 Contributors routinely ask how these PQ and MASP design choices differ from Zcash’s Sapling/Orchard stack. The high-level costs
