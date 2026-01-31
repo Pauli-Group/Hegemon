@@ -18,6 +18,7 @@ const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
 const walletAutoLockEnabledKey = 'hegemon.walletAutoLockEnabled';
 const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
+const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 const minWalletPassphraseLength = 12;
 
 const normalizeTxId = (value: string | null | undefined) => {
@@ -118,6 +119,9 @@ type NodeTransition = {
   startedAt: number;
 };
 
+type BlockAlertTone = 'self' | 'other';
+type BlockAlertStep = { frequency: number; duration: number; gap?: number };
+
 const logCategoryOrder: LogCategory[] = ['mining', 'sync', 'network', 'consensus', 'storage', 'rpc', 'other'];
 
 const logCategoryLabels: Record<LogCategory, string> = {
@@ -217,6 +221,19 @@ const formatHash = (value: string | null | undefined) => {
     return value;
   }
   return `${value.slice(0, 10)}...${value.slice(-8)}`;
+};
+
+const buildBlockAlertPattern = (tone: BlockAlertTone): BlockAlertStep[] => {
+  if (tone === 'self') {
+    return [
+      { frequency: 880, duration: 0.12, gap: 0.05 },
+      { frequency: 1175, duration: 0.12 }
+    ];
+  }
+  return [
+    { frequency: 520, duration: 0.14, gap: 0.04 },
+    { frequency: 420, duration: 0.16 }
+  ];
 };
 
 const parseDisclosureInput = (input: string) => {
@@ -466,6 +483,13 @@ export default function App() {
   const [autoLockEnabled, setAutoLockEnabled] = useState(true);
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
   const lastActivityRef = useRef(Date.now());
+  const [blockAlertEnabled, setBlockAlertEnabled] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const blockAlertRef = useRef<{
+    connectionId: string | null;
+    blocksMined: number | null;
+    blocksImported: number | null;
+  }>({ connectionId: null, blocksMined: null, blocksImported: null });
 
   const [recipientAddress, setRecipientAddress] = useState('');
   const [sendAmount, setSendAmount] = useState('');
@@ -536,12 +560,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const storedEnabled = window.localStorage.getItem(blockAlertEnabledKey);
+    if (storedEnabled !== null) {
+      setBlockAlertEnabled(storedEnabled === 'true');
+    }
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem(walletAutoLockEnabledKey, String(autoLockEnabled));
   }, [autoLockEnabled]);
 
   useEffect(() => {
     window.localStorage.setItem(walletAutoLockMinutesKey, String(clampAutoLockMinutes(autoLockMinutes)));
   }, [autoLockMinutes]);
+
+  useEffect(() => {
+    window.localStorage.setItem(blockAlertEnabledKey, String(blockAlertEnabled));
+  }, [blockAlertEnabled]);
 
   useEffect(() => {
     if (connections.length === 0) {
@@ -608,6 +643,36 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  const playBlockAlert = useCallback(
+    (tone: BlockAlertTone) => {
+      if (!blockAlertEnabled || typeof window.AudioContext === 'undefined') {
+        return;
+      }
+      const context = audioContextRef.current ?? new window.AudioContext();
+      if (context.state === 'suspended') {
+        void context.resume();
+      }
+      audioContextRef.current = context;
+      const pattern = buildBlockAlertPattern(tone);
+      let cursor = context.currentTime + 0.02;
+      pattern.forEach((step) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.value = step.frequency;
+        gain.gain.setValueAtTime(0.0001, cursor);
+        gain.gain.exponentialRampToValueAtTime(0.18, cursor + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, cursor + step.duration);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(cursor);
+        oscillator.stop(cursor + step.duration);
+        cursor += step.duration + (step.gap ?? 0.06);
+      });
+    },
+    [blockAlertEnabled]
+  );
 
   useEffect(() => {
     if (!walletStatus) {
@@ -802,6 +867,46 @@ export default function App() {
     const interval = window.setInterval(refreshNode, 5000);
     return () => window.clearInterval(interval);
   }, [connections, activeConnectionId]);
+
+  useEffect(() => {
+    const currentMined = activeSummary?.telemetry?.blocksMined ?? null;
+    const currentImported = activeSummary?.telemetry?.blocksImported ?? null;
+    if (!activeConnectionId) {
+      blockAlertRef.current = { connectionId: null, blocksMined: currentMined, blocksImported: currentImported };
+      return;
+    }
+    const previous = blockAlertRef.current;
+    if (
+      previous.connectionId !== activeConnectionId ||
+      previous.blocksMined === null ||
+      previous.blocksImported === null ||
+      currentMined === null ||
+      currentImported === null
+    ) {
+      blockAlertRef.current = { connectionId: activeConnectionId, blocksMined: currentMined, blocksImported: currentImported };
+      return;
+    }
+    const minedDelta = currentMined - previous.blocksMined;
+    const importedDelta = currentImported - previous.blocksImported;
+    if (minedDelta < 0 || importedDelta < 0) {
+      blockAlertRef.current = { connectionId: activeConnectionId, blocksMined: currentMined, blocksImported: currentImported };
+      return;
+    }
+    if (blockAlertEnabled) {
+      if (minedDelta > 0) {
+        playBlockAlert('self');
+      } else if (importedDelta > 0) {
+        playBlockAlert('other');
+      }
+    }
+    blockAlertRef.current = { connectionId: activeConnectionId, blocksMined: currentMined, blocksImported: currentImported };
+  }, [
+    activeConnectionId,
+    activeSummary?.telemetry?.blocksImported,
+    activeSummary?.telemetry?.blocksMined,
+    blockAlertEnabled,
+    playBlockAlert
+  ]);
 
   const transitionReachable = nodeTransition ? nodeSummaries[nodeTransition.connectionId]?.reachable : undefined;
 
@@ -2055,7 +2160,18 @@ export default function App() {
                     />
                     Auto-start mining
                   </label>
+                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                    <input
+                      type="checkbox"
+                      checked={blockAlertEnabled}
+                      onChange={(event) => setBlockAlertEnabled(event.target.checked)}
+                    />
+                    Play block alerts
+                  </label>
                 </div>
+                <p className="text-xs text-surfaceMuted md:col-span-2">
+                  Alerts play a short tone when you mine a block or when the node imports a block from someone else.
+                </p>
               </div>
               {activeConnection.dev && !activeConnection.chainSpecPath ? (
                 <p className="text-sm text-surfaceMuted">
