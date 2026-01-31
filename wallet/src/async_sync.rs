@@ -88,181 +88,233 @@ impl AsyncWalletSyncEngine {
     /// Fetches all new commitments, ciphertexts, and nullifiers from the node
     /// and updates the wallet store.
     pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
-        let mut outcome = SyncOutcome::default();
+        for attempt in 0..=1 {
+            let mut outcome = SyncOutcome::default();
 
-        // Validate genesis hash to detect chain resets
-        let metadata = self.client.get_chain_metadata().await?;
-        if !self.skip_genesis_check {
-            // Try to set genesis hash (will fail if mismatched)
-            self.store.set_genesis_hash(metadata.genesis_hash)?;
-        } else {
-            // Force rescan mode: reset if genesis changed, but also ensure we record
-            // the genesis hash even if this wallet has never synced before.
-            match self.store.genesis_hash()? {
-                None => {
-                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+            // Validate genesis hash to detect chain resets
+            let metadata = self.client.get_chain_metadata().await?;
+            if !self.skip_genesis_check {
+                // Try to set genesis hash (will fail if mismatched)
+                self.store.set_genesis_hash(metadata.genesis_hash)?;
+            } else {
+                // Force rescan mode: reset if genesis changed, but also ensure we record
+                // the genesis hash even if this wallet has never synced before.
+                match self.store.genesis_hash()? {
+                    None => {
+                        self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    }
+                    Some(existing) if existing != metadata.genesis_hash => {
+                        eprintln!("Chain genesis mismatch detected, resetting wallet sync state...");
+                        self.store.reset_sync_state()?;
+                        self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    }
+                    _ => {}
                 }
-                Some(existing) if existing != metadata.genesis_hash => {
-                    eprintln!("Chain genesis mismatch detected, resetting wallet sync state...");
-                    self.store.reset_sync_state()?;
-                    self.store.set_genesis_hash(metadata.genesis_hash)?;
-                }
-                _ => {}
             }
-        }
 
-        // Get current note status from node
-        let note_status = self.client.note_status().await?;
-        self.store.set_tree_depth(note_status.depth as u32)?;
+            // Get current note status from node
+            let note_status = self.client.note_status().await?;
+            self.store.set_tree_depth(note_status.depth as u32)?;
 
-        // Detect if our cursor is ahead of the chain (chain was reset). In force-rescan mode,
-        // treat this as a reset signal and wipe sync state automatically.
-        let mut commitment_cursor = self.store.next_commitment_index()?;
-        if commitment_cursor > note_status.leaf_count {
-            if self.skip_genesis_check {
-                eprintln!("Wallet cursor ahead of chain; resetting wallet sync state...");
+            // Detect if our cursor is ahead of the chain. This can happen if:
+            // - the node state was wiped/restarted (even with the same genesis hash), or
+            // - we experienced a reorg that removed commitments we had already scanned.
+            //
+            // In either case, the safest behavior is to reset and rescan from scratch.
+            let mut commitment_cursor = self.store.next_commitment_index()?;
+            if commitment_cursor > note_status.leaf_count {
+                eprintln!(
+                    "Wallet cursor ahead of chain ({} > {}); resetting wallet sync state...",
+                    commitment_cursor, note_status.leaf_count
+                );
                 self.store.reset_sync_state()?;
                 self.store.set_genesis_hash(metadata.genesis_hash)?;
                 commitment_cursor = 0;
-            } else {
-                return Err(WalletError::ChainMismatch {
-                    expected: format!("chain with >= {} commitments", commitment_cursor),
-                    actual: format!("chain with {} commitments", note_status.leaf_count),
-                });
             }
-        }
 
-        // Sync commitments
-        while commitment_cursor < note_status.leaf_count {
-            let entries = self
-                .client
-                .commitments(commitment_cursor, self.page_limit)
-                .await?;
-            if entries.is_empty() {
-                break;
-            }
-            let pairs: Vec<(u64, [u8; 48])> = entries
-                .iter()
-                .map(|entry| (entry.index, entry.value))
-                .collect();
-            self.store.append_commitments(&pairs)?;
-            commitment_cursor = self.store.next_commitment_index()?;
-            outcome.commitments += entries.len();
-        }
-
-        // Sync ciphertexts and attempt decryption
-        let mut ciphertext_cursor = self.store.next_ciphertext_index()?;
-        while ciphertext_cursor < note_status.next_index {
-            let mut entries = self
-                .client
-                .ciphertexts(ciphertext_cursor, self.page_limit)
-                .await?;
-            if entries.is_empty() {
-                if let Ok(archive_entries) = self
+            // Sync commitments
+            while commitment_cursor < note_status.leaf_count {
+                let entries = self
                     .client
-                    .archive_ciphertexts(ciphertext_cursor, self.page_limit)
-                    .await
-                {
-                    entries = archive_entries;
-                }
-            }
-            if entries.is_empty() {
-                break;
-            }
-            if entries.first().map(|entry| entry.index) != Some(ciphertext_cursor) {
-                entries = self
-                    .client
-                    .archive_ciphertexts(ciphertext_cursor, self.page_limit)
-                    .await
-                    .map_err(|err| {
-                        WalletError::Rpc(format!(
-                            "ciphertext gap at index {}: {}",
-                            ciphertext_cursor, err
-                        ))
-                    })?;
+                    .commitments(commitment_cursor, self.page_limit)
+                    .await?;
                 if entries.is_empty() {
-                    return Err(WalletError::Rpc(format!(
-                        "ciphertext gap at index {}: archive provider returned no data",
-                        ciphertext_cursor
-                    )));
+                    break;
+                }
+                let pairs: Vec<(u64, [u8; 48])> = entries
+                    .iter()
+                    .map(|entry| (entry.index, entry.value))
+                    .collect();
+                self.store.append_commitments(&pairs)?;
+                commitment_cursor = self.store.next_commitment_index()?;
+                outcome.commitments += entries.len();
+            }
+
+            if let Err(err) = self.store.validate_notes_against_commitments() {
+                if self.store.repair_note_positions().is_ok()
+                    && self.store.validate_notes_against_commitments().is_ok()
+                {
+                    eprintln!("Wallet notes repaired against commitments.");
+                } else if attempt == 0 {
+                    eprintln!(
+                        "Wallet notes out of sync with commitments; resetting wallet sync state..."
+                    );
+                    self.store.reset_sync_state()?;
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    continue;
+                } else {
+                    return Err(err);
                 }
             }
 
-            let start_index = ciphertext_cursor;
-            let mut expected = start_index;
-            let mut recovered = Vec::with_capacity(entries.len());
-            let ivk = self.store.incoming_key()?;
-
-            for entry in entries {
-                if entry.index != expected {
-                    return Err(WalletError::InvalidState("ciphertext index mismatch"));
-                }
-                outcome.ciphertexts += 1;
-
-                // Debug: log ciphertext details vs expected
-                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                    let material = ivk.address_material(entry.ciphertext.diversifier_index)?;
-                    eprintln!(
-                        "[DEBUG] Ciphertext #{}: version={} suite={} div_idx={}",
-                        entry.index,
-                        entry.ciphertext.version,
-                        entry.ciphertext.crypto_suite,
-                        entry.ciphertext.diversifier_index
-                    );
-                    eprintln!("  expected version: {}", material.version());
-                    eprintln!("  expected suite: {}", material.crypto_suite());
-                    eprintln!(
-                        "  version match: {}",
-                        entry.ciphertext.version == material.version()
-                    );
-                    eprintln!(
-                        "  suite match: {}",
-                        entry.ciphertext.crypto_suite == material.crypto_suite()
-                    );
-                    eprintln!(
-                        "  div_idx match: {}",
-                        entry.ciphertext.diversifier_index == material.diversifier_index
-                    );
-                }
-
-                recovered.push(match ivk.decrypt_note(&entry.ciphertext) {
-                    Ok(note) => Some(note),
-                    Err(WalletError::NoteMismatch(reason)) => {
-                        // Note not for this wallet, skip
-                        if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                            eprintln!("  -> NoteMismatch: {}", reason);
-                        }
-                        None
+            // Sync ciphertexts and attempt decryption
+            let mut ciphertext_cursor = self.store.next_ciphertext_index()?;
+            if ciphertext_cursor > note_status.next_index {
+                eprintln!(
+                    "Wallet ciphertext cursor ahead of chain ({} > {}); resetting wallet sync state...",
+                    ciphertext_cursor, note_status.next_index
+                );
+                self.store.reset_sync_state()?;
+                self.store.set_genesis_hash(metadata.genesis_hash)?;
+                ciphertext_cursor = 0;
+            }
+            while ciphertext_cursor < note_status.next_index {
+                let mut entries = self
+                    .client
+                    .ciphertexts(ciphertext_cursor, self.page_limit)
+                    .await?;
+                if entries.is_empty() {
+                    if let Ok(archive_entries) = self
+                        .client
+                        .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                        .await
+                    {
+                        entries = archive_entries;
                     }
-                    Err(WalletError::DecryptionFailure) => {
-                        if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                            eprintln!("  -> DecryptionFailure (not for this wallet)");
-                        }
-                        None
+                }
+                if entries.is_empty() {
+                    break;
+                }
+                let mut expected = ciphertext_cursor;
+                let mut gap_at = None;
+                for entry in &entries {
+                    if entry.index != expected {
+                        gap_at = Some(expected);
+                        break;
                     }
-                    Err(err) => return Err(err),
-                });
+                    expected = expected
+                        .checked_add(1)
+                        .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
+                }
+                if entries.first().map(|entry| entry.index) != Some(ciphertext_cursor)
+                    || gap_at.is_some()
+                {
+                    if let Ok(archive_entries) = self
+                        .client
+                        .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                        .await
+                    {
+                        if !archive_entries.is_empty() {
+                            entries = archive_entries;
+                        }
+                    }
+                }
+                if entries.is_empty() {
+                    break;
+                }
 
-                expected = expected
-                    .checked_add(1)
-                    .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
+                let first_index = entries.first().map(|entry| entry.index).unwrap_or(expected);
+                if first_index > ciphertext_cursor {
+                    eprintln!(
+                        "Ciphertext gap detected at index {} (skipping to {}).",
+                        ciphertext_cursor, first_index
+                    );
+                    self.store.advance_ciphertext_cursor(first_index)?;
+                    ciphertext_cursor = first_index;
+                }
+
+                let start_index = ciphertext_cursor;
+                let mut expected = start_index;
+                let mut recovered = Vec::with_capacity(entries.len());
+                let ivk = self.store.incoming_key()?;
+
+                for entry in entries {
+                    if entry.index != expected {
+                        eprintln!(
+                            "Ciphertext gap detected at index {} (skipping).",
+                            expected
+                        );
+                        break;
+                    }
+                    outcome.ciphertexts += 1;
+
+                    // Debug: log ciphertext details vs expected
+                    if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                        let material = ivk.address_material(entry.ciphertext.diversifier_index)?;
+                        eprintln!(
+                            "[DEBUG] Ciphertext #{}: version={} suite={} div_idx={}",
+                            entry.index,
+                            entry.ciphertext.version,
+                            entry.ciphertext.crypto_suite,
+                            entry.ciphertext.diversifier_index
+                        );
+                        eprintln!("  expected version: {}", material.version());
+                        eprintln!("  expected suite: {}", material.crypto_suite());
+                        eprintln!(
+                            "  version match: {}",
+                            entry.ciphertext.version == material.version()
+                        );
+                        eprintln!(
+                            "  suite match: {}",
+                            entry.ciphertext.crypto_suite == material.crypto_suite()
+                        );
+                        eprintln!(
+                            "  div_idx match: {}",
+                            entry.ciphertext.diversifier_index == material.diversifier_index
+                        );
+                    }
+
+                    recovered.push(match ivk.decrypt_note(&entry.ciphertext) {
+                        Ok(note) => Some(note),
+                        Err(WalletError::NoteMismatch(reason)) => {
+                            // Note not for this wallet, skip
+                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                                eprintln!("  -> NoteMismatch: {}", reason);
+                            }
+                            None
+                        }
+                        Err(WalletError::DecryptionFailure) => {
+                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                                eprintln!("  -> DecryptionFailure (not for this wallet)");
+                            }
+                            None
+                        }
+                        Err(err) => return Err(err),
+                    });
+
+                    expected = expected
+                        .checked_add(1)
+                        .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
+                }
+
+                outcome.recovered += self.store.apply_ciphertext_batch(start_index, recovered)?;
+                ciphertext_cursor = self.store.next_ciphertext_index()?;
             }
 
-            outcome.recovered += self.store.apply_ciphertext_batch(start_index, recovered)?;
-            ciphertext_cursor = self.store.next_ciphertext_index()?;
+            // Sync nullifiers
+            let nullifiers = self.client.nullifiers().await?;
+            let nullifier_set: HashSet<[u8; 48]> = nullifiers.into_iter().collect();
+            outcome.spent += self.store.mark_nullifiers(&nullifier_set)?;
+
+            // Update pending transactions
+            let latest = self.client.latest_block().await?;
+            self.store.refresh_pending(latest.height, &nullifier_set)?;
+            self.store.set_last_synced_height(latest.height)?;
+
+            return Ok(outcome);
         }
 
-        // Sync nullifiers
-        let nullifiers = self.client.nullifiers().await?;
-        let nullifier_set: HashSet<[u8; 48]> = nullifiers.into_iter().collect();
-        outcome.spent += self.store.mark_nullifiers(&nullifier_set)?;
-
-        // Update pending transactions
-        let latest = self.client.latest_block().await?;
-        self.store.refresh_pending(latest.height, &nullifier_set)?;
-        self.store.set_last_synced_height(latest.height)?;
-
-        Ok(outcome)
+        Err(WalletError::InvalidState("sync failed after reset"))
     }
 
     /// Run continuous synchronization with block subscriptions

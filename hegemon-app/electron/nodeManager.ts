@@ -22,6 +22,7 @@ export class NodeManager extends EventEmitter {
   private logs: string[] = [];
   private requestId = 0;
   private managedConnectionId: string | null = null;
+  private stopping = false;
 
   getLogs(): string[] {
     return [...this.logs];
@@ -114,6 +115,14 @@ export class NodeManager extends EventEmitter {
       ...process.env,
       HEGEMON_MINER_ADDRESS: options.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
       HEGEMON_SEEDS: options.seeds ?? process.env.HEGEMON_SEEDS,
+      HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS:
+        options.ciphertextDaRetentionBlocks !== undefined
+          ? String(options.ciphertextDaRetentionBlocks)
+          : process.env.HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS,
+      HEGEMON_DA_STORE_CAPACITY:
+        options.daStoreCapacity !== undefined
+          ? String(options.daStoreCapacity)
+          : process.env.HEGEMON_DA_STORE_CAPACITY,
       HEGEMON_MINE: mineFlag,
       HEGEMON_MINE_THREADS: options.mineThreads
         ? String(options.mineThreads)
@@ -146,16 +155,45 @@ export class NodeManager extends EventEmitter {
     if (!proc) {
       return;
     }
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 5_000);
-      proc.once('exit', () => {
-        clearTimeout(timeout);
-        resolve();
+    if (this.stopping) {
+      return;
+    }
+    this.stopping = true;
+
+    const waitForExit = async (timeoutMs: number) => {
+      if (proc.exitCode !== null) {
+        return true;
+      }
+      return await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), timeoutMs);
+        proc.once('exit', () => {
+          clearTimeout(timeout);
+          resolve(true);
+        });
       });
-      proc.kill('SIGINT');
-    });
+    };
+
+    const tryKill = async (signal: NodeJS.Signals, timeoutMs: number) => {
+      try {
+        proc.kill(signal);
+      } catch (error) {
+        this.appendLogs(`Failed to send ${signal} to node: ${(error as Error).message}`);
+      }
+      return await waitForExit(timeoutMs);
+    };
+
+    // Best-effort graceful shutdown, then escalate.
+    const exited =
+      (await tryKill('SIGINT', 5_000)) ||
+      (await tryKill('SIGTERM', 2_000)) ||
+      (await tryKill('SIGKILL', 2_000));
+
+    if (!exited) {
+      this.appendLogs('Node did not exit after SIGKILL; leaving process running.');
+    }
     this.process = null;
     this.managedConnectionId = null;
+    this.stopping = false;
   }
 
   async getSummary(request: NodeSummaryRequest): Promise<NodeSummary> {
