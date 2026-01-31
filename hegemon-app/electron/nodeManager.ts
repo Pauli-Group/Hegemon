@@ -119,6 +119,10 @@ export class NodeManager extends EventEmitter {
         options.ciphertextDaRetentionBlocks !== undefined
           ? String(options.ciphertextDaRetentionBlocks)
           : process.env.HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS,
+      HEGEMON_PROOF_DA_RETENTION_BLOCKS:
+        options.proofDaRetentionBlocks !== undefined
+          ? String(options.proofDaRetentionBlocks)
+          : process.env.HEGEMON_PROOF_DA_RETENTION_BLOCKS,
       HEGEMON_DA_STORE_CAPACITY:
         options.daStoreCapacity !== undefined
           ? String(options.daStoreCapacity)

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Contact,
+  DialogOpenOptions,
   NodeMiningRequest,
   NodeManagedStatus,
   NodeStartOptions,
@@ -47,5 +48,8 @@ contextBridge.exposeInMainWorld('hegemon', {
   contacts: {
     list: () => ipcRenderer.invoke('contacts:list'),
     save: (contacts: Contact[]) => ipcRenderer.invoke('contacts:save', contacts)
+  },
+  dialog: {
+    openPath: (options: DialogOpenOptions) => ipcRenderer.invoke('dialog:openPath', options)
   }
 });

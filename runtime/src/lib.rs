@@ -21,9 +21,7 @@ pub mod chain_spec;
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
-use frame_support::traits::{
-    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, VariantCount,
-};
+use frame_support::traits::{ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, VariantCount};
 use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, IdentityFee, Weight};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
@@ -35,8 +33,7 @@ use sp_core::offchain::StorageKind;
 use sp_core::{blake2_256, H256};
 use sp_runtime::generic::Era;
 use sp_runtime::traits::{
-    BlakeTwo256, Convert, Hash as HashT, IdentifyAccount, IdentityLookup, Lazy,
-    SaturatedConversion, Verify,
+    BlakeTwo256, Hash as HashT, IdentifyAccount, IdentityLookup, Lazy, SaturatedConversion, Verify,
 };
 use sp_runtime::{
     generic, AccountId32, DispatchError, FixedU128, MultiAddress, Perbill, Permill, RuntimeDebug,
@@ -424,7 +421,6 @@ type SignedPayload = sp_runtime::generic::SignedPayload<RuntimeCall, SignedExtra
 #[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub enum HoldReason {
     FeeModel,
-    Session,
 }
 
 impl VariantCount for HoldReason {
@@ -432,12 +428,6 @@ impl VariantCount for HoldReason {
 }
 
 impl DecodeWithMemTracking for HoldReason {}
-
-impl From<pallet_session::HoldReason> for HoldReason {
-    fn from(_: pallet_session::HoldReason) -> Self {
-        HoldReason::Session
-    }
-}
 
 parameter_types! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
@@ -513,77 +503,6 @@ impl From<IssuerId> for AccountId {
     }
 }
 
-pub struct AccountIdAsValidatorId;
-impl Convert<AccountId, Option<AccountId>> for AccountIdAsValidatorId {
-    fn convert(account: AccountId) -> Option<AccountId> {
-        Some(account)
-    }
-}
-
-// serde impls are unconditional because polkadot-sdk crates require it
-#[derive(
-    Clone,
-    Default,
-    Encode,
-    Decode,
-    PartialEq,
-    Eq,
-    RuntimeDebug,
-    MaxEncodedLen,
-    TypeInfo,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub struct DummySessionKeys;
-
-impl sp_runtime::traits::OpaqueKeys for DummySessionKeys {
-    type KeyTypeIdProviders = ();
-
-    fn key_ids() -> &'static [sp_core::crypto::KeyTypeId] {
-        &[]
-    }
-
-    fn get_raw(&self, _i: sp_core::crypto::KeyTypeId) -> &[u8] {
-        &[]
-    }
-}
-
-impl DummySessionKeys {
-    /// Generate session keys - no-op for dummy implementation
-    pub fn generate(_seed: Option<Vec<u8>>) -> Vec<u8> {
-        Self::default().encode()
-    }
-
-    /// Decode session keys into raw public keys - no-op for dummy implementation
-    pub fn decode_into_raw_public_keys(
-        encoded: &[u8],
-    ) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
-        let _ = Self::decode(&mut &encoded[..]).ok()?;
-        Some(Vec::new())
-    }
-}
-
-impl DecodeWithMemTracking for DummySessionKeys {}
-
-pub struct NullSessionHandler;
-
-impl pallet_session::SessionHandler<AccountId> for NullSessionHandler {
-    const KEY_TYPE_IDS: &'static [sp_core::crypto::KeyTypeId] = &[];
-
-    fn on_genesis_session<Ks: sp_runtime::traits::OpaqueKeys>(_validators: &[(AccountId, Ks)]) {}
-
-    fn on_new_session<Ks: sp_runtime::traits::OpaqueKeys>(
-        _changed: bool,
-        _validators: &[(AccountId, Ks)],
-        _queued_validators: &[(AccountId, Ks)],
-    ) {
-    }
-
-    fn on_before_session_ending() {}
-
-    fn on_disabled(_validator_index: u32) {}
-}
-
 pub struct TreasurySpendLimit;
 impl frame_support::traits::TypedGet for TreasurySpendLimit {
     type Type = Balance;
@@ -653,11 +572,9 @@ impl frame_support::traits::Get<frame_support::weights::Weight> for MaxCollectiv
 pub mod pow {
     use super::{Moment, PowDifficulty, PowFutureDrift, PowRetargetWindow, PowTargetBlockTime};
     use crate::MaxPowValidators;
-    use alloc::vec::Vec;
     use frame_support::{pallet_prelude::*, BoundedVec};
     use frame_system::pallet_prelude::*;
     use sp_core::{H256, U256};
-    use sp_staking::SessionIndex;
 
     #[pallet::config]
     #[allow(deprecated)]
@@ -703,10 +620,6 @@ pub mod pow {
         PowInvalidSeal {
             pow_bits: u32,
             nonce: u64,
-        },
-        SessionValidatorsRotated {
-            session: SessionIndex,
-            validators: Vec<T::AccountId>,
         },
     }
 
@@ -846,26 +759,6 @@ pub mod pow {
             });
         }
     }
-
-    impl<T: Config> pallet_session::SessionManager<T::AccountId> for Pallet<T> {
-        fn new_session(index: SessionIndex) -> Option<Vec<T::AccountId>> {
-            let validators = Validators::<T>::get();
-            if validators.is_empty() {
-                None
-            } else {
-                let set = validators.to_vec();
-                Pallet::<T>::deposit_event(Event::SessionValidatorsRotated {
-                    session: index,
-                    validators: set.clone(),
-                });
-                Some(set)
-            }
-        }
-
-        fn end_session(_index: SessionIndex) {}
-
-        fn start_session(_index: SessionIndex) {}
-    }
 }
 
 /// Runtime version used in impl_runtime_apis! and version() returns
@@ -896,8 +789,6 @@ parameter_types! {
     pub const MinimumPeriod: u64 = 5;
     pub const ExistentialDeposit: u128 = 1;
     pub const MaxLocks: u32 = 50;
-    pub const SessionPeriod: u64 = 10;
-    pub const SessionOffset: u64 = 0;
     pub const TreasuryPayoutPeriod: u64 = 10;
     pub const PowDifficulty: u32 = 0x3f00_ffff;
     pub const PowRetargetWindow: u32 = 120;
@@ -1002,21 +893,6 @@ where
     }
 }
 
-impl pallet_session::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type ValidatorId = AccountId;
-    type ValidatorIdOf = AccountIdAsValidatorId;
-    type ShouldEndSession = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
-    type NextSessionRotation = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
-    type SessionManager = pow::Pallet<Runtime>;
-    type SessionHandler = NullSessionHandler;
-    type Keys = DummySessionKeys;
-    type DisablingStrategy = ();
-    type Currency = Balances;
-    type KeyDeposit = ConstU128<0>;
-    type WeightInfo = ();
-}
-
 impl pallet_balances::Config for Runtime {
     type Balance = Balance;
     type DustRemoval = ();
@@ -1064,12 +940,6 @@ impl pallet_transaction_payment::Config for Runtime {
     type WeightToFee = IdentityFee<Balance>;
     type LengthToFee = IdentityFee<Balance>;
     type FeeMultiplierUpdate = ();
-    type WeightInfo = ();
-}
-
-impl pallet_sudo::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type RuntimeCall = RuntimeCall;
     type WeightInfo = ();
 }
 
@@ -1642,10 +1512,8 @@ construct_runtime!(
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
         Pow: pow::{Pallet, Call, Storage, Event<T>},
         Difficulty: pallet_difficulty::{Pallet, Call, Storage, Event<T>, Config<T>},
-        Session: pallet_session::{Pallet, Call, Storage, Event<T>, Config<T>},
         Balances: pallet_balances::{Pallet, Storage, Config<T>, Event<T>},
         TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>},
-        Sudo: pallet_sudo::{Pallet, Call, Storage, Event<T>, Config<T>},
         Council: pallet_collective::<Instance1>::{Pallet, Call, Storage, Origin<T>, Event<T>},
         CouncilMembership: pallet_membership::<Instance1>::{Pallet, Call, Storage, Event<T>},
         Treasury: pallet_treasury::{Pallet, Call, Storage, Event<T>},
@@ -1751,12 +1619,14 @@ sp_api::impl_runtime_apis! {
     }
 
     impl sp_session::SessionKeys<Block> for Runtime {
-        fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
-            DummySessionKeys::generate(seed)
+        fn generate_session_keys(_seed: Option<Vec<u8>>) -> Vec<u8> {
+            Vec::new()
         }
 
-        fn decode_session_keys(encoded: Vec<u8>) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
-            DummySessionKeys::decode_into_raw_public_keys(&encoded)
+        fn decode_session_keys(
+            _encoded: Vec<u8>,
+        ) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
+            Some(Vec::new())
         }
     }
 
@@ -2137,47 +2007,6 @@ mod tests {
             assert!(events.iter().any(|evt| matches!(
                 evt.event,
                 RuntimeEvent::Pow(pow::Event::PowInvalidSeal { nonce, .. }) if nonce == bad_nonce
-            )));
-        });
-    }
-
-    #[test]
-    fn session_rotation_emits_pow_validator_set() {
-        new_ext().execute_with(|| {
-            System::set_block_number(1);
-            Timestamp::set_timestamp(0);
-            let pow_bits = PowDifficulty::get();
-            let pre_hash = H256::repeat_byte(1);
-            let nonce = valid_nonce(pre_hash, pow_bits);
-            assert_ok!(Pow::submit_work(
-                RuntimeOrigin::signed(account(1)),
-                pre_hash,
-                nonce,
-                pow_bits,
-                0,
-            ));
-
-            let pre_hash_two = H256::repeat_byte(2);
-            let nonce_two = valid_nonce(pre_hash_two, pow_bits);
-            System::set_block_number(SessionPeriod::get());
-            Timestamp::set_timestamp(PowTargetBlockTime::get());
-            assert_ok!(Pow::submit_work(
-                RuntimeOrigin::signed(account(2)),
-                pre_hash_two,
-                nonce_two,
-                pow_bits,
-                PowTargetBlockTime::get(),
-            ));
-
-            for n in 1..=SessionPeriod::get() + 1 {
-                Session::on_initialize(n);
-            }
-
-            let events = System::events();
-            assert!(events.iter().any(|evt| matches!(
-                evt.event,
-                RuntimeEvent::Pow(pow::Event::SessionValidatorsRotated { ref validators, .. })
-                    if validators.contains(&account(1)) && validators.contains(&account(2))
             )));
         });
     }
