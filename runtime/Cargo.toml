@@ -23,11 +23,10 @@ sp-version = { workspace = true }
 sp-api = { workspace = true }
 sp-offchain = { workspace = true }
 sp-application-crypto = { workspace = true }
-sp-staking = { workspace = true }
+sp-session = { workspace = true }
 sp-block-builder = { workspace = true }
 sp-transaction-pool = { workspace = true }
 sp-inherents = { workspace = true }
-sp-session = { workspace = true }
 sp-genesis-builder = { workspace = true }
 
 crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
@@ -41,13 +40,11 @@ frame-system = { workspace = true }
 frame-executive = { workspace = true }
 frame-benchmarking = { workspace = true, optional = true }
 pallet-timestamp = { workspace = true }
-pallet-session = { workspace = true, features = ["historical"] }
 pallet-balances = { workspace = true }
 pallet-transaction-payment = { workspace = true }
 pallet-collective = { workspace = true }
 pallet-membership = { workspace = true }
 pallet-treasury = { workspace = true }
-pallet-sudo = { workspace = true }
 
 pallet-identity = { path = "../pallets/identity", default-features = false }
 pallet-attestations = { path = "../pallets/attestations", default-features = false }
@@ -82,7 +79,6 @@ std = [
     "sp-api/std",
     "sp-offchain/std",
     "sp-application-crypto/std",
-    "sp-staking/std",
     "sp-block-builder/std",
     "sp-transaction-pool/std",
     "sp-inherents/std",
@@ -93,13 +89,11 @@ std = [
     "frame-executive/std",
     "frame-benchmarking?/std",
     "pallet-timestamp/std",
-    "pallet-session/std",
     "pallet-balances/std",
     "pallet-transaction-payment/std",
     "pallet-collective/std",
     "pallet-membership/std",
     "pallet-treasury/std",
-    "pallet-sudo/std",
     "pallet-identity/std",
     "pallet-attestations/std",
     "pallet-asset-registry/std",

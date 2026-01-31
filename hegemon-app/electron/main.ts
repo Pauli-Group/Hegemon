@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeImage, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, session } from 'electron';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -10,6 +10,7 @@ import type {
   NodeStartOptions,
   NodeSummaryRequest,
   Contact,
+  DialogOpenOptions,
   WalletDisclosureRecord,
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
@@ -368,4 +369,26 @@ ipcMain.handle('contacts:save', async (_event, contacts: Contact[]) => {
     throw new Error('Contacts payload must be an array.');
   }
   await saveContacts(contacts);
+});
+
+ipcMain.handle('dialog:openPath', async (_event, options: DialogOpenOptions) => {
+  const browserWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const resolvedDefaultPath =
+    options.defaultPath === '~'
+      ? app.getPath('home')
+      : options.defaultPath?.startsWith('~/')
+        ? join(app.getPath('home'), options.defaultPath.slice(2))
+        : options.defaultPath;
+  const dialogOptions = {
+    title: options.title,
+    defaultPath: resolvedDefaultPath,
+    buttonLabel: options.buttonLabel,
+    filters: options.filters,
+    properties: options.properties && options.properties.length > 0 ? options.properties : ['openFile']
+  };
+  const result = await dialog.showOpenDialog(browserWindow ?? undefined, dialogOptions);
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
 });
