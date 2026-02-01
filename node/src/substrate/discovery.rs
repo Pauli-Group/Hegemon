@@ -54,4 +54,3 @@ mod tests {
         assert!(!is_dialable_addr(&"127.0.0.1:0".parse().unwrap()));
     }
 }
-
