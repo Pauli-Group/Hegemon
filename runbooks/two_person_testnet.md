@@ -8,10 +8,12 @@ Both participants need:
 - The `hegemon-node` and `walletd` binaries (build with `cargo build -p hegemon-node -p walletd --release`)
 - Port 30333 TCP forwarded if behind NAT
 - `jq` for parsing walletd JSON output
+- Time sync (NTP/chrony) enabled (PoW blocks reject timestamps that exceed the future-skew bound)
 
 ## Network Info
 
 - **Boot Node (Alice):** `hegemon.pauli.group:30333`
+- **Approved seed list (`HEGEMON_SEEDS`):** `hegemon.pauli.group:30333,75.155.93.185:30333`
 - **Chain:** Shared chainspec file (see below)
 - **Block time:** ~60 seconds (1 minute)
 - **Coinbase reward:** ~4.98 HEG per block (halves every ~4 years / 2.1M blocks)
@@ -100,6 +102,12 @@ To connect to the boot node, set `BOOTNODE` before running:
 
 ```bash
 BOOTNODE="hegemon.pauli.group:30333" ./scripts/start-mining.sh
+```
+
+For real testnet mining, use the approved seed list so all miners share the same bootstrap peers:
+
+```bash
+HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333" ./scripts/start-mining.sh
 ```
 
 ### ⚠️ Ciphertext Retention (Required on Testnet)
@@ -210,7 +218,7 @@ printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_SEEDS="hegemon.pauli.group:30333" \
+HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333" \
 HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
   | jq -r '.result.primaryAddress') \
@@ -331,7 +339,8 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 ### Bob can't connect
 - Verify port 30333 is forwarded on Alice's router
 - Check firewall allows inbound TCP 30333 (macOS: add hegemon-node to allowed apps)
-- Ensure `HEGEMON_SEEDS` is set correctly (e.g., `hegemon.pauli.group:30333`)
+- Ensure `HEGEMON_SEEDS` uses the approved seed list: `hegemon.pauli.group:30333,75.155.93.185:30333`
+- Ensure all miners share the same seed list to avoid partitions/forks
 
 ### Blocks not syncing
 - **Genesis mismatch:** Ensure all nodes use the same `config/dev-chainspec.json` file from the boot node
