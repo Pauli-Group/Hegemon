@@ -5806,39 +5806,68 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 task_manager.spawn_handle().spawn(
                     "pq-network-events",
                     Some("network"),
-                    async move {
-                        use crate::substrate::discovery::{
-                            is_dialable_addr, DiscoveryMessage, DEFAULT_ADDR_LIMIT,
-                            DEFAULT_DIAL_BATCH, DISCOVERY_PROTOCOL,
-                        };
-                        use rand::seq::SliceRandom;
-                        use std::collections::HashMap;
-                        use std::collections::HashSet;
-                        use std::net::SocketAddr;
-                        use std::time::{Duration, Instant};
+	                    async move {
+	                        use crate::substrate::discovery::{
+	                            is_dialable_addr, DiscoveryMessage, DEFAULT_ADDR_LIMIT,
+	                            DEFAULT_DIAL_BATCH, DISCOVERY_PROTOCOL,
+	                        };
+	                        use rand::seq::SliceRandom;
+	                        use std::collections::HashMap;
+	                        use std::collections::HashSet;
+	                        use std::net::SocketAddr;
+	                        use std::time::{Duration, Instant};
+	                        use tokio::time::MissedTickBehavior;
 
-                        let pq_backend = pq_backend_for_events;
-                        let listen_port = discovery_listen_port;
+	                        let pq_backend = pq_backend_for_events;
+	                        let listen_port = discovery_listen_port;
 
-                        // Discovery state: observed peer socket address and whether we dialed them.
-                        let mut connected_peers: HashMap<[u8; 32], (SocketAddr, bool)> =
-                            HashMap::new();
+	                        // Discovery state: observed peer socket address and whether we dialed them.
+	                        let mut connected_peers: HashMap<[u8; 32], (SocketAddr, bool)> =
+	                            HashMap::new();
 
-                        // Peer discovery store (persisted).
-                        let mut peer_store = peer_store;
+	                        // Peer discovery store (persisted).
+	                        let mut peer_store = peer_store;
 
-                        // Track recent dial attempts so we don't spin on unreachable addrs.
-                        let mut recent_dials: HashMap<SocketAddr, Instant> = HashMap::new();
-                        let recent_dial_window = Duration::from_secs(30);
+	                        // Track recent dial attempts so we don't spin on unreachable addrs.
+	                        let mut recent_dials: HashMap<SocketAddr, Instant> = HashMap::new();
+	                        let recent_dial_window = Duration::from_secs(30);
 
-                        tracing::info!("PQ network event handler started (Full Client Mode + Sync)");
+	                        // Periodically refresh discovered peers so early-joining nodes learn about
+	                        // peers that connect later (otherwise a node that connects once to a seed
+	                        // may never request new addresses again).
+	                        let discovery_min_peers = std::env::var("HEGEMON_PQ_DISCOVERY_MIN_PEERS")
+	                            .ok()
+	                            .and_then(|s| s.parse::<usize>().ok())
+	                            .unwrap_or(4)
+	                            .max(1)
+	                            .min(discovery_max_peers);
+	                        let discovery_tick_secs = std::env::var("HEGEMON_PQ_DISCOVERY_TICK_SECS")
+	                            .ok()
+	                            .and_then(|s| s.parse::<u64>().ok())
+	                            .unwrap_or(30)
+	                            .max(5);
+	                        let mut discovery_tick =
+	                            tokio::time::interval(Duration::from_secs(discovery_tick_secs));
+	                        discovery_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+	                        tracing::info!(
+	                            min_peers = discovery_min_peers,
+	                            tick_secs = discovery_tick_secs,
+	                            "PQ discovery enabled (address exchange)"
+	                        );
 
-                        while let Some(event) = event_rx.recv().await {
-                            {
-                                let mut bridge = bridge_clone.lock().await;
-                                bridge.handle_event(event.clone()).await;
+	                        tracing::info!("PQ network event handler started (Full Client Mode + Sync)");
 
-                                // Process transactions
+	                        loop {
+	                            tokio::select! {
+	                                maybe_event = event_rx.recv() => {
+	                                    let Some(event) = maybe_event else {
+	                                        break;
+	                                    };
+	                            {
+	                                let mut bridge = bridge_clone.lock().await;
+	                                bridge.handle_event(event.clone()).await;
+
+	                                // Process transactions
                                 let pending_txs = bridge.drain_transactions();
                                 if !pending_txs.is_empty() {
                                     pool_bridge_clone.queue_from_bridge(pending_txs).await;
@@ -5855,8 +5884,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 "PQ network event received by Full Client handler"
                             );
 
-                            match event {
-                                PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
+	                            match event {
+	                                PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
                                     tracing::info!(
                                         peer = %hex::encode(peer_id),
                                         addr = %addr,
@@ -5981,7 +6010,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         "PQ peer connected"
                                     );
                                 }
-                                PqNetworkEvent::PeerDisconnected { peer_id, reason } => {
+	                                PqNetworkEvent::PeerDisconnected { peer_id, reason } => {
                                     // Update sync service
                                     {
                                         let mut sync = sync_service_clone.lock().await;
@@ -6004,25 +6033,25 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         "PQ peer disconnected"
                                     );
                                 }
-                                PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
-                                    // Handle discovery protocol messages
-                                    if protocol == DISCOVERY_PROTOCOL {
-                                        let decoded =
-                                            bincode::deserialize::<DiscoveryMessage>(&data);
-                                        match decoded {
-                                            Ok(DiscoveryMessage::Hello { listen_port }) => {
-                                                if let Some((observed, _)) =
-                                                    connected_peers.get(&peer_id)
-                                                {
-                                                    let candidate =
-                                                        SocketAddr::new(observed.ip(), listen_port);
-                                                    if is_dialable_addr(&candidate) {
-                                                        let _ = peer_store
-                                                            .record_learned([candidate]);
-                                                    }
-                                                }
-                                            }
-                                            Ok(DiscoveryMessage::GetAddrs { limit }) => {
+	                                PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
+	                                    // Handle discovery protocol messages
+	                                    if protocol == DISCOVERY_PROTOCOL {
+	                                        let decoded =
+	                                            bincode::deserialize::<DiscoveryMessage>(&data);
+	                                        match decoded {
+	                                            Ok(DiscoveryMessage::Hello { listen_port }) => {
+	                                                if let Some((observed, _)) =
+	                                                    connected_peers.get(&peer_id)
+	                                                {
+	                                                    let candidate =
+	                                                        SocketAddr::new(observed.ip(), listen_port);
+	                                                    if is_dialable_addr(&candidate) {
+	                                                        let _ = peer_store
+	                                                            .record_learned([candidate]);
+	                                                    }
+	                                                }
+	                                            }
+	                                            Ok(DiscoveryMessage::GetAddrs { limit }) => {
                                                 // Basic rate limiting: ignore pathological requests.
                                                 let limit = limit.min(DEFAULT_ADDR_LIMIT) as usize;
                                                 let mut addrs: Vec<_> = peer_store
@@ -6044,25 +6073,26 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         .await;
                                                 }
                                             }
-                                            Ok(DiscoveryMessage::Addrs { addrs }) => {
-                                                // Persist learned addrs.
-                                                let learned: Vec<_> = addrs
-                                                    .into_iter()
-                                                    .filter(|addr| is_dialable_addr(addr))
-                                                    .collect();
-                                                if !learned.is_empty() {
-                                                    let _ = peer_store
-                                                        .record_learned(learned.iter().copied());
-                                                }
+	                                            Ok(DiscoveryMessage::Addrs { addrs }) => {
+	                                                // Persist learned addrs.
+	                                                let learned: Vec<_> = addrs
+	                                                    .into_iter()
+	                                                    .filter(|addr| is_dialable_addr(addr))
+	                                                    .collect();
+	                                                if !learned.is_empty() {
+	                                                    let _ = peer_store
+	                                                        .record_learned(learned.iter().copied());
+	                                                }
 
-                                                // Opportunistically dial a small batch if we're under target.
-                                                let current_peers = pq_backend.peer_count().await;
-                                                if current_peers < discovery_max_peers {
-                                                    // Exclude addresses we are already connected to (by addr).
-                                                    let connected_addrs: HashSet<_> = pq_backend
-                                                        .peer_info()
-                                                        .await
-                                                        .into_iter()
+	                                                // Opportunistically dial a small batch if we're under the
+	                                                // minimum peer target.
+	                                                let current_peers = pq_backend.peer_count().await;
+	                                                if current_peers < discovery_min_peers {
+	                                                    // Exclude addresses we are already connected to (by addr).
+	                                                    let connected_addrs: HashSet<_> = pq_backend
+	                                                        .peer_info()
+	                                                        .await
+	                                                        .into_iter()
                                                         .map(|info| info.addr)
                                                         .collect();
 
@@ -6090,14 +6120,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 }
                                             }
                                             Err(err) => {
-                                                tracing::debug!(
-                                                    peer = %hex::encode(peer_id),
-                                                    error = %err,
-                                                    "Failed to decode discovery message"
-                                                );
-                                            }
-                                        }
-                                    }
+	                                                tracing::debug!(
+	                                                    peer = %hex::encode(peer_id),
+	                                                    error = %err,
+	                                                    "Failed to decode discovery message"
+	                                                );
+	                                            }
+	                                        }
+	                                    }
                                     // Handle sync protocol messages
                                     use crate::substrate::network_bridge::{
                                         BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,
@@ -6260,16 +6290,82 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                 }
-                                PqNetworkEvent::Stopped => {
-                                    peer_count_for_rpc.store(0, Ordering::Relaxed);
-                                    tracing::info!("PQ network stopped");
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                    },
-                );
+	                                PqNetworkEvent::Stopped => {
+	                                    peer_count_for_rpc.store(0, Ordering::Relaxed);
+	                                    tracing::info!("PQ network stopped");
+	                                    break;
+	                                }
+	                                _ => {}
+	                            }
+	                                }
+	                                _ = discovery_tick.tick() => {
+	                                    let current_peers = pq_backend.peer_count().await;
+	                                    if current_peers >= discovery_min_peers {
+	                                        continue;
+	                                    }
+
+	                                    // Ask a random connected peer for addresses.
+	                                    let mut peers: Vec<_> = connected_peers.keys().copied().collect();
+	                                    peers.shuffle(&mut rand::thread_rng());
+	                                    if let Some(peer_id) = peers.first().copied() {
+	                                        let get_addrs = DiscoveryMessage::GetAddrs {
+	                                            limit: DEFAULT_ADDR_LIMIT,
+	                                        };
+	                                        if let Ok(encoded) = bincode::serialize(&get_addrs) {
+	                                            let _ = pq_handle_for_sync
+	                                                .send_message(
+	                                                    peer_id,
+	                                                    DISCOVERY_PROTOCOL.to_string(),
+	                                                    encoded,
+	                                                )
+	                                                .await;
+	                                        }
+	                                    }
+
+	                                    // Dial a small batch of recent peers from the store.
+	                                    let connected_addrs: HashSet<_> = pq_backend
+	                                        .peer_info()
+	                                        .await
+	                                        .into_iter()
+	                                        .map(|info| info.addr)
+	                                        .collect();
+	                                    let candidates = match peer_store
+	                                        .recent_peers(DEFAULT_DIAL_BATCH * 2, &connected_addrs)
+	                                    {
+	                                        Ok(candidates) => candidates,
+	                                        Err(err) => {
+	                                            tracing::debug!(
+	                                                error = %err,
+	                                                "Failed to select recent peers from discovery store"
+	                                            );
+	                                            Vec::new()
+	                                        }
+	                                    };
+	                                    let mut dialed = 0usize;
+	                                    for addr in candidates {
+	                                        if dialed >= DEFAULT_DIAL_BATCH {
+	                                            break;
+	                                        }
+	                                        if !is_dialable_addr(&addr) {
+	                                            continue;
+	                                        }
+	                                        if let Some(last) = recent_dials.get(&addr) {
+	                                            if last.elapsed() < recent_dial_window {
+	                                                continue;
+	                                            }
+	                                        }
+	                                        recent_dials.insert(addr, Instant::now());
+	                                        let pq_backend = Arc::clone(&pq_backend);
+	                                        tokio::spawn(async move {
+	                                            let _ = pq_backend.connect(addr).await;
+	                                        });
+	                                        dialed += 1;
+	                                    }
+	                                }
+	                            }
+	                        }
+	                    },
+	                );
 
                 // =======================================================================
                 // Spawn sync state machine tick task
@@ -7206,63 +7302,117 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             // Part 2: Process block announcements (new blocks from mining)
                             // ============================================================
                             // Drain pending block announcements from the bridge
-                            let pending_announces = {
-                                let mut bridge = block_import_bridge.lock().await;
-                                bridge.drain_announces()
-                            };
+	                            let pending_announces = {
+	                                let mut bridge = block_import_bridge.lock().await;
+	                                bridge.drain_announces()
+	                            };
+	                            let mut deferred_announced_blocks: Vec<
+	                                crate::substrate::sync::DownloadedBlock,
+	                            > = Vec::new();
 
-                            for (peer_id, announce) in pending_announces {
+	                            for (peer_id, announce) in pending_announces {
                                 // Update sync service with block announcement to track peer's best height
                                 // This is critical for triggering historical sync when we're behind
-                                {
-                                    let mut sync = sync_service_for_import.lock().await;
-                                    sync.on_block_announce(peer_id, &announce);
-                                }
+	                                {
+	                                    let mut sync = sync_service_for_import.lock().await;
+	                                    sync.on_block_announce(peer_id, &announce);
+	                                }
 
-                                // Only process blocks that have a body (full blocks)
-                                let body = match &announce.body {
-                                    Some(body) => body.clone(),
-                                    None => {
-                                        // Header-only announcement - the sync service was already
-                                        // notified above, so it can request the full block
-                                        tracing::trace!(
-                                            peer = %hex::encode(&peer_id),
-                                            block_number = announce.number,
-                                            "Header-only announcement - sync service notified"
-                                        );
-                                        continue;
-                                    }
-                                };
+	                                let crate::substrate::network_bridge::BlockAnnounce {
+	                                    header: announce_header,
+	                                    state: _,
+	                                    number: announce_number,
+	                                    hash: announce_hash,
+	                                    body,
+	                                } = announce;
 
-                                // Decode the header
-                                let header = match runtime::Header::decode(&mut &announce.header[..]) {
-                                    Ok(h) => h,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            peer = %hex::encode(&peer_id),
-                                            error = %e,
+	                                // Only process blocks that have a body (full blocks)
+	                                let body = match body {
+	                                    Some(body) => body,
+	                                    None => {
+	                                        // Header-only announcement - the sync service was already
+	                                        // notified above, so it can request the full block
+	                                        tracing::trace!(
+	                                            peer = %hex::encode(&peer_id),
+	                                            block_number = announce_number,
+	                                            "Header-only announcement - sync service notified"
+	                                        );
+	                                        continue;
+	                                    }
+	                                };
+
+	                                // Decode the header
+	                                let header =
+	                                    match runtime::Header::decode(&mut &announce_header[..]) {
+	                                    Ok(h) => h,
+	                                    Err(e) => {
+	                                        tracing::warn!(
+	                                            peer = %hex::encode(&peer_id),
+	                                            error = %e,
                                             "Failed to decode block header"
                                         );
                                         blocks_failed += 1;
-                                        continue;
-                                    }
-                                };
+	                                        continue;
+	                                    }
+	                                };
 
-                                // Decode extrinsics
-                                let extrinsics: Vec<runtime::UncheckedExtrinsic> = body
-                                    .iter()
-                                    .filter_map(|ext_bytes| {
-                                        runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]).ok()
+	                                let block_number = *header.number();
+	                                let parent_hash = *header.parent_hash();
+
+	                                match block_import_client.header(parent_hash) {
+	                                    Ok(Some(_)) => {}
+	                                    Ok(None) => {
+	                                        tracing::debug!(
+	                                            peer = %hex::encode(&peer_id),
+	                                            block_number,
+	                                            parent = %hex::encode(parent_hash.as_bytes()),
+	                                            "Deferring announced block until parent is available"
+	                                        );
+	                                        deferred_announced_blocks.push(
+	                                            crate::substrate::sync::DownloadedBlock {
+	                                                number: block_number,
+	                                                hash: announce_hash,
+	                                                header: announce_header,
+	                                                body,
+	                                                from_peer: peer_id,
+	                                            },
+	                                        );
+	                                        continue;
+	                                    }
+	                                    Err(err) => {
+	                                        tracing::warn!(
+	                                            peer = %hex::encode(&peer_id),
+	                                            block_number,
+	                                            parent = %hex::encode(parent_hash.as_bytes()),
+	                                            error = %err,
+	                                            "Failed to query parent header; deferring announced block"
+	                                        );
+	                                        deferred_announced_blocks.push(
+	                                            crate::substrate::sync::DownloadedBlock {
+	                                                number: block_number,
+	                                                hash: announce_hash,
+	                                                header: announce_header,
+	                                                body,
+	                                                from_peer: peer_id,
+	                                            },
+	                                        );
+	                                        continue;
+	                                    }
+	                                }
+
+	                                // Decode extrinsics
+	                                let extrinsics: Vec<runtime::UncheckedExtrinsic> = body
+	                                    .iter()
+	                                    .filter_map(|ext_bytes| {
+	                                        runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]).ok()
                                     })
                                     .collect();
 
-                                // Create the block
-                                let block = runtime::Block::new(header.clone(), extrinsics.clone());
-                                let block_hash = block.hash();
-                                let block_number = *header.number();
-                                let parent_hash = *header.parent_hash();
-                                let mut block_hash_bytes = [0u8; 32];
-                                block_hash_bytes.copy_from_slice(block_hash.as_bytes());
+	                                // Create the block
+	                                let block = runtime::Block::new(header.clone(), extrinsics.clone());
+	                                let block_hash = block.hash();
+	                                let mut block_hash_bytes = [0u8; 32];
+	                                block_hash_bytes.copy_from_slice(block_hash.as_bytes());
 
                                 let requires_sidecar = has_sidecar_transfers(&extrinsics);
                                 let da_policy =
@@ -7861,6 +8011,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                 }
+                            }
+
+                            if !deferred_announced_blocks.is_empty() {
+                                let mut sync = sync_service_for_import.lock().await;
+                                sync.requeue_downloaded(deferred_announced_blocks);
                             }
                         }
                     },

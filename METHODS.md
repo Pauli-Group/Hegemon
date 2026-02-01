@@ -552,6 +552,8 @@ Instead, once a PQ connection is established, peers run a small “address excha
 
 Nodes persist learned addresses under the Substrate `--base-path` (cache file: `<base-path>/pq-peers.bin`) and opportunistically dial a small batch of learned addresses when peer count is low. `HEGEMON_SEEDS` remains the bootstrap mechanism (operators should still share the same seed list to avoid partitions).
 
+To ensure early-joining nodes continue to learn about peers that connect later, nodes periodically re-request addresses from a random connected peer and attempt a bounded batch of dials from the discovery cache while below the peer target (defaults: `HEGEMON_PQ_DISCOVERY_MIN_PEERS=4`, `HEGEMON_PQ_DISCOVERY_TICK_SECS=30`).
+
 ### 2. Object definitions (bits, fields, encodings)
 
 #### 2.1 Value and asset ID

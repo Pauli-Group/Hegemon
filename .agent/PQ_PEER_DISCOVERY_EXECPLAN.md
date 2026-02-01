@@ -24,6 +24,8 @@ You can see this working by starting 3 nodes where only 1 node is in `HEGEMON_SE
 - [x] (2026-02-01T01:37Z) Opportunistically dial discovered addresses when peer count is low (bounded fanout, avoid duplicate overwrites).
 - [x] (2026-02-01T01:39Z) Add focused tests for discovery message round-trip and address filtering.
 - [x] (2026-02-01T01:48Z) Validate via `cargo test -p network` and `cargo test -p hegemon-node` (macOS requires `LIBCLANG_PATH` / `DYLD_LIBRARY_PATH`).
+- [x] (2026-02-01T15:30Z) Add periodic discovery refresh (`GetAddrs` tick + cached dial attempts) so early-joining nodes learn later peers; gate dialing on a minimum peer target (`HEGEMON_PQ_DISCOVERY_MIN_PEERS`, `HEGEMON_PQ_DISCOVERY_TICK_SECS`).
+- [x] (2026-02-01T15:30Z) Defer announced blocks when the parent header is missing (avoid `forced_inclusions(parent_hash)` runtime API errors during proof verification).
 
 ## Surprises & Discoveries
 
@@ -53,7 +55,7 @@ The Substrate node now performs basic peer discovery over the PQ network:
 
 - Nodes exchange `Hello` (listen port) and `GetAddrs`/`Addrs` on connect.
 - Learned addresses are persisted at `<base-path>/pq-peers.bin`.
-- Nodes opportunistically dial a small batch of learned addresses when under the peer target.
+- Nodes periodically re-request addresses and opportunistically dial a small batch of learned addresses until reaching the minimum peer target (defaults: 4 peers, 30s tick).
 - The PQ backend drops duplicate peer connections (same peer ID) rather than overwriting an existing connection entry.
 
 This should make “non-seed” nodes converge to multiple peers over time, removing the seed-only connectivity cliff observed on the testnet.
