@@ -1,10 +1,14 @@
 //! Chain Synchronization Service (Phase 11.6)
 //!
-//! Bitcoin-style "headers first" sync for Hegemon's PoW blockchain.
-//! This is simpler than Substrate's ChainSync because PoW chains don't need:
-//! - Finality gadget integration (no GRANDPA)
-//! - Complex ancestor search (longest chain wins)
-//! - Warp/state sync (we always fully validate)
+//! Bitcoin-style sync for Hegemon's PoW blockchain.
+//!
+//! This is intentionally simpler than Substrate's ChainSync (no GRANDPA, no warp/state sync),
+//! but PoW chains still fork and require **ancestor backtracking** when peers diverge.
+//!
+//! Our PQ network's `GetBlocks(start_height)` uses heights for efficiency, so the sync client
+//! tracks a `(height, hash)` tip for the branch it is trying to extend. If the next batch's
+//! first block does not build on that tip, we walk backwards along our current branch until we
+//! find a common ancestor and can import the peer's longer chain.
 //!
 //! # Sync Protocol
 //!
@@ -93,6 +97,8 @@ pub enum SyncState {
         peer: PeerId,
         /// Height of the last block we successfully imported
         current_height: u64,
+        /// Hash of the block at `current_height` (may be non-canonical during fork recovery)
+        current_hash: [u8; 32],
         /// Height we've requested up to (may be ahead of current_height)
         requested_height: u64,
         /// Whether we have a pending request (waiting for response)
@@ -233,6 +239,22 @@ where
     Block: BlockT,
     Client: HeaderBackend<Block> + BlockBackend<Block> + Send + Sync + 'static,
 {
+    fn best_hash_bytes(&self) -> [u8; 32] {
+        let info = self.client.info();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(info.best_hash.as_ref());
+        bytes
+    }
+
+    fn parent_of_hash(&self, hash: [u8; 32]) -> Option<[u8; 32]> {
+        let hash = Block::Hash::decode(&mut &hash[..]).ok()?;
+        let header = self.client.header(hash).ok().flatten()?;
+        let parent = *HeaderT::parent_hash(&header);
+        let mut parent_bytes = [0u8; 32];
+        parent_bytes.copy_from_slice(parent.as_ref());
+        Some(parent_bytes)
+    }
+
     /// Create a new sync service
     pub fn new(client: Arc<Client>) -> Self {
         Self {
@@ -373,9 +395,7 @@ where
 
         // Check if we should start syncing
         let our_best = self.best_number();
-        if announce.number > our_best + 1
-            && matches!(self.state, SyncState::Idle | SyncState::Synced)
-        {
+        if announce.number > our_best && matches!(self.state, SyncState::Idle | SyncState::Synced) {
             tracing::info!(
                 our_best = our_best,
                 peer_best = announce.number,
@@ -388,6 +408,7 @@ where
                 target_height: announce.number,
                 peer: peer_id,
                 current_height: our_best,
+                current_hash: self.best_hash_bytes(),
                 requested_height: our_best,
                 request_pending: false,
                 last_request_time: None,
@@ -767,8 +788,10 @@ where
             "🔄 SYNC: handle_blocks_response CALLED"
         );
 
-        // Remove from pending
-        let _pending = self.pending_requests.remove(&request_id);
+        // We only allow one outstanding request at a time. The protocol currently does not
+        // correlate request/response IDs, so clear pending unconditionally to avoid leaks.
+        let _ = request_id;
+        self.pending_requests.clear();
 
         // Clear request pending flag
         if let SyncState::Downloading {
@@ -796,6 +819,94 @@ where
 
         let block_count = blocks.len();
         self.stats.blocks_downloaded += block_count as u64;
+
+        // Validate that the first block connects to our current sync tip. If not, we are on
+        // a fork: backtrack along our current branch until we find a common ancestor.
+        let Some(first) = blocks.first() else {
+            return;
+        };
+
+        let (current_height_snapshot, current_hash_snapshot) = match &self.state {
+            SyncState::Downloading {
+                current_height,
+                current_hash,
+                ..
+            } => (*current_height, *current_hash),
+            _ => return,
+        };
+
+        let decoded = match <Block::Header as Decode>::decode(&mut &first.header[..]) {
+            Ok(h) => h,
+            Err(err) => {
+                tracing::warn!(
+                    peer = %hex::encode(peer_id),
+                    error = %err,
+                    "🔄 SYNC: Failed to decode first synced header"
+                );
+                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                    peer_state.failed_requests += 1;
+                }
+                self.stats.failed_requests += 1;
+                return;
+            }
+        };
+        let parent = *HeaderT::parent_hash(&decoded);
+        let mut parent_bytes = [0u8; 32];
+        parent_bytes.copy_from_slice(parent.as_ref());
+
+        if parent_bytes != current_hash_snapshot {
+            if current_height_snapshot == 0 {
+                tracing::warn!(
+                    peer = %hex::encode(peer_id),
+                    block_number = first.number,
+                    expected_parent = %hex::encode(current_hash_snapshot),
+                    got_parent = %hex::encode(parent_bytes),
+                    "🔄 SYNC: Fork detected at genesis; cannot backtrack further"
+                );
+                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                    peer_state.failed_requests += 1;
+                }
+                self.stats.failed_requests += 1;
+                self.state = SyncState::Idle;
+                return;
+            }
+
+            let Some(parent_of_current) = self.parent_of_hash(current_hash_snapshot) else {
+                tracing::warn!(
+                    peer = %hex::encode(peer_id),
+                    height = current_height_snapshot,
+                    hash = %hex::encode(current_hash_snapshot),
+                    "🔄 SYNC: Fork detected but failed to load current header; resetting to idle"
+                );
+                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                    peer_state.failed_requests += 1;
+                }
+                self.stats.failed_requests += 1;
+                self.state = SyncState::Idle;
+                return;
+            };
+
+            tracing::info!(
+                peer = %hex::encode(peer_id),
+                requested_first = first.number,
+                expected_parent = %hex::encode(current_hash_snapshot),
+                got_parent = %hex::encode(parent_bytes),
+                backtrack_from_height = current_height_snapshot,
+                backtrack_to_height = current_height_snapshot.saturating_sub(1),
+                "🔄 SYNC: Fork detected; backtracking one block"
+            );
+
+            if let SyncState::Downloading {
+                ref mut current_height,
+                ref mut current_hash,
+                ..
+            } = &mut self.state
+            {
+                *current_height = current_height_snapshot.saturating_sub(1);
+                *current_hash = parent_of_current;
+            }
+            return;
+        }
 
         tracing::info!(
             peer = %hex::encode(peer_id),
@@ -947,19 +1058,6 @@ where
             from_peer: peer_id,
         });
 
-        self.stats.blocks_downloaded += 1;
-
-        // Update sync state progress
-        if let SyncState::Downloading {
-            ref mut current_height,
-            ..
-        } = &mut self.state
-        {
-            if number > *current_height {
-                *current_height = number;
-            }
-        }
-
         tracing::debug!(
             peer = %hex::encode(peer_id),
             block_number = number,
@@ -969,17 +1067,21 @@ where
     }
 
     /// Notify sync service that a block was successfully imported
-    pub fn on_block_imported(&mut self, number: u64) {
+    pub fn on_block_imported(&mut self, number: u64, hash: [u8; 32]) {
         self.stats.blocks_imported += 1;
 
         // Update state
         if let SyncState::Downloading {
             target_height,
             ref mut current_height,
+            ref mut current_hash,
             ..
         } = &mut self.state
         {
-            *current_height = number;
+            if number > *current_height {
+                *current_height = number;
+                *current_hash = hash;
+            }
 
             // Check if we're synced
             if number >= *target_height {
@@ -1060,7 +1162,7 @@ where
             SyncState::Idle => {
                 // Check if any peer is ahead of us
                 if let Some((peer_id, peer_state)) = self.best_sync_peer() {
-                    if peer_state.best_height > our_best + 1 {
+                    if peer_state.best_height > our_best {
                         tracing::info!(
                             our_best = our_best,
                             peer_best = peer_state.best_height,
@@ -1072,6 +1174,7 @@ where
                             target_height: peer_state.best_height,
                             peer: peer_id,
                             current_height: our_best,
+                            current_hash: self.best_hash_bytes(),
                             requested_height: our_best,
                             request_pending: false,
                             last_request_time: None,
@@ -1087,6 +1190,7 @@ where
                 target_height,
                 peer,
                 current_height,
+                current_hash: _,
                 requested_height,
                 request_pending,
                 last_request_time,
@@ -1115,9 +1219,9 @@ where
                 );
 
                 // Check if we've caught up
-                if our_best >= target_height {
+                if current_height >= target_height {
                     tracing::info!(
-                        height = our_best,
+                        height = current_height,
                         target = target_height,
                         "Sync complete, transitioning to synced state"
                     );
@@ -1162,13 +1266,13 @@ where
                 }
 
                 // Don't overwhelm - only request if queue has room
-                if self.downloaded_blocks.len() >= MAX_IMPORT_BUFFER / 2 {
-                    tracing::trace!("Download queue filling up, waiting for imports");
+                if !self.downloaded_blocks.is_empty() {
+                    tracing::trace!("Download queue not empty, waiting for imports");
                     return None;
                 }
 
                 // Request the next batch of blocks
-                let next_height = our_best + 1;
+                let next_height = current_height + 1;
                 tracing::info!(
                     peer = %hex::encode(peer),
                     next_height = next_height,
@@ -1179,7 +1283,7 @@ where
             SyncState::Synced => {
                 // Check if we've fallen behind
                 if let Some((peer_id, peer_state)) = self.best_sync_peer() {
-                    if peer_state.best_height > our_best + 1 {
+                    if peer_state.best_height > our_best {
                         tracing::info!(
                             our_best = our_best,
                             peer_best = peer_state.best_height,
@@ -1189,6 +1293,7 @@ where
                             target_height: peer_state.best_height,
                             peer: peer_id,
                             current_height: our_best,
+                            current_hash: self.best_hash_bytes(),
                             requested_height: our_best,
                             request_pending: false,
                             last_request_time: None,

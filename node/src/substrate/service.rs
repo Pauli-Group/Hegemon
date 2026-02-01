@@ -7131,7 +7131,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         // Notify sync service of successful import
                                         {
                                             let mut sync = sync_service_for_import.lock().await;
-                                            sync.on_block_imported(block_number as u64);
+                                            sync.on_block_imported(block_number as u64, block_hash);
                                         }
 
                                         if let Some(proof) = commitment_block_proof.take() {
@@ -7167,6 +7167,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
+                                        // Treat AlreadyInChain as progress for the sync cursor, so a node that
+                                        // reconnects after mining on a fork can still advance without stalling.
+                                        {
+                                            let mut sync = sync_service_for_import.lock().await;
+                                            sync.on_block_imported(block_number as u64, block_hash);
+                                        }
+
                                         if da_build.is_some() || proof_da_build.is_some() {
                                             let mut store = da_chunk_store_for_import.lock();
 
