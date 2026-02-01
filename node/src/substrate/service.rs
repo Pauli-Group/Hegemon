@@ -5713,6 +5713,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     "PqNetworkBackend started"
                 );
 
+                let pq_backend = Arc::new(pq_backend);
+
                 // Get PQ network handle for mining worker broadcasting
                 pq_network_handle = Some(pq_backend.handle());
                 tracing::info!("PQ network handle captured for mining worker");
@@ -5724,6 +5726,44 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         .build(),
                 ));
                 let bridge_clone = Arc::clone(&network_bridge);
+
+                // =======================================================================
+                // Peer discovery (address exchange) store
+                // =======================================================================
+                // Persist learned peer socket addresses under the node base path so nodes
+                // that are not in HEGEMON_SEEDS can still reconnect across restarts.
+                use network::{PeerStore, PeerStoreConfig};
+                let mut peer_store = PeerStore::new(PeerStoreConfig {
+                    path: config.base_path.path().join("pq-peers.bin"),
+                    ttl: std::time::Duration::from_secs(24 * 60 * 60),
+                    max_entries: 2048,
+                });
+                if let Err(err) = peer_store.load() {
+                    tracing::warn!(error = %err, "Failed to load PQ peer discovery store");
+                }
+                // Opportunistically dial a small number of cached peers on startup. This helps
+                // nodes recover connectivity even if a seed is temporarily unreachable.
+                use crate::substrate::discovery::is_dialable_addr;
+                let cached_dials: Vec<_> = peer_store
+                    .addresses()
+                    .into_iter()
+                    .filter(|addr| is_dialable_addr(addr))
+                    .take(8)
+                    .collect();
+                if !cached_dials.is_empty() {
+                    let pq_backend_for_cached = Arc::clone(&pq_backend);
+                    task_manager.spawn_handle().spawn(
+                        "pq-discovery-cached-dials",
+                        Some("network"),
+                        async move {
+                            for addr in cached_dials {
+                                let _ = pq_backend_for_cached.connect(addr).await;
+                            }
+                        },
+                    );
+                }
+                let discovery_listen_port = pq_service_config.listen_addr.port();
+                let discovery_max_peers = pq_service_config.max_peers;
 
                 // =======================================================================
                 // Create Chain Sync Service
@@ -5748,7 +5788,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let pool_verbose = pool_config.verbose;
 
                 // Get handles for sending sync messages
-                // NOTE: Get all handles before pq_backend is moved into the task
                 let pq_handle_for_sync = pq_backend.handle();
                 let sync_handle_for_tick = pq_backend.handle();
                 let pq_handle_for_status = pq_backend.handle(); // For sending best block on connect
@@ -5763,11 +5802,35 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let peer_count_for_rpc = Arc::clone(&peer_count);
 
                 // Spawn the PQ network event handler task with sync integration
+                let pq_backend_for_events = Arc::clone(&pq_backend);
                 task_manager.spawn_handle().spawn(
                     "pq-network-events",
                     Some("network"),
                     async move {
-                        let _pq_backend = pq_backend;
+                        use crate::substrate::discovery::{
+                            is_dialable_addr, DiscoveryMessage, DEFAULT_ADDR_LIMIT,
+                            DEFAULT_DIAL_BATCH, DISCOVERY_PROTOCOL,
+                        };
+                        use rand::seq::SliceRandom;
+                        use std::collections::HashMap;
+                        use std::collections::HashSet;
+                        use std::net::SocketAddr;
+                        use std::time::{Duration, Instant};
+
+                        let pq_backend = pq_backend_for_events;
+                        let listen_port = discovery_listen_port;
+
+                        // Discovery state: observed peer socket address and whether we dialed them.
+                        let mut connected_peers: HashMap<[u8; 32], (SocketAddr, bool)> =
+                            HashMap::new();
+
+                        // Peer discovery store (persisted).
+                        let mut peer_store = peer_store;
+
+                        // Track recent dial attempts so we don't spin on unreachable addrs.
+                        let mut recent_dials: HashMap<SocketAddr, Instant> = HashMap::new();
+                        let recent_dial_window = Duration::from_secs(30);
+
                         tracing::info!("PQ network event handler started (Full Client Mode + Sync)");
 
                         while let Some(event) = event_rx.recv().await {
@@ -5807,6 +5870,45 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         sync.on_peer_connected(peer_id);
                                         peer_count_for_rpc
                                             .store(sync.peer_count(), Ordering::Relaxed);
+                                    }
+
+                                    connected_peers.insert(peer_id, (addr, is_outbound));
+
+                                    // Record dialed addresses so we can share them with others.
+                                    if is_outbound && is_dialable_addr(&addr) {
+                                        if let Err(err) = peer_store.record_connected(addr) {
+                                            tracing::warn!(
+                                                peer = %hex::encode(peer_id),
+                                                addr = %addr,
+                                                error = %err,
+                                                "Failed to persist connected peer address"
+                                            );
+                                        }
+                                    }
+
+                                    // Send discovery hello + request addresses.
+                                    let hello = DiscoveryMessage::Hello { listen_port };
+                                    if let Ok(encoded) = bincode::serialize(&hello) {
+                                        let _ = pq_handle_for_status
+                                            .send_message(
+                                                peer_id,
+                                                DISCOVERY_PROTOCOL.to_string(),
+                                                encoded,
+                                            )
+                                            .await;
+                                    }
+
+                                    let get_addrs = DiscoveryMessage::GetAddrs {
+                                        limit: DEFAULT_ADDR_LIMIT,
+                                    };
+                                    if let Ok(encoded) = bincode::serialize(&get_addrs) {
+                                        let _ = pq_handle_for_status
+                                            .send_message(
+                                                peer_id,
+                                                DISCOVERY_PROTOCOL.to_string(),
+                                                encoded,
+                                            )
+                                            .await;
                                     }
 
                                     // Send our best block to the new peer so they know our chain tip
@@ -5887,6 +5989,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         peer_count_for_rpc
                                             .store(sync.peer_count(), Ordering::Relaxed);
                                     }
+
+                                    if let Some((addr, is_outbound)) = connected_peers.remove(&peer_id)
+                                    {
+                                        if is_outbound && is_dialable_addr(&addr) {
+                                            // Keep the peer fresh in the store so reconnect attempts
+                                            // prefer it over stale entries.
+                                            let _ = peer_store.record_disconnected(addr);
+                                        }
+                                    }
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
                                         reason = %reason,
@@ -5894,6 +6005,99 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     );
                                 }
                                 PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
+                                    // Handle discovery protocol messages
+                                    if protocol == DISCOVERY_PROTOCOL {
+                                        let decoded =
+                                            bincode::deserialize::<DiscoveryMessage>(&data);
+                                        match decoded {
+                                            Ok(DiscoveryMessage::Hello { listen_port }) => {
+                                                if let Some((observed, _)) =
+                                                    connected_peers.get(&peer_id)
+                                                {
+                                                    let candidate =
+                                                        SocketAddr::new(observed.ip(), listen_port);
+                                                    if is_dialable_addr(&candidate) {
+                                                        let _ = peer_store
+                                                            .record_learned([candidate]);
+                                                    }
+                                                }
+                                            }
+                                            Ok(DiscoveryMessage::GetAddrs { limit }) => {
+                                                // Basic rate limiting: ignore pathological requests.
+                                                let limit = limit.min(DEFAULT_ADDR_LIMIT) as usize;
+                                                let mut addrs: Vec<_> = peer_store
+                                                    .addresses()
+                                                    .into_iter()
+                                                    .filter(|addr| is_dialable_addr(addr))
+                                                    .collect();
+                                                addrs.shuffle(&mut rand::thread_rng());
+                                                addrs.truncate(limit);
+
+                                                let msg = DiscoveryMessage::Addrs { addrs };
+                                                if let Ok(encoded) = bincode::serialize(&msg) {
+                                                    let _ = pq_handle_for_sync
+                                                        .send_message(
+                                                            peer_id,
+                                                            DISCOVERY_PROTOCOL.to_string(),
+                                                            encoded,
+                                                        )
+                                                        .await;
+                                                }
+                                            }
+                                            Ok(DiscoveryMessage::Addrs { addrs }) => {
+                                                // Persist learned addrs.
+                                                let learned: Vec<_> = addrs
+                                                    .into_iter()
+                                                    .filter(|addr| is_dialable_addr(addr))
+                                                    .collect();
+                                                if !learned.is_empty() {
+                                                    let _ = peer_store
+                                                        .record_learned(learned.iter().copied());
+                                                }
+
+                                                // Opportunistically dial a small batch if we're under target.
+                                                let current_peers = pq_backend.peer_count().await;
+                                                if current_peers < discovery_max_peers {
+                                                    // Exclude addresses we are already connected to (by addr).
+                                                    let connected_addrs: HashSet<_> = pq_backend
+                                                        .peer_info()
+                                                        .await
+                                                        .into_iter()
+                                                        .map(|info| info.addr)
+                                                        .collect();
+
+                                                    let mut dialed = 0usize;
+                                                    for addr in learned {
+                                                        if dialed >= DEFAULT_DIAL_BATCH {
+                                                            break;
+                                                        }
+                                                        if connected_addrs.contains(&addr) {
+                                                            continue;
+                                                        }
+                                                        if let Some(last) = recent_dials.get(&addr) {
+                                                            if last.elapsed() < recent_dial_window {
+                                                                continue;
+                                                            }
+                                                        }
+                                                        recent_dials.insert(addr, Instant::now());
+
+                                                        let pq_backend = Arc::clone(&pq_backend);
+                                                        tokio::spawn(async move {
+                                                            let _ = pq_backend.connect(addr).await;
+                                                        });
+                                                        dialed += 1;
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
+                                                tracing::debug!(
+                                                    peer = %hex::encode(peer_id),
+                                                    error = %err,
+                                                    "Failed to decode discovery message"
+                                                );
+                                            }
+                                        }
+                                    }
                                     // Handle sync protocol messages
                                     use crate::substrate::network_bridge::{
                                         BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,

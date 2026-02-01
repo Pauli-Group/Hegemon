@@ -67,6 +67,7 @@ pub mod block_import;
 pub mod chain_spec;
 pub mod client;
 pub mod command;
+pub mod discovery;
 pub mod mining_worker;
 pub mod network;
 pub mod network_bridge;

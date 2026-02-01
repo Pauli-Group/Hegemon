@@ -538,6 +538,20 @@ We do not need signatures inside the shielded circuit, only for block authentica
 
 PQ network identities are derived from a 32-byte secret seed that must be generated from OS entropy and persisted on disk with restrictive permissions (mode 0600). The node loads this seed from `HEGEMON_PQ_IDENTITY_SEED` (hex) when provided, otherwise it reads `HEGEMON_PQ_IDENTITY_SEED_PATH` or defaults to `<base-path>/pq-identity.seed`. The seed is never derived from public peer IDs; peer IDs are computed from the public keys that result from this secret seed. This keeps PQ transport identity keys unpredictable while keeping peer identity stable across restarts.
 
+#### 1.6 Peer discovery (PQ address exchange)
+
+The Substrate node’s PQ network stack is **not** libp2p, so we do not get Kademlia/mDNS discovery “for free”.
+
+Instead, once a PQ connection is established, peers run a small “address exchange” protocol over the PQ framed message channel:
+
+* Protocol id: `/hegemon/discovery/pq/1`
+* Messages (serde+bincode encoded):
+
+  * `Hello { listen_port }` – the receiver combines the *observed peer IP* with `listen_port` to form a dialable `IP:port` even if the connection’s TCP source port was ephemeral.
+  * `GetAddrs { limit }` and `Addrs { addrs }` – bounded address lists used to share additional dial targets beyond seeds.
+
+Nodes persist learned addresses under the Substrate `--base-path` (cache file: `<base-path>/pq-peers.bin`) and opportunistically dial a small batch of learned addresses when peer count is low. `HEGEMON_SEEDS` remains the bootstrap mechanism (operators should still share the same seed list to avoid partitions).
+
 ### 2. Object definitions (bits, fields, encodings)
 
 #### 2.1 Value and asset ID
