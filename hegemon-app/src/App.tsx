@@ -2027,7 +2027,7 @@ export default function App() {
           {sendBlockedReason ? <p className="text-xs text-amber">{sendBlockedReason}</p> : null}
           {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? (
             <p className="text-xs text-amber">
-              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.8.1 node on a different RPC
+              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.8.2 node on a different RPC
               port (e.g. 9955) and update this connection’s URLs to regain start/stop control.
             </p>
           ) : null}

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.2 - 2026-02-01
+- Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.8.2`.
+- PQ sync: recover from forks by backtracking to a common ancestor and resuming downloads.
+- PQ peer discovery: exchange and persist learned peer addresses (`pq-peers.bin`) to reduce reliance on hardwired seeds.
+- Ops/runbooks: document the approved `HEGEMON_SEEDS` list and remind operators to enable NTP/chrony.
+
 ## v0.8.1 - 2026-01-31
 - Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.8.1`.
 
