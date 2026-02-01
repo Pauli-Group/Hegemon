@@ -287,12 +287,20 @@ impl PqNetworkBackend {
                                 let peers = peers.clone();
                                 let event_tx = event_tx.clone();
 
-                                tokio::spawn(async move {
-                                    match transport.upgrade_inbound(socket, addr).await {
-                                        Ok(conn) => {
-                                            let peer_id = conn.peer_id();
-                                            let info = PqConnectionInfo::from(&conn);
-                                            let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
+	                                tokio::spawn(async move {
+	                                    match transport.upgrade_inbound(socket, addr).await {
+	                                        Ok(conn) => {
+	                                            let peer_id = conn.peer_id();
+	                                            if peers.read().await.contains_key(&peer_id) {
+	                                                tracing::debug!(
+	                                                    peer_id = %hex::encode(peer_id),
+	                                                    addr = %addr,
+	                                                    "Duplicate inbound peer connection; dropping"
+	                                                );
+	                                                return;
+	                                            }
+	                                            let info = PqConnectionInfo::from(&conn);
+	                                            let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
 
                                             // Store only the write channel - connection owned by task
                                             peers.write().await.insert(peer_id, PeerConnection {
@@ -543,9 +551,18 @@ impl PqNetworkBackend {
             .await
             .map_err(|e| e.to_string())?;
 
-        let peer_id = conn.peer_id();
-        let info = PqConnectionInfo::from(&conn);
-        let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
+	        let peer_id = conn.peer_id();
+	        let info = PqConnectionInfo::from(&conn);
+
+	        if peers.read().await.contains_key(&peer_id) {
+	            tracing::debug!(
+	                peer_id = %hex::encode(peer_id),
+	                addr = %addr,
+	                "Duplicate outbound peer connection; dropping"
+	            );
+	            return Ok(peer_id);
+	        }
+	        let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Store only the write channel - connection owned by task
         peers.write().await.insert(
