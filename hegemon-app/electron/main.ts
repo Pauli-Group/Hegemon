@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session } from 'electron';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -37,6 +37,23 @@ if (process.platform === 'win32') {
 app.setName('Hegemon');
 
 const resolveContactsPath = () => join(app.getPath('appData'), 'Hegemon', contactsFileName);
+
+const configureAppMenu = () => {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+  // Electron’s default macOS menu can emit noisy logs like:
+  // "representedObject is not a WeakPtrToElectronMenuModelAsNSObject"
+  // when Cocoa validates menu items. We ship an explicit minimal app menu to avoid
+  // the default template (and we intentionally omit recent-documents items).
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+};
 
 const resolveLegacyContactsPaths = () => {
   const appData = app.getPath('appData');
@@ -228,6 +245,8 @@ app.whenReady().then(() => {
     applicationVersion: app.getVersion()
   });
 
+  configureAppMenu();
+
   const csp = buildContentSecurityPolicy(devServerUrl);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -379,7 +398,7 @@ ipcMain.handle('dialog:openPath', async (_event, options: DialogOpenOptions) => 
       : options.defaultPath?.startsWith('~/')
         ? join(app.getPath('home'), options.defaultPath.slice(2))
         : options.defaultPath;
-  const dialogOptions = {
+  const dialogOptions: Electron.OpenDialogOptions = {
     title: options.title,
     defaultPath: resolvedDefaultPath,
     buttonLabel: options.buttonLabel,
