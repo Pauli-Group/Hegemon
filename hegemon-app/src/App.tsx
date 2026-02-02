@@ -9,6 +9,7 @@ import type {
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
+  WalletNoteEntry,
   WalletStatus,
   WalletSyncResult
 } from './types';
@@ -469,6 +470,10 @@ export default function App() {
   const [logNewestFirst, setLogNewestFirst] = useState(true);
 
   const [walletStatus, setWalletStatus] = useState<WalletStatus | null>(null);
+  const [walletNotes, setWalletNotes] = useState<WalletNoteEntry[] | null>(null);
+  const [walletNotesBusy, setWalletNotesBusy] = useState(false);
+  const [walletNotesError, setWalletNotesError] = useState<string | null>(null);
+  const [walletNotesCollapsed, setWalletNotesCollapsed] = useState(true);
   const [walletSyncOutput, setWalletSyncOutput] = useState<string>('');
   const [walletSendOutput, setWalletSendOutput] = useState<string>('');
   const [walletDisclosureOutput, setWalletDisclosureOutput] = useState<string>('');
@@ -1102,9 +1107,44 @@ export default function App() {
       const resolvedStorePath = resolveStorePath();
       const status = await window.hegemon.wallet.status(resolvedStorePath, passphrase, true);
       setWalletStatus(status);
+      await refreshWalletNotes(passphrase, status);
       setWalletError(null);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet status failed.');
+    }
+  };
+
+  const refreshWalletNotes = async (
+    overridePassphrase?: string,
+    statusOverride?: WalletStatus | null
+  ) => {
+    const passphrase = overridePassphrase ?? activePassphrase;
+    if (!passphrase) {
+      setWalletNotes(null);
+      return;
+    }
+    if (statusOverride?.capabilities && !statusOverride.capabilities.notesList) {
+      setWalletNotes(null);
+      return;
+    }
+    setWalletNotesBusy(true);
+    setWalletNotesError(null);
+    try {
+      const resolvedStorePath = resolveStorePath();
+      const notes = await window.hegemon.wallet.notesList(resolvedStorePath, passphrase, {
+        includePending: true
+      });
+      setWalletNotes(notes);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Note list failed.';
+      const code = (error as { code?: string }).code;
+      if (code === 'unknown_method' || message.includes('unknown method notes.list')) {
+        setWalletNotes(null);
+        return;
+      }
+      setWalletNotesError(message);
+    } finally {
+      setWalletNotesBusy(false);
     }
   };
 
@@ -1150,6 +1190,7 @@ export default function App() {
       setCreatePassphraseConfirm('');
       setOpenPassphrase('');
       await refreshDisclosureRecords(createPassphrase);
+      await refreshWalletNotes(createPassphrase, status);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet init failed.');
     } finally {
@@ -1172,6 +1213,7 @@ export default function App() {
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
       await refreshDisclosureRecords(openPassphrase);
+      await refreshWalletNotes(openPassphrase, status);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet open failed.');
     } finally {
@@ -1199,6 +1241,8 @@ export default function App() {
       setWalletDisclosureVerifyOutput('');
       setDisclosureRecords([]);
       setSelectedDisclosureKey(null);
+      setWalletNotes(null);
+      setWalletNotesError(null);
     }
   }, []);
 
@@ -1636,6 +1680,7 @@ export default function App() {
   const walletGenesis = walletStatus?.genesisHash ?? null;
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
+  const notesListSupported = Boolean(walletStatus?.capabilities?.notesList);
   const nodeIsLocal = activeConnection?.mode === 'local';
   const nodeTransitionAction =
     nodeTransition && activeConnection && nodeTransition.connectionId === activeConnection.id ? nodeTransition.action : null;
@@ -2923,6 +2968,71 @@ export default function App() {
             </p>
           ) : (
             <p className="text-sm text-surfaceMuted">No note summary.</p>
+          )}
+        </div>
+        <div>
+          <div className="flex items-center justify-between">
+            <p className="label">Note values</p>
+            <div className="flex items-center gap-2">
+              <button
+                className="secondary px-3 py-1 text-xs"
+                onClick={() => setWalletNotesCollapsed((value) => !value)}
+                disabled={!walletReady || !notesListSupported}
+              >
+                {walletNotesCollapsed ? 'Show' : 'Hide'}
+              </button>
+              <button
+                className="secondary px-3 py-1 text-xs"
+                onClick={() => refreshWalletNotes()}
+                disabled={!walletReady || walletNotesBusy || !notesListSupported || walletNotesCollapsed}
+              >
+                {walletNotesBusy ? 'Refreshing' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+          {walletNotesCollapsed ? (
+            <p className="text-sm text-surfaceMuted">Collapsed by default to keep the summary focused.</p>
+          ) : !walletReady ? (
+            <p className="text-sm text-surfaceMuted">Open a wallet to view per-note values.</p>
+          ) : !notesListSupported ? (
+            <p className="text-sm text-surfaceMuted">Note list unavailable. Update walletd to enable it.</p>
+          ) : walletNotesError ? (
+            <p className="text-sm text-guard">{walletNotesError}</p>
+          ) : walletNotesBusy ? (
+            <p className="text-sm text-surfaceMuted">Loading notes…</p>
+          ) : walletNotes?.length ? (
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase text-surfaceMuted/80">
+                  <tr>
+                    <th className="text-left font-medium py-2">Value</th>
+                    <th className="text-left font-medium py-2">Asset</th>
+                    <th className="text-left font-medium py-2">Status</th>
+                    <th className="text-right font-medium py-2">Position</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surfaceMuted/10">
+                  {walletNotes.map((note) => (
+                    <tr key={`${note.position}-${note.status}`} className="text-surface/90">
+                      <td className="py-2 pr-4 mono">
+                        {note.assetId === 0 ? formatHgm(note.value) : note.value.toLocaleString()}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {note.assetId === 0 ? 'HGM' : `Asset ${note.assetId}`}
+                      </td>
+                      <td className="py-2 pr-4">
+                        <span className={`status-pill ${note.status === 'spendable' ? 'ok' : 'warn'}`}>
+                          {note.status}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right mono">{note.position.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-surfaceMuted">No spendable notes yet.</p>
           )}
         </div>
         <div>

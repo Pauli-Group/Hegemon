@@ -14,6 +14,8 @@ import type {
   WalletDisclosureRecord,
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
+  WalletNoteEntry,
+  WalletNotesListRequest,
   WalletSendPlanRequest,
   WalletSendPlanResult,
   WalletSendRequest,
@@ -378,6 +380,12 @@ ipcMain.handle(
 ipcMain.handle('wallet:disclosureList', async (_event, storePath: string, passphrase: string) => {
   return walletdClient.disclosureList(storePath, passphrase) as Promise<WalletDisclosureRecord[]>;
 });
+ipcMain.handle(
+  'wallet:notesList',
+  async (_event, storePath: string, passphrase: string, request?: WalletNotesListRequest) => {
+    return walletdClient.notesList(storePath, passphrase, request) as Promise<WalletNoteEntry[]>;
+  }
+);
 
 ipcMain.handle('contacts:list', async () => {
   return loadContacts();

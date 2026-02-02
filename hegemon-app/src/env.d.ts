@@ -9,6 +9,8 @@ import type {
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
+  WalletNoteEntry,
+  WalletNotesListRequest,
   WalletSendRequest,
   WalletSendResult,
   WalletSendPlanRequest,
@@ -48,6 +50,11 @@ export type HegemonApi = {
       packageJson: object
     ) => Promise<WalletDisclosureVerifyResult>;
     disclosureList: (storePath: string, passphrase: string) => Promise<WalletDisclosureRecord[]>;
+    notesList: (
+      storePath: string,
+      passphrase: string,
+      request?: WalletNotesListRequest
+    ) => Promise<WalletNoteEntry[]>;
   };
   contacts: {
     list: () => Promise<Contact[] | null>;

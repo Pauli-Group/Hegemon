@@ -6,6 +6,7 @@ import type {
   NodeManagedStatus,
   NodeStartOptions,
   NodeSummaryRequest,
+  WalletNotesListRequest,
   WalletSendPlanRequest,
   WalletSendRequest
 } from '../src/types';
@@ -43,7 +44,9 @@ contextBridge.exposeInMainWorld('hegemon', {
       packageJson: object
     ) => ipcRenderer.invoke('wallet:disclosureVerify', storePath, passphrase, wsUrl, packageJson),
     disclosureList: (storePath: string, passphrase: string) =>
-      ipcRenderer.invoke('wallet:disclosureList', storePath, passphrase)
+      ipcRenderer.invoke('wallet:disclosureList', storePath, passphrase),
+    notesList: (storePath: string, passphrase: string, request?: WalletNotesListRequest) =>
+      ipcRenderer.invoke('wallet:notesList', storePath, passphrase, request)
   },
   contacts: {
     list: () => ipcRenderer.invoke('contacts:list'),

@@ -116,6 +116,7 @@ struct WalletCapabilities {
     disclosure: bool,
     auto_consolidate: bool,
     notes_summary: bool,
+    notes_list: bool,
     error_codes: bool,
 }
 
@@ -187,6 +188,28 @@ struct NoteSummary {
     max_inputs: usize,
     needs_consolidation: bool,
     plan: Option<ConsolidationPlanSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteEntry {
+    asset_id: u64,
+    value: u64,
+    position: u64,
+    status: String,
+    diversifier_index: u32,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct NotesListParams {
+    asset_id: Option<u64>,
+    #[serde(default = "default_true")]
+    include_pending: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize)]
@@ -454,6 +477,10 @@ fn handle_request(
                 let params: SyncParams = parse_params(request.params)?;
                 to_json(sync_once(runtime, store, params)?)
             }
+            "notes.list" => {
+                let params: NotesListParams = parse_params_or_default(request.params)?;
+                to_json(notes_list(&store, params)?)
+            }
             "tx.plan" => {
                 let params: TxPlanParams = parse_params(request.params)?;
                 to_json(tx_plan(&store, params)?)
@@ -503,6 +530,15 @@ fn parse_params<T: for<'de> Deserialize<'de>>(params: Value) -> WalletdResult<T>
             format!("invalid params: {err}"),
         )
     })
+}
+
+fn parse_params_or_default<T: for<'de> Deserialize<'de> + Default>(
+    params: Value,
+) -> WalletdResult<T> {
+    if params.is_null() {
+        return Ok(T::default());
+    }
+    parse_params(params)
 }
 
 fn to_json<T: Serialize>(value: T) -> WalletdResult<Value> {
@@ -580,6 +616,7 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
             disclosure: true,
             auto_consolidate: true,
             notes_summary: true,
+            notes_list: true,
             error_codes: true,
         },
         wallet_mode: match mode {
@@ -594,6 +631,56 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
         notes,
         genesis_hash,
     })
+}
+
+fn notes_list(store: &Arc<WalletStore>, params: NotesListParams) -> WalletdResult<Vec<NoteEntry>> {
+    let asset_ids = if let Some(asset_id) = params.asset_id {
+        vec![asset_id]
+    } else {
+        let balances = store.balances().map_err(WalletdError::internal)?;
+        let pending_balances = store.pending_balances().map_err(WalletdError::internal)?;
+        let mut ids: Vec<u64> = balances.keys().copied().collect();
+        for asset_id in pending_balances.keys() {
+            if !ids.contains(asset_id) {
+                ids.push(*asset_id);
+            }
+        }
+        ids.sort_unstable();
+        ids
+    };
+
+    let mut entries = Vec::new();
+    for asset_id in asset_ids {
+        let notes = store
+            .spendable_notes(asset_id)
+            .map_err(WalletdError::internal)?;
+        for note in notes {
+            entries.push(NoteEntry {
+                asset_id,
+                value: note.recovered.note.value,
+                position: note.position,
+                status: "spendable".to_string(),
+                diversifier_index: note.recovered.diversifier_index,
+            });
+        }
+        if params.include_pending {
+            let pending = store
+                .pending_spend_notes(asset_id)
+                .map_err(WalletdError::internal)?;
+            for note in pending {
+                entries.push(NoteEntry {
+                    asset_id,
+                    value: note.recovered.note.value,
+                    position: note.position,
+                    status: "pending".to_string(),
+                    diversifier_index: note.recovered.diversifier_index,
+                });
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| b.position.cmp(&a.position));
+    Ok(entries)
 }
 
 fn summarize_notes(store: &Arc<WalletStore>) -> WalletdResult<Option<NoteSummary>> {

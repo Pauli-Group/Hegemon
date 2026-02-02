@@ -7,6 +7,8 @@ import type {
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
+  WalletNoteEntry,
+  WalletNotesListRequest,
   WalletSendPlanRequest,
   WalletSendPlanResult,
   WalletSendRequest,
@@ -125,6 +127,14 @@ export class WalletdClient {
 
   async disclosureList(storePath: string, passphrase: string): Promise<WalletDisclosureRecord[]> {
     return this.request('disclosure.list', {}, storePath, passphrase, 'open');
+  }
+
+  async notesList(
+    storePath: string,
+    passphrase: string,
+    request: WalletNotesListRequest = {}
+  ): Promise<WalletNoteEntry[]> {
+    return this.request('notes.list', request, storePath, passphrase, 'open');
   }
 
   private async request(

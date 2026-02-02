@@ -59,6 +59,10 @@ To share funds with a friend without handing over your root secret, run `wallet 
 
 Files such as `inputs.json`, `recipients.json`, and `ivk.json` are ordinary JSON documents; see `scripts/wallet-demo.sh` for a complete, reproducible example that creates them automatically.
 
+### Walletd daemon
+
+The `walletd` sidecar daemon (used by `hegemon-app`) exposes `status.get` for balances and `notes.list` for per-note value tables. Keep `docs/API_REFERENCE.md#walletd` in sync when adding or changing walletd methods.
+
 ### Automated demo
 
 Run `make wallet-demo` (or `./scripts/wallet-demo.sh`) to exercise the full flow end-to-end. The script:

@@ -135,12 +135,26 @@ export type WalletNotes = {
   plan?: { txsNeeded: number; blocksNeeded: number } | null;
 };
 
+export type WalletNoteEntry = {
+  assetId: number;
+  value: number;
+  position: number;
+  status: 'spendable' | 'pending';
+  diversifierIndex: number;
+};
+
+export type WalletNotesListRequest = {
+  assetId?: number;
+  includePending?: boolean;
+};
+
 export type WalletStatus = {
   protocolVersion?: number;
   capabilities?: {
     disclosure: boolean;
     autoConsolidate: boolean;
     notesSummary: boolean;
+    notesList: boolean;
     errorCodes: boolean;
   };
   walletMode?: 'full' | 'watch_only';
