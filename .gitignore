@@ -9,6 +9,8 @@ node.db/
 scripts/__pycache__/
 *.pyc
 .dashboard-service-venv/
+.venv/
+tmp/
 
 # Testnet deployment artifacts (regenerate with scripts)
 .env.testnet

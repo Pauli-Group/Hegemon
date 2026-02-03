@@ -89,7 +89,8 @@ pub struct NoteStatus {
     pub depth: u64,
     /// Current Merkle root (hex encoded)
     pub root: String,
-    /// Next available index
+    /// Next ciphertext index the node can serve. This can differ from `leaf_count` when ciphertext
+    /// bytes are served from sidecar/DA storage and forks/retention introduce gaps.
     pub next_index: u64,
 }
 

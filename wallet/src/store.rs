@@ -347,6 +347,10 @@ impl WalletStore {
     /// correspond to ciphertext indices `start_index..start_index+len`.
     ///
     /// Returns the number of newly-added notes (deduped by position).
+    ///
+    /// If a ciphertext decrypts successfully but its note commitment cannot be found in the local
+    /// commitment list, the note is skipped. This can occur when the ciphertext stream contains
+    /// non-canonical (forked) ciphertexts or when ciphertext retention policies introduce gaps.
     pub fn apply_ciphertext_batch(
         &self,
         start_index: u64,
@@ -375,29 +379,42 @@ impl WalletStore {
                     let expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
                         &note.note_data.commitment(),
                     );
-                    let position = state
+                    let position = match state
                         .commitments
                         .iter()
                         .position(|value| *value == expected_commitment)
-                        .ok_or(WalletError::InvalidState(
-                            "note commitment not found in local commitment list",
-                        ))? as u64;
-                    if !state.notes.iter().any(|n| n.position == position) {
-                        let nullifier = state
-                            .full_viewing_key
-                            .as_ref()
-                            .map(|fvk| fvk.compute_nullifier(&note.note.rho, position));
-                        state.notes.push(TrackedNote {
-                            note,
-                            position,
-                            ciphertext_index: index,
-                            nullifier,
-                            spent: false,
-                            pending_spend: false,
-                        });
-                        added = added
-                            .checked_add(1)
-                            .ok_or(WalletError::InvalidState("note count overflow"))?;
+                    {
+                        Some(position) => Some(position as u64),
+                        None => {
+                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                                eprintln!(
+                                    "[DEBUG sync] Decrypted note at ciphertext index {} but commitment not found; skipping (commitment={})",
+                                    index,
+                                    hex::encode(expected_commitment),
+                                );
+                            }
+                            None
+                        }
+                    };
+
+                    if let Some(position) = position {
+                        if !state.notes.iter().any(|n| n.position == position) {
+                            let nullifier = state
+                                .full_viewing_key
+                                .as_ref()
+                                .map(|fvk| fvk.compute_nullifier(&note.note.rho, position));
+                            state.notes.push(TrackedNote {
+                                note,
+                                position,
+                                ciphertext_index: index,
+                                nullifier,
+                                spent: false,
+                                pending_spend: false,
+                            });
+                            added = added
+                                .checked_add(1)
+                                .ok_or(WalletError::InvalidState("note count overflow"))?;
+                        }
                     }
                 }
 
@@ -1351,6 +1368,29 @@ mod tests {
         let notes = store.spendable_notes(0).unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].position, 1);
+    }
+
+    #[test]
+    fn apply_ciphertext_batch_skips_notes_missing_commitment() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(123);
+
+        let note = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+
+        // No commitments have been synced yet, so the decrypted note should be ignored
+        // rather than causing the sync engine to fail.
+        let added = store
+            .apply_ciphertext_batch(0, vec![Some(recovered)])
+            .unwrap();
+        assert_eq!(added, 0);
+        assert_eq!(store.next_ciphertext_index().unwrap(), 1);
+        assert!(store.spendable_notes(0).unwrap().is_empty());
     }
 
     #[test]
