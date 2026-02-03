@@ -250,6 +250,11 @@ where
         let best_hash = self.best_hash();
 
         let leaf_count = api.encrypted_note_count(best_hash).unwrap_or(0);
+        let ciphertext_next_index = self
+            .da_chunk_store
+            .lock()
+            .ciphertext_count()
+            .unwrap_or(leaf_count);
         let merkle_root = api.merkle_root(best_hash).unwrap_or([0u8; 48]);
         let tree_depth = api.tree_depth(best_hash).unwrap_or(32);
 
@@ -257,7 +262,11 @@ where
             leaf_count,
             depth: tree_depth as u64,
             root: format!("0x{}", hex::encode(merkle_root)),
-            next_index: leaf_count,
+            // Ciphertexts may be served from sidecar/DA storage and can diverge from the
+            // canonical commitment count (e.g., forks, retention gaps). Wallets should scan
+            // up to the maximum index that the node can serve and then map decrypted notes
+            // back to commitment positions via their commitments.
+            next_index: ciphertext_next_index.max(leaf_count),
         }
     }
 

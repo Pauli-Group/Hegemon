@@ -389,6 +389,8 @@ Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone c
 
 Long-lived wallets rely on the Substrate WebSocket RPC client (`wallet/src/substrate_rpc.rs`) and async sync engine (`wallet/src/async_sync.rs`) rather than ad-hoc scripts. `AsyncWalletSyncEngine` pages through commitments/ciphertexts/nullifiers plus the latest block height, storing commitments inside the encrypted `WalletStore` so daemons can resume after crashes. The runbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through starting those daemons against two nodes.
 
+Ciphertext availability is policy-dependent: ciphertext bytes may be served from on-chain storage (inline) or from sidecar/DA stores. In the sidecar path, the ciphertext stream can contain gaps (retention) or non-canonical ciphertexts (forks). Wallet sync therefore treats decrypted notes as valid only when their commitment can be found in the locally-synced commitment list; otherwise the note is skipped and sync continues. Nodes should report `walletNotes.next_index` as the maximum ciphertext index they can serve (which may exceed `leaf_count`), while `leaf_count` remains the canonical commitment tree size.
+
 The Polkadot.js Apps dashboard (https://polkadot.js.org/apps/) connects to the node's standard Substrate RPC endpoint and provides block exploration, account management, and chain state queries out of the box.
 
 ---
