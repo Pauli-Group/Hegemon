@@ -15,8 +15,8 @@
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                    Protocol Negotiation                          │
 //! ├─────────────────────────────────────────────────────────────────┤
-//! │  Security (ML-KEM-768 + ML-DSA-65 only):                        │
-//! │  1. /hegemon/pq/1 - Full PQ (ML-KEM-768 + ML-DSA-65)            │
+//! │  Security (ML-KEM-1024 + ML-DSA-65 only):                        │
+//! │  1. /hegemon/pq/1 - Full PQ (ML-KEM-1024 + ML-DSA-65)            │
 //! │                                                                  │
 //! │  No classical/ECC fallbacks - pure post-quantum only.           │
 //! └─────────────────────────────────────────────────────────────────┘
@@ -66,7 +66,7 @@ impl ProtocolSecurityLevel {
 impl fmt::Display for ProtocolSecurityLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProtocolSecurityLevel::PostQuantum => write!(f, "PQ (ML-KEM-768 + ML-DSA-65)"),
+            ProtocolSecurityLevel::PostQuantum => write!(f, "PQ (ML-KEM-1024 + ML-DSA-65)"),
         }
     }
 }

@@ -3,7 +3,7 @@
 #
 # This script generates the required cryptographic keys for testnet boot nodes:
 # - Ed25519 node keys for libp2p peer identity
-# - PQ keypairs for ML-KEM-768 secure connections
+# - PQ keypairs for ML-KEM-1024 secure connections
 #
 # Usage:
 #   ./scripts/generate-testnet-keys.sh

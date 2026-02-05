@@ -8,14 +8,14 @@ We currently rely on:
 
 - **ML-DSA-65** (Dilithium3 profile) for miner rig identities, pool controller signatures, and block announcements.
 - **SLH-DSA** (SPHINCS+-SHA2-128f) for governance keys and long-lived pool treasury authorizations.
-- **ML-KEM-768** (Kyber) for encryption and key agreement on miner <-> pool control channels.
+- **ML-KEM-1024** (Kyber) for encryption and key agreement on miner <-> pool control channels.
 - **Poseidon2-384** inside the STARK AIR for commitments/nullifiers/Merkle hashing (48-byte digests), plus SHA-256/BLAKE3 externally for protocol hashes and identifiers.
 
 Commissioning requirements:
 
 1. **Parameter validation brief** – Hand vendors `DESIGN.md §1` plus `crypto/README.md` (if updated) and request:
    - Side-channel considerations for deterministic RNG wrappers used in `crypto::ml_dsa`/`ml_kem`, with explicit coverage of rack-level miners that share chassis power/temperature envelopes.
-   - State-of-the-art lattice reduction cost estimates for ML-DSA-65 and ML-KEM-768 under BKZ 2.0 and dual attacks with quantum sieving assumptions, highlighting replay risk if pool identities are rotated slowly.
+   - State-of-the-art lattice reduction cost estimates for ML-DSA-65 and ML-KEM-1024 under BKZ 2.0 and dual attacks with quantum sieving assumptions, highlighting replay risk if pool identities are rotated slowly.
    - Hash/collision resistance assessments for Poseidon2 parameters/constants and the 48-byte commitment/nullifier/Merkle encodings used across circuits and pallets (see `circuits/transaction-core/src/poseidon2_constants.rs` and `circuits/transaction-core/src/hashing_pq.rs`).
 2. **Deliverables** – Require a written report with:
    - Attack models and concrete security estimates (bits) for each primitive plus explicit call-outs on miner impersonation or pool takeover implications.

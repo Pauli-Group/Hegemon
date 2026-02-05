@@ -297,7 +297,7 @@ async fn test_pq_handshake_latency_average() {
     );
 }
 
-/// Test that logs show "PQ handshake complete with ML-KEM-768"
+/// Test that logs show "PQ handshake complete with ML-KEM-1024"
 /// This is verified by the verbose logging mode in PqTransportConfig
 #[tokio::test]
 async fn test_pq_handshake_logs_completion() {
@@ -327,7 +327,7 @@ async fn test_pq_handshake_logs_completion() {
     let conn1 = upgrade_outbound(&node1, socket, addr).await;
     let conn2 = responder_handle.await.unwrap();
 
-    // Both should succeed - the log message "PQ handshake complete with ML-KEM-768"
+    // Both should succeed - the log message "PQ handshake complete with ML-KEM-1024"
     // is emitted inside the pq-noise crate when verbose logging is enabled
     assert!(conn1.is_ok());
     assert!(conn2.is_ok());

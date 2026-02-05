@@ -124,7 +124,7 @@ impl PqTransport {
         if self.config.verbose_logging {
             tracing::info!(
                 peer_id = %hex::encode(peer_id),
-                "PQ handshake complete with ML-KEM-768"
+                "PQ handshake complete with ML-KEM-1024"
             );
         }
 
@@ -204,7 +204,7 @@ impl PqTransport {
         if self.config.verbose_logging {
             tracing::info!(
                 peer_id = %hex::encode(peer_id),
-                "PQ handshake complete with ML-KEM-768"
+                "PQ handshake complete with ML-KEM-1024"
             );
         }
 

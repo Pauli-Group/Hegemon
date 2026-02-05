@@ -110,6 +110,10 @@ impl TransactionProverP3 {
             COL_SLOT2_ASSET,
             COL_SLOT3_ASSET,
         ];
+        let mut slot_asset_vals = [Val::ZERO; 4];
+        for (idx, asset_id) in slot_assets.iter().take(slot_asset_vals.len()).enumerate() {
+            slot_asset_vals[idx] = Val::from_u64(*asset_id);
+        }
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
         let selector_cols = [
@@ -166,8 +170,12 @@ impl TransactionProverP3 {
                     row_slice[col] = Val::ONE;
                 }
             }
-            for &col in slot_asset_cols.iter() {
-                row_slice[col] = Val::ONE;
+        }
+
+        for row in 0..trace_len {
+            let row_slice = trace.row_mut(row);
+            for (idx, &col) in slot_asset_cols.iter().enumerate() {
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
 
@@ -184,7 +192,7 @@ impl TransactionProverP3 {
                 row_slice[selector_cols[0][slot]] = selectors[0][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
         if start_row_in1 < trace_len {
@@ -196,7 +204,7 @@ impl TransactionProverP3 {
                 row_slice[selector_cols[1][slot]] = selectors[1][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
         if start_row_out0 < trace_len {
@@ -208,7 +216,7 @@ impl TransactionProverP3 {
                 row_slice[selector_cols[2][slot]] = selectors[2][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
         if start_row_out1 < trace_len {
@@ -220,7 +228,7 @@ impl TransactionProverP3 {
                 row_slice[selector_cols[3][slot]] = selectors[3][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
 
@@ -231,7 +239,7 @@ impl TransactionProverP3 {
             row_slice[COL_VALUE_BALANCE_SIGN] = vb_sign;
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
             row_slice[COL_STABLECOIN_ENABLED] = stablecoin_inputs.enabled;
             row_slice[COL_STABLECOIN_ASSET] = stablecoin_inputs.asset;
@@ -1202,6 +1210,29 @@ mod tests {
             assert!(
                 verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
                 "verification should fail for tampered counters"
+            );
+        }
+    }
+
+    #[test]
+    fn slot_asset_relabel_between_rows_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let mut trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+
+        // Tamper a non-note row so only slot-asset continuity constraints catch it.
+        let row = 2;
+        let col = COL_SLOT1_ASSET;
+        let idx = row * trace.width + col;
+        trace.values[idx] = trace.values[idx] + Val::ONE;
+
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        if let Ok(proof) = result {
+            assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail for slot asset relabeling across rows"
             );
         }
     }

@@ -1,4 +1,4 @@
-//! Pure ML-KEM-768 handshake implementation (no classical ECDH)
+//! Pure ML-KEM-1024 handshake implementation (no classical ECDH)
 
 use crypto::hashes::sha256;
 use crypto::ml_dsa::{MlDsaPublicKey, MlDsaSignature};
@@ -296,7 +296,7 @@ impl PqHandshake {
         let keys = SessionKeys::derive(&transcript_hash, &ss1, &ss2);
 
         if self.config.verbose_logging {
-            tracing::info!("PQ handshake complete with ML-KEM-768 (pure post-quantum)");
+            tracing::info!("PQ handshake complete with ML-KEM-1024 (pure post-quantum)");
         }
 
         Ok(keys)

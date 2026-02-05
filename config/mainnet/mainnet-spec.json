@@ -53,17 +53,17 @@
   "extensions": {
     "powBits": 32,
     "targetBlockTimeMs": 60000,
-    "handshakeProtocol": "ml-kem-768",
+    "handshakeProtocol": "ml-kem-1024",
     "signatureScheme": "ml-dsa-65"
   },
   "_securityParameters": {
     "_comment": "Post-Quantum Security Parameters for Audit",
     "keyEncapsulation": {
-      "algorithm": "ML-KEM-768",
+      "algorithm": "ML-KEM-1024",
       "standard": "FIPS 203",
-      "securityLevel": 3,
-      "publicKeySize": 1184,
-      "ciphertextSize": 1088,
+      "securityLevel": 5,
+      "publicKeySize": 1568,
+      "ciphertextSize": 1568,
       "sharedSecretSize": 32
     },
     "digitalSignatures": {
