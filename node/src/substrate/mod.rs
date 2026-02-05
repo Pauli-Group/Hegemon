@@ -28,7 +28,7 @@
 //! - Peer count: Use system_health RPC, NOT system_peers
 //! - Peer IDs: 32-byte PQ keys, not libp2p PeerIds
 //! - PqNetworkConfig for PQ-secure networking
-//! - Pure ML-KEM-768 handshake (no classical ECDH)
+//! - Pure ML-KEM-1024 handshake (no classical ECDH)
 //! - ML-DSA-65 peer authentication
 //! - Integration with sc-network (pending aligned polkadot-sdk)
 //!

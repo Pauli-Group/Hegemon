@@ -1113,11 +1113,17 @@ where
             when.assert_bool(sel);
         }
 
+        let slot_asset_cols = [
+            COL_SLOT0_ASSET,
+            COL_SLOT1_ASSET,
+            COL_SLOT2_ASSET,
+            COL_SLOT3_ASSET,
+        ];
         let slot_assets = [
-            current[COL_SLOT0_ASSET].clone(),
-            current[COL_SLOT1_ASSET].clone(),
-            current[COL_SLOT2_ASSET].clone(),
-            current[COL_SLOT3_ASSET].clone(),
+            current[slot_asset_cols[0]].clone(),
+            current[slot_asset_cols[1]].clone(),
+            current[slot_asset_cols[2]].clone(),
+            current[slot_asset_cols[3]].clone(),
         ];
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
@@ -1335,6 +1341,10 @@ where
                 not_first_row.clone()
                     * (next[slot_out_cols[slot]].clone()
                         - (current[slot_out_cols[slot]].clone() + add_out)),
+            );
+            when.assert_zero(
+                not_first_row.clone()
+                    * (next[slot_asset_cols[slot]].clone() - current[slot_asset_cols[slot]].clone()),
             );
         }
 

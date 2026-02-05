@@ -1,7 +1,7 @@
 //! Post-Quantum Noise Protocol Extension
 //!
 //! This crate implements a post-quantum key exchange protocol using:
-//! - ML-KEM-768 encapsulation (FIPS 203, lattice-based)
+//! - ML-KEM-1024 encapsulation (FIPS 203, lattice-based)
 //!
 //! # Security Properties
 //!
@@ -14,7 +14,7 @@
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                     PQ Handshake                            │
 //! ├─────────────────────────────────────────────────────────────┤
-//! │  1. ML-KEM-768 Encaps  │  PQ key encapsulation              │
+//! │  1. ML-KEM-1024 Encaps  │  PQ key encapsulation              │
 //! │  2. Shared Secret      │  HKDF(mlkem_ss)                    │
 //! │  3. ML-DSA-65 Sign     │  Authenticate peer identity        │
 //! └─────────────────────────────────────────────────────────────┘

@@ -51,7 +51,7 @@
 
 ## 2025-02-17
 - **Phase 3: PQ libp2p Integration** - Implemented post-quantum secure peer connections
-  - Created `pq-noise` crate implementing pure ML-KEM-768 handshake protocol
+  - Created `pq-noise` crate implementing pure ML-KEM-1024 handshake protocol
   - Added AES-256-GCM encrypted sessions with ML-KEM-derived keys
   - Integrated ML-DSA-65 signature authentication for peer identity verification
   - Added `network/src/pq_transport.rs` for network layer integration

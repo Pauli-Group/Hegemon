@@ -222,10 +222,10 @@ echo "=== Step 4: Critical Module Verification ==="
 echo ""
 
 # Check pq-noise uses ML-KEM (not X25519)
-echo -n "Checking pq-noise uses ML-KEM-768... "
+echo -n "Checking pq-noise uses ML-KEM-1024... "
 if grep -q "ml-kem" "$PROJECT_ROOT/pq-noise/Cargo.toml" && \
-   grep -q "ML_KEM_768" "$PROJECT_ROOT/pq-noise/src"/*.rs 2>/dev/null; then
-    echo -e "${GREEN}✅ Uses ML-KEM-768${NC}"
+   grep -q "ML-KEM-1024" "$PROJECT_ROOT/pq-noise/src"/*.rs 2>/dev/null; then
+    echo -e "${GREEN}✅ Uses ML-KEM-1024${NC}"
 elif grep -q "ML-KEM" "$PROJECT_ROOT/crypto/src"/*.rs 2>/dev/null; then
     echo -e "${GREEN}✅ Uses ML-KEM via crypto crate${NC}"
 else
@@ -342,7 +342,7 @@ if [ $VIOLATIONS -eq 0 ]; then
     echo ""
     echo "Approved Primitives:"
     echo "  ✓ Blake3 (PoW, general hashing)"
-    echo "  ✓ ML-KEM-768 (P2P handshake), ML-KEM-1024 (note encryption)"
+    echo "  ✓ ML-KEM-1024 (P2P handshake and note encryption)"
     echo "  ✓ ML-DSA-65 (Signatures, identity)"
     echo "  ✓ SLH-DSA (Long-term trust roots)"
     echo "  ✓ STARK/FRI (Zero-knowledge proofs)"
@@ -361,7 +361,7 @@ else
         echo ""
         echo "Suggested Fixes:"
         echo "  - Replace Ed25519 → ML-DSA-65"
-        echo "  - Replace X25519 → ML-KEM-768"
+        echo "  - Replace X25519 → ML-KEM-1024"
         echo "  - Replace Groth16 → STARK (Plonky3)"
         echo "  - Replace ECDSA → ML-DSA-65"
         echo "  - Remove all *-dalek crates"

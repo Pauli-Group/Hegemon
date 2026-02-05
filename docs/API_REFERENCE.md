@@ -67,7 +67,7 @@ p budgets.
   - `register_did(document: Vec<u8>, tags: Vec<IdentityTag>, session_key: Option<SessionKey>)` stores the DID document, identity tags, and an optional PQ session key bundle (Dilithium/Falcon).
 - `pallet-attestations` / `pallet-settlement`
   - `set_verifier_params(params: StarkVerifierParams)` (admin origin) updates the on-chain STARK verifier parameters.
-  - Default runtime constants seed attestations with Poseidon2-384 hashing, 43 FRI queries, a 16x blowup factor, and quadratic extension over Goldilocks. With 384-bit digests, PQ collision resistance reaches ~128 bits. Calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
+  - The live Plonky3 transaction/settlement verifier path uses compile-time production settings (`log_blowup = 4`, `num_queries = 32`) from `transaction-core`. Runtime constants still seed on-chain `StarkVerifierParams` storage for governance workflows. With 384-bit digests, PQ collision resistance reaches ~128 bits.
 
 ## Node RPC endpoints
 

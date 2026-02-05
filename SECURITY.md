@@ -31,7 +31,7 @@ Recursive block proofs are currently disabled and the old recursion path has bee
 
 ### PQ Security Margins
 
-- Note encryption uses ML-KEM-1024 (NIST Level 5) with 32-byte shared secrets; PQ transport handshake remains ML-KEM-768 until upgraded.
+- Note encryption and PQ transport handshake use ML-KEM-1024 (NIST Level 5) with 32-byte shared secrets.
 - Commitments, nullifiers, and Merkle roots use 48-byte (384-bit) digests, yielding ~128-bit post-quantum collision security under generic BHT attacks.
 - Production FRI parameters use log_blowup = 4 (16x) and num_queries = 32, giving an engineering soundness estimate of 128 bits under the ethSTARK conjecture (see `circuits/transaction-core/src/p3_config.rs` and `p3_fri::FriParameters::conjectured_soundness_bits`).
 
