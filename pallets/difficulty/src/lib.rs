@@ -204,7 +204,7 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        /// Force a difficulty adjustment (sudo only, for emergencies)
+        /// Force a difficulty adjustment (root only, for emergencies)
         ///
         /// This bypasses the normal retarget schedule and sets difficulty directly.
         /// Only callable by root origin.
