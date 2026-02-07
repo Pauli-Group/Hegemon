@@ -10,7 +10,7 @@ This `docs/` tree centralizes contributor-facing material for the Hegemon monore
 - [`CONSENSUS_AUDIT.md`](CONSENSUS_AUDIT.md) – spec ↔ implementation reconciliation for `hegemon-node`, plus consensus invariants that should be enforced in CI.
 - [`USER_PRIVACY_GUIDELINES.md`](USER_PRIVACY_GUIDELINES.md) – end-user playbook for protecting wallet keys, node operations, and selective-disclosure workflows.
 - [`COMPLIANCE_ARCHITECTURE.md`](COMPLIANCE_ARCHITECTURE.md) – how HEGEMON accommodates regulatory requirements (Travel Rule, sanctions screening, selective disclosure) without compromising privacy or introducing backdoors.
-- [`CHAIN_SPECS.md`](CHAIN_SPECS.md) – chain specification checklists for Testnet0/1/2 and pre-mainnet, including bootstrapping keys and the path to remove `sudo`.
+- [`CHAIN_SPECS.md`](CHAIN_SPECS.md) – chain specification checklists for Testnet0/1/2 and pre-mainnet, including bootstrapping keys and governance assumptions.
 - [`SDK_DEVELOPER_GUIDE.md`](SDK_DEVELOPER_GUIDE.md) – how to extend the SDK surface area and work with feature flags during staged rollouts.
 
 Each document calls out which sections of `DESIGN.md` and `METHODS.md` must be kept in sync so reviewers can verify that code, design, and docs evolve together. When adding a new crate, benchmark, or protocol feature, extend this hub and cross-reference the exact commit that introduced the change.

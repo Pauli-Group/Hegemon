@@ -107,10 +107,7 @@ pallet-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", tag = "
 pallet-session = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1", default-features = false }
 pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1", default-features = false }
 pallet-transaction-payment = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1", default-features = false }
-pallet-collective = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1", default-features = false }
-pallet-membership = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1", default-features = false }
 pallet-treasury = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1", default-features = false }
-pallet-sudo = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1", default-features = false }
 
 # --- Substrate Client (sc-*) ---
 sc-cli = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }

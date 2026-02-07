@@ -92,8 +92,7 @@ impl pallet_attestations::Config for Test {
     type MaxVerificationKeySize = MaxVerificationKeySize;
     type MaxPendingEvents = MaxPendingEvents;
     type AdminOrigin = frame_system::EnsureRoot<u64>;
-    type CouncilOrigin = frame_system::EnsureRoot<u64>;
-    type ReferendaOrigin = frame_system::EnsureRoot<u64>;
+    type GovernanceOrigin = frame_system::EnsureRoot<u64>;
     type SettlementBatchHook = ();
     type DefaultVerifierParams = DefaultVerifierParams;
     type WeightInfo = pallet_attestations::DefaultWeightInfo;

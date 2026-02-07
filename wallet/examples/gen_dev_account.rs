@@ -36,9 +36,6 @@ fn main() {
     println!("    ],");
     println!("    \"devAccounts\": null");
     println!("}}");
-    println!("\"sudo\": {{");
-    println!("    \"key\": \"{}\"", alice_ss58);
-    println!("}}");
 }
 
 fn get_account_id(seed: &[u8; 32]) -> [u8; 32] {

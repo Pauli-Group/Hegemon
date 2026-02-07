@@ -138,8 +138,7 @@ impl pallet_settlement::Config for Test {
     type AssetId = u32;
     type Balance = u128;
     type VerificationKeyId = u32;
-    type CouncilOrigin = frame_system::EnsureRoot<u64>;
-    type ReferendaOrigin = frame_system::EnsureRoot<u64>;
+    type GovernanceOrigin = frame_system::EnsureRoot<u64>;
     type Currency = Balances;
     type AuthorityId = TestAuthId;
     type ProofVerifier = TestProofVerifier;
