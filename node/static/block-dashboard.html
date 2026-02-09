@@ -300,6 +300,14 @@
         <div class="bar-grid" id="frequency-bars"></div>
         <div class="bar-labels" id="frequency-labels"></div>
       </section>
+      <section class="chart">
+        <div class="chart-header">
+          <h3>Blocks Mined By This Node</h3>
+          <span id="mined-range">Last -- hours</span>
+        </div>
+        <div class="bar-grid" id="mined-bars"></div>
+        <div class="bar-labels" id="mined-labels"></div>
+      </section>
       <div class="note">
         Tip: if the browser blocks requests, start the node with
         <code>--rpc-cors=all</code> or open this file through a local HTTP server.
@@ -334,6 +342,9 @@
         chartRange: document.getElementById("chart-range"),
         frequencyBars: document.getElementById("frequency-bars"),
         frequencyLabels: document.getElementById("frequency-labels"),
+        minedRange: document.getElementById("mined-range"),
+        minedBars: document.getElementById("mined-bars"),
+        minedLabels: document.getElementById("mined-labels"),
       };
 
       let autoRefresh = true;
@@ -341,6 +352,7 @@
       let lastHeightTime = null;
       let intervalHandle = null;
       const timestampCache = [];
+      let minedTimestampCache = [];
       let timestampSyncInProgress = false;
       let timestampTargetHeight = 0;
 
@@ -385,7 +397,42 @@
         return clampBucketMinutes(Number(ui.bucketMinutes.value));
       }
 
-      function renderFrequencyChart(nowMs) {
+      function buildBuckets(timestamps, minTs, bucketMs, bucketCount) {
+        const buckets = new Array(bucketCount).fill(0);
+        timestamps.forEach((ts) => {
+          const index = Math.floor((ts - minTs) / bucketMs);
+          if (index >= 0 && index < bucketCount) {
+            buckets[index] += 1;
+          }
+        });
+        return buckets;
+      }
+
+      function renderBars(barsEl, labelsEl, buckets, minTs, bucketMs, labelStride) {
+        const maxValue = Math.max(1, ...buckets);
+        barsEl.innerHTML = "";
+        labelsEl.innerHTML = "";
+        buckets.forEach((count, index) => {
+          const bar = document.createElement("div");
+          bar.className = "bar";
+          bar.style.height = `${Math.max(8, (count / maxValue) * 140)}px`;
+          bar.textContent = count.toString();
+          const bucketStart = new Date(minTs + index * bucketMs);
+          bar.title = `${bucketStart.toLocaleString()} — ${count} blocks`;
+          barsEl.appendChild(bar);
+
+          const label = document.createElement("span");
+          if (index % labelStride === 0 || index === buckets.length - 1) {
+            const labelDate = new Date(minTs + index * bucketMs);
+            label.textContent = labelDate.toLocaleDateString();
+          } else {
+            label.textContent = "";
+          }
+          labelsEl.appendChild(label);
+        });
+      }
+
+      function renderFrequencyCharts(nowMs) {
         const bucketMinutes = getBucketMinutes();
         const bucketMs = bucketMinutes * 60 * 1000;
         const timestamps = timestampCache
@@ -395,48 +442,32 @@
           ui.frequencyBars.innerHTML = "";
           ui.frequencyLabels.innerHTML = "";
           ui.chartRange.textContent = "Syncing timestamps...";
+          ui.minedBars.innerHTML = "";
+          ui.minedLabels.innerHTML = "";
+          ui.minedRange.textContent = "Syncing timestamps...";
           return;
         }
         const minTs = Math.min(...timestamps);
         const maxTs = Math.max(...timestamps);
         const bucketCount = Math.max(1, Math.floor((maxTs - minTs) / bucketMs) + 1);
-        const buckets = new Array(bucketCount).fill(0);
-        timestamps.forEach((ts) => {
-          const index = Math.floor((ts - minTs) / bucketMs);
-          if (index >= 0 && index < bucketCount) {
-            buckets[index] += 1;
-          }
-        });
-        const maxValue = Math.max(1, ...buckets);
-        ui.frequencyBars.innerHTML = "";
-        ui.frequencyLabels.innerHTML = "";
-
+        const buckets = buildBuckets(timestamps, minTs, bucketMs, bucketCount);
         const labelStride = bucketCount > 48 ? Math.ceil(bucketCount / 12) : 1;
-        buckets.forEach((count, index) => {
-          const bar = document.createElement("div");
-          bar.className = "bar";
-          bar.style.height = `${Math.max(8, (count / maxValue) * 140)}px`;
-          bar.textContent = count.toString();
-          const bucketStart = new Date(minTs + index * bucketMs);
-          bar.title = `${bucketStart.toLocaleString()} — ${count} blocks`;
-          ui.frequencyBars.appendChild(bar);
+        renderBars(ui.frequencyBars, ui.frequencyLabels, buckets, minTs, bucketMs, labelStride);
 
-          const label = document.createElement("span");
-          if (index % labelStride === 0 || index === bucketCount - 1) {
-            const labelDate = new Date(minTs + index * bucketMs);
-            label.textContent = labelDate.toLocaleDateString();
-          } else {
-            label.textContent = "";
-          }
-          ui.frequencyLabels.appendChild(label);
-        });
+        const minedTimestamps = minedTimestampCache
+          .map((entry) => entry.timestampMs)
+          .filter((value) => typeof value === "number");
+        const minedBuckets = buildBuckets(minedTimestamps, minTs, bucketMs, bucketCount);
+        renderBars(ui.minedBars, ui.minedLabels, minedBuckets, minTs, bucketMs, labelStride);
 
         if (timestampCache.length && timestampCache.length < timestampTargetHeight + 1) {
           ui.chartRange.textContent = `Syncing ${formatNumber(timestampCache.length)} / ${formatNumber(
             timestampTargetHeight + 1
           )} blocks`;
+          ui.minedRange.textContent = "Syncing timestamps...";
         } else {
           ui.chartRange.textContent = `Full chain (${formatNumber(bucketCount)} buckets @ ${bucketMinutes}m)`;
+          ui.minedRange.textContent = `Full chain (${formatNumber(bucketCount)} buckets @ ${bucketMinutes}m)`;
         }
       }
 
@@ -461,6 +492,19 @@
           throw new Error(payload.error.message || "RPC error");
         }
         return payload.result;
+      }
+
+      async function refreshMinedBlocks() {
+        try {
+          const mined = await callRpc("hegemon_minedBlockTimestamps");
+          minedTimestampCache = mined.map((entry) => ({
+            height: entry.height,
+            timestampMs: entry.timestamp_ms ?? entry.timestampMs ?? null,
+          }));
+        } catch (error) {
+          console.error(error);
+          minedTimestampCache = [];
+        }
       }
 
       async function refresh() {
@@ -493,7 +537,8 @@
           lastHeight = consensus.height;
           lastHeightTime = now;
           scheduleTimestampSync(consensus.height);
-          renderFrequencyChart(now);
+          await refreshMinedBlocks();
+          renderFrequencyCharts(now);
 
           ui.blocksMined.textContent = formatNumber(mining.blocks_found);
           ui.blocksImported.textContent = `Imported: ${formatNumber(telemetry.blocks_imported)}`;
@@ -535,7 +580,7 @@
               });
             }
             nextHeight = end + 1;
-            renderFrequencyChart(Date.now());
+            renderFrequencyCharts(Date.now());
             if (!autoRefresh) {
               break;
             }
@@ -574,6 +619,7 @@
         ui.rpcUrl.value = localStorage.getItem("hegemonRpcUrl") || DEFAULT_RPC;
         ui.bucketMinutes.value = localStorage.getItem("hegemonBucketMinutes") || DEFAULT_BUCKET_MINUTES;
         ui.chartRange.textContent = "Syncing timestamps...";
+        ui.minedRange.textContent = "Syncing timestamps...";
         ui.rpcUrl.addEventListener("change", () => {
           localStorage.setItem("hegemonRpcUrl", ui.rpcUrl.value.trim());
           refresh();
@@ -582,7 +628,7 @@
           const next = clampBucketMinutes(Number(ui.bucketMinutes.value));
           ui.bucketMinutes.value = next.toString();
           localStorage.setItem("hegemonBucketMinutes", ui.bucketMinutes.value);
-          renderFrequencyChart(Date.now());
+          renderFrequencyCharts(Date.now());
         });
         ui.refresh.addEventListener("click", refresh);
         ui.auto.addEventListener("click", toggleAuto);

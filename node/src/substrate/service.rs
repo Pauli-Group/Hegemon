@@ -119,7 +119,7 @@ use crate::substrate::client::{
 };
 use crate::substrate::mining_worker::{
     create_production_mining_worker, create_production_mining_worker_mock_broadcast,
-    ChainStateProvider, MiningWorkerConfig,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -5554,6 +5554,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     }
 
     // Auto-start mining if HEGEMON_MINE=1 is set
+    let mined_block_store = Arc::new(parking_lot::Mutex::new(Vec::<MinedBlockRecord>::new()));
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         pow_handle.start_mining();
@@ -8158,6 +8159,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // Check if we have a PQ network handle for live broadcasting
         if let Some(pq_handle) = pq_network_handle.clone() {
             let sync_status_for_mining = Arc::clone(&sync_status);
+            let mined_blocks_for_worker = Arc::clone(&mined_block_store);
             tracing::info!(
                 threads = worker_config.threads,
                 test_mode = worker_config.test_mode,
@@ -8173,6 +8175,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         chain_state,
                         pq_handle,
                         worker_config,
+                        mined_blocks_for_worker,
                     )
                     .with_sync_status(sync_status_for_mining);
 
@@ -8181,6 +8184,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             );
         } else {
             let sync_status_for_mining = Arc::clone(&sync_status);
+            let mined_blocks_for_worker = Arc::clone(&mined_block_store);
             // Production mode without network broadcasting
             tracing::info!(
                 threads = worker_config.threads,
@@ -8196,6 +8200,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         pow_handle_for_worker,
                         chain_state,
                         worker_config,
+                        mined_blocks_for_worker,
                     )
                     .with_sync_status(sync_status_for_mining);
 
@@ -8242,6 +8247,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         Arc::clone(&sync_status),
         Arc::clone(&da_chunk_store),
         Arc::clone(&pending_ciphertext_store),
+        mined_block_store,
     ));
 
     // Create RPC module with all extensions
