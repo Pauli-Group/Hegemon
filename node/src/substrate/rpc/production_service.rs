@@ -74,6 +74,7 @@ use std::time::Instant;
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
 use crate::substrate::service::{DaChunkStore, PendingCiphertextStore};
+use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 use crate::substrate::mining_worker::MinedBlockRecord;
 
 /// Default difficulty bits when runtime API query fails
@@ -106,8 +107,18 @@ where
     start_time: Instant,
     /// Mined block records (local node)
     mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
+    /// Cached mined-by-address history (full chain scan)
+    mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
+    /// Miner recipient address bytes (if configured)
+    miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
     /// Phantom data for the block type
     _phantom: PhantomData<Block>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct MinedHistoryCache {
+    last_scanned: Option<u64>,
+    timestamps: Vec<BlockTimestamp>,
 }
 
 impl<C, Block> ProductionRpcService<C, Block>
@@ -128,6 +139,8 @@ where
         da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
         pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
         mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
+        mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
+        miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
     ) -> Self {
         Self {
             client,
@@ -137,6 +150,8 @@ where
             pending_ciphertext_store,
             start_time: Instant::now(),
             mined_blocks,
+            mined_history,
+            miner_recipient,
             _phantom: PhantomData,
         }
     }
@@ -280,14 +295,49 @@ where
     }
 
     fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String> {
-        let mined = self.mined_blocks.lock();
-        Ok(mined
-            .iter()
-            .map(|record| BlockTimestamp {
-                height: record.height,
-                timestamp_ms: Some(record.timestamp_ms),
-            })
-            .collect())
+        let miner_recipient = match self.miner_recipient {
+            Some(recipient) => recipient,
+            None => return Ok(vec![]),
+        };
+
+        let best = self.best_number();
+        let start = {
+            let cache = self.mined_history.lock();
+            cache.last_scanned.map(|value| value.saturating_add(1)).unwrap_or(0)
+        };
+
+        if start > best {
+            return Ok(self.mined_history.lock().timestamps.clone());
+        }
+
+        let mut new_entries = Vec::new();
+        for number in start..=best {
+            let hash = self
+                .client
+                .hash(sp_runtime::traits::NumberFor::<Block>::from(number))
+                .map_err(|e| format!("failed to fetch hash for {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block hash for {number}"))?;
+            let block = self
+                .client
+                .block(hash)
+                .map_err(|e| format!("failed to fetch block {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block {number}"))?
+                .block;
+            if let Some(recipient) = extract_coinbase_recipient(&block) {
+                if recipient == miner_recipient {
+                    let timestamp_ms = extract_block_timestamp(&block);
+                    new_entries.push(BlockTimestamp {
+                        height: number,
+                        timestamp_ms,
+                    });
+                }
+            }
+        }
+
+        let mut cache = self.mined_history.lock();
+        cache.last_scanned = Some(best);
+        cache.timestamps.extend(new_entries);
+        Ok(cache.timestamps.clone())
     }
 }
 
@@ -300,12 +350,37 @@ fn extract_block_timestamp<Block: BlockT>(block: &Block) -> Option<u64> {
     None
 }
 
+fn extract_coinbase_recipient<Block: BlockT>(
+    block: &Block,
+) -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
+    for extrinsic in block.extrinsics().iter() {
+        if let Some(recipient) = try_decode_coinbase_recipient::<Block>(extrinsic) {
+            return Some(recipient);
+        }
+    }
+    None
+}
+
 fn try_decode_timestamp<Block: BlockT>(extrinsic: &Block::Extrinsic) -> Option<u64> {
     use codec::Decode;
     let bytes = extrinsic.encode();
     let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
     match decoded.function {
         runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { now }) => Some(now),
+        _ => None,
+    }
+}
+
+fn try_decode_coinbase_recipient<Block: BlockT>(
+    extrinsic: &Block::Extrinsic,
+) -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
+    use codec::Decode;
+    let bytes = extrinsic.encode();
+    let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
+    match decoded.function {
+        runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::mint_coinbase {
+            coinbase_data,
+        }) => Some(coinbase_data.recipient_address),
         _ => None,
     }
 }

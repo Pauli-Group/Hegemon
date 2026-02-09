@@ -121,6 +121,8 @@ use crate::substrate::mining_worker::{
     create_production_mining_worker, create_production_mining_worker_mock_broadcast,
     ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
 };
+use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
+use wallet::address::ShieldedAddress;
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
@@ -179,6 +181,16 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+
+fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
+    let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
+    let decoded = ShieldedAddress::decode(&address).ok()?;
+    let mut out = [0u8; DIVERSIFIED_ADDRESS_SIZE];
+    out[0] = decoded.version;
+    out[1..5].copy_from_slice(&decoded.diversifier_index.to_le_bytes());
+    out[5..37].copy_from_slice(&decoded.pk_recipient);
+    Some(out)
+}
 
 type ShieldedPoolCall = pallet_shielded_pool::Call<runtime::Runtime>;
 
@@ -8241,6 +8253,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let rpc_deny_unsafe = sc_rpc_server::utils::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
 
     // Create production RPC service with client access
+    let miner_recipient = miner_recipient_from_env();
+    let mined_history = Arc::new(parking_lot::Mutex::new(Default::default()));
     let rpc_service = Arc::new(ProductionRpcService::new(
         client.clone(),
         Arc::clone(&peer_count),
@@ -8248,6 +8262,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         Arc::clone(&da_chunk_store),
         Arc::clone(&pending_ciphertext_store),
         mined_block_store,
+        mined_history,
+        miner_recipient,
     ));
 
     // Create RPC module with all extensions
