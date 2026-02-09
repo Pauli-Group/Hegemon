@@ -49,7 +49,7 @@
 //! ```
 
 use super::archive::ArchiveMarketService;
-use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, TelemetrySnapshot};
+use super::hegemon::{BlockTimestamp, ConsensusStatus, HegemonService, StorageFootprint, TelemetrySnapshot};
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::{Decode, Encode};
@@ -57,9 +57,11 @@ use pallet_shielded_pool::types::{
     BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
 };
 use parking_lot::Mutex as ParkingMutex;
+use pallet_timestamp;
 use runtime::apis::{ArchiveMarketApi, ConsensusApi, ShieldedPoolApi};
 use runtime::AccountId;
 use sp_api::ProvideRuntimeApi;
+use sc_client_api::BlockBackend;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
 use std::collections::HashMap;
@@ -158,7 +160,8 @@ where
 impl<C, Block> HegemonService for ProductionRpcService<C, Block>
 where
     Block: BlockT,
-    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
+    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + BlockBackend<Block> + Send + Sync + 'static,
+    sp_runtime::traits::NumberFor<Block>: From<u64>,
     C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
 {
     fn consensus_status(&self) -> ConsensusStatus {
@@ -232,6 +235,62 @@ where
 
     fn current_height(&self) -> u64 {
         self.best_number()
+    }
+
+    fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String> {
+        const MAX_RANGE: u64 = 1000;
+        if start > end {
+            return Err("start must be <= end".to_string());
+        }
+        let best = self.best_number();
+        let clamped_end = end.min(best);
+        let count = clamped_end.saturating_sub(start).saturating_add(1);
+        if count > MAX_RANGE {
+            return Err(format!(
+                "range too large (max {MAX_RANGE} blocks per request); requested {count}"
+            ));
+        }
+
+        let mut out = Vec::with_capacity(count as usize);
+        for number in start..=clamped_end {
+            let hash = self
+                .client
+                .hash(sp_runtime::traits::NumberFor::<Block>::from(number))
+                .map_err(|e| format!("failed to fetch hash for {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block hash for {number}"))?;
+            let block = self
+                .client
+                .block(hash)
+                .map_err(|e| format!("failed to fetch block {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block {number}"))?
+                .block;
+            let timestamp_ms = extract_block_timestamp(&block);
+            out.push(BlockTimestamp {
+                height: number,
+                timestamp_ms,
+            });
+        }
+
+        Ok(out)
+    }
+}
+
+fn extract_block_timestamp<Block: BlockT>(block: &Block) -> Option<u64> {
+    for extrinsic in block.extrinsics().iter() {
+        if let Some(timestamp) = try_decode_timestamp::<Block>(extrinsic) {
+            return Some(timestamp);
+        }
+    }
+    None
+}
+
+fn try_decode_timestamp<Block: BlockT>(extrinsic: &Block::Extrinsic) -> Option<u64> {
+    use codec::Decode;
+    let bytes = extrinsic.encode();
+    let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
+    match decoded.function {
+        runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { now }) => Some(now),
+        _ => None,
     }
 }
 
