@@ -222,12 +222,13 @@ where
 
     fn telemetry_snapshot(&self) -> TelemetrySnapshot {
         let uptime = self.start_time.elapsed();
+        let blocks_mined = self.mined_blocks.lock().len() as u64;
 
         TelemetrySnapshot {
             uptime_secs: uptime.as_secs(),
             tx_count: 0, // TODO: Wire to transaction metrics
             blocks_imported: self.best_number(),
-            blocks_mined: 0,     // TODO: Wire to mining metrics
+            blocks_mined,
             memory_bytes: 0,     // TODO: Wire to memory metrics
             network_rx_bytes: 0, // TODO: Wire to network metrics
             network_tx_bytes: 0, // TODO: Wire to network metrics

@@ -12,6 +12,8 @@ import type {
   WalletStatus,
   WalletSyncResult
 } from './types';
+import blockMinedAudio from './assets/sounds/block-mined.wav';
+import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
 const contactsKey = 'hegemon.contacts';
@@ -228,13 +230,14 @@ const formatHash = (value: string | null | undefined) => {
 const buildBlockAlertPattern = (tone: BlockAlertTone): BlockAlertStep[] => {
   if (tone === 'self') {
     return [
-      { frequency: 880, duration: 0.12, gap: 0.05 },
-      { frequency: 1175, duration: 0.12 }
+      { frequency: 1480, duration: 0.08, gap: 0.05 },
+      { frequency: 1760, duration: 0.08, gap: 0.05 },
+      { frequency: 2090, duration: 0.12 }
     ];
   }
   return [
-    { frequency: 520, duration: 0.14, gap: 0.04 },
-    { frequency: 420, duration: 0.16 }
+    { frequency: 330, duration: 0.22, gap: 0.08 },
+    { frequency: 220, duration: 0.26 }
   ];
 };
 
@@ -494,6 +497,8 @@ export default function App() {
   const lastActivityRef = useRef(Date.now());
   const [blockAlertEnabled, setBlockAlertEnabled] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const blockMinedAudioRef = useRef<HTMLAudioElement | null>(null);
+  const blockReceivedAudioRef = useRef<HTMLAudioElement | null>(null);
   const blockAlertRef = useRef<{
     connectionId: string | null;
     blocksMined: number | null;
@@ -653,34 +658,58 @@ export default function App() {
     };
   }, []);
 
+  const playBlockTone = useCallback((tone: BlockAlertTone) => {
+    if (typeof window.AudioContext === 'undefined') {
+      return;
+    }
+    const context = audioContextRef.current ?? new window.AudioContext();
+    if (context.state === 'suspended') {
+      void context.resume();
+    }
+    audioContextRef.current = context;
+    const pattern = buildBlockAlertPattern(tone);
+    let cursor = context.currentTime + 0.02;
+    pattern.forEach((step) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = step.frequency;
+      gain.gain.setValueAtTime(0.0001, cursor);
+      gain.gain.exponentialRampToValueAtTime(0.18, cursor + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, cursor + step.duration);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(cursor);
+      oscillator.stop(cursor + step.duration);
+      cursor += step.duration + (step.gap ?? 0.06);
+    });
+  }, []);
+
   const playBlockAlert = useCallback(
     (tone: BlockAlertTone) => {
-      if (!blockAlertEnabled || typeof window.AudioContext === 'undefined') {
+      if (!blockAlertEnabled) {
         return;
       }
-      const context = audioContextRef.current ?? new window.AudioContext();
-      if (context.state === 'suspended') {
-        void context.resume();
+      const audioRef = tone === 'self' ? blockMinedAudioRef : blockReceivedAudioRef;
+      const audioSrc = tone === 'self' ? blockMinedAudio : blockReceivedAudio;
+      try {
+        if (!audioRef.current) {
+          audioRef.current = new Audio(audioSrc);
+          audioRef.current.preload = 'auto';
+        }
+        audioRef.current.currentTime = 0;
+        const playPromise = audioRef.current.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {
+            playBlockTone(tone);
+          });
+        }
+        return;
+      } catch {
+        playBlockTone(tone);
       }
-      audioContextRef.current = context;
-      const pattern = buildBlockAlertPattern(tone);
-      let cursor = context.currentTime + 0.02;
-      pattern.forEach((step) => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.value = step.frequency;
-        gain.gain.setValueAtTime(0.0001, cursor);
-        gain.gain.exponentialRampToValueAtTime(0.18, cursor + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, cursor + step.duration);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(cursor);
-        oscillator.stop(cursor + step.duration);
-        cursor += step.duration + (step.gap ?? 0.06);
-      });
     },
-    [blockAlertEnabled]
+    [blockAlertEnabled, playBlockTone]
   );
 
   useEffect(() => {

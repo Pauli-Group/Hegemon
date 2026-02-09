@@ -218,17 +218,7 @@
         font-weight: 600;
       }
       .bar-labels {
-        display: flex;
-        gap: 8px;
-        margin-top: 6px;
-        font-size: 10px;
-        color: var(--muted);
-        text-align: center;
-        overflow-x: auto;
-      }
-      .bar-labels span {
-        min-width: 18px;
-        display: inline-block;
+        display: none;
       }
       code {
         background: #0b1018;
@@ -298,7 +288,6 @@
           <span id="chart-range">Last -- hours</span>
         </div>
         <div class="bar-grid" id="frequency-bars"></div>
-        <div class="bar-labels" id="frequency-labels"></div>
       </section>
       <section class="chart">
         <div class="chart-header">
@@ -306,7 +295,6 @@
           <span id="mined-range">Last -- hours</span>
         </div>
         <div class="bar-grid" id="mined-bars"></div>
-        <div class="bar-labels" id="mined-labels"></div>
       </section>
       <div class="note">
         Tip: if the browser blocks requests, start the node with
@@ -341,10 +329,8 @@
         stateRoot: document.getElementById("state-root"),
         chartRange: document.getElementById("chart-range"),
         frequencyBars: document.getElementById("frequency-bars"),
-        frequencyLabels: document.getElementById("frequency-labels"),
         minedRange: document.getElementById("mined-range"),
         minedBars: document.getElementById("mined-bars"),
-        minedLabels: document.getElementById("mined-labels"),
       };
 
       let autoRefresh = true;
@@ -355,6 +341,7 @@
       let minedTimestampCache = [];
       let timestampSyncInProgress = false;
       let timestampTargetHeight = 0;
+      let isSyncingScroll = false;
 
       function setStatus(text, kind) {
         ui.status.querySelector("span").textContent = text;
@@ -408,10 +395,9 @@
         return buckets;
       }
 
-      function renderBars(barsEl, labelsEl, buckets, minTs, bucketMs, labelStride) {
+      function renderBars(barsEl, buckets, minTs, bucketMs) {
         const maxValue = Math.max(1, ...buckets);
         barsEl.innerHTML = "";
-        labelsEl.innerHTML = "";
         buckets.forEach((count, index) => {
           const bar = document.createElement("div");
           bar.className = "bar";
@@ -420,15 +406,6 @@
           const bucketStart = new Date(minTs + index * bucketMs);
           bar.title = `${bucketStart.toLocaleString()} — ${count} blocks`;
           barsEl.appendChild(bar);
-
-          const label = document.createElement("span");
-          if (index % labelStride === 0 || index === buckets.length - 1) {
-            const labelDate = new Date(minTs + index * bucketMs);
-            label.textContent = labelDate.toLocaleDateString();
-          } else {
-            label.textContent = "";
-          }
-          labelsEl.appendChild(label);
         });
       }
 
@@ -440,10 +417,8 @@
           .filter((value) => typeof value === "number");
         if (!timestamps.length) {
           ui.frequencyBars.innerHTML = "";
-          ui.frequencyLabels.innerHTML = "";
           ui.chartRange.textContent = "Syncing timestamps...";
           ui.minedBars.innerHTML = "";
-          ui.minedLabels.innerHTML = "";
           ui.minedRange.textContent = "Syncing timestamps...";
           return;
         }
@@ -451,14 +426,13 @@
         const maxTs = Math.max(...timestamps);
         const bucketCount = Math.max(1, Math.floor((maxTs - minTs) / bucketMs) + 1);
         const buckets = buildBuckets(timestamps, minTs, bucketMs, bucketCount);
-        const labelStride = bucketCount > 48 ? Math.ceil(bucketCount / 12) : 1;
-        renderBars(ui.frequencyBars, ui.frequencyLabels, buckets, minTs, bucketMs, labelStride);
+        renderBars(ui.frequencyBars, buckets, minTs, bucketMs);
 
         const minedTimestamps = minedTimestampCache
           .map((entry) => entry.timestampMs)
           .filter((value) => typeof value === "number");
         const minedBuckets = buildBuckets(minedTimestamps, minTs, bucketMs, bucketCount);
-        renderBars(ui.minedBars, ui.minedLabels, minedBuckets, minTs, bucketMs, labelStride);
+        renderBars(ui.minedBars, minedBuckets, minTs, bucketMs);
 
         if (timestampCache.length && timestampCache.length < timestampTargetHeight + 1) {
           ui.chartRange.textContent = `Syncing ${formatNumber(timestampCache.length)} / ${formatNumber(
@@ -620,6 +594,16 @@
         ui.bucketMinutes.value = localStorage.getItem("hegemonBucketMinutes") || DEFAULT_BUCKET_MINUTES;
         ui.chartRange.textContent = "Syncing timestamps...";
         ui.minedRange.textContent = "Syncing timestamps...";
+        const syncScroll = (source, target) => {
+          if (isSyncingScroll) return;
+          isSyncingScroll = true;
+          target.scrollLeft = source.scrollLeft;
+          requestAnimationFrame(() => {
+            isSyncingScroll = false;
+          });
+        };
+        ui.frequencyBars.addEventListener("scroll", () => syncScroll(ui.frequencyBars, ui.minedBars));
+        ui.minedBars.addEventListener("scroll", () => syncScroll(ui.minedBars, ui.frequencyBars));
         ui.rpcUrl.addEventListener("change", () => {
           localStorage.setItem("hegemonRpcUrl", ui.rpcUrl.value.trim());
           refresh();
