@@ -38,7 +38,7 @@ pub use scanner::{
 pub use shielded_tx::{BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder};
 pub use store::{
     OutgoingDisclosureDraft, OutgoingDisclosureRecord, PendingStatus, PendingTransaction,
-    SpendableNote, TransferRecipient, WalletMode, WalletStore,
+    SpendableNote, TrackedNoteView, TransferRecipient, WalletMode, WalletStore,
 };
 pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, SubstrateRpcConfig};
 pub use sync::SyncOutcome;

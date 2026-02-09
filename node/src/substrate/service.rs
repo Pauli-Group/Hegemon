@@ -165,6 +165,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Mutex};
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use url::Url;
+use hyper::http::{header, Method};
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
@@ -8569,13 +8572,68 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     };
 
     // Spawn RPC server task
+    fn build_rpc_cors_layer(cors: &Option<Vec<String>>) -> CorsLayer {
+        match cors {
+            None => CorsLayer::permissive(),
+            Some(origins) if origins.is_empty() => {
+                CorsLayer::new().allow_origin(AllowOrigin::predicate(|_, _| false))
+            }
+            Some(origins) => {
+                let allowed = origins.clone();
+                let allow_origin = AllowOrigin::predicate(move |origin, _| {
+                    let origin_str = match origin.to_str() {
+                        Ok(value) => value,
+                        Err(_) => return false,
+                    };
+                    allowed.iter().any(|pattern| origin_matches(origin_str, pattern))
+                });
+                CorsLayer::new()
+                    .allow_origin(allow_origin)
+                    .allow_methods([Method::POST, Method::OPTIONS])
+                    .allow_headers([header::CONTENT_TYPE, header::ACCEPT])
+            }
+        }
+    }
+
+    fn origin_matches(origin: &str, pattern: &str) -> bool {
+        if pattern == "null" {
+            return origin == "null";
+        }
+        let wildcard_port = pattern.ends_with(":*");
+        let parsed_pattern = if wildcard_port {
+            let trimmed = pattern.trim_end_matches(":*");
+            format!("{trimmed}:0")
+        } else {
+            pattern.to_string()
+        };
+        let pattern_url = match Url::parse(&parsed_pattern) {
+            Ok(url) => url,
+            Err(_) => return false,
+        };
+        let origin_url = match Url::parse(origin) {
+            Ok(url) => url,
+            Err(_) => return false,
+        };
+        if pattern_url.scheme() != origin_url.scheme() {
+            return false;
+        }
+        if pattern_url.host_str() != origin_url.host_str() {
+            return false;
+        }
+        if wildcard_port {
+            return true;
+        }
+        pattern_url.port_or_known_default() == origin_url.port_or_known_default()
+    }
+
+    let rpc_cors = config.rpc.cors.clone();
     let rpc_handle = task_manager.spawn_handle();
     rpc_handle.spawn("hegemon-rpc-server", Some("rpc"), async move {
         let addr = rpc_listen_addr;
 
         // Create HTTP middleware
         // Note: DenyUnsafe is injected via extension middleware below
-        let http_middleware = tower::ServiceBuilder::new();
+        let http_middleware = tower::ServiceBuilder::new().layer(build_rpc_cors_layer(&rpc_cors));
 
         let deny_unsafe = rpc_deny_unsafe;
 
