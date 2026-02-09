@@ -116,6 +116,15 @@ pub struct StorageFootprint {
     pub nullifiers_bytes: u64,
 }
 
+/// Block timestamp response
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockTimestamp {
+    /// Block height
+    pub height: u64,
+    /// Timestamp in milliseconds since epoch (None if not present)
+    pub timestamp_ms: Option<u64>,
+}
+
 /// Node config snapshot
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,6 +214,13 @@ pub trait HegemonApi {
     /// including chain spec identity, base path, listen addresses, and PQ settings.
     #[method(name = "nodeConfig")]
     async fn node_config(&self) -> RpcResult<NodeConfigSnapshot>;
+
+    /// Get block timestamps for a height range (inclusive).
+    ///
+    /// Returns an entry for each block height in the range. Timestamps are
+    /// extracted from the timestamp inherent when present.
+    #[method(name = "blockTimestamps")]
+    async fn block_timestamps(&self, start: u64, end: u64) -> RpcResult<Vec<BlockTimestamp>>;
 }
 
 /// Trait for mining handle operations
@@ -241,6 +257,8 @@ pub trait HegemonService: Send + Sync {
     fn current_difficulty(&self) -> u32;
     /// Get current block height
     fn current_height(&self) -> u64;
+    /// Get block timestamps for a height range (inclusive).
+    fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String>;
 }
 
 /// Hegemon RPC implementation
@@ -342,6 +360,12 @@ where
     async fn node_config(&self) -> RpcResult<NodeConfigSnapshot> {
         Ok(self.config_snapshot.clone())
     }
+
+    async fn block_timestamps(&self, start: u64, end: u64) -> RpcResult<Vec<BlockTimestamp>> {
+        self.service.block_timestamps(start, end).map_err(|e| {
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -437,6 +461,18 @@ mod tests {
 
         fn current_height(&self) -> u64 {
             100
+        }
+
+        fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String> {
+            if start > end {
+                return Err("start must be <= end".to_string());
+            }
+            Ok((start..=end)
+                .map(|height| BlockTimestamp {
+                    height,
+                    timestamp_ms: Some(1_700_000_000_000 + height),
+                })
+                .collect())
         }
     }
 

@@ -301,6 +301,7 @@
       const POLL_MS = 5000;
       const DEFAULT_BUCKET_MINUTES = 60;
       const MAX_BUCKETS = 12;
+      const TIMESTAMP_BATCH = 500;
 
       const ui = {
         rpcUrl: document.getElementById("rpc-url"),
@@ -330,7 +331,9 @@
       let lastHeight = null;
       let lastHeightTime = null;
       let intervalHandle = null;
-      const blockTimestamps = [];
+      const timestampCache = [];
+      let timestampSyncInProgress = false;
+      let timestampTargetHeight = 0;
 
       function setStatus(text, kind) {
         ui.status.querySelector("span").textContent = text;
@@ -373,34 +376,15 @@
         return clampBucketMinutes(Number(ui.bucketMinutes.value));
       }
 
-      function trimBlockHistory(nowMs, bucketMinutes) {
-        const windowMs = bucketMinutes * MAX_BUCKETS * 60 * 1000;
-        const cutoff = nowMs - windowMs;
-        while (blockTimestamps.length && blockTimestamps[0] < cutoff) {
-          blockTimestamps.shift();
-        }
-      }
-
-      function recordBlocks(height, nowMs) {
-        if (lastHeight === null) {
-          lastHeight = height;
-          lastHeightTime = nowMs;
-          return;
-        }
-        if (height > lastHeight) {
-          const deltaBlocks = height - lastHeight;
-          for (let i = 0; i < deltaBlocks; i += 1) {
-            blockTimestamps.push(nowMs);
-          }
-        }
-      }
-
       function renderFrequencyChart(nowMs) {
         const bucketMinutes = getBucketMinutes();
         const bucketMs = bucketMinutes * 60 * 1000;
         const buckets = new Array(MAX_BUCKETS).fill(0);
-        for (const ts of blockTimestamps) {
-          const age = nowMs - ts;
+        for (const entry of timestampCache) {
+          if (!entry.timestampMs) {
+            continue;
+          }
+          const age = nowMs - entry.timestampMs;
           if (age < 0) continue;
           const index = Math.floor(age / bucketMs);
           if (index >= 0 && index < MAX_BUCKETS) {
@@ -425,7 +409,15 @@
         });
 
         const hours = ((bucketMinutes * MAX_BUCKETS) / 60).toFixed(1);
-        ui.chartRange.textContent = `Last ${hours} hours`;
+        if (timestampCache.length && timestampCache.length < timestampTargetHeight + 1) {
+          ui.chartRange.textContent = `Syncing ${formatNumber(timestampCache.length)} / ${formatNumber(
+            timestampTargetHeight + 1
+          )} blocks`;
+        } else if (timestampCache.length) {
+          ui.chartRange.textContent = `Last ${hours} hours`;
+        } else {
+          ui.chartRange.textContent = "Syncing timestamps...";
+        }
       }
 
       async function callRpc(method, params = []) {
@@ -478,10 +470,9 @@
           } else if (ui.blockInterval.textContent === "--") {
             ui.blockInterval.textContent = "Avg block interval: --";
           }
-          recordBlocks(consensus.height, now);
           lastHeight = consensus.height;
           lastHeightTime = now;
-          trimBlockHistory(now, getBucketMinutes());
+          scheduleTimestampSync(consensus.height);
           renderFrequencyChart(now);
 
           ui.blocksMined.textContent = formatNumber(mining.blocks_found);
@@ -499,6 +490,40 @@
           setStatus("Disconnected", "bad");
           ui.lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
           console.error(error);
+        }
+      }
+
+      async function scheduleTimestampSync(bestHeight) {
+        timestampTargetHeight = bestHeight;
+        if (timestampSyncInProgress) {
+          return;
+        }
+        timestampSyncInProgress = true;
+        try {
+          let nextHeight = timestampCache.length > 0 ? timestampCache[timestampCache.length - 1].height + 1 : 0;
+          if (nextHeight > bestHeight) {
+            timestampSyncInProgress = false;
+            return;
+          }
+          while (nextHeight <= bestHeight) {
+            const end = Math.min(bestHeight, nextHeight + TIMESTAMP_BATCH - 1);
+            const batch = await callRpc("hegemon_blockTimestamps", [nextHeight, end]);
+            for (const entry of batch) {
+              timestampCache.push({
+                height: entry.height,
+                timestampMs: entry.timestamp_ms ?? entry.timestampMs ?? null,
+              });
+            }
+            nextHeight = end + 1;
+            renderFrequencyChart(Date.now());
+            if (!autoRefresh) {
+              break;
+            }
+          }
+        } catch (error) {
+          console.error(error);
+        } finally {
+          timestampSyncInProgress = false;
         }
       }
 
@@ -528,6 +553,7 @@
       function init() {
         ui.rpcUrl.value = localStorage.getItem("hegemonRpcUrl") || DEFAULT_RPC;
         ui.bucketMinutes.value = localStorage.getItem("hegemonBucketMinutes") || DEFAULT_BUCKET_MINUTES;
+        ui.chartRange.textContent = "Syncing timestamps...";
         ui.rpcUrl.addEventListener("change", () => {
           localStorage.setItem("hegemonRpcUrl", ui.rpcUrl.value.trim());
           refresh();
