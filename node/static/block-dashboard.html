@@ -52,7 +52,7 @@
       }
       .controls {
         display: grid;
-        grid-template-columns: 1fr auto auto auto;
+        grid-template-columns: 1fr auto auto auto auto auto;
         gap: 12px;
         align-items: center;
         margin-bottom: 18px;
@@ -94,6 +94,102 @@
       .controls button.secondary {
         background: transparent;
         color: var(--text);
+      }
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(8, 10, 14, 0.76);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 10;
+      }
+      .modal.hidden {
+        display: none;
+      }
+      .modal-card {
+        width: min(960px, 100%);
+        max-height: 90vh;
+        overflow: auto;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 20px 22px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+      }
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .modal-header h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .modal-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 14px;
+      }
+      .modal-controls label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .modal-controls input {
+        width: 140px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+      }
+      .modal-controls button {
+        padding: 8px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--accent);
+        color: #0b1020;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .modal-controls button.secondary {
+        background: transparent;
+        color: var(--text);
+      }
+      .modal-status {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .modal-section {
+        margin-top: 16px;
+      }
+      .modal-section h4 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      .modal-section pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+        font-size: 12px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
       }
       .status {
         display: flex;
@@ -249,6 +345,8 @@
         </label>
         <button id="refresh">Refresh</button>
         <button id="auto" class="secondary">Auto: On</button>
+        <button id="block-details" class="secondary">Block Details</button>
+        <button id="recent-hashes" class="secondary">Recent Block Hashes</button>
       </section>
       <section class="grid">
         <div class="card">
@@ -301,6 +399,54 @@
         <code>--rpc-cors=all</code> or open this file through a local HTTP server.
       </div>
     </main>
+    <div class="modal hidden" id="block-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Block Details</h3>
+          <button id="block-close" class="secondary">Close</button>
+        </div>
+        <div class="modal-controls">
+          <label>
+            Block height
+            <input id="block-height" type="number" min="0" step="1" />
+          </label>
+          <button id="block-fetch">Load</button>
+          <span class="modal-status" id="block-status">Idle</span>
+        </div>
+        <div class="modal-section">
+          <h4>Block hash</h4>
+          <pre id="block-hash">--</pre>
+        </div>
+        <div class="modal-section">
+          <h4>Header (chain_getHeader)</h4>
+          <pre id="block-header">--</pre>
+        </div>
+        <div class="modal-section">
+          <h4>Block (chain_getBlock)</h4>
+          <pre id="block-body">--</pre>
+        </div>
+      </div>
+    </div>
+    <div class="modal hidden" id="recent-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Recent Block Hashes</h3>
+          <button id="recent-close" class="secondary">Close</button>
+        </div>
+        <div class="modal-controls">
+          <label>
+            Previous blocks
+            <input id="recent-count" type="number" min="1" step="1" />
+          </label>
+          <button id="recent-fetch">Load</button>
+          <span class="modal-status" id="recent-status">Idle</span>
+        </div>
+        <div class="modal-section">
+          <h4>Hashes</h4>
+          <pre id="recent-list">--</pre>
+        </div>
+      </div>
+    </div>
     <script>
       const DEFAULT_RPC = "http://127.0.0.1:9944";
       const POLL_MS = 5000;
@@ -315,6 +461,22 @@
         status: document.getElementById("status"),
         lastUpdated: document.getElementById("last-updated"),
         bucketMinutes: document.getElementById("bucket-minutes"),
+        blockDetails: document.getElementById("block-details"),
+        blockModal: document.getElementById("block-modal"),
+        blockClose: document.getElementById("block-close"),
+        blockHeight: document.getElementById("block-height"),
+        blockFetch: document.getElementById("block-fetch"),
+        blockStatus: document.getElementById("block-status"),
+        blockHash: document.getElementById("block-hash"),
+        blockHeader: document.getElementById("block-header"),
+        blockBody: document.getElementById("block-body"),
+        recentHashes: document.getElementById("recent-hashes"),
+        recentModal: document.getElementById("recent-modal"),
+        recentClose: document.getElementById("recent-close"),
+        recentCount: document.getElementById("recent-count"),
+        recentFetch: document.getElementById("recent-fetch"),
+        recentStatus: document.getElementById("recent-status"),
+        recentList: document.getElementById("recent-list"),
         height: document.getElementById("height"),
         bestHash: document.getElementById("best-hash"),
         hashRate: document.getElementById("hash-rate"),
@@ -373,6 +535,11 @@
       function formatDuration(seconds) {
         if (seconds === null || seconds === undefined) return "--";
         return `${seconds.toFixed(1)}s`;
+      }
+
+      function formatJson(value) {
+        if (value === null || value === undefined) return "--";
+        return JSON.stringify(value, null, 2);
       }
 
       function clampBucketMinutes(value) {
@@ -532,6 +699,103 @@
         }
       }
 
+      function setBlockStatus(text) {
+        ui.blockStatus.textContent = text;
+      }
+
+      function openBlockModal() {
+        const nextHeight = Number.isFinite(lastHeight) ? lastHeight : 0;
+        ui.blockHeight.value = nextHeight.toString();
+        ui.blockModal.classList.remove("hidden");
+        setBlockStatus("Idle");
+      }
+
+      function closeBlockModal() {
+        ui.blockModal.classList.add("hidden");
+      }
+
+      async function loadBlockDetails() {
+        const height = Number(ui.blockHeight.value);
+        if (!Number.isFinite(height) || height < 0) {
+          setBlockStatus("Enter a valid height.");
+          return;
+        }
+        setBlockStatus("Loading block data...");
+        ui.blockHash.textContent = "--";
+        ui.blockHeader.textContent = "--";
+        ui.blockBody.textContent = "--";
+        try {
+          const blockHash = await callRpc("chain_getBlockHash", [height]);
+          if (!blockHash) {
+            setBlockStatus("No block at that height.");
+            return;
+          }
+          const [header, block] = await Promise.all([
+            callRpc("chain_getHeader", [blockHash]),
+            callRpc("chain_getBlock", [blockHash]),
+          ]);
+          ui.blockHash.textContent = blockHash;
+          ui.blockHeader.textContent = formatJson(header);
+          ui.blockBody.textContent = formatJson(block);
+          setBlockStatus("Loaded.");
+        } catch (error) {
+          console.error(error);
+          setBlockStatus("Failed to load block details.");
+        }
+      }
+
+      function setRecentStatus(text) {
+        ui.recentStatus.textContent = text;
+      }
+
+      async function getBestHeight() {
+        if (Number.isFinite(lastHeight)) {
+          return lastHeight;
+        }
+        const header = await callRpc("chain_getHeader");
+        return Number.parseInt(header.number, 16);
+      }
+
+      function openRecentModal() {
+        ui.recentCount.value = "7";
+        ui.recentList.textContent = "--";
+        setRecentStatus("Idle");
+        ui.recentModal.classList.remove("hidden");
+      }
+
+      function closeRecentModal() {
+        ui.recentModal.classList.add("hidden");
+      }
+
+      async function loadRecentHashes() {
+        const count = Math.floor(Number(ui.recentCount.value));
+        if (!Number.isFinite(count) || count < 1) {
+          setRecentStatus("Enter a valid count.");
+          return;
+        }
+        setRecentStatus("Loading hashes...");
+        ui.recentList.textContent = "--";
+        try {
+          const best = await getBestHeight();
+          const heights = [];
+          for (let i = 0; i < count; i += 1) {
+            const height = best - i;
+            if (height < 0) break;
+            heights.push(height);
+          }
+          const hashes = await Promise.all(
+            heights.map((height) => callRpc("chain_getBlockHash", [height]))
+          );
+          ui.recentList.textContent = heights
+            .map((height, index) => `${height}: ${hashes[index] ?? "--"}`)
+            .join("\n");
+          setRecentStatus(`Loaded ${heights.length} hashes (best: ${best}).`);
+        } catch (error) {
+          console.error(error);
+          setRecentStatus("Failed to load hashes.");
+        }
+      }
+
       async function scheduleTimestampSync(bestHeight) {
         timestampTargetHeight = bestHeight;
         if (timestampSyncInProgress) {
@@ -616,6 +880,32 @@
         });
         ui.refresh.addEventListener("click", refresh);
         ui.auto.addEventListener("click", toggleAuto);
+        ui.blockDetails.addEventListener("click", openBlockModal);
+        ui.blockClose.addEventListener("click", closeBlockModal);
+        ui.blockFetch.addEventListener("click", loadBlockDetails);
+        ui.blockHeight.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            loadBlockDetails();
+          }
+        });
+        ui.blockModal.addEventListener("click", (event) => {
+          if (event.target === ui.blockModal) {
+            closeBlockModal();
+          }
+        });
+        ui.recentHashes.addEventListener("click", openRecentModal);
+        ui.recentClose.addEventListener("click", closeRecentModal);
+        ui.recentFetch.addEventListener("click", loadRecentHashes);
+        ui.recentCount.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            loadRecentHashes();
+          }
+        });
+        ui.recentModal.addEventListener("click", (event) => {
+          if (event.target === ui.recentModal) {
+            closeRecentModal();
+          }
+        });
         startAuto();
         refresh();
       }
