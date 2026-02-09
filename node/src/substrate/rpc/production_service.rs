@@ -74,6 +74,7 @@ use std::time::Instant;
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
 use crate::substrate::service::{DaChunkStore, PendingCiphertextStore};
+use crate::substrate::mining_worker::MinedBlockRecord;
 
 /// Default difficulty bits when runtime API query fails
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
@@ -103,6 +104,8 @@ where
     sync_status: Arc<AtomicBool>,
     /// Node start time for uptime calculation
     start_time: Instant,
+    /// Mined block records (local node)
+    mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
     /// Phantom data for the block type
     _phantom: PhantomData<Block>,
 }
@@ -124,6 +127,7 @@ where
         sync_status: Arc<AtomicBool>,
         da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
         pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
+        mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
     ) -> Self {
         Self {
             client,
@@ -132,6 +136,7 @@ where
             da_chunk_store,
             pending_ciphertext_store,
             start_time: Instant::now(),
+            mined_blocks,
             _phantom: PhantomData,
         }
     }
@@ -272,6 +277,17 @@ where
         }
 
         Ok(out)
+    }
+
+    fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String> {
+        let mined = self.mined_blocks.lock();
+        Ok(mined
+            .iter()
+            .map(|record| BlockTimestamp {
+                height: record.height,
+                timestamp_ms: Some(record.timestamp_ms),
+            })
+            .collect())
     }
 }
 

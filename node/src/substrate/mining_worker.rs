@@ -400,6 +400,13 @@ pub struct MiningWorkerStats {
     pub start_time: Option<Instant>,
 }
 
+/// Record of a block mined by this node.
+#[derive(Debug, Clone, Copy)]
+pub struct MinedBlockRecord {
+    pub height: u64,
+    pub timestamp_ms: u64,
+}
+
 impl MiningWorkerStats {
     /// Create new stats
     pub fn new() -> Self {
@@ -691,6 +698,8 @@ pub struct MiningWorker<CSP: ChainStateProvider, BB: BlockBroadcaster> {
     config: MiningWorkerConfig,
     /// Statistics
     stats: Arc<parking_lot::RwLock<MiningWorkerStats>>,
+    /// Mined block records (local node)
+    mined_blocks: Arc<parking_lot::Mutex<Vec<MinedBlockRecord>>>,
 }
 
 impl<CSP: ChainStateProvider, BB: BlockBroadcaster> std::fmt::Debug for MiningWorker<CSP, BB> {
@@ -713,6 +722,7 @@ where
         chain_state: Arc<CSP>,
         broadcaster: Arc<BB>,
         config: MiningWorkerConfig,
+        mined_blocks: Arc<parking_lot::Mutex<Vec<MinedBlockRecord>>>,
     ) -> Self {
         Self {
             pow_handle,
@@ -721,6 +731,7 @@ where
             sync_status: None,
             config,
             stats: Arc::new(parking_lot::RwLock::new(MiningWorkerStats::new())),
+            mined_blocks,
         }
     }
 
@@ -882,6 +893,13 @@ where
                             let mut stats = self.stats.write();
                             stats.blocks_imported += 1;
                         }
+                        {
+                            let mut mined = self.mined_blocks.lock();
+                            mined.push(MinedBlockRecord {
+                                height: template.number,
+                                timestamp_ms: template.timestamp,
+                            });
+                        }
 
                         // Broadcast the block
                         let announce = BlockAnnounce::new(
@@ -940,8 +958,9 @@ pub fn create_scaffold_mining_worker(
 ) -> MiningWorker<MockChainStateProvider, MockBlockBroadcaster> {
     let chain_state = Arc::new(MockChainStateProvider::new(config.test_mode));
     let broadcaster = Arc::new(MockBlockBroadcaster::new(config.verbose));
+    let mined_blocks = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
-    MiningWorker::new(pow_handle, chain_state, broadcaster, config)
+    MiningWorker::new(pow_handle, chain_state, broadcaster, config, mined_blocks)
 }
 
 /// Create a mining worker with network broadcasting
@@ -955,8 +974,9 @@ pub fn create_network_mining_worker(
 ) -> MiningWorker<MockChainStateProvider, NetworkBridgeBroadcaster> {
     let chain_state = Arc::new(MockChainStateProvider::new(config.test_mode));
     let broadcaster = Arc::new(NetworkBridgeBroadcaster::new(pq_handle));
+    let mined_blocks = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
-    MiningWorker::new(pow_handle, chain_state, broadcaster, config)
+    MiningWorker::new(pow_handle, chain_state, broadcaster, config, mined_blocks)
 }
 
 // =============================================================================
@@ -1012,6 +1032,7 @@ pub fn create_production_mining_worker(
     chain_state: Arc<ProductionChainStateProvider>,
     pq_handle: network::PqNetworkHandle,
     config: MiningWorkerConfig,
+    mined_blocks: Arc<parking_lot::Mutex<Vec<MinedBlockRecord>>>,
 ) -> MiningWorker<ProductionChainStateProvider, NetworkBridgeBroadcaster> {
     let broadcaster = Arc::new(NetworkBridgeBroadcaster::new(pq_handle));
 
@@ -1022,7 +1043,7 @@ pub fn create_production_mining_worker(
         "Creating production mining worker (Task 10.5)"
     );
 
-    MiningWorker::new(pow_handle, chain_state, broadcaster, config)
+    MiningWorker::new(pow_handle, chain_state, broadcaster, config, mined_blocks)
 }
 
 /// Create a production mining worker with mock broadcasting (for testing)
@@ -1033,10 +1054,11 @@ pub fn create_production_mining_worker_mock_broadcast(
     pow_handle: PowHandle,
     chain_state: Arc<ProductionChainStateProvider>,
     config: MiningWorkerConfig,
+    mined_blocks: Arc<parking_lot::Mutex<Vec<MinedBlockRecord>>>,
 ) -> MiningWorker<ProductionChainStateProvider, MockBlockBroadcaster> {
     let broadcaster = Arc::new(MockBlockBroadcaster::new(config.verbose));
 
-    MiningWorker::new(pow_handle, chain_state, broadcaster, config)
+    MiningWorker::new(pow_handle, chain_state, broadcaster, config, mined_blocks)
 }
 
 /// Production mining worker builder for ergonomic configuration
@@ -1101,11 +1123,13 @@ impl ProductionMiningWorkerBuilder {
         let pq_handle = self.pq_handle.ok_or("PQ network handle is required")?;
 
         let chain_state = Arc::new(ProductionChainStateProvider::new(self.production_config));
+        let mined_blocks = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let worker = create_production_mining_worker(
             pow_handle,
             chain_state.clone(),
             pq_handle,
             self.config,
+            mined_blocks,
         );
 
         Ok((worker, chain_state))
@@ -1124,10 +1148,12 @@ impl ProductionMiningWorkerBuilder {
         let pow_handle = self.pow_handle.ok_or("PoW handle is required")?;
 
         let chain_state = Arc::new(ProductionChainStateProvider::new(self.production_config));
+        let mined_blocks = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let worker = create_production_mining_worker_mock_broadcast(
             pow_handle,
             chain_state.clone(),
             self.config,
+            mined_blocks,
         );
 
         Ok((worker, chain_state))
