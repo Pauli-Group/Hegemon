@@ -221,6 +221,10 @@ pub trait HegemonApi {
     /// extracted from the timestamp inherent when present.
     #[method(name = "blockTimestamps")]
     async fn block_timestamps(&self, start: u64, end: u64) -> RpcResult<Vec<BlockTimestamp>>;
+
+    /// Get timestamps for blocks mined by this node.
+    #[method(name = "minedBlockTimestamps")]
+    async fn mined_block_timestamps(&self) -> RpcResult<Vec<BlockTimestamp>>;
 }
 
 /// Trait for mining handle operations
@@ -259,6 +263,8 @@ pub trait HegemonService: Send + Sync {
     fn current_height(&self) -> u64;
     /// Get block timestamps for a height range (inclusive).
     fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String>;
+    /// Get timestamps for blocks mined by this node.
+    fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String>;
 }
 
 /// Hegemon RPC implementation
@@ -363,6 +369,12 @@ where
 
     async fn block_timestamps(&self, start: u64, end: u64) -> RpcResult<Vec<BlockTimestamp>> {
         self.service.block_timestamps(start, end).map_err(|e| {
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+        })
+    }
+
+    async fn mined_block_timestamps(&self) -> RpcResult<Vec<BlockTimestamp>> {
+        self.service.mined_block_timestamps().map_err(|e| {
             ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
         })
     }
@@ -473,6 +485,13 @@ mod tests {
                     timestamp_ms: Some(1_700_000_000_000 + height),
                 })
                 .collect())
+        }
+
+        fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String> {
+            Ok(vec![BlockTimestamp {
+                height: 99,
+                timestamp_ms: Some(1_700_000_000_123),
+            }])
         }
     }
 
