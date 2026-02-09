@@ -187,19 +187,25 @@
         color: var(--muted);
       }
       .bar-grid {
-        display: grid;
-        grid-auto-flow: column;
-        grid-auto-columns: 1fr;
+        display: flex;
         align-items: end;
         gap: 8px;
         height: 160px;
         padding: 8px 4px 4px;
         border-radius: 10px;
         background: var(--panel-alt);
+        overflow-x: auto;
+      }
+      .bar-grid::-webkit-scrollbar {
+        height: 8px;
+      }
+      .bar-grid::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 999px;
       }
       .bar {
         position: relative;
-        width: 100%;
+        min-width: 18px;
         min-height: 8px;
         border-radius: 8px 8px 4px 4px;
         background: linear-gradient(180deg, rgba(108, 178, 255, 0.9), rgba(108, 178, 255, 0.3));
@@ -212,14 +218,17 @@
         font-weight: 600;
       }
       .bar-labels {
-        display: grid;
-        grid-auto-flow: column;
-        grid-auto-columns: 1fr;
+        display: flex;
         gap: 8px;
         margin-top: 6px;
         font-size: 10px;
         color: var(--muted);
         text-align: center;
+        overflow-x: auto;
+      }
+      .bar-labels span {
+        min-width: 18px;
+        display: inline-block;
       }
       code {
         background: #0b1018;
@@ -379,44 +388,55 @@
       function renderFrequencyChart(nowMs) {
         const bucketMinutes = getBucketMinutes();
         const bucketMs = bucketMinutes * 60 * 1000;
-        const buckets = new Array(MAX_BUCKETS).fill(0);
-        for (const entry of timestampCache) {
-          if (!entry.timestampMs) {
-            continue;
-          }
-          const age = nowMs - entry.timestampMs;
-          if (age < 0) continue;
-          const index = Math.floor(age / bucketMs);
-          if (index >= 0 && index < MAX_BUCKETS) {
-            buckets[MAX_BUCKETS - 1 - index] += 1;
-          }
+        const timestamps = timestampCache
+          .map((entry) => entry.timestampMs)
+          .filter((value) => typeof value === "number");
+        if (!timestamps.length) {
+          ui.frequencyBars.innerHTML = "";
+          ui.frequencyLabels.innerHTML = "";
+          ui.chartRange.textContent = "Syncing timestamps...";
+          return;
         }
+        const minTs = Math.min(...timestamps);
+        const maxTs = Math.max(...timestamps);
+        const bucketCount = Math.max(1, Math.floor((maxTs - minTs) / bucketMs) + 1);
+        const buckets = new Array(bucketCount).fill(0);
+        timestamps.forEach((ts) => {
+          const index = Math.floor((ts - minTs) / bucketMs);
+          if (index >= 0 && index < bucketCount) {
+            buckets[index] += 1;
+          }
+        });
         const maxValue = Math.max(1, ...buckets);
         ui.frequencyBars.innerHTML = "";
         ui.frequencyLabels.innerHTML = "";
 
+        const labelStride = bucketCount > 48 ? Math.ceil(bucketCount / 12) : 1;
         buckets.forEach((count, index) => {
           const bar = document.createElement("div");
           bar.className = "bar";
           bar.style.height = `${Math.max(8, (count / maxValue) * 140)}px`;
           bar.textContent = count.toString();
+          const bucketStart = new Date(minTs + index * bucketMs);
+          bar.title = `${bucketStart.toLocaleString()} — ${count} blocks`;
           ui.frequencyBars.appendChild(bar);
 
-          const label = document.createElement("div");
-          const minutesAgo = (MAX_BUCKETS - 1 - index) * bucketMinutes;
-          label.textContent = minutesAgo === 0 ? "Now" : `-${minutesAgo}m`;
+          const label = document.createElement("span");
+          if (index % labelStride === 0 || index === bucketCount - 1) {
+            const labelDate = new Date(minTs + index * bucketMs);
+            label.textContent = labelDate.toLocaleDateString();
+          } else {
+            label.textContent = "";
+          }
           ui.frequencyLabels.appendChild(label);
         });
 
-        const hours = ((bucketMinutes * MAX_BUCKETS) / 60).toFixed(1);
         if (timestampCache.length && timestampCache.length < timestampTargetHeight + 1) {
           ui.chartRange.textContent = `Syncing ${formatNumber(timestampCache.length)} / ${formatNumber(
             timestampTargetHeight + 1
           )} blocks`;
-        } else if (timestampCache.length) {
-          ui.chartRange.textContent = `Last ${hours} hours`;
         } else {
-          ui.chartRange.textContent = "Syncing timestamps...";
+          ui.chartRange.textContent = `Full chain (${formatNumber(bucketCount)} buckets @ ${bucketMinutes}m)`;
         }
       }
 
