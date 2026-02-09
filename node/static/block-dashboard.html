@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hegemon Block Production Dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0c0f14;
+        --panel: #151a22;
+        --panel-alt: #10141b;
+        --border: #252b36;
+        --text: #e6edf6;
+        --muted: #9aa7bd;
+        --accent: #6cb2ff;
+        --good: #42d392;
+        --warn: #f4bf50;
+        --bad: #ff6b6b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 32px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel-alt);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .wrap {
+        padding: 24px 32px 40px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr auto auto auto;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 18px;
+      }
+      .controls input {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+      }
+      .controls .field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .controls .field input {
+        width: 72px;
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+      .controls button {
+        padding: 10px 16px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--accent);
+        color: #0b1020;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .controls button.secondary {
+        background: transparent;
+        color: var(--text);
+      }
+      .status {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .status span {
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+      }
+      .status .ok {
+        color: var(--good);
+        border-color: rgba(66, 211, 146, 0.4);
+      }
+      .status .warn {
+        color: var(--warn);
+        border-color: rgba(244, 191, 80, 0.4);
+      }
+      .status .bad {
+        color: var(--bad);
+        border-color: rgba(255, 107, 107, 0.4);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+        min-height: 120px;
+      }
+      .card h3 {
+        margin: 0 0 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .metric {
+        font-size: 24px;
+        font-weight: 600;
+      }
+      .metric small {
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .subline {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
+      .note {
+        margin-top: 22px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .chart {
+        margin-top: 16px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+      }
+      .chart-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .chart-header h3 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .chart-header span {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .bar-grid {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
+        align-items: end;
+        gap: 8px;
+        height: 160px;
+        padding: 8px 4px 4px;
+        border-radius: 10px;
+        background: var(--panel-alt);
+      }
+      .bar {
+        position: relative;
+        width: 100%;
+        min-height: 8px;
+        border-radius: 8px 8px 4px 4px;
+        background: linear-gradient(180deg, rgba(108, 178, 255, 0.9), rgba(108, 178, 255, 0.3));
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 6px;
+        font-size: 11px;
+        color: #0b1020;
+        font-weight: 600;
+      }
+      .bar-labels {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
+        gap: 8px;
+        margin-top: 6px;
+        font-size: 10px;
+        color: var(--muted);
+        text-align: center;
+      }
+      code {
+        background: #0b1018;
+        border: 1px solid var(--border);
+        padding: 2px 6px;
+        border-radius: 6px;
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Block Production Dashboard</h1>
+        <p>Read-only metrics streamed from the local node via JSON-RPC.</p>
+      </div>
+      <div class="status" id="status">
+        <span class="warn">Idle</span>
+        <span id="last-updated">Last updated: --</span>
+      </div>
+    </header>
+    <main class="wrap">
+      <section class="controls">
+        <input id="rpc-url" type="text" placeholder="RPC URL" />
+        <label class="field">
+          Blocks / N min
+          <input id="bucket-minutes" type="number" min="1" step="1" />
+        </label>
+        <button id="refresh">Refresh</button>
+        <button id="auto" class="secondary">Auto: On</button>
+      </section>
+      <section class="grid">
+        <div class="card">
+          <h3>Height</h3>
+          <div class="metric" id="height">--</div>
+          <div class="subline" id="best-hash">Best hash: --</div>
+        </div>
+        <div class="card">
+          <h3>Hash Rate</h3>
+          <div class="metric" id="hash-rate">--</div>
+          <div class="subline" id="mining-threads">Threads: --</div>
+        </div>
+        <div class="card">
+          <h3>Difficulty</h3>
+          <div class="metric" id="difficulty">--</div>
+          <div class="subline" id="block-interval">Avg block interval: --</div>
+        </div>
+        <div class="card">
+          <h3>Blocks Mined</h3>
+          <div class="metric" id="blocks-mined">--</div>
+          <div class="subline" id="blocks-imported">Imported: --</div>
+        </div>
+        <div class="card">
+          <h3>Peers & Sync</h3>
+          <div class="metric" id="peers">--</div>
+          <div class="subline" id="syncing">Syncing: --</div>
+        </div>
+        <div class="card">
+          <h3>Supply Digest</h3>
+          <div class="metric" id="supply-digest">--</div>
+          <div class="subline" id="state-root">State root: --</div>
+        </div>
+      </section>
+      <section class="chart">
+        <div class="chart-header">
+          <h3>Block Frequency</h3>
+          <span id="chart-range">Last -- hours</span>
+        </div>
+        <div class="bar-grid" id="frequency-bars"></div>
+        <div class="bar-labels" id="frequency-labels"></div>
+      </section>
+      <div class="note">
+        Tip: if the browser blocks requests, start the node with
+        <code>--rpc-cors=all</code> or open this file through a local HTTP server.
+      </div>
+    </main>
+    <script>
+      const DEFAULT_RPC = "http://127.0.0.1:9944";
+      const POLL_MS = 5000;
+      const DEFAULT_BUCKET_MINUTES = 60;
+      const MAX_BUCKETS = 12;
+
+      const ui = {
+        rpcUrl: document.getElementById("rpc-url"),
+        refresh: document.getElementById("refresh"),
+        auto: document.getElementById("auto"),
+        status: document.getElementById("status"),
+        lastUpdated: document.getElementById("last-updated"),
+        bucketMinutes: document.getElementById("bucket-minutes"),
+        height: document.getElementById("height"),
+        bestHash: document.getElementById("best-hash"),
+        hashRate: document.getElementById("hash-rate"),
+        miningThreads: document.getElementById("mining-threads"),
+        difficulty: document.getElementById("difficulty"),
+        blockInterval: document.getElementById("block-interval"),
+        blocksMined: document.getElementById("blocks-mined"),
+        blocksImported: document.getElementById("blocks-imported"),
+        peers: document.getElementById("peers"),
+        syncing: document.getElementById("syncing"),
+        supplyDigest: document.getElementById("supply-digest"),
+        stateRoot: document.getElementById("state-root"),
+        chartRange: document.getElementById("chart-range"),
+        frequencyBars: document.getElementById("frequency-bars"),
+        frequencyLabels: document.getElementById("frequency-labels"),
+      };
+
+      let autoRefresh = true;
+      let lastHeight = null;
+      let lastHeightTime = null;
+      let intervalHandle = null;
+      const blockTimestamps = [];
+
+      function setStatus(text, kind) {
+        ui.status.querySelector("span").textContent = text;
+        ui.status.querySelector("span").className = kind;
+      }
+
+      function formatNumber(value) {
+        if (value === null || value === undefined) return "--";
+        return Number(value).toLocaleString("en-US");
+      }
+
+      function formatHash(hash) {
+        if (!hash || hash === "--") return "--";
+        return hash.length > 16 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash;
+      }
+
+      function formatRate(value) {
+        if (value === null || value === undefined) return "--";
+        const units = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s"];
+        let idx = 0;
+        let v = Number(value);
+        while (v >= 1000 && idx < units.length - 1) {
+          v /= 1000;
+          idx += 1;
+        }
+        return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[idx]}`;
+      }
+
+      function formatDuration(seconds) {
+        if (seconds === null || seconds === undefined) return "--";
+        return `${seconds.toFixed(1)}s`;
+      }
+
+      function clampBucketMinutes(value) {
+        if (!Number.isFinite(value)) return DEFAULT_BUCKET_MINUTES;
+        return Math.max(1, Math.min(24 * 60, Math.floor(value)));
+      }
+
+      function getBucketMinutes() {
+        return clampBucketMinutes(Number(ui.bucketMinutes.value));
+      }
+
+      function trimBlockHistory(nowMs, bucketMinutes) {
+        const windowMs = bucketMinutes * MAX_BUCKETS * 60 * 1000;
+        const cutoff = nowMs - windowMs;
+        while (blockTimestamps.length && blockTimestamps[0] < cutoff) {
+          blockTimestamps.shift();
+        }
+      }
+
+      function recordBlocks(height, nowMs) {
+        if (lastHeight === null) {
+          lastHeight = height;
+          lastHeightTime = nowMs;
+          return;
+        }
+        if (height > lastHeight) {
+          const deltaBlocks = height - lastHeight;
+          for (let i = 0; i < deltaBlocks; i += 1) {
+            blockTimestamps.push(nowMs);
+          }
+        }
+      }
+
+      function renderFrequencyChart(nowMs) {
+        const bucketMinutes = getBucketMinutes();
+        const bucketMs = bucketMinutes * 60 * 1000;
+        const buckets = new Array(MAX_BUCKETS).fill(0);
+        for (const ts of blockTimestamps) {
+          const age = nowMs - ts;
+          if (age < 0) continue;
+          const index = Math.floor(age / bucketMs);
+          if (index >= 0 && index < MAX_BUCKETS) {
+            buckets[MAX_BUCKETS - 1 - index] += 1;
+          }
+        }
+        const maxValue = Math.max(1, ...buckets);
+        ui.frequencyBars.innerHTML = "";
+        ui.frequencyLabels.innerHTML = "";
+
+        buckets.forEach((count, index) => {
+          const bar = document.createElement("div");
+          bar.className = "bar";
+          bar.style.height = `${Math.max(8, (count / maxValue) * 140)}px`;
+          bar.textContent = count.toString();
+          ui.frequencyBars.appendChild(bar);
+
+          const label = document.createElement("div");
+          const minutesAgo = (MAX_BUCKETS - 1 - index) * bucketMinutes;
+          label.textContent = minutesAgo === 0 ? "Now" : `-${minutesAgo}m`;
+          ui.frequencyLabels.appendChild(label);
+        });
+
+        const hours = ((bucketMinutes * MAX_BUCKETS) / 60).toFixed(1);
+        ui.chartRange.textContent = `Last ${hours} hours`;
+      }
+
+      async function callRpc(method, params = []) {
+        const response = await fetch(ui.rpcUrl.value, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: Date.now(),
+            method,
+            params,
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        if (payload.error) {
+          throw new Error(payload.error.message || "RPC error");
+        }
+        return payload.result;
+      }
+
+      async function refresh() {
+        setStatus("Loading...", "warn");
+        try {
+          const [consensus, mining, telemetry] = await Promise.all([
+            callRpc("hegemon_consensusStatus"),
+            callRpc("hegemon_miningStatus"),
+            callRpc("hegemon_telemetry"),
+          ]);
+
+          ui.height.textContent = formatNumber(consensus.height);
+          ui.bestHash.textContent = `Best hash: ${formatHash(consensus.best_hash)}`;
+          ui.hashRate.textContent = formatRate(mining.hash_rate);
+          ui.miningThreads.textContent = `Threads: ${formatNumber(mining.threads)} | Mining: ${
+            mining.is_mining ? "Yes" : "No"
+          }`;
+          ui.difficulty.textContent = formatNumber(mining.difficulty);
+
+          const now = Date.now();
+          if (lastHeight !== null && consensus.height > lastHeight) {
+            const deltaBlocks = consensus.height - lastHeight;
+            const deltaSecs = (now - lastHeightTime) / 1000;
+            ui.blockInterval.textContent = `Avg block interval: ${formatDuration(
+              deltaSecs / deltaBlocks
+            )}`;
+          } else if (ui.blockInterval.textContent === "--") {
+            ui.blockInterval.textContent = "Avg block interval: --";
+          }
+          recordBlocks(consensus.height, now);
+          lastHeight = consensus.height;
+          lastHeightTime = now;
+          trimBlockHistory(now, getBucketMinutes());
+          renderFrequencyChart(now);
+
+          ui.blocksMined.textContent = formatNumber(mining.blocks_found);
+          ui.blocksImported.textContent = `Imported: ${formatNumber(telemetry.blocks_imported)}`;
+
+          ui.peers.textContent = formatNumber(consensus.peers);
+          ui.syncing.textContent = `Syncing: ${consensus.syncing ? "Yes" : "No"}`;
+
+          ui.supplyDigest.textContent = consensus.supply_digest?.toString?.() ?? "--";
+          ui.stateRoot.textContent = `State root: ${formatHash(consensus.state_root)}`;
+
+          ui.lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+          setStatus("Connected", "ok");
+        } catch (error) {
+          setStatus("Disconnected", "bad");
+          ui.lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+          console.error(error);
+        }
+      }
+
+      function startAuto() {
+        if (intervalHandle) return;
+        intervalHandle = setInterval(refresh, POLL_MS);
+      }
+
+      function stopAuto() {
+        if (intervalHandle) {
+          clearInterval(intervalHandle);
+          intervalHandle = null;
+        }
+      }
+
+      function toggleAuto() {
+        autoRefresh = !autoRefresh;
+        ui.auto.textContent = `Auto: ${autoRefresh ? "On" : "Off"}`;
+        if (autoRefresh) {
+          startAuto();
+          refresh();
+        } else {
+          stopAuto();
+        }
+      }
+
+      function init() {
+        ui.rpcUrl.value = localStorage.getItem("hegemonRpcUrl") || DEFAULT_RPC;
+        ui.bucketMinutes.value = localStorage.getItem("hegemonBucketMinutes") || DEFAULT_BUCKET_MINUTES;
+        ui.rpcUrl.addEventListener("change", () => {
+          localStorage.setItem("hegemonRpcUrl", ui.rpcUrl.value.trim());
+          refresh();
+        });
+        ui.bucketMinutes.addEventListener("change", () => {
+          const next = clampBucketMinutes(Number(ui.bucketMinutes.value));
+          ui.bucketMinutes.value = next.toString();
+          localStorage.setItem("hegemonBucketMinutes", ui.bucketMinutes.value);
+          renderFrequencyChart(Date.now());
+        });
+        ui.refresh.addEventListener("click", refresh);
+        ui.auto.addEventListener("click", toggleAuto);
+        startAuto();
+        refresh();
+      }
+
+      init();
+    </script>
+  </body>
+</html>

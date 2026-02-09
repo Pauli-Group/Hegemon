@@ -477,6 +477,25 @@ impl WalletStore {
         })
     }
 
+    pub fn tracked_notes(&self) -> Result<Vec<TrackedNoteView>, WalletError> {
+        self.with_state(|state| {
+            let mut notes: Vec<TrackedNoteView> = state
+                .notes
+                .iter()
+                .map(|note| TrackedNoteView {
+                    note: note.note.clone(),
+                    position: note.position,
+                    ciphertext_index: note.ciphertext_index,
+                    nullifier: note.nullifier,
+                    spent: note.spent,
+                    pending_spend: note.pending_spend,
+                })
+                .collect();
+            notes.sort_by_key(|note| note.position);
+            Ok(notes)
+        })
+    }
+
     pub fn pending_spend_notes(&self, asset_id: u64) -> Result<Vec<SpendableNote>, WalletError> {
         self.with_state(|state| {
             let mut notes: Vec<SpendableNote> = state
@@ -1007,6 +1026,16 @@ pub struct SpendableNote {
     pub index: usize,
     pub recovered: RecoveredNote,
     pub position: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrackedNoteView {
+    pub note: RecoveredNote,
+    pub position: u64,
+    pub ciphertext_index: u64,
+    pub nullifier: Option<[u8; 48]>,
+    pub spent: bool,
+    pub pending_spend: bool,
 }
 
 impl SpendableNote {
