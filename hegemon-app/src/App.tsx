@@ -402,6 +402,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
+  rpcCorsAll: false,
   seeds: 'hegemon.pauli.group'
 });
 
@@ -422,6 +423,7 @@ const buildTestnetConnection = (): NodeConnection => ({
   proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
+  rpcCorsAll: false,
   chainSpecPath: 'testnet',
   seeds: 'hegemon.pauli.group'
 });
@@ -1037,6 +1039,7 @@ export default function App() {
         seeds: activeConnection.seeds || undefined,
         rpcExternal: activeConnection.rpcExternal,
         rpcMethods: activeConnection.rpcMethods,
+        rpcCorsAll: activeConnection.rpcCorsAll,
         nodeName: activeConnection.nodeName || undefined,
         ciphertextDaRetentionBlocks: activeConnection.ciphertextDaRetentionBlocks,
         proofDaRetentionBlocks: activeConnection.proofDaRetentionBlocks,
@@ -1690,6 +1693,7 @@ export default function App() {
 
   const normalizedStorePath = storePath.trim();
   const pendingTransactions = walletStatus?.pending ?? [];
+  const walletNoteDetails = walletStatus?.noteDetails ?? [];
   const pendingByTxId = useMemo(() => {
     const map = new Map<string, typeof pendingTransactions[number]>();
     pendingTransactions.forEach((entry) => {
@@ -2357,6 +2361,14 @@ export default function App() {
                 <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
                     type="checkbox"
+                    checked={Boolean(activeConnection.rpcCorsAll)}
+                    onChange={(event) => updateActiveConnection({ rpcCorsAll: event.target.checked })}
+                  />
+                  Enable RPC CORS
+                </label>
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                  <input
+                    type="checkbox"
                     checked={blockAlertEnabled}
                     onChange={(event) => setBlockAlertEnabled(event.target.checked)}
                   />
@@ -2924,6 +2936,68 @@ export default function App() {
           ) : (
             <p className="text-sm text-surfaceMuted">No note summary.</p>
           )}
+        </div>
+        <div>
+          <details className="rounded-lg border border-surfaceMuted/10 bg-midnight/30 p-3">
+            <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm text-surfaceMuted">
+              <span className="label">All notes</span>
+              <span className="text-xs text-surfaceMuted/80">{walletNoteDetails.length} total</span>
+            </summary>
+            <div className="mt-3 space-y-3">
+              {walletNoteDetails.length ? (
+                walletNoteDetails.map((note) => (
+                  <div key={note.commitment} className="rounded-lg border border-surfaceMuted/10 bg-midnight/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium">Note {formatNumber(note.position)}</p>
+                      <span className="text-xs text-surfaceMuted">{note.status}</span>
+                    </div>
+                    <div className="grid gap-1 text-sm text-surfaceMuted">
+                      <div className="flex justify-between">
+                        <span>Balance</span>
+                        <span className="mono">
+                          {note.assetId === 0 ? formatHgm(note.value) : note.value.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Asset</span>
+                        <span className="mono">{note.assetId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Address</span>
+                        <span className="mono break-all">{note.address}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Memo</span>
+                        <span className="mono break-all">{note.memo ?? '—'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Diversifier</span>
+                        <span className="mono">{note.diversifierIndex}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Position</span>
+                        <span className="mono">{formatNumber(note.position)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Ciphertext index</span>
+                        <span className="mono">{formatNumber(note.ciphertextIndex)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Commitment</span>
+                        <span className="mono break-all">{note.commitment}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Nullifier</span>
+                        <span className="mono break-all">{note.nullifier ?? '—'}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-surfaceMuted">No notes recorded yet.</p>
+              )}
+            </div>
+          </details>
         </div>
         <div>
           <p className="label">Connected to</p>

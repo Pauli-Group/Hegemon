@@ -20,6 +20,7 @@ export type NodeConnection = {
   allowRemoteMining?: boolean;
   rpcExternal?: boolean;
   rpcMethods?: 'safe' | 'unsafe';
+  rpcCorsAll?: boolean;
   nodeName?: string;
   ciphertextDaRetentionBlocks?: number;
   proofDaRetentionBlocks?: number;
@@ -135,6 +136,19 @@ export type WalletNotes = {
   plan?: { txsNeeded: number; blocksNeeded: number } | null;
 };
 
+export type WalletNoteDetail = {
+  assetId: number;
+  value: number;
+  memo?: string | null;
+  address: string;
+  diversifierIndex: number;
+  position: number;
+  ciphertextIndex: number;
+  status: string;
+  nullifier?: string | null;
+  commitment: string;
+};
+
 export type WalletStatus = {
   protocolVersion?: number;
   capabilities?: {
@@ -150,6 +164,7 @@ export type WalletStatus = {
   balances: WalletBalance[];
   pending: WalletPending[];
   notes?: WalletNotes | null;
+  noteDetails?: WalletNoteDetail[] | null;
   genesisHash?: string | null;
 };
 
@@ -220,6 +235,7 @@ export type NodeStartOptions = {
   seeds?: string;
   rpcExternal?: boolean;
   rpcMethods?: 'safe' | 'unsafe';
+  rpcCorsAll?: boolean;
   nodeName?: string;
   ciphertextDaRetentionBlocks?: number;
   proofDaRetentionBlocks?: number;
