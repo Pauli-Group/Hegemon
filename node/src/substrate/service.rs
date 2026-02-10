@@ -121,8 +121,6 @@ use crate::substrate::mining_worker::{
     create_production_mining_worker, create_production_mining_worker_mock_broadcast,
     ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
 };
-use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
-use wallet::address::ShieldedAddress;
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
@@ -144,10 +142,12 @@ use consensus::{
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
+use hyper::http::{header, Method};
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
+use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 use rand::{rngs::OsRng, RngCore};
 use sc_client_api::BlockchainEvents;
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
@@ -169,7 +169,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
-use hyper::http::{header, Method};
+use wallet::address::ShieldedAddress;
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
@@ -8751,7 +8751,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         Ok(value) => value,
                         Err(_) => return false,
                     };
-                    allowed.iter().any(|pattern| origin_matches(origin_str, pattern))
+                    allowed
+                        .iter()
+                        .any(|pattern| origin_matches(origin_str, pattern))
                 });
                 CorsLayer::new()
                     .allow_origin(allow_origin)
