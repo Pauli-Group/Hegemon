@@ -71,6 +71,7 @@ Where they're used:
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
   * PQ network identity seeds are generated from OS entropy, persisted under the node base path (for example `pq-identity.seed`) or provided via environment override, and never derived from public peer IDs.
+  * The PQ discovery channel (`/hegemon/discovery/pq/1`) exchanges both dialable addresses (`GetAddrs`/`Addrs`) and bounded connected-peer lists (`GetPeerGraph`/`PeerGraph`) so dashboards can visualize multi-hop peer graphs.
   * Identity/session records store optional PQ session keys via `SessionKey::PostQuantum` (Dilithium/Falcon); registrations provide PQ bundles through `pallet_identity::register_did`.
 * **User layer**:
 

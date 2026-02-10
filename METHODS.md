@@ -550,10 +550,12 @@ Instead, once a PQ connection is established, peers run a small “address excha
 
   * `Hello { listen_port }` – the receiver combines the *observed peer IP* with `listen_port` to form a dialable `IP:port` even if the connection’s TCP source port was ephemeral.
   * `GetAddrs { limit }` and `Addrs { addrs }` – bounded address lists used to share additional dial targets beyond seeds.
+  * `GetPeerGraph { limit }` and `PeerGraph { peers }` – bounded lists of currently connected peers used to build a multi-hop peer graph for dashboards.
 
 Nodes persist learned addresses under the Substrate `--base-path` (cache file: `<base-path>/pq-peers.bin`) and opportunistically dial a small batch of learned addresses when peer count is low. `HEGEMON_SEEDS` remains the bootstrap mechanism (operators should still share the same seed list to avoid partitions).
 
 To ensure early-joining nodes continue to learn about peers that connect later, nodes periodically re-request addresses from a random connected peer and attempt a bounded batch of dials from the discovery cache while below the peer target (defaults: `HEGEMON_PQ_DISCOVERY_MIN_PEERS=4`, `HEGEMON_PQ_DISCOVERY_TICK_SECS=30`).
+Nodes also request peer graphs on a periodic tick (default: `HEGEMON_PQ_PEER_GRAPH_TICK_SECS=30`) so monitoring tools can render the network topology.
 
 ### 2. Object definitions (bits, fields, encodings)
 
@@ -960,7 +962,7 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 1. Launch the Substrate-based `hegemon-node` binary with `HEGEMON_MINE=1` and `--dev` for fast block times. The node exposes JSON-RPC on port 9944 and P2P on port 30333 by default. Run `make node` to build.
 2. Connect the desktop app or Polkadot.js Apps to the node RPC endpoint to view live telemetry. When using the desktop app, prefer a persistent base path (avoid `--tmp`), and set `--listen-addr /ip4/0.0.0.0/tcp/30333` only when you intend to accept IPv4 peer traffic. Expose RPC externally only on trusted networks.
    The desktop app is organized into Overview, Node, Wallet, Send, Disclosure, and Console workspaces. Its global status bar always shows the active node, wallet store, and genesis hash so operators can detect mismatches before sending or mining.
-   Use `hegemon_peerList` to retrieve connected peer details (address, direction, best height/hash); `system_peers` remains empty on the PQ transport.
+   Use `hegemon_peerGraph` to retrieve connected peer details plus reported peers (address, direction, best height/hash); `system_peers` remains empty on the PQ transport.
 3. For multi-node setups, start additional nodes with `--bootnodes /ip4/127.0.0.1/tcp/30333` pointing to the first node.
 
 ### Security assurance workflow

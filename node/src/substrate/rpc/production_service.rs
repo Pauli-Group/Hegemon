@@ -39,6 +39,8 @@
 //!     peer_count.clone(),
 //!     sync_status.clone(),
 //!     peer_details.clone(),
+//!     peer_graph_reports.clone(),
+//!     local_peer_id,
 //!     da_chunk_store.clone(),
 //!     pending_ciphertext_store.clone(),
 //!     mined_blocks.clone(),
@@ -60,7 +62,8 @@
 
 use super::archive::ArchiveMarketService;
 use super::hegemon::{
-    BlockTimestamp, ConsensusStatus, HegemonService, PeerDetail, StorageFootprint, TelemetrySnapshot,
+    BlockTimestamp, ConsensusStatus, HegemonService, PeerDetail, PeerGraphPeer,
+    PeerGraphReportSnapshot, PeerGraphSnapshot, StorageFootprint, TelemetrySnapshot,
 };
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
@@ -87,6 +90,7 @@ use std::time::Instant;
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
 use crate::substrate::service::{DaChunkStore, PendingCiphertextStore, PeerConnectionSnapshot};
+use crate::substrate::service::PeerGraphReport;
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 use crate::substrate::mining_worker::MinedBlockRecord;
 
@@ -116,6 +120,10 @@ where
     peer_count: Arc<AtomicUsize>,
     /// Connected peer detail snapshots
     peer_details: Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
+    /// Peer graph reports from connected peers
+    peer_graph_reports: Arc<parking_lot::RwLock<HashMap<PeerId, PeerGraphReport>>>,
+    /// Local PQ peer id (if configured)
+    local_peer_id: Option<PeerId>,
     /// Sync status flag (true means syncing)
     sync_status: Arc<AtomicBool>,
     /// Node start time for uptime calculation
@@ -152,6 +160,8 @@ where
         peer_count: Arc<AtomicUsize>,
         sync_status: Arc<AtomicBool>,
         peer_details: Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
+        peer_graph_reports: Arc<parking_lot::RwLock<HashMap<PeerId, PeerGraphReport>>>,
+        local_peer_id: Option<PeerId>,
         da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
         pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
         mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
@@ -163,6 +173,8 @@ where
             peer_count,
             sync_status,
             peer_details,
+            peer_graph_reports,
+            local_peer_id,
             da_chunk_store,
             pending_ciphertext_store,
             start_time: Instant::now(),
@@ -376,6 +388,43 @@ where
                 last_seen_secs: now.duration_since(peer.last_seen).as_secs(),
             })
             .collect()
+    }
+
+    fn peer_graph(&self) -> PeerGraphSnapshot {
+        let peers = self.peer_list();
+        let now = Instant::now();
+        let peer_details = self.peer_details.read();
+        let reports = self.peer_graph_reports.read();
+        let report_entries = reports
+            .iter()
+            .map(|(peer_id, report)| {
+                let reporter_address = peer_details
+                    .get(peer_id)
+                    .map(|peer| peer.addr.to_string())
+                    .unwrap_or_else(|| "--".to_string());
+                PeerGraphReportSnapshot {
+                    reporter_peer_id: format!("0x{}", hex::encode(peer_id)),
+                    reporter_address,
+                    reported_at_secs: now.duration_since(report.reported_at).as_secs(),
+                    peers: report
+                        .peers
+                        .iter()
+                        .map(|entry| PeerGraphPeer {
+                            peer_id: format!("0x{}", hex::encode(entry.peer_id)),
+                            address: entry.addr.to_string(),
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        PeerGraphSnapshot {
+            local_peer_id: self
+                .local_peer_id
+                .map(|peer_id| format!("0x{}", hex::encode(peer_id)))
+                .unwrap_or_else(|| "--".to_string()),
+            peers,
+            reports: report_entries,
+        }
     }
 }
 

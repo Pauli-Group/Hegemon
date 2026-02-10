@@ -205,6 +205,15 @@ header p {
   stroke: var(--muted);
   stroke-width: 1.5;
 }
+.peer-network .peer-node.direct-node {
+  fill: rgba(154, 167, 189, 0.2);
+  stroke: var(--muted);
+}
+.peer-network .peer-node.indirect-node {
+  fill: rgba(244, 191, 80, 0.18);
+  stroke: var(--warn);
+  stroke-width: 1.8;
+}
 .peer-network .peer-node.local-node {
   fill: rgba(108, 178, 255, 0.25);
   stroke: var(--accent);
@@ -216,6 +225,9 @@ header p {
 }
 .peer-network .peer-label.hidden {
   opacity: 0;
+}
+.peer-network .peer-line-indirect {
+  stroke: rgba(244, 191, 80, 0.5);
 }
 .peer-network .peer-empty {
   fill: var(--muted);
