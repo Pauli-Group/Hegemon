@@ -140,6 +140,12 @@
           <span class="modal-status" id="peer-status">Idle</span>
         </div>
         <div class="modal-section">
+          <h4>Network</h4>
+          <div class="peer-network">
+            <svg id="peer-network" viewBox="0 0 640 320" role="img" aria-label="Peer network graph"></svg>
+          </div>
+        </div>
+        <div class="modal-section">
           <h4>Peers</h4>
           <pre id="peer-list-output">--</pre>
         </div>
@@ -181,6 +187,7 @@
         peerFetch: document.getElementById("peer-fetch"),
         peerStatus: document.getElementById("peer-status"),
         peerListOutput: document.getElementById("peer-list-output"),
+        peerNetwork: document.getElementById("peer-network"),
         height: document.getElementById("height"),
         bestHash: document.getElementById("best-hash"),
         hashRate: document.getElementById("hash-rate"),
@@ -357,6 +364,92 @@
         }
       }
 
+      function renderPeerNetwork(peers) {
+        if (!ui.peerNetwork) return;
+        const svg = ui.peerNetwork;
+        while (svg.firstChild) {
+          svg.removeChild(svg.firstChild);
+        }
+        const width = svg.clientWidth || 640;
+        const height = svg.clientHeight || 320;
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        const center = { x: width / 2, y: height / 2 };
+        const radius = Math.max(60, Math.min(width, height) / 2 - 72);
+        const svgNS = "http://www.w3.org/2000/svg";
+        const createEl = (name, attrs) => {
+          const el = document.createElementNS(svgNS, name);
+          Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+          return el;
+        };
+        if (!Array.isArray(peers) || peers.length === 0) {
+          const empty = createEl("text", {
+            x: center.x.toString(),
+            y: center.y.toString(),
+            "text-anchor": "middle",
+            "dominant-baseline": "middle",
+            class: "peer-empty",
+          });
+          empty.textContent = "No peer details";
+          svg.appendChild(empty);
+        } else {
+          const angleStep = (Math.PI * 2) / peers.length;
+          peers.forEach((peer, index) => {
+            const angle = angleStep * index - Math.PI / 2;
+            const x = center.x + Math.cos(angle) * radius;
+            const y = center.y + Math.sin(angle) * radius;
+            const line = createEl("line", {
+              x1: center.x.toString(),
+              y1: center.y.toString(),
+              x2: x.toString(),
+              y2: y.toString(),
+              class: "peer-line",
+            });
+            svg.appendChild(line);
+            const node = createEl("circle", {
+              cx: x.toString(),
+              cy: y.toString(),
+              r: "10",
+              class: "peer-node",
+            });
+            svg.appendChild(node);
+            const labelX = (center.x + x) / 2;
+            const labelY = (center.y + y) / 2 + (index % 2 === 0 ? -8 : 8);
+            const label = createEl("text", {
+              x: labelX.toString(),
+              y: labelY.toString(),
+              "text-anchor": "middle",
+              class: "peer-label hidden",
+            });
+            label.textContent = peer.address ?? "--";
+            svg.appendChild(label);
+            const title = createEl("title", {});
+            title.textContent = peer.address ?? peer.peer_id ?? "peer";
+            node.appendChild(title);
+            const hoverTarget = () => label.classList.remove("hidden");
+            const hoverOut = () => label.classList.add("hidden");
+            node.addEventListener("mouseenter", hoverTarget);
+            node.addEventListener("mouseleave", hoverOut);
+            node.addEventListener("focus", hoverTarget);
+            node.addEventListener("blur", hoverOut);
+          });
+        }
+        const local = createEl("circle", {
+          cx: center.x.toString(),
+          cy: center.y.toString(),
+          r: "14",
+          class: "peer-node local-node",
+        });
+        svg.appendChild(local);
+        const localLabel = createEl("text", {
+          x: center.x.toString(),
+          y: (center.y + 26).toString(),
+          "text-anchor": "middle",
+          class: "peer-label",
+        });
+        localLabel.textContent = "local";
+        svg.appendChild(localLabel);
+      }
+
       async function callRpc(method, params = []) {
         const response = await fetch(ui.rpcUrl.value, {
           method: "POST",
@@ -501,6 +594,7 @@
         ui.peerListOutput.textContent = "--";
         setPeerStatus("Loading peers...");
         ui.peerModal.classList.remove("hidden");
+        renderPeerNetwork([]);
         loadPeers();
       }
 
@@ -526,6 +620,7 @@
                 ? "No peer details reported."
                 : `No peer details reported. Connected peers: ${formatNumber(peerCount)}.`;
             setPeerStatus("No peer details reported.");
+            renderPeerNetwork([]);
             return;
           }
           ui.peerListOutput.textContent = peers
@@ -542,10 +637,12 @@
             })
             .join("\n");
           setPeerStatus(`Loaded ${peers.length} peer(s).`);
+          renderPeerNetwork(peers);
         } catch (error) {
           console.error(error);
           setPeerStatus(`Failed to load peers: ${formatRpcError(error)}`);
           ui.peerListOutput.textContent = "Check that the node exposes hegemon_peerList.";
+          renderPeerNetwork([]);
         }
       }
 

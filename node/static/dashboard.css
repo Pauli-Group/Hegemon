@@ -184,6 +184,43 @@ header p {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.peer-network {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 10px;
+  height: 360px;
+}
+.peer-network svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.peer-network .peer-line {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.peer-network .peer-node {
+  fill: var(--panel-alt);
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+.peer-network .peer-node.local-node {
+  fill: rgba(108, 178, 255, 0.25);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.peer-network .peer-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.peer-network .peer-label.hidden {
+  opacity: 0;
+}
+.peer-network .peer-empty {
+  fill: var(--muted);
+  font-size: 12px;
+}
 .status {
   display: flex;
   gap: 12px;
