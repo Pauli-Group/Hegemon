@@ -72,12 +72,12 @@ use network::PeerId;
 use pallet_shielded_pool::types::{
     BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
 };
-use parking_lot::Mutex as ParkingMutex;
 use pallet_timestamp;
+use parking_lot::Mutex as ParkingMutex;
 use runtime::apis::{ArchiveMarketApi, ConsensusApi, ShieldedPoolApi};
 use runtime::AccountId;
-use sp_api::ProvideRuntimeApi;
 use sc_client_api::BlockBackend;
+use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
 use std::collections::HashMap;
@@ -89,10 +89,10 @@ use std::sync::{
 use std::time::Instant;
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
-use crate::substrate::service::{DaChunkStore, PendingCiphertextStore, PeerConnectionSnapshot};
-use crate::substrate::service::PeerGraphReport;
-use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 use crate::substrate::mining_worker::MinedBlockRecord;
+use crate::substrate::service::PeerGraphReport;
+use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
+use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 
 /// Default difficulty bits when runtime API query fails
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
@@ -209,7 +209,12 @@ where
 impl<C, Block> HegemonService for ProductionRpcService<C, Block>
 where
     Block: BlockT,
-    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + BlockBackend<Block> + Send + Sync + 'static,
+    C: ProvideRuntimeApi<Block>
+        + HeaderBackend<Block>
+        + BlockBackend<Block>
+        + Send
+        + Sync
+        + 'static,
     sp_runtime::traits::NumberFor<Block>: From<u64>,
     C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
 {
@@ -333,7 +338,10 @@ where
         let best = self.best_number();
         let start = {
             let cache = self.mined_history.lock();
-            cache.last_scanned.map(|value| value.saturating_add(1)).unwrap_or(0)
+            cache
+                .last_scanned
+                .map(|value| value.saturating_add(1))
+                .unwrap_or(0)
         };
 
         if start > best {
