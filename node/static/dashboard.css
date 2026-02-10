@@ -45,7 +45,7 @@ header p {
 }
 .controls {
   display: grid;
-  grid-template-columns: 1fr auto auto auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto auto auto;
   gap: 12px;
   align-items: center;
   margin-bottom: 18px;
