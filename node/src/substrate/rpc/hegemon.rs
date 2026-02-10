@@ -101,6 +101,23 @@ pub struct TelemetrySnapshot {
     pub network_tx_bytes: u64,
 }
 
+/// Connected peer detail snapshot (PQ network)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerDetail {
+    /// Peer identifier (hex-encoded)
+    pub peer_id: String,
+    /// Observed socket address
+    pub address: String,
+    /// Connection direction ("inbound" or "outbound")
+    pub direction: String,
+    /// Peer's reported best height
+    pub best_height: u64,
+    /// Peer's reported best hash (hex-encoded)
+    pub best_hash: String,
+    /// Seconds since we last heard from the peer
+    pub last_seen_secs: u64,
+}
+
 /// Storage footprint response
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StorageFootprint {
@@ -225,6 +242,10 @@ pub trait HegemonApi {
     /// Get timestamps for blocks mined by this node.
     #[method(name = "minedBlockTimestamps")]
     async fn mined_block_timestamps(&self) -> RpcResult<Vec<BlockTimestamp>>;
+
+    /// Get connected peer details (PQ network snapshot).
+    #[method(name = "peerList")]
+    async fn peer_list(&self) -> RpcResult<Vec<PeerDetail>>;
 }
 
 /// Trait for mining handle operations
@@ -265,6 +286,8 @@ pub trait HegemonService: Send + Sync {
     fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String>;
     /// Get timestamps for blocks mined by this node.
     fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String>;
+    /// Get connected peer details (PQ network snapshot).
+    fn peer_list(&self) -> Vec<PeerDetail>;
 }
 
 /// Hegemon RPC implementation
@@ -377,6 +400,10 @@ where
         self.service.mined_block_timestamps().map_err(|e| {
             ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
         })
+    }
+
+    async fn peer_list(&self) -> RpcResult<Vec<PeerDetail>> {
+        Ok(self.service.peer_list())
     }
 }
 
@@ -492,6 +519,17 @@ mod tests {
                 height: 99,
                 timestamp_ms: Some(1_700_000_000_123),
             }])
+        }
+
+        fn peer_list(&self) -> Vec<PeerDetail> {
+            vec![PeerDetail {
+                peer_id: "0xdeadbeef".to_string(),
+                address: "127.0.0.1:30333".to_string(),
+                direction: "outbound".to_string(),
+                best_height: 120,
+                best_hash: "0xabcdef".to_string(),
+                last_seen_secs: 3,
+            }]
         }
     }
 

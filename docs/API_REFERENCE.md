@@ -80,6 +80,15 @@ Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
 - `hegemon_telemetry() -> TelemetrySnapshot`
 - `hegemon_storageFootprint() -> StorageFootprint`
 - `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, chain spec identity, listen addresses, PQ verbosity, peer limits)
+- `hegemon_peerList() -> Vec<PeerDetail>` (connected PQ peers with address, direction, best height/hash, last-seen seconds)
+
+`PeerDetail` fields:
+- `peer_id: String` (hex)
+- `address: String` (`ip:port`)
+- `direction: String` (`inbound` | `outbound`)
+- `best_height: u64`
+- `best_hash: String` (hex)
+- `last_seen_secs: u64`
 
 Archive market RPC methods exposed on the Substrate JSON-RPC server:
 

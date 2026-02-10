@@ -512,14 +512,7 @@
         setPeerStatus("Loading peers...");
         ui.peerListOutput.textContent = "--";
         try {
-          const methods = await getRpcMethods();
-          if (methods && !methods.has("system_peers")) {
-            setPeerStatus("Peer list disabled by RPC method filter.");
-            ui.peerListOutput.textContent =
-              "system_peers is not enabled. Start the node with RPC methods that include system_peers (or unsafe) to view peer details.";
-            return;
-          }
-          const peers = await callRpc("system_peers");
+          const peers = await callRpc("hegemon_peerList");
           if (!Array.isArray(peers) || peers.length === 0) {
             let peerCount = null;
             try {
@@ -530,31 +523,29 @@
             }
             ui.peerListOutput.textContent =
               peerCount === null || peerCount === undefined
-                ? "No peer details available. This node does not expose peer metadata."
-                : `No peer details available. Connected peers: ${formatNumber(peerCount)}.`;
-            setPeerStatus("No peer details available.");
+                ? "No peer details reported."
+                : `No peer details reported. Connected peers: ${formatNumber(peerCount)}.`;
+            setPeerStatus("No peer details reported.");
             return;
           }
           ui.peerListOutput.textContent = peers
             .map((peer, index) => {
-              const peerId = peer.peerId ?? peer.peer_id ?? `peer-${index + 1}`;
-              const roles = peer.roles ?? "--";
-              const bestNumber = formatHeight(peer.bestNumber ?? peer.best_number);
-              const bestHash = formatHash(peer.bestHash ?? peer.best_hash);
-              return `${peerId} | ${roles} | best: ${bestNumber} @ ${bestHash}`;
+              const peerId = peer.peer_id ?? peer.peerId ?? `peer-${index + 1}`;
+              const address = peer.address ?? "--";
+              const direction = peer.direction ?? "--";
+              const bestNumber = formatHeight(peer.best_height ?? peer.bestHeight);
+              const bestHash = formatHash(peer.best_hash ?? peer.bestHash);
+              const lastSeen = Number(peer.last_seen_secs ?? peer.lastSeenSecs ?? 0);
+              return `${peerId} | ${direction} | ${address} | best: ${bestNumber} @ ${bestHash} | seen ${formatNumber(
+                lastSeen
+              )}s ago`;
             })
             .join("\n");
           setPeerStatus(`Loaded ${peers.length} peer(s).`);
         } catch (error) {
           console.error(error);
-          if (isUnsafeRpcError(error)) {
-            setPeerStatus("system_peers blocked by RPC safety settings.");
-            ui.peerListOutput.textContent =
-              "Start the node with --rpc-methods=unsafe (or --rpc-methods=all) to allow system_peers.";
-          } else {
-            setPeerStatus(`Failed to load peers: ${formatRpcError(error)}`);
-            ui.peerListOutput.textContent = "Check that RPC methods allow system_peers.";
-          }
+          setPeerStatus(`Failed to load peers: ${formatRpcError(error)}`);
+          ui.peerListOutput.textContent = "Check that the node exposes hegemon_peerList.";
         }
       }
 
