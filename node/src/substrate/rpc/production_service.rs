@@ -139,7 +139,7 @@ where
 }
 
 #[derive(Debug, Default, Clone)]
-pub(crate) struct MinedHistoryCache {
+pub struct MinedHistoryCache {
     last_scanned: Option<u64>,
     timestamps: Vec<BlockTimestamp>,
 }
