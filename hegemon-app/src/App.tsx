@@ -2398,6 +2398,16 @@ export default function App() {
                 <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
                     type="checkbox"
+                    checked={activeConnection.rpcMethods === 'unsafe'}
+                    onChange={(event) =>
+                      updateActiveConnection({ rpcMethods: event.target.checked ? 'unsafe' : 'safe' })
+                    }
+                  />
+                  Enable unsafe RPC methods
+                </label>
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                  <input
+                    type="checkbox"
                     checked={blockAlertEnabled}
                     onChange={(event) => setBlockAlertEnabled(event.target.checked)}
                   />
