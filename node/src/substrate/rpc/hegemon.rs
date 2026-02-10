@@ -118,6 +118,27 @@ pub struct PeerDetail {
     pub last_seen_secs: u64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerGraphPeer {
+    pub peer_id: String,
+    pub address: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerGraphReportSnapshot {
+    pub reporter_peer_id: String,
+    pub reporter_address: String,
+    pub reported_at_secs: u64,
+    pub peers: Vec<PeerGraphPeer>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerGraphSnapshot {
+    pub local_peer_id: String,
+    pub peers: Vec<PeerDetail>,
+    pub reports: Vec<PeerGraphReportSnapshot>,
+}
+
 /// Storage footprint response
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StorageFootprint {
@@ -246,6 +267,10 @@ pub trait HegemonApi {
     /// Get connected peer details (PQ network snapshot).
     #[method(name = "peerList")]
     async fn peer_list(&self) -> RpcResult<Vec<PeerDetail>>;
+
+    /// Get peer graph details (direct peers + reported peers).
+    #[method(name = "peerGraph")]
+    async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot>;
 }
 
 /// Trait for mining handle operations
@@ -288,6 +313,8 @@ pub trait HegemonService: Send + Sync {
     fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String>;
     /// Get connected peer details (PQ network snapshot).
     fn peer_list(&self) -> Vec<PeerDetail>;
+    /// Get peer graph details (direct peers + reported peers).
+    fn peer_graph(&self) -> PeerGraphSnapshot;
 }
 
 /// Hegemon RPC implementation
@@ -404,6 +431,10 @@ where
 
     async fn peer_list(&self) -> RpcResult<Vec<PeerDetail>> {
         Ok(self.service.peer_list())
+    }
+
+    async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot> {
+        Ok(self.service.peer_graph())
     }
 }
 
@@ -530,6 +561,22 @@ mod tests {
                 best_hash: "0xabcdef".to_string(),
                 last_seen_secs: 3,
             }]
+        }
+
+        fn peer_graph(&self) -> PeerGraphSnapshot {
+            PeerGraphSnapshot {
+                local_peer_id: "0xlocal".to_string(),
+                peers: self.peer_list(),
+                reports: vec![PeerGraphReportSnapshot {
+                    reporter_peer_id: "0xdeadbeef".to_string(),
+                    reporter_address: "127.0.0.1:30333".to_string(),
+                    reported_at_secs: 5,
+                    peers: vec![PeerGraphPeer {
+                        peer_id: "0xbeadfeed".to_string(),
+                        address: "10.0.0.5:30333".to_string(),
+                    }],
+                }],
+            }
         }
     }
 
