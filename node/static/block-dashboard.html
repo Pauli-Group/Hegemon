@@ -364,8 +364,10 @@
         }
       }
 
-      function renderPeerNetwork(peers) {
+      function renderPeerNetwork(graph) {
         if (!ui.peerNetwork) return;
+        const peers = Array.isArray(graph?.peers) ? graph.peers : [];
+        const reports = Array.isArray(graph?.reports) ? graph.reports : [];
         const svg = ui.peerNetwork;
         while (svg.firstChild) {
           svg.removeChild(svg.firstChild);
@@ -374,14 +376,35 @@
         const height = svg.clientHeight || 320;
         svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
         const center = { x: width / 2, y: height / 2 };
-        const radius = Math.max(60, Math.min(width, height) / 2 - 72);
+        const maxRadius = Math.max(90, Math.min(width, height) / 2 - 32);
+        const innerRadius = Math.max(70, maxRadius - 70);
+        const outerRadius = maxRadius;
         const svgNS = "http://www.w3.org/2000/svg";
         const createEl = (name, attrs) => {
           const el = document.createElementNS(svgNS, name);
           Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
           return el;
         };
-        if (!Array.isArray(peers) || peers.length === 0) {
+        const makeLabel = (text, x, y) => {
+          const label = createEl("text", {
+            x: x.toString(),
+            y: y.toString(),
+            "text-anchor": "middle",
+            class: "peer-label hidden",
+          });
+          label.textContent = text;
+          svg.appendChild(label);
+          return label;
+        };
+        const attachHover = (node, label) => {
+          const show = () => label.classList.remove("hidden");
+          const hide = () => label.classList.add("hidden");
+          node.addEventListener("mouseenter", show);
+          node.addEventListener("mouseleave", hide);
+          node.addEventListener("focus", show);
+          node.addEventListener("blur", hide);
+        };
+        if (peers.length === 0 && reports.length === 0) {
           const empty = createEl("text", {
             x: center.x.toString(),
             y: center.y.toString(),
@@ -391,48 +414,101 @@
           });
           empty.textContent = "No peer details";
           svg.appendChild(empty);
-        } else {
-          const angleStep = (Math.PI * 2) / peers.length;
-          peers.forEach((peer, index) => {
-            const angle = angleStep * index - Math.PI / 2;
-            const x = center.x + Math.cos(angle) * radius;
-            const y = center.y + Math.sin(angle) * radius;
+        }
+        const directNodes = peers.map((peer) => ({
+          peer_id: peer.peer_id ?? peer.peerId ?? "--",
+          address: peer.address ?? "--",
+        }));
+        const directByAddress = new Map(
+          directNodes.map((peer) => [peer.address, peer])
+        );
+        const indirectMap = new Map();
+        reports.forEach((report) => {
+          const entries = Array.isArray(report?.peers) ? report.peers : [];
+          entries.forEach((entry) => {
+            const address = entry.address ?? "--";
+            if (!directByAddress.has(address) && !indirectMap.has(address)) {
+              indirectMap.set(address, {
+                peer_id: entry.peer_id ?? entry.peerId ?? "--",
+                address,
+              });
+            }
+          });
+        });
+        const indirectNodes = Array.from(indirectMap.values());
+        const directPositions = new Map();
+        const directAngleStep = directNodes.length ? (Math.PI * 2) / directNodes.length : 0;
+        directNodes.forEach((peer, index) => {
+          const angle = directAngleStep * index - Math.PI / 2;
+          const x = center.x + Math.cos(angle) * innerRadius;
+          const y = center.y + Math.sin(angle) * innerRadius;
+          directPositions.set(peer.address, { x, y });
+          const line = createEl("line", {
+            x1: center.x.toString(),
+            y1: center.y.toString(),
+            x2: x.toString(),
+            y2: y.toString(),
+            class: "peer-line",
+          });
+          svg.appendChild(line);
+          const node = createEl("circle", {
+            cx: x.toString(),
+            cy: y.toString(),
+            r: "10",
+            class: "peer-node direct-node",
+          });
+          svg.appendChild(node);
+          const label = makeLabel(peer.address, x, y - 14);
+          const title = createEl("title", {});
+          title.textContent = peer.address;
+          node.appendChild(title);
+          attachHover(node, label);
+        });
+        const indirectPositions = new Map();
+        const indirectAngleStep = indirectNodes.length ? (Math.PI * 2) / indirectNodes.length : 0;
+        indirectNodes.forEach((peer, index) => {
+          const angle = indirectAngleStep * index - Math.PI / 2;
+          const x = center.x + Math.cos(angle) * outerRadius;
+          const y = center.y + Math.sin(angle) * outerRadius;
+          indirectPositions.set(peer.address, { x, y });
+        });
+        reports.forEach((report) => {
+          const reporterAddr = report.reporter_address ?? report.reporterAddress ?? "";
+          const reporterPos = directPositions.get(reporterAddr) ?? center;
+          const entries = Array.isArray(report?.peers) ? report.peers : [];
+          entries.forEach((entry) => {
+            const address = entry.address ?? "--";
+            if (directByAddress.has(address)) {
+              return;
+            }
+            const target = indirectPositions.get(address);
+            if (!target) return;
             const line = createEl("line", {
-              x1: center.x.toString(),
-              y1: center.y.toString(),
-              x2: x.toString(),
-              y2: y.toString(),
-              class: "peer-line",
+              x1: reporterPos.x.toString(),
+              y1: reporterPos.y.toString(),
+              x2: target.x.toString(),
+              y2: target.y.toString(),
+              class: "peer-line peer-line-indirect",
             });
             svg.appendChild(line);
-            const node = createEl("circle", {
-              cx: x.toString(),
-              cy: y.toString(),
-              r: "10",
-              class: "peer-node",
-            });
-            svg.appendChild(node);
-            const labelX = (center.x + x) / 2;
-            const labelY = (center.y + y) / 2 + (index % 2 === 0 ? -8 : 8);
-            const label = createEl("text", {
-              x: labelX.toString(),
-              y: labelY.toString(),
-              "text-anchor": "middle",
-              class: "peer-label hidden",
-            });
-            label.textContent = peer.address ?? "--";
-            svg.appendChild(label);
-            const title = createEl("title", {});
-            title.textContent = peer.address ?? peer.peer_id ?? "peer";
-            node.appendChild(title);
-            const hoverTarget = () => label.classList.remove("hidden");
-            const hoverOut = () => label.classList.add("hidden");
-            node.addEventListener("mouseenter", hoverTarget);
-            node.addEventListener("mouseleave", hoverOut);
-            node.addEventListener("focus", hoverTarget);
-            node.addEventListener("blur", hoverOut);
           });
-        }
+        });
+        indirectNodes.forEach((peer) => {
+          const target = indirectPositions.get(peer.address);
+          if (!target) return;
+          const node = createEl("circle", {
+            cx: target.x.toString(),
+            cy: target.y.toString(),
+            r: "9",
+            class: "peer-node indirect-node",
+          });
+          svg.appendChild(node);
+          const label = makeLabel(peer.address, target.x, target.y - 12);
+          const title = createEl("title", {});
+          title.textContent = peer.address;
+          node.appendChild(title);
+          attachHover(node, label);
+        });
         const local = createEl("circle", {
           cx: center.x.toString(),
           cy: center.y.toString(),
@@ -606,7 +682,8 @@
         setPeerStatus("Loading peers...");
         ui.peerListOutput.textContent = "--";
         try {
-          const peers = await callRpc("hegemon_peerList");
+          const graph = await callRpc("hegemon_peerGraph");
+          const peers = Array.isArray(graph?.peers) ? graph.peers : [];
           if (!Array.isArray(peers) || peers.length === 0) {
             let peerCount = null;
             try {
@@ -637,11 +714,11 @@
             })
             .join("\n");
           setPeerStatus(`Loaded ${peers.length} peer(s).`);
-          renderPeerNetwork(peers);
+          renderPeerNetwork(graph);
         } catch (error) {
           console.error(error);
           setPeerStatus(`Failed to load peers: ${formatRpcError(error)}`);
-          ui.peerListOutput.textContent = "Check that the node exposes hegemon_peerList.";
+          ui.peerListOutput.textContent = "Check that the node exposes hegemon_peerGraph.";
           renderPeerNetwork([]);
         }
       }
