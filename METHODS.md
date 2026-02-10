@@ -960,6 +960,7 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 1. Launch the Substrate-based `hegemon-node` binary with `HEGEMON_MINE=1` and `--dev` for fast block times. The node exposes JSON-RPC on port 9944 and P2P on port 30333 by default. Run `make node` to build.
 2. Connect the desktop app or Polkadot.js Apps to the node RPC endpoint to view live telemetry. When using the desktop app, prefer a persistent base path (avoid `--tmp`), and set `--listen-addr /ip4/0.0.0.0/tcp/30333` only when you intend to accept IPv4 peer traffic. Expose RPC externally only on trusted networks.
    The desktop app is organized into Overview, Node, Wallet, Send, Disclosure, and Console workspaces. Its global status bar always shows the active node, wallet store, and genesis hash so operators can detect mismatches before sending or mining.
+   Use `hegemon_peerList` to retrieve connected peer details (address, direction, best height/hash); `system_peers` remains empty on the PQ transport.
 3. For multi-node setups, start additional nodes with `--bootnodes /ip4/127.0.0.1/tcp/30333` pointing to the first node.
 
 ### Security assurance workflow
