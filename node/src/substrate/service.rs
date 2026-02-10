@@ -4712,6 +4712,23 @@ pub struct PqServiceConfig {
     pub max_peers: usize,
 }
 
+/// Snapshot of a connected PQ peer for RPC reporting.
+#[derive(Clone, Debug)]
+pub struct PeerConnectionSnapshot {
+    /// Peer identifier (raw 32 bytes).
+    pub peer_id: [u8; 32],
+    /// Observed socket address.
+    pub addr: std::net::SocketAddr,
+    /// Whether this connection was outbound.
+    pub is_outbound: bool,
+    /// Peer's reported best height.
+    pub best_height: u64,
+    /// Peer's reported best hash.
+    pub best_hash: [u8; 32],
+    /// Last time we heard from this peer.
+    pub last_seen: std::time::Instant,
+}
+
 impl Default for PqServiceConfig {
     fn default() -> Self {
         Self {
@@ -5538,6 +5555,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let mut pq_network_handle: Option<PqNetworkHandle> = None;
     let peer_count = Arc::new(AtomicUsize::new(0));
     let sync_status = Arc::new(AtomicBool::new(false));
+    let peer_details = Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
 
     tracing::info!(
         chain = %chain_name,
@@ -5816,6 +5834,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let da_chunk_store_for_handler = Arc::clone(&da_chunk_store);
                 let da_request_tracker_for_handler = Arc::clone(&da_request_tracker);
                 let peer_count_for_rpc = Arc::clone(&peer_count);
+                let peer_details_for_events = Arc::clone(&peer_details);
 
                 // Spawn the PQ network event handler task with sync integration
                 let pq_backend_for_events = Arc::clone(&pq_backend);
@@ -5918,6 +5937,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
 
                                     connected_peers.insert(peer_id, (addr, is_outbound));
+                                    peer_details_for_events.write().insert(
+                                        peer_id,
+                                        PeerConnectionSnapshot {
+                                            peer_id,
+                                            addr,
+                                            is_outbound,
+                                            best_height: 0,
+                                            best_hash: [0u8; 32],
+                                            last_seen: Instant::now(),
+                                        },
+                                    );
 
                                     // Record dialed addresses so we can share them with others.
                                     if is_outbound && is_dialable_addr(&addr) {
@@ -6043,6 +6073,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             let _ = peer_store.record_disconnected(addr);
                                         }
                                     }
+                                    peer_details_for_events.write().remove(&peer_id);
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
                                         reason = %reason,
@@ -6303,6 +6334,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             sync.on_block_announce(peer_id, &announce);
                                             sync_status_for_events
                                                 .store(sync.is_syncing(), Ordering::Relaxed);
+                                            if let Some(entry) =
+                                                peer_details_for_events.write().get_mut(&peer_id)
+                                            {
+                                                if announce.number > entry.best_height {
+                                                    entry.best_height = announce.number;
+                                                    entry.best_hash = announce.hash;
+                                                }
+                                                entry.last_seen = Instant::now();
+                                            }
                                         }
                                     }
                                 }
@@ -6561,6 +6601,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let da_sample_timeout_for_import = da_sample_timeout;
                 let da_sampling_secret_for_import = da_sampling_secret;
                 let pq_handle_for_da_import = pq_handle_for_da_import.clone();
+                let peer_details_for_import = Arc::clone(&peer_details);
 
                 task_manager.spawn_handle().spawn(
                     "block-import-handler",
@@ -7339,6 +7380,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                {
 	                                    let mut sync = sync_service_for_import.lock().await;
 	                                    sync.on_block_announce(peer_id, &announce);
+	                                }
+	                                if let Some(entry) = peer_details_for_import.write().get_mut(&peer_id) {
+	                                    if announce.number > entry.best_height {
+	                                        entry.best_height = announce.number;
+	                                        entry.best_hash = announce.hash;
+	                                    }
+	                                    entry.last_seen = Instant::now();
 	                                }
 
 	                                let crate::substrate::network_bridge::BlockAnnounce {
@@ -8259,6 +8307,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         client.clone(),
         Arc::clone(&peer_count),
         Arc::clone(&sync_status),
+        Arc::clone(&peer_details),
         Arc::clone(&da_chunk_store),
         Arc::clone(&pending_ciphertext_store),
         mined_block_store,
