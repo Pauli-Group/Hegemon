@@ -34,7 +34,17 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! let service = ProductionRpcService::new(client.clone(), peer_count.clone(), sync_status.clone());
+//! let service = ProductionRpcService::new(
+//!     client.clone(),
+//!     peer_count.clone(),
+//!     sync_status.clone(),
+//!     peer_details.clone(),
+//!     da_chunk_store.clone(),
+//!     pending_ciphertext_store.clone(),
+//!     mined_blocks.clone(),
+//!     mined_history.clone(),
+//!     miner_recipient,
+//! );
 //! let rpc_deps = FullDeps {
 //!     service: Arc::new(service),
 //!     pow_handle: pow_handle.clone(),
@@ -49,10 +59,13 @@
 //! ```
 
 use super::archive::ArchiveMarketService;
-use super::hegemon::{BlockTimestamp, ConsensusStatus, HegemonService, StorageFootprint, TelemetrySnapshot};
+use super::hegemon::{
+    BlockTimestamp, ConsensusStatus, HegemonService, PeerDetail, StorageFootprint, TelemetrySnapshot,
+};
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::{Decode, Encode};
+use network::PeerId;
 use pallet_shielded_pool::types::{
     BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
 };
@@ -73,7 +86,7 @@ use std::sync::{
 use std::time::Instant;
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
-use crate::substrate::service::{DaChunkStore, PendingCiphertextStore};
+use crate::substrate::service::{DaChunkStore, PendingCiphertextStore, PeerConnectionSnapshot};
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 use crate::substrate::mining_worker::MinedBlockRecord;
 
@@ -101,6 +114,8 @@ where
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     /// Connected peer count snapshot
     peer_count: Arc<AtomicUsize>,
+    /// Connected peer detail snapshots
+    peer_details: Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
     /// Sync status flag (true means syncing)
     sync_status: Arc<AtomicBool>,
     /// Node start time for uptime calculation
@@ -136,6 +151,7 @@ where
         client: Arc<C>,
         peer_count: Arc<AtomicUsize>,
         sync_status: Arc<AtomicBool>,
+        peer_details: Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
         da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
         pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
         mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
@@ -146,6 +162,7 @@ where
             client,
             peer_count,
             sync_status,
+            peer_details,
             da_chunk_store,
             pending_ciphertext_store,
             start_time: Instant::now(),
@@ -339,6 +356,26 @@ where
         cache.last_scanned = Some(best);
         cache.timestamps.extend(new_entries);
         Ok(cache.timestamps.clone())
+    }
+
+    fn peer_list(&self) -> Vec<PeerDetail> {
+        let now = Instant::now();
+        let peers = self.peer_details.read();
+        peers
+            .values()
+            .map(|peer| PeerDetail {
+                peer_id: format!("0x{}", hex::encode(peer.peer_id)),
+                address: peer.addr.to_string(),
+                direction: if peer.is_outbound {
+                    "outbound".to_string()
+                } else {
+                    "inbound".to_string()
+                },
+                best_height: peer.best_height,
+                best_hash: format!("0x{}", hex::encode(peer.best_hash)),
+                last_seen_secs: now.duration_since(peer.last_seen).as_secs(),
+            })
+            .collect()
     }
 }
 
