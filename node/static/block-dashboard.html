@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hegemon Block Production Dashboard</title>
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Block Production Dashboard</h1>
+        <p>Read-only metrics streamed from the local node via JSON-RPC.</p>
+      </div>
+      <div class="status" id="status">
+        <span class="warn">Idle</span>
+        <span id="last-updated">Last updated: --</span>
+      </div>
+    </header>
+    <main class="wrap">
+      <section class="controls">
+        <input id="rpc-url" type="text" placeholder="RPC URL" />
+        <label class="field">
+          Blocks / N min
+          <input id="bucket-minutes" type="number" min="1" step="1" />
+        </label>
+        <button id="refresh">Refresh</button>
+        <button id="auto" class="secondary">Auto: On</button>
+        <button id="block-details" class="secondary">Block Details</button>
+        <button id="recent-hashes" class="secondary">Recent Block Hashes</button>
+        <button id="peer-list" class="secondary">Peers</button>
+      </section>
+      <section class="grid">
+        <div class="card">
+          <h3>Height</h3>
+          <div class="metric" id="height">--</div>
+          <div class="subline" id="best-hash">Best hash: --</div>
+        </div>
+        <div class="card">
+          <h3>Hash Rate</h3>
+          <div class="metric" id="hash-rate">--</div>
+          <div class="subline" id="mining-threads">Threads: --</div>
+        </div>
+        <div class="card">
+          <h3>Difficulty</h3>
+          <div class="metric" id="difficulty">--</div>
+          <div class="subline" id="block-interval">Avg block interval: --</div>
+        </div>
+        <div class="card">
+          <h3>Blocks Mined</h3>
+          <div class="metric" id="blocks-mined">--</div>
+          <div class="subline" id="blocks-imported">Imported: --</div>
+        </div>
+        <div class="card">
+          <h3>Peers & Sync</h3>
+          <div class="metric" id="peers">--</div>
+          <div class="subline" id="syncing">Syncing: --</div>
+        </div>
+        <div class="card">
+          <h3>Supply Digest</h3>
+          <div class="metric" id="supply-digest">--</div>
+          <div class="subline" id="state-root">State root: --</div>
+        </div>
+      </section>
+      <section class="chart">
+        <div class="chart-header">
+          <h3>Block Frequency</h3>
+          <span id="chart-range">Last -- hours</span>
+        </div>
+        <div class="bar-grid" id="frequency-bars"></div>
+      </section>
+      <section class="chart">
+        <div class="chart-header">
+          <h3>Blocks Mined By This Node</h3>
+          <span id="mined-range">Last -- hours</span>
+        </div>
+        <div class="bar-grid" id="mined-bars"></div>
+      </section>
+      <div class="note">
+        Tip: if the browser blocks requests, start the node with
+        <code>--rpc-cors=all</code> or open this file through a local HTTP server.
+      </div>
+    </main>
+    <div class="modal hidden" id="block-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Block Details</h3>
+          <button id="block-close" class="secondary">Close</button>
+        </div>
+        <div class="modal-controls">
+          <label>
+            Block height
+            <input id="block-height" type="number" min="0" step="1" />
+          </label>
+          <button id="block-fetch">Load</button>
+          <span class="modal-status" id="block-status">Idle</span>
+        </div>
+        <div class="modal-section">
+          <h4>Block hash</h4>
+          <pre id="block-hash">--</pre>
+        </div>
+        <div class="modal-section">
+          <h4>Header (chain_getHeader)</h4>
+          <pre id="block-header">--</pre>
+        </div>
+        <div class="modal-section">
+          <h4>Block (chain_getBlock)</h4>
+          <pre id="block-body">--</pre>
+        </div>
+      </div>
+    </div>
+    <div class="modal hidden" id="recent-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Recent Block Hashes</h3>
+          <button id="recent-close" class="secondary">Close</button>
+        </div>
+        <div class="modal-controls">
+          <label>
+            Previous blocks
+            <input id="recent-count" type="number" min="1" step="1" />
+          </label>
+          <button id="recent-fetch">Load</button>
+          <span class="modal-status" id="recent-status">Idle</span>
+        </div>
+        <div class="modal-section">
+          <h4>Hashes</h4>
+          <pre id="recent-list">--</pre>
+        </div>
+      </div>
+    </div>
+    <div class="modal hidden" id="peer-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Connected Peers</h3>
+          <button id="peer-close" class="secondary">Close</button>
+        </div>
+        <div class="modal-controls">
+          <button id="peer-fetch">Refresh</button>
+          <span class="modal-status" id="peer-status">Idle</span>
+        </div>
+        <div class="modal-section">
+          <h4>Network</h4>
+          <div class="peer-network">
+            <svg id="peer-network" viewBox="0 0 640 320" role="img" aria-label="Peer network graph"></svg>
+          </div>
+        </div>
+        <div class="modal-section">
+          <h4>Peers</h4>
+          <pre id="peer-list-output">--</pre>
+        </div>
+      </div>
+    </div>
+    <script>
+      const DEFAULT_RPC = "http://127.0.0.1:9944";
+      const POLL_MS = 5000;
+      const DEFAULT_BUCKET_MINUTES = 60;
+      const MAX_BUCKETS = 12;
+      const TIMESTAMP_BATCH = 500;
+
+      const ui = {
+        rpcUrl: document.getElementById("rpc-url"),
+        refresh: document.getElementById("refresh"),
+        auto: document.getElementById("auto"),
+        status: document.getElementById("status"),
+        lastUpdated: document.getElementById("last-updated"),
+        bucketMinutes: document.getElementById("bucket-minutes"),
+        blockDetails: document.getElementById("block-details"),
+        blockModal: document.getElementById("block-modal"),
+        blockClose: document.getElementById("block-close"),
+        blockHeight: document.getElementById("block-height"),
+        blockFetch: document.getElementById("block-fetch"),
+        blockStatus: document.getElementById("block-status"),
+        blockHash: document.getElementById("block-hash"),
+        blockHeader: document.getElementById("block-header"),
+        blockBody: document.getElementById("block-body"),
+        recentHashes: document.getElementById("recent-hashes"),
+        recentModal: document.getElementById("recent-modal"),
+        recentClose: document.getElementById("recent-close"),
+        recentCount: document.getElementById("recent-count"),
+        recentFetch: document.getElementById("recent-fetch"),
+        recentStatus: document.getElementById("recent-status"),
+        recentList: document.getElementById("recent-list"),
+        peerList: document.getElementById("peer-list"),
+        peerModal: document.getElementById("peer-modal"),
+        peerClose: document.getElementById("peer-close"),
+        peerFetch: document.getElementById("peer-fetch"),
+        peerStatus: document.getElementById("peer-status"),
+        peerListOutput: document.getElementById("peer-list-output"),
+        peerNetwork: document.getElementById("peer-network"),
+        height: document.getElementById("height"),
+        bestHash: document.getElementById("best-hash"),
+        hashRate: document.getElementById("hash-rate"),
+        miningThreads: document.getElementById("mining-threads"),
+        difficulty: document.getElementById("difficulty"),
+        blockInterval: document.getElementById("block-interval"),
+        blocksMined: document.getElementById("blocks-mined"),
+        blocksImported: document.getElementById("blocks-imported"),
+        peers: document.getElementById("peers"),
+        syncing: document.getElementById("syncing"),
+        supplyDigest: document.getElementById("supply-digest"),
+        stateRoot: document.getElementById("state-root"),
+        chartRange: document.getElementById("chart-range"),
+        frequencyBars: document.getElementById("frequency-bars"),
+        minedRange: document.getElementById("mined-range"),
+        minedBars: document.getElementById("mined-bars"),
+      };
+
+      let autoRefresh = true;
+      let lastHeight = null;
+      let lastHeightTime = null;
+      let intervalHandle = null;
+      const timestampCache = [];
+      let minedTimestampCache = [];
+      let timestampSyncInProgress = false;
+      let timestampTargetHeight = 0;
+      let isSyncingScroll = false;
+      let rpcMethodCache = null;
+
+      function setStatus(text, kind) {
+        ui.status.querySelector("span").textContent = text;
+        ui.status.querySelector("span").className = kind;
+      }
+
+      function formatNumber(value) {
+        if (value === null || value === undefined) return "--";
+        return Number(value).toLocaleString("en-US");
+      }
+
+      function formatHash(hash) {
+        if (!hash || hash === "--") return "--";
+        return hash.length > 16 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash;
+      }
+
+      function formatRate(value) {
+        if (value === null || value === undefined) return "--";
+        const units = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s"];
+        let idx = 0;
+        let v = Number(value);
+        while (v >= 1000 && idx < units.length - 1) {
+          v /= 1000;
+          idx += 1;
+        }
+        return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[idx]}`;
+      }
+
+      function formatDuration(seconds) {
+        if (seconds === null || seconds === undefined) return "--";
+        return `${seconds.toFixed(1)}s`;
+      }
+
+      function formatRpcError(error) {
+        if (!error) return "Unknown error";
+        if (typeof error === "string") return error;
+        if (error.message) return error.message;
+        return JSON.stringify(error);
+      }
+
+      function isUnsafeRpcError(error) {
+        const message = formatRpcError(error).toLowerCase();
+        return message.includes("unsafe") && message.includes("extern");
+      }
+
+      async function getRpcMethods() {
+        if (rpcMethodCache) return rpcMethodCache;
+        try {
+          const result = await callRpc("rpc_methods");
+          const methods = Array.isArray(result) ? result : result?.methods;
+          if (!Array.isArray(methods)) {
+            return null;
+          }
+          rpcMethodCache = new Set(methods);
+          return rpcMethodCache;
+        } catch (error) {
+          console.warn("Failed to load rpc_methods", error);
+          return null;
+        }
+      }
+
+      function formatHeight(value) {
+        if (value === null || value === undefined) return "--";
+        if (typeof value === "string" && value.startsWith("0x")) {
+          const parsed = Number.parseInt(value, 16);
+          return Number.isFinite(parsed) ? formatNumber(parsed) : value;
+        }
+        if (Number.isFinite(Number(value))) {
+          return formatNumber(Number(value));
+        }
+        return value;
+      }
+
+      function formatJson(value) {
+        if (value === null || value === undefined) return "--";
+        return JSON.stringify(value, null, 2);
+      }
+
+      function clampBucketMinutes(value) {
+        if (!Number.isFinite(value)) return DEFAULT_BUCKET_MINUTES;
+        return Math.max(1, Math.min(24 * 60, Math.floor(value)));
+      }
+
+      function getBucketMinutes() {
+        return clampBucketMinutes(Number(ui.bucketMinutes.value));
+      }
+
+      function buildBuckets(timestamps, minTs, bucketMs, bucketCount) {
+        const buckets = new Array(bucketCount).fill(0);
+        timestamps.forEach((ts) => {
+          const index = Math.floor((ts - minTs) / bucketMs);
+          if (index >= 0 && index < bucketCount) {
+            buckets[index] += 1;
+          }
+        });
+        return buckets;
+      }
+
+      function renderBars(barsEl, buckets, minTs, bucketMs) {
+        const maxValue = Math.max(1, ...buckets);
+        barsEl.innerHTML = "";
+        buckets.forEach((count, index) => {
+          const bar = document.createElement("div");
+          bar.className = "bar";
+          bar.style.height = `${Math.max(8, (count / maxValue) * 140)}px`;
+          bar.textContent = count.toString();
+          const bucketStart = new Date(minTs + index * bucketMs);
+          bar.title = `${bucketStart.toLocaleString()} — ${count} blocks`;
+          barsEl.appendChild(bar);
+        });
+      }
+
+      function renderFrequencyCharts(nowMs) {
+        const bucketMinutes = getBucketMinutes();
+        const bucketMs = bucketMinutes * 60 * 1000;
+        const timestamps = timestampCache
+          .map((entry) => entry.timestampMs)
+          .filter((value) => typeof value === "number");
+        if (!timestamps.length) {
+          ui.frequencyBars.innerHTML = "";
+          ui.chartRange.textContent = "Syncing timestamps...";
+          ui.minedBars.innerHTML = "";
+          ui.minedRange.textContent = "Syncing timestamps...";
+          return;
+        }
+        const minTs = Math.min(...timestamps);
+        const maxTs = Math.max(...timestamps);
+        const bucketCount = Math.max(1, Math.floor((maxTs - minTs) / bucketMs) + 1);
+        const buckets = buildBuckets(timestamps, minTs, bucketMs, bucketCount);
+        renderBars(ui.frequencyBars, buckets, minTs, bucketMs);
+
+        const minedTimestamps = minedTimestampCache
+          .map((entry) => entry.timestampMs)
+          .filter((value) => typeof value === "number");
+        const minedBuckets = buildBuckets(minedTimestamps, minTs, bucketMs, bucketCount);
+        renderBars(ui.minedBars, minedBuckets, minTs, bucketMs);
+
+        if (timestampCache.length && timestampCache.length < timestampTargetHeight + 1) {
+          ui.chartRange.textContent = `Syncing ${formatNumber(timestampCache.length)} / ${formatNumber(
+            timestampTargetHeight + 1
+          )} blocks`;
+          ui.minedRange.textContent = "Syncing timestamps...";
+        } else {
+          ui.chartRange.textContent = `Full chain (${formatNumber(bucketCount)} buckets @ ${bucketMinutes}m)`;
+          ui.minedRange.textContent = `Full chain (${formatNumber(bucketCount)} buckets @ ${bucketMinutes}m)`;
+        }
+      }
+
+      function renderPeerNetwork(graph) {
+        if (!ui.peerNetwork) return;
+        const peers = Array.isArray(graph?.peers) ? graph.peers : [];
+        const reports = Array.isArray(graph?.reports) ? graph.reports : [];
+        const svg = ui.peerNetwork;
+        while (svg.firstChild) {
+          svg.removeChild(svg.firstChild);
+        }
+        const width = svg.clientWidth || 640;
+        const height = svg.clientHeight || 320;
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        const center = { x: width / 2, y: height / 2 };
+        const maxRadius = Math.max(90, Math.min(width, height) / 2 - 32);
+        const innerRadius = Math.max(70, maxRadius - 70);
+        const outerRadius = maxRadius;
+        const svgNS = "http://www.w3.org/2000/svg";
+        const createEl = (name, attrs) => {
+          const el = document.createElementNS(svgNS, name);
+          Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+          return el;
+        };
+        const makeLabel = (text, x, y) => {
+          const label = createEl("text", {
+            x: x.toString(),
+            y: y.toString(),
+            "text-anchor": "middle",
+            class: "peer-label hidden",
+          });
+          label.textContent = text;
+          svg.appendChild(label);
+          return label;
+        };
+        const attachHover = (node, label) => {
+          const show = () => label.classList.remove("hidden");
+          const hide = () => label.classList.add("hidden");
+          node.addEventListener("mouseenter", show);
+          node.addEventListener("mouseleave", hide);
+          node.addEventListener("focus", show);
+          node.addEventListener("blur", hide);
+        };
+        if (peers.length === 0 && reports.length === 0) {
+          const empty = createEl("text", {
+            x: center.x.toString(),
+            y: center.y.toString(),
+            "text-anchor": "middle",
+            "dominant-baseline": "middle",
+            class: "peer-empty",
+          });
+          empty.textContent = "No peer details";
+          svg.appendChild(empty);
+        }
+        const directNodes = peers.map((peer) => ({
+          peer_id: peer.peer_id ?? peer.peerId ?? "--",
+          address: peer.address ?? "--",
+        }));
+        const directByAddress = new Map(
+          directNodes.map((peer) => [peer.address, peer])
+        );
+        const indirectMap = new Map();
+        reports.forEach((report) => {
+          const entries = Array.isArray(report?.peers) ? report.peers : [];
+          entries.forEach((entry) => {
+            const address = entry.address ?? "--";
+            if (!directByAddress.has(address) && !indirectMap.has(address)) {
+              indirectMap.set(address, {
+                peer_id: entry.peer_id ?? entry.peerId ?? "--",
+                address,
+              });
+            }
+          });
+        });
+        const indirectNodes = Array.from(indirectMap.values());
+        const directPositions = new Map();
+        const directAngleStep = directNodes.length ? (Math.PI * 2) / directNodes.length : 0;
+        directNodes.forEach((peer, index) => {
+          const angle = directAngleStep * index - Math.PI / 2;
+          const x = center.x + Math.cos(angle) * innerRadius;
+          const y = center.y + Math.sin(angle) * innerRadius;
+          directPositions.set(peer.address, { x, y });
+          const line = createEl("line", {
+            x1: center.x.toString(),
+            y1: center.y.toString(),
+            x2: x.toString(),
+            y2: y.toString(),
+            class: "peer-line",
+          });
+          svg.appendChild(line);
+          const node = createEl("circle", {
+            cx: x.toString(),
+            cy: y.toString(),
+            r: "10",
+            class: "peer-node direct-node",
+          });
+          svg.appendChild(node);
+          const label = makeLabel(peer.address, x, y - 14);
+          const title = createEl("title", {});
+          title.textContent = peer.address;
+          node.appendChild(title);
+          attachHover(node, label);
+        });
+        const indirectPositions = new Map();
+        const indirectAngleStep = indirectNodes.length ? (Math.PI * 2) / indirectNodes.length : 0;
+        indirectNodes.forEach((peer, index) => {
+          const angle = indirectAngleStep * index - Math.PI / 2;
+          const x = center.x + Math.cos(angle) * outerRadius;
+          const y = center.y + Math.sin(angle) * outerRadius;
+          indirectPositions.set(peer.address, { x, y });
+        });
+        reports.forEach((report) => {
+          const reporterAddr = report.reporter_address ?? report.reporterAddress ?? "";
+          const reporterPos = directPositions.get(reporterAddr) ?? center;
+          const entries = Array.isArray(report?.peers) ? report.peers : [];
+          entries.forEach((entry) => {
+            const address = entry.address ?? "--";
+            if (directByAddress.has(address)) {
+              return;
+            }
+            const target = indirectPositions.get(address);
+            if (!target) return;
+            const line = createEl("line", {
+              x1: reporterPos.x.toString(),
+              y1: reporterPos.y.toString(),
+              x2: target.x.toString(),
+              y2: target.y.toString(),
+              class: "peer-line peer-line-indirect",
+            });
+            svg.appendChild(line);
+          });
+        });
+        indirectNodes.forEach((peer) => {
+          const target = indirectPositions.get(peer.address);
+          if (!target) return;
+          const node = createEl("circle", {
+            cx: target.x.toString(),
+            cy: target.y.toString(),
+            r: "9",
+            class: "peer-node indirect-node",
+          });
+          svg.appendChild(node);
+          const label = makeLabel(peer.address, target.x, target.y - 12);
+          const title = createEl("title", {});
+          title.textContent = peer.address;
+          node.appendChild(title);
+          attachHover(node, label);
+        });
+        const local = createEl("circle", {
+          cx: center.x.toString(),
+          cy: center.y.toString(),
+          r: "14",
+          class: "peer-node local-node",
+        });
+        svg.appendChild(local);
+        const localLabel = createEl("text", {
+          x: center.x.toString(),
+          y: (center.y + 26).toString(),
+          "text-anchor": "middle",
+          class: "peer-label",
+        });
+        localLabel.textContent = "local";
+        svg.appendChild(localLabel);
+      }
+
+      async function callRpc(method, params = []) {
+        const response = await fetch(ui.rpcUrl.value, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: Date.now(),
+            method,
+            params,
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        if (payload.error) {
+          throw new Error(payload.error.message || "RPC error");
+        }
+        return payload.result;
+      }
+
+      async function refreshMinedBlocks() {
+        try {
+          const mined = await callRpc("hegemon_minedBlockTimestamps");
+          minedTimestampCache = mined.map((entry) => ({
+            height: entry.height,
+            timestampMs: entry.timestamp_ms ?? entry.timestampMs ?? null,
+          }));
+        } catch (error) {
+          console.error(error);
+          minedTimestampCache = [];
+        }
+      }
+
+      async function refresh() {
+        setStatus("Loading...", "warn");
+        try {
+          const [consensus, mining, telemetry] = await Promise.all([
+            callRpc("hegemon_consensusStatus"),
+            callRpc("hegemon_miningStatus"),
+            callRpc("hegemon_telemetry"),
+          ]);
+
+          ui.height.textContent = formatNumber(consensus.height);
+          ui.bestHash.textContent = `Best hash: ${formatHash(consensus.best_hash)}`;
+          ui.hashRate.textContent = formatRate(mining.hash_rate);
+          ui.miningThreads.textContent = `Threads: ${formatNumber(mining.threads)} | Mining: ${
+            mining.is_mining ? "Yes" : "No"
+          }`;
+          ui.difficulty.textContent = formatNumber(mining.difficulty);
+
+          const now = Date.now();
+          if (lastHeight !== null && consensus.height > lastHeight) {
+            const deltaBlocks = consensus.height - lastHeight;
+            const deltaSecs = (now - lastHeightTime) / 1000;
+            ui.blockInterval.textContent = `Avg block interval: ${formatDuration(
+              deltaSecs / deltaBlocks
+            )}`;
+          } else if (ui.blockInterval.textContent === "--") {
+            ui.blockInterval.textContent = "Avg block interval: --";
+          }
+          lastHeight = consensus.height;
+          lastHeightTime = now;
+          scheduleTimestampSync(consensus.height);
+          await refreshMinedBlocks();
+          renderFrequencyCharts(now);
+
+          ui.blocksMined.textContent = formatNumber(mining.blocks_found);
+          ui.blocksImported.textContent = `Imported: ${formatNumber(telemetry.blocks_imported)}`;
+
+          ui.peers.textContent = formatNumber(consensus.peers);
+          ui.syncing.textContent = `Syncing: ${consensus.syncing ? "Yes" : "No"}`;
+
+          ui.supplyDigest.textContent = consensus.supply_digest?.toString?.() ?? "--";
+          ui.stateRoot.textContent = `State root: ${formatHash(consensus.state_root)}`;
+
+          ui.lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+          setStatus("Connected", "ok");
+        } catch (error) {
+          setStatus("Disconnected", "bad");
+          ui.lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+          console.error(error);
+        }
+      }
+
+      function setBlockStatus(text) {
+        ui.blockStatus.textContent = text;
+      }
+
+      function openBlockModal() {
+        const nextHeight = Number.isFinite(lastHeight) ? lastHeight : 0;
+        ui.blockHeight.value = nextHeight.toString();
+        ui.blockModal.classList.remove("hidden");
+        setBlockStatus("Idle");
+      }
+
+      function closeBlockModal() {
+        ui.blockModal.classList.add("hidden");
+      }
+
+      async function loadBlockDetails() {
+        const height = Number(ui.blockHeight.value);
+        if (!Number.isFinite(height) || height < 0) {
+          setBlockStatus("Enter a valid height.");
+          return;
+        }
+        setBlockStatus("Loading block data...");
+        ui.blockHash.textContent = "--";
+        ui.blockHeader.textContent = "--";
+        ui.blockBody.textContent = "--";
+        try {
+          const blockHash = await callRpc("chain_getBlockHash", [height]);
+          if (!blockHash) {
+            setBlockStatus("No block at that height.");
+            return;
+          }
+          const [header, block] = await Promise.all([
+            callRpc("chain_getHeader", [blockHash]),
+            callRpc("chain_getBlock", [blockHash]),
+          ]);
+          ui.blockHash.textContent = blockHash;
+          ui.blockHeader.textContent = formatJson(header);
+          ui.blockBody.textContent = formatJson(block);
+          setBlockStatus("Loaded.");
+        } catch (error) {
+          console.error(error);
+          setBlockStatus("Failed to load block details.");
+        }
+      }
+
+      function setRecentStatus(text) {
+        ui.recentStatus.textContent = text;
+      }
+
+      function setPeerStatus(text) {
+        ui.peerStatus.textContent = text;
+      }
+
+      function openPeerModal() {
+        ui.peerListOutput.textContent = "--";
+        setPeerStatus("Loading peers...");
+        ui.peerModal.classList.remove("hidden");
+        renderPeerNetwork([]);
+        loadPeers();
+      }
+
+      function closePeerModal() {
+        ui.peerModal.classList.add("hidden");
+      }
+
+      async function loadPeers() {
+        setPeerStatus("Loading peers...");
+        ui.peerListOutput.textContent = "--";
+        try {
+          const graph = await callRpc("hegemon_peerGraph");
+          const peers = Array.isArray(graph?.peers) ? graph.peers : [];
+          if (!Array.isArray(peers) || peers.length === 0) {
+            let peerCount = null;
+            try {
+              const health = await callRpc("system_health");
+              peerCount = health?.peers;
+            } catch (error) {
+              console.warn("Failed to load system_health", error);
+            }
+            ui.peerListOutput.textContent =
+              peerCount === null || peerCount === undefined
+                ? "No peer details reported."
+                : `No peer details reported. Connected peers: ${formatNumber(peerCount)}.`;
+            setPeerStatus("No peer details reported.");
+            renderPeerNetwork([]);
+            return;
+          }
+          ui.peerListOutput.textContent = peers
+            .map((peer, index) => {
+              const peerId = peer.peer_id ?? peer.peerId ?? `peer-${index + 1}`;
+              const address = peer.address ?? "--";
+              const direction = peer.direction ?? "--";
+              const bestNumber = formatHeight(peer.best_height ?? peer.bestHeight);
+              const bestHash = formatHash(peer.best_hash ?? peer.bestHash);
+              const lastSeen = Number(peer.last_seen_secs ?? peer.lastSeenSecs ?? 0);
+              return `${peerId} | ${direction} | ${address} | best: ${bestNumber} @ ${bestHash} | seen ${formatNumber(
+                lastSeen
+              )}s ago`;
+            })
+            .join("\n");
+          setPeerStatus(`Loaded ${peers.length} peer(s).`);
+          renderPeerNetwork(graph);
+        } catch (error) {
+          console.error(error);
+          setPeerStatus(`Failed to load peers: ${formatRpcError(error)}`);
+          ui.peerListOutput.textContent = "Check that the node exposes hegemon_peerGraph.";
+          renderPeerNetwork([]);
+        }
+      }
+
+      async function getBestHeight() {
+        if (Number.isFinite(lastHeight)) {
+          return lastHeight;
+        }
+        const header = await callRpc("chain_getHeader");
+        return Number.parseInt(header.number, 16);
+      }
+
+      function openRecentModal() {
+        ui.recentCount.value = "7";
+        ui.recentList.textContent = "--";
+        setRecentStatus("Idle");
+        ui.recentModal.classList.remove("hidden");
+      }
+
+      function closeRecentModal() {
+        ui.recentModal.classList.add("hidden");
+      }
+
+      async function loadRecentHashes() {
+        const count = Math.floor(Number(ui.recentCount.value));
+        if (!Number.isFinite(count) || count < 1) {
+          setRecentStatus("Enter a valid count.");
+          return;
+        }
+        setRecentStatus("Loading hashes...");
+        ui.recentList.textContent = "--";
+        try {
+          const best = await getBestHeight();
+          const heights = [];
+          for (let i = 0; i < count; i += 1) {
+            const height = best - i;
+            if (height < 0) break;
+            heights.push(height);
+          }
+          const hashes = await Promise.all(
+            heights.map((height) => callRpc("chain_getBlockHash", [height]))
+          );
+          ui.recentList.textContent = heights
+            .map((height, index) => `${height}: ${hashes[index] ?? "--"}`)
+            .join("\n");
+          setRecentStatus(`Loaded ${heights.length} hashes (best: ${best}).`);
+        } catch (error) {
+          console.error(error);
+          setRecentStatus("Failed to load hashes.");
+        }
+      }
+
+      async function scheduleTimestampSync(bestHeight) {
+        timestampTargetHeight = bestHeight;
+        if (timestampSyncInProgress) {
+          return;
+        }
+        timestampSyncInProgress = true;
+        try {
+          let nextHeight = timestampCache.length > 0 ? timestampCache[timestampCache.length - 1].height + 1 : 0;
+          if (nextHeight > bestHeight) {
+            timestampSyncInProgress = false;
+            return;
+          }
+          while (nextHeight <= bestHeight) {
+            const end = Math.min(bestHeight, nextHeight + TIMESTAMP_BATCH - 1);
+            const batch = await callRpc("hegemon_blockTimestamps", [nextHeight, end]);
+            for (const entry of batch) {
+              timestampCache.push({
+                height: entry.height,
+                timestampMs: entry.timestamp_ms ?? entry.timestampMs ?? null,
+              });
+            }
+            nextHeight = end + 1;
+            renderFrequencyCharts(Date.now());
+            if (!autoRefresh) {
+              break;
+            }
+          }
+        } catch (error) {
+          console.error(error);
+        } finally {
+          timestampSyncInProgress = false;
+        }
+      }
+
+      function startAuto() {
+        if (intervalHandle) return;
+        intervalHandle = setInterval(refresh, POLL_MS);
+      }
+
+      function stopAuto() {
+        if (intervalHandle) {
+          clearInterval(intervalHandle);
+          intervalHandle = null;
+        }
+      }
+
+      function toggleAuto() {
+        autoRefresh = !autoRefresh;
+        ui.auto.textContent = `Auto: ${autoRefresh ? "On" : "Off"}`;
+        if (autoRefresh) {
+          startAuto();
+          refresh();
+        } else {
+          stopAuto();
+        }
+      }
+
+      function init() {
+        ui.rpcUrl.value = localStorage.getItem("hegemonRpcUrl") || DEFAULT_RPC;
+        ui.bucketMinutes.value = localStorage.getItem("hegemonBucketMinutes") || DEFAULT_BUCKET_MINUTES;
+        ui.chartRange.textContent = "Syncing timestamps...";
+        ui.minedRange.textContent = "Syncing timestamps...";
+        const syncScroll = (source, target) => {
+          if (isSyncingScroll) return;
+          isSyncingScroll = true;
+          target.scrollLeft = source.scrollLeft;
+          requestAnimationFrame(() => {
+            isSyncingScroll = false;
+          });
+        };
+        ui.frequencyBars.addEventListener("scroll", () => syncScroll(ui.frequencyBars, ui.minedBars));
+        ui.minedBars.addEventListener("scroll", () => syncScroll(ui.minedBars, ui.frequencyBars));
+        ui.rpcUrl.addEventListener("change", () => {
+          localStorage.setItem("hegemonRpcUrl", ui.rpcUrl.value.trim());
+          refresh();
+        });
+        ui.bucketMinutes.addEventListener("change", () => {
+          const next = clampBucketMinutes(Number(ui.bucketMinutes.value));
+          ui.bucketMinutes.value = next.toString();
+          localStorage.setItem("hegemonBucketMinutes", ui.bucketMinutes.value);
+          renderFrequencyCharts(Date.now());
+        });
+        ui.refresh.addEventListener("click", refresh);
+        ui.auto.addEventListener("click", toggleAuto);
+        ui.blockDetails.addEventListener("click", openBlockModal);
+        ui.blockClose.addEventListener("click", closeBlockModal);
+        ui.blockFetch.addEventListener("click", loadBlockDetails);
+        ui.blockHeight.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            loadBlockDetails();
+          }
+        });
+        ui.blockModal.addEventListener("click", (event) => {
+          if (event.target === ui.blockModal) {
+            closeBlockModal();
+          }
+        });
+        ui.recentHashes.addEventListener("click", openRecentModal);
+        ui.recentClose.addEventListener("click", closeRecentModal);
+        ui.recentFetch.addEventListener("click", loadRecentHashes);
+        ui.recentCount.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            loadRecentHashes();
+          }
+        });
+        ui.recentModal.addEventListener("click", (event) => {
+          if (event.target === ui.recentModal) {
+            closeRecentModal();
+          }
+        });
+        ui.peerList.addEventListener("click", openPeerModal);
+        ui.peerClose.addEventListener("click", closePeerModal);
+        ui.peerFetch.addEventListener("click", loadPeers);
+        ui.peerModal.addEventListener("click", (event) => {
+          if (event.target === ui.peerModal) {
+            closePeerModal();
+          }
+        });
+        startAuto();
+        refresh();
+      }
+
+      init();
+    </script>
+  </body>
+</html>

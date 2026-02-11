@@ -34,7 +34,19 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! let service = ProductionRpcService::new(client.clone(), peer_count.clone(), sync_status.clone());
+//! let service = ProductionRpcService::new(
+//!     client.clone(),
+//!     peer_count.clone(),
+//!     sync_status.clone(),
+//!     peer_details.clone(),
+//!     peer_graph_reports.clone(),
+//!     local_peer_id,
+//!     da_chunk_store.clone(),
+//!     pending_ciphertext_store.clone(),
+//!     mined_blocks.clone(),
+//!     mined_history.clone(),
+//!     miner_recipient,
+//! );
 //! let rpc_deps = FullDeps {
 //!     service: Arc::new(service),
 //!     pow_handle: pow_handle.clone(),
@@ -49,16 +61,22 @@
 //! ```
 
 use super::archive::ArchiveMarketService;
-use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, TelemetrySnapshot};
+use super::hegemon::{
+    BlockTimestamp, ConsensusStatus, HegemonService, PeerDetail, PeerGraphPeer,
+    PeerGraphReportSnapshot, PeerGraphSnapshot, StorageFootprint, TelemetrySnapshot,
+};
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::{Decode, Encode};
+use network::PeerId;
 use pallet_shielded_pool::types::{
     BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
 };
+use pallet_timestamp;
 use parking_lot::Mutex as ParkingMutex;
 use runtime::apis::{ArchiveMarketApi, ConsensusApi, ShieldedPoolApi};
 use runtime::AccountId;
+use sc_client_api::BlockBackend;
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
@@ -71,7 +89,10 @@ use std::sync::{
 use std::time::Instant;
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
-use crate::substrate::service::{DaChunkStore, PendingCiphertextStore};
+use crate::substrate::mining_worker::MinedBlockRecord;
+use crate::substrate::service::PeerGraphReport;
+use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
+use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 
 /// Default difficulty bits when runtime API query fails
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
@@ -97,12 +118,30 @@ where
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     /// Connected peer count snapshot
     peer_count: Arc<AtomicUsize>,
+    /// Connected peer detail snapshots
+    peer_details: Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
+    /// Peer graph reports from connected peers
+    peer_graph_reports: Arc<parking_lot::RwLock<HashMap<PeerId, PeerGraphReport>>>,
+    /// Local PQ peer id (if configured)
+    local_peer_id: Option<PeerId>,
     /// Sync status flag (true means syncing)
     sync_status: Arc<AtomicBool>,
     /// Node start time for uptime calculation
     start_time: Instant,
+    /// Mined block records (local node)
+    mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
+    /// Cached mined-by-address history (full chain scan)
+    mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
+    /// Miner recipient address bytes (if configured)
+    miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
     /// Phantom data for the block type
     _phantom: PhantomData<Block>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct MinedHistoryCache {
+    last_scanned: Option<u64>,
+    timestamps: Vec<BlockTimestamp>,
 }
 
 impl<C, Block> ProductionRpcService<C, Block>
@@ -120,16 +159,28 @@ where
         client: Arc<C>,
         peer_count: Arc<AtomicUsize>,
         sync_status: Arc<AtomicBool>,
+        peer_details: Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
+        peer_graph_reports: Arc<parking_lot::RwLock<HashMap<PeerId, PeerGraphReport>>>,
+        local_peer_id: Option<PeerId>,
         da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
         pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
+        mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
+        mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
+        miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
     ) -> Self {
         Self {
             client,
             peer_count,
             sync_status,
+            peer_details,
+            peer_graph_reports,
+            local_peer_id,
             da_chunk_store,
             pending_ciphertext_store,
             start_time: Instant::now(),
+            mined_blocks,
+            mined_history,
+            miner_recipient,
             _phantom: PhantomData,
         }
     }
@@ -158,7 +209,13 @@ where
 impl<C, Block> HegemonService for ProductionRpcService<C, Block>
 where
     Block: BlockT,
-    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
+    C: ProvideRuntimeApi<Block>
+        + HeaderBackend<Block>
+        + BlockBackend<Block>
+        + Send
+        + Sync
+        + 'static,
+    sp_runtime::traits::NumberFor<Block>: From<u64>,
     C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
 {
     fn consensus_status(&self) -> ConsensusStatus {
@@ -199,12 +256,13 @@ where
 
     fn telemetry_snapshot(&self) -> TelemetrySnapshot {
         let uptime = self.start_time.elapsed();
+        let blocks_mined = self.mined_blocks.lock().len() as u64;
 
         TelemetrySnapshot {
             uptime_secs: uptime.as_secs(),
             tx_count: 0, // TODO: Wire to transaction metrics
             blocks_imported: self.best_number(),
-            blocks_mined: 0,     // TODO: Wire to mining metrics
+            blocks_mined,
             memory_bytes: 0,     // TODO: Wire to memory metrics
             network_rx_bytes: 0, // TODO: Wire to network metrics
             network_tx_bytes: 0, // TODO: Wire to network metrics
@@ -232,6 +290,193 @@ where
 
     fn current_height(&self) -> u64 {
         self.best_number()
+    }
+
+    fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String> {
+        const MAX_RANGE: u64 = 1000;
+        if start > end {
+            return Err("start must be <= end".to_string());
+        }
+        let best = self.best_number();
+        let clamped_end = end.min(best);
+        let count = clamped_end.saturating_sub(start).saturating_add(1);
+        if count > MAX_RANGE {
+            return Err(format!(
+                "range too large (max {MAX_RANGE} blocks per request); requested {count}"
+            ));
+        }
+
+        let mut out = Vec::with_capacity(count as usize);
+        for number in start..=clamped_end {
+            let hash = self
+                .client
+                .hash(sp_runtime::traits::NumberFor::<Block>::from(number))
+                .map_err(|e| format!("failed to fetch hash for {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block hash for {number}"))?;
+            let block = self
+                .client
+                .block(hash)
+                .map_err(|e| format!("failed to fetch block {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block {number}"))?
+                .block;
+            let timestamp_ms = extract_block_timestamp(&block);
+            out.push(BlockTimestamp {
+                height: number,
+                timestamp_ms,
+            });
+        }
+
+        Ok(out)
+    }
+
+    fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String> {
+        let miner_recipient = match self.miner_recipient {
+            Some(recipient) => recipient,
+            None => return Ok(vec![]),
+        };
+
+        let best = self.best_number();
+        let start = {
+            let cache = self.mined_history.lock();
+            cache
+                .last_scanned
+                .map(|value| value.saturating_add(1))
+                .unwrap_or(0)
+        };
+
+        if start > best {
+            return Ok(self.mined_history.lock().timestamps.clone());
+        }
+
+        let mut new_entries = Vec::new();
+        for number in start..=best {
+            let hash = self
+                .client
+                .hash(sp_runtime::traits::NumberFor::<Block>::from(number))
+                .map_err(|e| format!("failed to fetch hash for {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block hash for {number}"))?;
+            let block = self
+                .client
+                .block(hash)
+                .map_err(|e| format!("failed to fetch block {number}: {e:?}"))?
+                .ok_or_else(|| format!("missing block {number}"))?
+                .block;
+            if let Some(recipient) = extract_coinbase_recipient(&block) {
+                if recipient == miner_recipient {
+                    let timestamp_ms = extract_block_timestamp(&block);
+                    new_entries.push(BlockTimestamp {
+                        height: number,
+                        timestamp_ms,
+                    });
+                }
+            }
+        }
+
+        let mut cache = self.mined_history.lock();
+        cache.last_scanned = Some(best);
+        cache.timestamps.extend(new_entries);
+        Ok(cache.timestamps.clone())
+    }
+
+    fn peer_list(&self) -> Vec<PeerDetail> {
+        let now = Instant::now();
+        let peers = self.peer_details.read();
+        peers
+            .values()
+            .map(|peer| PeerDetail {
+                peer_id: format!("0x{}", hex::encode(peer.peer_id)),
+                address: peer.addr.to_string(),
+                direction: if peer.is_outbound {
+                    "outbound".to_string()
+                } else {
+                    "inbound".to_string()
+                },
+                best_height: peer.best_height,
+                best_hash: format!("0x{}", hex::encode(peer.best_hash)),
+                last_seen_secs: now.duration_since(peer.last_seen).as_secs(),
+            })
+            .collect()
+    }
+
+    fn peer_graph(&self) -> PeerGraphSnapshot {
+        let peers = self.peer_list();
+        let now = Instant::now();
+        let peer_details = self.peer_details.read();
+        let reports = self.peer_graph_reports.read();
+        let report_entries = reports
+            .iter()
+            .map(|(peer_id, report)| {
+                let reporter_address = peer_details
+                    .get(peer_id)
+                    .map(|peer| peer.addr.to_string())
+                    .unwrap_or_else(|| "--".to_string());
+                PeerGraphReportSnapshot {
+                    reporter_peer_id: format!("0x{}", hex::encode(peer_id)),
+                    reporter_address,
+                    reported_at_secs: now.duration_since(report.reported_at).as_secs(),
+                    peers: report
+                        .peers
+                        .iter()
+                        .map(|entry| PeerGraphPeer {
+                            peer_id: format!("0x{}", hex::encode(entry.peer_id)),
+                            address: entry.addr.to_string(),
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        PeerGraphSnapshot {
+            local_peer_id: self
+                .local_peer_id
+                .map(|peer_id| format!("0x{}", hex::encode(peer_id)))
+                .unwrap_or_else(|| "--".to_string()),
+            peers,
+            reports: report_entries,
+        }
+    }
+}
+
+fn extract_block_timestamp<Block: BlockT>(block: &Block) -> Option<u64> {
+    for extrinsic in block.extrinsics().iter() {
+        if let Some(timestamp) = try_decode_timestamp::<Block>(extrinsic) {
+            return Some(timestamp);
+        }
+    }
+    None
+}
+
+fn extract_coinbase_recipient<Block: BlockT>(
+    block: &Block,
+) -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
+    for extrinsic in block.extrinsics().iter() {
+        if let Some(recipient) = try_decode_coinbase_recipient::<Block>(extrinsic) {
+            return Some(recipient);
+        }
+    }
+    None
+}
+
+fn try_decode_timestamp<Block: BlockT>(extrinsic: &Block::Extrinsic) -> Option<u64> {
+    use codec::Decode;
+    let bytes = extrinsic.encode();
+    let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
+    match decoded.function {
+        runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { now }) => Some(now),
+        _ => None,
+    }
+}
+
+fn try_decode_coinbase_recipient<Block: BlockT>(
+    extrinsic: &Block::Extrinsic,
+) -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
+    use codec::Decode;
+    let bytes = extrinsic.encode();
+    let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
+    match decoded.function {
+        runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::mint_coinbase {
+            coinbase_data,
+        }) => Some(coinbase_data.recipient_address),
+        _ => None,
     }
 }
 

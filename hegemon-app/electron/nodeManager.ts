@@ -106,6 +106,10 @@ export class NodeManager extends EventEmitter {
       args.push('--rpc-methods', rpcMethods);
     }
 
+    if (options.rpcCorsAll) {
+      args.push('--rpc-cors=all');
+    }
+
     if (options.nodeName) {
       args.push('--name', options.nodeName);
     }
