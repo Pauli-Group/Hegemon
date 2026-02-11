@@ -16,6 +16,15 @@ pub const DEFAULT_ADDR_LIMIT: u16 = 64;
 /// Default maximum number of outbound dials we attempt per received `Addrs`.
 pub const DEFAULT_DIAL_BATCH: usize = 4;
 
+/// Default maximum number of peer graph entries returned in one response.
+pub const DEFAULT_PEER_GRAPH_LIMIT: u16 = 64;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerGraphEntry {
+    pub peer_id: [u8; 32],
+    pub addr: SocketAddr,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DiscoveryMessage {
     /// Tell the peer which TCP port we listen on.
@@ -27,6 +36,10 @@ pub enum DiscoveryMessage {
     GetAddrs { limit: u16 },
     /// Return a bounded list of addresses.
     Addrs { addrs: Vec<SocketAddr> },
+    /// Request a bounded list of connected peers.
+    GetPeerGraph { limit: u16 },
+    /// Return a bounded list of connected peers.
+    PeerGraph { peers: Vec<PeerGraphEntry> },
 }
 
 pub fn is_dialable_addr(addr: &SocketAddr) -> bool {
@@ -41,6 +54,19 @@ mod tests {
     fn discovery_message_roundtrip() {
         let msg = DiscoveryMessage::Addrs {
             addrs: vec!["127.0.0.1:30333".parse().unwrap()],
+        };
+        let bytes = bincode::serialize(&msg).expect("serialize");
+        let decoded: DiscoveryMessage = bincode::deserialize(&bytes).expect("deserialize");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn peer_graph_message_roundtrip() {
+        let msg = DiscoveryMessage::PeerGraph {
+            peers: vec![PeerGraphEntry {
+                peer_id: [7u8; 32],
+                addr: "127.0.0.1:30333".parse().unwrap(),
+            }],
         };
         let bytes = bincode::serialize(&msg).expect("serialize");
         let decoded: DiscoveryMessage = bincode::deserialize(&bytes).expect("deserialize");

@@ -119,7 +119,7 @@ use crate::substrate::client::{
 };
 use crate::substrate::mining_worker::{
     create_production_mining_worker, create_production_mining_worker_mock_broadcast,
-    ChainStateProvider, MiningWorkerConfig,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -142,10 +142,12 @@ use consensus::{
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
+use hyper::http::{header, Method};
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
+use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 use rand::{rngs::OsRng, RngCore};
 use sc_client_api::BlockchainEvents;
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
@@ -165,6 +167,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Mutex};
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use url::Url;
+use wallet::address::ShieldedAddress;
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
@@ -176,6 +181,16 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+
+fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
+    let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
+    let decoded = ShieldedAddress::decode(&address).ok()?;
+    let mut out = [0u8; DIVERSIFIED_ADDRESS_SIZE];
+    out[0] = decoded.version;
+    out[1..5].copy_from_slice(&decoded.diversifier_index.to_le_bytes());
+    out[5..37].copy_from_slice(&decoded.pk_recipient);
+    Some(out)
+}
 
 type ShieldedPoolCall = pallet_shielded_pool::Call<runtime::Runtime>;
 
@@ -4697,6 +4712,29 @@ pub struct PqServiceConfig {
     pub max_peers: usize,
 }
 
+/// Snapshot of a connected PQ peer for RPC reporting.
+#[derive(Clone, Debug)]
+pub struct PeerConnectionSnapshot {
+    /// Peer identifier (raw 32 bytes).
+    pub peer_id: [u8; 32],
+    /// Observed socket address.
+    pub addr: std::net::SocketAddr,
+    /// Whether this connection was outbound.
+    pub is_outbound: bool,
+    /// Peer's reported best height.
+    pub best_height: u64,
+    /// Peer's reported best hash.
+    pub best_hash: [u8; 32],
+    /// Last time we heard from this peer.
+    pub last_seen: std::time::Instant,
+}
+
+#[derive(Clone, Debug)]
+pub struct PeerGraphReport {
+    pub reported_at: std::time::Instant,
+    pub peers: Vec<crate::substrate::discovery::PeerGraphEntry>,
+}
+
 impl Default for PqServiceConfig {
     fn default() -> Self {
         Self {
@@ -5523,6 +5561,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let mut pq_network_handle: Option<PqNetworkHandle> = None;
     let peer_count = Arc::new(AtomicUsize::new(0));
     let sync_status = Arc::new(AtomicBool::new(false));
+    let peer_details = Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
+    let peer_graph_reports = Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
 
     tracing::info!(
         chain = %chain_name,
@@ -5551,6 +5591,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     }
 
     // Auto-start mining if HEGEMON_MINE=1 is set
+    let mined_block_store = Arc::new(parking_lot::Mutex::new(Vec::<MinedBlockRecord>::new()));
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         pow_handle.start_mining();
@@ -5800,6 +5841,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let da_chunk_store_for_handler = Arc::clone(&da_chunk_store);
                 let da_request_tracker_for_handler = Arc::clone(&da_request_tracker);
                 let peer_count_for_rpc = Arc::clone(&peer_count);
+                let peer_details_for_events = Arc::clone(&peer_details);
+                let peer_graph_reports_for_events = Arc::clone(&peer_graph_reports);
 
                 // Spawn the PQ network event handler task with sync integration
                 let pq_backend_for_events = Arc::clone(&pq_backend);
@@ -5809,7 +5852,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                    async move {
 	                        use crate::substrate::discovery::{
 	                            is_dialable_addr, DiscoveryMessage, DEFAULT_ADDR_LIMIT,
-	                            DEFAULT_DIAL_BATCH, DISCOVERY_PROTOCOL,
+	                            DEFAULT_DIAL_BATCH, DEFAULT_PEER_GRAPH_LIMIT, DISCOVERY_PROTOCOL,
 	                        };
 	                        use rand::seq::SliceRandom;
 	                        use std::collections::HashMap;
@@ -5849,6 +5892,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                        let mut discovery_tick =
 	                            tokio::time::interval(Duration::from_secs(discovery_tick_secs));
 	                        discovery_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+	                        let peer_graph_tick_secs = std::env::var("HEGEMON_PQ_PEER_GRAPH_TICK_SECS")
+	                            .ok()
+	                            .and_then(|s| s.parse::<u64>().ok())
+	                            .unwrap_or(30)
+	                            .max(5);
+	                        let mut peer_graph_tick =
+	                            tokio::time::interval(Duration::from_secs(peer_graph_tick_secs));
+	                        peer_graph_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 	                        tracing::info!(
 	                            min_peers = discovery_min_peers,
 	                            tick_secs = discovery_tick_secs,
@@ -5885,7 +5936,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             );
 
 	                            match event {
-	                                PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
+                                PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
                                     tracing::info!(
                                         peer = %hex::encode(peer_id),
                                         addr = %addr,
@@ -5902,6 +5953,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
 
                                     connected_peers.insert(peer_id, (addr, is_outbound));
+                                    peer_details_for_events.write().insert(
+                                        peer_id,
+                                        PeerConnectionSnapshot {
+                                            peer_id,
+                                            addr,
+                                            is_outbound,
+                                            best_height: 0,
+                                            best_hash: [0u8; 32],
+                                            last_seen: Instant::now(),
+                                        },
+                                    );
+                                    let msg = DiscoveryMessage::GetPeerGraph {
+                                        limit: DEFAULT_PEER_GRAPH_LIMIT,
+                                    };
+                                    if let Ok(encoded) = bincode::serialize(&msg) {
+                                        let _ = pq_handle_for_status
+                                            .send_message(
+                                                peer_id,
+                                                DISCOVERY_PROTOCOL.to_string(),
+                                                encoded,
+                                            )
+                                            .await;
+                                    }
 
                                     // Record dialed addresses so we can share them with others.
                                     if is_outbound && is_dialable_addr(&addr) {
@@ -6027,6 +6101,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             let _ = peer_store.record_disconnected(addr);
                                         }
                                     }
+                                    peer_details_for_events.write().remove(&peer_id);
+                                    peer_graph_reports_for_events.write().remove(&peer_id);
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
                                         reason = %reason,
@@ -6073,7 +6149,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         .await;
                                                 }
                                             }
-	                                            Ok(DiscoveryMessage::Addrs { addrs }) => {
+                                            Ok(DiscoveryMessage::Addrs { addrs }) => {
 	                                                // Persist learned addrs.
 	                                                let learned: Vec<_> = addrs
 	                                                    .into_iter()
@@ -6117,6 +6193,48 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         });
                                                         dialed += 1;
                                                     }
+                                                }
+                                            }
+                                            Ok(DiscoveryMessage::GetPeerGraph { limit }) => {
+                                                let limit = limit.min(DEFAULT_PEER_GRAPH_LIMIT) as usize;
+                                                let mut peers: Vec<_> = connected_peers
+                                                    .iter()
+                                                    .map(|(peer_id, (addr, _))| {
+                                                        crate::substrate::discovery::PeerGraphEntry {
+                                                            peer_id: *peer_id,
+                                                            addr: *addr,
+                                                        }
+                                                    })
+                                                    .collect();
+                                                peers.shuffle(&mut rand::thread_rng());
+                                                peers.truncate(limit);
+                                                let msg = DiscoveryMessage::PeerGraph { peers };
+                                                if let Ok(encoded) = bincode::serialize(&msg) {
+                                                    let _ = pq_handle_for_sync
+                                                        .send_message(
+                                                            peer_id,
+                                                            DISCOVERY_PROTOCOL.to_string(),
+                                                            encoded,
+                                                        )
+                                                        .await;
+                                                }
+                                            }
+                                            Ok(DiscoveryMessage::PeerGraph { peers }) => {
+                                                let addr = connected_peers
+                                                    .get(&peer_id)
+                                                    .map(|(addr, _)| *addr);
+                                                peer_graph_reports_for_events.write().insert(
+                                                    peer_id,
+                                                    PeerGraphReport {
+                                                        reported_at: Instant::now(),
+                                                        peers,
+                                                    },
+                                                );
+                                                if addr.is_none() {
+                                                    tracing::debug!(
+                                                        peer = %hex::encode(peer_id),
+                                                        "Received peer graph from unknown addr"
+                                                    );
                                                 }
                                             }
                                             Err(err) => {
@@ -6287,6 +6405,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             sync.on_block_announce(peer_id, &announce);
                                             sync_status_for_events
                                                 .store(sync.is_syncing(), Ordering::Relaxed);
+                                            if let Some(entry) =
+                                                peer_details_for_events.write().get_mut(&peer_id)
+                                            {
+                                                if announce.number > entry.best_height {
+                                                    entry.best_height = announce.number;
+                                                    entry.best_hash = announce.hash;
+                                                }
+                                                entry.last_seen = Instant::now();
+                                            }
                                         }
                                     }
                                 }
@@ -6360,6 +6487,26 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                            let _ = pq_backend.connect(addr).await;
 	                                        });
 	                                        dialed += 1;
+	                                    }
+	                                }
+	                                _ = peer_graph_tick.tick() => {
+	                                    let peers: Vec<_> = connected_peers.keys().copied().collect();
+	                                    if peers.is_empty() {
+	                                        continue;
+	                                    }
+	                                    let get_graph = DiscoveryMessage::GetPeerGraph {
+	                                        limit: DEFAULT_PEER_GRAPH_LIMIT,
+	                                    };
+	                                    if let Ok(encoded) = bincode::serialize(&get_graph) {
+	                                        for peer_id in peers {
+	                                            let _ = pq_handle_for_sync
+	                                                .send_message(
+	                                                    peer_id,
+	                                                    DISCOVERY_PROTOCOL.to_string(),
+	                                                    encoded.clone(),
+	                                                )
+	                                                .await;
+	                                        }
 	                                    }
 	                                }
 	                            }
@@ -6545,6 +6692,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let da_sample_timeout_for_import = da_sample_timeout;
                 let da_sampling_secret_for_import = da_sampling_secret;
                 let pq_handle_for_da_import = pq_handle_for_da_import.clone();
+                let peer_details_for_import = Arc::clone(&peer_details);
 
                 task_manager.spawn_handle().spawn(
                     "block-import-handler",
@@ -7323,6 +7471,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                {
 	                                    let mut sync = sync_service_for_import.lock().await;
 	                                    sync.on_block_announce(peer_id, &announce);
+	                                }
+	                                if let Some(entry) = peer_details_for_import.write().get_mut(&peer_id) {
+	                                    if announce.number > entry.best_height {
+	                                        entry.best_height = announce.number;
+	                                        entry.best_hash = announce.hash;
+	                                    }
+	                                    entry.last_seen = Instant::now();
 	                                }
 
 	                                let crate::substrate::network_bridge::BlockAnnounce {
@@ -8155,6 +8310,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // Check if we have a PQ network handle for live broadcasting
         if let Some(pq_handle) = pq_network_handle.clone() {
             let sync_status_for_mining = Arc::clone(&sync_status);
+            let mined_blocks_for_worker = Arc::clone(&mined_block_store);
             tracing::info!(
                 threads = worker_config.threads,
                 test_mode = worker_config.test_mode,
@@ -8170,6 +8326,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         chain_state,
                         pq_handle,
                         worker_config,
+                        mined_blocks_for_worker,
                     )
                     .with_sync_status(sync_status_for_mining);
 
@@ -8178,6 +8335,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             );
         } else {
             let sync_status_for_mining = Arc::clone(&sync_status);
+            let mined_blocks_for_worker = Arc::clone(&mined_block_store);
             // Production mode without network broadcasting
             tracing::info!(
                 threads = worker_config.threads,
@@ -8193,6 +8351,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         pow_handle_for_worker,
                         chain_state,
                         worker_config,
+                        mined_blocks_for_worker,
                     )
                     .with_sync_status(sync_status_for_mining);
 
@@ -8233,12 +8392,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let rpc_deny_unsafe = sc_rpc_server::utils::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
 
     // Create production RPC service with client access
+    let miner_recipient = miner_recipient_from_env();
+    let mined_history = Arc::new(parking_lot::Mutex::new(Default::default()));
     let rpc_service = Arc::new(ProductionRpcService::new(
         client.clone(),
         Arc::clone(&peer_count),
         Arc::clone(&sync_status),
+        Arc::clone(&peer_details),
+        Arc::clone(&peer_graph_reports),
+        rpc_peer_id,
         Arc::clone(&da_chunk_store),
         Arc::clone(&pending_ciphertext_store),
+        mined_block_store,
+        mined_history,
+        miner_recipient,
     ));
 
     // Create RPC module with all extensions
@@ -8314,7 +8481,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "archive_providerCount",
                             "archive_listContracts",
                             "archive_getContract",
-                            "rpc_methods"
+                            "rpc_methods",
+                            "hegemon_peerList",
+                            "hegemon_peerGraph"
                         ]
                     }));
                 result
@@ -8569,13 +8738,70 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     };
 
     // Spawn RPC server task
+    fn build_rpc_cors_layer(cors: &Option<Vec<String>>) -> CorsLayer {
+        match cors {
+            None => CorsLayer::permissive(),
+            Some(origins) if origins.is_empty() => {
+                CorsLayer::new().allow_origin(AllowOrigin::predicate(|_, _| false))
+            }
+            Some(origins) => {
+                let allowed = origins.clone();
+                let allow_origin = AllowOrigin::predicate(move |origin, _| {
+                    let origin_str = match origin.to_str() {
+                        Ok(value) => value,
+                        Err(_) => return false,
+                    };
+                    allowed
+                        .iter()
+                        .any(|pattern| origin_matches(origin_str, pattern))
+                });
+                CorsLayer::new()
+                    .allow_origin(allow_origin)
+                    .allow_methods([Method::POST, Method::OPTIONS])
+                    .allow_headers([header::CONTENT_TYPE, header::ACCEPT])
+            }
+        }
+    }
+
+    fn origin_matches(origin: &str, pattern: &str) -> bool {
+        if pattern == "null" {
+            return origin == "null";
+        }
+        let wildcard_port = pattern.ends_with(":*");
+        let parsed_pattern = if wildcard_port {
+            let trimmed = pattern.trim_end_matches(":*");
+            format!("{trimmed}:0")
+        } else {
+            pattern.to_string()
+        };
+        let pattern_url = match Url::parse(&parsed_pattern) {
+            Ok(url) => url,
+            Err(_) => return false,
+        };
+        let origin_url = match Url::parse(origin) {
+            Ok(url) => url,
+            Err(_) => return false,
+        };
+        if pattern_url.scheme() != origin_url.scheme() {
+            return false;
+        }
+        if pattern_url.host_str() != origin_url.host_str() {
+            return false;
+        }
+        if wildcard_port {
+            return true;
+        }
+        pattern_url.port_or_known_default() == origin_url.port_or_known_default()
+    }
+
+    let rpc_cors = config.rpc.cors.clone();
     let rpc_handle = task_manager.spawn_handle();
     rpc_handle.spawn("hegemon-rpc-server", Some("rpc"), async move {
         let addr = rpc_listen_addr;
 
         // Create HTTP middleware
         // Note: DenyUnsafe is injected via extension middleware below
-        let http_middleware = tower::ServiceBuilder::new();
+        let http_middleware = tower::ServiceBuilder::new().layer(build_rpc_cors_layer(&rpc_cors));
 
         let deny_unsafe = rpc_deny_unsafe;
 

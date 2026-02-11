@@ -12,6 +12,8 @@ import type {
   WalletStatus,
   WalletSyncResult
 } from './types';
+import blockMinedAudio from './assets/sounds/block-mined.wav';
+import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
 const contactsKey = 'hegemon.contacts';
@@ -228,13 +230,14 @@ const formatHash = (value: string | null | undefined) => {
 const buildBlockAlertPattern = (tone: BlockAlertTone): BlockAlertStep[] => {
   if (tone === 'self') {
     return [
-      { frequency: 880, duration: 0.12, gap: 0.05 },
-      { frequency: 1175, duration: 0.12 }
+      { frequency: 1480, duration: 0.08, gap: 0.05 },
+      { frequency: 1760, duration: 0.08, gap: 0.05 },
+      { frequency: 2090, duration: 0.12 }
     ];
   }
   return [
-    { frequency: 520, duration: 0.14, gap: 0.04 },
-    { frequency: 420, duration: 0.16 }
+    { frequency: 330, duration: 0.22, gap: 0.08 },
+    { frequency: 220, duration: 0.26 }
   ];
 };
 
@@ -402,6 +405,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
+  rpcCorsAll: false,
   seeds: 'hegemon.pauli.group'
 });
 
@@ -422,6 +426,7 @@ const buildTestnetConnection = (): NodeConnection => ({
   proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
+  rpcCorsAll: false,
   chainSpecPath: 'testnet',
   seeds: 'hegemon.pauli.group'
 });
@@ -492,6 +497,8 @@ export default function App() {
   const lastActivityRef = useRef(Date.now());
   const [blockAlertEnabled, setBlockAlertEnabled] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const blockMinedAudioRef = useRef<HTMLAudioElement | null>(null);
+  const blockReceivedAudioRef = useRef<HTMLAudioElement | null>(null);
   const blockAlertRef = useRef<{
     connectionId: string | null;
     blocksMined: number | null;
@@ -651,34 +658,58 @@ export default function App() {
     };
   }, []);
 
+  const playBlockTone = useCallback((tone: BlockAlertTone) => {
+    if (typeof window.AudioContext === 'undefined') {
+      return;
+    }
+    const context = audioContextRef.current ?? new window.AudioContext();
+    if (context.state === 'suspended') {
+      void context.resume();
+    }
+    audioContextRef.current = context;
+    const pattern = buildBlockAlertPattern(tone);
+    let cursor = context.currentTime + 0.02;
+    pattern.forEach((step) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = step.frequency;
+      gain.gain.setValueAtTime(0.0001, cursor);
+      gain.gain.exponentialRampToValueAtTime(0.18, cursor + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, cursor + step.duration);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(cursor);
+      oscillator.stop(cursor + step.duration);
+      cursor += step.duration + (step.gap ?? 0.06);
+    });
+  }, []);
+
   const playBlockAlert = useCallback(
     (tone: BlockAlertTone) => {
-      if (!blockAlertEnabled || typeof window.AudioContext === 'undefined') {
+      if (!blockAlertEnabled) {
         return;
       }
-      const context = audioContextRef.current ?? new window.AudioContext();
-      if (context.state === 'suspended') {
-        void context.resume();
+      const audioRef = tone === 'self' ? blockMinedAudioRef : blockReceivedAudioRef;
+      const audioSrc = tone === 'self' ? blockMinedAudio : blockReceivedAudio;
+      try {
+        if (!audioRef.current) {
+          audioRef.current = new Audio(audioSrc);
+          audioRef.current.preload = 'auto';
+        }
+        audioRef.current.currentTime = 0;
+        const playPromise = audioRef.current.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {
+            playBlockTone(tone);
+          });
+        }
+        return;
+      } catch {
+        playBlockTone(tone);
       }
-      audioContextRef.current = context;
-      const pattern = buildBlockAlertPattern(tone);
-      let cursor = context.currentTime + 0.02;
-      pattern.forEach((step) => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.value = step.frequency;
-        gain.gain.setValueAtTime(0.0001, cursor);
-        gain.gain.exponentialRampToValueAtTime(0.18, cursor + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, cursor + step.duration);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(cursor);
-        oscillator.stop(cursor + step.duration);
-        cursor += step.duration + (step.gap ?? 0.06);
-      });
     },
-    [blockAlertEnabled]
+    [blockAlertEnabled, playBlockTone]
   );
 
   useEffect(() => {
@@ -1037,6 +1068,7 @@ export default function App() {
         seeds: activeConnection.seeds || undefined,
         rpcExternal: activeConnection.rpcExternal,
         rpcMethods: activeConnection.rpcMethods,
+        rpcCorsAll: activeConnection.rpcCorsAll,
         nodeName: activeConnection.nodeName || undefined,
         ciphertextDaRetentionBlocks: activeConnection.ciphertextDaRetentionBlocks,
         proofDaRetentionBlocks: activeConnection.proofDaRetentionBlocks,
@@ -1690,6 +1722,7 @@ export default function App() {
 
   const normalizedStorePath = storePath.trim();
   const pendingTransactions = walletStatus?.pending ?? [];
+  const walletNoteDetails = walletStatus?.noteDetails ?? [];
   const pendingByTxId = useMemo(() => {
     const map = new Map<string, typeof pendingTransactions[number]>();
     pendingTransactions.forEach((entry) => {
@@ -2357,6 +2390,24 @@ export default function App() {
                 <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
                     type="checkbox"
+                    checked={Boolean(activeConnection.rpcCorsAll)}
+                    onChange={(event) => updateActiveConnection({ rpcCorsAll: event.target.checked })}
+                  />
+                  Enable RPC CORS
+                </label>
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                  <input
+                    type="checkbox"
+                    checked={activeConnection.rpcMethods === 'unsafe'}
+                    onChange={(event) =>
+                      updateActiveConnection({ rpcMethods: event.target.checked ? 'unsafe' : 'safe' })
+                    }
+                  />
+                  Enable unsafe RPC methods
+                </label>
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                  <input
+                    type="checkbox"
                     checked={blockAlertEnabled}
                     onChange={(event) => setBlockAlertEnabled(event.target.checked)}
                   />
@@ -2924,6 +2975,68 @@ export default function App() {
           ) : (
             <p className="text-sm text-surfaceMuted">No note summary.</p>
           )}
+        </div>
+        <div>
+          <details className="rounded-lg border border-surfaceMuted/10 bg-midnight/30 p-3">
+            <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm text-surfaceMuted">
+              <span className="label">All notes</span>
+              <span className="text-xs text-surfaceMuted/80">{walletNoteDetails.length} total</span>
+            </summary>
+            <div className="mt-3 space-y-3">
+              {walletNoteDetails.length ? (
+                walletNoteDetails.map((note) => (
+                  <div key={note.commitment} className="rounded-lg border border-surfaceMuted/10 bg-midnight/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium">Note {formatNumber(note.position)}</p>
+                      <span className="text-xs text-surfaceMuted">{note.status}</span>
+                    </div>
+                    <div className="grid gap-1 text-sm text-surfaceMuted">
+                      <div className="flex justify-between">
+                        <span>Balance</span>
+                        <span className="mono">
+                          {note.assetId === 0 ? formatHgm(note.value) : note.value.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Asset</span>
+                        <span className="mono">{note.assetId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Address</span>
+                        <span className="mono break-all">{note.address}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Memo</span>
+                        <span className="mono break-all">{note.memo ?? '—'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Diversifier</span>
+                        <span className="mono">{note.diversifierIndex}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Position</span>
+                        <span className="mono">{formatNumber(note.position)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Ciphertext index</span>
+                        <span className="mono">{formatNumber(note.ciphertextIndex)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Commitment</span>
+                        <span className="mono break-all">{note.commitment}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Nullifier</span>
+                        <span className="mono break-all">{note.nullifier ?? '—'}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-surfaceMuted">No notes recorded yet.</p>
+              )}
+            </div>
+          </details>
         </div>
         <div>
           <p className="label">Connected to</p>

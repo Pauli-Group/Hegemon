@@ -44,7 +44,7 @@
 //! NOTE: This network does NOT use libp2p. All peer connections use PQ-Noise.
 //! - Bootnodes are specified via HEGEMON_SEEDS as host[:port] (defaults to 30333)
 //! - Peer discovery is handled by PQ address exchange (`/hegemon/discovery/pq/1`) and cached at `<base-path>/pq-peers.bin`
-//! - Use system_health RPC for peer count, NOT system_peers
+//! - Use system_health RPC for peer count, NOT system_peers (peer details via hegemon_peerList/peerGraph)
 //! - PqNetworkConfig: Configuration for PQ-secure networking
 //! - Protocol definitions for Substrate integration
 //! - Notification handlers for block and transaction gossip

@@ -101,6 +101,44 @@ pub struct TelemetrySnapshot {
     pub network_tx_bytes: u64,
 }
 
+/// Connected peer detail snapshot (PQ network)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerDetail {
+    /// Peer identifier (hex-encoded)
+    pub peer_id: String,
+    /// Observed socket address
+    pub address: String,
+    /// Connection direction ("inbound" or "outbound")
+    pub direction: String,
+    /// Peer's reported best height
+    pub best_height: u64,
+    /// Peer's reported best hash (hex-encoded)
+    pub best_hash: String,
+    /// Seconds since we last heard from the peer
+    pub last_seen_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerGraphPeer {
+    pub peer_id: String,
+    pub address: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerGraphReportSnapshot {
+    pub reporter_peer_id: String,
+    pub reporter_address: String,
+    pub reported_at_secs: u64,
+    pub peers: Vec<PeerGraphPeer>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerGraphSnapshot {
+    pub local_peer_id: String,
+    pub peers: Vec<PeerDetail>,
+    pub reports: Vec<PeerGraphReportSnapshot>,
+}
+
 /// Storage footprint response
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StorageFootprint {
@@ -114,6 +152,15 @@ pub struct StorageFootprint {
     pub transactions_bytes: u64,
     /// Nullifier set size
     pub nullifiers_bytes: u64,
+}
+
+/// Block timestamp response
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockTimestamp {
+    /// Block height
+    pub height: u64,
+    /// Timestamp in milliseconds since epoch (None if not present)
+    pub timestamp_ms: Option<u64>,
 }
 
 /// Node config snapshot
@@ -205,6 +252,25 @@ pub trait HegemonApi {
     /// including chain spec identity, base path, listen addresses, and PQ settings.
     #[method(name = "nodeConfig")]
     async fn node_config(&self) -> RpcResult<NodeConfigSnapshot>;
+
+    /// Get block timestamps for a height range (inclusive).
+    ///
+    /// Returns an entry for each block height in the range. Timestamps are
+    /// extracted from the timestamp inherent when present.
+    #[method(name = "blockTimestamps")]
+    async fn block_timestamps(&self, start: u64, end: u64) -> RpcResult<Vec<BlockTimestamp>>;
+
+    /// Get timestamps for blocks mined by this node.
+    #[method(name = "minedBlockTimestamps")]
+    async fn mined_block_timestamps(&self) -> RpcResult<Vec<BlockTimestamp>>;
+
+    /// Get connected peer details (PQ network snapshot).
+    #[method(name = "peerList")]
+    async fn peer_list(&self) -> RpcResult<Vec<PeerDetail>>;
+
+    /// Get peer graph details (direct peers + reported peers).
+    #[method(name = "peerGraph")]
+    async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot>;
 }
 
 /// Trait for mining handle operations
@@ -241,6 +307,14 @@ pub trait HegemonService: Send + Sync {
     fn current_difficulty(&self) -> u32;
     /// Get current block height
     fn current_height(&self) -> u64;
+    /// Get block timestamps for a height range (inclusive).
+    fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String>;
+    /// Get timestamps for blocks mined by this node.
+    fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String>;
+    /// Get connected peer details (PQ network snapshot).
+    fn peer_list(&self) -> Vec<PeerDetail>;
+    /// Get peer graph details (direct peers + reported peers).
+    fn peer_graph(&self) -> PeerGraphSnapshot;
 }
 
 /// Hegemon RPC implementation
@@ -342,6 +416,26 @@ where
     async fn node_config(&self) -> RpcResult<NodeConfigSnapshot> {
         Ok(self.config_snapshot.clone())
     }
+
+    async fn block_timestamps(&self, start: u64, end: u64) -> RpcResult<Vec<BlockTimestamp>> {
+        self.service.block_timestamps(start, end).map_err(|e| {
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+        })
+    }
+
+    async fn mined_block_timestamps(&self) -> RpcResult<Vec<BlockTimestamp>> {
+        self.service.mined_block_timestamps().map_err(|e| {
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+        })
+    }
+
+    async fn peer_list(&self) -> RpcResult<Vec<PeerDetail>> {
+        Ok(self.service.peer_list())
+    }
+
+    async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot> {
+        Ok(self.service.peer_graph())
+    }
 }
 
 #[cfg(test)]
@@ -437,6 +531,52 @@ mod tests {
 
         fn current_height(&self) -> u64 {
             100
+        }
+
+        fn block_timestamps(&self, start: u64, end: u64) -> Result<Vec<BlockTimestamp>, String> {
+            if start > end {
+                return Err("start must be <= end".to_string());
+            }
+            Ok((start..=end)
+                .map(|height| BlockTimestamp {
+                    height,
+                    timestamp_ms: Some(1_700_000_000_000 + height),
+                })
+                .collect())
+        }
+
+        fn mined_block_timestamps(&self) -> Result<Vec<BlockTimestamp>, String> {
+            Ok(vec![BlockTimestamp {
+                height: 99,
+                timestamp_ms: Some(1_700_000_000_123),
+            }])
+        }
+
+        fn peer_list(&self) -> Vec<PeerDetail> {
+            vec![PeerDetail {
+                peer_id: "0xdeadbeef".to_string(),
+                address: "127.0.0.1:30333".to_string(),
+                direction: "outbound".to_string(),
+                best_height: 120,
+                best_hash: "0xabcdef".to_string(),
+                last_seen_secs: 3,
+            }]
+        }
+
+        fn peer_graph(&self) -> PeerGraphSnapshot {
+            PeerGraphSnapshot {
+                local_peer_id: "0xlocal".to_string(),
+                peers: self.peer_list(),
+                reports: vec![PeerGraphReportSnapshot {
+                    reporter_peer_id: "0xdeadbeef".to_string(),
+                    reporter_address: "127.0.0.1:30333".to_string(),
+                    reported_at_secs: 5,
+                    peers: vec![PeerGraphPeer {
+                        peer_id: "0xbeadfeed".to_string(),
+                        address: "10.0.0.5:30333".to_string(),
+                    }],
+                }],
+            }
         }
     }
 
