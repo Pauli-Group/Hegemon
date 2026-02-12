@@ -153,6 +153,13 @@ struct PeerConnection {
     msg_tx: mpsc::Sender<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerAdmission {
+    Inserted,
+    Duplicate,
+    MaxPeersReached,
+}
+
 /// PQ Network Backend
 ///
 /// Manages PQ-secure peer connections for Substrate networking.
@@ -180,6 +187,23 @@ pub struct PqNetworkBackend {
 }
 
 impl PqNetworkBackend {
+    async fn admit_peer(
+        peers: &Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
+        peer_id: [u8; 32],
+        connection: PeerConnection,
+        max_peers: usize,
+    ) -> PeerAdmission {
+        let mut peers_guard = peers.write().await;
+        if peers_guard.contains_key(&peer_id) {
+            return PeerAdmission::Duplicate;
+        }
+        if peers_guard.len() >= max_peers {
+            return PeerAdmission::MaxPeersReached;
+        }
+        peers_guard.insert(peer_id, connection);
+        PeerAdmission::Inserted
+    }
+
     /// Create a new PQ network backend
     pub fn new(identity: &PqPeerIdentity, config: PqNetworkBackendConfig) -> Self {
         let transport_config = SubstratePqTransportConfig {
@@ -291,22 +315,38 @@ impl PqNetworkBackend {
                                         match transport.upgrade_inbound(socket, addr).await {
                                             Ok(conn) => {
                                                 let peer_id = conn.peer_id();
-                                                if peers.read().await.contains_key(&peer_id) {
-                                                    tracing::debug!(
-                                                        peer_id = %hex::encode(peer_id),
-                                                        addr = %addr,
-                                                        "Duplicate inbound peer connection; dropping"
-                                                    );
-                                                    return;
-                                                }
                                                 let info = PqConnectionInfo::from(&conn);
                                                 let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
-
-                                            // Store only the write channel - connection owned by task
-                                            peers.write().await.insert(peer_id, PeerConnection {
-                                                info: info.clone(),
-                                                msg_tx,
-                                            });
+                                                let admission = Self::admit_peer(
+                                                    &peers,
+                                                    peer_id,
+                                                    PeerConnection {
+                                                        info: info.clone(),
+                                                        msg_tx,
+                                                    },
+                                                    max_peers,
+                                                )
+                                                .await;
+                                                match admission {
+                                                    PeerAdmission::Duplicate => {
+                                                        tracing::debug!(
+                                                            peer_id = %hex::encode(peer_id),
+                                                            addr = %addr,
+                                                            "Duplicate inbound peer connection; dropping"
+                                                        );
+                                                        return;
+                                                    }
+                                                    PeerAdmission::MaxPeersReached => {
+                                                        tracing::debug!(
+                                                            peer_id = %hex::encode(peer_id),
+                                                            addr = %addr,
+                                                            max_peers,
+                                                            "Rejecting inbound connection after handshake: max peers reached"
+                                                        );
+                                                        return;
+                                                    }
+                                                    PeerAdmission::Inserted => {}
+                                                }
 
                                             let send_result = event_tx.send(PqNetworkEvent::PeerConnected {
                                                 peer_id,
@@ -553,25 +593,31 @@ impl PqNetworkBackend {
 
         let peer_id = conn.peer_id();
         let info = PqConnectionInfo::from(&conn);
-
-        if peers.read().await.contains_key(&peer_id) {
-            tracing::debug!(
-                peer_id = %hex::encode(peer_id),
-                addr = %addr,
-                "Duplicate outbound peer connection; dropping"
-            );
-            return Ok(peer_id);
-        }
         let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
-
-        // Store only the write channel - connection owned by task
-        peers.write().await.insert(
+        let admission = Self::admit_peer(
+            &peers,
             peer_id,
             PeerConnection {
                 info: info.clone(),
                 msg_tx,
             },
-        );
+            max_peers,
+        )
+        .await;
+        match admission {
+            PeerAdmission::Duplicate => {
+                tracing::debug!(
+                    peer_id = %hex::encode(peer_id),
+                    addr = %addr,
+                    "Duplicate outbound peer connection; dropping"
+                );
+                return Ok(peer_id);
+            }
+            PeerAdmission::MaxPeersReached => {
+                return Err("Max peers reached".to_string());
+            }
+            PeerAdmission::Inserted => {}
+        }
 
         let _ = event_tx
             .send(PqNetworkEvent::PeerConnected {
@@ -1013,5 +1059,39 @@ mod tests {
         let result = handle.send_to_peer([99u8; 32], vec![1, 2, 3]).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Peer not found");
+    }
+
+    #[tokio::test]
+    async fn test_admit_peer_enforces_strict_capacity() {
+        let peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let make_conn = |peer_id: [u8; 32]| {
+            let (msg_tx, _msg_rx) = mpsc::channel::<Vec<u8>>(8);
+            PeerConnection {
+                info: PqConnectionInfo {
+                    peer_id,
+                    addr: "127.0.0.1:30333".parse().unwrap(),
+                    is_outbound: false,
+                    bytes_sent: 0,
+                    bytes_received: 0,
+                    protocol: "/hegemon/pq/1".to_string(),
+                },
+                msg_tx,
+            }
+        };
+
+        assert_eq!(
+            PqNetworkBackend::admit_peer(&peers, [1u8; 32], make_conn([1u8; 32]), 2).await,
+            PeerAdmission::Inserted
+        );
+        assert_eq!(
+            PqNetworkBackend::admit_peer(&peers, [2u8; 32], make_conn([2u8; 32]), 2).await,
+            PeerAdmission::Inserted
+        );
+        assert_eq!(
+            PqNetworkBackend::admit_peer(&peers, [3u8; 32], make_conn([3u8; 32]), 2).await,
+            PeerAdmission::MaxPeersReached
+        );
+        assert_eq!(peers.read().await.len(), 2);
     }
 }

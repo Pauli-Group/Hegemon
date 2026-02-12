@@ -14,6 +14,7 @@ export type NodeConnection = {
   p2pPort?: number;
   listenAddr?: string;
   seeds?: string;
+  maxPeers?: number;
   minerAddress?: string;
   mineThreads?: number;
   miningIntent?: boolean;
@@ -233,6 +234,7 @@ export type NodeStartOptions = {
   mineThreads?: number;
   mineOnStart?: boolean;
   seeds?: string;
+  maxPeers?: number;
   rpcExternal?: boolean;
   rpcMethods?: 'safe' | 'unsafe';
   rpcCorsAll?: boolean;
