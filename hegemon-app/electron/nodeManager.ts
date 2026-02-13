@@ -119,6 +119,7 @@ export class NodeManager extends EventEmitter {
       ...process.env,
       HEGEMON_MINER_ADDRESS: options.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
       HEGEMON_SEEDS: options.seeds ?? process.env.HEGEMON_SEEDS,
+      HEGEMON_MAX_PEERS: options.maxPeers !== undefined ? String(options.maxPeers) : process.env.HEGEMON_MAX_PEERS,
       HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS:
         options.ciphertextDaRetentionBlocks !== undefined
           ? String(options.ciphertextDaRetentionBlocks)

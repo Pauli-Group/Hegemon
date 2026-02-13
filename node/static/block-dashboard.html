@@ -61,6 +61,11 @@
           <div class="metric" id="supply-digest">--</div>
           <div class="subline" id="state-root">State root: --</div>
         </div>
+        <div class="card">
+          <h3>Observed Address</h3>
+          <div class="metric" id="observed-address">--</div>
+          <div class="subline" id="observed-address-source">Reported by peers: --</div>
+        </div>
       </section>
       <section class="chart">
         <div class="chart-header">
@@ -136,6 +141,10 @@
           <button id="peer-close" class="secondary">Close</button>
         </div>
         <div class="modal-controls">
+          <label>
+            Depth
+            <input id="peer-depth" type="number" min="1" step="1" />
+          </label>
           <button id="peer-fetch">Refresh</button>
           <span class="modal-status" id="peer-status">Idle</span>
         </div>
@@ -157,6 +166,7 @@
       const DEFAULT_BUCKET_MINUTES = 60;
       const MAX_BUCKETS = 12;
       const TIMESTAMP_BATCH = 500;
+      const DEFAULT_PEER_DEPTH = 2;
 
       const ui = {
         rpcUrl: document.getElementById("rpc-url"),
@@ -185,6 +195,7 @@
         peerModal: document.getElementById("peer-modal"),
         peerClose: document.getElementById("peer-close"),
         peerFetch: document.getElementById("peer-fetch"),
+        peerDepth: document.getElementById("peer-depth"),
         peerStatus: document.getElementById("peer-status"),
         peerListOutput: document.getElementById("peer-list-output"),
         peerNetwork: document.getElementById("peer-network"),
@@ -200,6 +211,8 @@
         syncing: document.getElementById("syncing"),
         supplyDigest: document.getElementById("supply-digest"),
         stateRoot: document.getElementById("state-root"),
+        observedAddress: document.getElementById("observed-address"),
+        observedAddressSource: document.getElementById("observed-address-source"),
         chartRange: document.getElementById("chart-range"),
         frequencyBars: document.getElementById("frequency-bars"),
         minedRange: document.getElementById("mined-range"),
@@ -216,6 +229,7 @@
       let timestampTargetHeight = 0;
       let isSyncingScroll = false;
       let rpcMethodCache = null;
+      const peerPositionOverrides = new Map();
 
       function setStatus(text, kind) {
         ui.status.querySelector("span").textContent = text;
@@ -254,6 +268,101 @@
         if (typeof error === "string") return error;
         if (error.message) return error.message;
         return JSON.stringify(error);
+      }
+
+      function collectObservedAddresses(graph) {
+        const localPeerId = graph?.local_peer_id ?? graph?.localPeerId;
+        const reports = Array.isArray(graph?.reports) ? graph.reports : [];
+        if (!localPeerId || reports.length === 0) {
+          return [];
+        }
+        const observed = [];
+        reports.forEach((report) => {
+          const entries = Array.isArray(report?.peers) ? report.peers : [];
+          entries.forEach((entry) => {
+            const peerId = entry.peer_id ?? entry.peerId;
+            const address = entry.address;
+            if (peerId === localPeerId && typeof address === "string" && address.trim() !== "") {
+              observed.push(address.trim());
+            }
+          });
+        });
+        return observed;
+      }
+
+      function summarizeObservedAddress(observed) {
+        if (!Array.isArray(observed) || observed.length === 0) {
+          return null;
+        }
+        const counts = new Map();
+        observed.forEach((address) => {
+          counts.set(address, (counts.get(address) ?? 0) + 1);
+        });
+        let winner = null;
+        let winnerCount = 0;
+        counts.forEach((count, address) => {
+          if (count > winnerCount) {
+            winner = address;
+            winnerCount = count;
+          }
+        });
+        if (!winner) {
+          return null;
+        }
+        return {
+          address: winner,
+          agreement: winnerCount,
+          total: observed.length,
+        };
+      }
+
+      function collectLocalAddresses(graph) {
+        const localPeerId = graph?.local_peer_id ?? graph?.localPeerId;
+        const localAddresses = new Set();
+        if (!localPeerId) {
+          return localAddresses;
+        }
+        const reports = Array.isArray(graph?.reports) ? graph.reports : [];
+        reports.forEach((report) => {
+          const reporterPeerId = report?.reporter_peer_id ?? report?.reporterPeerId;
+          const reporterAddress = report?.reporter_address ?? report?.reporterAddress;
+          if (reporterPeerId === localPeerId && typeof reporterAddress === "string" && reporterAddress.trim() !== "") {
+            localAddresses.add(reporterAddress.trim());
+          }
+          const entries = Array.isArray(report?.peers) ? report.peers : [];
+          entries.forEach((entry) => {
+            const entryPeerId = entry?.peer_id ?? entry?.peerId;
+            const entryAddress = entry?.address;
+            if (entryPeerId === localPeerId && typeof entryAddress === "string" && entryAddress.trim() !== "") {
+              localAddresses.add(entryAddress.trim());
+            }
+          });
+        });
+        return localAddresses;
+      }
+
+      async function refreshObservedAddress(consensusPeers) {
+        try {
+          const graph = await callRpc("hegemon_peerGraph");
+          const observed = collectObservedAddresses(graph);
+          const summary = summarizeObservedAddress(observed);
+          if (!summary) {
+            ui.observedAddress.textContent = "--";
+            ui.observedAddressSource.textContent =
+              consensusPeers > 0
+                ? "Reported by peers: not reported yet"
+                : "Reported by peers: no connected peers";
+            return;
+          }
+          ui.observedAddress.textContent = summary.address;
+          ui.observedAddressSource.textContent = `Reported by peers: ${summary.agreement}/${summary.total} reports`;
+        } catch (error) {
+          console.warn("Failed to load observed address", error);
+          ui.observedAddress.textContent = "--";
+          ui.observedAddressSource.textContent = `Reported by peers: unavailable (${formatRpcError(
+            error
+          )})`;
+        }
       }
 
       function isUnsafeRpcError(error) {
@@ -299,8 +408,17 @@
         return Math.max(1, Math.min(24 * 60, Math.floor(value)));
       }
 
+      function clampPeerDepth(value) {
+        if (!Number.isFinite(value)) return DEFAULT_PEER_DEPTH;
+        return Math.max(1, Math.min(6, Math.floor(value)));
+      }
+
       function getBucketMinutes() {
         return clampBucketMinutes(Number(ui.bucketMinutes.value));
+      }
+
+      function getPeerDepth() {
+        return clampPeerDepth(Number(ui.peerDepth.value));
       }
 
       function buildBuckets(timestamps, minTs, bucketMs, bucketCount) {
@@ -364,10 +482,158 @@
         }
       }
 
-      function renderPeerNetwork(graph) {
-        if (!ui.peerNetwork) return;
+      function buildPeerTraversal(graph, maxDepth) {
+        const localPeerId = graph?.local_peer_id ?? graph?.localPeerId;
+        const localAddresses = collectLocalAddresses(graph);
         const peers = Array.isArray(graph?.peers) ? graph.peers : [];
         const reports = Array.isArray(graph?.reports) ? graph.reports : [];
+        const normalizeAddress = (value) => (typeof value === "string" ? value.trim() : "");
+        const directPeers = peers
+          .map((peer) => ({
+            peer_id: peer.peer_id ?? peer.peerId ?? "--",
+            address: normalizeAddress(peer.address ?? "--"),
+            direction: peer.direction ?? "--",
+            best_height: peer.best_height ?? peer.bestHeight,
+            best_hash: peer.best_hash ?? peer.bestHash,
+            last_seen_secs: peer.last_seen_secs ?? peer.lastSeenSecs,
+          }))
+          .filter((peer) => {
+            if (!peer.address) return false;
+            if (localPeerId && peer.peer_id === localPeerId) {
+              return false;
+            }
+            if (localAddresses.has(peer.address)) {
+              return false;
+            }
+            return true;
+          });
+        const reportByPeerId = new Map();
+        const reportByAddress = new Map();
+        reports.forEach((report) => {
+          const reporterPeerId = report?.reporter_peer_id ?? report?.reporterPeerId ?? "";
+          const reporterAddress = normalizeAddress(report?.reporter_address ?? report?.reporterAddress ?? "");
+          if (reporterPeerId && !reportByPeerId.has(reporterPeerId)) {
+            reportByPeerId.set(reporterPeerId, report);
+          }
+          if (reporterAddress && reporterAddress !== "--" && !reportByAddress.has(reporterAddress)) {
+            reportByAddress.set(reporterAddress, report);
+          }
+        });
+
+        const nodesByAddress = new Map();
+        const edges = [];
+        const edgeKeys = new Set();
+        const queue = [];
+        const enqueue = (entry) => queue.push(entry);
+        const upsertNode = (node) => {
+          const existing = nodesByAddress.get(node.address);
+          if (!existing) {
+            nodesByAddress.set(node.address, node);
+            return true;
+          }
+          if (node.distance < existing.distance) {
+            existing.distance = node.distance;
+          }
+          if ((!existing.peer_id || existing.peer_id === "--") && node.peer_id && node.peer_id !== "--") {
+            existing.peer_id = node.peer_id;
+          }
+          if (existing.kind !== "direct" && node.kind === "direct") {
+            existing.kind = "direct";
+          }
+          if (existing.direction === "--" && node.direction && node.direction !== "--") {
+            existing.direction = node.direction;
+          }
+          if ((!existing.best_height || existing.best_height === "--") && node.best_height !== undefined) {
+            existing.best_height = node.best_height;
+          }
+          if ((!existing.best_hash || existing.best_hash === "--") && node.best_hash !== undefined) {
+            existing.best_hash = node.best_hash;
+          }
+          if ((!existing.last_seen_secs || existing.last_seen_secs === "--") && node.last_seen_secs !== undefined) {
+            existing.last_seen_secs = node.last_seen_secs;
+          }
+          return false;
+        };
+        const addEdge = (from, to, kind) => {
+          const key = `${from}->${to}`;
+          if (edgeKeys.has(key)) return;
+          edgeKeys.add(key);
+          edges.push({ from, to, kind });
+        };
+
+        directPeers.forEach((peer) => {
+          const node = {
+            address: peer.address,
+            peer_id: peer.peer_id,
+            distance: 1,
+            kind: "direct",
+            direction: peer.direction ?? "--",
+            best_height: peer.best_height,
+            best_hash: peer.best_hash,
+            last_seen_secs: peer.last_seen_secs,
+          };
+          if (upsertNode(node)) {
+            enqueue({ address: peer.address, peer_id: peer.peer_id, distance: 1 });
+          }
+          addEdge("__local__", peer.address, "direct");
+        });
+
+        let traversedReports = 0;
+        while (queue.length > 0) {
+          const current = queue.shift();
+          if (!current) continue;
+          if (current.distance >= maxDepth) continue;
+          const report =
+            (current.peer_id && reportByPeerId.get(current.peer_id)) ||
+            reportByAddress.get(current.address);
+          if (!report) {
+            continue;
+          }
+          traversedReports += 1;
+          const entries = Array.isArray(report?.peers) ? report.peers : [];
+          entries.forEach((entry) => {
+            const peerId = entry?.peer_id ?? entry?.peerId ?? "--";
+            const address = normalizeAddress(entry?.address ?? "--");
+            if (!address || address === "--") {
+              return;
+            }
+            if (localPeerId && peerId === localPeerId) {
+              return;
+            }
+            if (localAddresses.has(address)) {
+              return;
+            }
+            const nextDistance = current.distance + 1;
+            const node = {
+              address,
+              peer_id: peerId,
+              distance: nextDistance,
+              kind: nextDistance === 1 ? "direct" : "indirect",
+              direction: "--",
+              best_height: undefined,
+              best_hash: undefined,
+              last_seen_secs: undefined,
+            };
+            const isNew = upsertNode(node);
+            addEdge(current.address, address, "indirect");
+            if (isNew) {
+              enqueue({ address, peer_id: peerId, distance: nextDistance });
+            }
+          });
+        }
+
+        return {
+          nodes: Array.from(nodesByAddress.values()).sort((a, b) => a.distance - b.distance),
+          edges,
+          traversedReports,
+          directCount: directPeers.length,
+          knownReports: reports.length,
+        };
+      }
+
+      function renderPeerNetwork(graph, maxDepth) {
+        if (!ui.peerNetwork) return;
+        const traversal = buildPeerTraversal(graph, maxDepth);
         const svg = ui.peerNetwork;
         while (svg.firstChild) {
           svg.removeChild(svg.firstChild);
@@ -380,10 +646,80 @@
         const innerRadius = Math.max(70, maxRadius - 70);
         const outerRadius = maxRadius;
         const svgNS = "http://www.w3.org/2000/svg";
+        const LOCAL_NODE_KEY = "__local__";
         const createEl = (name, attrs) => {
           const el = document.createElementNS(svgNS, name);
           Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
           return el;
+        };
+        const nodePositions = new Map();
+        const nodeElements = new Map();
+        const labelElements = new Map();
+        const labelOffsets = new Map();
+        const edgeUpdaters = [];
+        const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+        const clampPosition = (x, y, radius) => ({
+          x: clamp(x, radius + 6, width - radius - 6),
+          y: clamp(y, radius + 6, height - radius - 6),
+        });
+        const refreshEdges = () => {
+          edgeUpdaters.forEach((update) => update());
+        };
+        const setNodePosition = (key, x, y) => {
+          const current = nodePositions.get(key);
+          if (!current) return;
+          const next = clampPosition(x, y, current.radius);
+          nodePositions.set(key, { ...current, x: next.x, y: next.y });
+          const node = nodeElements.get(key);
+          if (node) {
+            node.setAttribute("cx", next.x.toString());
+            node.setAttribute("cy", next.y.toString());
+          }
+          const label = labelElements.get(key);
+          if (label) {
+            const labelOffset = labelOffsets.get(key) ?? -12;
+            label.setAttribute("x", next.x.toString());
+            label.setAttribute("y", (next.y + labelOffset).toString());
+          }
+          peerPositionOverrides.set(key, { x: next.x, y: next.y });
+          refreshEdges();
+        };
+        const eventToSvgPoint = (event) => {
+          const rect = svg.getBoundingClientRect();
+          const scaleX = width / (rect.width || 1);
+          const scaleY = height / (rect.height || 1);
+          return {
+            x: (event.clientX - rect.left) * scaleX,
+            y: (event.clientY - rect.top) * scaleY,
+          };
+        };
+        const attachDrag = (node, key) => {
+          let pointerId = null;
+          let dragging = false;
+          node.style.cursor = "grab";
+          node.addEventListener("pointerdown", (event) => {
+            pointerId = event.pointerId;
+            dragging = true;
+            node.style.cursor = "grabbing";
+            node.setPointerCapture(pointerId);
+            event.preventDefault();
+          });
+          node.addEventListener("pointermove", (event) => {
+            if (!dragging || event.pointerId !== pointerId) return;
+            const point = eventToSvgPoint(event);
+            setNodePosition(key, point.x, point.y);
+          });
+          const endDrag = (event) => {
+            if (event.pointerId !== pointerId) return;
+            dragging = false;
+            pointerId = null;
+            node.style.cursor = "grab";
+            if (node.hasPointerCapture(event.pointerId)) {
+              node.releasePointerCapture(event.pointerId);
+            }
+          };
+          node.addEventListener("pointerup", endDrag);
+          node.addEventListener("pointercancel", endDrag);
         };
         const makeLabel = (text, x, y) => {
           const label = createEl("text", {
@@ -396,6 +732,21 @@
           svg.appendChild(label);
           return label;
         };
+        const registerNode = (key, node, label, initialPos, radius, labelOffset) => {
+          const override = peerPositionOverrides.get(key);
+          const start = override
+            ? clampPosition(override.x, override.y, radius)
+            : clampPosition(initialPos.x, initialPos.y, radius);
+          nodePositions.set(key, { x: start.x, y: start.y, radius });
+          nodeElements.set(key, node);
+          labelElements.set(key, label);
+          labelOffsets.set(key, labelOffset);
+          node.setAttribute("cx", start.x.toString());
+          node.setAttribute("cy", start.y.toString());
+          label.setAttribute("x", start.x.toString());
+          label.setAttribute("y", (start.y + labelOffset).toString());
+          attachDrag(node, key);
+        };
         const attachHover = (node, label) => {
           const show = () => label.classList.remove("hidden");
           const hide = () => label.classList.add("hidden");
@@ -404,7 +755,7 @@
           node.addEventListener("focus", show);
           node.addEventListener("blur", hide);
         };
-        if (peers.length === 0 && reports.length === 0) {
+        if (traversal.nodes.length === 0) {
           const empty = createEl("text", {
             x: center.x.toString(),
             y: center.y.toString(),
@@ -415,27 +766,11 @@
           empty.textContent = "No peer details";
           svg.appendChild(empty);
         }
-        const directNodes = peers.map((peer) => ({
-          peer_id: peer.peer_id ?? peer.peerId ?? "--",
-          address: peer.address ?? "--",
-        }));
+        const directNodes = traversal.nodes.filter((peer) => peer.distance === 1);
         const directByAddress = new Map(
           directNodes.map((peer) => [peer.address, peer])
         );
-        const indirectMap = new Map();
-        reports.forEach((report) => {
-          const entries = Array.isArray(report?.peers) ? report.peers : [];
-          entries.forEach((entry) => {
-            const address = entry.address ?? "--";
-            if (!directByAddress.has(address) && !indirectMap.has(address)) {
-              indirectMap.set(address, {
-                peer_id: entry.peer_id ?? entry.peerId ?? "--",
-                address,
-              });
-            }
-          });
-        });
-        const indirectNodes = Array.from(indirectMap.values());
+        const indirectNodes = traversal.nodes.filter((peer) => peer.distance > 1);
         const directPositions = new Map();
         const directAngleStep = directNodes.length ? (Math.PI * 2) / directNodes.length : 0;
         directNodes.forEach((peer, index) => {
@@ -444,16 +779,19 @@
           const y = center.y + Math.sin(angle) * innerRadius;
           directPositions.set(peer.address, { x, y });
           const line = createEl("line", {
-            x1: center.x.toString(),
-            y1: center.y.toString(),
-            x2: x.toString(),
-            y2: y.toString(),
             class: "peer-line",
           });
           svg.appendChild(line);
+          edgeUpdaters.push(() => {
+            const source = nodePositions.get(LOCAL_NODE_KEY);
+            const target = nodePositions.get(peer.address);
+            if (!source || !target) return;
+            line.setAttribute("x1", source.x.toString());
+            line.setAttribute("y1", source.y.toString());
+            line.setAttribute("x2", target.x.toString());
+            line.setAttribute("y2", target.y.toString());
+          });
           const node = createEl("circle", {
-            cx: x.toString(),
-            cy: y.toString(),
             r: "10",
             class: "peer-node direct-node",
           });
@@ -463,6 +801,7 @@
           title.textContent = peer.address;
           node.appendChild(title);
           attachHover(node, label);
+          registerNode(peer.address, node, label, { x, y }, 10, -14);
         });
         const indirectPositions = new Map();
         const indirectAngleStep = indirectNodes.length ? (Math.PI * 2) / indirectNodes.length : 0;
@@ -472,33 +811,27 @@
           const y = center.y + Math.sin(angle) * outerRadius;
           indirectPositions.set(peer.address, { x, y });
         });
-        reports.forEach((report) => {
-          const reporterAddr = report.reporter_address ?? report.reporterAddress ?? "";
-          const reporterPos = directPositions.get(reporterAddr) ?? center;
-          const entries = Array.isArray(report?.peers) ? report.peers : [];
-          entries.forEach((entry) => {
-            const address = entry.address ?? "--";
-            if (directByAddress.has(address)) {
-              return;
-            }
-            const target = indirectPositions.get(address);
-            if (!target) return;
+        traversal.edges
+          .filter((edge) => edge.kind === "indirect")
+          .forEach((edge) => {
             const line = createEl("line", {
-              x1: reporterPos.x.toString(),
-              y1: reporterPos.y.toString(),
-              x2: target.x.toString(),
-              y2: target.y.toString(),
               class: "peer-line peer-line-indirect",
             });
             svg.appendChild(line);
+            edgeUpdaters.push(() => {
+              const source = nodePositions.get(edge.from) ?? nodePositions.get(LOCAL_NODE_KEY);
+              const destination = nodePositions.get(edge.to);
+              if (!source || !destination) return;
+              line.setAttribute("x1", source.x.toString());
+              line.setAttribute("y1", source.y.toString());
+              line.setAttribute("x2", destination.x.toString());
+              line.setAttribute("y2", destination.y.toString());
+            });
           });
-        });
         indirectNodes.forEach((peer) => {
           const target = indirectPositions.get(peer.address);
           if (!target) return;
           const node = createEl("circle", {
-            cx: target.x.toString(),
-            cy: target.y.toString(),
             r: "9",
             class: "peer-node indirect-node",
           });
@@ -508,22 +841,22 @@
           title.textContent = peer.address;
           node.appendChild(title);
           attachHover(node, label);
+          registerNode(peer.address, node, label, target, 9, -12);
         });
         const local = createEl("circle", {
-          cx: center.x.toString(),
-          cy: center.y.toString(),
           r: "14",
           class: "peer-node local-node",
         });
         svg.appendChild(local);
         const localLabel = createEl("text", {
-          x: center.x.toString(),
-          y: (center.y + 26).toString(),
           "text-anchor": "middle",
           class: "peer-label",
         });
         localLabel.textContent = "local";
         svg.appendChild(localLabel);
+        registerNode(LOCAL_NODE_KEY, local, localLabel, center, 14, 26);
+        refreshEdges();
+        return traversal;
       }
 
       async function callRpc(method, params = []) {
@@ -603,6 +936,7 @@
 
           ui.supplyDigest.textContent = consensus.supply_digest?.toString?.() ?? "--";
           ui.stateRoot.textContent = `State root: ${formatHash(consensus.state_root)}`;
+          await refreshObservedAddress(consensus.peers);
 
           ui.lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
           setStatus("Connected", "ok");
@@ -667,10 +1001,11 @@
       }
 
       function openPeerModal() {
+        ui.peerDepth.value = localStorage.getItem("hegemonPeerDepth") || DEFAULT_PEER_DEPTH;
         ui.peerListOutput.textContent = "--";
         setPeerStatus("Loading peers...");
         ui.peerModal.classList.remove("hidden");
-        renderPeerNetwork([]);
+        renderPeerNetwork([], getPeerDepth());
         loadPeers();
       }
 
@@ -679,12 +1014,15 @@
       }
 
       async function loadPeers() {
+        const depth = getPeerDepth();
+        ui.peerDepth.value = depth.toString();
+        localStorage.setItem("hegemonPeerDepth", depth.toString());
         setPeerStatus("Loading peers...");
         ui.peerListOutput.textContent = "--";
         try {
           const graph = await callRpc("hegemon_peerGraph");
-          const peers = Array.isArray(graph?.peers) ? graph.peers : [];
-          if (!Array.isArray(peers) || peers.length === 0) {
+          const traversal = buildPeerTraversal(graph, depth);
+          if (traversal.nodes.length === 0) {
             let peerCount = null;
             try {
               const health = await callRpc("system_health");
@@ -697,10 +1035,10 @@
                 ? "No peer details reported."
                 : `No peer details reported. Connected peers: ${formatNumber(peerCount)}.`;
             setPeerStatus("No peer details reported.");
-            renderPeerNetwork([]);
+            renderPeerNetwork([], depth);
             return;
           }
-          ui.peerListOutput.textContent = peers
+          ui.peerListOutput.textContent = traversal.nodes
             .map((peer, index) => {
               const peerId = peer.peer_id ?? peer.peerId ?? `peer-${index + 1}`;
               const address = peer.address ?? "--";
@@ -708,18 +1046,20 @@
               const bestNumber = formatHeight(peer.best_height ?? peer.bestHeight);
               const bestHash = formatHash(peer.best_hash ?? peer.bestHash);
               const lastSeen = Number(peer.last_seen_secs ?? peer.lastSeenSecs ?? 0);
-              return `${peerId} | ${direction} | ${address} | best: ${bestNumber} @ ${bestHash} | seen ${formatNumber(
+              return `[hop ${peer.distance}] ${peerId} | ${direction} | ${address} | best: ${bestNumber} @ ${bestHash} | seen ${formatNumber(
                 lastSeen
               )}s ago`;
             })
             .join("\n");
-          setPeerStatus(`Loaded ${peers.length} peer(s).`);
-          renderPeerNetwork(graph);
+          setPeerStatus(
+            `Loaded ${traversal.nodes.length} peer(s), depth ${depth}, traversed ${traversal.traversedReports}/${traversal.knownReports} reports.`
+          );
+          renderPeerNetwork(graph, depth);
         } catch (error) {
           console.error(error);
           setPeerStatus(`Failed to load peers: ${formatRpcError(error)}`);
           ui.peerListOutput.textContent = "Check that the node exposes hegemon_peerGraph.";
-          renderPeerNetwork([]);
+          renderPeerNetwork([], depth);
         }
       }
 
@@ -884,6 +1224,14 @@
         ui.peerList.addEventListener("click", openPeerModal);
         ui.peerClose.addEventListener("click", closePeerModal);
         ui.peerFetch.addEventListener("click", loadPeers);
+        ui.peerDepth.addEventListener("change", () => {
+          const next = clampPeerDepth(Number(ui.peerDepth.value));
+          ui.peerDepth.value = next.toString();
+          localStorage.setItem("hegemonPeerDepth", next.toString());
+          if (!ui.peerModal.classList.contains("hidden")) {
+            loadPeers();
+          }
+        });
         ui.peerModal.addEventListener("click", (event) => {
           if (event.target === ui.peerModal) {
             closePeerModal();
