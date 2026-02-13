@@ -406,7 +406,8 @@ const buildDefaultConnection = (): NodeConnection => ({
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
   rpcCorsAll: false,
-  seeds: 'hegemon.pauli.group'
+  seeds: 'hegemon.pauli.group',
+  maxPeers: 50
 });
 
 const buildTestnetConnection = (): NodeConnection => ({
@@ -428,7 +429,8 @@ const buildTestnetConnection = (): NodeConnection => ({
   rpcMethods: 'safe',
   rpcCorsAll: false,
   chainSpecPath: 'testnet',
-  seeds: 'hegemon.pauli.group'
+  seeds: 'hegemon.pauli.group',
+  maxPeers: 50
 });
 
 const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
@@ -1038,6 +1040,10 @@ export default function App() {
       setNodeError('Set a miner address before enabling mining.');
       return;
     }
+    if (activeConnection.maxPeers !== undefined && activeConnection.maxPeers < 1) {
+      setNodeError('Max peers must be at least 1.');
+      return;
+    }
     if (activeConnection.tmp) {
       const confirmed = window.confirm('Temp storage deletes node data on shutdown. Continue?');
       if (!confirmed) {
@@ -1066,6 +1072,7 @@ export default function App() {
         mineThreads: activeConnection.mineThreads,
         mineOnStart: activeConnection.miningIntent,
         seeds: activeConnection.seeds || undefined,
+        maxPeers: activeConnection.maxPeers,
         rpcExternal: activeConnection.rpcExternal,
         rpcMethods: activeConnection.rpcMethods,
         rpcCorsAll: activeConnection.rpcCorsAll,
@@ -2298,6 +2305,23 @@ export default function App() {
                   placeholder="1.2.3.4:30333,5.6.7.8:30333"
                 />
               </label>
+              <label className="space-y-2">
+                <span className="label">Max peers (HEGEMON_MAX_PEERS)</span>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={activeConnection.maxPeers?.toString() ?? ''}
+                  onChange={(event) => {
+                    const nextValue = Number.parseInt(event.target.value, 10);
+                    updateActiveConnection({ maxPeers: Number.isNaN(nextValue) ? undefined : nextValue });
+                  }}
+                  placeholder="50"
+                />
+              </label>
+              <p className="text-xs text-surfaceMuted md:col-span-2">
+                Applied when the node starts. Restart the node after changing this value.
+              </p>
             </div>
           </div>
 
