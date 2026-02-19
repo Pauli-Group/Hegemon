@@ -45,7 +45,7 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
         },
         "shieldedPool": {
             "verifyingKey": verifying_key_value,
-            "proofAvailabilityPolicy": "DaRequired"
+            "proofAvailabilityPolicy": "SelfContained"
         },
         "stablecoinPolicy": {
             "policies": [

@@ -36,11 +36,11 @@ fn commitment_proof_handoff_accepts_matching_nullifiers() {
         assemble_pow_block(params).expect("assemble block");
 
     let lists = commitment_nullifier_lists(&block.transactions).expect("nullifier lists");
-    let proof_hashes = vec![[9u8; 48]; block.transactions.len()];
+    let statement_hashes = vec![[9u8; 48]; block.transactions.len()];
     let prover = CommitmentBlockProver::new();
     let proof = prover
-        .prove_from_hashes_with_inputs(
-            &proof_hashes,
+        .prove_from_statement_hashes_with_inputs(
+            &statement_hashes,
             base_tree.root(),
             updated_tree.root(),
             updated_nullifiers.commitment(),
@@ -79,11 +79,11 @@ fn commitment_proof_handoff_rejects_nullifier_mismatch() {
         assemble_pow_block(params).expect("assemble block");
 
     let lists = commitment_nullifier_lists(&block.transactions).expect("nullifier lists");
-    let proof_hashes = vec![[7u8; 48]; block.transactions.len()];
+    let statement_hashes = vec![[7u8; 48]; block.transactions.len()];
     let prover = CommitmentBlockProver::new();
     let proof = prover
-        .prove_from_hashes_with_inputs(
-            &proof_hashes,
+        .prove_from_statement_hashes_with_inputs(
+            &statement_hashes,
             base_tree.root(),
             updated_tree.root(),
             updated_nullifiers.commitment(),

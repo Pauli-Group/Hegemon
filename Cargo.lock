@@ -83,6 +83,7 @@ dependencies = [
  "p3-recursion",
  "p3-uni-stark",
  "postcard",
+ "serde",
  "thiserror 1.0.69",
  "transaction-circuit",
 ]

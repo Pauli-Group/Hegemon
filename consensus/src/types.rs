@@ -206,6 +206,9 @@ pub struct Block<BH> {
     pub coinbase: Option<CoinbaseData>,
     pub commitment_proof: Option<CommitmentBlockProof>,
     pub aggregation_proof: Option<Vec<u8>>,
+    /// Optional commitment to transaction statement hashes, derived by the caller in canonical
+    /// transaction order (for example from binding-hash statements on Substrate imports).
+    pub tx_statements_commitment: Option<[u8; 48]>,
     pub transaction_proofs: Option<Vec<TransactionProof>>,
 }
 
@@ -217,6 +220,7 @@ impl<BH> Block<BH> {
             coinbase: self.coinbase,
             commitment_proof: self.commitment_proof,
             aggregation_proof: self.aggregation_proof,
+            tx_statements_commitment: self.tx_statements_commitment,
             transaction_proofs: self.transaction_proofs,
         }
     }

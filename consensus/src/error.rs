@@ -106,6 +106,10 @@ pub enum ProofError {
     AggregationProofInputsMismatch(String),
     #[error("aggregation proof verification failed: {0}")]
     AggregationProofVerification(String),
+    #[error("aggregation proof V3 decode failed: {0}")]
+    AggregationProofV3Decode(String),
+    #[error("aggregation proof V3 binding failed: {0}")]
+    AggregationProofV3Binding(String),
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]

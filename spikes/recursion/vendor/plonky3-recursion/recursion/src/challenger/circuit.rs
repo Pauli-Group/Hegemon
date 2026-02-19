@@ -3,7 +3,6 @@
 use alloc::vec::Vec;
 
 use p3_circuit::CircuitBuilder;
-// TODO: Replace with Poseidon2 perm once integrated.
 use p3_field::Field;
 
 use crate::Target;
@@ -31,7 +30,6 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
         if self.buffer_flushed || self.absorb_buffer.is_empty() {
             return;
         }
-
         // Hash absorb removed; placeholder until Poseidon2 perm is wired.
         self.absorb_buffer.clear();
         self.buffer_flushed = true;

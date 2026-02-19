@@ -259,9 +259,8 @@ impl Default for CiphertextPolicy {
 /// This matters only in "aggregation mode", where the runtime may skip per-transaction proof
 /// verification and instead rely on an aggregation proof verified during block import.
 ///
-/// In Phase A ("proof availability by DA"), we allow transfers to omit proof bytes from the
-/// extrinsic, but we require the block to commit to the proof bytes via a DA root so other
-/// validators can retrieve them and verify the aggregation proof deterministically.
+/// In Phase C ("self-contained aggregation"), transfers may omit proof bytes from the extrinsic,
+/// and block validity is established by the aggregation proof plus statement commitments.
 #[derive(
     Clone,
     Copy,
@@ -279,9 +278,9 @@ impl Default for CiphertextPolicy {
 pub enum ProofAvailabilityPolicy {
     /// Each transfer extrinsic must carry its STARK proof bytes (legacy path).
     InlineRequired,
-    /// Transfer extrinsics may omit proof bytes in aggregation mode, but proof bytes must be made
-    /// available via a DA commitment during block import.
-    DaRequired,
+    /// Transfer extrinsics may omit proof bytes in aggregation mode, and validators verify the
+    /// block from the aggregation proof and statement commitments without proof-DA fetch.
+    SelfContained,
 }
 
 impl Default for ProofAvailabilityPolicy {

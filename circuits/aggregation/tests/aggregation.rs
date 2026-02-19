@@ -131,14 +131,23 @@ fn aggregation_proof_roundtrip() {
         .expect("generate transaction proof");
 
     let proofs = vec![proof.clone(), proof.clone()];
-    let aggregation_bytes = prove_aggregation(&proofs).expect("generate aggregation proof");
+    let tx_statements_commitment = [7u8; 48];
+    let aggregation_bytes =
+        prove_aggregation(&proofs, tx_statements_commitment).expect("generate aggregation proof");
 
-    verify_aggregation_proof(&aggregation_bytes, &proofs).expect("verify aggregation proof");
+    verify_aggregation_proof(
+        &aggregation_bytes,
+        proofs.len(),
+        &tx_statements_commitment,
+    )
+    .expect("verify aggregation proof");
 
-    let mut corrupted = proofs.clone();
-    corrupted[0].stark_proof[0] ^= 0x01;
+    let mut corrupted_payload: aggregation_circuit::AggregationProofV3Payload =
+        postcard::from_bytes(&aggregation_bytes).expect("decode payload");
+    corrupted_payload.outer_proof[0] ^= 0x01;
+    let corrupted_bytes = postcard::to_allocvec(&corrupted_payload).expect("encode payload");
 
-    let err = verify_aggregation_proof(&aggregation_bytes, &corrupted)
+    let err = verify_aggregation_proof(&corrupted_bytes, proofs.len(), &tx_statements_commitment)
         .expect_err("corrupted proof should fail");
     assert!(matches!(
         err,

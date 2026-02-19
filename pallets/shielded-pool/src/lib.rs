@@ -265,13 +265,6 @@ pub mod pallet {
         #[pallet::constant]
         type MaxCommitmentsPerBatch: Get<u32>;
 
-        /// Maximum number of proof-DA manifest entries permitted in a single block.
-        ///
-        /// Each entry maps a transfer `binding_hash` to the location of its proof bytes in the
-        /// proof-DA blob, plus the on-chain committed proof hash.
-        #[pallet::constant]
-        type MaxProofDaManifestEntries: Get<u32>;
-
         /// Number of historical Merkle roots to keep.
         #[pallet::constant]
         type MerkleRootHistorySize: Get<u32>;
@@ -421,18 +414,6 @@ pub mod pallet {
     #[pallet::storage]
     pub type CommitmentProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
-    /// Whether the proof DA commitment was already submitted this block.
-    ///
-    /// Reset on `on_initialize` so exactly one proof DA commitment can be attached per block.
-    #[pallet::storage]
-    pub type ProofDaCommitmentProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
-
-    /// Whether the proof DA manifest was already submitted this block.
-    ///
-    /// Reset on `on_initialize` so exactly one proof DA manifest can be attached per block.
-    #[pallet::storage]
-    pub type ProofDaManifestProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
-
     /// Whether the aggregation proof was already submitted this block.
     ///
     /// Reset on `on_initialize` so exactly one aggregation proof can be attached per block.
@@ -452,12 +433,6 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn da_commitment)]
     pub type DaCommitments<T: Config> =
-        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
-
-    /// Proof DA commitments per block (da_root + chunk count) for aggregation import.
-    #[pallet::storage]
-    #[pallet::getter(fn proof_da_commitment)]
-    pub type ProofDaCommitments<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
 
     /// DA availability policy (full fetch vs sampling).
@@ -644,10 +619,6 @@ pub mod pallet {
         CoinbaseAlreadyProcessed,
         /// Commitment proof already submitted for this block.
         CommitmentProofAlreadyProcessed,
-        /// Proof DA commitment already submitted for this block.
-        ProofDaCommitmentAlreadyProcessed,
-        /// Proof DA manifest already submitted for this block.
-        ProofDaManifestAlreadyProcessed,
         /// Aggregation proof already submitted for this block.
         AggregationProofAlreadyProcessed,
         /// Aggregation proof mode was already enabled for this block.
@@ -690,8 +661,6 @@ pub mod pallet {
         InlineCiphertextsDisabled,
         /// DA chunk count is invalid for this block.
         InvalidDaChunkCount,
-        /// Proof-DA manifest is invalid (empty or malformed).
-        InvalidProofDaManifest,
         /// Invalid batch size (must be power of 2: 2, 4, 8, or 16).
         InvalidBatchSize,
         // ========================================
@@ -836,8 +805,6 @@ pub mod pallet {
             CoinbaseProcessed::<T>::kill();
             ShieldedTransfersProcessed::<T>::kill();
             CommitmentProofProcessed::<T>::kill();
-            ProofDaCommitmentProcessed::<T>::kill();
-            ProofDaManifestProcessed::<T>::kill();
             AggregationProofProcessed::<T>::kill();
             AggregationProofRequired::<T>::kill();
             Weight::from_parts(1_000, 0)
@@ -914,69 +881,6 @@ pub mod pallet {
                 },
             );
             CommitmentProofProcessed::<T>::put(true);
-            Ok(())
-        }
-
-        /// Attach the proof DA commitment (root + chunk count) for this block.
-        ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
-        /// proof-DA root on-chain so importers can fetch per-transaction proof bytes when
-        /// aggregation mode allows transfers to omit proof bytes from extrinsics.
-        #[pallet::call_index(15)]
-        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_proof_da_commitment(
-            origin: OriginFor<T>,
-            da_root: [u8; 48],
-            chunk_count: u32,
-        ) -> DispatchResult {
-            ensure_none(origin)?;
-
-            ensure!(
-                !ProofDaCommitmentProcessed::<T>::get(),
-                Error::<T>::ProofDaCommitmentAlreadyProcessed
-            );
-
-            ensure!(chunk_count > 0, Error::<T>::InvalidDaChunkCount);
-
-            let block_number = frame_system::Pallet::<T>::block_number();
-            ProofDaCommitments::<T>::insert(
-                block_number,
-                types::DaCommitment {
-                    root: da_root,
-                    chunk_count,
-                },
-            );
-
-            ProofDaCommitmentProcessed::<T>::put(true);
-            Ok(())
-        }
-
-        /// Attach the proof-DA manifest for this block.
-        ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to commit, on-chain,
-        /// the mapping from `binding_hash` to proof location and proof hash. This enables block
-        /// verifiers to bind block-level commitments (such as commitment proofs) to per-transaction
-        /// proof hashes without downloading full proof bytes.
-        ///
-        /// The node import pipeline is responsible for enforcing that the manifest matches:
-        /// - the set of transfers that omitted proof bytes, and
-        /// - the proof-DA blob committed via `submit_proof_da_commitment`.
-        #[pallet::call_index(16)]
-        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_proof_da_manifest(
-            origin: OriginFor<T>,
-            manifest: BoundedVec<types::ProofDaManifestEntry, T::MaxProofDaManifestEntries>,
-        ) -> DispatchResult {
-            ensure_none(origin)?;
-
-            ensure!(
-                !ProofDaManifestProcessed::<T>::get(),
-                Error::<T>::ProofDaManifestAlreadyProcessed
-            );
-
-            ensure!(!manifest.is_empty(), Error::<T>::InvalidProofDaManifest);
-
-            ProofDaManifestProcessed::<T>::put(true);
             Ok(())
         }
 
@@ -1874,7 +1778,10 @@ pub mod pallet {
                 // on-chain policy allows DA-provided proofs.
                 ensure!(aggregation_mode, Error::<T>::ProofBytesRequired);
                 ensure!(
-                    matches!(proof_policy, types::ProofAvailabilityPolicy::DaRequired),
+                    matches!(
+                        proof_policy,
+                        types::ProofAvailabilityPolicy::SelfContained
+                    ),
                     Error::<T>::ProofBytesRequired
                 );
             }
@@ -2933,7 +2840,10 @@ pub mod pallet {
                             return InvalidTransaction::Custom(12).into();
                         }
 
-                        if !matches!(proof_policy, types::ProofAvailabilityPolicy::DaRequired) {
+                        if !matches!(
+                            proof_policy,
+                            types::ProofAvailabilityPolicy::SelfContained
+                        ) {
                             log::info!(
                                 target: "shielded-pool",
                                 "  REJECTED: proof bytes required by policy"
@@ -3045,43 +2955,6 @@ pub mod pallet {
                         .priority(TransactionPriority::MAX)
                         .longevity(1)
                         .and_provides(vec![b"commitment_proof".to_vec()])
-                        .propagate(false)
-                        .build()
-                }
-                Call::submit_proof_da_commitment {
-                    da_root: _,
-                    chunk_count,
-                } => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
-                    }
-                    if ProofDaCommitmentProcessed::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if *chunk_count == 0 {
-                        return InvalidTransaction::Custom(13).into();
-                    }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolProofDaCommitment")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"proof_da_commitment".to_vec()])
-                        .propagate(false)
-                        .build()
-                }
-                Call::submit_proof_da_manifest { manifest } => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
-                    }
-                    if ProofDaManifestProcessed::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if manifest.is_empty() {
-                        return InvalidTransaction::Custom(14).into();
-                    }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolProofDaManifest")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"proof_da_manifest".to_vec()])
                         .propagate(false)
                         .build()
                 }

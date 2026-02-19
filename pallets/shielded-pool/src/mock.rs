@@ -175,7 +175,6 @@ parameter_types! {
     pub const MaxEncryptedNotesPerTx: u32 = 2;
     pub const MaxNullifiersPerBatch: u32 = 32;  // 16 txs * 2 nullifiers
     pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
-    pub const MaxProofDaManifestEntries: u32 = 1024;
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
     pub const MaxForcedInclusions: u32 = 8;
@@ -199,7 +198,6 @@ impl pallet_shielded_pool::Config for Test {
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
-    type MaxProofDaManifestEntries = MaxProofDaManifestEntries;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxCoinbaseSubsidy;
     type StablecoinAssetId = u32;
@@ -1804,7 +1802,7 @@ mod tests {
     }
 
     #[test]
-    fn proofless_sidecar_allowed_with_da_policy_and_aggregation_mode() {
+    fn proofless_sidecar_allowed_with_self_contained_policy_and_aggregation_mode() {
         new_test_ext().execute_with(|| {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
@@ -1814,7 +1812,7 @@ mod tests {
             ));
             assert_ok!(Pallet::<Test>::set_proof_availability_policy(
                 RuntimeOrigin::root(),
-                ProofAvailabilityPolicy::DaRequired,
+                ProofAvailabilityPolicy::SelfContained,
             ));
 
             let proof = StarkProof::from_bytes(Vec::new());

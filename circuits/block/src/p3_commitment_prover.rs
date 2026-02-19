@@ -59,11 +59,11 @@ impl CommitmentBlockProverP3 {
         &self,
         transactions: &[TransactionProof],
     ) -> Result<CommitmentBlockProofP3, BlockError> {
-        let proof_hashes = proof_hashes_from_transactions(transactions)?;
+        let statement_hashes = statement_hashes_from_transactions(transactions)?;
         let nullifiers = nullifiers_from_transactions(transactions)?;
         let sorted_nullifiers = sorted_nullifiers(&nullifiers);
-        self.prove_from_hashes_with_inputs(
-            &proof_hashes,
+        self.prove_from_statement_hashes_with_inputs(
+            &statement_hashes,
             [0u8; 48],
             [0u8; 48],
             [0u8; 48],
@@ -103,9 +103,9 @@ impl CommitmentBlockProverP3 {
         }
 
         let ending_root = tree.root();
-        let proof_hashes = proof_hashes_from_transactions(transactions)?;
-        self.prove_from_hashes_with_inputs(
-            &proof_hashes,
+        let statement_hashes = statement_hashes_from_transactions(transactions)?;
+        self.prove_from_statement_hashes_with_inputs(
+            &statement_hashes,
             starting_root,
             ending_root,
             nullifier_root,
@@ -115,11 +115,11 @@ impl CommitmentBlockProverP3 {
         )
     }
 
-    pub fn prove_from_hashes(
+    pub fn prove_from_statement_hashes(
         &self,
-        proof_hashes: &[Commitment],
+        statement_hashes: &[Commitment],
     ) -> Result<CommitmentBlockProofP3, BlockError> {
-        let nullifier_count = proof_hashes.len().saturating_mul(MAX_INPUTS);
+        let nullifier_count = statement_hashes.len().saturating_mul(MAX_INPUTS);
         let mut nullifiers = Vec::with_capacity(nullifier_count);
         for idx in 0..nullifier_count {
             let mut nf = [0u8; 48];
@@ -127,8 +127,8 @@ impl CommitmentBlockProverP3 {
             nullifiers.push(nf);
         }
         let sorted_nullifiers = sorted_nullifiers(&nullifiers);
-        self.prove_from_hashes_with_inputs(
-            proof_hashes,
+        self.prove_from_statement_hashes_with_inputs(
+            statement_hashes,
             [0u8; 48],
             [0u8; 48],
             [0u8; 48],
@@ -138,21 +138,21 @@ impl CommitmentBlockProverP3 {
         )
     }
 
-    pub fn commitment_from_proof_hashes(
-        proof_hashes: &[Commitment],
+    pub fn commitment_from_statement_hashes(
+        statement_hashes: &[Commitment],
     ) -> Result<Commitment, BlockError> {
-        if proof_hashes.is_empty() {
+        if statement_hashes.is_empty() {
             return Err(BlockError::CommitmentProofEmptyBlock);
         }
 
-        let mut inputs = hashes_to_vals(proof_hashes);
-        let input_cycles = proof_hashes.len().max(1);
+        let mut inputs = hashes_to_vals(statement_hashes);
+        let input_cycles = statement_hashes.len().max(1);
         let target_len = input_cycles * POSEIDON2_RATE;
         if inputs.len() < target_len {
             inputs.resize(target_len, Val::ZERO);
         }
 
-        let trace_len = CommitmentBlockAirP3::trace_length(proof_hashes.len());
+        let trace_len = CommitmentBlockAirP3::trace_length(statement_hashes.len());
         let total_cycles = trace_len / CYCLE_LENGTH;
 
         let mut state = [Val::ZERO; POSEIDON2_WIDTH];
@@ -210,9 +210,9 @@ impl CommitmentBlockProverP3 {
         Ok(felts_to_bytes48(&output))
     }
 
-    pub fn prove_from_hashes_with_inputs(
+    pub fn prove_from_statement_hashes_with_inputs(
         &self,
-        proof_hashes: &[Commitment],
+        statement_hashes: &[Commitment],
         starting_state_root: Commitment,
         ending_state_root: Commitment,
         nullifier_root: Commitment,
@@ -220,13 +220,13 @@ impl CommitmentBlockProverP3 {
         nullifiers: Vec<Commitment>,
         sorted_nullifiers: Vec<Commitment>,
     ) -> Result<CommitmentBlockProofP3, BlockError> {
-        if proof_hashes.is_empty() {
+        if statement_hashes.is_empty() {
             return Err(BlockError::CommitmentProofEmptyBlock);
         }
         validate_commitment_bytes("starting_state_root", &starting_state_root)?;
         validate_commitment_bytes("ending_state_root", &ending_state_root)?;
 
-        let expected_nullifiers = proof_hashes.len().saturating_mul(MAX_INPUTS);
+        let expected_nullifiers = statement_hashes.len().saturating_mul(MAX_INPUTS);
         if nullifiers.len() != expected_nullifiers {
             return Err(BlockError::CommitmentProofInvalidInputs(format!(
                 "nullifier length mismatch (expected {}, got {})",
@@ -267,13 +267,13 @@ impl CommitmentBlockProverP3 {
             &ending_state_root,
             &nullifier_root,
             &da_root,
-            proof_hashes.len() as u32,
+            statement_hashes.len() as u32,
             &nullifiers,
             &sorted_nullifiers,
         );
 
         let (trace, commitment_vals) = self.build_trace(
-            proof_hashes,
+            statement_hashes,
             &start_root_vals,
             &end_root_vals,
             &nullifier_root_vals,
@@ -285,12 +285,12 @@ impl CommitmentBlockProverP3 {
         )?;
 
         let pub_inputs = CommitmentBlockPublicInputsP3 {
-            tx_proofs_commitment: commitment_vals,
+            tx_statements_commitment: commitment_vals,
             starting_state_root: start_root_vals,
             ending_state_root: end_root_vals,
             nullifier_root: nullifier_root_vals,
             da_root: da_root_vals,
-            tx_count: proof_hashes.len() as u32,
+            tx_count: statement_hashes.len() as u32,
             perm_alpha,
             perm_beta,
             nullifiers: decode_nullifier_list("nullifiers", &nullifiers)?,
@@ -327,7 +327,7 @@ impl CommitmentBlockProverP3 {
 
     fn build_trace(
         &self,
-        proof_hashes: &[Commitment],
+        statement_hashes: &[Commitment],
         starting_state_root: &[Val; 6],
         ending_state_root: &[Val; 6],
         nullifier_root: &[Val; 6],
@@ -337,8 +337,8 @@ impl CommitmentBlockProverP3 {
         perm_alpha: Val,
         perm_beta: Val,
     ) -> Result<(RowMajorMatrix<Val>, [Val; 6]), BlockError> {
-        let mut inputs = hashes_to_vals(proof_hashes);
-        let tx_count = proof_hashes.len();
+        let mut inputs = hashes_to_vals(statement_hashes);
+        let tx_count = statement_hashes.len();
         let input_cycles = tx_count.max(1);
         let target_len = input_cycles * POSEIDON2_RATE;
         if inputs.len() < target_len {
@@ -550,17 +550,45 @@ impl CommitmentBlockProverP3 {
     }
 }
 
-fn proof_hashes_from_transactions(
+fn statement_hashes_from_transactions(
     transactions: &[TransactionProof],
 ) -> Result<Vec<Commitment>, BlockError> {
     let mut hashes = Vec::with_capacity(transactions.len());
-    for (index, tx) in transactions.iter().enumerate() {
-        if tx.stark_proof.is_empty() {
-            return Err(BlockError::MissingStarkProof { index });
-        }
-        hashes.push(blake3_384(&tx.stark_proof));
+    for tx in transactions {
+        hashes.push(statement_hash_from_proof(tx));
     }
     Ok(hashes)
+}
+
+fn statement_hash_from_proof(proof: &TransactionProof) -> Commitment {
+    let mut hasher = Blake3Hasher::new();
+    let public = &proof.public_inputs;
+    hasher.update(b"tx-statement-v1");
+    hasher.update(&public.merkle_root);
+    for nf in &public.nullifiers {
+        hasher.update(nf);
+    }
+    for cm in &public.commitments {
+        hasher.update(cm);
+    }
+    for ct in &public.ciphertext_hashes {
+        hasher.update(ct);
+    }
+    hasher.update(&public.native_fee.to_le_bytes());
+    hasher.update(&public.value_balance.to_le_bytes());
+    hasher.update(&public.balance_tag);
+    hasher.update(&public.circuit_version.to_le_bytes());
+    hasher.update(&public.crypto_suite.to_le_bytes());
+    hasher.update(&[public.stablecoin.enabled as u8]);
+    hasher.update(&public.stablecoin.asset_id.to_le_bytes());
+    hasher.update(&public.stablecoin.policy_hash);
+    hasher.update(&public.stablecoin.oracle_commitment);
+    hasher.update(&public.stablecoin.attestation_commitment);
+    hasher.update(&public.stablecoin.issuance_delta.to_le_bytes());
+    hasher.update(&public.stablecoin.policy_version.to_le_bytes());
+    let mut out = [0u8; 48];
+    hasher.finalize_xof().fill(&mut out);
+    out
 }
 
 fn nullifiers_from_transactions(
