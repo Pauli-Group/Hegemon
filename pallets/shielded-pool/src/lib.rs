@@ -1778,10 +1778,7 @@ pub mod pallet {
                 // on-chain policy allows DA-provided proofs.
                 ensure!(aggregation_mode, Error::<T>::ProofBytesRequired);
                 ensure!(
-                    matches!(
-                        proof_policy,
-                        types::ProofAvailabilityPolicy::SelfContained
-                    ),
+                    matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained),
                     Error::<T>::ProofBytesRequired
                 );
             }
@@ -2840,10 +2837,7 @@ pub mod pallet {
                             return InvalidTransaction::Custom(12).into();
                         }
 
-                        if !matches!(
-                            proof_policy,
-                            types::ProofAvailabilityPolicy::SelfContained
-                        ) {
+                        if !matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained) {
                             log::info!(
                                 target: "shielded-pool",
                                 "  REJECTED: proof bytes required by policy"

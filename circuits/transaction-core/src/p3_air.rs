@@ -1344,7 +1344,8 @@ where
             );
             when.assert_zero(
                 not_first_row.clone()
-                    * (next[slot_asset_cols[slot]].clone() - current[slot_asset_cols[slot]].clone()),
+                    * (next[slot_asset_cols[slot]].clone()
+                        - current[slot_asset_cols[slot]].clone()),
             );
         }
 
