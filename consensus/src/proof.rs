@@ -1,5 +1,6 @@
 use crate::aggregation::{
-    aggregation_proof_uncompressed_len, verify_aggregation_proof, warm_aggregation_cache,
+    aggregation_proof_uncompressed_len, verify_aggregation_proof_with_metrics,
+    warm_aggregation_cache_from_proof_bytes,
 };
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
@@ -250,18 +251,17 @@ impl ProofVerifier for ParallelProofVerifier {
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
         let commitment_verify_ms = start_commitment.elapsed().as_millis();
 
-        let expected_commitment =
-            if let Some(commitment) = block.tx_statements_commitment {
-                commitment
-            } else if let Some(proofs) = transaction_proofs {
-                let statement_hashes = statement_hashes_from_transaction_proofs(proofs)?;
-                CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-                    .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
-            } else {
-                let statement_hashes = statement_hashes_from_transactions(&block.transactions);
-                CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-                    .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
-            };
+        let expected_commitment = if let Some(commitment) = block.tx_statements_commitment {
+            commitment
+        } else if let Some(proofs) = transaction_proofs {
+            let statement_hashes = statement_hashes_from_transaction_proofs(proofs)?;
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
+        } else {
+            let statement_hashes = statement_hashes_from_transactions(&block.transactions);
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
+        };
         let proof_commitment =
             felts_to_bytes48(&commitment_proof.public_inputs.tx_statements_commitment);
         if expected_commitment != proof_commitment {
@@ -282,29 +282,54 @@ impl ProofVerifier for ParallelProofVerifier {
         }
 
         let mut aggregation_verify_ms = 0u128;
+        let mut aggregation_verify_batch_ms = 0u128;
         let mut tx_verify_ms = 0u128;
 
         let mut aggregation_cache_hit = None;
         let mut aggregation_cache_build_ms = None;
-        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref() {
-            if let Some(proofs) = transaction_proofs
-                && let Some(representative) = proofs.first()
-                && let Ok(warmup) = warm_aggregation_cache(representative, tx_count)
-            {
-                aggregation_cache_hit = Some(warmup.cache_hit);
-                aggregation_cache_build_ms = Some(warmup.cache_build_ms);
+        let mut aggregation_cache_prewarm_hit = None;
+        let mut aggregation_cache_prewarm_build_ms = None;
+        let mut aggregation_cache_prewarm_total_ms = None;
+        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref()
+        {
+            let prewarm_start = Instant::now();
+            match warm_aggregation_cache_from_proof_bytes(
+                aggregation_proof,
+                tx_count,
+                &expected_commitment,
+            ) {
+                Ok(warmup) => {
+                    aggregation_cache_prewarm_hit = Some(warmup.cache_hit);
+                    aggregation_cache_prewarm_build_ms = Some(warmup.cache_build_ms);
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        target: "consensus::metrics",
+                        ?err,
+                        tx_count,
+                        "aggregation cache prewarm failed"
+                    );
+                }
             }
+            aggregation_cache_prewarm_total_ms = Some(prewarm_start.elapsed().as_millis());
 
-            let start_agg = Instant::now();
-            verify_aggregation_proof(aggregation_proof, tx_count, &expected_commitment)?;
-            aggregation_verify_ms = start_agg.elapsed().as_millis();
+            let verify_metrics = verify_aggregation_proof_with_metrics(
+                aggregation_proof,
+                tx_count,
+                &expected_commitment,
+            )?;
+            aggregation_verify_ms = verify_metrics.total_ms;
+            aggregation_verify_batch_ms = verify_metrics.verify_batch_ms;
+            aggregation_cache_hit = Some(verify_metrics.cache_hit);
+            aggregation_cache_build_ms = Some(verify_metrics.cache_build_ms);
             true
         } else {
             false
         };
 
         if !aggregation_verified {
-            let transaction_proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
+            let transaction_proofs =
+                transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
             let start_tx = Instant::now();
             transaction_proofs
                 .par_iter()
@@ -355,8 +380,12 @@ impl ProofVerifier for ParallelProofVerifier {
             ciphertext_bytes_total,
             commitment_verify_ms,
             aggregation_verify_ms,
+            aggregation_verify_batch_ms,
             aggregation_cache_hit = aggregation_cache_hit.unwrap_or(false),
             aggregation_cache_build_ms = aggregation_cache_build_ms.unwrap_or(0),
+            aggregation_cache_prewarm_hit = aggregation_cache_prewarm_hit.unwrap_or(false),
+            aggregation_cache_prewarm_build_ms = aggregation_cache_prewarm_build_ms.unwrap_or(0),
+            aggregation_cache_prewarm_total_ms = aggregation_cache_prewarm_total_ms.unwrap_or(0),
             tx_verify_ms,
             total_verify_ms = start_total.elapsed().as_millis(),
             aggregation_verified,
@@ -452,9 +481,7 @@ fn statement_hashes_from_transaction_proofs(
     Ok(hashes)
 }
 
-fn statement_hashes_from_transactions(
-    transactions: &[crate::types::Transaction],
-) -> Vec<[u8; 48]> {
+fn statement_hashes_from_transactions(transactions: &[crate::types::Transaction]) -> Vec<[u8; 48]> {
     transactions
         .iter()
         .map(|tx| {

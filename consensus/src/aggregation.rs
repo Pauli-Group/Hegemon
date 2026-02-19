@@ -106,6 +106,14 @@ pub struct AggregationCacheWarmup {
     pub cache_build_ms: u128,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AggregationVerifyMetrics {
+    pub cache_hit: bool,
+    pub cache_build_ms: u128,
+    pub verify_batch_ms: u128,
+    pub total_ms: u128,
+}
+
 fn build_aggregation_verifier_cache_entry(
     key: AggregationVerifierKey,
     representative_proof: &TransactionProofP3,
@@ -376,12 +384,8 @@ fn binding_hash_from_public_inputs(
     ensure_zeroed_suffix(&public.commitments, output_count, "commitments")?;
     ensure_zeroed_suffix(&public.ciphertext_hashes, output_count, "ciphertext_hashes")?;
 
-    let mut message = Vec::with_capacity(
-        48 + input_count * 48
-            + output_count * 48
-            + output_count * 48
-            + 24,
-    );
+    let mut message =
+        Vec::with_capacity(48 + input_count * 48 + output_count * 48 + output_count * 48 + 24);
     message.extend_from_slice(&felts_to_bytes48(&public.merkle_root));
     for nf in public.nullifiers.iter().take(input_count) {
         message.extend_from_slice(&felts_to_bytes48(nf));
@@ -534,11 +538,96 @@ pub fn warm_aggregation_cache(
     })
 }
 
-pub fn verify_aggregation_proof(
+pub fn warm_aggregation_cache_from_proof_bytes(
     aggregation_proof: &[u8],
     tx_count: usize,
     expected_statement_commitment: &[u8; 48],
-) -> Result<(), ProofError> {
+) -> Result<AggregationCacheWarmup, ProofError> {
+    if tx_count == 0 {
+        return Err(ProofError::AggregationProofEmptyBlock);
+    }
+    if aggregation_proof.is_empty() {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "aggregation proof bytes empty".to_string(),
+        ));
+    }
+
+    let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
+    let payload: AggregationProofV3Payload = postcard::from_bytes(&decoded).map_err(|_| {
+        ProofError::AggregationProofV3Decode("aggregation V3 payload encoding invalid".to_string())
+    })?;
+
+    if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V3 {
+        return Err(ProofError::AggregationProofV3Decode(format!(
+            "unsupported aggregation proof payload version {}",
+            payload.version
+        )));
+    }
+    if payload.tx_count as usize != tx_count {
+        return Err(ProofError::AggregationProofV3Binding(format!(
+            "tx_count mismatch (payload {}, expected {})",
+            payload.tx_count, tx_count
+        )));
+    }
+    if payload.tx_statements_commitment.len() != 48 {
+        return Err(ProofError::AggregationProofV3Decode(
+            "tx_statements_commitment length invalid".to_string(),
+        ));
+    }
+    if payload.tx_statements_commitment.as_slice() != expected_statement_commitment.as_slice() {
+        return Err(ProofError::AggregationProofV3Binding(
+            "tx_statements_commitment mismatch".to_string(),
+        ));
+    }
+    if payload.representative_proof.is_empty() {
+        return Err(ProofError::AggregationProofV3Decode(
+            "representative proof missing".to_string(),
+        ));
+    }
+    let pub_inputs_len = payload.inner_public_inputs_len as usize;
+    if pub_inputs_len == 0 {
+        return Err(ProofError::AggregationProofV3Decode(
+            "inner_public_inputs_len must be non-zero".to_string(),
+        ));
+    }
+
+    let representative_proof: TransactionProofP3 =
+        postcard::from_bytes(&payload.representative_proof).map_err(|_| {
+            ProofError::AggregationProofV3Decode(
+                "representative proof encoding invalid".to_string(),
+            )
+        })?;
+    let shape = ProofShape {
+        degree_bits: representative_proof.degree_bits,
+        commit_phase_len: representative_proof
+            .opening_proof
+            .commit_phase_commits
+            .len(),
+        final_poly_len: representative_proof.opening_proof.final_poly.len(),
+        query_count: representative_proof.opening_proof.query_proofs.len(),
+    };
+    let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
+    let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+    let cache_key = AggregationVerifierKey {
+        tx_count,
+        pub_inputs_len,
+        log_blowup,
+        shape,
+    };
+    let cache_result =
+        get_or_build_aggregation_verifier_cache_entry(cache_key, &representative_proof)?;
+
+    Ok(AggregationCacheWarmup {
+        cache_hit: cache_result.cache_hit,
+        cache_build_ms: cache_result.cache_build_ms,
+    })
+}
+
+pub fn verify_aggregation_proof_with_metrics(
+    aggregation_proof: &[u8],
+    tx_count: usize,
+    expected_statement_commitment: &[u8; 48],
+) -> Result<AggregationVerifyMetrics, ProofError> {
     let start_total = Instant::now();
 
     if tx_count == 0 {
@@ -670,6 +759,7 @@ pub fn verify_aggregation_proof(
     })?;
     let verify_batch_ms = start_verify.elapsed().as_millis();
 
+    let total_ms = start_total.elapsed().as_millis();
     tracing::info!(
         target: "consensus::metrics",
         tx_count,
@@ -677,11 +767,29 @@ pub fn verify_aggregation_proof(
         cache_hit = cache_result.cache_hit,
         cache_build_ms = cache_result.cache_build_ms,
         verify_batch_ms,
-        total_ms = start_total.elapsed().as_millis(),
+        total_ms,
         "aggregation_verify_breakdown_metrics"
     );
 
-    Ok(())
+    Ok(AggregationVerifyMetrics {
+        cache_hit: cache_result.cache_hit,
+        cache_build_ms: cache_result.cache_build_ms,
+        verify_batch_ms,
+        total_ms,
+    })
+}
+
+pub fn verify_aggregation_proof(
+    aggregation_proof: &[u8],
+    tx_count: usize,
+    expected_statement_commitment: &[u8; 48],
+) -> Result<(), ProofError> {
+    verify_aggregation_proof_with_metrics(
+        aggregation_proof,
+        tx_count,
+        expected_statement_commitment,
+    )
+    .map(|_| ())
 }
 
 fn unpack_recursion_public_values(values: &[u64]) -> Vec<Val> {

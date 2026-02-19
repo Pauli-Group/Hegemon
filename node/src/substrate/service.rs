@@ -2567,7 +2567,11 @@ fn extract_shielded_transfers_for_parallel_verification(
                 let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
                 let hash_vec = ciphertext_hashes.to_vec();
                 let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs) {
+                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
+                    proof,
+                    binding_hash,
+                    pending_proofs,
+                ) {
                     Ok(bytes) => Some(bytes),
                     Err(err) if allow_missing_sidecar_proofs && proof.data.is_empty() => {
                         tracing::debug!(
@@ -2669,7 +2673,11 @@ fn extract_shielded_transfers_for_parallel_verification(
                 let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
                 let hash_vec = ciphertext_hashes.to_vec();
                 let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs) {
+                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
+                    proof,
+                    binding_hash,
+                    pending_proofs,
+                ) {
                     Ok(bytes) => Some(bytes),
                     Err(err) if allow_missing_sidecar_proofs && proof.data.is_empty() => {
                         tracing::debug!(
@@ -2899,8 +2907,9 @@ fn derive_commitment_block_proof_from_bytes(
             statement_hashes.len()
         ));
     }
-    let tx_statements_commitment = CommitmentBlockProver::commitment_from_statement_hashes(statement_hashes)
-        .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
 
     let mut tree = parent_tree.clone();
     for tx in transactions {
@@ -8230,7 +8239,6 @@ mod tests {
         let len = proof_da_blob_len_from_manifest(&[a, b]).expect("len");
         assert_eq!(len, 155);
     }
-
 }
 
 // =============================================================================

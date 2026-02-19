@@ -12,8 +12,12 @@ use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, 
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::{generate_challenges, verify_circuit};
-use p3_uni_stark::get_log_num_quotient_chunks;
+use p3_uni_stark::{get_log_num_quotient_chunks, Val as StarkVal};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::time::Instant;
 use thiserror::Error;
 use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
@@ -37,12 +41,41 @@ type InnerFri = FriProofTargets<
     Witness<Val>,
 >;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ProofShape {
     degree_bits: usize,
     commit_phase_len: usize,
     final_poly_len: usize,
     query_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct AggregationProverKey {
+    tx_count: usize,
+    pub_inputs_len: usize,
+    log_blowup: usize,
+    shape: ProofShape,
+}
+
+type OuterWitnessMultiplicities = Vec<StarkVal<circuit_config::GoldilocksConfig>>;
+
+struct AggregationProverCacheEntry {
+    circuit: Circuit<Challenge>,
+    verifier_inputs:
+        Vec<StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>>,
+    common: CommonData<circuit_config::GoldilocksConfig>,
+    witness_multiplicities: OuterWitnessMultiplicities,
+}
+
+struct AggregationProverCacheResult {
+    entry: Rc<AggregationProverCacheEntry>,
+    cache_hit: bool,
+    cache_build_ms: u128,
+}
+
+thread_local! {
+    static AGGREGATION_PROVER_CACHE: RefCell<HashMap<AggregationProverKey, Rc<AggregationProverCacheEntry>>> =
+        RefCell::new(HashMap::new());
 }
 
 pub const AGGREGATION_PROOF_V3_VERSION: u8 = 3;
@@ -70,7 +103,9 @@ pub enum AggregationError {
     InvalidPublicInputs { index: usize, message: String },
     #[error("transaction proof {index} encoding invalid")]
     InvalidProofFormat { index: usize },
-    #[error("transaction proof {index} public input length mismatch (expected {expected}, got {observed})")]
+    #[error(
+        "transaction proof {index} public input length mismatch (expected {expected}, got {observed})"
+    )]
     PublicInputLengthMismatch {
         index: usize,
         expected: usize,
@@ -92,6 +127,107 @@ pub enum AggregationError {
     SerializeFailed,
     #[error("aggregation payload serialization failed")]
     PayloadSerializeFailed,
+}
+
+fn build_aggregation_prover_cache_entry(
+    key: AggregationProverKey,
+    representative_proof: &TransactionProofP3,
+) -> Result<AggregationProverCacheEntry, AggregationError> {
+    let inner_config = config_with_fri(key.log_blowup, FRI_NUM_QUERIES);
+    let final_poly_len = key.shape.final_poly_len;
+    if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
+        return Err(AggregationError::InvalidFinalPolynomialLength);
+    }
+    let log_final_poly_len = final_poly_len.ilog2() as usize;
+    let commit_pow_bits = 0;
+    let query_pow_bits = FRI_POW_BITS;
+    let fri_verifier_params = FriVerifierParams {
+        log_blowup: key.log_blowup,
+        log_final_poly_len,
+        commit_pow_bits,
+        query_pow_bits,
+    };
+
+    let mut circuit_builder = CircuitBuilder::<Challenge>::new();
+    let mut verifier_inputs = Vec::with_capacity(key.tx_count);
+    for _ in 0..key.tx_count {
+        let inputs = StarkVerifierInputsBuilder::<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>::allocate(
+            &mut circuit_builder,
+            representative_proof,
+            None,
+            key.pub_inputs_len,
+        );
+        verify_circuit::<
+            TransactionAirP3,
+            Config,
+            HashTargets<Val, DIGEST_ELEMS>,
+            InputProofTargets<Val, Challenge, RecValMmcs<Val, DIGEST_ELEMS, Hash, Compress>>,
+            InnerFri,
+            POSEIDON2_RATE,
+        >(
+            &inner_config.config,
+            &TransactionAirP3,
+            &mut circuit_builder,
+            &inputs.proof_targets,
+            &inputs.air_public_targets,
+            &None,
+            &fri_verifier_params,
+        )
+        .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+        verifier_inputs.push(inputs);
+    }
+
+    let circuit = circuit_builder
+        .build()
+        .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+
+    let table_packing = TablePacking::new(4, 4, 1);
+    let (airs_degrees, witness_multiplicities) = get_airs_and_degrees_with_prep::<
+        circuit_config::GoldilocksConfig,
+        _,
+        2,
+    >(&circuit, table_packing, None)
+    .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
+
+    let outer_config = circuit_config::goldilocks().build();
+    let common = CommonData::from_airs_and_degrees(&outer_config, &mut airs, &degrees);
+
+    Ok(AggregationProverCacheEntry {
+        circuit,
+        verifier_inputs,
+        common,
+        witness_multiplicities,
+    })
+}
+
+fn get_or_build_aggregation_prover_cache_entry(
+    key: AggregationProverKey,
+    representative_proof: &TransactionProofP3,
+) -> Result<AggregationProverCacheResult, AggregationError> {
+    if let Some(entry) = AGGREGATION_PROVER_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return Ok(AggregationProverCacheResult {
+            entry,
+            cache_hit: true,
+            cache_build_ms: 0,
+        });
+    }
+
+    let start_build = Instant::now();
+    let built = Rc::new(build_aggregation_prover_cache_entry(
+        key,
+        representative_proof,
+    )?);
+    let build_ms = start_build.elapsed().as_millis();
+    let entry = AGGREGATION_PROVER_CACHE.with(|cache| {
+        let mut guard = cache.borrow_mut();
+        guard.entry(key).or_insert_with(|| built.clone()).clone()
+    });
+    Ok(AggregationProverCacheResult {
+        entry,
+        cache_hit: false,
+        cache_build_ms: build_ms,
+    })
 }
 
 /// Generate an aggregation proof for a batch of transaction proofs.
@@ -157,58 +293,30 @@ pub fn prove_aggregation(
     }
 
     let pub_inputs_len = expected_inputs_len.ok_or(AggregationError::EmptyBatch)?;
+    let expected_shape = expected_shape.ok_or(AggregationError::EmptyBatch)?;
     let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-    let inner_config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
-    let final_poly_len = expected_shape
-        .map(|shape| shape.final_poly_len)
-        .unwrap_or(0);
+    let final_poly_len = expected_shape.final_poly_len;
     if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
         return Err(AggregationError::InvalidFinalPolynomialLength);
     }
-    let log_final_poly_len = final_poly_len.ilog2() as usize;
-    let commit_pow_bits = 0;
-    let query_pow_bits = FRI_POW_BITS;
-    let log_height_max = log_final_poly_len + log_blowup;
-    let fri_verifier_params = FriVerifierParams {
+    let cache_key = AggregationProverKey {
+        tx_count: transaction_proofs.len(),
+        pub_inputs_len,
         log_blowup,
-        log_final_poly_len,
-        commit_pow_bits,
-        query_pow_bits,
+        shape: expected_shape,
     };
+    let cache_result = get_or_build_aggregation_prover_cache_entry(
+        cache_key,
+        inner_proofs.first().ok_or(AggregationError::EmptyBatch)?,
+    )?;
+    let _cache_hit = cache_result.cache_hit;
+    let _cache_build_ms = cache_result.cache_build_ms;
 
-    let mut circuit_builder = CircuitBuilder::<Challenge>::new();
-    let mut verifier_inputs = Vec::with_capacity(inner_proofs.len());
-    for proof in &inner_proofs {
-        let inputs = StarkVerifierInputsBuilder::<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>::allocate(
-            &mut circuit_builder,
-            proof,
-            None,
-            pub_inputs_len,
-        );
-        verify_circuit::<
-            TransactionAirP3,
-            Config,
-            HashTargets<Val, DIGEST_ELEMS>,
-            InputProofTargets<Val, Challenge, RecValMmcs<Val, DIGEST_ELEMS, Hash, Compress>>,
-            InnerFri,
-            POSEIDON2_RATE,
-        >(
-            &inner_config.config,
-            &TransactionAirP3,
-            &mut circuit_builder,
-            &inputs.proof_targets,
-            &inputs.air_public_targets,
-            &None,
-            &fri_verifier_params,
-        )
-        .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
-        verifier_inputs.push(inputs);
-    }
-
-    let circuit = circuit_builder
-        .build()
-        .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    let query_pow_bits = FRI_POW_BITS;
+    let log_final_poly_len = final_poly_len.ilog2() as usize;
+    let log_height_max = log_final_poly_len + log_blowup;
+    let inner_config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
 
     let mut recursion_public_inputs = Vec::new();
     for (index, (proof, pub_inputs_vec)) in
@@ -226,7 +334,7 @@ pub fn prove_aggregation(
             message: format!("{err:?}"),
         })?;
         let num_queries = proof.opening_proof.query_proofs.len();
-        let packed = verifier_inputs[index].pack_values(
+        let packed = cache_result.entry.verifier_inputs[index].pack_values(
             pub_inputs_vec,
             proof,
             &None,
@@ -236,35 +344,33 @@ pub fn prove_aggregation(
         recursion_public_inputs.extend(packed);
     }
 
-    let table_packing = TablePacking::new(4, 4, 1);
-    let (airs_degrees, witness_multiplicities) = get_airs_and_degrees_with_prep::<
-        circuit_config::GoldilocksConfig,
-        _,
-        2,
-    >(&circuit, table_packing, None)
-    .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
-    let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
-
-    let outer_config = circuit_config::goldilocks().build();
-    let common = CommonData::from_airs_and_degrees(&outer_config, &mut airs, &degrees);
-
-    let mut runner = circuit.clone().runner();
+    let mut runner = cache_result.entry.circuit.clone().runner();
     runner
         .set_public_inputs(&recursion_public_inputs)
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
-    set_stark_verifier_witnesses(&circuit, &mut runner, &verifier_inputs, &inner_proofs)
-        .map_err(|err| AggregationError::CircuitRun(format!("set witness targets: {err:?}")))?;
+    set_stark_verifier_witnesses(
+        &cache_result.entry.circuit,
+        &mut runner,
+        &cache_result.entry.verifier_inputs,
+        &inner_proofs,
+    )
+    .map_err(|err| AggregationError::CircuitRun(format!("set witness targets: {err:?}")))?;
     let traces = runner
         .run()
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
 
-    let outer_prover = BatchStarkProver::new(outer_config).with_table_packing(table_packing);
+    let outer_prover = BatchStarkProver::new(circuit_config::goldilocks().build())
+        .with_table_packing(TablePacking::new(4, 4, 1));
     let outer_proof = outer_prover
-        .prove_all_tables(&traces, &common, witness_multiplicities)
+        .prove_all_tables(
+            &traces,
+            &cache_result.entry.common,
+            cache_result.entry.witness_multiplicities.clone(),
+        )
         .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))?;
 
-    let outer_proof = postcard::to_allocvec(&outer_proof.proof)
-        .map_err(|_| AggregationError::SerializeFailed)?;
+    let outer_proof =
+        postcard::to_allocvec(&outer_proof.proof).map_err(|_| AggregationError::SerializeFailed)?;
     let representative_proof = transaction_proofs
         .first()
         .ok_or(AggregationError::EmptyBatch)?
@@ -438,12 +544,7 @@ fn set_stark_verifier_witnesses(
                     .zip(batch_proof.opened_values.iter())
                 {
                     for (t, v) in row_targets.iter().zip(row_values.iter()) {
-                        set_target(
-                            circuit,
-                            runner,
-                            *t,
-                            Challenge::from(*v),
-                        )?;
+                        set_target(circuit, runner, *t, Challenge::from(*v))?;
                     }
                 }
 
@@ -454,12 +555,7 @@ fn set_stark_verifier_witnesses(
                     .zip(batch_proof.opening_proof.iter())
                 {
                     for (t, v) in hash_targets.iter().zip(hash_values.iter()) {
-                        set_target(
-                            circuit,
-                            runner,
-                            *t,
-                            Challenge::from(*v),
-                        )?;
+                        set_target(circuit, runner, *t, Challenge::from(*v))?;
                     }
                 }
             }
@@ -484,12 +580,7 @@ fn set_stark_verifier_witnesses(
                     .zip(step_proof.opening_proof.iter())
                 {
                     for (t, v) in hash_targets.iter().zip(hash_values.iter()) {
-                        set_target(
-                            circuit,
-                            runner,
-                            *t,
-                            Challenge::from(*v),
-                        )?;
+                        set_target(circuit, runner, *t, Challenge::from(*v))?;
                     }
                 }
             }
