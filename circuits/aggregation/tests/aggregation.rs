@@ -1,12 +1,16 @@
 use aggregation_circuit::prove_aggregation;
+use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
+use crypto::hashes::blake3_384;
 use p3_field::PrimeCharacteristicRing;
+use sp_core::hashing::blake2_256;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::{
-    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
+    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionProof,
+    TransactionWitness,
 };
 
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
@@ -122,6 +126,53 @@ fn sample_witness() -> TransactionWitness {
     }
 }
 
+fn statement_hash_from_proof(proof: &TransactionProof) -> [u8; 48] {
+    let public = &proof.public_inputs;
+    let mut binding_message = Vec::new();
+    binding_message.extend_from_slice(&public.merkle_root);
+    for nf in &public.nullifiers {
+        binding_message.extend_from_slice(nf);
+    }
+    for cm in &public.commitments {
+        binding_message.extend_from_slice(cm);
+    }
+    for ct in &public.ciphertext_hashes {
+        binding_message.extend_from_slice(ct);
+    }
+    binding_message.extend_from_slice(&public.native_fee.to_le_bytes());
+    binding_message.extend_from_slice(&public.value_balance.to_le_bytes());
+
+    let mut msg0 = Vec::new();
+    msg0.extend_from_slice(b"binding-hash-v1");
+    msg0.push(0);
+    msg0.extend_from_slice(&binding_message);
+    let hash0 = blake2_256(&msg0);
+
+    let mut msg1 = Vec::new();
+    msg1.extend_from_slice(b"binding-hash-v1");
+    msg1.push(1);
+    msg1.extend_from_slice(&binding_message);
+    let hash1 = blake2_256(&msg1);
+
+    let mut binding_hash = [0u8; 64];
+    binding_hash[..32].copy_from_slice(&hash0);
+    binding_hash[32..].copy_from_slice(&hash1);
+
+    let mut statement_message = Vec::new();
+    statement_message.extend_from_slice(b"tx-statement-v1");
+    statement_message.extend_from_slice(&binding_hash);
+    blake3_384(&statement_message)
+}
+
+fn tx_statements_commitment_from_proofs(proofs: &[TransactionProof]) -> [u8; 48] {
+    let statement_hashes = proofs
+        .iter()
+        .map(statement_hash_from_proof)
+        .collect::<Vec<_>>();
+    CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+        .expect("statement commitment")
+}
+
 #[test]
 #[ignore = "slow aggregation proof generation"]
 fn aggregation_proof_roundtrip() {
@@ -131,16 +182,12 @@ fn aggregation_proof_roundtrip() {
         .expect("generate transaction proof");
 
     let proofs = vec![proof.clone(), proof.clone()];
-    let tx_statements_commitment = [7u8; 48];
+    let tx_statements_commitment = tx_statements_commitment_from_proofs(&proofs);
     let aggregation_bytes =
         prove_aggregation(&proofs, tx_statements_commitment).expect("generate aggregation proof");
 
-    verify_aggregation_proof(
-        &aggregation_bytes,
-        proofs.len(),
-        &tx_statements_commitment,
-    )
-    .expect("verify aggregation proof");
+    verify_aggregation_proof(&aggregation_bytes, proofs.len(), &tx_statements_commitment)
+        .expect("verify aggregation proof");
 
     let mut corrupted_payload: aggregation_circuit::AggregationProofV3Payload =
         postcard::from_bytes(&aggregation_bytes).expect("decode payload");

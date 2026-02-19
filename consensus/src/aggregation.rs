@@ -1,9 +1,11 @@
 use crate::error::ProofError;
+use block_circuit::CommitmentBlockProver;
+use crypto::hashes::blake3_384;
 use p3_batch_stark::{BatchProof, CommonData, verify_batch};
 use p3_circuit::CircuitBuilder;
 use p3_circuit_prover::common::{CircuitTableAir, get_airs_and_degrees_with_prep};
 use p3_circuit_prover::{TablePacking, config as circuit_config};
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, PrimeField64};
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
@@ -16,7 +18,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
-    TransactionAirP3, TransactionProof,
+    TransactionAirP3, TransactionProof, TransactionPublicInputsP3,
+    hashing_pq::felts_to_bytes48,
     p3_config::{
         Challenge, Compress, Config, DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS,
         Hash, POSEIDON2_RATE, TransactionProofP3, Val, config_with_fri,
@@ -71,6 +74,8 @@ const AGGREGATION_PROOF_ZSTD_LEVEL: i32 = 3;
 const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 pub const AGGREGATION_PROOF_FORMAT_VERSION_V3: u8 = 3;
 const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
+const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
+const STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct AggregationProofV3Payload {
@@ -308,6 +313,180 @@ fn decode_aggregation_proof_bytes(bytes: &[u8]) -> Result<Vec<u8>, ProofError> {
     Ok(decoded)
 }
 
+fn decode_signed_i128_from_parts(sign: Val, magnitude: Val) -> Result<i128, ProofError> {
+    let sign_bit = sign.as_canonical_u64();
+    if sign_bit > 1 {
+        return Err(ProofError::AggregationProofV3Binding(
+            "invalid value_balance_sign in aggregated statement".to_string(),
+        ));
+    }
+    let magnitude_i128 = magnitude.as_canonical_u64() as i128;
+    Ok(if sign_bit == 1 {
+        -magnitude_i128
+    } else {
+        magnitude_i128
+    })
+}
+
+fn active_prefix_len(flags: &[Val], label: &str) -> Result<usize, ProofError> {
+    let mut seen_zero = false;
+    let mut count = 0usize;
+    for (idx, flag) in flags.iter().enumerate() {
+        let bit = flag.as_canonical_u64();
+        if bit > 1 {
+            return Err(ProofError::AggregationProofV3Binding(format!(
+                "{label}[{idx}] is not boolean"
+            )));
+        }
+        if bit == 1 {
+            if seen_zero {
+                return Err(ProofError::AggregationProofV3Binding(format!(
+                    "{label} contains non-prefix active slot at index {idx}"
+                )));
+            }
+            count += 1;
+        } else {
+            seen_zero = true;
+        }
+    }
+    Ok(count)
+}
+
+fn ensure_zeroed_suffix(
+    values: &[[Val; 6]],
+    active_len: usize,
+    label: &str,
+) -> Result<(), ProofError> {
+    for (idx, value) in values.iter().enumerate().skip(active_len) {
+        if felts_to_bytes48(value) != [0u8; 48] {
+            return Err(ProofError::AggregationProofV3Binding(format!(
+                "{label}[{idx}] must be zero when inactive"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn binding_hash_from_public_inputs(
+    public: &TransactionPublicInputsP3,
+) -> Result<[u8; 64], ProofError> {
+    let input_count = active_prefix_len(&public.input_flags, "input_flags")?;
+    let output_count = active_prefix_len(&public.output_flags, "output_flags")?;
+    ensure_zeroed_suffix(&public.nullifiers, input_count, "nullifiers")?;
+    ensure_zeroed_suffix(&public.commitments, output_count, "commitments")?;
+    ensure_zeroed_suffix(&public.ciphertext_hashes, output_count, "ciphertext_hashes")?;
+
+    let mut message = Vec::with_capacity(
+        48 + input_count * 48
+            + output_count * 48
+            + output_count * 48
+            + 24,
+    );
+    message.extend_from_slice(&felts_to_bytes48(&public.merkle_root));
+    for nf in public.nullifiers.iter().take(input_count) {
+        message.extend_from_slice(&felts_to_bytes48(nf));
+    }
+    for cm in public.commitments.iter().take(output_count) {
+        message.extend_from_slice(&felts_to_bytes48(cm));
+    }
+    for ct in public.ciphertext_hashes.iter().take(output_count) {
+        message.extend_from_slice(&felts_to_bytes48(ct));
+    }
+    message.extend_from_slice(&public.fee.as_canonical_u64().to_le_bytes());
+    let value_balance =
+        decode_signed_i128_from_parts(public.value_balance_sign, public.value_balance_magnitude)?;
+    message.extend_from_slice(&value_balance.to_le_bytes());
+
+    let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + message.len());
+    msg0.extend_from_slice(BINDING_HASH_DOMAIN);
+    msg0.push(0);
+    msg0.extend_from_slice(&message);
+    let hash0 = sp_core::hashing::blake2_256(&msg0);
+
+    let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + message.len());
+    msg1.extend_from_slice(BINDING_HASH_DOMAIN);
+    msg1.push(1);
+    msg1.extend_from_slice(&message);
+    let hash1 = sp_core::hashing::blake2_256(&msg1);
+
+    let mut out = [0u8; 64];
+    out[..32].copy_from_slice(&hash0);
+    out[32..].copy_from_slice(&hash1);
+    Ok(out)
+}
+
+fn statement_hash_from_binding_hash(binding_hash: &[u8; 64]) -> [u8; 48] {
+    let mut message = Vec::with_capacity(STATEMENT_HASH_DOMAIN.len() + binding_hash.len());
+    message.extend_from_slice(STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(binding_hash);
+    blake3_384(&message)
+}
+
+fn derive_statement_commitment_from_packed_public_values(
+    packed_public_values: &[u64],
+    tx_count: usize,
+    pub_inputs_len: usize,
+) -> Result<[u8; 48], ProofError> {
+    let ext_degree = <Challenge as BasedVectorSpace<Val>>::DIMENSION;
+    if packed_public_values.len() % ext_degree != 0 {
+        return Err(ProofError::AggregationProofV3Decode(
+            "packed_public_values length is not aligned to extension degree".to_string(),
+        ));
+    }
+
+    let total_extension_values = packed_public_values.len() / ext_degree;
+    if total_extension_values % tx_count != 0 {
+        return Err(ProofError::AggregationProofV3Decode(
+            "packed_public_values length does not align with tx_count".to_string(),
+        ));
+    }
+    let per_tx_extension_values = total_extension_values / tx_count;
+    if per_tx_extension_values < pub_inputs_len {
+        return Err(ProofError::AggregationProofV3Decode(
+            "packed_public_values missing transaction public inputs".to_string(),
+        ));
+    }
+
+    let per_tx_word_stride = per_tx_extension_values * ext_degree;
+    let public_values_word_len = pub_inputs_len * ext_degree;
+
+    let mut statement_hashes = Vec::with_capacity(tx_count);
+    for tx_index in 0..tx_count {
+        let tx_offset_words = tx_index * per_tx_word_stride;
+        let tx_public_words =
+            &packed_public_values[tx_offset_words..tx_offset_words + public_values_word_len];
+
+        let mut tx_public_values = Vec::with_capacity(pub_inputs_len);
+        for idx in 0..pub_inputs_len {
+            let coeff_offset = idx * ext_degree;
+            let base_coeff = tx_public_words[coeff_offset];
+            for limb in 1..ext_degree {
+                if tx_public_words[coeff_offset + limb] != 0 {
+                    return Err(ProofError::AggregationProofV3Binding(format!(
+                        "tx {tx_index} public input {idx} is not base-lifted"
+                    )));
+                }
+            }
+            tx_public_values.push(Val::from_u64(base_coeff));
+        }
+
+        let tx_public =
+            TransactionPublicInputsP3::try_from_slice(&tx_public_values).map_err(|err| {
+                ProofError::AggregationProofV3Binding(format!(
+                    "tx {tx_index} public input decode failed: {err}"
+                ))
+            })?;
+        let binding_hash = binding_hash_from_public_inputs(&tx_public)?;
+        statement_hashes.push(statement_hash_from_binding_hash(&binding_hash));
+    }
+
+    CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes).map_err(|err| {
+        ProofError::AggregationProofV3Binding(format!(
+            "statement commitment derivation failed: {err}"
+        ))
+    })
+}
+
 pub fn warm_aggregation_cache(
     representative_proof: &TransactionProof,
     tx_count: usize,
@@ -373,9 +552,7 @@ pub fn verify_aggregation_proof(
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
     let payload: AggregationProofV3Payload = postcard::from_bytes(&decoded).map_err(|_| {
-        ProofError::AggregationProofV3Decode(
-            "aggregation V3 payload encoding invalid".to_string(),
-        )
+        ProofError::AggregationProofV3Decode("aggregation V3 payload encoding invalid".to_string())
     })?;
 
     if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V3 {
@@ -425,7 +602,10 @@ pub fn verify_aggregation_proof(
         })?;
     let shape = ProofShape {
         degree_bits: representative_proof.degree_bits,
-        commit_phase_len: representative_proof.opening_proof.commit_phase_commits.len(),
+        commit_phase_len: representative_proof
+            .opening_proof
+            .commit_phase_commits
+            .len(),
         final_poly_len: representative_proof.opening_proof.final_poly.len(),
         query_count: representative_proof.opening_proof.query_proofs.len(),
     };
@@ -456,6 +636,17 @@ pub fn verify_aggregation_proof(
     if public_values.is_empty() {
         return Err(ProofError::AggregationProofV3Decode(
             "packed_public_values missing".to_string(),
+        ));
+    }
+    let derived_statement_commitment = derive_statement_commitment_from_packed_public_values(
+        &payload.packed_public_values,
+        tx_count,
+        pub_inputs_len,
+    )?;
+    if derived_statement_commitment != *expected_statement_commitment {
+        return Err(ProofError::AggregationProofV3Binding(
+            "statement commitment derived from aggregated public inputs does not match expected commitment"
+                .to_string(),
         ));
     }
 
@@ -500,6 +691,28 @@ fn unpack_recursion_public_values(values: &[u64]) -> Vec<Val> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use p3_field::PrimeField64;
+
+    fn pack_public_inputs_with_padding(
+        tx_public_inputs: &[TransactionPublicInputsP3],
+        per_tx_extension_values: usize,
+    ) -> Vec<u64> {
+        let mut packed = Vec::new();
+        for public in tx_public_inputs {
+            let values = public.to_vec();
+            let values_len = values.len();
+            assert!(values_len <= per_tx_extension_values);
+            for value in values {
+                packed.push(value.as_canonical_u64());
+                packed.push(0);
+            }
+            for _ in values_len..per_tx_extension_values {
+                packed.push(0);
+                packed.push(0);
+            }
+        }
+        packed
+    }
 
     #[test]
     fn aggregation_proof_compression_roundtrip() {
@@ -515,5 +728,64 @@ mod tests {
         let raw = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9];
         let decoded = decode_aggregation_proof_bytes(&raw).expect("decode");
         assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn derive_statement_commitment_from_packed_public_values_roundtrip() {
+        let mut tx0 = TransactionPublicInputsP3::default();
+        tx0.input_flags[0] = Val::ONE;
+        tx0.output_flags[0] = Val::ONE;
+        tx0.merkle_root[0] = Val::from_u64(11);
+        tx0.nullifiers[0][0] = Val::from_u64(12);
+        tx0.commitments[0][0] = Val::from_u64(13);
+        tx0.ciphertext_hashes[0][0] = Val::from_u64(14);
+        tx0.fee = Val::from_u64(15);
+        tx0.value_balance_sign = Val::ZERO;
+        tx0.value_balance_magnitude = Val::from_u64(7);
+
+        let mut tx1 = TransactionPublicInputsP3::default();
+        tx1.input_flags[0] = Val::ONE;
+        tx1.output_flags[0] = Val::ONE;
+        tx1.merkle_root[0] = Val::from_u64(21);
+        tx1.nullifiers[0][0] = Val::from_u64(22);
+        tx1.commitments[0][0] = Val::from_u64(23);
+        tx1.ciphertext_hashes[0][0] = Val::from_u64(24);
+        tx1.fee = Val::from_u64(25);
+        tx1.value_balance_sign = Val::ONE;
+        tx1.value_balance_magnitude = Val::from_u64(9);
+
+        let pub_inputs_len = tx0.to_vec().len();
+        let per_tx_extension_values = pub_inputs_len + 4;
+        let packed =
+            pack_public_inputs_with_padding(&[tx0.clone(), tx1.clone()], per_tx_extension_values);
+
+        let expected_hashes = vec![
+            statement_hash_from_binding_hash(
+                &binding_hash_from_public_inputs(&tx0).expect("binding hash"),
+            ),
+            statement_hash_from_binding_hash(
+                &binding_hash_from_public_inputs(&tx1).expect("binding hash"),
+            ),
+        ];
+        let expected_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&expected_hashes)
+                .expect("statement commitment");
+
+        let observed =
+            derive_statement_commitment_from_packed_public_values(&packed, 2, pub_inputs_len)
+                .expect("derived commitment");
+        assert_eq!(observed, expected_commitment);
+    }
+
+    #[test]
+    fn derive_statement_commitment_rejects_non_base_lifted_public_inputs() {
+        let tx = TransactionPublicInputsP3::default();
+        let pub_inputs_len = tx.to_vec().len();
+        let mut packed = pack_public_inputs_with_padding(&[tx], pub_inputs_len + 2);
+        packed[1] = 9; // second limb of first extension value must stay zero for base-lifted inputs.
+
+        let err = derive_statement_commitment_from_packed_public_values(&packed, 1, pub_inputs_len)
+            .expect_err("non-base-lifted input should fail");
+        assert!(matches!(err, ProofError::AggregationProofV3Binding(_)));
     }
 }
