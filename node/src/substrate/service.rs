@@ -2237,6 +2237,14 @@ fn build_commitment_block_proof(
             .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
         decoded.push(extrinsic);
     }
+    let statement_hashes = statement_hashes_from_extrinsics(&decoded);
+    if statement_hashes.len() != proofs.len() {
+        return Err(format!(
+            "tx statement hash count mismatch (expected {}, got {})",
+            proofs.len(),
+            statement_hashes.len()
+        ));
+    }
     let da_root = if let Some(root) = da_root_override {
         root
     } else {
@@ -2244,11 +2252,40 @@ fn build_commitment_block_proof(
             build_da_encoding_from_extrinsics(&decoded, da_params, None)?;
         encoding.root()
     };
+    let starting_root = tree.root();
+    for (index, proof) in proofs.iter().enumerate() {
+        let anchor = proof.public_inputs.merkle_root;
+        if !tree.root_history().contains(&anchor) {
+            return Err(format!(
+                "transaction {index} anchor not found in commitment tree history"
+            ));
+        }
+        for &commitment in proof.commitments.iter().filter(|c| **c != [0u8; 48]) {
+            tree.append(commitment)
+                .map_err(|err| format!("commitment tree append failed: {err}"))?;
+        }
+    }
+    let ending_root = tree.root();
+
+    let mut nullifiers = Vec::new();
+    for proof in &proofs {
+        nullifiers.extend_from_slice(&proof.nullifiers);
+    }
+    let mut sorted_nullifiers = nullifiers.clone();
+    sorted_nullifiers.sort_unstable();
+    let nullifier_root = nullifier_root_from_list(&nullifiers)?;
 
     let prover = CommitmentBlockProver::new();
-
     let proof = prover
-        .prove_block_commitment_with_tree(&mut tree, &proofs, da_root)
+        .prove_from_statement_hashes_with_inputs(
+            &statement_hashes,
+            starting_root,
+            ending_root,
+            nullifier_root,
+            da_root,
+            nullifiers,
+            sorted_nullifiers,
+        )
         .map_err(|e| format!("commitment block proof failed: {e}"))?;
 
     Ok(Some(proof))

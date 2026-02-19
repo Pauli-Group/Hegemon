@@ -15,6 +15,7 @@ Observable user-visible result: on a fresh `0.9.0` genesis, nodes accept SelfCon
 - [x] (2026-02-19T00:00Z) Runtime/pallet policy cutover to `ProofAvailabilityPolicy::{InlineRequired, SelfContained}` and removal of proof-DA consensus extrinsics.
 - [x] (2026-02-19T00:00Z) Statement-binding migration from `tx_proofs_commitment` to `tx_statements_commitment` in block circuit, consensus verification, and node import/build paths.
 - [x] (2026-02-19T00:00Z) Aggregation V3 payload path landed with strict versioned decode + statement commitment binding checks in consensus.
+- [x] (2026-02-19T02:35Z) Hardened aggregation V3 verifier to re-derive `tx_statements_commitment` from packed recursion public values (via tx public-input decoding + binding-hash statement hashing) and reject payloads that only carry an unbound commitment field.
 - [x] (2026-02-19T00:00Z) Deep recursion vendor pass landed: challenger now enforces deterministic absorb/squeeze constraints in-circuit; major inner-proof payload targets moved to witness allocations.
 - [x] (2026-02-19T00:00Z) Deterministic, versioned public-value packing marker added to aggregation payload (`public_values_encoding`).
 - [x] (2026-02-19T00:00Z) Node tests compile cleanly under removed proof-DA calls (`cargo test -p hegemon-node --no-run`).
@@ -31,6 +32,9 @@ Observable user-visible result: on a fresh `0.9.0` genesis, nodes accept SelfCon
 
 - Observation: Migrating proof/opening targets to witness targets required explicit runner witness wiring in aggregation prover flow.
   Evidence: `circuits/aggregation/src/lib.rs` required extending witness assignment beyond FRI query proofs to commitments/opened values/final poly/PoW witness fields.
+
+- Observation: Aggregation V3 payload previously trusted `tx_statements_commitment` as a field-level claim without recomputing it from proof-constrained public values.
+  Evidence: `consensus/src/aggregation.rs` validated the payload commitment bytes against expected commitment but did not derive statement commitment from `packed_public_values` before `verify_batch`.
 
 ## Decision Log
 
