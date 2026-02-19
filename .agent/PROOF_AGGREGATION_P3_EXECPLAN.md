@@ -23,6 +23,8 @@ The “it works” proof is:
 
 ## Progress
 
+- [x] (2026-02-19T00:00Z) Phase C endpoint migration: aggregation payload/consensus path moved to V3 statement-commitment binding (`tx_statements_commitment`) with strict versioned decode checks.
+- [x] (2026-02-19T00:00Z) Deep recursion refactor pass landed in vendor recursion stack: deterministic in-circuit challenger absorb/squeeze and broader witness-target allocation for inner proof payloads.
 - [x] (2026-01-21T00:00Z) Draft proof aggregation ExecPlan (this file).
 - [x] (2026-01-21T20:09Z) Ran `cargo test -p plonky3-spike --features plonky3` to confirm the current Plonky3 toolchain builds and executes a basic proof.
 - [x] (2026-01-21T20:09Z) Searched the repo and Cargo.lock for recursion/inner-verifier crates and found only legacy recursion error types, no active recursion implementation.
@@ -164,9 +166,15 @@ The “it works” proof is:
   Rationale: Consensus-critical verification cannot be optional in production; allow toggling only in non-production builds for local benchmarking.
   Date/Author: 2026-01-22 / Codex
 
+- Decision: Treat aggregation payload V3 as the production endpoint for `0.9.0` and remove proof-DA consensus coupling.
+  Rationale: Phase C requires self-contained aggregation validity; proposer-side proof staging remains useful but must not affect consensus acceptance.
+  Date/Author: 2026-02-19 / Codex
+
 ## Outcomes & Retrospective
 
 2026-01-22: Milestone 3 prototyping now produces and verifies an outer proof for a real transaction proof. Measurements recorded for proof size, prove/verify time, RSS, corrupted-proof rejection, batch aggregation scaling to 16 proofs, and public-input binding. Remaining work includes block import integration.
+
+2026-02-19: Aggregation path now targets the Phase C endpoint semantics (statement commitments + V3 payload validation + deep recursion challenger/witness refactor integration). Remaining work is operational benchmarking and end-to-end artifact capture under the SelfContained lane.
 
 ## Context and Orientation
 
@@ -419,3 +427,5 @@ At the end of Milestone 5, the repo must have:
 - A deterministic binding from block transaction ordering to the aggregation statement (so miners cannot “swap proofs”).
 
 Plan update 2026-01-22: added a design-principles paragraph in Context, recorded the new aggregation prover crate/CLI and block-builder integration behind `HEGEMON_AGGREGATION_PROOFS`, and updated steps/interfaces so future decisions stay grounded in the PQ/transparent/anti-witness-sharing philosophy.
+
+Plan update 2026-02-19: recorded the Phase C endpoint migration to aggregation payload V3 (`tx_statements_commitment` binding, no consensus proof-DA dependency) and deep-recursion challenger/witness refactor status.

@@ -1299,6 +1299,11 @@ impl SubstrateRpcClient {
             }
         }
 
+        // Phase C behavior note:
+        // `HEGEMON_WALLET_PROOF_SIDECAR` is proposer staging only. It uploads proof bytes to
+        // `da_submitProofs` so local/block-author aggregation builders can fetch them by
+        // binding hash, but consensus validity in `ProofAvailabilityPolicy::SelfContained`
+        // does not depend on proof-DA fetch/manifest paths.
         let use_proof_sidecar = std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
             .ok()
             .map(|value| {

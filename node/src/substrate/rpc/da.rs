@@ -112,6 +112,9 @@ pub trait DaApi {
     /// In rollup/aggregation mode, shielded transfer extrinsics may omit the per-tx proof bytes
     /// from the block body; the block author assembles an aggregation proof using these staged
     /// proofs.
+    ///
+    /// Phase C note: this is an off-chain proposer/mempool staging API, not a consensus
+    /// proof-availability requirement.
     #[method(name = "submitProofs")]
     async fn submit_proofs(
         &self,

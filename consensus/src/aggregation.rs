@@ -3,13 +3,14 @@ use p3_batch_stark::{BatchProof, CommonData, verify_batch};
 use p3_circuit::CircuitBuilder;
 use p3_circuit_prover::common::{CircuitTableAir, get_airs_and_degrees_with_prep};
 use p3_circuit_prover::{TablePacking, config as circuit_config};
-use p3_field::BasedVectorSpace;
+use p3_field::PrimeCharacteristicRing;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
-use p3_recursion::{generate_challenges, verify_circuit};
+use p3_recursion::verify_circuit;
 use p3_uni_stark::get_log_num_quotient_chunks;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -18,7 +19,7 @@ use transaction_circuit::{
     TransactionAirP3, TransactionProof,
     p3_config::{
         Challenge, Compress, Config, DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS,
-        Hash, POSEIDON2_RATE, TransactionProofP3, TransactionStarkConfig, Val, config_with_fri,
+        Hash, POSEIDON2_RATE, TransactionProofP3, Val, config_with_fri,
     },
 };
 use zstd::stream::{decode_all, encode_all};
@@ -53,11 +54,6 @@ struct AggregationVerifierKey {
 }
 
 struct AggregationVerifierCacheEntry {
-    inner_config: TransactionStarkConfig,
-    log_height_max: usize,
-    query_pow_bits: usize,
-    verifier_inputs:
-        Vec<StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>>,
     outer_config: circuit_config::GoldilocksConfig,
     airs: Vec<CircuitTableAir<circuit_config::GoldilocksConfig, 2>>,
     common: CommonData<circuit_config::GoldilocksConfig>,
@@ -73,6 +69,20 @@ const AGGREGATION_PROOF_VERSION: u8 = 1;
 const AGGREGATION_PROOF_HEADER_LEN: usize = 4 + 1 + 4;
 const AGGREGATION_PROOF_ZSTD_LEVEL: i32 = 3;
 const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
+pub const AGGREGATION_PROOF_FORMAT_VERSION_V3: u8 = 3;
+const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct AggregationProofV3Payload {
+    version: u8,
+    tx_count: u32,
+    tx_statements_commitment: Vec<u8>,
+    public_values_encoding: u8,
+    inner_public_inputs_len: u32,
+    representative_proof: Vec<u8>,
+    packed_public_values: Vec<u64>,
+    outer_proof: Vec<u8>,
+}
 
 fn aggregation_verifier_cache()
 -> &'static Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>> {
@@ -106,7 +116,7 @@ fn build_aggregation_verifier_cache_entry(
         ));
     }
     let log_final_poly_len = final_poly_len.ilog2() as usize;
-    let log_height_max = log_final_poly_len + key.log_blowup;
+    let _log_height_max = log_final_poly_len + key.log_blowup;
     let fri_verifier_params = FriVerifierParams {
         log_blowup: key.log_blowup,
         log_final_poly_len,
@@ -115,7 +125,6 @@ fn build_aggregation_verifier_cache_entry(
     };
 
     let mut circuit_builder = CircuitBuilder::<Challenge>::new();
-    let mut verifier_inputs = Vec::with_capacity(key.tx_count);
     for _ in 0..key.tx_count {
         let inputs = StarkVerifierInputsBuilder::<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>::allocate(
             &mut circuit_builder,
@@ -144,7 +153,6 @@ fn build_aggregation_verifier_cache_entry(
                 "recursion circuit build failed: {err:?}"
             ))
         })?;
-        verifier_inputs.push(inputs);
     }
 
     let circuit = circuit_builder.build().map_err(|err| {
@@ -183,10 +191,6 @@ fn build_aggregation_verifier_cache_entry(
     }
 
     Ok(AggregationVerifierCacheEntry {
-        inner_config,
-        log_height_max,
-        query_pow_bits,
-        verifier_inputs,
         outer_config,
         airs,
         common,
@@ -353,11 +357,12 @@ pub fn warm_aggregation_cache(
 
 pub fn verify_aggregation_proof(
     aggregation_proof: &[u8],
-    transaction_proofs: &[TransactionProof],
+    tx_count: usize,
+    expected_statement_commitment: &[u8; 48],
 ) -> Result<(), ProofError> {
     let start_total = Instant::now();
 
-    if transaction_proofs.is_empty() {
+    if tx_count == 0 {
         return Err(ProofError::AggregationProofEmptyBlock);
     }
     if aggregation_proof.is_empty() {
@@ -366,126 +371,94 @@ pub fn verify_aggregation_proof(
         ));
     }
 
-    let mut inner_proofs = Vec::with_capacity(transaction_proofs.len());
-    let mut public_inputs = Vec::with_capacity(transaction_proofs.len());
-    let mut expected_inputs_len: Option<usize> = None;
-    let mut expected_shape: Option<ProofShape> = None;
+    let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
+    let payload: AggregationProofV3Payload = postcard::from_bytes(&decoded).map_err(|_| {
+        ProofError::AggregationProofV3Decode(
+            "aggregation V3 payload encoding invalid".to_string(),
+        )
+    })?;
 
-    for (index, proof) in transaction_proofs.iter().enumerate() {
-        if proof.stark_proof.is_empty() {
-            return Err(ProofError::AggregationProofInputsMismatch(format!(
-                "transaction proof {index} missing STARK proof bytes"
-            )));
-        }
-        let pub_inputs = stark_public_inputs_p3(proof).map_err(|err| {
-            ProofError::AggregationProofInputsMismatch(format!(
-                "transaction proof {index} public inputs invalid: {err}"
-            ))
-        })?;
-        let pub_inputs_vec = pub_inputs.to_vec();
-
-        if let Some(expected) = expected_inputs_len {
-            if pub_inputs_vec.len() != expected {
-                return Err(ProofError::AggregationProofInputsMismatch(format!(
-                    "transaction proof {index} public input length mismatch (expected {expected}, got {})",
-                    pub_inputs_vec.len()
-                )));
-            }
-        } else {
-            expected_inputs_len = Some(pub_inputs_vec.len());
-        }
-
-        let inner_proof: TransactionProofP3 =
-            postcard::from_bytes(&proof.stark_proof).map_err(|_| {
-                ProofError::AggregationProofInputsMismatch(format!(
-                    "transaction proof {index} encoding invalid"
-                ))
-            })?;
-
-        let shape = ProofShape {
-            degree_bits: inner_proof.degree_bits,
-            commit_phase_len: inner_proof.opening_proof.commit_phase_commits.len(),
-            final_poly_len: inner_proof.opening_proof.final_poly.len(),
-            query_count: inner_proof.opening_proof.query_proofs.len(),
-        };
-
-        if let Some(expected) = expected_shape {
-            if shape != expected {
-                return Err(ProofError::AggregationProofInputsMismatch(format!(
-                    "transaction proof {index} shape mismatch"
-                )));
-            }
-        } else {
-            expected_shape = Some(shape);
-        }
-
-        inner_proofs.push(inner_proof);
-        public_inputs.push(pub_inputs_vec);
+    if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V3 {
+        return Err(ProofError::AggregationProofV3Decode(format!(
+            "unsupported aggregation proof payload version {}",
+            payload.version
+        )));
+    }
+    if payload.tx_count as usize != tx_count {
+        return Err(ProofError::AggregationProofV3Binding(format!(
+            "tx_count mismatch (payload {}, expected {})",
+            payload.tx_count, tx_count
+        )));
+    }
+    if payload.tx_statements_commitment.len() != 48 {
+        return Err(ProofError::AggregationProofV3Decode(
+            "tx_statements_commitment length invalid".to_string(),
+        ));
+    }
+    if payload.tx_statements_commitment.as_slice() != expected_statement_commitment.as_slice() {
+        return Err(ProofError::AggregationProofV3Binding(
+            "tx_statements_commitment mismatch".to_string(),
+        ));
+    }
+    if payload.representative_proof.is_empty() {
+        return Err(ProofError::AggregationProofV3Decode(
+            "representative proof missing".to_string(),
+        ));
+    }
+    if payload.outer_proof.is_empty() {
+        return Err(ProofError::AggregationProofV3Decode(
+            "outer aggregation proof missing".to_string(),
+        ));
+    }
+    let pub_inputs_len = payload.inner_public_inputs_len as usize;
+    if pub_inputs_len == 0 {
+        return Err(ProofError::AggregationProofV3Decode(
+            "inner_public_inputs_len must be non-zero".to_string(),
+        ));
     }
 
-    let pub_inputs_len = expected_inputs_len.ok_or(ProofError::AggregationProofInputsMismatch(
-        "no transaction public inputs found".to_string(),
-    ))?;
-
-    let shape = expected_shape.ok_or(ProofError::AggregationProofInputsMismatch(
-        "no transaction proof shape found".to_string(),
-    ))?;
-
+    let representative_proof: TransactionProofP3 =
+        postcard::from_bytes(&payload.representative_proof).map_err(|_| {
+            ProofError::AggregationProofV3Decode(
+                "representative proof encoding invalid".to_string(),
+            )
+        })?;
+    let shape = ProofShape {
+        degree_bits: representative_proof.degree_bits,
+        commit_phase_len: representative_proof.opening_proof.commit_phase_commits.len(),
+        final_poly_len: representative_proof.opening_proof.final_poly.len(),
+        query_count: representative_proof.opening_proof.query_proofs.len(),
+    };
     let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let cache_key = AggregationVerifierKey {
-        tx_count: inner_proofs.len(),
+        tx_count,
         pub_inputs_len,
         log_blowup,
         shape,
     };
-    let cache_result = get_or_build_aggregation_verifier_cache_entry(
-        cache_key,
-        inner_proofs
-            .first()
-            .ok_or(ProofError::AggregationProofEmptyBlock)?,
-    )?;
+    let cache_result =
+        get_or_build_aggregation_verifier_cache_entry(cache_key, &representative_proof)?;
 
-    let start_pack = Instant::now();
-    let mut recursion_public_inputs = Vec::new();
-    for (index, (proof, pub_inputs_vec)) in
-        inner_proofs.iter().zip(public_inputs.iter()).enumerate()
-    {
-        let challenges = generate_challenges(
-            &TransactionAirP3,
-            &cache_result.entry.inner_config.config,
-            proof,
-            pub_inputs_vec,
-            Some(&[
-                cache_result.entry.query_pow_bits,
-                cache_result.entry.log_height_max,
-            ]),
-        )
-        .map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "transaction proof {index} challenge derivation failed: {err:?}"
-            ))
-        })?;
-        let packed = cache_result.entry.verifier_inputs[index].pack_values(
-            pub_inputs_vec,
-            proof,
-            &None,
-            &challenges,
-            proof.opening_proof.query_proofs.len(),
-        );
-        recursion_public_inputs.extend(packed);
-    }
-    let pack_ms = start_pack.elapsed().as_millis();
-
-    let decoded_aggregation_proof = decode_aggregation_proof_bytes(aggregation_proof)?;
     let outer_proof: BatchProof<circuit_config::GoldilocksConfig> =
-        postcard::from_bytes(&decoded_aggregation_proof).map_err(|_| {
-            ProofError::AggregationProofInputsMismatch(
-                "aggregation proof encoding invalid".to_string(),
+        postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+            ProofError::AggregationProofV3Decode(
+                "outer aggregation proof encoding invalid".to_string(),
             )
         })?;
+    if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V1 {
+        return Err(ProofError::AggregationProofV3Decode(format!(
+            "unsupported packed public values encoding version {}",
+            payload.public_values_encoding
+        )));
+    }
+    let public_values = unpack_recursion_public_values(&payload.packed_public_values);
+    if public_values.is_empty() {
+        return Err(ProofError::AggregationProofV3Decode(
+            "packed_public_values missing".to_string(),
+        ));
+    }
 
-    let public_values = flatten_public_values(&recursion_public_inputs);
     let mut public_values_by_air = vec![Vec::new(); cache_result.entry.airs.len()];
     for idx in cache_result.entry.public_table_indices.iter().copied() {
         public_values_by_air[idx] = public_values.clone();
@@ -508,11 +481,10 @@ pub fn verify_aggregation_proof(
 
     tracing::info!(
         target: "consensus::metrics",
-        tx_count = transaction_proofs.len(),
+        tx_count,
         pub_inputs_len,
         cache_hit = cache_result.cache_hit,
         cache_build_ms = cache_result.cache_build_ms,
-        pack_ms,
         verify_batch_ms,
         total_ms = start_total.elapsed().as_millis(),
         "aggregation_verify_breakdown_metrics"
@@ -521,13 +493,8 @@ pub fn verify_aggregation_proof(
     Ok(())
 }
 
-fn flatten_public_values(values: &[Challenge]) -> Vec<Val> {
-    let mut flattened =
-        Vec::with_capacity(values.len() * <Challenge as BasedVectorSpace<Val>>::DIMENSION);
-    for value in values {
-        flattened.extend_from_slice(value.as_basis_coefficients_slice());
-    }
-    flattened
+fn unpack_recursion_public_values(values: &[u64]) -> Vec<Val> {
+    values.iter().map(|word| Val::from_u64(*word)).collect()
 }
 
 #[cfg(test)]

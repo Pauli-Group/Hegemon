@@ -232,19 +232,17 @@ impl ProofVerifier for ParallelProofVerifier {
             .commitment_proof
             .as_ref()
             .ok_or(ProofError::MissingCommitmentProof)?;
-        let transaction_proofs = block
-            .transaction_proofs
-            .as_ref()
-            .ok_or(ProofError::MissingTransactionProofs)?;
+        let transaction_proofs = block.transaction_proofs.as_ref();
 
         let tx_proof_bytes_total: usize = transaction_proofs
-            .iter()
-            .map(|proof| proof.stark_proof.len())
-            .sum();
-        if transaction_proofs.len() != block.transactions.len() {
+            .map(|proofs| proofs.iter().map(|proof| proof.stark_proof.len()).sum())
+            .unwrap_or(0);
+        if let Some(proofs) = transaction_proofs
+            && proofs.len() != block.transactions.len()
+        {
             return Err(ProofError::TransactionProofCountMismatch {
                 expected: block.transactions.len(),
-                observed: transaction_proofs.len(),
+                observed: proofs.len(),
             });
         }
 
@@ -252,35 +250,45 @@ impl ProofVerifier for ParallelProofVerifier {
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
         let commitment_verify_ms = start_commitment.elapsed().as_millis();
 
-        let proof_hashes = proof_hashes_from_transaction_proofs(transaction_proofs)?;
         let expected_commitment =
-            CommitmentBlockProver::commitment_from_proof_hashes(&proof_hashes)
-                .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?;
+            if let Some(commitment) = block.tx_statements_commitment {
+                commitment
+            } else if let Some(proofs) = transaction_proofs {
+                let statement_hashes = statement_hashes_from_transaction_proofs(proofs)?;
+                CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                    .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
+            } else {
+                let statement_hashes = statement_hashes_from_transactions(&block.transactions);
+                CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                    .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
+            };
         let proof_commitment =
-            felts_to_bytes48(&commitment_proof.public_inputs.tx_proofs_commitment);
+            felts_to_bytes48(&commitment_proof.public_inputs.tx_statements_commitment);
         if expected_commitment != proof_commitment {
             return Err(ProofError::CommitmentProofInputsMismatch(
-                "tx_proofs_commitment mismatch".to_string(),
+                "tx_statements_commitment mismatch".to_string(),
             ));
         }
 
-        transaction_proofs
-            .par_iter()
-            .zip(&block.transactions)
-            .enumerate()
-            .try_for_each(|(index, (proof, tx))| {
-                verify_transaction_proof_inputs(index, tx, proof)?;
-                Ok::<_, ProofError>(())
-            })?;
+        if let Some(proofs) = transaction_proofs {
+            proofs
+                .par_iter()
+                .zip(&block.transactions)
+                .enumerate()
+                .try_for_each(|(index, (proof, tx))| {
+                    verify_transaction_proof_inputs(index, tx, proof)?;
+                    Ok::<_, ProofError>(())
+                })?;
+        }
 
         let mut aggregation_verify_ms = 0u128;
         let mut tx_verify_ms = 0u128;
 
         let mut aggregation_cache_hit = None;
         let mut aggregation_cache_build_ms = None;
-        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref()
-        {
-            if let Some(representative) = transaction_proofs.first()
+        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref() {
+            if let Some(proofs) = transaction_proofs
+                && let Some(representative) = proofs.first()
                 && let Ok(warmup) = warm_aggregation_cache(representative, tx_count)
             {
                 aggregation_cache_hit = Some(warmup.cache_hit);
@@ -288,7 +296,7 @@ impl ProofVerifier for ParallelProofVerifier {
             }
 
             let start_agg = Instant::now();
-            verify_aggregation_proof(aggregation_proof, transaction_proofs)?;
+            verify_aggregation_proof(aggregation_proof, tx_count, &expected_commitment)?;
             aggregation_verify_ms = start_agg.elapsed().as_millis();
             true
         } else {
@@ -296,6 +304,7 @@ impl ProofVerifier for ParallelProofVerifier {
         };
 
         if !aggregation_verified {
+            let transaction_proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
             let start_tx = Instant::now();
             transaction_proofs
                 .par_iter()
@@ -312,21 +321,29 @@ impl ProofVerifier for ParallelProofVerifier {
             tx_verify_ms = start_tx.elapsed().as_millis();
         }
 
-        let anchors: Vec<[u8; 48]> = transaction_proofs
-            .iter()
-            .map(|proof| proof.public_inputs.merkle_root)
-            .collect();
-
         let proof_starting_root =
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
         let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
-        let result = verify_and_apply_tree_transition(
-            parent_commitment_tree,
-            proof_starting_root,
-            proof_ending_root,
-            &block.transactions,
-            &anchors,
-        )?;
+        let result = if let Some(proofs) = transaction_proofs {
+            let anchors: Vec<[u8; 48]> = proofs
+                .iter()
+                .map(|proof| proof.public_inputs.merkle_root)
+                .collect();
+            verify_and_apply_tree_transition(
+                parent_commitment_tree,
+                proof_starting_root,
+                proof_ending_root,
+                &block.transactions,
+                &anchors,
+            )?
+        } else {
+            verify_and_apply_tree_transition_without_anchors(
+                parent_commitment_tree,
+                proof_starting_root,
+                proof_ending_root,
+                &block.transactions,
+            )?
+        };
 
         tracing::info!(
             target: "consensus::metrics",
@@ -425,20 +442,57 @@ fn apply_commitments(
     Ok(tree)
 }
 
-fn proof_hashes_from_transaction_proofs(
+fn statement_hashes_from_transaction_proofs(
     proofs: &[transaction_circuit::TransactionProof],
 ) -> Result<Vec<[u8; 48]>, ProofError> {
     let mut hashes = Vec::with_capacity(proofs.len());
-    for (index, proof) in proofs.iter().enumerate() {
-        if proof.stark_proof.is_empty() {
-            return Err(ProofError::TransactionProofInputsMismatch {
-                index,
-                message: "missing STARK proof bytes".to_string(),
-            });
-        }
-        hashes.push(blake3_384(&proof.stark_proof));
+    for proof in proofs {
+        hashes.push(statement_hash_from_proof(proof));
     }
     Ok(hashes)
+}
+
+fn statement_hashes_from_transactions(
+    transactions: &[crate::types::Transaction],
+) -> Vec<[u8; 48]> {
+    transactions
+        .iter()
+        .map(|tx| {
+            let mut data = Vec::with_capacity(4 + 32);
+            data.extend_from_slice(b"tx-statement-fallback-v1");
+            data.extend_from_slice(&tx.hash());
+            blake3_384(&data)
+        })
+        .collect()
+}
+
+fn statement_hash_from_proof(proof: &transaction_circuit::TransactionProof) -> [u8; 48] {
+    let public = &proof.public_inputs;
+    let mut message = Vec::new();
+    message.extend_from_slice(b"tx-statement-v1");
+    message.extend_from_slice(&public.merkle_root);
+    for nf in &public.nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for cm in &public.commitments {
+        message.extend_from_slice(cm);
+    }
+    for ct in &public.ciphertext_hashes {
+        message.extend_from_slice(ct);
+    }
+    message.extend_from_slice(&public.native_fee.to_le_bytes());
+    message.extend_from_slice(&public.value_balance.to_le_bytes());
+    message.extend_from_slice(&public.balance_tag);
+    message.extend_from_slice(&public.circuit_version.to_le_bytes());
+    message.extend_from_slice(&public.crypto_suite.to_le_bytes());
+    message.push(public.stablecoin.enabled as u8);
+    message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
+    message.extend_from_slice(&public.stablecoin.policy_hash);
+    message.extend_from_slice(&public.stablecoin.oracle_commitment);
+    message.extend_from_slice(&public.stablecoin.attestation_commitment);
+    message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
+    message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
+    blake3_384(&message)
 }
 
 fn verify_transaction_proof_inputs(
@@ -572,6 +626,28 @@ fn verify_and_apply_tree_transition(
         });
     }
 
+    Ok(tree)
+}
+
+fn verify_and_apply_tree_transition_without_anchors(
+    parent_commitment_tree: &CommitmentTreeState,
+    proof_starting_root: [u8; 48],
+    proof_ending_root: [u8; 48],
+    transactions: &[crate::types::Transaction],
+) -> Result<CommitmentTreeState, ProofError> {
+    if proof_starting_root != parent_commitment_tree.root() {
+        return Err(ProofError::StartingRootMismatch {
+            expected: parent_commitment_tree.root(),
+            observed: proof_starting_root,
+        });
+    }
+    let tree = apply_commitments(parent_commitment_tree, transactions)?;
+    if proof_ending_root != tree.root() {
+        return Err(ProofError::EndingRootMismatch {
+            expected: tree.root(),
+            observed: proof_ending_root,
+        });
+    }
     Ok(tree)
 }
 

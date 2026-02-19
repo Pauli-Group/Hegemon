@@ -32,6 +32,7 @@ This guide walks you through setting up a peer-to-peer HEGEMON network between y
 - **RAM**: 8GB minimum (16GB recommended)
 - **Disk**: 2GB free space
 - **Network**: Stable internet connection with ability to open ports
+- **Time sync**: NTP/chrony enabled on both machines (PoW rejects future-skewed timestamps)
 
 ### Software Requirements
 
@@ -131,6 +132,7 @@ mkdir -p /tmp/my-hegemon-node
 
 # Start your mining node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
+HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333" \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --dev \
   --base-path /tmp/my-hegemon-node \
@@ -175,7 +177,7 @@ Share your bootnode address with your friend:
 
 ## Step 6: Second Node Connects
 
-Your friend runs this command, replacing `<BOOTNODE_PUBLIC_IP>` with your public IP:
+Your friend runs this command with the same approved seed list:
 
 ```bash
 # Create a data directory
@@ -183,7 +185,7 @@ mkdir -p /tmp/friend-hegemon-node
 
 # Start the node, connecting to the bootnode
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-HEGEMON_SEEDS="<BOOTNODE_PUBLIC_IP>:30333" \
+HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333" \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --dev \
   --base-path /tmp/friend-hegemon-node \
@@ -193,6 +195,8 @@ cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --name "FriendNode" \
   --require-pq
 ```
+
+Use the same approved `HEGEMON_SEEDS` list on every miner. Diverging seed lists can partition peers and cause forks.
 
 ---
 

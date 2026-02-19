@@ -64,7 +64,7 @@ pub const TRACE_WIDTH: usize = BASE_TRACE_WIDTH;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentBlockPublicInputsP3 {
-    pub tx_proofs_commitment: [Felt; 6],
+    pub tx_statements_commitment: [Felt; 6],
     pub starting_state_root: [Felt; 6],
     pub ending_state_root: [Felt; 6],
     pub nullifier_root: [Felt; 6],
@@ -79,7 +79,7 @@ pub struct CommitmentBlockPublicInputsP3 {
 impl CommitmentBlockPublicInputsP3 {
     pub fn to_vec(&self) -> Vec<Felt> {
         let mut elements = Vec::with_capacity(self.expected_len());
-        elements.extend_from_slice(&self.tx_proofs_commitment);
+        elements.extend_from_slice(&self.tx_statements_commitment);
         elements.extend_from_slice(&self.starting_state_root);
         elements.extend_from_slice(&self.ending_state_root);
         elements.extend_from_slice(&self.nullifier_root);
@@ -103,7 +103,7 @@ impl CommitmentBlockPublicInputsP3 {
         }
         let nullifier_count = (elements.len() - base_len) / 12;
         let mut idx = 0usize;
-        let tx_proofs_commitment = slice6(elements, &mut idx);
+        let tx_statements_commitment = slice6(elements, &mut idx);
         let starting_state_root = slice6(elements, &mut idx);
         let ending_state_root = slice6(elements, &mut idx);
         let nullifier_root = slice6(elements, &mut idx);
@@ -124,7 +124,7 @@ impl CommitmentBlockPublicInputsP3 {
         }
 
         Ok(Self {
-            tx_proofs_commitment,
+            tx_statements_commitment,
             starting_state_root,
             ending_state_root,
             nullifier_root,

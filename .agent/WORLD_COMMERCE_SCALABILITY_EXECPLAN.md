@@ -27,6 +27,11 @@ After this work, a developer can run a local devnet and observe all of the follo
 
 ## Progress
 
+- [x] (2026-02-19T00:00Z) Locked Phase C endpoint for `0.9.0` as deep-recursion-only (`ProofAvailabilityPolicy::SelfContained` / `InlineRequired`, no production `DaRequired` lane) with fresh-genesis assumptions.
+- [x] (2026-02-19T00:00Z) Migrated commitment/aggregation binding from `tx_proofs_commitment` to `tx_statements_commitment` and added aggregation payload V3 decode/binding checks in consensus.
+- [x] (2026-02-19T00:00Z) Removed proof-DA consensus extrinsics from runtime/pallet call surface and made `da_submitProofs` an off-chain proposer staging path only.
+- [x] (2026-02-19T00:00Z) Landed deep-recursion refactor pass in vendor recursion stack: deterministic in-circuit challenger absorb/squeeze (no placeholder public-input sampling), witness-target migration for inner proof payloads, and versioned public-value packing metadata in V3 payloads.
+- [ ] (2026-02-19T00:00Z) Phase C closure checklist (completed: core codepath migration + compile/test target checks; remaining: full throughput/e2e reruns and final metrics capture under `SelfContained` mode).
 - [x] (2026-01-21T00:00Z) Draft world-commerce scalability ExecPlan (this file).
 - [x] (2026-01-22T18:47Z) Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
 - [x] (2026-01-22T18:54Z) Execute `.agent/PROOF_AGGREGATION_P3_EXECPLAN.md` through “end-to-end batch proof on devnet” milestone.
@@ -157,12 +162,29 @@ After this work, a developer can run a local devnet and observe all of the follo
   Rationale: Wallet UX requires ciphertext availability; proof bytes are only needed for Phase A verification and can drop to “archive-grade” quickly.
   Date/Author: 2026-01-25 / Codex
 
+- Decision: Ship Phase C as a direct deep-recursion endpoint for `0.9.0` and remove the production `DaRequired` path.
+  Rationale: Interim bridge modes preserve complexity without improving the final security/throughput target. Fresh genesis allows a clean cut to `SelfContained` aggregation semantics.
+  Date/Author: 2026-02-19 / Codex
+
+- Decision: Bind commitment proofs and aggregation verification to canonical transaction statements (`tx_statements_commitment`) rather than per-proof hashes.
+  Rationale: Phase C consensus validity should depend on transaction statements and recursive validity, not on consensus-visible proof-DA availability artifacts.
+  Date/Author: 2026-02-19 / Codex
+
 ## Outcomes & Retrospective
 
 Phase A (0.8.0) is demonstrable locally:
 
 - Single-node throughput + aggregation: `scripts/throughput_sidecar_aggregation_tmux.sh`
 - Two-node DA fetch (miner ↔ verifier): `scripts/two_node_sidecar_da_e2e_tmux.sh`
+
+Phase C (0.9.0 endpoint) is now code-complete at the architecture level in this tree:
+
+- `SelfContained` aggregation is wired through runtime + consensus import paths.
+- Commitment/aggregation binding uses statement commitments (`tx_statements_commitment`).
+- Proof-DA commitment/manifest consensus calls are removed.
+- Deep recursion challenger/witness refactor is integrated into the vendor recursion path.
+
+Remaining work is operational validation (fresh-genesis devnet and updated throughput/e2e metrics capture under the new lane).
 
 ## Context and Orientation
 
@@ -188,16 +210,19 @@ We use three classes of “switch,” each with a distinct purpose:
    - Already present:
      - `DaAvailabilityPolicy`: `FullFetch` vs `Sampling` (DA acceptance rules).
      - `CiphertextPolicy`: `InlineAllowed` vs `SidecarOnly` (block payload rules).
-     - `ProofAvailabilityPolicy`: `InlineRequired` vs `DaRequired` (where per-tx proof bytes live when aggregation mode is used).
+     - `ProofAvailabilityPolicy`: `InlineRequired` vs `SelfContained` (whether aggregation mode may omit per-tx proof bytes in consensus path).
 
 2. Per-block markers (mandatory unsigned extrinsics). These are for “what validation mode is this block using?” and are used so block authors can explicitly opt into a mode while verifiers can reject blocks that use the mode incorrectly.
 
    - Already present:
      - `ShieldedPool::submit_commitment_proof`: binds ciphertext-DA root + `chunk_count` plus the `CommitmentBlockProof` bytes.
-     - `ShieldedPool::submit_proof_da_commitment`: binds proof-DA root + `chunk_count` for per-tx proof bytes in Phase A.
-     - `ShieldedPool::submit_proof_da_manifest`: binds `binding_hash -> (proof_hash, len, offset)` so commitments can be computed without fetching proof bytes.
      - `ShieldedPool::submit_aggregation_proof`: supplies the block’s aggregation proof bytes (verified during import).
      - `ShieldedPool::enable_aggregation_mode`: indicates per-tx verification may be skipped in the runtime for this block (the node must verify aggregated validity during import).
+
+   - Historical (0.8.0 / Phase A only):
+     - `ShieldedPool::submit_proof_da_commitment`
+     - `ShieldedPool::submit_proof_da_manifest`
+     - These were removed from the `0.9.0` Phase C production lane.
 
 3. Protocol versioning (code-level change gates). These are for “the format changed” or “verification logic changed” and must be activated by a version schedule, not by a mutable runtime toggle.
 
@@ -295,3 +320,5 @@ The concrete ExecPlans will introduce or harden the following interfaces:
 - A DA sidecar interface keyed by `DaRoot` with chunk proofs (`state/da` + `node/src/substrate/network_bridge.rs`).
 - A wallet-facing RPC that can fetch ciphertext ranges from DA data, not from block bodies.
 - A fee model that prices bytes *and* retention time, without relying on public priority bidding.
+
+Plan update note (2026-02-19): updated progress/decisions/outcomes and activation switchboard to lock the Phase C endpoint (`SelfContained` + deep recursion refactor, no production `DaRequired` path), and linked this top-level plan to the dedicated `.agent/PHASE_C_DEEP_RECURSION_EXECPLAN.md` workstream.

@@ -13,6 +13,7 @@ p3-recursion = { workspace = true }
 p3-field = { workspace = true }
 p3-uni-stark = { workspace = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
 thiserror = "1.0"
 transaction-circuit = { path = "../transaction", package = "transaction-circuit" }
 

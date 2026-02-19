@@ -194,11 +194,11 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         assemble_pow_block(params).expect("assemble block");
 
     let lists = commitment_nullifier_lists(&block.transactions).expect("nullifier lists");
-    let proof_hashes = vec![blake3_384(&tx_proof.stark_proof)];
+    let statement_hashes = vec![blake3_384(&tx_proof.stark_proof)];
     let prover = CommitmentBlockProver::new();
     let commitment_proof = prover
-        .prove_from_hashes_with_inputs(
-            &proof_hashes,
+        .prove_from_statement_hashes_with_inputs(
+            &statement_hashes,
             base_tree.root(),
             updated_tree.root(),
             updated_nullifiers.commitment(),

@@ -165,7 +165,7 @@ decl_runtime_apis! {
         /// Get the ciphertext policy (inline vs sidecar-only).
         fn ciphertext_policy() -> pallet_shielded_pool::types::CiphertextPolicy;
 
-        /// Get the proof availability policy (inline vs DA required in aggregation mode).
+        /// Get the proof availability policy (inline vs self-contained aggregation mode).
         fn proof_availability_policy() -> pallet_shielded_pool::types::ProofAvailabilityPolicy;
 
         /// Fetch the compact Merkle tree state used for commitment-root computation.

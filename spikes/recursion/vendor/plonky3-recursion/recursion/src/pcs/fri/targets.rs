@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use alloc::{format, vec};
+use alloc::format;
 use core::marker::PhantomData;
 
 use p3_challenger::{CanObserve, GrindingChallenger};
@@ -71,7 +71,7 @@ impl<
             .collect();
 
         let final_poly = circuit
-            .alloc_public_inputs(input.final_poly.len(), "FRI final polynomial coefficients");
+            .alloc_witness_inputs(input.final_poly.len(), "FRI final polynomial coefficients");
 
         Self {
             commit_phase_commits,
@@ -83,30 +83,9 @@ impl<
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        let FriProof {
-            commit_phase_commits,
-            commit_pow_witnesses,
-            query_proofs,
-            final_poly,
-            query_pow_witness,
-        } = input;
-
-        commit_phase_commits
-            .iter()
-            .flat_map(|c| RecMmcs::Commitment::get_values(c))
-            .chain(
-                commit_pow_witnesses
-                    .iter()
-                    .flat_map(|w| Witness::get_values(w)),
-            )
-            .chain(
-                query_proofs
-                    .iter()
-                    .flat_map(|c| QueryProofTargets::<F, EF, InputProof, RecMmcs>::get_values(c)),
-            )
-            .chain(final_poly.iter().copied())
-            .chain(Witness::get_values(query_pow_witness))
-            .collect()
+        // FRI proof payloads are witness-only in recursion circuits.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -249,13 +228,15 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
 
     fn new(circuit: &mut CircuitBuilder<EF>, _input: &Self::Input) -> Self {
         Self {
-            hash_targets: circuit.alloc_public_input_array("MMCS commitment digest"),
+            hash_targets: circuit.alloc_witness_input_array("MMCS commitment digest"),
             _phantom: PhantomData,
         }
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        input.into_iter().map(|v| EF::from(v)).collect()
+        // Commitment digests are witness-only.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -303,13 +284,15 @@ impl<F: Field, EF: ExtensionField<F>> Recursive<EF> for Witness<F> {
 
     fn new(circuit: &mut CircuitBuilder<EF>, _input: &Self::Input) -> Self {
         Self {
-            witness: circuit.alloc_public_input("FRI proof-of-work witness"),
+            witness: circuit.alloc_witness_input("FRI proof-of-work witness"),
             _phantom: PhantomData,
         }
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        vec![EF::from(*input)]
+        // PoW witnesses are witness-only.
+        let _ = input;
+        Vec::new()
     }
 }
 
