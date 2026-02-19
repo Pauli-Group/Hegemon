@@ -6,9 +6,9 @@ edition = "2021"
 description = "Aggregation proof builder for Hegemon transaction proofs"
 
 [dependencies]
-p3-batch-stark = { workspace = true }
+p3-batch-stark = { workspace = true, features = ["parallel"] }
 p3-circuit = { workspace = true }
-p3-circuit-prover = { workspace = true }
+p3-circuit-prover = { workspace = true, features = ["parallel"] }
 p3-recursion = { workspace = true }
 p3-field = { workspace = true }
 p3-uni-stark = { workspace = true }
