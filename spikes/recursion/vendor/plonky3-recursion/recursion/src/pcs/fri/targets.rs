@@ -11,11 +11,13 @@ use p3_field::{
     ExtensionField, Field, PackedValue, PrimeCharacteristicRing, PrimeField64, TwoAdicField,
 };
 use p3_fri::{CommitPhaseProofStep, FriProof, QueryProof, TwoAdicFriPcs};
+use p3_matrix::Dimensions;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{CryptographicHasher, Hash, PseudoCompressionFunction};
 use p3_uni_stark::{StarkGenericConfig, Val};
 use serde::{Deserialize, Serialize};
 
+use super::verifier::{flatten_extension_rows_to_base_targets, verify_merkle_batch_circuit};
 use super::{FriVerifierParams, MAX_QUERY_INDEX_BITS, verify_fri_circuit};
 use crate::Target;
 use crate::challenger::{ChallengerField, CircuitChallenger};
@@ -308,7 +310,8 @@ where
     _phantom: PhantomData<F>,
 }
 
-impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize, H, C> RecursiveMmcs<F, EF>
+impl<F: PrimeField64 + TwoAdicField, EF: ExtensionField<F>, const DIGEST_ELEMS: usize, H, C>
+    RecursiveMmcs<F, EF>
     for RecValMmcs<F, DIGEST_ELEMS, H, C>
 where
     H: CryptographicHasher<F, [F; DIGEST_ELEMS]>
@@ -324,6 +327,24 @@ where
     type Commitment = HashTargets<F, DIGEST_ELEMS>;
 
     type Proof = HashProofTargets<F, DIGEST_ELEMS>;
+
+    fn verify_batch_circuit(
+        circuit: &mut CircuitBuilder<EF>,
+        commitment_observation: &[Target],
+        dimensions: &[Dimensions],
+        index_bits: &[Target],
+        opened_values: &[Vec<Target>],
+        opening_proof: &Self::Proof,
+    ) -> Result<(), CircuitBuilderError> {
+        verify_merkle_batch_circuit::<F, EF, DIGEST_ELEMS>(
+            circuit,
+            commitment_observation,
+            dimensions,
+            index_bits,
+            opened_values,
+            &opening_proof.hash_proof_targets,
+        )
+    }
 }
 
 /// `Recursive` version of an `ExtensionFieldMmcs` where the inner `Mmcs` is a `MerkleTreeMmcs`.
@@ -338,14 +359,44 @@ pub struct RecExtensionValMmcs<
     _phantom_val: PhantomData<ValMmcs>,
 }
 
-impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize, RecValMmcs: RecursiveMmcs<F, EF>>
-    RecursiveExtensionMmcs<F, EF> for RecExtensionValMmcs<F, EF, DIGEST_ELEMS, RecValMmcs>
+impl<
+    F: PrimeField64 + TwoAdicField,
+    EF: ExtensionField<F>,
+    const DIGEST_ELEMS: usize,
+    RecValMmcs: RecursiveMmcs<F, EF>,
+> RecursiveExtensionMmcs<F, EF> for RecExtensionValMmcs<F, EF, DIGEST_ELEMS, RecValMmcs>
 {
     type Input = ExtensionMmcs<F, EF, RecValMmcs::Input>;
 
     type Commitment = RecValMmcs::Commitment;
 
     type Proof = RecValMmcs::Proof;
+
+    fn verify_batch_circuit(
+        circuit: &mut CircuitBuilder<EF>,
+        commitment_observation: &[Target],
+        dimensions: &[Dimensions],
+        index_bits: &[Target],
+        opened_values: &[Vec<Target>],
+        opening_proof: &Self::Proof,
+    ) -> Result<(), CircuitBuilderError> {
+        let flattened_openings = flatten_extension_rows_to_base_targets::<F, EF>(circuit, opened_values)?;
+        let flattened_dimensions = dimensions
+            .iter()
+            .map(|dim| Dimensions {
+                width: dim.width.saturating_mul(EF::DIMENSION),
+                height: dim.height,
+            })
+            .collect::<Vec<_>>();
+        RecValMmcs::verify_batch_circuit(
+            circuit,
+            commitment_observation,
+            &flattened_dimensions,
+            index_bits,
+            &flattened_openings,
+            opening_proof,
+        )
+    }
 }
 
 pub type InputProofTargets<F, EF, Inner> = Vec<BatchOpeningTargets<F, EF, Inner>>;
@@ -403,7 +454,7 @@ where
     SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
     InputMmcs: Mmcs<Val<SC>>,
     FriMmcs: Mmcs<SC::Challenge>,
-    Comm: Recursive<SC::Challenge>,
+    Comm: Recursive<SC::Challenge> + ObservableCommitment,
     RecursiveInputMmcs: RecursiveMmcs<Val<SC>, SC::Challenge, Input = InputMmcs>,
     RecursiveFriMmcs: RecursiveExtensionMmcs<Val<SC>, SC::Challenge, Input = FriMmcs>,
     RecursiveFriMmcs::Commitment: ObservableCommitment,
