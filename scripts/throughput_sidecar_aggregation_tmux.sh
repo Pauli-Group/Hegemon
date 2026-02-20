@@ -442,7 +442,8 @@ SEND_END_MS="$(now_ms)"
 SEND_TOTAL_MS=$((SEND_END_MS - SEND_START_MS))
 echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
 
-echo "Starting mining to include the queued transfers..." >&2
+INCLUSION_START_BLOCK="$(current_block_number)"
+echo "Starting mining to include the queued transfers... (start_block=${INCLUSION_START_BLOCK})" >&2
 curl -s -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
   "$RPC_HTTP" >/dev/null
@@ -450,13 +451,26 @@ curl -s -H "Content-Type: application/json" \
 echo "Waiting for size + verify metrics in logs..." >&2
 touch "$LOG_FILE"
 FOUND=""
+FOUND_BLOCK=""
 for i in $(seq 1 1200); do
   LINE="$(search_log "block_payload_size_metrics" | tail -n 1 || true)"
-  if [ -n "$LINE" ]; then
-    FOUND="$LINE"
-    break
+  if [ -z "$LINE" ]; then
+    sleep 1
+    continue
   fi
-  sleep 1
+  LINE_BLOCK="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\\bblock_number=(\\d+)\\b", s); print(m.group(1) if m else "")' <<<"$LINE")"
+  if [ -z "$LINE_BLOCK" ]; then
+    sleep 1
+    continue
+  fi
+  # Ignore stale payload lines from pre-round blocks (e.g., worker-funding inclusion).
+  if [ "$LINE_BLOCK" -le "$INCLUSION_START_BLOCK" ]; then
+    sleep 1
+    continue
+  fi
+  FOUND="$LINE"
+  FOUND_BLOCK="$LINE_BLOCK"
+  break
 done
 
 if [ -z "$FOUND" ]; then
@@ -473,7 +487,7 @@ print(f"{(tx_count / (round_total_ms / 1000.0)):.6f}" if round_total_ms > 0 else
 PY
 )"
 
-BLOCK_NUMBER="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\\bblock_number=(\\d+)\\b", s); print(m.group(1) if m else "")' <<<"$FOUND")"
+BLOCK_NUMBER="$FOUND_BLOCK"
 
 VERIFY_LINE=""
 CONS_LINE=""
@@ -497,7 +511,7 @@ done
 
 echo "" >&2
 echo "=== Latest payload size metrics ===" >&2
-search_log "block_payload_size_metrics" | tail -n 1 >&2 || true
+echo "$FOUND" >&2
 echo "=== Latest import verify time ===" >&2
 if [ -n "$VERIFY_LINE" ]; then
   echo "$VERIFY_LINE" >&2

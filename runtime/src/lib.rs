@@ -1268,7 +1268,8 @@ parameter_types! {
     /// Maximum commitments per batch (16 txs * 2 commitments each).
     pub const MaxCommitmentsPerBatch: u32 = 32;
     /// Number of historical Merkle roots to keep for anchor validation.
-    pub const MerkleRootHistorySize: u32 = 100;
+    /// Must comfortably exceed the largest expected same-anchor transfer batch.
+    pub const MerkleRootHistorySize: u32 = 4096;
     /// Maximum forced inclusion commitments stored at once.
     pub const MaxForcedInclusions: u32 = 16;
     /// Maximum number of blocks a forced inclusion can remain pending.
