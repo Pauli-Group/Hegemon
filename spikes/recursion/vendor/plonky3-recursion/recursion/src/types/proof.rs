@@ -7,14 +7,15 @@ use core::marker::PhantomData;
 use p3_batch_stark::common::PreprocessedInstanceMeta;
 use p3_batch_stark::proof::OpenedValuesWithLookups;
 use p3_batch_stark::{BatchCommitments, BatchOpenedValues, BatchProof, CommonData};
-use p3_circuit::CircuitBuilder;
+use p3_circuit::{CircuitBuilder, CircuitBuilderError};
 use p3_commit::Pcs;
-use p3_field::Field;
+use p3_field::{ExtensionField, Field, PrimeField64};
 use p3_lookup::lookup_traits::{Lookup, LookupData};
 use p3_uni_stark::{OpenedValues, Proof, StarkGenericConfig, Val};
 
 use crate::Target;
-use crate::traits::{Recursive, RecursiveChallenger};
+use crate::challenger::CircuitChallenger;
+use crate::traits::Recursive;
 
 /// Structure representing all the targets necessary for an input proof.
 ///
@@ -198,41 +199,64 @@ impl<SC: StarkGenericConfig> OpenedValuesTargetsWithLookups<SC> {
     /// # Parameters
     /// - `circuit`: Circuit builder
     /// - `challenger`: Running challenger state
-    pub fn observe<F: Field>(
+    pub fn observe<const RATE: usize>(
         &self,
-        circuit: &mut CircuitBuilder<F>,
-        challenger: &mut impl RecursiveChallenger<F>,
-    ) {
+        circuit: &mut CircuitBuilder<SC::Challenge>,
+        challenger: &mut CircuitChallenger<RATE>,
+    ) -> Result<(), CircuitBuilderError>
+    where
+        Val<SC>: PrimeField64,
+        SC::Challenge: ExtensionField<Val<SC>>,
+    {
         // Observe random values if in ZK mode
         if let Some(random_vals) = &self.opened_values_no_lookups.random_targets {
-            challenger.observe_slice(circuit, random_vals);
+            challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(circuit, random_vals)?;
         }
 
         // Observe trace values at zeta and zeta_next
-        challenger.observe_slice(circuit, &self.opened_values_no_lookups.trace_local_targets);
-        challenger.observe_slice(circuit, &self.opened_values_no_lookups.trace_next_targets);
+        challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(
+            circuit,
+            &self.opened_values_no_lookups.trace_local_targets,
+        )?;
+        challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(
+            circuit,
+            &self.opened_values_no_lookups.trace_next_targets,
+        )?;
 
         // Observe quotient chunk values
         for chunk_values in &self.opened_values_no_lookups.quotient_chunks_targets {
-            challenger.observe_slice(circuit, chunk_values);
+            challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(circuit, chunk_values)?;
         }
 
         if let Some(preprocessed_local_targets) =
             &self.opened_values_no_lookups.preprocessed_local_targets
         {
-            challenger.observe_slice(circuit, preprocessed_local_targets);
+            challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(
+                circuit,
+                preprocessed_local_targets,
+            )?;
         }
         if let Some(preprocessed_next_targets) =
             &self.opened_values_no_lookups.preprocessed_next_targets
         {
-            challenger.observe_slice(circuit, preprocessed_next_targets);
+            challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(
+                circuit,
+                preprocessed_next_targets,
+            )?;
         }
         if !self.permutation_local_targets.is_empty() {
-            challenger.observe_slice(circuit, &self.permutation_local_targets);
+            challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(
+                circuit,
+                &self.permutation_local_targets,
+            )?;
         }
         if !self.permutation_next_targets.is_empty() {
-            challenger.observe_slice(circuit, &self.permutation_next_targets);
+            challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(
+                circuit,
+                &self.permutation_next_targets,
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -452,34 +476,43 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargets<SC
 
     fn new(circuit: &mut CircuitBuilder<SC::Challenge>, input: &Self::Input) -> Self {
         let trace_local_len = input.trace_local.len();
-        let trace_local_targets =
-            circuit.alloc_public_inputs(trace_local_len, "trace local values");
+        let trace_local_targets = circuit.alloc_witness_inputs(
+            trace_local_len,
+            "trace local opened values (witness)",
+        );
 
         let trace_next_len = input.trace_next.len();
-        let trace_next_targets = circuit.alloc_public_inputs(trace_next_len, "trace next values");
+        let trace_next_targets =
+            circuit.alloc_witness_inputs(trace_next_len, "trace next opened values (witness)");
 
         let preprocessed_local_targets = input
             .preprocessed_local
             .as_ref()
-            .map(|prep| circuit.alloc_public_inputs(prep.len(), "local preprocessed values"));
+            .map(|prep| {
+                circuit.alloc_witness_inputs(prep.len(), "local preprocessed opened values (witness)")
+            });
         let preprocessed_next_targets = input
             .preprocessed_next
             .as_ref()
-            .map(|prep| circuit.alloc_public_inputs(prep.len(), "local preprocessed values"));
+            .map(|prep| {
+                circuit.alloc_witness_inputs(prep.len(), "next preprocessed opened values (witness)")
+            });
 
         let quotient_chunks_len = input.quotient_chunks.len();
         let mut quotient_chunks_targets = Vec::with_capacity(quotient_chunks_len);
         for quotient_chunk in input.quotient_chunks.iter() {
             let quotient_chunks_cols_len = quotient_chunk.len();
-            let quotient_col =
-                circuit.alloc_public_inputs(quotient_chunks_cols_len, "quotient chunk columns");
+            let quotient_col = circuit.alloc_witness_inputs(
+                quotient_chunks_cols_len,
+                "quotient chunk opened values (witness)",
+            );
             quotient_chunks_targets.push(quotient_col);
         }
 
         let random_targets = input
             .random
             .as_ref()
-            .map(|random| circuit.alloc_public_inputs(random.len(), "random values (ZK mode)"));
+            .map(|random| circuit.alloc_witness_inputs(random.len(), "random opened values (witness, ZK mode)"));
 
         Self {
             trace_local_targets,
@@ -493,32 +526,9 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargets<SC
     }
 
     fn get_values(input: &Self::Input) -> Vec<SC::Challenge> {
-        let OpenedValues {
-            trace_local,
-            trace_next,
-            preprocessed_local,
-            preprocessed_next,
-            quotient_chunks,
-            random,
-        } = input;
-
-        let mut values = vec![];
-        values.extend(trace_local);
-        values.extend(trace_next);
-        if let Some(preprocessed_local) = preprocessed_local {
-            values.extend(preprocessed_local);
-        }
-        if let Some(preprocessed_next) = preprocessed_next {
-            values.extend(preprocessed_next);
-        }
-        for chunk in quotient_chunks {
-            values.extend(chunk);
-        }
-        if let Some(random) = random {
-            values.extend(random);
-        }
-
-        values
+        // Opened values are witness-only in recursion circuits.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -528,13 +538,13 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargetsWit
     fn new(circuit: &mut CircuitBuilder<SC::Challenge>, input: &Self::Input) -> Self {
         let opened_values_no_lookups = OpenedValuesTargets::new(circuit, &input.base_opened_values);
 
-        let permutation_local_targets = circuit.alloc_public_inputs(
+        let permutation_local_targets = circuit.alloc_witness_inputs(
             input.permutation_local.len(),
-            "permutation local opened values",
+            "permutation local opened values (witness)",
         );
-        let permutation_next_targets = circuit.alloc_public_inputs(
+        let permutation_next_targets = circuit.alloc_witness_inputs(
             input.permutation_next.len(),
-            "permutation next opened values",
+            "permutation next opened values (witness)",
         );
 
         Self {
@@ -545,17 +555,9 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargetsWit
     }
 
     fn get_values(input: &Self::Input) -> Vec<SC::Challenge> {
-        let OpenedValuesWithLookups {
-            base_opened_values,
-            permutation_local,
-            permutation_next,
-        } = input;
-
-        let mut values = vec![];
-        values.extend(OpenedValuesTargets::<SC>::get_values(base_opened_values));
-        values.extend(permutation_local);
-        values.extend(permutation_next);
-        values
+        // Lookup opened values are witness-only in recursion circuits.
+        let _ = input;
+        Vec::new()
     }
 }
 

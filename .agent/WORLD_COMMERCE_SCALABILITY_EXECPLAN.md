@@ -30,7 +30,10 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-02-19T00:00Z) Locked Phase C endpoint for `0.9.0` as deep-recursion-only (`ProofAvailabilityPolicy::SelfContained` / `InlineRequired`, no production `DaRequired` lane) with fresh-genesis assumptions.
 - [x] (2026-02-19T00:00Z) Migrated commitment/aggregation binding from `tx_proofs_commitment` to `tx_statements_commitment` and added aggregation payload V3 decode/binding checks in consensus.
 - [x] (2026-02-19T00:00Z) Removed proof-DA consensus extrinsics from runtime/pallet call surface and made `da_submitProofs` an off-chain proposer staging path only.
-- [x] (2026-02-19T00:00Z) Landed deep-recursion refactor pass in vendor recursion stack: deterministic in-circuit challenger absorb/squeeze (no placeholder public-input sampling), witness-target migration for inner proof payloads, and versioned public-value packing metadata in V3 payloads.
+- [x] (2026-02-20T00:00Z) Landed fail-closed import/producer semantics for Phase C (`ProofVerificationMode::{InlineRequired, SelfContainedAggregation}`), including strict SelfContained aggregation-proof requirement and no tx-proof fallback in SelfContained mode.
+- [x] (2026-02-20T00:00Z) Moved remaining recursive opened-value payloads to witness targets and extended aggregation witness wiring; `aggregation_proof_roundtrip` (ignored test) passes.
+- [x] (2026-02-20T00:00Z) Added strict throughput harness guard (`HEGEMON_TP_STRICT_AGGREGATION=1`) and consensus regression tests for mode behavior (`consensus/tests/self_contained_mode.rs`).
+- [x] (2026-02-20T01:00Z) Deep recursion challenger placeholder removed: recursive Fiat-Shamir sampling is now constrained in-circuit and sampled challenge public inputs are connected to derived transcript values.
 - [ ] (2026-02-19T00:00Z) Phase C closure checklist (completed: core codepath migration + compile/test target checks; remaining: full throughput/e2e reruns and final metrics capture under `SelfContained` mode).
 - [x] (2026-01-21T00:00Z) Draft world-commerce scalability ExecPlan (this file).
 - [x] (2026-01-22T18:47Z) Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
@@ -182,9 +185,9 @@ Phase C (0.9.0 endpoint) is now code-complete at the architecture level in this 
 - `SelfContained` aggregation is wired through runtime + consensus import paths.
 - Commitment/aggregation binding uses statement commitments (`tx_statements_commitment`).
 - Proof-DA commitment/manifest consensus calls are removed.
-- Deep recursion challenger/witness refactor is integrated into the vendor recursion path.
+- Recursive witness migration is integrated for inner proof payloads used by aggregation.
 
-Remaining work is operational validation (fresh-genesis devnet and updated throughput/e2e metrics capture under the new lane).
+Remaining work: operational validation (fresh-genesis devnet and updated throughput/e2e metrics capture under the strict SelfContained lane).
 
 ## Context and Orientation
 

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{FriVerifierParams, MAX_QUERY_INDEX_BITS, verify_fri_circuit};
 use crate::Target;
-use crate::challenger::CircuitChallenger;
+use crate::challenger::{ChallengerField, CircuitChallenger};
 use crate::traits::{
     ComsWithOpeningsTargets, Recursive, RecursiveChallenger, RecursiveExtensionMmcs, RecursiveMmcs,
     RecursivePcs,
@@ -400,6 +400,7 @@ impl<SC, Dft, Comm, InputMmcs, RecursiveInputMmcs, RecursiveFriMmcs, FriMmcs>
 where
     SC: StarkGenericConfig,
     Val<SC>: TwoAdicField + PrimeField64,
+    SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
     InputMmcs: Mmcs<Val<SC>>,
     FriMmcs: Mmcs<SC::Challenge>,
     Comm: Recursive<SC::Challenge>,
@@ -427,7 +428,7 @@ where
         opened_values: &OpenedValuesTargetsWithLookups<SC>,
         params: &Self::VerifierParams,
     ) -> Result<Vec<Target>, CircuitBuilderError> {
-        opened_values.observe(circuit, challenger);
+        opened_values.observe(circuit, challenger)?;
 
         // Sample FRI alpha (for batch opening reduction)
         let fri_alpha = challenger.sample(circuit);
@@ -441,14 +442,13 @@ where
             .zip(fri_proof.commit_pow_witnesses.iter())
         {
             let commit_targets = commit.to_observation_targets();
-            challenger.observe_slice(circuit, &commit_targets);
+            challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, &commit_targets)?;
             // Check commit-phase PoW witness when enabled.
             if params.commit_pow_bits > 0 {
-                challenger.check_witness(
+                challenger.check_witness_base::<Val<SC>, SC::Challenge>(
                     circuit,
                     params.commit_pow_bits,
                     pow.witness,
-                    Val::<SC>::bits(),
                 )?;
             }
             let beta = challenger.sample(circuit);
@@ -456,23 +456,25 @@ where
         }
 
         // Observe final polynomial coefficients
-        challenger.observe_slice(circuit, &fri_proof.final_poly);
+        challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(circuit, &fri_proof.final_poly)?;
 
         // Check query PoW witness when enabled.
         if params.query_pow_bits > 0 {
-            challenger.check_witness(
+            challenger.check_witness_base::<Val<SC>, SC::Challenge>(
                 circuit,
                 params.query_pow_bits,
                 fri_proof.pow_witness.witness,
-                Val::<SC>::bits(),
             )?;
         }
 
         // Sample query indices
+        let log_global_max_height =
+            fri_proof.commit_phase_commits.len() + params.log_blowup + params.log_final_poly_len;
         let num_queries = fri_proof.query_proofs.len();
         let mut query_indices = Vec::with_capacity(num_queries);
         for _ in 0..num_queries {
-            let index = challenger.sample(circuit);
+            let index = challenger
+                .sample_bits_public::<Val<SC>, SC::Challenge>(circuit, log_global_max_height)?;
             query_indices.push(index);
         }
 

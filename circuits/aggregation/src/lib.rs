@@ -488,6 +488,79 @@ fn set_stark_verifier_witnesses(
             )?;
         }
 
+        let opened_targets = &inputs.proof_targets.opened_values_targets;
+        let opened_values = &proof.opened_values;
+        set_targets(
+            circuit,
+            runner,
+            &opened_targets.trace_local_targets,
+            &opened_values.trace_local,
+        )?;
+        set_targets(
+            circuit,
+            runner,
+            &opened_targets.trace_next_targets,
+            &opened_values.trace_next,
+        )?;
+        match (
+            opened_targets.preprocessed_local_targets.as_ref(),
+            opened_values.preprocessed_local.as_ref(),
+        ) {
+            (Some(targets), Some(values)) => {
+                set_targets(circuit, runner, targets, values)?;
+            }
+            (None, None) => {}
+            _ => {
+                return Err(CircuitError::PublicInputLengthMismatch {
+                    expected: usize::from(opened_targets.preprocessed_local_targets.is_some()),
+                    got: usize::from(opened_values.preprocessed_local.is_some()),
+                });
+            }
+        }
+        match (
+            opened_targets.preprocessed_next_targets.as_ref(),
+            opened_values.preprocessed_next.as_ref(),
+        ) {
+            (Some(targets), Some(values)) => {
+                set_targets(circuit, runner, targets, values)?;
+            }
+            (None, None) => {}
+            _ => {
+                return Err(CircuitError::PublicInputLengthMismatch {
+                    expected: usize::from(opened_targets.preprocessed_next_targets.is_some()),
+                    got: usize::from(opened_values.preprocessed_next.is_some()),
+                });
+            }
+        }
+        if opened_targets.quotient_chunks_targets.len() != opened_values.quotient_chunks.len() {
+            return Err(CircuitError::PublicInputLengthMismatch {
+                expected: opened_targets.quotient_chunks_targets.len(),
+                got: opened_values.quotient_chunks.len(),
+            });
+        }
+        for (chunk_targets, chunk_values) in opened_targets
+            .quotient_chunks_targets
+            .iter()
+            .zip(opened_values.quotient_chunks.iter())
+        {
+            set_targets(circuit, runner, chunk_targets, chunk_values)?;
+        }
+        match (
+            opened_targets.random_targets.as_ref(),
+            opened_values.random.as_ref(),
+        ) {
+            (Some(targets), Some(values)) => {
+                set_targets(circuit, runner, targets, values)?;
+            }
+            (None, None) => {}
+            _ => {
+                return Err(CircuitError::PublicInputLengthMismatch {
+                    expected: usize::from(opened_targets.random_targets.is_some()),
+                    got: usize::from(opened_values.random.is_some()),
+                });
+            }
+        }
+
         let fri_targets = &inputs.proof_targets.opening_proof;
         let fri_proof = &proof.opening_proof;
         for (commit_targets, commit_values) in fri_targets

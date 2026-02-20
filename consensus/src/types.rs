@@ -199,6 +199,18 @@ fn compute_transaction_id(
     out
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProofVerificationMode {
+    InlineRequired,
+    SelfContainedAggregation,
+}
+
+impl Default for ProofVerificationMode {
+    fn default() -> Self {
+        Self::InlineRequired
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block<BH> {
     pub header: BH,
@@ -210,6 +222,7 @@ pub struct Block<BH> {
     /// transaction order (for example from binding-hash statements on Substrate imports).
     pub tx_statements_commitment: Option<[u8; 48]>,
     pub transaction_proofs: Option<Vec<TransactionProof>>,
+    pub proof_verification_mode: ProofVerificationMode,
 }
 
 impl<BH> Block<BH> {
@@ -222,6 +235,7 @@ impl<BH> Block<BH> {
             aggregation_proof: self.aggregation_proof,
             tx_statements_commitment: self.tx_statements_commitment,
             transaction_proofs: self.transaction_proofs,
+            proof_verification_mode: self.proof_verification_mode,
         }
     }
 }

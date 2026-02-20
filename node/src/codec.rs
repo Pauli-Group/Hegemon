@@ -232,6 +232,7 @@ impl StoredBlock {
             commitment_proof: None,
             aggregation_proof: None,
             transaction_proofs: None,
+            proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
         })
     }
 }

@@ -17,6 +17,7 @@ COINBASE_BLOCKS="${HEGEMON_TP_COINBASE_BLOCKS:-$((TX_COUNT + 3))}"
 MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
+STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if aggregation proof is absent
 
 # Throughput profile:
 # - safe: conservative laptop defaults
@@ -508,6 +509,27 @@ for i in $(seq 1 60); do
   fi
   sleep 1
 done
+
+if [ "$STRICT_AGGREGATION" = "1" ]; then
+  if [ -z "$VERIFY_LINE" ]; then
+    echo "Strict aggregation mode: missing block_import_verify_time_ms for block ${BLOCK_NUMBER}." >&2
+    exit 1
+  fi
+  if [ -z "$CONS_LINE" ]; then
+    echo "Strict aggregation mode: missing block_proof_verification_metrics line." >&2
+    exit 1
+  fi
+  if grep -q "aggregation_proof_present=false" <<<"$VERIFY_LINE"; then
+    echo "Strict aggregation mode: tested block imported without aggregation proof." >&2
+    echo "$VERIFY_LINE" >&2
+    exit 1
+  fi
+  if grep -q "aggregation_verified=false" <<<"$CONS_LINE"; then
+    echo "Strict aggregation mode: tested block did not verify aggregation proof." >&2
+    echo "$CONS_LINE" >&2
+    exit 1
+  fi
+fi
 
 echo "" >&2
 echo "=== Latest payload size metrics ===" >&2
