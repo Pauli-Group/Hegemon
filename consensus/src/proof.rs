@@ -199,19 +199,19 @@ impl ProofVerifier for ParallelProofVerifier {
         let start_total = Instant::now();
         let tx_count = block.transactions.len();
         let commitment_proof_bytes = block
-            .commitment_proof
+            .proven_batch
             .as_ref()
-            .map(|proof| proof.proof_bytes.len())
+            .map(|batch| batch.commitment_proof.proof_bytes.len())
             .unwrap_or(0);
         let aggregation_proof_bytes = block
-            .aggregation_proof
+            .proven_batch
             .as_ref()
-            .map(|bytes| bytes.len())
+            .map(|batch| batch.aggregation_proof.len())
             .unwrap_or(0);
         let aggregation_proof_uncompressed_bytes = block
-            .aggregation_proof
+            .proven_batch
             .as_ref()
-            .map(|bytes| aggregation_proof_uncompressed_len(bytes))
+            .map(|batch| aggregation_proof_uncompressed_len(&batch.aggregation_proof))
             .unwrap_or(0);
         let ciphertext_bytes_total: usize = block
             .transactions
@@ -221,20 +221,24 @@ impl ProofVerifier for ParallelProofVerifier {
             .sum();
 
         if block.transactions.is_empty() {
-            if block.commitment_proof.is_some() || block.transaction_proofs.is_some() {
+            if block.proven_batch.is_some() || block.transaction_proofs.is_some() {
                 return Err(ProofError::CommitmentProofEmptyBlock);
-            }
-            if block.aggregation_proof.is_some() {
-                return Err(ProofError::AggregationProofEmptyBlock);
             }
             return apply_commitments(parent_commitment_tree, &block.transactions);
         }
 
-        let commitment_proof = block
-            .commitment_proof
-            .as_ref()
-            .ok_or(ProofError::MissingCommitmentProof)?;
         let verification_mode = block.proof_verification_mode;
+        let proven_batch = block.proven_batch.as_ref().ok_or_else(|| {
+            if matches!(
+                verification_mode,
+                ProofVerificationMode::SelfContainedAggregation
+            ) {
+                ProofError::MissingProvenBatchForSelfContained
+            } else {
+                ProofError::MissingCommitmentProof
+            }
+        })?;
+        let commitment_proof = &proven_batch.commitment_proof;
         let transaction_proofs = block.transaction_proofs.as_ref();
 
         let tx_proof_bytes_total: usize = transaction_proofs
@@ -301,11 +305,10 @@ impl ProofVerifier for ParallelProofVerifier {
         let mut aggregation_cache_prewarm_hit = None;
         let mut aggregation_cache_prewarm_build_ms = None;
         let mut aggregation_cache_prewarm_total_ms = None;
-        let aggregation_verified = if let Some(aggregation_proof) = block.aggregation_proof.as_ref()
-        {
+        let aggregation_verified = if !proven_batch.aggregation_proof.is_empty() {
             let prewarm_start = Instant::now();
             match warm_aggregation_cache_from_proof_bytes(
-                aggregation_proof,
+                &proven_batch.aggregation_proof,
                 tx_count,
                 &expected_commitment,
             ) {
@@ -325,7 +328,7 @@ impl ProofVerifier for ParallelProofVerifier {
             aggregation_cache_prewarm_total_ms = Some(prewarm_start.elapsed().as_millis());
 
             let verify_metrics = verify_aggregation_proof_with_metrics(
-                aggregation_proof,
+                &proven_batch.aggregation_proof,
                 tx_count,
                 &expected_commitment,
             )?;

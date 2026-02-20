@@ -55,7 +55,6 @@
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
-use block_circuit::CommitmentBlockProof;
 use consensus::Blake3Seal;
 use sp_core::H256;
 use std::sync::Arc;
@@ -510,10 +509,6 @@ pub struct StateExecutionResult {
     /// If Some, storage changes were captured and can be applied during import.
     /// If None, block import will use StateAction::Skip (scaffold mode).
     pub storage_changes: Option<StorageChangesHandle>,
-    /// Optional commitment proof built from shielded transfer extrinsics.
-    pub commitment_proof: Option<CommitmentBlockProof>,
-    /// Optional aggregation proof bytes built from transaction proofs.
-    pub aggregation_proof: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -645,8 +640,6 @@ impl ProductionChainStateProvider {
     ///         extrinsics_root: result.extrinsics_root,
     ///         failed_count: result.failed,
     ///         storage_changes: None,
-    ///         commitment_proof: None,
-    ///         aggregation_proof: None,
     ///     })
     /// });
     /// ```
@@ -711,8 +704,6 @@ impl ProductionChainStateProvider {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None, // No storage changes in mock mode
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -861,8 +852,6 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         result.extrinsics_root,
                         result.storage_changes,
                     )
-                    .with_commitment_proof(result.commitment_proof)
-                    .with_aggregation_proof(result.aggregation_proof)
             }
             Err(e) => {
                 tracing::error!(
@@ -1215,8 +1204,6 @@ mod tests {
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         });
 
@@ -1248,8 +1235,6 @@ mod tests {
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
                 storage_changes: None,
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         });
 
@@ -1278,8 +1263,6 @@ mod tests {
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
                 storage_changes: None,
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         });
 

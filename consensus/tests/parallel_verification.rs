@@ -3,6 +3,7 @@ mod common;
 use block_circuit::CommitmentBlockProver;
 use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
+use consensus::types::ProvenBatch;
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
     commitment_nullifier_lists,
@@ -208,7 +209,20 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         )
         .expect("commitment proof");
 
-    block.commitment_proof = Some(commitment_proof);
+    let tx_statements_commitment = CommitmentBlockProver::commitment_from_statement_hashes(
+        &statement_hashes,
+    )
+    .expect("tx statements commitment");
+    block.proven_batch = Some(ProvenBatch {
+        version: 1,
+        tx_count: block.transactions.len() as u32,
+        tx_statements_commitment,
+        da_root: block.header.da_root,
+        da_chunk_count: 1,
+        commitment_proof,
+        aggregation_proof: Vec::new(),
+    });
+    block.tx_statements_commitment = Some(tx_statements_commitment);
     block.transaction_proofs = Some(vec![tx_proof.clone()]);
 
     let verifier = ParallelProofVerifier::new();

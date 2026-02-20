@@ -166,6 +166,9 @@ decl_runtime_apis! {
         fn ciphertext_policy() -> pallet_shielded_pool::types::CiphertextPolicy;
 
         /// Get the proof availability policy (inline vs self-contained aggregation mode).
+        ///
+        /// In `SelfContained`, aggregation-mode blocks carry a single
+        /// `ShieldedPool::submit_proven_batch` payload instead of per-proof calls.
         fn proof_availability_policy() -> pallet_shielded_pool::types::ProofAvailabilityPolicy;
 
         /// Fetch the compact Merkle tree state used for commitment-root computation.

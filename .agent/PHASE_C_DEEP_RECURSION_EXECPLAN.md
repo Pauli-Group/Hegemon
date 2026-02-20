@@ -17,7 +17,9 @@ Observable user-visible result: on a fresh `0.9.0` genesis, nodes accept SelfCon
 - [x] (2026-02-19T00:00Z) Aggregation V3 payload path landed with strict versioned decode + statement commitment binding checks in consensus.
 - [x] (2026-02-19T02:35Z) Hardened aggregation V3 verifier to re-derive `tx_statements_commitment` from packed recursion public values (via tx public-input decoding + binding-hash statement hashing) and reject payloads that only carry an unbound commitment field.
 - [x] (2026-02-20T00:00Z) Fail-closed mode plumbing landed: importer/builder derive and enforce `ProofVerificationMode::{InlineRequired, SelfContainedAggregation}`; SelfContained blocks now hard-require aggregation proof and disable tx-proof fallback.
-- [x] (2026-02-20T00:00Z) Added strict throughput harness guard (`HEGEMON_TP_STRICT_AGGREGATION=1`) that fails runs if accepted blocks report `aggregation_proof_present=false`.
+- [x] (2026-02-20T00:00Z) Added strict throughput harness guard (`HEGEMON_TP_STRICT_AGGREGATION=1`) that fails runs if accepted blocks report `proven_batch_present=false`.
+- [x] (2026-02-20T02:30Z) Phase D authoring cutover landed in node/runtime/consensus: dual proof extrinsics replaced by `submit_proven_batch`, `consensus::types::Block` now carries `proven_batch`, and the block-builder closure no longer performs synchronous proof generation.
+- [x] (2026-02-20T03:20Z) Prover coordinator now uses a bounded multi-job worker queue (`workers`, `queue_capacity`, `job_timeout`) with stale-parent result drops and coordinator unit-test coverage.
 - [x] (2026-02-20T00:00Z) Recursive witness migration advanced: opened values/permutation opened values moved to witness targets; aggregation prover witness wiring extended and `aggregation_proof_roundtrip` passes.
 - [x] (2026-02-20T00:00Z) Added consensus regression tests for fail-closed proof modes (`consensus/tests/self_contained_mode.rs`).
 - [x] (2026-02-20T01:00Z) Deep recursion challenger closure landed: vendor recursion challenger now enforces constrained in-circuit absorb/squeeze (Goldilocks Poseidon2 transcript path) and binds sampled challenge public inputs to computed transcript values.
@@ -56,7 +58,7 @@ Observable user-visible result: on a fresh `0.9.0` genesis, nodes accept SelfCon
 
 ## Outcomes & Retrospective
 
-Core Phase C architecture is largely implemented in this branch: runtime/pallet/node/consensus/circuit interfaces align to fail-closed `SelfContained` aggregation semantics with statement-commitment binding.
+Core Phase C architecture is implemented in this branch: runtime/pallet/node/consensus/circuit interfaces align to fail-closed `SelfContained` aggregation semantics with statement-commitment binding. Authoring now uses an asynchronous in-node prover coordinator that prebuilds proven batches keyed by `(parent_hash, tx_statements_commitment, tx_count)` and block assembly attaches only ready payloads.
 
 Remaining gap is fresh-genesis operational proof (throughput/e2e artifacts under strict SelfContained lane).
 

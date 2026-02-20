@@ -17,7 +17,7 @@ COINBASE_BLOCKS="${HEGEMON_TP_COINBASE_BLOCKS:-$((TX_COUNT + 3))}"
 MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
-STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if aggregation proof is absent
+STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven batch is absent
 
 # Throughput profile:
 # - safe: conservative laptop defaults
@@ -87,6 +87,7 @@ PASS_A="${HEGEMON_TP_PASS_A:-testwallet1}"
 PASS_B="${HEGEMON_TP_PASS_B:-testwallet2}"
 RECIPIENTS_JSON="${HEGEMON_TP_RECIPIENTS_JSON:-/tmp/hegemon-throughput-recipients.json}"
 WORKERS="${HEGEMON_TP_WORKERS:-1}"
+PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS:-1}"
 WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
 
 require_bin() {
@@ -162,6 +163,10 @@ fi
 
 if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [ "$WORKERS" -lt 1 ]; then
   echo "HEGEMON_TP_WORKERS must be a positive integer (got '$WORKERS')." >&2
+  exit 1
+fi
+if ! [[ "$PROVER_WORKERS" =~ ^[0-9]+$ ]] || [ "$PROVER_WORKERS" -lt 1 ]; then
+  echo "HEGEMON_TP_PROVER_WORKERS must be a positive integer (got '$PROVER_WORKERS')." >&2
   exit 1
 fi
 if [ "$WORKERS" -gt "$TX_COUNT" ]; then
@@ -280,6 +285,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_MAX_PEERS=0 \
      HEGEMON_MINE=1 \
      HEGEMON_MINE_THREADS='${MINE_THREADS}' \
+     HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
      HEGEMON_MINE_TEST=1 \
      HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
      HEGEMON_AGGREGATION_PROOFS=1 \
@@ -519,8 +525,8 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
     echo "Strict aggregation mode: missing block_proof_verification_metrics line." >&2
     exit 1
   fi
-  if grep -q "aggregation_proof_present=false" <<<"$VERIFY_LINE"; then
-    echo "Strict aggregation mode: tested block imported without aggregation proof." >&2
+  if grep -q "proven_batch_present=false" <<<"$VERIFY_LINE"; then
+    echo "Strict aggregation mode: tested block imported without proven batch." >&2
     echo "$VERIFY_LINE" >&2
     exit 1
   fi
@@ -547,7 +553,7 @@ else
   search_log "block_proof_verification_metrics" | tail -n 1 >&2 || true
 fi
 echo "" >&2
-echo "throughput_round_metrics tx_count=${TX_COUNT} workers=${WORKERS} profile=${TP_PROFILE} send_total_ms=${SEND_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} effective_tps=${EFFECTIVE_TPS}" >&2
+echo "throughput_round_metrics tx_count=${TX_COUNT} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} send_total_ms=${SEND_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} effective_tps=${EFFECTIVE_TPS}" >&2
 
 echo "Done. Node is still running in tmux." >&2
 echo "  Attach: tmux attach -t $SESSION" >&2

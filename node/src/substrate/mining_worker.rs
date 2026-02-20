@@ -62,7 +62,6 @@
 use crate::pow::PowHandle;
 use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
 use crate::substrate::service::StorageChangesHandle;
-use block_circuit::CommitmentBlockProof;
 use codec::Encode;
 use consensus::{Blake3Seal, MiningWork};
 use sp_core::H256;
@@ -173,10 +172,6 @@ pub struct BlockTemplate {
     /// Task 11.5.5: Handle for cached StorageChanges for block import.
     /// This is set during block building when using sc_block_builder::BlockBuilder.
     pub storage_changes: Option<StorageChangesHandle>,
-    /// Optional commitment block proof built from shielded transfer extrinsics.
-    pub commitment_proof: Option<CommitmentBlockProof>,
-    /// Optional aggregation proof bytes built from transaction proofs.
-    pub aggregation_proof: Option<Vec<u8>>,
 }
 
 impl BlockTemplate {
@@ -201,8 +196,6 @@ impl BlockTemplate {
             difficulty_bits,
             extrinsics: Vec::new(),
             storage_changes: None, // Task 11.5.5: Set during block building
-            commitment_proof: None,
-            aggregation_proof: None,
         }
     }
 
@@ -255,16 +248,6 @@ impl BlockTemplate {
             &self.extrinsics_root,
             &self.state_root,
         );
-        self
-    }
-
-    pub fn with_commitment_proof(mut self, commitment_proof: Option<CommitmentBlockProof>) -> Self {
-        self.commitment_proof = commitment_proof;
-        self
-    }
-
-    pub fn with_aggregation_proof(mut self, aggregation_proof: Option<Vec<u8>>) -> Self {
-        self.aggregation_proof = aggregation_proof;
         self
     }
 
@@ -837,14 +820,6 @@ where
                         state_root = %hex::encode(template.state_root.as_bytes()),
                         "New mining work (Task 11.4: state execution enabled)"
                     );
-                    if let Some(proof) = template.commitment_proof.as_ref() {
-                        tracing::debug!(
-                            height = template.number,
-                            tx_count = proof.public_inputs.tx_count,
-                            proof_size = proof.proof_bytes.len(),
-                            "Commitment block proof attached to template"
-                        );
-                    }
                 }
 
                 current_template = Some(template);

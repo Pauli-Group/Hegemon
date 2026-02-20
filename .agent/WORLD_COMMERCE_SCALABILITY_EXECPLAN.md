@@ -34,6 +34,8 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-02-20T00:00Z) Moved remaining recursive opened-value payloads to witness targets and extended aggregation witness wiring; `aggregation_proof_roundtrip` (ignored test) passes.
 - [x] (2026-02-20T00:00Z) Added strict throughput harness guard (`HEGEMON_TP_STRICT_AGGREGATION=1`) and consensus regression tests for mode behavior (`consensus/tests/self_contained_mode.rs`).
 - [x] (2026-02-20T01:00Z) Deep recursion challenger placeholder removed: recursive Fiat-Shamir sampling is now constrained in-circuit and sampled challenge public inputs are connected to derived transcript values.
+- [x] (2026-02-20T02:30Z) Phase D cutover landed: runtime call surface now uses single `submit_proven_batch`, consensus `Block` uses `proven_batch`, node authoring path attaches only ready proven batches, and synchronous in-closure proof generation was removed from `wire_block_builder_api`.
+- [x] (2026-02-20T03:20Z) Upgraded the in-node prover coordinator to a bounded multi-job scheduler: `HEGEMON_PROVER_WORKERS` and `HEGEMON_BATCH_QUEUE_CAPACITY` now actively control concurrent proving jobs, stale-parent results are discarded fail-closed, and new coordinator unit tests cover ready lookup, stale cancellation, and failure slot release.
 - [ ] (2026-02-19T00:00Z) Phase C closure checklist (completed: core codepath migration + compile/test target checks; remaining: full throughput/e2e reruns and final metrics capture under `SelfContained` mode).
 - [x] (2026-01-21T00:00Z) Draft world-commerce scalability ExecPlan (this file).
 - [x] (2026-01-22T18:47Z) Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
@@ -218,8 +220,7 @@ We use three classes of “switch,” each with a distinct purpose:
 2. Per-block markers (mandatory unsigned extrinsics). These are for “what validation mode is this block using?” and are used so block authors can explicitly opt into a mode while verifiers can reject blocks that use the mode incorrectly.
 
    - Already present:
-     - `ShieldedPool::submit_commitment_proof`: binds ciphertext-DA root + `chunk_count` plus the `CommitmentBlockProof` bytes.
-     - `ShieldedPool::submit_aggregation_proof`: supplies the block’s aggregation proof bytes (verified during import).
+     - `ShieldedPool::submit_proven_batch`: carries commitment proof + aggregation proof + statement commitment + DA binding in a single payload.
      - `ShieldedPool::enable_aggregation_mode`: indicates per-tx verification may be skipped in the runtime for this block (the node must verify aggregated validity during import).
 
    - Historical (0.8.0 / Phase A only):

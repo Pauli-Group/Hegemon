@@ -408,17 +408,11 @@ pub mod pallet {
     #[pallet::storage]
     pub type ShieldedTransfersProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
-    /// Whether the commitment proof was already submitted this block.
+    /// Whether a proven-batch payload was already submitted this block.
     ///
-    /// Reset on `on_initialize` so exactly one commitment proof can be attached per block.
+    /// Reset on `on_initialize` so exactly one proven-batch payload can be attached per block.
     #[pallet::storage]
-    pub type CommitmentProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
-
-    /// Whether the aggregation proof was already submitted this block.
-    ///
-    /// Reset on `on_initialize` so exactly one aggregation proof can be attached per block.
-    #[pallet::storage]
-    pub type AggregationProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
+    pub type ProvenBatchProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
     /// Whether this block is operating in "aggregation required" mode.
     ///
@@ -617,10 +611,8 @@ pub mod pallet {
         InvalidCoinbaseCommitment,
         /// Coinbase already processed for this block.
         CoinbaseAlreadyProcessed,
-        /// Commitment proof already submitted for this block.
-        CommitmentProofAlreadyProcessed,
-        /// Aggregation proof already submitted for this block.
-        AggregationProofAlreadyProcessed,
+        /// Proven batch payload already submitted for this block.
+        ProvenBatchAlreadyProcessed,
         /// Aggregation proof mode was already enabled for this block.
         AggregationModeAlreadyEnabled,
         /// Aggregation proof mode must be enabled before transfers.
@@ -804,8 +796,7 @@ pub mod pallet {
             // Reset coinbase processed flag at start of each block
             CoinbaseProcessed::<T>::kill();
             ShieldedTransfersProcessed::<T>::kill();
-            CommitmentProofProcessed::<T>::kill();
-            AggregationProofProcessed::<T>::kill();
+            ProvenBatchProcessed::<T>::kill();
             AggregationProofRequired::<T>::kill();
             Weight::from_parts(1_000, 0)
         }
@@ -841,71 +832,56 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Attach the commitment proof for this block.
+        /// Attach the proven-batch payload for this block.
         ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
-        /// commitment proof bytes on-chain so all nodes can verify them during block import.
+        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry all
+        /// consensus proof material for a self-contained aggregation block.
         ///
-        /// The runtime does **not** verify the proof; verification is performed in the node.
-        ///
-        /// The `da_root` is carried explicitly so importers can fetch the DA sidecar before
-        /// reconstructing ciphertexts.
+        /// The runtime does **not** verify the proofs; verification is performed in the node.
         #[pallet::call_index(1)]
         #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_commitment_proof(
+        pub fn submit_proven_batch(
             origin: OriginFor<T>,
-            da_root: [u8; 48],
-            chunk_count: u32,
-            proof: StarkProof,
+            payload: types::ProvenBatchV1,
         ) -> DispatchResult {
             ensure_none(origin)?;
 
             ensure!(
-                !CommitmentProofProcessed::<T>::get(),
-                Error::<T>::CommitmentProofAlreadyProcessed
+                !ProvenBatchProcessed::<T>::get(),
+                Error::<T>::ProvenBatchAlreadyProcessed
             );
 
             ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                payload.version == types::PROVEN_BATCH_V1_VERSION,
+                Error::<T>::InvalidProofFormat
+            );
+
+            ensure!(
+                payload.tx_count > 0,
+                Error::<T>::InvalidNullifierCount
+            );
+
+            ensure!(
+                payload.commitment_proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
 
-            ensure!(chunk_count > 0, Error::<T>::InvalidDaChunkCount);
+            ensure!(
+                payload.aggregation_proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
+
+            ensure!(payload.da_chunk_count > 0, Error::<T>::InvalidDaChunkCount);
 
             let block_number = frame_system::Pallet::<T>::block_number();
             DaCommitments::<T>::insert(
                 block_number,
                 types::DaCommitment {
-                    root: da_root,
-                    chunk_count,
+                    root: payload.da_root,
+                    chunk_count: payload.da_chunk_count,
                 },
             );
-            CommitmentProofProcessed::<T>::put(true);
-            Ok(())
-        }
-
-        /// Attach the aggregation proof for this block.
-        ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
-        /// aggregation proof bytes on-chain so nodes can verify them during block import.
-        ///
-        /// The runtime does **not** verify the proof; verification is performed in the node.
-        #[pallet::call_index(6)]
-        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_aggregation_proof(origin: OriginFor<T>, proof: StarkProof) -> DispatchResult {
-            ensure_none(origin)?;
-
-            ensure!(
-                !AggregationProofProcessed::<T>::get(),
-                Error::<T>::AggregationProofAlreadyProcessed
-            );
-
-            ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
-                Error::<T>::ProofTooLarge
-            );
-
-            AggregationProofProcessed::<T>::put(true);
+            ProvenBatchProcessed::<T>::put(true);
             Ok(())
         }
 
@@ -2928,44 +2904,32 @@ pub mod pallet {
                         .propagate(false) // Inherents are not propagated
                         .build()
                 }
-                Call::submit_commitment_proof {
-                    da_root: _,
-                    chunk_count,
-                    proof,
-                } => {
+                Call::submit_proven_batch { payload } => {
                     if _source != TransactionSource::InBlock {
                         return InvalidTransaction::Call.into();
                     }
-                    if CommitmentProofProcessed::<T>::get() {
+                    if ProvenBatchProcessed::<T>::get() {
                         return InvalidTransaction::Stale.into();
                     }
-                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
-                        return InvalidTransaction::ExhaustsResources.into();
+                    if payload.version != types::PROVEN_BATCH_V1_VERSION {
+                        return InvalidTransaction::BadProof.into();
                     }
-                    if *chunk_count == 0 {
+                    if payload.tx_count == 0 {
                         return InvalidTransaction::Custom(10).into();
                     }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolCommitmentProof")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"commitment_proof".to_vec()])
-                        .propagate(false)
-                        .build()
-                }
-                Call::submit_aggregation_proof { proof } => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
-                    }
-                    if AggregationProofProcessed::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                    if payload.commitment_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
                         return InvalidTransaction::ExhaustsResources.into();
                     }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolAggregationProof")
+                    if payload.aggregation_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                        return InvalidTransaction::ExhaustsResources.into();
+                    }
+                    if payload.da_chunk_count == 0 {
+                        return InvalidTransaction::Custom(10).into();
+                    }
+                    ValidTransaction::with_tag_prefix("ShieldedPoolProvenBatch")
                         .priority(TransactionPriority::MAX)
                         .longevity(1)
-                        .and_provides(vec![b"aggregation_proof".to_vec()])
+                        .and_provides(vec![b"proven_batch".to_vec()])
                         .propagate(false)
                         .build()
                 }

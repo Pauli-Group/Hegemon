@@ -246,7 +246,8 @@ mod tests {
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{
         BindingHash, EncryptedNote, FeeParameters, FeeProofKind, ProofAvailabilityPolicy,
-        StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA, NOTE_ENCRYPTION_VERSION,
+        ProvenBatchV1, StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA,
+        NOTE_ENCRYPTION_VERSION, PROVEN_BATCH_V1_VERSION,
     };
     use codec::Encode;
     use frame_support::traits::Hooks;
@@ -262,6 +263,18 @@ mod tests {
 
     fn valid_da_root() -> [u8; 48] {
         [9u8; 48]
+    }
+
+    fn valid_proven_batch() -> ProvenBatchV1 {
+        ProvenBatchV1 {
+            version: PROVEN_BATCH_V1_VERSION,
+            tx_count: 1,
+            tx_statements_commitment: [3u8; 48],
+            da_root: valid_da_root(),
+            da_chunk_count: 1,
+            commitment_proof: valid_proof(),
+            aggregation_proof: valid_proof(),
+        }
     }
 
     fn valid_binding_hash() -> BindingHash {
@@ -358,12 +371,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_submit_commitment_proof_is_in_block_only() {
+    fn validate_unsigned_submit_proven_batch_is_in_block_only() {
         new_test_ext().execute_with(|| {
-            let call = crate::Call::<Test>::submit_commitment_proof {
-                da_root: valid_da_root(),
-                chunk_count: 1,
-                proof: valid_proof(),
+            let call = crate::Call::<Test>::submit_proven_batch {
+                payload: valid_proven_batch(),
             };
 
             let validity_external =
@@ -380,15 +391,13 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_submit_commitment_proof_rejects_oversized() {
+    fn validate_unsigned_submit_proven_batch_rejects_oversized() {
         new_test_ext().execute_with(|| {
-            let call = crate::Call::<Test>::submit_commitment_proof {
-                da_root: valid_da_root(),
-                chunk_count: 1,
-                proof: StarkProof {
-                    data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
-                },
+            let mut payload = valid_proven_batch();
+            payload.commitment_proof = StarkProof {
+                data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
             };
+            let call = crate::Call::<Test>::submit_proven_batch { payload };
 
             let validity_in_block =
                 Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
@@ -402,19 +411,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_submit_commitment_proof_rejects_duplicate_in_block() {
+    fn validate_unsigned_submit_proven_batch_rejects_duplicate_in_block() {
         new_test_ext().execute_with(|| {
-            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
-                valid_da_root(),
-                1,
-                valid_proof(),
+                valid_proven_batch(),
             ));
 
-            let call = crate::Call::<Test>::submit_commitment_proof {
-                da_root: valid_da_root(),
-                chunk_count: 1,
-                proof: valid_proof(),
+            let call = crate::Call::<Test>::submit_proven_batch {
+                payload: valid_proven_batch(),
             };
             let validity_in_block =
                 Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
@@ -735,60 +740,45 @@ mod tests {
     }
 
     #[test]
-    fn submit_commitment_proof_requires_none_origin_and_is_singleton() {
+    fn submit_proven_batch_requires_none_origin_and_is_singleton() {
         new_test_ext().execute_with(|| {
             // Signed origin rejected.
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(
-                    RuntimeOrigin::signed(1),
-                    valid_da_root(),
-                    1,
-                    valid_proof(),
-                ),
+                Pallet::<Test>::submit_proven_batch(RuntimeOrigin::signed(1), valid_proven_batch(),),
                 sp_runtime::DispatchError::BadOrigin
             );
 
             // None origin accepted once per block.
-            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
-                valid_da_root(),
-                1,
-                valid_proof(),
+                valid_proven_batch(),
             ));
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(
+                Pallet::<Test>::submit_proven_batch(
                     RuntimeOrigin::none(),
-                    valid_da_root(),
-                    1,
-                    valid_proof(),
+                    valid_proven_batch(),
                 ),
-                crate::Error::<Test>::CommitmentProofAlreadyProcessed
+                crate::Error::<Test>::ProvenBatchAlreadyProcessed
             );
 
             // Reset on new block.
             Pallet::<Test>::on_initialize(2);
-            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
-                valid_da_root(),
-                1,
-                valid_proof(),
+                valid_proven_batch(),
             ));
         });
     }
 
     #[test]
-    fn submit_commitment_proof_respects_size_limit() {
+    fn submit_proven_batch_respects_size_limit() {
         new_test_ext().execute_with(|| {
-            let proof = StarkProof {
+            let mut payload = valid_proven_batch();
+            payload.commitment_proof = StarkProof {
                 data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
             };
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(
-                    RuntimeOrigin::none(),
-                    valid_da_root(),
-                    1,
-                    proof,
-                ),
+                Pallet::<Test>::submit_proven_batch(RuntimeOrigin::none(), payload,),
                 crate::Error::<Test>::ProofTooLarge
             );
         });
