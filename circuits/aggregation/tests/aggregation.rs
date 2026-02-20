@@ -174,7 +174,6 @@ fn tx_statements_commitment_from_proofs(proofs: &[TransactionProof]) -> [u8; 48]
 }
 
 #[test]
-#[ignore = "slow aggregation proof generation"]
 fn aggregation_proof_roundtrip() {
     let witness = sample_witness();
     let (proving_key, _verifying_key) = generate_keys();

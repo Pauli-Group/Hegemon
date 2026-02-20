@@ -42,4 +42,7 @@ pub enum TransactionCircuitError {
 
     #[error("constraint system violated: {0}")]
     ConstraintViolation(&'static str),
+
+    #[error("constraint system violated: {0}")]
+    ConstraintViolationOwned(String),
 }
