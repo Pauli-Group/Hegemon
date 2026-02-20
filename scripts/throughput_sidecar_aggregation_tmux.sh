@@ -459,7 +459,7 @@ for i in $(seq 1 1200); do
     sleep 1
     continue
   fi
-  LINE_BLOCK="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\\bblock_number=(\\d+)\\b", s); print(m.group(1) if m else "")' <<<"$LINE")"
+  LINE_BLOCK="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\bblock_number=(\d+)\b", s); print(m.group(1) if m else "")' <<<"$LINE")"
   if [ -z "$LINE_BLOCK" ]; then
     sleep 1
     continue
