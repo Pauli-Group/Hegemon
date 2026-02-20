@@ -18,6 +18,7 @@ MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
 STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven batch is absent
+TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
 
 # Throughput profile:
 # - safe: conservative laptop defaults
@@ -80,6 +81,15 @@ if [ "${HEGEMON_TP_UNSAFE:-0}" != "1" ] && [ "$FAST" != "1" ] && [ "$TX_COUNT" -
   echo "Hint: set HEGEMON_TP_FAST=1 for dev-only proofs, or run on a beefier machine." >&2
   exit 1
 fi
+
+case "$TPS_EFFECTIVE_MODE" in
+  inclusion|end_to_end|submission)
+    ;;
+  *)
+    echo "HEGEMON_TP_EFFECTIVE_MODE must be one of inclusion|end_to_end|submission (got '$TPS_EFFECTIVE_MODE')." >&2
+    exit 1
+    ;;
+esac
 
 WALLET_A="${HEGEMON_TP_WALLET_A:-/tmp/hegemon-throughput-wallet-a}"
 WALLET_B="${HEGEMON_TP_WALLET_B:-/tmp/hegemon-throughput-wallet-b}"
@@ -450,6 +460,7 @@ SEND_TOTAL_MS=$((SEND_END_MS - SEND_START_MS))
 echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
 
 INCLUSION_START_BLOCK="$(current_block_number)"
+INCLUSION_START_MS="$(now_ms)"
 echo "Starting mining to include the queued transfers... (start_block=${INCLUSION_START_BLOCK})" >&2
 curl -s -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
@@ -487,12 +498,38 @@ if [ -z "$FOUND" ]; then
 fi
 ROUND_END_MS="$(now_ms)"
 ROUND_TOTAL_MS=$((ROUND_END_MS - ROUND_START_MS))
-EFFECTIVE_TPS="$(python3 - <<PY
+INCLUSION_TOTAL_MS=$((ROUND_END_MS - INCLUSION_START_MS))
+
+SUBMISSION_TPS="$(python3 - <<PY
+tx_count = int("${TX_COUNT}")
+send_total_ms = int("${SEND_TOTAL_MS}")
+print(f"{(tx_count / (send_total_ms / 1000.0)):.6f}" if send_total_ms > 0 else "0.000000")
+PY
+)"
+INCLUSION_TPS="$(python3 - <<PY
+tx_count = int("${TX_COUNT}")
+inclusion_total_ms = int("${INCLUSION_TOTAL_MS}")
+print(f"{(tx_count / (inclusion_total_ms / 1000.0)):.6f}" if inclusion_total_ms > 0 else "0.000000")
+PY
+)"
+END_TO_END_TPS="$(python3 - <<PY
 tx_count = int("${TX_COUNT}")
 round_total_ms = int("${ROUND_TOTAL_MS}")
 print(f"{(tx_count / (round_total_ms / 1000.0)):.6f}" if round_total_ms > 0 else "0.000000")
 PY
 )"
+
+case "$TPS_EFFECTIVE_MODE" in
+  submission)
+    EFFECTIVE_TPS="$SUBMISSION_TPS"
+    ;;
+  end_to_end)
+    EFFECTIVE_TPS="$END_TO_END_TPS"
+    ;;
+  inclusion)
+    EFFECTIVE_TPS="$INCLUSION_TPS"
+    ;;
+esac
 
 BLOCK_NUMBER="$FOUND_BLOCK"
 
@@ -553,7 +590,7 @@ else
   search_log "block_proof_verification_metrics" | tail -n 1 >&2 || true
 fi
 echo "" >&2
-echo "throughput_round_metrics tx_count=${TX_COUNT} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} send_total_ms=${SEND_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} effective_tps=${EFFECTIVE_TPS}" >&2
+echo "throughput_round_metrics tx_count=${TX_COUNT} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
 
 echo "Done. Node is still running in tmux." >&2
 echo "  Attach: tmux attach -t $SESSION" >&2
