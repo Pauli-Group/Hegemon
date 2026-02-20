@@ -123,6 +123,9 @@ use crate::substrate::mining_worker::{
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
+use crate::substrate::prover_coordinator::{
+    ProverCoordinator, ProverCoordinatorConfig, ReadyBatch, ReadyBatchKey,
+};
 use crate::substrate::rpc::{
     ArchiveApiServer, ArchiveRpc, BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer,
     HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ShieldedApiServer, ShieldedRpc,
@@ -1641,15 +1644,22 @@ fn build_da_encoding_from_extrinsics(
 }
 
 #[cfg(test)]
+#[derive(Clone, Debug)]
+struct LegacyProofDaManifestEntry {
+    _binding_hash: [u8; 64],
+    proof_len: u32,
+    proof_offset: u32,
+}
+
+#[cfg(test)]
 fn proof_da_blob_len_from_manifest(
-    manifest: &[pallet_shielded_pool::types::ProofDaManifestEntry],
+    manifest: &[LegacyProofDaManifestEntry],
 ) -> Result<usize, String> {
     if manifest.is_empty() {
         return Err("proof DA manifest is empty".to_string());
     }
 
-    let mut entries: Vec<&pallet_shielded_pool::types::ProofDaManifestEntry> =
-        manifest.iter().collect();
+    let mut entries: Vec<&LegacyProofDaManifestEntry> = manifest.iter().collect();
     entries.sort_by_key(|entry| entry.proof_offset);
 
     const HEADER_BYTES: u64 = 4; // u32 entry count
@@ -2293,7 +2303,6 @@ fn build_commitment_block_proof(
 #[derive(Clone, Debug, Default)]
 struct AggregationProofOutcome {
     proof_bytes: Option<Vec<u8>>,
-    attach_extrinsic: bool,
 }
 
 fn build_aggregation_proof(
@@ -2308,7 +2317,6 @@ fn build_aggregation_proof(
         decoded.push(extrinsic);
     }
 
-    let existing = extract_aggregation_proof_bytes(&decoded)?;
     let (_transactions, proofs) = extract_shielded_transfers_for_parallel_verification(
         &decoded,
         resolved_ciphertexts,
@@ -2316,9 +2324,6 @@ fn build_aggregation_proof(
         false,
     )?;
     if proofs.is_empty() {
-        if existing.is_some() {
-            return Err("aggregation proof present for block with no shielded transfers".into());
-        }
         return Ok(AggregationProofOutcome::default());
     }
     let statement_hashes = statement_hashes_from_extrinsics(&decoded);
@@ -2326,18 +2331,10 @@ fn build_aggregation_proof(
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
 
-    if let Some(proof_bytes) = existing {
-        return Ok(AggregationProofOutcome {
-            proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
-            attach_extrinsic: false,
-        });
-    }
-
     let proof_bytes = prove_aggregation(&proofs, tx_statements_commitment)
         .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
     Ok(AggregationProofOutcome {
         proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
-        attach_extrinsic: true,
     })
 }
 
@@ -2353,6 +2350,84 @@ fn maybe_corrupt_aggregation_proof(mut proof_bytes: Vec<u8>) -> Vec<u8> {
         tracing::warn!("Corrupting aggregation proof bytes for test");
     }
     proof_bytes
+}
+
+fn build_ready_proven_batch(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    _block_number: u64,
+    candidate_txs: Vec<Vec<u8>>,
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+    commitment_block_fast: bool,
+) -> Result<ReadyBatch, String> {
+    let started = Instant::now();
+    let mut decoded = Vec::with_capacity(candidate_txs.len());
+    for ext_bytes in &candidate_txs {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
+        decoded.push(extrinsic);
+    }
+
+    let da_blob = build_da_blob_from_extrinsics(&decoded, Some(pending_ciphertexts))
+        .map_err(|err| format!("failed to build DA blob for proven batch: {err}"))?;
+    let encoding = state_da::encode_da_blob(&da_blob.blob, da_params)
+        .map_err(|err| format!("failed to encode DA blob for proven batch: {err}"))?;
+    let da_root = encoding.root();
+    let da_chunk_count = encoding.chunks().len() as u32;
+    let resolved_ciphertexts = Some(da_blob.transactions.as_slice());
+
+    let commitment_proof = build_commitment_block_proof(
+        client,
+        parent_hash,
+        &candidate_txs,
+        da_params,
+        Some(da_root),
+        resolved_ciphertexts,
+        Some(pending_proofs),
+        commitment_block_fast,
+    )?
+    .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
+
+    let aggregation_outcome =
+        build_aggregation_proof(&candidate_txs, resolved_ciphertexts, Some(pending_proofs))?;
+    let aggregation_raw = aggregation_outcome
+        .proof_bytes
+        .ok_or_else(|| "candidate tx set has no aggregation proof material".to_string())?;
+    let aggregation_proof = encode_aggregation_proof_bytes(aggregation_raw);
+
+    let statement_hashes = statement_hashes_from_extrinsics(&decoded);
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+    let tx_count = statement_hashes.len() as u32;
+    if tx_count == 0 {
+        return Err("candidate tx set has no shielded transfers".to_string());
+    }
+
+    let payload = pallet_shielded_pool::types::ProvenBatchV1 {
+        version: pallet_shielded_pool::types::PROVEN_BATCH_V1_VERSION,
+        tx_count,
+        tx_statements_commitment,
+        da_root,
+        da_chunk_count,
+        commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
+            commitment_proof.proof_bytes.clone(),
+        ),
+        aggregation_proof: pallet_shielded_pool::types::StarkProof::from_bytes(aggregation_proof),
+    };
+
+    Ok(ReadyBatch {
+        key: ReadyBatchKey {
+            parent_hash,
+            tx_statements_commitment,
+            tx_count,
+        },
+        payload,
+        candidate_txs,
+        build_ms: started.elapsed().as_millis(),
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2386,54 +2461,27 @@ impl HeaderProofExt for SubstrateProofHeader {
     }
 }
 
-struct CommitmentProofPayload {
-    da_root: DaRoot,
-    da_chunk_count: u32,
-    proof_bytes: Vec<u8>,
+#[derive(Clone, Debug)]
+struct ProvenBatchPayload {
+    payload: pallet_shielded_pool::types::ProvenBatchV1,
 }
 
-fn extract_commitment_proof_payload(
+fn extract_proven_batch_payload(
     extrinsics: &[runtime::UncheckedExtrinsic],
-) -> Result<Option<CommitmentProofPayload>, String> {
-    let mut found: Option<CommitmentProofPayload> = None;
+) -> Result<Option<ProvenBatchPayload>, String> {
+    let mut found: Option<ProvenBatchPayload> = None;
     for extrinsic in extrinsics {
         let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
             continue;
         };
 
-        if let ShieldedPoolCall::submit_commitment_proof {
-            da_root,
-            chunk_count,
-            proof,
-        } = call
-        {
+        if let ShieldedPoolCall::submit_proven_batch { payload } = call {
             if found.is_some() {
-                return Err("multiple submit_commitment_proof extrinsics in block".into());
+                return Err("multiple submit_proven_batch extrinsics in block".into());
             }
-            found = Some(CommitmentProofPayload {
-                da_root: *da_root,
-                da_chunk_count: *chunk_count,
-                proof_bytes: proof.data.clone(),
+            found = Some(ProvenBatchPayload {
+                payload: payload.clone(),
             });
-        }
-    }
-    Ok(found)
-}
-
-fn extract_aggregation_proof_bytes(
-    extrinsics: &[runtime::UncheckedExtrinsic],
-) -> Result<Option<Vec<u8>>, String> {
-    let mut found: Option<Vec<u8>> = None;
-    for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-            continue;
-        };
-
-        if let ShieldedPoolCall::submit_aggregation_proof { proof } = call {
-            if found.is_some() {
-                return Err("multiple submit_aggregation_proof extrinsics in block".into());
-            }
-            found = Some(proof.data.clone());
         }
     }
     Ok(found)
@@ -2966,8 +3014,7 @@ fn verify_proof_carrying_block(
 ) -> Result<Option<CommitmentBlockProof>, String> {
     use consensus::ProofVerifier;
 
-    let commitment_payload = extract_commitment_proof_payload(extrinsics)?;
-    let aggregation_proof_bytes = extract_aggregation_proof_bytes(extrinsics)?;
+    let proven_batch_payload = extract_proven_batch_payload(extrinsics)?;
     ensure_shielded_transfer_ordering(extrinsics)?;
     ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
     let (transactions, tx_proofs) = extract_shielded_transfers_for_parallel_verification(
@@ -2995,41 +3042,48 @@ fn verify_proof_carrying_block(
     };
 
     if transactions.is_empty() {
-        if commitment_payload.is_some() {
-            return Err("commitment proof present for block with no shielded transfers".into());
-        }
-        if aggregation_proof_bytes.is_some() {
-            return Err("aggregation proof present for block with no shielded transfers".into());
+        if proven_batch_payload.is_some() {
+            return Err("proven batch present for block with no shielded transfers".into());
         }
         return Ok(None);
     }
 
-    let payload = commitment_payload
-        .ok_or_else(|| "missing submit_commitment_proof extrinsic".to_string())?;
+    let payload = proven_batch_payload
+        .ok_or_else(|| "missing submit_proven_batch extrinsic".to_string())?
+        .payload;
+    if payload.version != pallet_shielded_pool::types::PROVEN_BATCH_V1_VERSION {
+        return Err(format!(
+            "unsupported proven batch version {}",
+            payload.version
+        ));
+    }
+    if payload.tx_count != transactions.len() as u32 {
+        return Err("proven batch tx_count mismatch".to_string());
+    }
+    let aggregation_proof_bytes = payload.aggregation_proof.data.clone();
 
     {
         let extrinsics_bytes_total: usize = extrinsics.iter().map(|ext| ext.encode().len()).sum();
         let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
             .map(|layouts| da_blob_len_from_layouts(&layouts))
             .unwrap_or(0);
-        let proof_sidecar_blob_bytes_estimate = 0usize;
         let tx_proof_bytes_total: usize =
             tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
-        let aggregation_proof_bytes_len = aggregation_proof_bytes
-            .as_ref()
-            .map(|bytes| bytes.len())
-            .unwrap_or(0);
+        let proven_batch_bytes =
+            payload.commitment_proof.data.len() + payload.aggregation_proof.data.len();
         tracing::info!(
             target: "node::metrics",
             block_number,
             tx_count = transactions.len(),
             extrinsics_bytes_total,
             da_blob_bytes_estimate,
-            proof_sidecar_blob_bytes_estimate,
-            proof_sidecar_missing_count = missing_proof_bindings.len(),
             tx_proof_bytes_total,
-            commitment_proof_bytes = payload.proof_bytes.len(),
-            aggregation_proof_bytes = aggregation_proof_bytes_len,
+            proven_batch_present = true,
+            proven_batch_bytes,
+            proven_batch_build_ms = 0u128,
+            proven_batch_stale_count = 0u64,
+            commitment_proof_bytes = payload.commitment_proof.data.len(),
+            aggregation_proof_bytes = payload.aggregation_proof.data.len(),
             da_chunk_count = payload.da_chunk_count,
             da_root = %hex::encode(payload.da_root),
             da_policy = ?da_policy,
@@ -3057,11 +3111,9 @@ fn verify_proof_carrying_block(
     if matches!(
         verification_mode,
         consensus::types::ProofVerificationMode::SelfContainedAggregation
-    ) && aggregation_proof_bytes.is_none()
+    ) && aggregation_proof_bytes.is_empty()
     {
-        return Err(
-            "self-contained aggregation block is missing submit_aggregation_proof".to_string(),
-        );
+        return Err("self-contained aggregation block is missing aggregation proof".to_string());
     }
 
     let requires_full_fetch = matches!(
@@ -3094,8 +3146,11 @@ fn verify_proof_carrying_block(
     let tx_statements_commitment =
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+    if payload.tx_statements_commitment != tx_statements_commitment {
+        return Err("proven batch tx_statements_commitment mismatch".to_string());
+    }
     let commitment_proof = derive_commitment_block_proof_from_bytes(
-        payload.proof_bytes,
+        payload.commitment_proof.data.clone(),
         &transactions,
         &statement_hashes,
         &parent_tree,
@@ -3120,8 +3175,15 @@ fn verify_proof_carrying_block(
         header: SubstrateProofHeader { da_params },
         transactions,
         coinbase: None,
-        commitment_proof: Some(commitment_proof.clone()),
-        aggregation_proof: aggregation_proof_bytes,
+        proven_batch: Some(consensus::types::ProvenBatch {
+            version: payload.version,
+            tx_count: payload.tx_count,
+            tx_statements_commitment: payload.tx_statements_commitment,
+            da_root: payload.da_root,
+            da_chunk_count: payload.da_chunk_count,
+            commitment_proof: commitment_proof.clone(),
+            aggregation_proof: aggregation_proof_bytes,
+        }),
         tx_statements_commitment: Some(tx_statements_commitment),
         transaction_proofs,
         proof_verification_mode: verification_mode,
@@ -3136,7 +3198,7 @@ fn verify_proof_carrying_block(
         target: "node::metrics",
         block_number,
         verify_ms,
-        aggregation_proof_present = block.aggregation_proof.is_some(),
+        proven_batch_present = block.proven_batch.is_some(),
         "block_import_verify_time_ms"
     );
 
@@ -3433,32 +3495,14 @@ fn total_shielded_fees(extrinsics: &[Vec<u8>]) -> Result<u128, String> {
 pub fn wire_block_builder_api(
     chain_state: &Arc<ProductionChainStateProvider>,
     client: Arc<HegemonFullClient>,
-    da_params: DaParams,
-    pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
-    pending_proof_store: Arc<ParkingMutex<PendingProofStore>>,
+    prover_coordinator: Arc<ProverCoordinator>,
 ) {
     use sc_block_builder::BlockBuilderBuilder;
 
     let client_for_exec = client;
-    let commitment_block_proofs_enabled = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
     let aggregation_proofs_enabled = std::env::var("HEGEMON_AGGREGATION_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let requested_commitment_block_fast = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let commitment_block_fast = if cfg!(feature = "fast-proofs") {
-        requested_commitment_block_fast
-    } else {
-        if requested_commitment_block_fast {
-            tracing::warn!(
-                "HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
-            );
-        }
-        false
-    };
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
 
     // Capture the miner's shielded address
@@ -3711,12 +3755,6 @@ pub fn wire_block_builder_api(
                 runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
             )
         });
-        let mandatory_aggregation_proof = aggregation_mode_enabled
-            && matches!(
-                proof_policy,
-                pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
-            )
-            && !missing_proof_bindings.is_empty();
         if !missing_proof_bindings.is_empty() {
             if !aggregation_mode_enabled {
                 return Err(
@@ -3733,161 +3771,58 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let mut da_blob_build = None;
-        if commitment_block_proofs_enabled || aggregation_proofs_enabled {
-            let build = {
-                let pending_guard = pending_ciphertext_store.lock();
-                build_da_blob_from_extrinsics(&decoded_applied, Some(&*pending_guard))
-            }
-            .map_err(|err| format!("failed to build DA blob for block: {err}"))?;
-            da_blob_build = Some(build);
-        }
-
-        let resolved_ciphertexts =
-            da_blob_build.as_ref().map(|build| build.transactions.as_slice());
-        let mut da_chunk_count_override = None;
-        let da_root_override = if commitment_block_proofs_enabled {
-            if let Some(build) = da_blob_build.as_ref() {
-                let encoding = state_da::encode_da_blob(&build.blob, da_params)
-                    .map_err(|err| format!("da_root encoding failed: {err}"))?;
-                let root = encoding.root();
-                da_chunk_count_override = Some(encoding.chunks().len() as u32);
-                Some(root)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let commitment_proof = if commitment_block_proofs_enabled {
-            let da_root_for_commitment = da_root_override
-                .ok_or_else(|| "missing da_root for commitment proof".to_string())?;
-            let pending_proofs_guard = pending_proof_store.lock();
-            match build_commitment_block_proof(
-                client_for_exec.as_ref(),
+        let statement_hashes = statement_hashes_from_extrinsics(&decoded_applied);
+        let shielded_tx_count = statement_hashes.len() as u32;
+        let requires_proven_batch = shielded_tx_count > 0;
+        if requires_proven_batch {
+            let tx_statements_commitment =
+                CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                    .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+            let ready_batch = prover_coordinator.lookup_ready_batch(
                 parent_substrate_hash,
-                &applied,
-                da_params,
-                Some(da_root_for_commitment),
-                resolved_ciphertexts,
-                Some(&*pending_proofs_guard),
-                commitment_block_fast,
-            ) {
-                Ok(Some(proof)) => {
-                    let chunk_count_for_commitment = da_chunk_count_override
-                        .ok_or_else(|| "missing da_chunk_count for commitment proof".to_string())?;
-                    let commitment_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                        runtime::RuntimeCall::ShieldedPool(
-                            ShieldedPoolCall::submit_commitment_proof {
-                                da_root: da_root_for_commitment,
-                                chunk_count: chunk_count_for_commitment,
-                                proof: pallet_shielded_pool::types::StarkProof::from_bytes(
-                                    proof.proof_bytes.clone(),
-                                ),
-                            },
-                        ),
-                    );
-
-                    match block_builder.push(commitment_extrinsic.clone()) {
-                        Ok(_) => {
-                            applied.push(commitment_extrinsic.encode());
-                            tracing::info!(
-                                block_number,
-                                tx_count = proof.public_inputs.tx_count,
-                                proof_size = proof.proof_bytes.len(),
-                                proof_hash = %hex::encode(proof.proof_hash),
-                                "Commitment proof extrinsic attached"
-                            );
-                        }
-                        Err(e) => {
-                            return Err(format!(
-                                "failed to push commitment proof extrinsic: {e:?}"
-                            ));
-                        }
-                    }
-
-                    Some(proof)
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    return Err(format!("commitment block proof generation failed: {e}"));
-                }
-            }
-        } else {
-            None
-        };
-
-        let mut aggregation_outcome = if aggregation_proofs_enabled {
-            let pending_proofs_guard = pending_proof_store.lock();
-            match build_aggregation_proof(
-                &applied,
-                resolved_ciphertexts,
-                Some(&*pending_proofs_guard),
-            ) {
-                Ok(outcome) => outcome,
-                Err(err) => {
-                    return Err(format!("aggregation proof generation failed: {err}"));
-                }
-            }
-        } else {
-            let existing = extract_aggregation_proof_bytes(&decoded_applied)?;
-            AggregationProofOutcome {
-                proof_bytes: existing,
-                attach_extrinsic: false,
-            }
-        };
-
-        if aggregation_outcome.attach_extrinsic {
-            let proof_bytes = aggregation_outcome
-                .proof_bytes
-                .clone()
-                .ok_or_else(|| "aggregation proof bytes missing".to_string())?;
-            let encoded_proof_bytes = encode_aggregation_proof_bytes(proof_bytes);
-            let proof_size = encoded_proof_bytes.len();
-            let proof_size_uncompressed =
-                aggregation_proof_uncompressed_len(&encoded_proof_bytes);
-            let aggregation_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_aggregation_proof {
-                    proof: pallet_shielded_pool::types::StarkProof::from_bytes(
-                        encoded_proof_bytes.clone(),
-                    ),
-                }),
+                tx_statements_commitment,
+                shielded_tx_count,
             );
-            match block_builder.push(aggregation_extrinsic.clone()) {
-                Ok(_) => {
-                    applied.push(aggregation_extrinsic.encode());
-                    aggregation_outcome.proof_bytes = Some(encoded_proof_bytes);
-                    tracing::info!(
-                        block_number,
-                        proof_size,
-                        proof_size_uncompressed,
-                        "Aggregation proof extrinsic attached"
-                    );
-                }
-                Err(e) => {
-                    if mandatory_aggregation_proof {
-                        return Err(format!(
-                            "failed to push mandatory aggregation proof extrinsic: {e:?}"
-                        ));
-                    } else {
-                        tracing::warn!(
+
+            if let Some(ready_batch) = ready_batch {
+                let proof_size = ready_batch.payload.commitment_proof.data.len()
+                    + ready_batch.payload.aggregation_proof.data.len();
+                let proof_size_uncompressed = aggregation_proof_uncompressed_len(
+                    ready_batch.payload.aggregation_proof.data.as_slice(),
+                );
+                let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                    runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
+                        payload: ready_batch.payload,
+                    }),
+                );
+                match block_builder.push(proven_batch_extrinsic.clone()) {
+                    Ok(_) => {
+                        applied.push(proven_batch_extrinsic.encode());
+                        tracing::info!(
                             block_number,
                             proof_size,
-                            error = ?e,
-                            "Aggregation proof extrinsic omitted (block resources exhausted)"
+                            proof_size_uncompressed,
+                            proven_batch_build_ms = ready_batch.build_ms,
+                            proven_batch_stale_count = prover_coordinator.stale_count(),
+                            "Proven batch extrinsic attached"
                         );
-                        aggregation_outcome.proof_bytes = None;
-                        aggregation_outcome.attach_extrinsic = false;
+                    }
+                    Err(e) => {
+                        if requires_proven_batch {
+                            return Err(format!(
+                                "failed to push mandatory proven batch extrinsic: {e:?}"
+                            ));
+                        }
+                        tracing::warn!(
+                            block_number,
+                            error = ?e,
+                            "Proven batch extrinsic omitted (block resources exhausted)"
+                        );
                     }
                 }
+            } else if requires_proven_batch {
+                return Err("shielded block requires a ready proven batch".to_string());
             }
-        }
-        if mandatory_aggregation_proof && aggregation_outcome.proof_bytes.is_none() {
-            return Err(
-                "self-contained aggregation block requires an aggregation proof extrinsic"
-                    .to_string(),
-            );
         }
 
         // In self-contained aggregation mode, proof sidecar bytes are proposer-local artifacts.
@@ -3929,8 +3864,6 @@ pub fn wire_block_builder_api(
             extrinsics_root,
             failed_count: failed,
             storage_changes: Some(storage_changes),
-            commitment_proof,
-            aggregation_proof: aggregation_outcome.proof_bytes,
         })
     });
 
@@ -4076,10 +4009,11 @@ fn wire_pow_block_import(
             )
         };
 
+        let mut commitment_block_proof: Option<CommitmentBlockProof> = None;
         if proof_verification_enabled {
             let da_policy = fetch_da_policy(block_import.as_ref(), template.parent_hash);
             let resolved_ciphertexts = da_build.as_ref().map(|build| build.transactions.as_slice());
-            verify_proof_carrying_block(
+            commitment_block_proof = verify_proof_carrying_block(
                 &parallel_verifier,
                 block_import.as_ref(),
                 template.parent_hash,
@@ -4201,7 +4135,7 @@ fn wire_pow_block_import(
                         pending_proof_store.lock().remove_many(&binding_hashes);
                     }
                 }
-                if let Some(proof) = template.commitment_proof.clone() {
+                if let Some(proof) = commitment_block_proof.clone() {
                     let proof_size = proof.proof_bytes.len();
                     let proof_hash = proof.proof_hash;
                     commitment_block_proof_store
@@ -4285,7 +4219,7 @@ fn wire_pow_block_import(
                         pending_proof_store.lock().remove_many(&binding_hashes);
                     }
                 }
-                if let Some(proof) = template.commitment_proof.clone() {
+                if let Some(proof) = commitment_block_proof.clone() {
                     let proof_size = proof.proof_bytes.len();
                     let proof_hash = proof.proof_hash;
                     commitment_block_proof_store
@@ -6422,13 +6356,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
                                 let mut da_build = if requires_sidecar {
-                                    let payload = match extract_commitment_proof_payload(&extrinsics) {
-                                        Ok(Some(payload)) => payload,
+                                    let payload = match extract_proven_batch_payload(&extrinsics) {
+                                        Ok(Some(payload)) => payload.payload,
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
-                                                "Rejecting synced block (missing commitment proof)"
+                                                "Rejecting synced block (missing proven batch)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -6438,7 +6372,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
                                                 error = %err,
-                                                "Rejecting synced block (failed to parse commitment proof payload)"
+                                                "Rejecting synced block (failed to parse proven batch payload)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -7021,13 +6955,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
                                 let mut da_build = if requires_sidecar {
-                                    let payload = match extract_commitment_proof_payload(&extrinsics) {
-                                        Ok(Some(payload)) => payload,
+                                    let payload = match extract_proven_batch_payload(&extrinsics) {
+                                        Ok(Some(payload)) => payload.payload,
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&peer_id),
                                                 block_number,
-                                                "Rejecting announced block (missing commitment proof)"
+                                                "Rejecting announced block (missing proven batch)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -7037,7 +6971,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 peer = %hex::encode(&peer_id),
                                                 block_number,
                                                 error = %err,
-                                                "Rejecting announced block (failed to parse commitment proof payload)"
+                                                "Rejecting announced block (failed to parse proven batch payload)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -7501,22 +7435,79 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         tracing::info!("difficulty_fn wired to runtime ConsensusApi::difficulty_bits()");
 
         // =======================================================================
-        // Wire pending_txs_fn to transaction pool
+        // Build async proven-batch coordinator
         // =======================================================================
-        // For now, use the pool bridge which collects from network
-        // Full integration would use transaction_pool.ready() directly
-        let pool_for_mining = Arc::clone(&pool_bridge);
         let max_block_txs = production_config.max_block_transactions;
-        chain_state.set_pending_txs_fn(move || pool_for_mining.ready_for_block(max_block_txs));
+        let requested_commitment_block_fast = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let commitment_block_fast = if cfg!(feature = "fast-proofs") {
+            requested_commitment_block_fast
+        } else {
+            if requested_commitment_block_fast {
+                tracing::warn!(
+                    "HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
+                );
+            }
+            false
+        };
+
+        let coordinator_cfg = ProverCoordinatorConfig::from_env(max_block_txs);
+        let best_for_coord = {
+            let client = client.clone();
+            Arc::new(move || {
+                let info = client.chain_info();
+                (info.best_hash, info.best_number)
+            })
+        };
+        let pending_for_coord = {
+            let pool = Arc::clone(&pool_bridge);
+            Arc::new(move |target_txs: usize| pool.ready_for_block(target_txs))
+        };
+        let build_for_coord = {
+            let client = client.clone();
+            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
+            let pending_proofs = Arc::clone(&pending_proof_store);
+            Arc::new(move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
+                let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                let pending_ciphertexts_guard = pending_ciphertexts.lock();
+                let pending_proofs_guard = pending_proofs.lock();
+                build_ready_proven_batch(
+                    client.as_ref(),
+                    parent_hash,
+                    block_number,
+                    ordered,
+                    da_params,
+                    &pending_ciphertexts_guard,
+                    &pending_proofs_guard,
+                    commitment_block_fast,
+                )
+            })
+        };
+        let prover_coordinator =
+            ProverCoordinator::new(coordinator_cfg, best_for_coord, pending_for_coord, build_for_coord);
+        prover_coordinator.start();
+
+        // =======================================================================
+        // Wire pending_txs_fn to coordinator-selected transaction set
+        // =======================================================================
+        let coordinator_for_pending = Arc::clone(&prover_coordinator);
+        chain_state.set_pending_txs_fn(move || coordinator_for_pending.pending_transactions(max_block_txs));
 
         // Wire post-import callback to clear mined transactions
         let pool_for_import = Arc::clone(&pool_bridge);
+        let coordinator_for_import = Arc::clone(&prover_coordinator);
         chain_state.set_on_import_success_fn(move |included_txs: &[Vec<u8>]| {
             pool_for_import.clear_included(included_txs);
+            coordinator_for_import.clear_on_import_success(included_txs);
         });
 
         tracing::info!(
             max_block_transactions = max_block_txs,
+            prover_workers = coordinator_cfg.workers,
+            prover_batch_target_txs = coordinator_cfg.target_txs,
+            prover_batch_queue_capacity = coordinator_cfg.queue_capacity,
+            prover_batch_job_timeout_ms = coordinator_cfg.job_timeout.as_millis() as u64,
             "Transaction pool wired to chain state provider"
         );
 
@@ -7526,9 +7517,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         wire_block_builder_api(
             &chain_state,
             client.clone(),
-            da_params,
-            Arc::clone(&pending_ciphertext_store),
-            Arc::clone(&pending_proof_store),
+            Arc::clone(&prover_coordinator),
         );
 
         tracing::info!("BlockBuilder API wired for real state execution");
@@ -8235,15 +8224,13 @@ mod tests {
 
     #[test]
     fn proof_da_blob_len_from_manifest_matches_layout() {
-        let a = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: [1u8; 64] },
-            proof_hash: [0u8; 48],
+        let a = LegacyProofDaManifestEntry {
+            _binding_hash: [1u8; 64],
             proof_len: 10,
             proof_offset: 72,
         };
-        let b = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: [2u8; 64] },
-            proof_hash: [0u8; 48],
+        let b = LegacyProofDaManifestEntry {
+            _binding_hash: [2u8; 64],
             proof_len: 5,
             proof_offset: 150,
         };

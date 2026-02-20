@@ -212,12 +212,22 @@ impl Default for ProofVerificationMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvenBatch {
+    pub version: u8,
+    pub tx_count: u32,
+    pub tx_statements_commitment: [u8; 48],
+    pub da_root: DaRoot,
+    pub da_chunk_count: u32,
+    pub commitment_proof: CommitmentBlockProof,
+    pub aggregation_proof: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block<BH> {
     pub header: BH,
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
-    pub commitment_proof: Option<CommitmentBlockProof>,
-    pub aggregation_proof: Option<Vec<u8>>,
+    pub proven_batch: Option<ProvenBatch>,
     /// Optional commitment to transaction statement hashes, derived by the caller in canonical
     /// transaction order (for example from binding-hash statements on Substrate imports).
     pub tx_statements_commitment: Option<[u8; 48]>,
@@ -231,8 +241,7 @@ impl<BH> Block<BH> {
             header,
             transactions: self.transactions,
             coinbase: self.coinbase,
-            commitment_proof: self.commitment_proof,
-            aggregation_proof: self.aggregation_proof,
+            proven_batch: self.proven_batch,
             tx_statements_commitment: self.tx_statements_commitment,
             transaction_proofs: self.transaction_proofs,
             proof_verification_mode: self.proof_verification_mode,

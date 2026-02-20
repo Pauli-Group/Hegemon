@@ -92,6 +92,14 @@ pub enum ProofError {
     MissingCommitmentProof,
     #[error("missing aggregation proof payload")]
     MissingAggregationProof,
+    #[error("self-contained aggregation mode requires a proven-batch payload")]
+    MissingProvenBatchForSelfContained,
+    #[error("proven-batch payload decode failed: {0}")]
+    ProvenBatchDecodeFailed(String),
+    #[error("proven-batch payload binding mismatch: {0}")]
+    ProvenBatchBindingMismatch(String),
+    #[error("legacy proof extrinsics are not allowed in this mode")]
+    LegacyProofExtrinsicNotAllowed,
     #[error("self-contained aggregation mode requires an aggregation proof payload")]
     MissingAggregationProofForSelfContainedMode,
     #[error("missing transaction proofs")]

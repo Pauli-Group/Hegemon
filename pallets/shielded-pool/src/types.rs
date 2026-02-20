@@ -156,6 +156,29 @@ impl StarkProof {
     }
 }
 
+/// Version tag for the self-contained proven-batch payload format.
+pub const PROVEN_BATCH_V1_VERSION: u8 = 1;
+
+/// Per-block payload that carries all consensus-required proof material for
+/// self-contained aggregation blocks.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct ProvenBatchV1 {
+    /// Payload format version.
+    pub version: u8,
+    /// Number of shielded transfers covered by this payload.
+    pub tx_count: u32,
+    /// Commitment over canonical transaction statements in canonical tx order.
+    pub tx_statements_commitment: [u8; 48],
+    /// DA root bound by the commitment proof.
+    pub da_root: [u8; 48],
+    /// DA chunk count bound by the commitment proof.
+    pub da_chunk_count: u32,
+    /// Commitment proof bytes.
+    pub commitment_proof: StarkProof,
+    /// Aggregation proof bytes (V3 payload format).
+    pub aggregation_proof: StarkProof,
+}
+
 /// Balance commitment for value balance verification.
 ///
 /// In the PQC model, value balance is verified inside the STARK proof itself.

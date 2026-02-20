@@ -5,7 +5,7 @@ use common::{
     PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators,
 };
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
-use consensus::types::{ConsensusBlock, ProofVerificationMode, Transaction};
+use consensus::types::{ConsensusBlock, ProofVerificationMode, ProvenBatch, Transaction};
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
     commitment_nullifier_lists,
@@ -64,7 +64,20 @@ fn build_block_with_commitment_proof(
         )
         .expect("commitment proof");
 
-    block.commitment_proof = Some(commitment_proof);
+    let tx_statements_commitment = CommitmentBlockProver::commitment_from_statement_hashes(
+        &statement_hashes,
+    )
+    .expect("tx statements commitment");
+    block.proven_batch = Some(ProvenBatch {
+        version: 1,
+        tx_count: block.transactions.len() as u32,
+        tx_statements_commitment,
+        da_root: block.header.da_root,
+        da_chunk_count: 1,
+        commitment_proof,
+        aggregation_proof: Vec::new(),
+    });
+    block.tx_statements_commitment = Some(tx_statements_commitment);
     block.proof_verification_mode = mode;
 
     (block, base_tree)
@@ -84,6 +97,37 @@ fn self_contained_mode_rejects_missing_aggregation_proof() {
         err,
         ProofError::MissingAggregationProofForSelfContainedMode
     ));
+}
+
+#[test]
+fn self_contained_mode_rejects_missing_proven_batch() {
+    let mut miners = make_validators(1, 0);
+    let miner = miners.remove(0);
+    let base_nullifiers = NullifierSet::new();
+    let base_tree = CommitmentTreeState::default();
+    let transactions = vec![dummy_transaction(11)];
+    let params = PowBlockParams {
+        height: 1,
+        parent_hash: [0u8; 32],
+        timestamp_ms: 1_000,
+        transactions,
+        miner: &miner,
+        base_nullifiers: &base_nullifiers,
+        base_commitment_tree: &base_tree,
+        pow_bits: DEFAULT_GENESIS_POW_BITS,
+        nonce: [0u8; 32],
+        parent_supply: 0,
+        coinbase: dummy_coinbase(1),
+    };
+    let (mut block, _, _) = assemble_pow_block(params).expect("assemble block");
+    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+    block.proven_batch = None;
+
+    let verifier = ParallelProofVerifier::new();
+    let err = verifier
+        .verify_block(&block, &base_tree)
+        .expect_err("missing proven batch must be rejected");
+    assert!(matches!(err, ProofError::MissingProvenBatchForSelfContained));
 }
 
 #[test]

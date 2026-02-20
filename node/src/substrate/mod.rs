@@ -71,6 +71,7 @@ pub mod discovery;
 pub mod mining_worker;
 pub mod network;
 pub mod network_bridge;
+pub mod prover_coordinator;
 pub mod rpc;
 pub mod service;
 pub mod sync;
