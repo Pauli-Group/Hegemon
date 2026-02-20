@@ -5,8 +5,9 @@ use crate::aggregation::{
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
-    Block, DaParams, DaRoot, FeeCommitment, StarkCommitment, VersionCommitment,
-    compute_fee_commitment, compute_proof_commitment, compute_version_commitment, da_root,
+    Block, DaParams, DaRoot, FeeCommitment, ProofVerificationMode, StarkCommitment,
+    VersionCommitment, compute_fee_commitment, compute_proof_commitment,
+    compute_version_commitment, da_root,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use crypto::hashes::blake3_384;
@@ -233,6 +234,7 @@ impl ProofVerifier for ParallelProofVerifier {
             .commitment_proof
             .as_ref()
             .ok_or(ProofError::MissingCommitmentProof)?;
+        let verification_mode = block.proof_verification_mode;
         let transaction_proofs = block.transaction_proofs.as_ref();
 
         let tx_proof_bytes_total: usize = transaction_proofs
@@ -246,6 +248,11 @@ impl ProofVerifier for ParallelProofVerifier {
                 observed: proofs.len(),
             });
         }
+        if matches!(verification_mode, ProofVerificationMode::InlineRequired)
+            && transaction_proofs.is_none()
+        {
+            return Err(ProofError::MissingTransactionProofs);
+        }
 
         let start_commitment = Instant::now();
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
@@ -253,12 +260,14 @@ impl ProofVerifier for ParallelProofVerifier {
 
         let expected_commitment = if let Some(commitment) = block.tx_statements_commitment {
             commitment
-        } else if let Some(proofs) = transaction_proofs {
-            let statement_hashes = statement_hashes_from_transaction_proofs(proofs)?;
-            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-                .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
         } else {
-            let statement_hashes = statement_hashes_from_transactions(&block.transactions);
+            let statement_hashes =
+                if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
+                    let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
+                    statement_hashes_from_transaction_proofs(proofs)?
+                } else {
+                    statement_hashes_from_transactions(&block.transactions)
+                };
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
         };
@@ -270,7 +279,9 @@ impl ProofVerifier for ParallelProofVerifier {
             ));
         }
 
-        if let Some(proofs) = transaction_proofs {
+        if matches!(verification_mode, ProofVerificationMode::InlineRequired)
+            && let Some(proofs) = transaction_proofs
+        {
             proofs
                 .par_iter()
                 .zip(&block.transactions)
@@ -328,28 +339,36 @@ impl ProofVerifier for ParallelProofVerifier {
         };
 
         if !aggregation_verified {
-            let transaction_proofs =
-                transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
-            let start_tx = Instant::now();
-            transaction_proofs
-                .par_iter()
-                .enumerate()
-                .try_for_each(|(index, proof)| {
-                    verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
-                        ProofError::TransactionProofVerification {
-                            index,
-                            message: err.to_string(),
-                        }
-                    })?;
-                    Ok::<_, ProofError>(())
-                })?;
-            tx_verify_ms = start_tx.elapsed().as_millis();
+            match verification_mode {
+                ProofVerificationMode::InlineRequired => {
+                    let transaction_proofs =
+                        transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
+                    let start_tx = Instant::now();
+                    transaction_proofs
+                        .par_iter()
+                        .enumerate()
+                        .try_for_each(|(index, proof)| {
+                            verify_transaction_proof(proof, &self.verifying_key).map_err(
+                                |err| ProofError::TransactionProofVerification {
+                                    index,
+                                    message: err.to_string(),
+                                },
+                            )?;
+                            Ok::<_, ProofError>(())
+                        })?;
+                    tx_verify_ms = start_tx.elapsed().as_millis();
+                }
+                ProofVerificationMode::SelfContainedAggregation => {
+                    return Err(ProofError::MissingAggregationProofForSelfContainedMode);
+                }
+            }
         }
 
         let proof_starting_root =
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
         let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
-        let result = if let Some(proofs) = transaction_proofs {
+        let result = if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
+            let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
             let anchors: Vec<[u8; 48]> = proofs
                 .iter()
                 .map(|proof| proof.public_inputs.merkle_root)

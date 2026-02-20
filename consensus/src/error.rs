@@ -92,6 +92,8 @@ pub enum ProofError {
     MissingCommitmentProof,
     #[error("missing aggregation proof payload")]
     MissingAggregationProof,
+    #[error("self-contained aggregation mode requires an aggregation proof payload")]
+    MissingAggregationProofForSelfContainedMode,
     #[error("missing transaction proofs")]
     MissingTransactionProofs,
     #[error("transaction proof count mismatch: expected {expected}, got {observed}")]

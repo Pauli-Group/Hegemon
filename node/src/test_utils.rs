@@ -178,6 +178,7 @@ impl LegacyNode {
             commitment_proof: None,
             aggregation_proof: None,
             transaction_proofs: None,
+            proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
         };
         let best_hash = block.header.hash()?;
         state.height = height;

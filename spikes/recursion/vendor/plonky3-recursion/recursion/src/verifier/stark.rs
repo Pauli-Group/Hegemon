@@ -6,13 +6,13 @@ use itertools::Itertools;
 use p3_circuit::utils::ColumnsTargets;
 use p3_circuit::{CircuitBuilder, CircuitBuilderError};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
+use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_lookup::logup::LogUpGadget;
 use p3_uni_stark::{StarkGenericConfig, Val};
 
 use super::{ObservableCommitment, VerificationError, recompose_quotient_from_chunks_circuit};
 use crate::Target;
-use crate::challenger::CircuitChallenger;
+use crate::challenger::{ChallengerField, CircuitChallenger};
 use crate::traits::{LookupMetadata, Recursive, RecursiveAir, RecursiveChallenger, RecursivePcs};
 use crate::types::{
     CommitmentTargets, OpenedValuesTargets, OpenedValuesTargetsWithLookups, ProofTargets,
@@ -79,7 +79,8 @@ where
             Comm,
             <SC::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Domain,
         >,
-    SC::Challenge: PrimeCharacteristicRing,
+    SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
+    Val<SC>: PrimeField64,
 {
     let ProofTargets {
         commitments_targets:
@@ -330,7 +331,8 @@ where
             Comm,
             <SC::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Domain,
         >,
-    SC::Challenge: PrimeCharacteristicRing,
+    SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
+    Val<SC>: PrimeField64,
 {
     let mut challenger = CircuitChallenger::<RATE>::new();
 
@@ -361,20 +363,20 @@ where
     );
 
     // Observe instance data in the same order as the non-recursive verifier.
-    challenger.observe(circuit, degree_bits_target);
-    challenger.observe(circuit, degree_bits_minus_zk_target);
-    challenger.observe(circuit, preprocessed_width_target);
-    challenger.observe_slice(circuit, &trace_comm_targets);
+    challenger.observe_base::<Val<SC>, SC::Challenge>(circuit, degree_bits_target)?;
+    challenger.observe_base::<Val<SC>, SC::Challenge>(circuit, degree_bits_minus_zk_target)?;
+    challenger.observe_base::<Val<SC>, SC::Challenge>(circuit, preprocessed_width_target)?;
+    challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, &trace_comm_targets)?;
     if let Some(prep_targets) = preprocessed_commit_targets {
-        challenger.observe_slice(circuit, &prep_targets);
+        challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, &prep_targets)?;
     }
-    challenger.observe_slice(circuit, public_values);
+    challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, public_values)?;
 
     let alpha = challenger.sample(circuit);
 
-    challenger.observe_slice(circuit, &quotient_comm_targets);
+    challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, &quotient_comm_targets)?;
     if let Some(random_targets) = random_comm_targets {
-        challenger.observe_slice(circuit, &random_targets);
+        challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, &random_targets)?;
     }
 
     let zeta = challenger.sample(circuit);

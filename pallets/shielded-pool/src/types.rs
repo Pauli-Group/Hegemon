@@ -289,14 +289,11 @@ impl Default for ProofAvailabilityPolicy {
     }
 }
 
-/// On-chain manifest entry for locating per-transaction proof bytes in proof-DA.
+/// Legacy proof-DA manifest entry retained for test helpers only.
 ///
-/// The `binding_hash` identifies the transfer this proof belongs to. The `(proof_len, proof_offset)`
-/// pair describes where the proof bytes live inside the proof-DA blob committed by
-/// `submit_proof_da_commitment`.
-///
-/// The `proof_hash` (BLAKE3-384) is committed on-chain so verifiers can bind commitment proofs and
-/// other block-level commitments without downloading the proof bytes.
+/// Phase C consensus no longer uses proof-DA manifests. This struct remains under `#[cfg(test)]`
+/// to support unit tests that exercise historical parser/layout helpers.
+#[cfg(test)]
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
 )]

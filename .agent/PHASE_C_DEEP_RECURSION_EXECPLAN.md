@@ -16,7 +16,11 @@ Observable user-visible result: on a fresh `0.9.0` genesis, nodes accept SelfCon
 - [x] (2026-02-19T00:00Z) Statement-binding migration from `tx_proofs_commitment` to `tx_statements_commitment` in block circuit, consensus verification, and node import/build paths.
 - [x] (2026-02-19T00:00Z) Aggregation V3 payload path landed with strict versioned decode + statement commitment binding checks in consensus.
 - [x] (2026-02-19T02:35Z) Hardened aggregation V3 verifier to re-derive `tx_statements_commitment` from packed recursion public values (via tx public-input decoding + binding-hash statement hashing) and reject payloads that only carry an unbound commitment field.
-- [x] (2026-02-19T00:00Z) Deep recursion vendor pass landed: challenger now enforces deterministic absorb/squeeze constraints in-circuit; major inner-proof payload targets moved to witness allocations.
+- [x] (2026-02-20T00:00Z) Fail-closed mode plumbing landed: importer/builder derive and enforce `ProofVerificationMode::{InlineRequired, SelfContainedAggregation}`; SelfContained blocks now hard-require aggregation proof and disable tx-proof fallback.
+- [x] (2026-02-20T00:00Z) Added strict throughput harness guard (`HEGEMON_TP_STRICT_AGGREGATION=1`) that fails runs if accepted blocks report `aggregation_proof_present=false`.
+- [x] (2026-02-20T00:00Z) Recursive witness migration advanced: opened values/permutation opened values moved to witness targets; aggregation prover witness wiring extended and `aggregation_proof_roundtrip` passes.
+- [x] (2026-02-20T00:00Z) Added consensus regression tests for fail-closed proof modes (`consensus/tests/self_contained_mode.rs`).
+- [x] (2026-02-20T01:00Z) Deep recursion challenger closure landed: vendor recursion challenger now enforces constrained in-circuit absorb/squeeze (Goldilocks Poseidon2 transcript path) and binds sampled challenge public inputs to computed transcript values.
 - [x] (2026-02-19T00:00Z) Deterministic, versioned public-value packing marker added to aggregation payload (`public_values_encoding`).
 - [x] (2026-02-19T00:00Z) Node tests compile cleanly under removed proof-DA calls (`cargo test -p hegemon-node --no-run`).
 - [x] (2026-02-19T00:00Z) Removed now-dead proof-DA helper code paths from `node/src/substrate/service.rs` (fetch/range/payload stubs and obsolete proof-DA blob builders).
@@ -27,8 +31,8 @@ Observable user-visible result: on a fresh `0.9.0` genesis, nodes accept SelfCon
 - Observation: Existing node test helpers still referenced removed runtime calls (`submit_proof_da_commitment`, `submit_proof_da_manifest`) after pallet/runtime cleanup.
   Evidence: `cargo test -p hegemon-node --no-run` failed with missing enum variants until those tests/helpers were removed.
 
-- Observation: Vendor recursion challenger still sampled challenges as unconstrained public inputs.
-  Evidence: `spikes/recursion/vendor/plonky3-recursion/recursion/src/challenger/circuit.rs` contained explicit placeholder comments and `alloc_public_input("sampled challenge")`.
+- Observation: Vendor recursion challenger now computes transcript challenges in-circuit and constrains sampled challenge public inputs to those computed values.
+  Evidence: `spikes/recursion/vendor/plonky3-recursion/recursion/src/challenger/circuit.rs` now performs constrained absorb/squeeze over a maintained sponge state and connects sampled public inputs to derived challenge targets.
 
 - Observation: Migrating proof/opening targets to witness targets required explicit runner witness wiring in aggregation prover flow.
   Evidence: `circuits/aggregation/src/lib.rs` required extending witness assignment beyond FRI query proofs to commitments/opened values/final poly/PoW witness fields.
@@ -52,9 +56,9 @@ Observable user-visible result: on a fresh `0.9.0` genesis, nodes accept SelfCon
 
 ## Outcomes & Retrospective
 
-Core Phase C architecture has been implemented in this branch: runtime/pallet/node/consensus/circuit interfaces now align to SelfContained aggregation semantics with statement-commitment binding and deep-recursion challenger/witness refactor support.
+Core Phase C architecture is largely implemented in this branch: runtime/pallet/node/consensus/circuit interfaces align to fail-closed `SelfContained` aggregation semantics with statement-commitment binding.
 
-Remaining gap is operational proof (fresh-genesis devnet throughput/e2e artifacts under this lane), not structural implementation.
+Remaining gap is fresh-genesis operational proof (throughput/e2e artifacts under strict SelfContained lane).
 
 ## Context and Orientation
 

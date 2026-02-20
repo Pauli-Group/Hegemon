@@ -356,7 +356,6 @@ const CIPHERTEXT_COUNT_KEY: &[u8] = b"ciphertext_count";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DaRootKind {
     Ciphertexts = 0,
-    Proofs = 1,
 }
 
 impl DaRootKind {
@@ -2964,7 +2963,6 @@ fn verify_proof_carrying_block(
     da_params: DaParams,
     da_policy: pallet_shielded_pool::types::DaAvailabilityPolicy,
     resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
-    pending_proofs: Option<&PendingProofStore>,
 ) -> Result<Option<CommitmentBlockProof>, String> {
     use consensus::ProofVerifier;
 
@@ -2975,10 +2973,26 @@ fn verify_proof_carrying_block(
     let (transactions, tx_proofs) = extract_shielded_transfers_for_parallel_verification(
         extrinsics,
         resolved_ciphertexts,
-        pending_proofs,
+        None,
         true,
     )?;
     let missing_proof_bindings = missing_proof_binding_hashes(extrinsics);
+    let proof_policy = fetch_proof_availability_policy(client, parent_hash)?;
+    let aggregation_mode_enabled = extrinsics.iter().any(|extrinsic| {
+        matches!(
+            &extrinsic.function,
+            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+        )
+    });
+    let verification_mode = if aggregation_mode_enabled
+        && matches!(
+            proof_policy,
+            pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+        ) {
+        consensus::types::ProofVerificationMode::SelfContainedAggregation
+    } else {
+        consensus::types::ProofVerificationMode::InlineRequired
+    };
 
     if transactions.is_empty() {
         if commitment_payload.is_some() {
@@ -2998,7 +3012,7 @@ fn verify_proof_carrying_block(
         let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
             .map(|layouts| da_blob_len_from_layouts(&layouts))
             .unwrap_or(0);
-        let proof_da_blob_bytes_estimate = 0usize;
+        let proof_sidecar_blob_bytes_estimate = 0usize;
         let tx_proof_bytes_total: usize =
             tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
         let aggregation_proof_bytes_len = aggregation_proof_bytes
@@ -3011,17 +3025,42 @@ fn verify_proof_carrying_block(
             tx_count = transactions.len(),
             extrinsics_bytes_total,
             da_blob_bytes_estimate,
-            proof_da_blob_bytes_estimate,
-            proof_da_entry_count = missing_proof_bindings.len(),
+            proof_sidecar_blob_bytes_estimate,
+            proof_sidecar_missing_count = missing_proof_bindings.len(),
             tx_proof_bytes_total,
             commitment_proof_bytes = payload.proof_bytes.len(),
             aggregation_proof_bytes = aggregation_proof_bytes_len,
             da_chunk_count = payload.da_chunk_count,
             da_root = %hex::encode(payload.da_root),
-            proof_da_chunk_count = 0,
-            proof_da_root = "",
             da_policy = ?da_policy,
+            proof_policy = ?proof_policy,
+            aggregation_mode_enabled,
+            verification_mode = ?verification_mode,
             "block_payload_size_metrics"
+        );
+    }
+
+    if !missing_proof_bindings.is_empty() {
+        if !aggregation_mode_enabled {
+            return Err("missing proof bytes are invalid outside aggregation mode".to_string());
+        }
+        if !matches!(
+            verification_mode,
+            consensus::types::ProofVerificationMode::SelfContainedAggregation
+        ) {
+            return Err(
+                "missing proof bytes require ProofAvailabilityPolicy::SelfContained with aggregation mode"
+                    .to_string(),
+            );
+        }
+    }
+    if matches!(
+        verification_mode,
+        consensus::types::ProofVerificationMode::SelfContainedAggregation
+    ) && aggregation_proof_bytes.is_none()
+    {
+        return Err(
+            "self-contained aggregation block is missing submit_aggregation_proof".to_string(),
         );
     }
 
@@ -3069,6 +3108,14 @@ fn verify_proof_carrying_block(
     } else {
         None
     };
+    let transaction_proofs = if matches!(
+        verification_mode,
+        consensus::types::ProofVerificationMode::SelfContainedAggregation
+    ) {
+        None
+    } else {
+        transaction_proofs
+    };
     let block = consensus::types::Block {
         header: SubstrateProofHeader { da_params },
         transactions,
@@ -3077,6 +3124,7 @@ fn verify_proof_carrying_block(
         aggregation_proof: aggregation_proof_bytes,
         tx_statements_commitment: Some(tx_statements_commitment),
         transaction_proofs,
+        proof_verification_mode: verification_mode,
     };
 
     let start_verify = Instant::now();
@@ -3648,17 +3696,48 @@ pub fn wire_block_builder_api(
             }
         }
 
+        let mut decoded_applied = Vec::with_capacity(applied.len());
+        for ext_bytes in &applied {
+            let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+                .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+            decoded_applied.push(extrinsic);
+        }
+        let proof_policy =
+            fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
+        let missing_proof_bindings = missing_proof_binding_hashes(&decoded_applied);
+        let aggregation_mode_enabled = decoded_applied.iter().any(|extrinsic| {
+            matches!(
+                &extrinsic.function,
+                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+            )
+        });
+        let mandatory_aggregation_proof = aggregation_mode_enabled
+            && matches!(
+                proof_policy,
+                pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+            )
+            && !missing_proof_bindings.is_empty();
+        if !missing_proof_bindings.is_empty() {
+            if !aggregation_mode_enabled {
+                return Err(
+                    "missing proof bytes are invalid outside aggregation mode".to_string(),
+                );
+            }
+            if !matches!(
+                proof_policy,
+                pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+            ) {
+                return Err(
+                    "missing proof bytes require ProofAvailabilityPolicy::SelfContained".to_string(),
+                );
+            }
+        }
+
         let mut da_blob_build = None;
         if commitment_block_proofs_enabled || aggregation_proofs_enabled {
-            let mut decoded = Vec::with_capacity(applied.len());
-            for ext_bytes in &applied {
-                let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-                    .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-                decoded.push(extrinsic);
-            }
             let build = {
                 let pending_guard = pending_ciphertext_store.lock();
-                build_da_blob_from_extrinsics(&decoded, Some(&*pending_guard))
+                build_da_blob_from_extrinsics(&decoded_applied, Some(&*pending_guard))
             }
             .map_err(|err| format!("failed to build DA blob for block: {err}"))?;
             da_blob_build = Some(build);
@@ -3752,13 +3831,7 @@ pub fn wire_block_builder_api(
                 }
             }
         } else {
-            let mut decoded = Vec::with_capacity(applied.len());
-            for ext_bytes in &applied {
-                let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-                    .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-                decoded.push(extrinsic);
-            }
-            let existing = extract_aggregation_proof_bytes(&decoded)?;
+            let existing = extract_aggregation_proof_bytes(&decoded_applied)?;
             AggregationProofOutcome {
                 proof_bytes: existing,
                 attach_extrinsic: false,
@@ -3793,16 +3866,28 @@ pub fn wire_block_builder_api(
                     );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        block_number,
-                        proof_size,
-                        error = ?e,
-                        "Aggregation proof extrinsic omitted (block resources exhausted)"
-                    );
-                    aggregation_outcome.proof_bytes = None;
-                    aggregation_outcome.attach_extrinsic = false;
+                    if mandatory_aggregation_proof {
+                        return Err(format!(
+                            "failed to push mandatory aggregation proof extrinsic: {e:?}"
+                        ));
+                    } else {
+                        tracing::warn!(
+                            block_number,
+                            proof_size,
+                            error = ?e,
+                            "Aggregation proof extrinsic omitted (block resources exhausted)"
+                        );
+                        aggregation_outcome.proof_bytes = None;
+                        aggregation_outcome.attach_extrinsic = false;
+                    }
                 }
             }
+        }
+        if mandatory_aggregation_proof && aggregation_outcome.proof_bytes.is_none() {
+            return Err(
+                "self-contained aggregation block requires an aggregation proof extrinsic"
+                    .to_string(),
+            );
         }
 
         // In self-contained aggregation mode, proof sidecar bytes are proposer-local artifacts.
@@ -3991,26 +4076,9 @@ fn wire_pow_block_import(
             )
         };
 
-        let missing_statement_hashes = missing_proof_binding_hashes(&encoded_extrinsics);
-        let mut proof_da_build: Option<DaEncoding> = None;
-        if !missing_statement_hashes.is_empty() {
-            let proof_policy =
-                fetch_proof_availability_policy(block_import.as_ref(), template.parent_hash)?;
-            if !matches!(
-                proof_policy,
-                pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
-            ) {
-                return Err(
-                    "missing proof bytes require ProofAvailabilityPolicy::SelfContained"
-                        .to_string(),
-                );
-            }
-        }
-
         if proof_verification_enabled {
             let da_policy = fetch_da_policy(block_import.as_ref(), template.parent_hash);
             let resolved_ciphertexts = da_build.as_ref().map(|build| build.transactions.as_slice());
-            let pending_proofs_guard = pending_proof_store.lock();
             verify_proof_carrying_block(
                 &parallel_verifier,
                 block_import.as_ref(),
@@ -4020,7 +4088,6 @@ fn wire_pow_block_import(
                 da_params,
                 da_policy,
                 resolved_ciphertexts,
-                Some(&*pending_proofs_guard),
             )
             .map_err(|err| format!("mined block proof verification failed: {err}"))?;
         }
@@ -4128,31 +4195,6 @@ fn wire_pow_block_import(
                         .lock()
                         .remove_many(&build.used_ciphertext_hashes);
                 }
-                if let Some(encoding) = proof_da_build.take() {
-                    let proof_da_root = encoding.root();
-                    let proof_da_chunks = encoding.chunks().len();
-                    let mut store = da_chunk_store.lock();
-                    if let Err(err) = store.insert(
-                        DaRootKind::Proofs,
-                        template.number,
-                        block_hash_bytes,
-                        encoding,
-                    ) {
-                        tracing::warn!(
-                            block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            error = %err,
-                            "Failed to persist proof DA encoding for imported block"
-                        );
-                    } else {
-                        tracing::info!(
-                            block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            da_chunks = proof_da_chunks,
-                            "Proof DA encoding stored for imported block"
-                        );
-                    }
-                }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
                     if !binding_hashes.is_empty() {
@@ -4236,31 +4278,6 @@ fn wire_pow_block_import(
                     pending_ciphertext_store
                         .lock()
                         .remove_many(&build.used_ciphertext_hashes);
-                }
-                if let Some(encoding) = proof_da_build.take() {
-                    let proof_da_root = encoding.root();
-                    let proof_da_chunks = encoding.chunks().len();
-                    let mut store = da_chunk_store.lock();
-                    if let Err(err) = store.insert(
-                        DaRootKind::Proofs,
-                        template.number,
-                        block_hash_bytes,
-                        encoding,
-                    ) {
-                        tracing::warn!(
-                            block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            error = %err,
-                            "Failed to persist proof DA encoding for known block"
-                        );
-                    } else {
-                        tracing::info!(
-                            block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            da_chunks = proof_da_chunks,
-                            "Proof DA encoding stored for known block"
-                        );
-                    }
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
@@ -6530,8 +6547,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 };
 
                                 let missing_statement_hashes = missing_proof_binding_hashes(&extrinsics);
-                                let proof_store: Option<PendingProofStore> = None;
-
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
                                     if !missing_statement_hashes.is_empty() {
@@ -6589,7 +6604,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
-                                        proof_store.as_ref(),
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
@@ -7132,8 +7146,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 };
 
                                 let missing_statement_hashes = missing_proof_binding_hashes(&extrinsics);
-                                let proof_store: Option<PendingProofStore> = None;
-
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
                                     if !missing_statement_hashes.is_empty() {
@@ -7181,7 +7193,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
-                                        proof_store.as_ref(),
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
