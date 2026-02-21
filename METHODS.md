@@ -722,10 +722,10 @@ Important constraint: the transaction membership proof anchors to a prior commit
 The wallet therefore uses a round-based workflow:
 
 1. Pick just enough notes to cover the target value (including a fee budget for the consolidation transactions themselves).
-2. Submit a batch of disjoint 2→1 consolidation transactions in one round, capped by (a) a maximum transactions-per-round and (b) a conservative on-chain block-size budget.
+2. Submit a batch of disjoint 2→1 consolidation transactions in one round, capped by (a) a maximum transactions-per-round and (b) a block-size budget. Consolidation now defaults to DA sidecar submission (ciphertexts staged via `da_submitCiphertexts`) and, by default, proof sidecar staging (`da_submitProofs`) so rounds can include substantially more merges than inline-proof mode.
 3. Wait for confirmation, sync, and repeat until the selected notes fit within `MAX_INPUTS`.
 
-This does not change the total number of required consolidation transactions in the worst case (with 2→1 merges it is still `note_count - MAX_INPUTS`), but it reduces wall-clock time by letting miners include multiple independent merges in the same block when space permits. The batch-size budget must stay below the runtime block length (see `runtime/src/lib.rs`).
+This does not change the total number of required consolidation transactions in the worst case (with 2→1 merges it is still `note_count - MAX_INPUTS`), but it reduces wall-clock time by letting miners include multiple independent merges in the same block when space permits. The batch-size budget must stay below the runtime block length (see `runtime/src/lib.rs`). Operators can tune consolidation throughput with `HEGEMON_WALLET_CONSOLIDATION_MAX_TXS_PER_BATCH` and `HEGEMON_WALLET_CONSOLIDATION_MAX_BATCH_BYTES`; sidecar/proof-sidecar behavior is controlled by `HEGEMON_WALLET_CONSOLIDATION_DA_SIDECAR` and `HEGEMON_WALLET_CONSOLIDATION_PROOF_SIDECAR`.
 
 #### 5.1 Public inputs
 
