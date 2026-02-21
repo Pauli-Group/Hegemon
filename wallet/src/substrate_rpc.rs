@@ -1231,6 +1231,21 @@ impl SubstrateRpcClient {
         &self,
         bundle: &TransactionBundle,
     ) -> Result<[u8; 32], WalletError> {
+        self.submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, None)
+            .await
+    }
+
+    /// Submit an unsigned sidecar transfer with an optional proof-sidecar override.
+    ///
+    /// If `force_proof_sidecar` is `Some(true)`, proof bytes are uploaded via
+    /// `da_submitProofs` and omitted from the extrinsic. If `Some(false)`, proof bytes stay
+    /// inline in the extrinsic. If `None`, behavior is controlled by
+    /// `HEGEMON_WALLET_PROOF_SIDECAR`.
+    pub async fn submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+        &self,
+        bundle: &TransactionBundle,
+        force_proof_sidecar: Option<bool>,
+    ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{
             build_unsigned_shielded_transfer_sidecar, ShieldedTransferSidecarCall,
         };
@@ -1304,15 +1319,17 @@ impl SubstrateRpcClient {
         // `da_submitProofs` so local/block-author aggregation builders can fetch them by
         // binding hash, but consensus validity in `ProofAvailabilityPolicy::SelfContained`
         // does not depend on proof-DA fetch/manifest paths.
-        let use_proof_sidecar = std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        let use_proof_sidecar = force_proof_sidecar.unwrap_or_else(|| {
+            std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
+                .ok()
+                .map(|value| {
+                    matches!(
+                        value.to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
+                .unwrap_or(false)
+        });
 
         let mut proof_bytes = bundle.proof_bytes.clone();
         if use_proof_sidecar {
