@@ -64,10 +64,9 @@ fn build_block_with_commitment_proof(
         )
         .expect("commitment proof");
 
-    let tx_statements_commitment = CommitmentBlockProver::commitment_from_statement_hashes(
-        &statement_hashes,
-    )
-    .expect("tx statements commitment");
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .expect("tx statements commitment");
     block.proven_batch = Some(ProvenBatch {
         version: 1,
         tx_count: block.transactions.len() as u32,
@@ -127,7 +126,10 @@ fn self_contained_mode_rejects_missing_proven_batch() {
     let err = verifier
         .verify_block(&block, &base_tree)
         .expect_err("missing proven batch must be rejected");
-    assert!(matches!(err, ProofError::MissingProvenBatchForSelfContained));
+    assert!(matches!(
+        err,
+        ProofError::MissingProvenBatchForSelfContained
+    ));
 }
 
 #[test]
