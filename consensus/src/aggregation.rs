@@ -432,14 +432,20 @@ fn derive_statement_commitment_from_packed_public_values(
     pub_inputs_len: usize,
 ) -> Result<[u8; 48], ProofError> {
     let ext_degree = <Challenge as BasedVectorSpace<Val>>::DIMENSION;
-    if packed_public_values.len() % ext_degree != 0 {
+    if !packed_public_values.len().is_multiple_of(ext_degree) {
         return Err(ProofError::AggregationProofV3Decode(
             "packed_public_values length is not aligned to extension degree".to_string(),
         ));
     }
 
+    if tx_count == 0 {
+        return Err(ProofError::AggregationProofV3Decode(
+            "tx_count must be greater than zero".to_string(),
+        ));
+    }
+
     let total_extension_values = packed_public_values.len() / ext_degree;
-    if total_extension_values % tx_count != 0 {
+    if !total_extension_values.is_multiple_of(tx_count) {
         return Err(ProofError::AggregationProofV3Decode(
             "packed_public_values length does not align with tx_count".to_string(),
         ));

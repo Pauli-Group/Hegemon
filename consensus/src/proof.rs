@@ -228,16 +228,18 @@ impl ProofVerifier for ParallelProofVerifier {
         }
 
         let verification_mode = block.proof_verification_mode;
-        let proven_batch = block.proven_batch.as_ref().ok_or_else(|| {
-            if matches!(
-                verification_mode,
-                ProofVerificationMode::SelfContainedAggregation
-            ) {
-                ProofError::MissingProvenBatchForSelfContained
-            } else {
-                ProofError::MissingCommitmentProof
-            }
-        })?;
+        let missing_proven_batch_error = if matches!(
+            verification_mode,
+            ProofVerificationMode::SelfContainedAggregation
+        ) {
+            ProofError::MissingProvenBatchForSelfContained
+        } else {
+            ProofError::MissingCommitmentProof
+        };
+        let proven_batch = block
+            .proven_batch
+            .as_ref()
+            .ok_or(missing_proven_batch_error)?;
         let commitment_proof = &proven_batch.commitment_proof;
         let transaction_proofs = block.transaction_proofs.as_ref();
 

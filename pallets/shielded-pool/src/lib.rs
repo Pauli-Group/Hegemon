@@ -856,10 +856,7 @@ pub mod pallet {
                 Error::<T>::InvalidProofFormat
             );
 
-            ensure!(
-                payload.tx_count > 0,
-                Error::<T>::InvalidNullifierCount
-            );
+            ensure!(payload.tx_count > 0, Error::<T>::InvalidNullifierCount);
 
             ensure!(
                 payload.commitment_proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,

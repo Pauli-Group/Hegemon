@@ -7468,31 +7468,39 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let client = client.clone();
             let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
             let pending_proofs = Arc::clone(&pending_proof_store);
-            Arc::new(move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
-                let ordered = reorder_shielded_transfers(&candidate_txs)?;
-                let pending_ciphertexts_guard = pending_ciphertexts.lock();
-                let pending_proofs_guard = pending_proofs.lock();
-                build_ready_proven_batch(
-                    client.as_ref(),
-                    parent_hash,
-                    block_number,
-                    ordered,
-                    da_params,
-                    &pending_ciphertexts_guard,
-                    &pending_proofs_guard,
-                    commitment_block_fast,
-                )
-            })
+            Arc::new(
+                move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
+                    let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                    let pending_ciphertexts_guard = pending_ciphertexts.lock();
+                    let pending_proofs_guard = pending_proofs.lock();
+                    build_ready_proven_batch(
+                        client.as_ref(),
+                        parent_hash,
+                        block_number,
+                        ordered,
+                        da_params,
+                        &pending_ciphertexts_guard,
+                        &pending_proofs_guard,
+                        commitment_block_fast,
+                    )
+                },
+            )
         };
-        let prover_coordinator =
-            ProverCoordinator::new(coordinator_cfg, best_for_coord, pending_for_coord, build_for_coord);
+        let prover_coordinator = ProverCoordinator::new(
+            coordinator_cfg,
+            best_for_coord,
+            pending_for_coord,
+            build_for_coord,
+        );
         prover_coordinator.start();
 
         // =======================================================================
         // Wire pending_txs_fn to coordinator-selected transaction set
         // =======================================================================
         let coordinator_for_pending = Arc::clone(&prover_coordinator);
-        chain_state.set_pending_txs_fn(move || coordinator_for_pending.pending_transactions(max_block_txs));
+        chain_state.set_pending_txs_fn(move || {
+            coordinator_for_pending.pending_transactions(max_block_txs)
+        });
 
         // Wire post-import callback to clear mined transactions
         let pool_for_import = Arc::clone(&pool_bridge);

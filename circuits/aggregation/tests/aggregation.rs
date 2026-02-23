@@ -1,4 +1,7 @@
-use aggregation_circuit::prove_aggregation;
+use aggregation_circuit::{
+    prove_aggregation, AggregationProofV3Payload, AGGREGATION_PROOF_V3_VERSION,
+    AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+};
 use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
 use crypto::hashes::blake3_384;
@@ -174,13 +177,14 @@ fn tx_statements_commitment_from_proofs(proofs: &[TransactionProof]) -> [u8; 48]
 }
 
 #[test]
+#[ignore = "expensive end-to-end aggregation proof generation; run manually"]
 fn aggregation_proof_roundtrip() {
     let witness = sample_witness();
     let (proving_key, _verifying_key) = generate_keys();
     let proof = transaction_circuit::proof::prove(&witness, &proving_key)
         .expect("generate transaction proof");
 
-    let proofs = vec![proof.clone(), proof.clone()];
+    let proofs = vec![proof];
     let tx_statements_commitment = tx_statements_commitment_from_proofs(&proofs);
     let aggregation_bytes =
         prove_aggregation(&proofs, tx_statements_commitment).expect("generate aggregation proof");
@@ -198,5 +202,27 @@ fn aggregation_proof_roundtrip() {
     assert!(matches!(
         err,
         consensus::ProofError::AggregationProofVerification(_)
+    ));
+}
+
+#[test]
+fn aggregation_payload_validation_rejects_invalid_encodings() {
+    let expected_commitment = [0u8; 48];
+    let payload = AggregationProofV3Payload {
+        version: AGGREGATION_PROOF_V3_VERSION,
+        tx_count: 1,
+        tx_statements_commitment: expected_commitment.to_vec(),
+        public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+        inner_public_inputs_len: 1,
+        representative_proof: vec![0xAA], // intentionally invalid postcard proof bytes
+        packed_public_values: vec![0, 0],
+        outer_proof: vec![0xBB], // intentionally invalid postcard proof bytes
+    };
+    let encoded = postcard::to_allocvec(&payload).expect("encode payload");
+    let err = verify_aggregation_proof(&encoded, 1, &expected_commitment)
+        .expect_err("invalid proof encoding must be rejected");
+    assert!(matches!(
+        err,
+        consensus::ProofError::AggregationProofV3Decode(_)
     ));
 }

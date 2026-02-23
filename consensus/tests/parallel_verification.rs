@@ -209,10 +209,9 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         )
         .expect("commitment proof");
 
-    let tx_statements_commitment = CommitmentBlockProver::commitment_from_statement_hashes(
-        &statement_hashes,
-    )
-    .expect("tx statements commitment");
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .expect("tx statements commitment");
     block.proven_batch = Some(ProvenBatch {
         version: 1,
         tx_count: block.transactions.len() as u32,

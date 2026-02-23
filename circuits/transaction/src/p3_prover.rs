@@ -1226,7 +1226,7 @@ mod tests {
         let row = 2;
         let col = COL_SLOT1_ASSET;
         let idx = row * trace.width + col;
-        trace.values[idx] = trace.values[idx] + Val::ONE;
+        trace.values[idx] += Val::ONE;
 
         let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
         if let Ok(proof) = result {

@@ -845,13 +845,12 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         "Block template built with state execution (Task 11.4 + 11.5.5)"
                     );
                 }
-                template
-                    .with_executed_state(
-                        result.applied_extrinsics,
-                        result.state_root,
-                        result.extrinsics_root,
-                        result.storage_changes,
-                    )
+                template.with_executed_state(
+                    result.applied_extrinsics,
+                    result.state_root,
+                    result.extrinsics_root,
+                    result.storage_changes,
+                )
             }
             Err(e) => {
                 tracing::error!(
