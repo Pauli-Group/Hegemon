@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.9.0 - 2026-02-24
+- Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.9.0`.
+- Interface package bump: `hegemon-app` is now `0.9.0`.
+
 ## v0.8.2 - 2026-02-01
 - Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.8.2`.
 - PQ sync: recover from forks by backtracking to a common ancestor and resuming downloads.
