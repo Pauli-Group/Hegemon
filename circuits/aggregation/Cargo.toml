@@ -16,9 +16,9 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1.0"
 transaction-circuit = { path = "../transaction", package = "transaction-circuit" }
-
-[dev-dependencies]
 block-circuit = { path = "../block" }
-consensus = { path = "../../consensus" }
 crypto = { package = "synthetic-crypto", path = "../../crypto" }
 sp-core = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+consensus = { path = "../../consensus" }
