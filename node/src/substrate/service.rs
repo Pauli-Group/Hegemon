@@ -6466,7 +6466,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                             let mut downloaded_blocks = downloaded_blocks;
                             downloaded_blocks.sort_by_key(|block| block.number);
-                            let mut deferred_blocks = Vec::new();
 
                             for downloaded in downloaded_blocks {
                                 // Decode the header
@@ -6502,9 +6501,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             peer = %hex::encode(&downloaded.from_peer),
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
-                                            "Deferring synced block until parent is available"
+                                            "Dropping synced block with unknown parent; sync service will re-request canonical range"
                                         );
-                                        deferred_blocks.push(downloaded);
                                         continue;
                                     }
                                     Err(err) => {
@@ -6513,9 +6511,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
                                             error = %err,
-                                            "Failed to query parent header; deferring block"
+                                            "Failed to query parent header; dropping synced block"
                                         );
-                                        deferred_blocks.push(downloaded);
                                         continue;
                                     }
                                 }
@@ -6664,9 +6661,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         block_number,
                                                         parent = %hex::encode(parent_hash.as_bytes()),
                                                         error = %err,
-                                                        "Deferring synced block (parent state not ready for proof availability policy)"
+                                                        "Dropping synced block (parent state not ready for proof availability policy)"
                                                     );
-                                                    deferred_blocks.push(downloaded);
                                                     continue;
                                                 }
                                                 tracing::warn!(
@@ -6715,9 +6711,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     block_number,
                                                     parent = %hex::encode(parent_hash.as_bytes()),
                                                     error = %err,
-                                                    "Deferring synced block (parent state not ready)"
+                                                    "Dropping synced block (parent state not ready)"
                                                 );
-                                                deferred_blocks.push(downloaded);
                                                 continue;
                                             }
                                             tracing::warn!(
@@ -6991,11 +6986,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 }
                             }
 
-                            if !deferred_blocks.is_empty() {
-                                let mut sync = sync_service_for_import.lock().await;
-                                sync.requeue_downloaded(deferred_blocks);
-                            }
-
                             // ============================================================
                             // Part 2: Process block announcements (new blocks from mining)
                             // ============================================================
@@ -7004,10 +6994,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                let mut bridge = block_import_bridge.lock().await;
 	                                bridge.drain_announces()
 	                            };
-	                            let mut deferred_announced_blocks: Vec<
-	                                crate::substrate::sync::DownloadedBlock,
-	                            > = Vec::new();
-
 	                            for (peer_id, announce) in pending_announces {
                                 // Update sync service with block announcement to track peer's best height
                                 // This is critical for triggering historical sync when we're behind
@@ -7027,7 +7013,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    header: announce_header,
 	                                    state: _,
 	                                    number: announce_number,
-	                                    hash: announce_hash,
+	                                    hash: _,
 	                                    body,
 	                                } = announce;
 
@@ -7071,16 +7057,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                            peer = %hex::encode(&peer_id),
 	                                            block_number,
 	                                            parent = %hex::encode(parent_hash.as_bytes()),
-	                                            "Deferring announced block until parent is available"
-	                                        );
-	                                        deferred_announced_blocks.push(
-	                                            crate::substrate::sync::DownloadedBlock {
-	                                                number: block_number,
-	                                                hash: announce_hash,
-	                                                header: announce_header,
-	                                                body,
-	                                                from_peer: peer_id,
-	                                            },
+	                                            "Dropping announced full block with unknown parent; sync service will fetch canonical range"
 	                                        );
 	                                        continue;
 	                                    }
@@ -7090,16 +7067,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                            block_number,
 	                                            parent = %hex::encode(parent_hash.as_bytes()),
 	                                            error = %err,
-	                                            "Failed to query parent header; deferring announced block"
-	                                        );
-	                                        deferred_announced_blocks.push(
-	                                            crate::substrate::sync::DownloadedBlock {
-	                                                number: block_number,
-	                                                hash: announce_hash,
-	                                                header: announce_header,
-	                                                body,
-	                                                from_peer: peer_id,
-	                                            },
+	                                            "Failed to query parent header; dropping announced full block"
 	                                        );
 	                                        continue;
 	                                    }
@@ -7532,11 +7500,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                 }
-                            }
-
-                            if !deferred_announced_blocks.is_empty() {
-                                let mut sync = sync_service_for_import.lock().await;
-                                sync.requeue_downloaded(deferred_announced_blocks);
                             }
                         }
                     },
