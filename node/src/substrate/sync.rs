@@ -84,6 +84,9 @@ pub const SYNC_REQUEST_TIMEOUT: u64 = 30;
 /// How long to wait before retrying sync after a failure (seconds)
 pub const SYNC_RETRY_DELAY: u64 = 5;
 
+/// Maximum tolerated sync failures before we stop selecting a peer.
+pub const MAX_PEER_FAILURES: u32 = 3;
+
 /// Sync state machine states
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncState {
@@ -378,6 +381,15 @@ where
             );
             return;
         };
+
+        if peer_state.failed_requests >= MAX_PEER_FAILURES {
+            tracing::debug!(
+                peer = %hex::encode(peer_id),
+                failures = peer_state.failed_requests,
+                "Ignoring block announce from peer above failure threshold"
+            );
+            return;
+        }
 
         // Update peer's best block if this is higher
         if announce.number > peer_state.best_height {
@@ -855,18 +867,36 @@ where
         parent_bytes.copy_from_slice(parent.as_ref());
 
         if parent_bytes != current_hash_snapshot {
+            let peer_failures = if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+                peer_state.failed_requests
+            } else {
+                0
+            };
+            self.stats.failed_requests += 1;
+
+            if peer_failures >= MAX_PEER_FAILURES {
+                tracing::warn!(
+                    peer = %hex::encode(peer_id),
+                    failures = peer_failures,
+                    requested_first = first.number,
+                    expected_parent = %hex::encode(current_hash_snapshot),
+                    got_parent = %hex::encode(parent_bytes),
+                    "Peer repeatedly sent non-connecting blocks; dropping sync target"
+                );
+                self.state = SyncState::Idle;
+                return;
+            }
+
             if current_height_snapshot == 0 {
                 tracing::warn!(
                     peer = %hex::encode(peer_id),
+                    failures = peer_failures,
                     block_number = first.number,
                     expected_parent = %hex::encode(current_hash_snapshot),
                     got_parent = %hex::encode(parent_bytes),
-                    "🔄 SYNC: Fork detected at genesis; cannot backtrack further"
+                    "Fork detected at genesis; cannot backtrack further"
                 );
-                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
-                    peer_state.failed_requests += 1;
-                }
-                self.stats.failed_requests += 1;
                 self.state = SyncState::Idle;
                 return;
             }
@@ -874,14 +904,11 @@ where
             let Some(parent_of_current) = self.parent_of_hash(current_hash_snapshot) else {
                 tracing::warn!(
                     peer = %hex::encode(peer_id),
+                    failures = peer_failures,
                     height = current_height_snapshot,
                     hash = %hex::encode(current_hash_snapshot),
-                    "🔄 SYNC: Fork detected but failed to load current header; resetting to idle"
+                    "Fork detected but failed to load current header; resetting to idle"
                 );
-                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
-                    peer_state.failed_requests += 1;
-                }
-                self.stats.failed_requests += 1;
                 self.state = SyncState::Idle;
                 return;
             };
@@ -893,7 +920,8 @@ where
                 got_parent = %hex::encode(parent_bytes),
                 backtrack_from_height = current_height_snapshot,
                 backtrack_to_height = current_height_snapshot.saturating_sub(1),
-                "🔄 SYNC: Fork detected; backtracking one block"
+                failures = peer_failures,
+                "Fork detected; backtracking one block"
             );
 
             if let SyncState::Downloading {
@@ -1111,7 +1139,7 @@ where
     pub fn best_sync_peer(&self) -> Option<(PeerId, &PeerSyncState)> {
         self.peers
             .iter()
-            .filter(|(_, state)| state.failed_requests < 3)
+            .filter(|(_, state)| state.failed_requests < MAX_PEER_FAILURES)
             .max_by_key(|(_, state)| state.best_height)
             .map(|(id, state)| (*id, state))
     }
@@ -1206,6 +1234,19 @@ where
                     );
                     self.state = SyncState::Idle;
                     return None;
+                }
+                if let Some(peer_state) = self.peers.get(&peer) {
+                    if peer_state.failed_requests >= MAX_PEER_FAILURES {
+                        tracing::warn!(
+                            peer = %hex::encode(peer),
+                            failures = peer_state.failed_requests,
+                            target_height = target_height,
+                            our_best = our_best,
+                            "Sync peer exceeded failure threshold; resetting to idle"
+                        );
+                        self.state = SyncState::Idle;
+                        return None;
+                    }
                 }
 
                 tracing::debug!(
