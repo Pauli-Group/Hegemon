@@ -861,7 +861,7 @@ fn tx_send(
                     "1" | "true" | "yes" | "on"
                 )
             })
-            .unwrap_or(false);
+            .unwrap_or(true);
         let result = if use_da_sidecar {
             client
                 .submit_shielded_transfer_unsigned_sidecar(&built.bundle)

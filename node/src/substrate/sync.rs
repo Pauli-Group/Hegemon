@@ -87,11 +87,33 @@ pub const SYNC_RETRY_DELAY: u64 = 5;
 /// Maximum tolerated sync failures before we stop selecting a peer.
 pub const MAX_PEER_FAILURES: u32 = 3;
 
+/// A peer's compatibility status relative to our local chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerCompatibility {
+    /// Not yet validated against our local genesis hash.
+    Unknown,
+    /// Confirmed to be on our local chain.
+    Compatible,
+    /// Confirmed to be on an incompatible chain.
+    Incompatible,
+}
+
 /// Sync state machine states
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncState {
     /// Not actively syncing
     Idle,
+    /// Probing a peer's genesis hash before considering it as a sync source.
+    ProbingGenesis {
+        /// Peer being probed
+        peer: PeerId,
+        /// Best height this peer advertised when probe started
+        announced_best: u64,
+        /// Whether we have a pending probe request
+        request_pending: bool,
+        /// When the probe request was sent
+        last_request_time: Option<Instant>,
+    },
     /// Downloading blocks from a peer
     Downloading {
         /// Target block height to sync to
@@ -130,6 +152,8 @@ pub struct PeerSyncState {
     pub last_seen: std::time::Instant,
     /// Number of failed requests to this peer
     pub failed_requests: u32,
+    /// Compatibility status for this peer's chain.
+    pub compatibility: PeerCompatibility,
 }
 
 /// A downloaded block waiting to be imported
@@ -225,6 +249,7 @@ struct PendingRequest {
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Reserved for future sync protocol implementation
 enum PendingRequestType {
+    GenesisProbe,
     /// Requesting blocks starting from a height
     GetBlocks {
         from_height: u64,
@@ -256,6 +281,14 @@ where
         let mut parent_bytes = [0u8; 32];
         parent_bytes.copy_from_slice(parent.as_ref());
         Some(parent_bytes)
+    }
+
+    fn genesis_hash_bytes(&self) -> Option<[u8; 32]> {
+        let genesis_num: NumberFor<Block> = 0u64.try_into().ok()?;
+        let genesis_hash = self.client.hash(genesis_num).ok().flatten()?;
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes.copy_from_slice(genesis_hash.as_ref());
+        Some(hash_bytes)
     }
 
     /// Create a new sync service
@@ -370,6 +403,8 @@ where
     ///
     /// Updates peer state and may trigger sync if peer is ahead.
     pub fn on_block_announce(&mut self, peer_id: PeerId, announce: &BlockAnnounce) {
+        let our_best = self.best_number();
+
         // Ignore announcements from peers we don't currently track as connected.
         //
         // This avoids resurrecting a peer in our sync table after a disconnect
@@ -405,8 +440,27 @@ where
             );
         }
 
+        match peer_state.compatibility {
+            PeerCompatibility::Compatible => {}
+            PeerCompatibility::Unknown => {
+                tracing::debug!(
+                    peer = %hex::encode(peer_id),
+                    peer_best = announce.number,
+                    "Deferring sync from peer until genesis compatibility probe completes"
+                );
+                return;
+            }
+            PeerCompatibility::Incompatible => {
+                tracing::debug!(
+                    peer = %hex::encode(peer_id),
+                    peer_best = announce.number,
+                    "Ignoring announce from incompatible-chain peer"
+                );
+                return;
+            }
+        }
+
         // Check if we should start syncing
-        let our_best = self.best_number();
         if announce.number > our_best && matches!(self.state, SyncState::Idle | SyncState::Synced) {
             tracing::info!(
                 our_best = our_best,
@@ -437,6 +491,7 @@ where
                 best_hash: [0u8; 32],
                 last_seen: std::time::Instant::now(),
                 failed_requests: 0,
+                compatibility: PeerCompatibility::Unknown,
             },
         );
         tracing::debug!(peer = %hex::encode(peer_id), "Sync: peer connected");
@@ -446,15 +501,18 @@ where
     pub fn on_peer_disconnected(&mut self, peer_id: &PeerId) {
         self.peers.remove(peer_id);
 
-        // If we were syncing from this peer, reset to idle
-        if let SyncState::Downloading { peer, .. } = &self.state {
-            if peer == peer_id {
-                tracing::warn!(
-                    peer = %hex::encode(peer_id),
-                    "Sync peer disconnected, resetting to idle"
-                );
-                self.state = SyncState::Idle;
+        // If we were syncing/probing this peer, reset to idle
+        match &self.state {
+            SyncState::Downloading { peer, .. } | SyncState::ProbingGenesis { peer, .. } => {
+                if peer == peer_id {
+                    tracing::warn!(
+                        peer = %hex::encode(peer_id),
+                        "Sync peer disconnected, resetting to idle"
+                    );
+                    self.state = SyncState::Idle;
+                }
             }
+            _ => {}
         }
         tracing::debug!(peer = %hex::encode(peer_id), "Sync: peer disconnected");
     }
@@ -806,12 +864,21 @@ where
         self.pending_requests.clear();
 
         // Clear request pending flag
-        if let SyncState::Downloading {
-            ref mut request_pending,
-            ..
-        } = &mut self.state
-        {
-            *request_pending = false;
+        match &mut self.state {
+            SyncState::Downloading {
+                request_pending, ..
+            }
+            | SyncState::ProbingGenesis {
+                request_pending, ..
+            } => {
+                *request_pending = false;
+            }
+            _ => {}
+        }
+
+        if matches!(self.state, SyncState::ProbingGenesis { .. }) {
+            self.handle_genesis_probe_response(peer_id, blocks);
+            return;
         }
 
         if blocks.is_empty() {
@@ -963,6 +1030,128 @@ where
             "🔄 SYNC: Blocks queued, queue size now {}",
             self.downloaded_blocks.len()
         );
+    }
+
+    fn handle_genesis_probe_response(
+        &mut self,
+        peer_id: PeerId,
+        blocks: Vec<crate::substrate::network_bridge::SyncBlock>,
+    ) {
+        let SyncState::ProbingGenesis {
+            peer: expected_peer,
+            announced_best,
+            ..
+        } = self.state
+        else {
+            return;
+        };
+
+        if expected_peer != peer_id {
+            tracing::debug!(
+                peer = %hex::encode(peer_id),
+                expected_peer = %hex::encode(expected_peer),
+                "Ignoring genesis probe response from unexpected peer"
+            );
+            return;
+        }
+
+        let local_genesis = match self.genesis_hash_bytes() {
+            Some(hash) => hash,
+            None => {
+                tracing::warn!("Failed to load local genesis hash during peer compatibility probe");
+                self.state = SyncState::Idle;
+                return;
+            }
+        };
+
+        let Some(genesis_block) = blocks.first() else {
+            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+            }
+            self.stats.failed_requests += 1;
+            tracing::warn!(
+                peer = %hex::encode(peer_id),
+                "Peer returned empty response to genesis probe"
+            );
+            self.state = SyncState::Idle;
+            return;
+        };
+
+        if genesis_block.number != 0 {
+            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+            }
+            self.stats.failed_requests += 1;
+            tracing::warn!(
+                peer = %hex::encode(peer_id),
+                first_number = genesis_block.number,
+                "Peer returned non-genesis block for genesis probe"
+            );
+            self.state = SyncState::Idle;
+            return;
+        }
+
+        let header = match <Block::Header as Decode>::decode(&mut &genesis_block.header[..]) {
+            Ok(header) => header,
+            Err(err) => {
+                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                    peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+                }
+                self.stats.failed_requests += 1;
+                tracing::warn!(
+                    peer = %hex::encode(peer_id),
+                    error = %err,
+                    "Failed to decode header in genesis probe response"
+                );
+                self.state = SyncState::Idle;
+                return;
+            }
+        };
+
+        let header_hash = HeaderT::hash(&header);
+        let mut peer_genesis = [0u8; 32];
+        peer_genesis.copy_from_slice(header_hash.as_ref());
+
+        if peer_genesis != local_genesis {
+            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.compatibility = PeerCompatibility::Incompatible;
+                peer_state.failed_requests = MAX_PEER_FAILURES;
+            }
+            tracing::warn!(
+                peer = %hex::encode(peer_id),
+                peer_genesis = %hex::encode(peer_genesis),
+                local_genesis = %hex::encode(local_genesis),
+                "Marked peer as incompatible due to genesis mismatch"
+            );
+            self.state = SyncState::Idle;
+            return;
+        }
+
+        if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+            peer_state.compatibility = PeerCompatibility::Compatible;
+            peer_state.failed_requests = 0;
+            peer_state.last_seen = Instant::now();
+        }
+        tracing::info!(
+            peer = %hex::encode(peer_id),
+            genesis = %hex::encode(local_genesis),
+            "Peer genesis verified"
+        );
+
+        let our_best = self.best_number();
+        if announced_best > our_best {
+            self.state = SyncState::Downloading {
+                target_height: announced_best,
+                peer: peer_id,
+                current_height: our_best,
+                current_hash: self.best_hash_bytes(),
+                requested_height: our_best,
+                request_pending: false,
+                last_request_time: None,
+            };
+        } else {
+            self.state = SyncState::Idle;
+        }
     }
 
     /// Handle a headers response
@@ -1135,12 +1324,31 @@ where
         }
     }
 
+    fn next_peer_to_probe(&self) -> Option<(PeerId, u64)> {
+        self.peers
+            .iter()
+            .filter(|(_, state)| {
+                state.failed_requests < MAX_PEER_FAILURES
+                    && state.compatibility == PeerCompatibility::Unknown
+            })
+            .max_by_key(|(_, state)| state.best_height)
+            .map(|(peer, state)| (*peer, state.best_height))
+    }
+
     /// Get the best sync target peer (highest block, least failures)
     pub fn best_sync_peer(&self) -> Option<(PeerId, &PeerSyncState)> {
         self.peers
             .iter()
-            .filter(|(_, state)| state.failed_requests < MAX_PEER_FAILURES)
-            .max_by_key(|(_, state)| state.best_height)
+            .filter(|(_, state)| {
+                state.failed_requests < MAX_PEER_FAILURES
+                    && state.compatibility == PeerCompatibility::Compatible
+            })
+            .max_by_key(|(_, state)| {
+                (
+                    MAX_PEER_FAILURES.saturating_sub(state.failed_requests),
+                    state.best_height,
+                )
+            })
             .map(|(id, state)| (*id, state))
     }
 
@@ -1188,6 +1396,11 @@ where
 
         match self.state.clone() {
             SyncState::Idle => {
+                // Probe unknown peers first so we only sync from genesis-compatible peers.
+                if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
+                    return self.create_genesis_probe_request(peer_id, announced_best);
+                }
+
                 // Check if any peer is ahead of us
                 if let Some((peer_id, peer_state)) = self.best_sync_peer() {
                     if peer_state.best_height > our_best {
@@ -1213,6 +1426,42 @@ where
                     }
                 }
                 None
+            }
+            SyncState::ProbingGenesis {
+                peer,
+                announced_best,
+                request_pending,
+                last_request_time,
+            } => {
+                if !self.peers.contains_key(&peer) {
+                    tracing::debug!(
+                        peer = %hex::encode(peer),
+                        "Genesis probe peer disconnected; resetting to idle"
+                    );
+                    self.state = SyncState::Idle;
+                    return None;
+                }
+
+                if request_pending {
+                    if let Some(last_time) = last_request_time {
+                        if now.duration_since(last_time) > Duration::from_secs(SYNC_REQUEST_TIMEOUT)
+                        {
+                            tracing::warn!(
+                                peer = %hex::encode(peer),
+                                "Genesis probe timed out"
+                            );
+                            if let Some(peer_state) = self.peers.get_mut(&peer) {
+                                peer_state.failed_requests =
+                                    peer_state.failed_requests.saturating_add(1);
+                            }
+                            self.stats.failed_requests += 1;
+                            self.state = SyncState::Idle;
+                        }
+                    }
+                    return None;
+                }
+
+                self.create_genesis_probe_request(peer, announced_best)
             }
             SyncState::Downloading {
                 target_height,
@@ -1322,6 +1571,11 @@ where
                 self.create_block_request(peer, next_height)
             }
             SyncState::Synced => {
+                // Probe unknown peers first so any future sync fallback has validated candidates.
+                if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
+                    return self.create_genesis_probe_request(peer_id, announced_best);
+                }
+
                 // Check if we've fallen behind
                 if let Some((peer_id, peer_state)) = self.best_sync_peer() {
                     if peer_state.best_height > our_best {
@@ -1344,6 +1598,44 @@ where
                 None
             }
         }
+    }
+
+    fn create_genesis_probe_request(
+        &mut self,
+        peer_id: PeerId,
+        announced_best: u64,
+    ) -> Option<(PeerId, SyncRequest)> {
+        let request_id = self.next_request_id();
+        let request = SyncRequest::GetBlocks {
+            start_height: 0,
+            max_blocks: 1,
+        };
+
+        self.pending_requests.insert(
+            request_id,
+            PendingRequest {
+                request_type: PendingRequestType::GenesisProbe,
+                peer: peer_id,
+                sent_at: Instant::now(),
+                request_id,
+            },
+        );
+
+        self.state = SyncState::ProbingGenesis {
+            peer: peer_id,
+            announced_best,
+            request_pending: true,
+            last_request_time: Some(Instant::now()),
+        };
+        self.stats.requests_sent += 1;
+
+        tracing::debug!(
+            peer = %hex::encode(peer_id),
+            request_id,
+            "Sending genesis compatibility probe"
+        );
+
+        Some((peer_id, request))
     }
 
     /// Create a block request for the sync protocol (PoW-style GetBlocks)
@@ -1453,6 +1745,7 @@ mod tests {
             best_hash: [1u8; 32],
             last_seen: std::time::Instant::now(),
             failed_requests: 0,
+            compatibility: PeerCompatibility::Unknown,
         };
         assert_eq!(state.best_height, 100);
     }

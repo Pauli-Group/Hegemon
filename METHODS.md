@@ -558,6 +558,8 @@ Nodes persist learned addresses under the Substrate `--base-path` (cache file: `
 To ensure early-joining nodes continue to learn about peers that connect later, nodes periodically re-request addresses from a random connected peer and attempt a bounded batch of dials from the discovery cache while below the peer target (defaults: `HEGEMON_PQ_DISCOVERY_MIN_PEERS=4`, `HEGEMON_PQ_DISCOVERY_TICK_SECS=30`).
 Nodes also request peer graphs on a periodic tick (default: `HEGEMON_PQ_PEER_GRAPH_TICK_SECS=30`) so monitoring tools can render the network topology.
 
+Sync source selection is gated by a genesis-compatibility probe instead of a "peer is not too far ahead" heuristic. For unknown peers, the node first issues `GetBlocks { start_height: 0, max_blocks: 1 }`, recomputes the hash of the returned height-0 header, and compares it to the local genesis hash. Only peers that match are marked sync-compatible; mismatches are marked incompatible and excluded from sync candidate selection. This keeps bootstrap for brand-new nodes unbounded by height while still filtering legacy/wrong-chain noise deterministically.
+
 ### 2. Object definitions (bits, fields, encodings)
 
 #### 2.1 Value and asset ID
