@@ -60,6 +60,7 @@ pub mod block;
 pub mod da;
 pub mod hegemon;
 pub mod production_service;
+pub mod prover;
 pub mod shielded;
 pub mod shielded_service;
 pub mod wallet;
@@ -71,10 +72,12 @@ pub use block::{BlockApiServer, BlockRpc};
 pub use da::{DaApiServer, DaRpc};
 pub use hegemon::{HegemonApiServer, HegemonRpc, HegemonService, MiningHandle, NodeConfigSnapshot};
 pub use production_service::ProductionRpcService;
+pub use prover::{ProverApiServer, ProverRpc};
 pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
 
+use crate::substrate::prover_coordinator::ProverCoordinator;
 use crate::substrate::service::{
     CommitmentBlockProofStore, DaChunkStore, PendingCiphertextStore, PendingProofStore,
 };
@@ -103,6 +106,8 @@ pub struct FullDeps<S, P> {
     pub pending_proof_store: Arc<parking_lot::Mutex<PendingProofStore>>,
     /// DA parameters
     pub da_params: DaParams,
+    /// Optional prover coordinator for prover-market RPC.
+    pub prover_coordinator: Option<Arc<ProverCoordinator>>,
 }
 
 /// Creates the full RPC extensions for the Hegemon node.
@@ -150,6 +155,11 @@ where
         deps.da_params,
     );
     module.merge(da_rpc.into_rpc())?;
+
+    if let Some(coordinator) = deps.prover_coordinator {
+        let prover_rpc = ProverRpc::new(coordinator);
+        module.merge(prover_rpc.into_rpc())?;
+    }
 
     tracing::info!("RPC extensions initialized (Phase 13 - Shielded Wallet Integration)");
 

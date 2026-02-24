@@ -124,12 +124,12 @@ use crate::substrate::mining_worker::{
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::prover_coordinator::{
-    ProverCoordinator, ProverCoordinatorConfig, ReadyBatch, ReadyBatchKey,
+    BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
 };
 use crate::substrate::rpc::{
     ArchiveApiServer, ArchiveRpc, BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer,
-    HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ShieldedApiServer, ShieldedRpc,
-    WalletApiServer, WalletRpc,
+    HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ProverApiServer, ProverRpc,
+    ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
@@ -150,7 +150,7 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
+use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
 use sc_client_api::BlockchainEvents;
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
@@ -2352,7 +2352,7 @@ fn maybe_corrupt_aggregation_proof(mut proof_bytes: Vec<u8>) -> Vec<u8> {
     proof_bytes
 }
 
-fn build_ready_proven_batch(
+fn prepare_block_proof_bundle(
     client: &HegemonFullClient,
     parent_hash: H256,
     _block_number: u64,
@@ -2361,7 +2361,7 @@ fn build_ready_proven_batch(
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
     commitment_block_fast: bool,
-) -> Result<ReadyBatch, String> {
+) -> Result<PreparedBundle, String> {
     let started = Instant::now();
     let mut decoded = Vec::with_capacity(candidate_txs.len());
     for ext_bytes in &candidate_txs {
@@ -2406,8 +2406,8 @@ fn build_ready_proven_batch(
         return Err("candidate tx set has no shielded transfers".to_string());
     }
 
-    let payload = pallet_shielded_pool::types::ProvenBatchV1 {
-        version: pallet_shielded_pool::types::PROVEN_BATCH_V1_VERSION,
+    let payload = pallet_shielded_pool::types::BlockProofBundle {
+        version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
         tx_count,
         tx_statements_commitment,
         da_root,
@@ -2416,10 +2416,11 @@ fn build_ready_proven_batch(
             commitment_proof.proof_bytes.clone(),
         ),
         aggregation_proof: pallet_shielded_pool::types::StarkProof::from_bytes(aggregation_proof),
+        prover_claim: None,
     };
 
-    Ok(ReadyBatch {
-        key: ReadyBatchKey {
+    Ok(PreparedBundle {
+        key: BundleMatchKey {
             parent_hash,
             tx_statements_commitment,
             tx_count,
@@ -2463,7 +2464,7 @@ impl HeaderProofExt for SubstrateProofHeader {
 
 #[derive(Clone, Debug)]
 struct ProvenBatchPayload {
-    payload: pallet_shielded_pool::types::ProvenBatchV1,
+    payload: pallet_shielded_pool::types::BlockProofBundle,
 }
 
 fn extract_proven_batch_payload(
@@ -3051,7 +3052,7 @@ fn verify_proof_carrying_block(
     let payload = proven_batch_payload
         .ok_or_else(|| "missing submit_proven_batch extrinsic".to_string())?
         .payload;
-    if payload.version != pallet_shielded_pool::types::PROVEN_BATCH_V1_VERSION {
+    if payload.version != pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA {
         return Err(format!(
             "unsupported proven batch version {}",
             payload.version
@@ -3059,6 +3060,49 @@ fn verify_proof_carrying_block(
     }
     if payload.tx_count != transactions.len() as u32 {
         return Err("proven batch tx_count mismatch".to_string());
+    }
+    if let Some(claim) = payload.prover_claim.as_ref() {
+        if !verify_prover_claim_signature(claim, &payload) {
+            return Err("invalid prover claim signature".to_string());
+        }
+    }
+
+    let fee_params = client
+        .runtime_api()
+        .fee_parameters(parent_hash)
+        .map_err(|e| format!("failed to fetch fee parameters: {e:?}"))?;
+    let fee_buckets = split_shielded_fee_buckets_from_decoded(extrinsics, fee_params)?;
+    let expected_prover_fees = u64::try_from(fee_buckets.prover_fees)
+        .map_err(|_| "prover fee bucket exceeds u64".to_string())?;
+    let reward_bundle = extract_block_reward_bundle(extrinsics)?;
+
+    match payload.prover_claim.as_ref() {
+        Some(claim) => {
+            let reward_bundle = reward_bundle
+                .ok_or_else(|| "missing mint_coinbase extrinsic for prover claim".to_string())?;
+            let prover_note = reward_bundle
+                .prover_note
+                .as_ref()
+                .ok_or_else(|| "missing prover reward note for prover claim".to_string())?;
+            if claim.prover_amount != expected_prover_fees {
+                return Err("prover claim amount does not match prover fee bucket".to_string());
+            }
+            if prover_note.amount != claim.prover_amount {
+                return Err("prover reward amount does not match prover claim".to_string());
+            }
+            if prover_note.recipient_address != claim.prover_recipient_address {
+                return Err("prover reward recipient does not match prover claim".to_string());
+            }
+        }
+        None => {
+            if reward_bundle
+                .as_ref()
+                .and_then(|bundle| bundle.prover_note.as_ref())
+                .is_some()
+            {
+                return Err("prover reward note present without prover claim".to_string());
+            }
+        }
     }
     let aggregation_proof_bytes = payload.aggregation_proof.data.clone();
 
@@ -3423,29 +3467,121 @@ fn reorder_shielded_transfers(extrinsics: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, St
     Ok(out)
 }
 
-fn total_shielded_fees(extrinsics: &[Vec<u8>]) -> Result<u128, String> {
-    let mut total: u128 = 0;
+fn split_shielded_fee_buckets(
+    extrinsics: &[Vec<u8>],
+    fee_params: FeeParameters,
+) -> Result<BlockFeeBuckets, String> {
+    let mut decoded = Vec::with_capacity(extrinsics.len());
     for ext_bytes in extrinsics {
         let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
             .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        let runtime::RuntimeCall::ShieldedPool(call) = extrinsic.function else {
+        decoded.push(extrinsic);
+    }
+    split_shielded_fee_buckets_from_decoded(&decoded, fee_params)
+}
+
+fn split_shielded_fee_buckets_from_decoded(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+    fee_params: FeeParameters,
+) -> Result<BlockFeeBuckets, String> {
+    let mut buckets = BlockFeeBuckets::default();
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
             continue;
         };
 
-        let fee = match call {
+        let (provided, prover_component) = match call {
             ShieldedPoolCall::shielded_transfer { fee, .. }
             | ShieldedPoolCall::shielded_transfer_unsigned { fee, .. }
             | ShieldedPoolCall::shielded_transfer_sidecar { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => u128::from(fee),
-            ShieldedPoolCall::batch_shielded_transfer { total_fee, .. } => total_fee,
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => {
+                (u128::from(*fee), fee_params.proof_fee)
+            }
+            ShieldedPoolCall::batch_shielded_transfer { total_fee, .. } => {
+                (*total_fee, fee_params.batch_proof_fee)
+            }
             _ => continue,
         };
 
-        total = total
-            .checked_add(fee)
+        let miner_component = provided
+            .checked_sub(prover_component)
+            .ok_or_else(|| "shielded fee lower than prover component".to_string())?;
+        buckets.miner_fees = buckets
+            .miner_fees
+            .checked_add(miner_component)
+            .ok_or_else(|| "shielded miner fee total overflowed".to_string())?;
+        buckets.prover_fees = buckets
+            .prover_fees
+            .checked_add(prover_component)
             .ok_or_else(|| "shielded fee total overflowed".to_string())?;
     }
-    Ok(total)
+    Ok(buckets)
+}
+
+fn extract_block_reward_bundle(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<Option<pallet_shielded_pool::types::BlockRewardBundle>, String> {
+    let mut found: Option<pallet_shielded_pool::types::BlockRewardBundle> = None;
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+        if let ShieldedPoolCall::mint_coinbase { reward_bundle } = call {
+            if found.is_some() {
+                return Err("multiple mint_coinbase extrinsics in block".to_string());
+            }
+            found = Some(reward_bundle.clone());
+        }
+    }
+    Ok(found)
+}
+
+fn prover_claim_signing_payload(
+    claim: &pallet_shielded_pool::types::ProverCompensationClaim,
+    bundle: &pallet_shielded_pool::types::BlockProofBundle,
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(
+        20 + 48
+            + 4
+            + 48
+            + 4
+            + 32
+            + claim.prover_recipient.len()
+            + pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE
+            + 8,
+    );
+    payload.extend_from_slice(b"hegemon-prover-claim");
+    payload.extend_from_slice(&bundle.tx_statements_commitment);
+    payload.extend_from_slice(&bundle.tx_count.to_le_bytes());
+    payload.extend_from_slice(&bundle.da_root);
+    payload.extend_from_slice(&bundle.da_chunk_count.to_le_bytes());
+    payload.extend_from_slice(&claim.prover_account);
+    payload.extend_from_slice(&claim.prover_recipient);
+    payload.extend_from_slice(&claim.prover_recipient_address);
+    payload.extend_from_slice(&claim.prover_amount.to_le_bytes());
+    payload
+}
+
+fn verify_prover_claim_signature(
+    claim: &pallet_shielded_pool::types::ProverCompensationClaim,
+    bundle: &pallet_shielded_pool::types::BlockProofBundle,
+) -> bool {
+    if claim.claim_signature.len() != 64 {
+        return false;
+    }
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(&claim.claim_signature);
+    let payload = prover_claim_signing_payload(claim, bundle);
+
+    let sr_pub = sp_core::sr25519::Public::from_raw(claim.prover_account);
+    let sr_sig = sp_core::sr25519::Signature::from_raw(sig_bytes);
+    if sp_io::crypto::sr25519_verify(&sr_sig, &payload, &sr_pub) {
+        return true;
+    }
+
+    let ed_pub = sp_core::ed25519::Public::from_raw(claim.prover_account);
+    let ed_sig = sp_core::ed25519::Signature::from_raw(sig_bytes);
+    sp_io::crypto::ed25519_verify(&ed_sig, &payload, &ed_pub)
 }
 
 // =============================================================================
@@ -3673,73 +3809,6 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let total_fees = if parsed_shielded_address.is_some() {
-            total_shielded_fees(&applied)?
-        } else {
-            0
-        };
-
-        if let Some(ref address) = parsed_shielded_address {
-            let subsidy = pallet_coinbase::block_subsidy(block_number);
-            let fee_u64 = u64::try_from(total_fees)
-                .map_err(|_| "block fee total exceeds u64".to_string())?;
-            let amount = subsidy
-                .checked_add(fee_u64)
-                .ok_or_else(|| "coinbase amount overflowed".to_string())?;
-
-            let mut block_hash_input = [0u8; 40];
-            block_hash_input[..32].copy_from_slice(parent_hash.as_bytes());
-            block_hash_input[32..40].copy_from_slice(&block_number.to_le_bytes());
-            let block_hash: [u8; 32] = blake3::hash(&block_hash_input).into();
-
-            match crate::shielded_coinbase::encrypt_coinbase_note(
-                address,
-                amount,
-                &block_hash,
-                block_number,
-            ) {
-                Ok(coinbase_data) => {
-                    tracing::info!(
-                        block_number,
-                        subsidy,
-                        fees = total_fees,
-                        amount,
-                        commitment = %hex::encode(&coinbase_data.commitment),
-                        "Encrypting shielded coinbase note"
-                    );
-                    let coinbase_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                        runtime::RuntimeCall::ShieldedPool(
-                            ShieldedPoolCall::mint_coinbase { coinbase_data },
-                        ),
-                    );
-                    match block_builder.push(coinbase_extrinsic.clone()) {
-                        Ok(_) => {
-                            applied.push(coinbase_extrinsic.encode());
-                            tracing::info!(
-                                block_number,
-                                subsidy,
-                                fees = total_fees,
-                                amount,
-                                "Added shielded coinbase extrinsic for block reward"
-                            );
-                        }
-                        Err(e) => {
-                            return Err(format!(
-                                "failed to push shielded coinbase extrinsic: {e:?}"
-                            ));
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        error = ?e,
-                        block_number,
-                        "Failed to encrypt coinbase note - no reward for this block"
-                    );
-                }
-            }
-        }
-
         let mut decoded_applied = Vec::with_capacity(applied.len());
         for ext_bytes in &applied {
             let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
@@ -3774,11 +3843,12 @@ pub fn wire_block_builder_api(
         let statement_hashes = statement_hashes_from_extrinsics(&decoded_applied);
         let shielded_tx_count = statement_hashes.len() as u32;
         let requires_proven_batch = shielded_tx_count > 0;
+        let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
         if requires_proven_batch {
             let tx_statements_commitment =
                 CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                     .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
-            let ready_batch = prover_coordinator.lookup_ready_batch(
+            let ready_batch = prover_coordinator.lookup_prepared_bundle(
                 parent_substrate_hash,
                 tx_statements_commitment,
                 shielded_tx_count,
@@ -3790,6 +3860,7 @@ pub fn wire_block_builder_api(
                 let proof_size_uncompressed = aggregation_proof_uncompressed_len(
                     ready_batch.payload.aggregation_proof.data.as_slice(),
                 );
+                selected_prover_claim = ready_batch.payload.prover_claim.clone();
                 let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
                     runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
                         payload: ready_batch.payload,
@@ -3822,6 +3893,86 @@ pub fn wire_block_builder_api(
                 }
             } else if requires_proven_batch {
                 return Err("shielded block requires a ready proven batch".to_string());
+            }
+        }
+
+        let fee_params = client_for_exec
+            .runtime_api()
+            .fee_parameters(parent_substrate_hash)
+            .map_err(|e| format!("failed to fetch fee parameters: {e:?}"))?;
+        let fee_buckets = split_shielded_fee_buckets(&applied, fee_params)?;
+
+        if let Some(ref address) = parsed_shielded_address {
+            let subsidy = pallet_coinbase::block_subsidy(block_number);
+            let miner_fees = u64::try_from(fee_buckets.miner_fees)
+                .map_err(|_| "miner fee total exceeds u64".to_string())?;
+            let miner_amount = subsidy
+                .checked_add(miner_fees)
+                .ok_or_else(|| "coinbase amount overflowed".to_string())?;
+            let prover_amount = u64::try_from(fee_buckets.prover_fees)
+                .map_err(|_| "prover fee total exceeds u64".to_string())?;
+
+            let mut block_hash_input = [0u8; 40];
+            block_hash_input[..32].copy_from_slice(parent_hash.as_bytes());
+            block_hash_input[32..40].copy_from_slice(&block_number.to_le_bytes());
+            let block_hash: [u8; 32] = blake3::hash(&block_hash_input).into();
+
+            let prover_address = if let Some(claim) = selected_prover_claim.as_ref() {
+                let recipient = std::str::from_utf8(claim.prover_recipient.as_slice())
+                    .map_err(|_| "prover claim recipient is not valid UTF-8".to_string())?;
+                let prover_address = crate::shielded_coinbase::parse_shielded_address(recipient)
+                    .map_err(|e| format!("failed to parse prover recipient address: {e}"))?;
+                Some(prover_address)
+            } else {
+                None
+            };
+
+            let reward_bundle = crate::shielded_coinbase::encrypt_block_reward_bundle(
+                address,
+                miner_amount,
+                prover_address.as_ref().map(|addr| (addr, prover_amount)),
+                &block_hash,
+                block_number,
+            )
+            .map_err(|e| format!("failed to encrypt block reward bundle: {e}"))?;
+
+            if let Some(claim) = selected_prover_claim.as_ref() {
+                let Some(prover_note) = reward_bundle.prover_note.as_ref() else {
+                    return Err("prover claim present but reward bundle missing prover note".to_string());
+                };
+                if prover_note.recipient_address != claim.prover_recipient_address {
+                    return Err("prover reward recipient mismatch".to_string());
+                }
+            }
+
+            tracing::info!(
+                block_number,
+                subsidy,
+                miner_fees = fee_buckets.miner_fees,
+                prover_fees = fee_buckets.prover_fees,
+                miner_amount,
+                has_prover_claim = selected_prover_claim.is_some(),
+                "Encrypting shielded block rewards"
+            );
+            let coinbase_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                    reward_bundle,
+                }),
+            );
+            match block_builder.push(coinbase_extrinsic.clone()) {
+                Ok(_) => {
+                    applied.push(coinbase_extrinsic.encode());
+                    tracing::info!(
+                        block_number,
+                        subsidy,
+                        miner_fees = fee_buckets.miner_fees,
+                        prover_fees = fee_buckets.prover_fees,
+                        "Added shielded coinbase extrinsic for block reward"
+                    );
+                }
+                Err(e) => {
+                    return Err(format!("failed to push shielded coinbase extrinsic: {e:?}"));
+                }
             }
         }
 
@@ -4080,11 +4231,19 @@ fn wire_pow_block_import(
                     let coinbase_ciphertexts = block
                         .extrinsics()
                         .iter()
-                        .filter_map(|extrinsic| match &extrinsic.function {
+                        .flat_map(|extrinsic| match &extrinsic.function {
                             runtime::RuntimeCall::ShieldedPool(
-                                ShieldedPoolCall::mint_coinbase { coinbase_data },
-                            ) => Some(encrypted_note_bytes(&coinbase_data.encrypted_note)),
-                            _ => None,
+                                ShieldedPoolCall::mint_coinbase { reward_bundle },
+                            ) => {
+                                let mut out = vec![encrypted_note_bytes(
+                                    &reward_bundle.miner_note.encrypted_note,
+                                )];
+                                if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+                                    out.push(encrypted_note_bytes(&prover_note.encrypted_note));
+                                }
+                                out
+                            }
+                            _ => Vec::new(),
                         })
                         .collect::<Vec<_>>();
                     ciphertexts.extend(coinbase_ciphertexts);
@@ -4164,11 +4323,19 @@ fn wire_pow_block_import(
                     let coinbase_ciphertexts = block
                         .extrinsics()
                         .iter()
-                        .filter_map(|extrinsic| match &extrinsic.function {
+                        .flat_map(|extrinsic| match &extrinsic.function {
                             runtime::RuntimeCall::ShieldedPool(
-                                ShieldedPoolCall::mint_coinbase { coinbase_data },
-                            ) => Some(encrypted_note_bytes(&coinbase_data.encrypted_note)),
-                            _ => None,
+                                ShieldedPoolCall::mint_coinbase { reward_bundle },
+                            ) => {
+                                let mut out = vec![encrypted_note_bytes(
+                                    &reward_bundle.miner_note.encrypted_note,
+                                )];
+                                if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+                                    out.push(encrypted_note_bytes(&prover_note.encrypted_note));
+                                }
+                                out
+                            }
+                            _ => Vec::new(),
                         })
                         .collect::<Vec<_>>();
                     ciphertexts.extend(coinbase_ciphertexts);
@@ -5154,6 +5321,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
     // Auto-start mining if HEGEMON_MINE=1 is set
     let mined_block_store = Arc::new(parking_lot::Mutex::new(Vec::<MinedBlockRecord>::new()));
+    let mut prover_coordinator_for_rpc: Option<Arc<ProverCoordinator>> = None;
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         pow_handle.start_mining();
@@ -7473,7 +7641,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     let ordered = reorder_shielded_transfers(&candidate_txs)?;
                     let pending_ciphertexts_guard = pending_ciphertexts.lock();
                     let pending_proofs_guard = pending_proofs.lock();
-                    build_ready_proven_batch(
+                    prepare_block_proof_bundle(
                         client.as_ref(),
                         parent_hash,
                         block_number,
@@ -7493,6 +7661,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             build_for_coord,
         );
         prover_coordinator.start();
+        prover_coordinator_for_rpc = Some(Arc::clone(&prover_coordinator));
 
         // =======================================================================
         // Wire pending_txs_fn to coordinator-selected transaction set
@@ -7661,7 +7830,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         mined_history,
         miner_recipient,
     ));
-
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
@@ -7730,6 +7898,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "block_getCommitmentProof",
                             "da_getChunk",
                             "da_getParams",
+                            "prover_getWorkPackage",
+                            "prover_submitWorkResult",
+                            "prover_getWorkStatus",
+                            "prover_getMarketParams",
                             "archive_listProviders",
                             "archive_getProvider",
                             "archive_providerCount",
@@ -7978,6 +8150,19 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::warn!(error = %e, "Failed to merge DA RPC");
         } else {
             tracing::info!("DA RPC wired (da_getChunk, da_getParams)");
+        }
+
+        if let Some(coordinator) = prover_coordinator_for_rpc.as_ref() {
+            let prover_rpc = ProverRpc::new(Arc::clone(coordinator));
+            if let Err(e) = module.merge(prover_rpc.into_rpc()) {
+                tracing::warn!(error = %e, "Failed to merge Prover RPC");
+            } else {
+                tracing::info!(
+                    "Prover RPC wired (prover_getWorkPackage, prover_submitWorkResult, prover_getWorkStatus, prover_getMarketParams)"
+                );
+            }
+        } else {
+            tracing::info!("Prover RPC disabled (mining coordinator not active)");
         }
 
         // Add Archive RPC (provider registry)

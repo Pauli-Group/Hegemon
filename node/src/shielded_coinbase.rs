@@ -12,8 +12,8 @@ use frame_support::BoundedVec;
 use pallet_shielded_pool::{
     commitment::{circuit_coinbase_commitment, pk_recipient_from_address},
     types::{
-        CoinbaseNoteData, EncryptedNote, CRYPTO_SUITE_GAMMA, DIVERSIFIED_ADDRESS_SIZE,
-        ENCRYPTED_NOTE_SIZE, NOTE_ENCRYPTION_VERSION,
+        BlockRewardBundle, CoinbaseNoteData, EncryptedNote, CRYPTO_SUITE_GAMMA,
+        DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, NOTE_ENCRYPTION_VERSION,
     },
 };
 
@@ -81,6 +81,30 @@ pub fn encrypt_coinbase_note(
         recipient_address,
         amount,
         public_seed,
+    })
+}
+
+/// Encrypt the miner reward note and optional prover reward note for one block.
+pub fn encrypt_block_reward_bundle(
+    miner_address: &ShieldedAddress,
+    miner_amount: u64,
+    prover: Option<(&ShieldedAddress, u64)>,
+    block_hash: &[u8; 32],
+    block_number: u64,
+) -> Result<BlockRewardBundle, CoinbaseEncryptionError> {
+    let miner_note = encrypt_coinbase_note(miner_address, miner_amount, block_hash, block_number)?;
+    let prover_note = match prover {
+        Some((prover_address, prover_amount)) => Some(encrypt_coinbase_note(
+            prover_address,
+            prover_amount,
+            block_hash,
+            block_number,
+        )?),
+        None => None,
+    };
+    Ok(BlockRewardBundle {
+        miner_note,
+        prover_note,
     })
 }
 

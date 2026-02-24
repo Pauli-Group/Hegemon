@@ -1754,6 +1754,17 @@ sp_api::impl_runtime_apis! {
                 .map_err(|_| ())
         }
 
+        fn fee_quote_breakdown(
+            ciphertext_bytes: u64,
+            proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, ()> {
+            pallet_shielded_pool::Pallet::<Runtime>::quote_fee_breakdown(
+                ciphertext_bytes,
+                proof_kind,
+            )
+            .map_err(|_| ())
+        }
+
         fn forced_inclusions() -> sp_std::vec::Vec<pallet_shielded_pool::types::ForcedInclusionStatus> {
             pallet_shielded_pool::Pallet::<Runtime>::forced_inclusions()
         }

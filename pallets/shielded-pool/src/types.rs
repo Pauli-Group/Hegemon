@@ -156,13 +156,34 @@ impl StarkProof {
     }
 }
 
-/// Version tag for the self-contained proven-batch payload format.
-pub const PROVEN_BATCH_V1_VERSION: u8 = 1;
+/// Version tag for the block proof bundle payload format.
+pub const BLOCK_PROOF_BUNDLE_SCHEMA: u8 = 1;
+/// Maximum encoded bytes for a prover recipient address (bech32m payload).
+pub const MAX_PROVER_RECIPIENT_LEN: u32 = 2048;
+/// Maximum encoded bytes for a prover claim signature.
+pub const MAX_PROVER_CLAIM_SIGNATURE_LEN: u32 = 4096;
+
+/// Signed prover claim used to bind an external prover payout to a submitted bundle.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
+)]
+pub struct ProverCompensationClaim {
+    /// Claimed prover account bytes (AccountId32 encoding).
+    pub prover_account: [u8; 32],
+    /// Full shielded address bytes (bech32 string bytes) used for note encryption.
+    pub prover_recipient: BoundedVec<u8, ConstU32<MAX_PROVER_RECIPIENT_LEN>>,
+    /// Shielded recipient address for prover payout.
+    pub prover_recipient_address: [u8; DIVERSIFIED_ADDRESS_SIZE],
+    /// Claimed payout amount for this bundle.
+    pub prover_amount: u64,
+    /// Signature over claim fields.
+    pub claim_signature: BoundedVec<u8, ConstU32<MAX_PROVER_CLAIM_SIGNATURE_LEN>>,
+}
 
 /// Per-block payload that carries all consensus-required proof material for
 /// self-contained aggregation blocks.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
-pub struct ProvenBatchV1 {
+pub struct BlockProofBundle {
     /// Payload format version.
     pub version: u8,
     /// Number of shielded transfers covered by this payload.
@@ -177,7 +198,15 @@ pub struct ProvenBatchV1 {
     pub commitment_proof: StarkProof,
     /// Aggregation proof bytes (V3 payload format).
     pub aggregation_proof: StarkProof,
+    /// Optional external prover payout claim.
+    pub prover_claim: Option<ProverCompensationClaim>,
 }
+
+#[deprecated(note = "Use BLOCK_PROOF_BUNDLE_SCHEMA instead.")]
+pub const PROVEN_BATCH_V1_VERSION: u8 = BLOCK_PROOF_BUNDLE_SCHEMA;
+
+#[deprecated(note = "Use BlockProofBundle instead.")]
+pub type ProvenBatchV1 = BlockProofBundle;
 
 /// Balance commitment for value balance verification.
 ///
@@ -371,6 +400,17 @@ pub struct CoinbaseNoteData {
     pub public_seed: [u8; 32],
 }
 
+/// Per-block shielded reward bundle.
+///
+/// Miner note is required, prover note is optional.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+)]
+pub struct BlockRewardBundle {
+    pub miner_note: CoinbaseNoteData,
+    pub prover_note: Option<CoinbaseNoteData>,
+}
+
 impl MerklePath {
     /// Create a new Merkle path.
     pub fn new(siblings: Vec<Commitment>, position_bits: Vec<bool>) -> Self {
@@ -444,6 +484,10 @@ pub struct FeeParameters {
     pub proof_fee: u128,
     /// Base fee charged per batch proof.
     pub batch_proof_fee: u128,
+    /// Miner inclusion fee for a single-proof transaction.
+    pub inclusion_fee: u128,
+    /// Miner inclusion fee for a batch-proof transaction.
+    pub batch_inclusion_fee: u128,
     /// Fee per ciphertext byte for DA publication.
     pub da_byte_fee: u128,
     /// Fee per ciphertext byte per block of hot retention.
@@ -457,11 +501,55 @@ impl Default for FeeParameters {
         Self {
             proof_fee: 0,
             batch_proof_fee: 0,
+            inclusion_fee: 0,
+            batch_inclusion_fee: 0,
             da_byte_fee: 0,
             retention_byte_fee: 0,
             hot_retention_blocks: 0,
         }
     }
+}
+
+/// Deterministic shielded fee split returned by runtime quote APIs.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct ShieldedFeeBreakdown {
+    pub prover_fee: u128,
+    pub miner_fee: u128,
+    pub total_fee: u128,
+}
+
+/// Per-block fee accumulators split by beneficiary role.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+    Default,
+)]
+pub struct BlockFeeBuckets {
+    pub miner_fees: u128,
+    pub prover_fees: u128,
 }
 
 /// Public view of a forced inclusion commitment.

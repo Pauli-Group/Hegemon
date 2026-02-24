@@ -474,8 +474,8 @@ fn try_decode_coinbase_recipient<Block: BlockT>(
     let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
     match decoded.function {
         runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::mint_coinbase {
-            coinbase_data,
-        }) => Some(coinbase_data.recipient_address),
+            reward_bundle,
+        }) => Some(reward_bundle.miner_note.recipient_address),
         _ => None,
     }
 }
@@ -862,6 +862,18 @@ where
         api.fee_quote(best_hash, ciphertext_bytes, proof_kind)
             .map_err(|e| format!("Runtime API error: {:?}", e))?
             .map_err(|_| "Fee quote failed".to_string())
+    }
+
+    fn fee_quote_breakdown(
+        &self,
+        ciphertext_bytes: u64,
+        proof_kind: FeeProofKind,
+    ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.fee_quote_breakdown(best_hash, ciphertext_bytes, proof_kind)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?
+            .map_err(|_| "Fee quote breakdown failed".to_string())
     }
 
     fn forced_inclusions(
