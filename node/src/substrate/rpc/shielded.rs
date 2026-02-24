@@ -139,9 +139,18 @@ pub struct FeeQuoteResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FeeQuoteBreakdownResponse {
+    pub prover_fee: u128,
+    pub miner_fee: u128,
+    pub total_fee: u128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FeeParametersResponse {
     pub proof_fee: u128,
     pub batch_proof_fee: u128,
+    pub inclusion_fee: u128,
+    pub batch_inclusion_fee: u128,
     pub da_byte_fee: u128,
     pub retention_byte_fee: u128,
     pub hot_retention_blocks: u32,
@@ -251,6 +260,13 @@ pub trait ShieldedApi {
     #[method(name = "feeQuote")]
     async fn fee_quote(&self, request: FeeQuoteRequest) -> RpcResult<FeeQuoteResponse>;
 
+    /// Quote a deterministic prover/miner fee breakdown.
+    #[method(name = "feeQuoteBreakdown")]
+    async fn fee_quote_breakdown(
+        &self,
+        request: FeeQuoteRequest,
+    ) -> RpcResult<FeeQuoteBreakdownResponse>;
+
     /// List pending forced inclusion commitments.
     #[method(name = "forcedInclusions")]
     async fn forced_inclusions(&self) -> RpcResult<Vec<ForcedInclusionEntryResponse>>;
@@ -311,6 +327,13 @@ pub trait ShieldedPoolService: Send + Sync {
         ciphertext_bytes: u64,
         proof_kind: pallet_shielded_pool::types::FeeProofKind,
     ) -> Result<u128, String>;
+
+    /// Quote a deterministic fee breakdown for prover/miner accounting.
+    fn fee_quote_breakdown(
+        &self,
+        ciphertext_bytes: u64,
+        proof_kind: pallet_shielded_pool::types::FeeProofKind,
+    ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String>;
 
     /// Fetch pending forced inclusion commitments.
     fn forced_inclusions(
@@ -611,6 +634,8 @@ where
         Ok(FeeParametersResponse {
             proof_fee: params.proof_fee,
             batch_proof_fee: params.batch_proof_fee,
+            inclusion_fee: params.inclusion_fee,
+            batch_inclusion_fee: params.batch_inclusion_fee,
             da_byte_fee: params.da_byte_fee,
             retention_byte_fee: params.retention_byte_fee,
             hot_retention_blocks: params.hot_retention_blocks,
@@ -629,6 +654,27 @@ where
                 ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
             })?;
         Ok(FeeQuoteResponse { required_fee: fee })
+    }
+
+    async fn fee_quote_breakdown(
+        &self,
+        request: FeeQuoteRequest,
+    ) -> RpcResult<FeeQuoteBreakdownResponse> {
+        let proof_kind = match request.proof_kind {
+            FeeQuoteProofKind::Single => pallet_shielded_pool::types::FeeProofKind::Single,
+            FeeQuoteProofKind::Batch => pallet_shielded_pool::types::FeeProofKind::Batch,
+        };
+        let breakdown = self
+            .service
+            .fee_quote_breakdown(request.ciphertext_bytes, proof_kind)
+            .map_err(|e| {
+                ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+            })?;
+        Ok(FeeQuoteBreakdownResponse {
+            prover_fee: breakdown.prover_fee,
+            miner_fee: breakdown.miner_fee,
+            total_fee: breakdown.total_fee,
+        })
     }
 
     async fn forced_inclusions(&self) -> RpcResult<Vec<ForcedInclusionEntryResponse>> {
@@ -748,6 +794,18 @@ mod tests {
             _proof_kind: pallet_shielded_pool::types::FeeProofKind,
         ) -> Result<u128, String> {
             Ok(0)
+        }
+
+        fn fee_quote_breakdown(
+            &self,
+            _ciphertext_bytes: u64,
+            _proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String> {
+            Ok(pallet_shielded_pool::types::ShieldedFeeBreakdown {
+                prover_fee: 0,
+                miner_fee: 0,
+                total_fee: 0,
+            })
         }
 
         fn forced_inclusions(

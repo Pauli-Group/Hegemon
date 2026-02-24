@@ -190,15 +190,18 @@ commitment, version commitment, and fork-choice result. Node services call this 
 version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
 receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
 
-On the Substrate runtime side, shielded transfers now accumulate a per-block fee total, and the shielded coinbase extrinsic must
-appear after shielded transfers and mint exactly `subsidy + block_fees`. If a block omits coinbase entirely, the fees are treated
-as burned and tracked on-chain. Because Substrate requires inherents to appear first in the block, `mint_coinbase` is treated as a
-mandatory unsigned extrinsic (not an inherent) and is appended by the node block builder at the end of the block so the runtime can
-enforce this rule deterministically.
+On the Substrate runtime side, shielded transfers now accumulate split per-block fee buckets:
+`BlockFeeBuckets { miner_fees, prover_fees }`. The shielded reward mint path (`mint_coinbase` external call name; `mint_block_rewards`
+internal path) validates a `BlockRewardBundle` with a required miner note and optional prover note. Miner reward must equal
+`subsidy + miner_fees`; prover reward, when claimed, must equal `prover_fees` and match the submitted prover claim metadata. If a
+block omits reward minting, both fee buckets are treated as burned and tracked on-chain.
 
-Fee pricing is parameterized on-chain: `fee = proof_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
-with separate `proof_fee` values for single and batch proofs. These parameters live in the shielded pool pallet, can be updated by
-governance, and are exposed via the runtime API and wallet RPC so clients can quote fees without participating in public auctions.
+Fee pricing is parameterized on-chain with deterministic split accounting:
+`prover_fee = proof_fee|batch_proof_fee`,
+`miner_fee = inclusion_fee|batch_inclusion_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
+`total_fee = prover_fee + miner_fee`.
+These parameters live in the shielded pool pallet, can be updated by governance, and are exposed via runtime API/RPC as both total
+quote and breakdown (`fee_quote`, `fee_quote_breakdown`) so clients can quote fees without auctions.
 
 Forced inclusion commitments provide a censorship escape hatch for the private lane. A user can submit a commitment hash
 (`blake2_256` of the SCALE-encoded shielded transfer call), an expiry block, and a bonded amount. The commitment queue is bounded
@@ -852,7 +855,7 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds. On top of that, the `circuits/block` crate treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction statement hashes via a Poseidon sponge (`tx_statements_commitment`), and consensus verifies the commitment proof alongside per-transaction input checks. In `InlineRequired`, blocks without an aggregation proof fall back to parallel per-transaction verification. In `SelfContained` aggregation mode, that fallback is disabled and missing proven-batch payload is invalid. Recursive epoch proofs remain removed; aggregation proofs are the only recursion path in the live system today.
 
-Aggregation proofs are produced from transaction proof bytes alone, never from spend witnesses. Block producers include aggregation + commitment proof material through a single `submit_proven_batch` payload. The reference aggregation prover lives in `circuits/aggregation` and emits postcard-encoded `BatchProof` bytes that are embedded inside the proven-batch payload. Node authoring uses an asynchronous prover coordinator (`node/src/substrate/prover_coordinator.rs`) that runs a bounded worker queue; it prebuilds proven batches by `(parent_hash, tx_statements_commitment, tx_count)` and exposes `HEGEMON_PROVER_WORKERS`, `HEGEMON_BATCH_TARGET_TXS`, `HEGEMON_BATCH_QUEUE_CAPACITY`, and `HEGEMON_BATCH_JOB_TIMEOUT_MS` for tuning.
+Aggregation proofs are produced from transaction proof bytes alone, never from spend witnesses. Block producers include aggregation + commitment proof material through a single `submit_proven_batch` payload (internal type: `BlockProofBundle`, external call name unchanged). The reference aggregation prover lives in `circuits/aggregation` and emits postcard-encoded `BatchProof` bytes that are embedded inside the bundle payload. Node authoring uses an asynchronous prover coordinator (`node/src/substrate/prover_coordinator.rs`) that runs a bounded worker queue and now also exposes open prover-market work packages through additive RPC methods (`prover_getWorkPackage`, `prover_submitWorkResult`, `prover_getWorkStatus`, `prover_getMarketParams`). Work packages are bounded by payload-size caps, per-source limits, per-package submission limits, and expiry windows.
 
 The commitment proof binds `tx_statements_commitment` (derived from the ordered list of canonical transaction statement hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness. On Substrate, the `submit_proven_batch` extrinsic carries the computed `da_root` plus `chunk_count` explicitly so importers can fetch DA chunks before reconstructing ciphertexts and archive audits can select valid chunk indices.
 

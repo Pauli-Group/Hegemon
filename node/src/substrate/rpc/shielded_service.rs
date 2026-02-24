@@ -230,6 +230,18 @@ impl ShieldedPoolService for MockShieldedPoolService {
         Ok(0)
     }
 
+    fn fee_quote_breakdown(
+        &self,
+        _ciphertext_bytes: u64,
+        _proof_kind: FeeProofKind,
+    ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String> {
+        Ok(pallet_shielded_pool::types::ShieldedFeeBreakdown {
+            prover_fee: 0,
+            miner_fee: 0,
+            total_fee: 0,
+        })
+    }
+
     fn forced_inclusions(
         &self,
     ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
@@ -404,6 +416,19 @@ where
         api.fee_quote(hash, ciphertext_bytes, proof_kind)
             .map_err(|e| format!("Runtime API error: {:?}", e))?
             .map_err(|_| "Fee quote failed".to_string())
+    }
+
+    fn fee_quote_breakdown(
+        &self,
+        ciphertext_bytes: u64,
+        proof_kind: FeeProofKind,
+    ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String> {
+        let api = self.client.runtime_api();
+        let hash = self.best_hash();
+
+        api.fee_quote_breakdown(hash, ciphertext_bytes, proof_kind)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?
+            .map_err(|_| "Fee quote breakdown failed".to_string())
     }
 
     fn forced_inclusions(
