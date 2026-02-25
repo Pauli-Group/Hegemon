@@ -18,6 +18,7 @@ MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
 STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven batch is absent
+STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-600}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
 
 # Throughput profile:
@@ -90,6 +91,10 @@ case "$TPS_EFFECTIVE_MODE" in
     exit 1
     ;;
 esac
+if ! [[ "$STRICT_PREPARE_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [ "$STRICT_PREPARE_TIMEOUT_SECS" -lt 1 ]; then
+  echo "HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS must be a positive integer (got '$STRICT_PREPARE_TIMEOUT_SECS')." >&2
+  exit 1
+fi
 
 WALLET_A="${HEGEMON_TP_WALLET_A:-/tmp/hegemon-throughput-wallet-a}"
 WALLET_B="${HEGEMON_TP_WALLET_B:-/tmp/hegemon-throughput-wallet-b}"
@@ -98,6 +103,7 @@ PASS_B="${HEGEMON_TP_PASS_B:-testwallet2}"
 RECIPIENTS_JSON="${HEGEMON_TP_RECIPIENTS_JSON:-/tmp/hegemon-throughput-recipients.json}"
 WORKERS="${HEGEMON_TP_WORKERS:-1}"
 PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS:-1}"
+PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-180000}"
 WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
 
 require_bin() {
@@ -179,15 +185,17 @@ if ! [[ "$PROVER_WORKERS" =~ ^[0-9]+$ ]] || [ "$PROVER_WORKERS" -lt 1 ]; then
   echo "HEGEMON_TP_PROVER_WORKERS must be a positive integer (got '$PROVER_WORKERS')." >&2
   exit 1
 fi
+if ! [[ "$PROVER_BATCH_JOB_TIMEOUT_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_BATCH_JOB_TIMEOUT_MS" -lt 1 ]; then
+  echo "HEGEMON_TP_BATCH_JOB_TIMEOUT_MS must be a positive integer (got '$PROVER_BATCH_JOB_TIMEOUT_MS')." >&2
+  exit 1
+fi
 if [ "$WORKERS" -gt "$TX_COUNT" ]; then
   WORKERS="$TX_COUNT"
 fi
 
 if [ "$FAST" = "1" ]; then
-  if [ ! -x ./target/release/hegemon-node ]; then
-    echo "Building node (fast proofs enabled)..." >&2
-    make node-fast
-  fi
+  echo "Building node (fast proofs enabled)..." >&2
+  make node-fast
 else
   if [ ! -x ./target/release/hegemon-node ]; then
     echo "Building node..." >&2
@@ -210,7 +218,7 @@ if [ "$WORKERS" -gt 1 ]; then
 fi
 
 existing_stores=()
-for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]}"; do
+for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"; do
   if [ -n "$store" ] && [ -d "$store" ]; then
     existing_stores+=("$store")
   fi
@@ -224,7 +232,7 @@ if [ "${#existing_stores[@]}" -gt 0 ]; then
   if [ "${HEGEMON_TP_FORCE:-0}" != "1" ]; then
     exit 1
   fi
-  rm -rf "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]}"
+  rm -rf "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"
 fi
 
 echo "Initializing wallets..." >&2
@@ -284,6 +292,10 @@ if [ "$FAST" = "1" ]; then
   NODE_FAST_ENV="HEGEMON_ACCEPT_FAST_PROOFS=1 HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST=1"
   WALLET_FAST_ENV="HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1"
 fi
+NODE_STRICT_ENV=""
+if [ "$STRICT_AGGREGATION" = "1" ]; then
+  NODE_STRICT_ENV="HEGEMON_DISABLE_PROOFLESS_HYDRATION=1"
+fi
 
 echo "Starting node in tmux session '$SESSION' (logs: $LOG_FILE)..." >&2
 tmux new-session -d -s "$SESSION" -n node \
@@ -291,15 +303,18 @@ tmux new-session -d -s "$SESSION" -n node \
    env \
      RUST_LOG=info \
      $NODE_FAST_ENV \
+     $NODE_STRICT_ENV \
      HEGEMON_SEEDS='' \
      HEGEMON_MAX_PEERS=0 \
      HEGEMON_MINE=1 \
      HEGEMON_MINE_THREADS='${MINE_THREADS}' \
      HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
+     HEGEMON_BATCH_JOB_TIMEOUT_MS='${PROVER_BATCH_JOB_TIMEOUT_MS}' \
      HEGEMON_MINE_TEST=1 \
      HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
      HEGEMON_AGGREGATION_PROOFS=1 \
      HEGEMON_PARALLEL_PROOF_VERIFICATION=1 \
+     HEGEMON_FULL_IMPORT=1 \
      HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK='${TX_COUNT}' \
      HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
      ./target/release/hegemon-node --dev --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
@@ -458,6 +473,24 @@ fi
 SEND_END_MS="$(now_ms)"
 SEND_TOTAL_MS=$((SEND_END_MS - SEND_START_MS))
 echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
+
+if [ "$STRICT_AGGREGATION" = "1" ]; then
+  echo "Strict mode: waiting for local proven batch candidate before mining..." >&2
+  PREPARED_LINE=""
+  for i in $(seq 1 "$STRICT_PREPARE_TIMEOUT_SECS"); do
+    PREPARED_LINE="$(search_log "Prepared proven batch candidate" | tail -n 1 || true)"
+    if [ -n "$PREPARED_LINE" ]; then
+      break
+    fi
+    sleep 1
+  done
+  if [ -z "$PREPARED_LINE" ]; then
+    echo "Strict aggregation mode: timed out waiting for local proven batch candidate." >&2
+    echo "Inspect logs: $LOG_FILE" >&2
+    exit 1
+  fi
+  echo "$PREPARED_LINE" >&2
+fi
 
 INCLUSION_START_BLOCK="$(current_block_number)"
 INCLUSION_START_MS="$(now_ms)"

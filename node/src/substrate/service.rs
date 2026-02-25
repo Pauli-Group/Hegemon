@@ -3360,6 +3360,18 @@ fn load_max_shielded_transfers_per_block() -> usize {
     configured
 }
 
+fn load_disable_proofless_hydration() -> bool {
+    std::env::var("HEGEMON_DISABLE_PROOFLESS_HYDRATION")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
     let runtime::RuntimeCall::ShieldedPool(call) = call else {
         return false;
@@ -3715,7 +3727,14 @@ pub fn wire_block_builder_api(
     let aggregation_proofs_enabled = std::env::var("HEGEMON_AGGREGATION_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    let disable_proofless_hydration = load_disable_proofless_hydration();
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
+
+    if disable_proofless_hydration {
+        tracing::warn!(
+            "Proofless sidecar hydration disabled via HEGEMON_DISABLE_PROOFLESS_HYDRATION=1"
+        );
+    }
 
     // Capture the miner's shielded address
     let miner_shielded_address = chain_state.miner_shielded_address();
@@ -3833,17 +3852,24 @@ pub fn wire_block_builder_api(
         // Proof-sidecar bytes are proposer-local; hydrate proofless sidecar
         // transfers when bytes are available locally so inline verification can
         // keep liveness even when aggregation proving is unavailable/disabled.
-        let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
-        let (hydrated_extrinsics, hydrated_count) =
-            hydrate_proofless_sidecar_extrinsics(&extrinsics, &pending_proofs_snapshot)?;
-        if hydrated_count > 0 {
-            tracing::info!(
-                block_number,
-                hydrated_count,
-                "Hydrated proofless sidecar transfers with local pending proof bytes"
-            );
-        }
-        let ordered_extrinsics = reorder_shielded_transfers(&hydrated_extrinsics)?;
+        // Strict test harnesses can disable this fallback to force submit_proven_batch
+        // validation through import.
+        let sidecar_ready_extrinsics = if disable_proofless_hydration {
+            extrinsics.to_vec()
+        } else {
+            let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
+            let (hydrated_extrinsics, hydrated_count) =
+                hydrate_proofless_sidecar_extrinsics(&extrinsics, &pending_proofs_snapshot)?;
+            if hydrated_count > 0 {
+                tracing::info!(
+                    block_number,
+                    hydrated_count,
+                    "Hydrated proofless sidecar transfers with local pending proof bytes"
+                );
+            }
+            hydrated_extrinsics
+        };
+        let ordered_extrinsics = reorder_shielded_transfers(&sidecar_ready_extrinsics)?;
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
         let mut defer_proofless_until_ready_batch = false;
