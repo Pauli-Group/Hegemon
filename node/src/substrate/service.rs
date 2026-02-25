@@ -113,13 +113,13 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
-    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
-    DEFAULT_DIFFICULTY_BITS,
+    DEFAULT_DIFFICULTY_BITS, FullBackend, HegemonFullClient, HegemonPowBlockImport,
+    HegemonSelectChain, HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
+    StateExecutionResult,
 };
 use crate::substrate::mining_worker::{
-    create_production_mining_worker, create_production_mining_worker_mock_broadcast,
-    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig, create_production_mining_worker,
+    create_production_mining_worker_mock_broadcast,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -140,20 +140,20 @@ use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes, Blake3Algorithm,
-    Blake3Seal, ParallelProofVerifier,
+    Blake3Algorithm, Blake3Seal, ParallelProofVerifier, aggregation_proof_uncompressed_len,
+    encode_aggregation_proof_bytes,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
-use hyper::http::{header, Method};
+use hyper::http::{Method, header};
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
-use rand::{rngs::OsRng, RngCore};
+use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE, FeeParameters};
+use rand::{RngCore, rngs::OsRng};
 use sc_client_api::BlockchainEvents;
-use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
+use sc_service::{Configuration, KeystoreContainer, TaskManager, error::Error as ServiceError};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ProvideRuntimeApi, StorageChanges};
@@ -165,11 +165,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 use wallet::address::ShieldedAddress;
@@ -181,7 +181,7 @@ use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
+use transaction_circuit::hashing_pq::{Felt, bytes48_to_felts, ciphertext_hash_bytes};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 
@@ -707,7 +707,7 @@ impl CommitmentBlockProofStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingCiphertextStore {
     capacity: usize,
     order: VecDeque<[u8; 48]>,
@@ -764,7 +764,7 @@ impl PendingCiphertextStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingProofStore {
     capacity: usize,
     order: VecDeque<[u8; 64]>,
@@ -1931,11 +1931,7 @@ const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
     let shards = len.div_ceil(chunk_size);
-    if shards == 0 {
-        1
-    } else {
-        shards
-    }
+    if shards == 0 { 1 } else { shards }
 }
 
 fn da_parity_shards_for_data(data_shards: usize) -> usize {
@@ -4035,8 +4031,8 @@ pub fn wire_block_builder_api(
 use crate::substrate::mining_worker::BlockTemplate;
 use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult};
 use sp_consensus::BlockOrigin;
-use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
+use sp_runtime::generic::Digest;
 
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
@@ -4284,14 +4280,28 @@ fn wire_pow_block_import(
                             "Ciphertexts stored for imported block"
                         );
                     }
-                    pending_ciphertext_store
-                        .lock()
-                        .remove_many(&build.used_ciphertext_hashes);
+                    if let Some(mut pending_ciphertexts) = pending_ciphertext_store.try_lock() {
+                        pending_ciphertexts.remove_many(&build.used_ciphertext_hashes);
+                    } else {
+                        tracing::warn!(
+                            block_number = template.number,
+                            pending_hashes = build.used_ciphertext_hashes.len(),
+                            "Pending ciphertext store busy after import; deferring cleanup"
+                        );
+                    }
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
                     if !binding_hashes.is_empty() {
-                        pending_proof_store.lock().remove_many(&binding_hashes);
+                        if let Some(mut pending_proofs) = pending_proof_store.try_lock() {
+                            pending_proofs.remove_many(&binding_hashes);
+                        } else {
+                            tracing::warn!(
+                                block_number = template.number,
+                                pending_bindings = binding_hashes.len(),
+                                "Pending proof store busy after import; deferring cleanup"
+                            );
+                        }
                     }
                 }
                 if let Some(proof) = commitment_block_proof.clone() {
@@ -4376,14 +4386,28 @@ fn wire_pow_block_import(
                             "Ciphertexts stored for known block"
                         );
                     }
-                    pending_ciphertext_store
-                        .lock()
-                        .remove_many(&build.used_ciphertext_hashes);
+                    if let Some(mut pending_ciphertexts) = pending_ciphertext_store.try_lock() {
+                        pending_ciphertexts.remove_many(&build.used_ciphertext_hashes);
+                    } else {
+                        tracing::warn!(
+                            block_number = template.number,
+                            pending_hashes = build.used_ciphertext_hashes.len(),
+                            "Pending ciphertext store busy for known block; deferring cleanup"
+                        );
+                    }
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
                     if !binding_hashes.is_empty() {
-                        pending_proof_store.lock().remove_many(&binding_hashes);
+                        if let Some(mut pending_proofs) = pending_proof_store.try_lock() {
+                            pending_proofs.remove_many(&binding_hashes);
+                        } else {
+                            tracing::warn!(
+                                block_number = template.number,
+                                pending_bindings = binding_hashes.len(),
+                                "Pending proof store busy for known block; deferring cleanup"
+                            );
+                        }
                     }
                 }
                 if let Some(proof) = commitment_block_proof.clone() {
@@ -6253,7 +6277,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 task_manager
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
-                        use crate::substrate::network_bridge::{SyncMessage, SYNC_PROTOCOL};
+                        use crate::substrate::network_bridge::{SYNC_PROTOCOL, SyncMessage};
 
                         let mut interval =
                             tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -6329,7 +6353,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("tx-propagation", Some("txpool"), async move {
                         use crate::substrate::network_bridge::{
-                            TransactionMessage, TRANSACTIONS_PROTOCOL,
+                            TRANSACTIONS_PROTOCOL, TransactionMessage,
                         };
                         use sc_transaction_pool_api::{
                             InPoolTransaction, TransactionPool as ScTransactionPool,
@@ -7602,16 +7626,18 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             Arc::new(
                 move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
                     let ordered = reorder_shielded_transfers(&candidate_txs)?;
-                    let pending_ciphertexts_guard = pending_ciphertexts.lock();
-                    let pending_proofs_guard = pending_proofs.lock();
+                    // Clone pending sidecar stores up front so we never hold these locks while
+                    // generating commitment/aggregation proofs (which can take seconds).
+                    let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
+                    let pending_proofs_snapshot = { pending_proofs.lock().clone() };
                     prepare_block_proof_bundle(
                         client.as_ref(),
                         parent_hash,
                         block_number,
                         ordered,
                         da_params,
-                        &pending_ciphertexts_guard,
-                        &pending_proofs_guard,
+                        &pending_ciphertexts_snapshot,
+                        &pending_proofs_snapshot,
                         commitment_block_fast,
                     )
                 },
@@ -7796,10 +7822,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
+        use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
         use sc_rpc::state::{ChildStateApiServer, StateApiServer};
         use sc_rpc::system::{System, SystemApiServer};
-        use sc_rpc::SubscriptionTaskExecutor;
         use sc_utils::mpsc::tracing_unbounded;
 
         let mut module = RpcModule::new(());
@@ -7974,7 +8000,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     // Simpler: use identity multihash with raw 32 bytes
                     // 0x00 = identity hash, 0x20 = 32 bytes length
                     let mut multihash = vec![0x00, 0x24]; // identity + 36 bytes
-                                                          // Add ed25519 public key protobuf prefix (type=1, length=32)
+                    // Add ed25519 public key protobuf prefix (type=1, length=32)
                     multihash.extend_from_slice(&[0x08, 0x01, 0x12, 0x20]);
                     multihash.extend_from_slice(id);
                     bs58::encode(&multihash).into_string()
@@ -8531,10 +8557,13 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String>
-           + Send
-           + Sync
-           + 'static {
+    ) -> impl Fn(
+        &crate::substrate::mining_worker::BlockTemplate,
+        &Blake3Seal,
+    ) -> Result<H256, String>
+    + Send
+    + Sync
+    + 'static {
         let stats = self.stats.clone();
         let best_number = self.best_number.clone();
         let best_hash = self.best_hash.clone();
