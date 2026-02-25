@@ -559,6 +559,8 @@ To ensure early-joining nodes continue to learn about peers that connect later, 
 Nodes also request peer graphs on a periodic tick (default: `HEGEMON_PQ_PEER_GRAPH_TICK_SECS=30`) so monitoring tools can render the network topology.
 
 Sync source selection is gated by a genesis-compatibility probe instead of a "peer is not too far ahead" heuristic. For unknown peers, the node first issues `GetBlocks { start_height: 0, max_blocks: 1 }`, recomputes the hash of the returned height-0 header, and compares it to the local genesis hash. Only peers that match are marked sync-compatible; mismatches are marked incompatible and excluded from sync candidate selection. This keeps bootstrap for brand-new nodes unbounded by height while still filtering legacy/wrong-chain noise deterministically.
+Sync scheduling prioritizes already-compatible peers before probing unknown peers, so legacy/high-noise peers cannot stall catch-up when a valid peer is available. Peers newly marked incompatible are disconnected automatically. By default (`HEGEMON_PQ_STRICT_COMPATIBILITY=1`), discovery address/graph traffic and cached discovery dials are restricted to genesis-compatible peers to prevent legacy nodes from polluting the active peer set.
+When no compatible peer currently advertises a higher tip, nodes run a lightweight tip-poll state (`GetBlocks` from `best+1`) that does not mark the node as "actively syncing", so mining continues without pause/resume churn while still recovering from missed announces.
 
 ### 2. Object definitions (bits, fields, encodings)
 

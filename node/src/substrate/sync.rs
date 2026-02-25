@@ -86,6 +86,8 @@ pub const SYNC_RETRY_DELAY: u64 = 5;
 
 /// Maximum tolerated sync failures before we stop selecting a peer.
 pub const MAX_PEER_FAILURES: u32 = 3;
+/// How often to poll a compatible peer for tip updates when announces are sparse.
+pub const TIP_POLL_INTERVAL_SECS: u64 = 5;
 
 /// A peer's compatibility status relative to our local chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +114,19 @@ pub enum SyncState {
         /// Whether we have a pending probe request
         request_pending: bool,
         /// When the probe request was sent
+        last_request_time: Option<Instant>,
+    },
+    /// Lightweight tip polling from a compatible peer while staying in synced mode.
+    TipPolling {
+        /// Peer being polled
+        peer: PeerId,
+        /// Local best height at poll start
+        current_height: u64,
+        /// Local best hash at poll start
+        current_hash: [u8; 32],
+        /// Whether we have a pending poll request
+        request_pending: bool,
+        /// When the poll request was sent
         last_request_time: Option<Instant>,
     },
     /// Downloading blocks from a peer
@@ -224,6 +239,10 @@ where
     /// Queue of blocks downloaded and ready for import
     /// The block-import-handler in service.rs will drain this
     downloaded_blocks: VecDeque<DownloadedBlock>,
+    /// Peers that were newly classified as incompatible and should be disconnected.
+    incompatible_peers: VecDeque<PeerId>,
+    /// Last time we scheduled a lightweight tip poll from a compatible peer.
+    last_tip_poll: Option<Instant>,
     /// Statistics
     stats: SyncStats,
     /// When we last logged sync status
@@ -300,6 +319,8 @@ where
             request_id_counter: 0,
             pending_requests: HashMap::new(),
             downloaded_blocks: VecDeque::new(),
+            incompatible_peers: VecDeque::new(),
+            last_tip_poll: None,
             stats: SyncStats::default(),
             last_log_time: Instant::now(),
             _phantom: std::marker::PhantomData,
@@ -334,6 +355,19 @@ where
     /// Get number of downloaded blocks waiting to be imported
     pub fn downloaded_queue_len(&self) -> usize {
         self.downloaded_blocks.len()
+    }
+
+    /// Get the tracked compatibility state for a peer.
+    pub fn peer_compatibility(&self, peer_id: &PeerId) -> PeerCompatibility {
+        self.peers
+            .get(peer_id)
+            .map(|state| state.compatibility)
+            .unwrap_or(PeerCompatibility::Unknown)
+    }
+
+    /// Drain peers newly marked incompatible since the last call.
+    pub fn drain_incompatible_peers(&mut self) -> Vec<PeerId> {
+        self.incompatible_peers.drain(..).collect()
     }
 
     /// Drain downloaded blocks for import
@@ -494,16 +528,20 @@ where
                 compatibility: PeerCompatibility::Unknown,
             },
         );
+        self.incompatible_peers.retain(|queued| queued != &peer_id);
         tracing::debug!(peer = %hex::encode(peer_id), "Sync: peer connected");
     }
 
     /// Handle peer disconnection
     pub fn on_peer_disconnected(&mut self, peer_id: &PeerId) {
         self.peers.remove(peer_id);
+        self.incompatible_peers.retain(|queued| queued != peer_id);
 
         // If we were syncing/probing this peer, reset to idle
         match &self.state {
-            SyncState::Downloading { peer, .. } | SyncState::ProbingGenesis { peer, .. } => {
+            SyncState::Downloading { peer, .. }
+            | SyncState::ProbingGenesis { peer, .. }
+            | SyncState::TipPolling { peer, .. } => {
                 if peer == peer_id {
                     tracing::warn!(
                         peer = %hex::encode(peer_id),
@@ -870,6 +908,9 @@ where
             }
             | SyncState::ProbingGenesis {
                 request_pending, ..
+            }
+            | SyncState::TipPolling {
+                request_pending, ..
             } => {
                 *request_pending = false;
             }
@@ -879,6 +920,51 @@ where
         if matches!(self.state, SyncState::ProbingGenesis { .. }) {
             self.handle_genesis_probe_response(peer_id, blocks);
             return;
+        }
+
+        let tip_poll_snapshot = match &self.state {
+            SyncState::TipPolling {
+                peer: expected_peer,
+                current_height,
+                current_hash,
+                ..
+            } => Some((*expected_peer, *current_height, *current_hash)),
+            _ => None,
+        };
+
+        if let Some((expected_peer, current_height, current_hash)) = tip_poll_snapshot {
+            if peer_id != expected_peer {
+                tracing::debug!(
+                    peer = %hex::encode(peer_id),
+                    expected_peer = %hex::encode(expected_peer),
+                    "Ignoring tip-poll response from unexpected peer"
+                );
+                self.state = SyncState::Synced;
+                return;
+            }
+
+            if blocks.is_empty() {
+                tracing::debug!(
+                    peer = %hex::encode(peer_id),
+                    height = current_height,
+                    "Tip poll returned no blocks; staying synced"
+                );
+                self.state = SyncState::Synced;
+                return;
+            }
+
+            self.state = SyncState::Downloading {
+                target_height: blocks
+                    .last()
+                    .map(|block| block.number.max(current_height))
+                    .unwrap_or(current_height),
+                peer: peer_id,
+                current_height,
+                current_hash,
+                requested_height: current_height,
+                request_pending: false,
+                last_request_time: None,
+            };
         }
 
         if blocks.is_empty() {
@@ -1117,6 +1203,9 @@ where
                 peer_state.compatibility = PeerCompatibility::Incompatible;
                 peer_state.failed_requests = MAX_PEER_FAILURES;
             }
+            if !self.incompatible_peers.contains(&peer_id) {
+                self.incompatible_peers.push_back(peer_id);
+            }
             tracing::warn!(
                 peer = %hex::encode(peer_id),
                 peer_genesis = %hex::encode(peer_genesis),
@@ -1352,6 +1441,29 @@ where
             .map(|(id, state)| (*id, state))
     }
 
+    fn should_poll_tip(&self, now: Instant) -> bool {
+        self.last_tip_poll
+            .map(|last| now.duration_since(last) >= Duration::from_secs(TIP_POLL_INTERVAL_SECS))
+            .unwrap_or(true)
+    }
+
+    fn start_tip_poll(
+        &mut self,
+        peer_id: PeerId,
+        our_best: u64,
+        now: Instant,
+    ) -> Option<(PeerId, SyncRequest)> {
+        self.last_tip_poll = Some(now);
+        self.state = SyncState::TipPolling {
+            peer: peer_id,
+            current_height: our_best,
+            current_hash: self.best_hash_bytes(),
+            request_pending: false,
+            last_request_time: None,
+        };
+        self.create_block_request(peer_id, our_best + 1)
+    }
+
     /// Tick the sync state machine
     ///
     /// Called periodically (e.g., every second) to drive sync progress.
@@ -1396,23 +1508,22 @@ where
 
         match self.state.clone() {
             SyncState::Idle => {
-                // Probe unknown peers first so we only sync from genesis-compatible peers.
-                if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
-                    return self.create_genesis_probe_request(peer_id, announced_best);
-                }
-
-                // Check if any peer is ahead of us
-                if let Some((peer_id, peer_state)) = self.best_sync_peer() {
-                    if peer_state.best_height > our_best {
+                // Always prioritize known compatible peers when we are behind.
+                // Unknown peers can be probed opportunistically after catch-up.
+                if let Some((peer_id, peer_best)) = self
+                    .best_sync_peer()
+                    .map(|(id, state)| (id, state.best_height))
+                {
+                    if peer_best > our_best {
                         tracing::info!(
                             our_best = our_best,
-                            peer_best = peer_state.best_height,
+                            peer_best = peer_best,
                             peer = %hex::encode(peer_id),
-                            blocks_behind = peer_state.best_height - our_best,
+                            blocks_behind = peer_best - our_best,
                             "Starting sync from peer"
                         );
                         self.state = SyncState::Downloading {
-                            target_height: peer_state.best_height,
+                            target_height: peer_best,
                             peer: peer_id,
                             current_height: our_best,
                             current_hash: self.best_hash_bytes(),
@@ -1425,6 +1536,25 @@ where
                         return self.create_block_request(peer_id, our_best + 1);
                     }
                 }
+
+                // If no compatible peer currently advertises us as behind, still poll
+                // periodically for the next block to avoid announce-only lag.
+                if let Some((peer_id, _)) = self.best_sync_peer() {
+                    if self.should_poll_tip(now) {
+                        tracing::debug!(
+                            peer = %hex::encode(peer_id),
+                            height = our_best,
+                            "Polling compatible peer for tip updates"
+                        );
+                        return self.start_tip_poll(peer_id, our_best, now);
+                    }
+                }
+
+                // Probe unknown peers only when not currently behind a known compatible peer.
+                if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
+                    return self.create_genesis_probe_request(peer_id, announced_best);
+                }
+
                 None
             }
             SyncState::ProbingGenesis {
@@ -1462,6 +1592,56 @@ where
                 }
 
                 self.create_genesis_probe_request(peer, announced_best)
+            }
+            SyncState::TipPolling {
+                peer,
+                current_height,
+                current_hash: _,
+                request_pending,
+                last_request_time,
+            } => {
+                let Some(peer_state) = self.peers.get(&peer) else {
+                    tracing::debug!(
+                        peer = %hex::encode(peer),
+                        "Tip poll peer disconnected; returning to synced state"
+                    );
+                    self.state = SyncState::Synced;
+                    return None;
+                };
+
+                if peer_state.failed_requests >= MAX_PEER_FAILURES
+                    || peer_state.compatibility != PeerCompatibility::Compatible
+                {
+                    tracing::debug!(
+                        peer = %hex::encode(peer),
+                        failures = peer_state.failed_requests,
+                        compatibility = ?peer_state.compatibility,
+                        "Tip poll peer no longer eligible; returning to synced state"
+                    );
+                    self.state = SyncState::Synced;
+                    return None;
+                }
+
+                if request_pending {
+                    if let Some(last_time) = last_request_time {
+                        if now.duration_since(last_time) > Duration::from_secs(SYNC_REQUEST_TIMEOUT)
+                        {
+                            tracing::warn!(
+                                peer = %hex::encode(peer),
+                                "Tip poll timed out"
+                            );
+                            if let Some(peer_state) = self.peers.get_mut(&peer) {
+                                peer_state.failed_requests =
+                                    peer_state.failed_requests.saturating_add(1);
+                            }
+                            self.stats.failed_requests += 1;
+                            self.state = SyncState::Synced;
+                        }
+                    }
+                    return None;
+                }
+
+                self.create_block_request(peer, current_height.saturating_add(1))
             }
             SyncState::Downloading {
                 target_height,
@@ -1571,21 +1751,19 @@ where
                 self.create_block_request(peer, next_height)
             }
             SyncState::Synced => {
-                // Probe unknown peers first so any future sync fallback has validated candidates.
-                if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
-                    return self.create_genesis_probe_request(peer_id, announced_best);
-                }
-
-                // Check if we've fallen behind
-                if let Some((peer_id, peer_state)) = self.best_sync_peer() {
-                    if peer_state.best_height > our_best {
+                // If we've fallen behind a compatible peer, sync immediately.
+                if let Some((peer_id, peer_best)) = self
+                    .best_sync_peer()
+                    .map(|(id, state)| (id, state.best_height))
+                {
+                    if peer_best > our_best {
                         tracing::info!(
                             our_best = our_best,
-                            peer_best = peer_state.best_height,
+                            peer_best = peer_best,
                             "Fallen behind, restarting sync"
                         );
                         self.state = SyncState::Downloading {
-                            target_height: peer_state.best_height,
+                            target_height: peer_best,
                             peer: peer_id,
                             current_height: our_best,
                             current_hash: self.best_hash_bytes(),
@@ -1593,8 +1771,26 @@ where
                             request_pending: false,
                             last_request_time: None,
                         };
+                        return self.create_block_request(peer_id, our_best + 1);
                     }
                 }
+
+                if let Some((peer_id, _)) = self.best_sync_peer() {
+                    if self.should_poll_tip(now) {
+                        tracing::debug!(
+                            peer = %hex::encode(peer_id),
+                            height = our_best,
+                            "Polling compatible peer for tip updates"
+                        );
+                        return self.start_tip_poll(peer_id, our_best, now);
+                    }
+                }
+
+                // Otherwise keep probing unknown peers in the background.
+                if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
+                    return self.create_genesis_probe_request(peer_id, announced_best);
+                }
+
                 None
             }
         }
@@ -1664,16 +1860,26 @@ where
         );
 
         // Update state to show request is pending
-        if let SyncState::Downloading {
-            ref mut requested_height,
-            ref mut request_pending,
-            ref mut last_request_time,
-            ..
-        } = &mut self.state
-        {
-            *requested_height = from_height + MAX_BLOCKS_PER_REQUEST as u64;
-            *request_pending = true;
-            *last_request_time = Some(Instant::now());
+        match &mut self.state {
+            SyncState::Downloading {
+                ref mut requested_height,
+                ref mut request_pending,
+                ref mut last_request_time,
+                ..
+            } => {
+                *requested_height = from_height + MAX_BLOCKS_PER_REQUEST as u64;
+                *request_pending = true;
+                *last_request_time = Some(Instant::now());
+            }
+            SyncState::TipPolling {
+                ref mut request_pending,
+                ref mut last_request_time,
+                ..
+            } => {
+                *request_pending = true;
+                *last_request_time = Some(Instant::now());
+            }
+            _ => {}
         }
 
         self.stats.requests_sent += 1;
