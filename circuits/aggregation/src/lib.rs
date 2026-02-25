@@ -316,6 +316,34 @@ pub fn prove_aggregation(
     }
 
     let pub_inputs_len = expected_inputs_len.ok_or(AggregationError::EmptyBatch)?;
+    let representative_proof = transaction_proofs
+        .first()
+        .ok_or(AggregationError::EmptyBatch)?
+        .stark_proof
+        .clone();
+
+    if transaction_proofs.len() == 1 {
+        let singleton_public_values = public_inputs
+            .first()
+            .ok_or(AggregationError::EmptyBatch)?
+            .iter()
+            .copied()
+            .map(Challenge::from)
+            .collect::<Vec<_>>();
+        let payload = AggregationProofV3Payload {
+            version: AGGREGATION_PROOF_V3_VERSION,
+            tx_count: 1,
+            tx_statements_commitment: tx_statements_commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+            inner_public_inputs_len: pub_inputs_len as u32,
+            representative_proof,
+            packed_public_values: pack_recursion_public_values_v1(&singleton_public_values),
+            outer_proof: Vec::new(),
+        };
+        return postcard::to_allocvec(&payload)
+            .map_err(|_| AggregationError::PayloadSerializeFailed);
+    }
+
     let expected_shape = expected_shape.ok_or(AggregationError::EmptyBatch)?;
     let log_blowup = expected_log_blowup.ok_or(AggregationError::EmptyBatch)?;
     let final_poly_len = expected_shape.final_poly_len;
@@ -393,11 +421,6 @@ pub fn prove_aggregation(
 
     let outer_proof =
         postcard::to_allocvec(&outer_proof.proof).map_err(|_| AggregationError::SerializeFailed)?;
-    let representative_proof = transaction_proofs
-        .first()
-        .ok_or(AggregationError::EmptyBatch)?
-        .stark_proof
-        .clone();
     let payload = AggregationProofV3Payload {
         version: AGGREGATION_PROOF_V3_VERSION,
         tx_count: transaction_proofs.len() as u32,

@@ -2302,7 +2302,7 @@ fn maybe_corrupt_aggregation_proof(mut proof_bytes: Vec<u8>) -> Vec<u8> {
 fn prepare_block_proof_bundle(
     client: &HegemonFullClient,
     parent_hash: H256,
-    _block_number: u64,
+    block_number: u64,
     candidate_txs: Vec<Vec<u8>>,
     da_params: DaParams,
     pending_ciphertexts: &PendingCiphertextStore,
@@ -2310,13 +2310,28 @@ fn prepare_block_proof_bundle(
     commitment_block_fast: bool,
 ) -> Result<PreparedBundle, String> {
     let started = Instant::now();
+    tracing::info!(
+        block_number,
+        tx_count = candidate_txs.len(),
+        candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>(),
+        "prepare_block_proof_bundle: start"
+    );
     let mut decoded = Vec::with_capacity(candidate_txs.len());
+    let decode_started = Instant::now();
     for ext_bytes in &candidate_txs {
         let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
             .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
         decoded.push(extrinsic);
     }
+    tracing::info!(
+        block_number,
+        tx_count = decoded.len(),
+        stage_ms = decode_started.elapsed().as_millis(),
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: decoded candidate extrinsics"
+    );
 
+    let da_started = Instant::now();
     let da_blob = build_da_blob_from_extrinsics(&decoded, Some(pending_ciphertexts))
         .map_err(|err| format!("failed to build DA blob for proven batch: {err}"))?;
     let encoding = state_da::encode_da_blob(&da_blob.blob, da_params)
@@ -2324,7 +2339,16 @@ fn prepare_block_proof_bundle(
     let da_root = encoding.root();
     let da_chunk_count = encoding.chunks().len() as u32;
     let resolved_ciphertexts = Some(da_blob.transactions.as_slice());
+    tracing::info!(
+        block_number,
+        da_blob_bytes = da_blob.blob.len(),
+        da_chunk_count,
+        stage_ms = da_started.elapsed().as_millis(),
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: built DA blob and encoding"
+    );
 
+    let commitment_started = Instant::now();
     let commitment_proof = build_commitment_block_proof(
         client,
         parent_hash,
@@ -2336,18 +2360,41 @@ fn prepare_block_proof_bundle(
         commitment_block_fast,
     )?
     .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
+    tracing::info!(
+        block_number,
+        commitment_bytes = commitment_proof.proof_bytes.len(),
+        stage_ms = commitment_started.elapsed().as_millis(),
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: built commitment proof"
+    );
 
+    let aggregation_started = Instant::now();
     let aggregation_outcome =
         build_aggregation_proof(&candidate_txs, resolved_ciphertexts, Some(pending_proofs))?;
     let aggregation_raw = aggregation_outcome
         .proof_bytes
         .ok_or_else(|| "candidate tx set has no aggregation proof material".to_string())?;
     let aggregation_proof = encode_aggregation_proof_bytes(aggregation_raw);
+    tracing::info!(
+        block_number,
+        aggregation_bytes = aggregation_proof.len(),
+        stage_ms = aggregation_started.elapsed().as_millis(),
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: built aggregation proof"
+    );
 
+    let commitment_started = Instant::now();
     let statement_hashes = statement_hashes_from_extrinsics(&decoded);
     let tx_statements_commitment =
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+    tracing::debug!(
+        block_number,
+        tx_count = statement_hashes.len(),
+        stage_ms = commitment_started.elapsed().as_millis(),
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: computed statements commitment"
+    );
     let tx_count = statement_hashes.len() as u32;
     if tx_count == 0 {
         return Err("candidate tx set has no shielded transfers".to_string());
@@ -2366,7 +2413,7 @@ fn prepare_block_proof_bundle(
         prover_claim: None,
     };
 
-    Ok(PreparedBundle {
+    let out = PreparedBundle {
         key: BundleMatchKey {
             parent_hash,
             tx_statements_commitment,
@@ -2375,7 +2422,14 @@ fn prepare_block_proof_bundle(
         payload,
         candidate_txs,
         build_ms: started.elapsed().as_millis(),
-    })
+    };
+    tracing::info!(
+        block_number,
+        tx_count,
+        build_ms = out.build_ms,
+        "prepare_block_proof_bundle: done"
+    );
+    Ok(out)
 }
 
 #[derive(Clone, Copy, Debug)]
