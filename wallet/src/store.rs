@@ -932,9 +932,19 @@ fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
         Ok(state) => Ok(state),
         Err(current_err) => match bincode::deserialize::<WalletStateV6Legacy>(bytes) {
             Ok(legacy) => Ok(legacy.into()),
-            Err(legacy_err) => Err(WalletError::Serialization(format!(
-                "failed to deserialize wallet state with current layout ({current_err}) or legacy v6 layout ({legacy_err})"
-            ))),
+            Err(v6_err) => {
+                match bincode::deserialize::<WalletStateV6LegacyNoCiphertextIndex>(bytes) {
+                    Ok(legacy) => Ok(legacy.into()),
+                    Err(no_ciphertext_err) => {
+                        match bincode::deserialize::<WalletStateV6LegacyNoCiphertextCursor>(bytes) {
+                        Ok(legacy) => Ok(legacy.into()),
+                        Err(no_cursor_err) => Err(WalletError::Serialization(format!(
+                            "failed to deserialize wallet state with current layout ({current_err}), legacy v6 layout ({v6_err}), legacy v6 layout without note ciphertext index ({no_ciphertext_err}), or legacy v6 layout without note ciphertext index/cursor ({no_cursor_err})"
+                        ))),
+                    }
+                    }
+                }
+            }
         },
     }
 }
@@ -998,6 +1008,88 @@ struct WalletStateV6Legacy {
     genesis_hash: Option<[u8; 32]>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TrackedNoteV6LegacyNoCiphertextIndex {
+    note: RecoveredNote,
+    position: u64,
+    #[serde(with = "serde_option_bytes48")]
+    nullifier: Option<[u8; 48]>,
+    spent: bool,
+    pending_spend: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV6LegacyNoCiphertextIndex {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNoteV6LegacyNoCiphertextIndex>,
+    pending: Vec<PendingTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV6LegacyNoCiphertextCursor {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNoteV6LegacyNoCiphertextIndex>,
+    pending: Vec<PendingTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    next_commitment_index: u64,
+    last_synced_height: u64,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+}
+
+fn tracked_notes_from_legacy_without_ciphertext_index(
+    notes: Vec<TrackedNoteV6LegacyNoCiphertextIndex>,
+) -> Vec<TrackedNote> {
+    notes
+        .into_iter()
+        .map(|note| TrackedNote {
+            note: note.note,
+            position: note.position,
+            ciphertext_index: note.position,
+            nullifier: note.nullifier,
+            spent: note.spent,
+            pending_spend: note.pending_spend,
+        })
+        .collect()
+}
+
+fn derive_next_ciphertext_index(notes: &[TrackedNote], next_commitment_index: u64) -> u64 {
+    let note_floor = notes
+        .iter()
+        .map(|note| note.ciphertext_index.saturating_add(1))
+        .max()
+        .unwrap_or(0);
+    next_commitment_index.max(note_floor)
+}
+
 impl From<WalletStateV6Legacy> for WalletState {
     fn from(legacy: WalletStateV6Legacy) -> Self {
         Self {
@@ -1014,6 +1106,61 @@ impl From<WalletStateV6Legacy> for WalletState {
             commitments: legacy.commitments,
             next_commitment_index: legacy.next_commitment_index,
             next_ciphertext_index: legacy.next_ciphertext_index,
+            last_synced_height: legacy.last_synced_height,
+            last_synced_block_hash: None,
+            outgoing_disclosures: legacy.outgoing_disclosures,
+            genesis_hash: legacy.genesis_hash,
+        }
+    }
+}
+
+impl From<WalletStateV6LegacyNoCiphertextIndex> for WalletState {
+    fn from(legacy: WalletStateV6LegacyNoCiphertextIndex) -> Self {
+        let notes = tracked_notes_from_legacy_without_ciphertext_index(legacy.notes);
+        let next_ciphertext_index =
+            derive_next_ciphertext_index(&notes, legacy.next_commitment_index)
+                .max(legacy.next_ciphertext_index);
+        Self {
+            mode: legacy.mode,
+            tree_depth: legacy.tree_depth,
+            root_secret: legacy.root_secret,
+            derived: legacy.derived,
+            incoming: legacy.incoming,
+            full_viewing_key: legacy.full_viewing_key,
+            outgoing: legacy.outgoing,
+            next_address_index: legacy.next_address_index,
+            notes,
+            pending: legacy.pending,
+            commitments: legacy.commitments,
+            next_commitment_index: legacy.next_commitment_index,
+            next_ciphertext_index,
+            last_synced_height: legacy.last_synced_height,
+            last_synced_block_hash: None,
+            outgoing_disclosures: legacy.outgoing_disclosures,
+            genesis_hash: legacy.genesis_hash,
+        }
+    }
+}
+
+impl From<WalletStateV6LegacyNoCiphertextCursor> for WalletState {
+    fn from(legacy: WalletStateV6LegacyNoCiphertextCursor) -> Self {
+        let notes = tracked_notes_from_legacy_without_ciphertext_index(legacy.notes);
+        let next_ciphertext_index =
+            derive_next_ciphertext_index(&notes, legacy.next_commitment_index);
+        Self {
+            mode: legacy.mode,
+            tree_depth: legacy.tree_depth,
+            root_secret: legacy.root_secret,
+            derived: legacy.derived,
+            incoming: legacy.incoming,
+            full_viewing_key: legacy.full_viewing_key,
+            outgoing: legacy.outgoing,
+            next_address_index: legacy.next_address_index,
+            notes,
+            pending: legacy.pending,
+            commitments: legacy.commitments,
+            next_commitment_index: legacy.next_commitment_index,
+            next_ciphertext_index,
             last_synced_height: legacy.last_synced_height,
             last_synced_block_hash: None,
             outgoing_disclosures: legacy.outgoing_disclosures,
@@ -1454,6 +1601,100 @@ mod tests {
         assert_eq!(reopened.last_synced_height().unwrap(), 42);
         assert_eq!(reopened.last_synced_block_hash().unwrap(), None);
         assert_eq!(reopened.genesis_hash().unwrap(), Some(expected_genesis));
+    }
+
+    #[test]
+    fn open_supports_legacy_v6_layout_without_note_ciphertext_index_and_cursor() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(99);
+        let note = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+        store.append_commitments(&[(0, commitment)]).unwrap();
+        store.register_ciphertext_index(0).unwrap();
+        store.record_recovered_note(recovered, 0, 0).unwrap();
+        store.set_last_synced_height(42).unwrap();
+        let expected_genesis = [9u8; 32];
+        store.set_genesis_hash(expected_genesis).unwrap();
+        drop(store);
+
+        let file_bytes = fs::read(&path).unwrap();
+        let file: WalletFile = bincode::deserialize(&file_bytes).unwrap();
+        let key = derive_key("passphrase", &file.salt).unwrap();
+        let cipher = ChaCha20Poly1305::new(&key.into());
+        let plaintext = cipher
+            .decrypt(
+                &file.nonce.into(),
+                Payload {
+                    msg: &file.ciphertext,
+                    aad: &file.salt,
+                },
+            )
+            .unwrap();
+        let current_state: WalletState = bincode::deserialize(&plaintext).unwrap();
+
+        let legacy_notes = current_state
+            .notes
+            .into_iter()
+            .map(|note| TrackedNoteV6LegacyNoCiphertextIndex {
+                note: note.note,
+                position: note.position,
+                nullifier: note.nullifier,
+                spent: note.spent,
+                pending_spend: note.pending_spend,
+            })
+            .collect();
+        let legacy_state = WalletStateV6LegacyNoCiphertextCursor {
+            mode: current_state.mode,
+            tree_depth: current_state.tree_depth,
+            root_secret: current_state.root_secret,
+            derived: current_state.derived,
+            incoming: current_state.incoming,
+            full_viewing_key: current_state.full_viewing_key,
+            outgoing: current_state.outgoing,
+            next_address_index: current_state.next_address_index,
+            notes: legacy_notes,
+            pending: current_state.pending,
+            commitments: current_state.commitments,
+            next_commitment_index: current_state.next_commitment_index,
+            last_synced_height: current_state.last_synced_height,
+            outgoing_disclosures: current_state.outgoing_disclosures,
+            genesis_hash: current_state.genesis_hash,
+        };
+        let legacy_plaintext = bincode::serialize(&legacy_state).unwrap();
+
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce[0] = 2;
+        let legacy_ciphertext = cipher
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &legacy_plaintext,
+                    aad: &file.salt,
+                },
+            )
+            .unwrap();
+        let legacy_file = WalletFile {
+            version: FILE_VERSION,
+            salt: file.salt,
+            nonce,
+            ciphertext: legacy_ciphertext,
+        };
+        let legacy_file_bytes = bincode::serialize(&legacy_file).unwrap();
+        fs::write(&path, legacy_file_bytes).unwrap();
+
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        assert_eq!(reopened.last_synced_height().unwrap(), 42);
+        assert_eq!(reopened.last_synced_block_hash().unwrap(), None);
+        assert_eq!(reopened.genesis_hash().unwrap(), Some(expected_genesis));
+        let notes = reopened.tracked_notes().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].position, notes[0].ciphertext_index);
     }
 
     #[test]

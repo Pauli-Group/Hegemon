@@ -30,6 +30,7 @@ default = ["std"]
 std = ["blake3/std", "serde?/std"]
 serde = ["dep:serde"]
 plonky3-e2e = []
+stark-fast = []
 
 [lints]
 workspace = true
