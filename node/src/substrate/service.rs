@@ -7568,7 +7568,36 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         };
         let pending_for_coord = {
             let pool = Arc::clone(&pool_bridge);
-            Arc::new(move |target_txs: usize| pool.ready_for_block(target_txs))
+            let tx_pool = transaction_pool.clone();
+            Arc::new(move |target_txs: usize| {
+                use sc_transaction_pool_api::{
+                    InPoolTransaction, TransactionPool as ScTransactionPool,
+                };
+
+                let mut txs = pool.ready_for_block(target_txs);
+                if txs.len() >= target_txs {
+                    return txs;
+                }
+
+                // Mining must include locally submitted RPC transactions too; they live in the
+                // substrate transaction pool and may not round-trip through the bridge network.
+                let mut seen = std::collections::HashSet::with_capacity(txs.len());
+                for tx in &txs {
+                    seen.insert(sp_core::hashing::blake2_256(tx));
+                }
+
+                for tx in tx_pool.ready() {
+                    let bytes = InPoolTransaction::data(&*tx).encode();
+                    let digest = sp_core::hashing::blake2_256(&bytes);
+                    if seen.insert(digest) {
+                        txs.push(bytes);
+                        if txs.len() >= target_txs {
+                            break;
+                        }
+                    }
+                }
+                txs
+            })
         };
         let build_for_coord = {
             let client = client.clone();
