@@ -23,7 +23,7 @@ use transaction_circuit::{
         Challenge, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash, POSEIDON2_RATE,
         TransactionProofP3, Val, config_with_fri,
     },
-    p3_verifier::infer_transaction_fri_profile_p3,
+    p3_verifier::{infer_transaction_fri_profile_p3, verify_transaction_proof_p3},
 };
 use zstd::stream::{decode_all, encode_all};
 
@@ -431,6 +431,35 @@ fn derive_statement_commitment_from_packed_public_values(
     tx_count: usize,
     pub_inputs_len: usize,
 ) -> Result<[u8; 48], ProofError> {
+    let tx_public_inputs = decode_public_inputs_from_packed_public_values(
+        packed_public_values,
+        tx_count,
+        pub_inputs_len,
+    )?;
+    statement_commitment_from_public_inputs(&tx_public_inputs)
+}
+
+fn statement_commitment_from_public_inputs(
+    tx_public_inputs: &[TransactionPublicInputsP3],
+) -> Result<[u8; 48], ProofError> {
+    let mut statement_hashes = Vec::with_capacity(tx_public_inputs.len());
+    for tx_public in tx_public_inputs {
+        let binding_hash = binding_hash_from_public_inputs(tx_public)?;
+        statement_hashes.push(statement_hash_from_binding_hash(&binding_hash));
+    }
+
+    CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes).map_err(|err| {
+        ProofError::AggregationProofV3Binding(format!(
+            "statement commitment derivation failed: {err}"
+        ))
+    })
+}
+
+fn decode_public_inputs_from_packed_public_values(
+    packed_public_values: &[u64],
+    tx_count: usize,
+    pub_inputs_len: usize,
+) -> Result<Vec<TransactionPublicInputsP3>, ProofError> {
     let ext_degree = <Challenge as BasedVectorSpace<Val>>::DIMENSION;
     if !packed_public_values.len().is_multiple_of(ext_degree) {
         return Err(ProofError::AggregationProofV3Decode(
@@ -460,7 +489,7 @@ fn derive_statement_commitment_from_packed_public_values(
     let per_tx_word_stride = per_tx_extension_values * ext_degree;
     let public_values_word_len = pub_inputs_len * ext_degree;
 
-    let mut statement_hashes = Vec::with_capacity(tx_count);
+    let mut tx_public_inputs = Vec::with_capacity(tx_count);
     for tx_index in 0..tx_count {
         let tx_offset_words = tx_index * per_tx_word_stride;
         let tx_public_words =
@@ -486,15 +515,9 @@ fn derive_statement_commitment_from_packed_public_values(
                     "tx {tx_index} public input decode failed: {err}"
                 ))
             })?;
-        let binding_hash = binding_hash_from_public_inputs(&tx_public)?;
-        statement_hashes.push(statement_hash_from_binding_hash(&binding_hash));
+        tx_public_inputs.push(tx_public);
     }
-
-    CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes).map_err(|err| {
-        ProofError::AggregationProofV3Binding(format!(
-            "statement commitment derivation failed: {err}"
-        ))
-    })
+    Ok(tx_public_inputs)
 }
 
 pub fn warm_aggregation_cache(
@@ -600,6 +623,34 @@ pub fn warm_aggregation_cache_from_proof_bytes(
             "inner_public_inputs_len must be non-zero".to_string(),
         ));
     }
+    if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V1 {
+        return Err(ProofError::AggregationProofV3Decode(format!(
+            "unsupported packed public values encoding version {}",
+            payload.public_values_encoding
+        )));
+    }
+    let derived_statement_commitment = derive_statement_commitment_from_packed_public_values(
+        &payload.packed_public_values,
+        tx_count,
+        pub_inputs_len,
+    )?;
+    if derived_statement_commitment != *expected_statement_commitment {
+        return Err(ProofError::AggregationProofV3Binding(
+            "statement commitment derived from aggregated public inputs does not match expected commitment"
+                .to_string(),
+        ));
+    }
+    if payload.outer_proof.is_empty() {
+        if tx_count == 1 {
+            return Ok(AggregationCacheWarmup {
+                cache_hit: false,
+                cache_build_ms: 0,
+            });
+        }
+        return Err(ProofError::AggregationProofV3Decode(
+            "outer aggregation proof missing".to_string(),
+        ));
+    }
 
     let representative_proof: TransactionProofP3 =
         postcard::from_bytes(&payload.representative_proof).map_err(|_| {
@@ -686,15 +737,28 @@ pub fn verify_aggregation_proof_with_metrics(
             "representative proof missing".to_string(),
         ));
     }
-    if payload.outer_proof.is_empty() {
-        return Err(ProofError::AggregationProofV3Decode(
-            "outer aggregation proof missing".to_string(),
-        ));
-    }
     let pub_inputs_len = payload.inner_public_inputs_len as usize;
     if pub_inputs_len == 0 {
         return Err(ProofError::AggregationProofV3Decode(
             "inner_public_inputs_len must be non-zero".to_string(),
+        ));
+    }
+    if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V1 {
+        return Err(ProofError::AggregationProofV3Decode(format!(
+            "unsupported packed public values encoding version {}",
+            payload.public_values_encoding
+        )));
+    }
+    let tx_public_inputs = decode_public_inputs_from_packed_public_values(
+        &payload.packed_public_values,
+        tx_count,
+        pub_inputs_len,
+    )?;
+    let derived_statement_commitment = statement_commitment_from_public_inputs(&tx_public_inputs)?;
+    if derived_statement_commitment != *expected_statement_commitment {
+        return Err(ProofError::AggregationProofV3Binding(
+            "statement commitment derived from aggregated public inputs does not match expected commitment"
+                .to_string(),
         ));
     }
 
@@ -704,6 +768,33 @@ pub fn verify_aggregation_proof_with_metrics(
                 "representative proof encoding invalid".to_string(),
             )
         })?;
+    if payload.outer_proof.is_empty() {
+        if tx_count != 1 {
+            return Err(ProofError::AggregationProofV3Decode(
+                "outer aggregation proof missing".to_string(),
+            ));
+        }
+        verify_transaction_proof_p3(
+            &representative_proof,
+            tx_public_inputs.first().ok_or_else(|| {
+                ProofError::AggregationProofV3Decode(
+                    "singleton aggregation payload missing public inputs".to_string(),
+                )
+            })?,
+        )
+        .map_err(|err| {
+            ProofError::AggregationProofVerification(format!(
+                "singleton representative proof verification failed: {err}"
+            ))
+        })?;
+        return Ok(AggregationVerifyMetrics {
+            cache_hit: false,
+            cache_build_ms: 0,
+            verify_batch_ms: 0,
+            total_ms: start_total.elapsed().as_millis(),
+        });
+    }
+
     let shape = ProofShape {
         degree_bits: representative_proof.degree_bits,
         commit_phase_len: representative_proof
@@ -735,27 +826,10 @@ pub fn verify_aggregation_proof_with_metrics(
                 "outer aggregation proof encoding invalid".to_string(),
             )
         })?;
-    if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V1 {
-        return Err(ProofError::AggregationProofV3Decode(format!(
-            "unsupported packed public values encoding version {}",
-            payload.public_values_encoding
-        )));
-    }
     let public_values = unpack_recursion_public_values(&payload.packed_public_values);
     if public_values.is_empty() {
         return Err(ProofError::AggregationProofV3Decode(
             "packed_public_values missing".to_string(),
-        ));
-    }
-    let derived_statement_commitment = derive_statement_commitment_from_packed_public_values(
-        &payload.packed_public_values,
-        tx_count,
-        pub_inputs_len,
-    )?;
-    if derived_statement_commitment != *expected_statement_commitment {
-        return Err(ProofError::AggregationProofV3Binding(
-            "statement commitment derived from aggregated public inputs does not match expected commitment"
-                .to_string(),
         ));
     }
 
@@ -915,5 +989,24 @@ mod tests {
         let err = derive_statement_commitment_from_packed_public_values(&packed, 1, pub_inputs_len)
             .expect_err("non-base-lifted input should fail");
         assert!(matches!(err, ProofError::AggregationProofV3Binding(_)));
+    }
+
+    #[test]
+    fn decode_public_inputs_from_packed_public_values_singleton_roundtrip() {
+        let mut tx = TransactionPublicInputsP3::default();
+        tx.input_flags[0] = Val::ONE;
+        tx.output_flags[0] = Val::ONE;
+        tx.merkle_root[0] = Val::from_u64(99);
+        tx.nullifiers[0][0] = Val::from_u64(100);
+        tx.commitments[0][0] = Val::from_u64(101);
+        tx.ciphertext_hashes[0][0] = Val::from_u64(102);
+        tx.fee = Val::from_u64(3);
+
+        let pub_inputs_len = tx.to_vec().len();
+        let packed = pack_public_inputs_with_padding(&[tx.clone()], pub_inputs_len);
+        let decoded = decode_public_inputs_from_packed_public_values(&packed, 1, pub_inputs_len)
+            .expect("decode packed singleton public inputs");
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].to_vec(), tx.to_vec());
     }
 }

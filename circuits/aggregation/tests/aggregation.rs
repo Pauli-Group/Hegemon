@@ -224,5 +224,6 @@ fn aggregation_payload_validation_rejects_invalid_encodings() {
     assert!(matches!(
         err,
         consensus::ProofError::AggregationProofV3Decode(_)
+            | consensus::ProofError::AggregationProofV3Binding(_)
     ));
 }
