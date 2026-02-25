@@ -4708,6 +4708,7 @@ impl PqServiceConfig {
     /// - `HEGEMON_SEEDS`: Comma-separated list of seed peers (host[:port], defaults to 30333)
     /// - `HEGEMON_LISTEN_ADDR`: Listen address (overrides --port)
     /// - `HEGEMON_MAX_PEERS`: Maximum peers (default: 50)
+    /// - `HEGEMON_PQ_STRICT_COMPATIBILITY`: Require genesis-compatible peers for discovery traffic (default: true)
     pub fn from_config(config: &Configuration) -> Self {
         let verbose = std::env::var("HEGEMON_PQ_VERBOSE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
@@ -5732,25 +5733,40 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 if let Err(err) = peer_store.load() {
                     tracing::warn!(error = %err, "Failed to load PQ peer discovery store");
                 }
+                let strict_compatibility = std::env::var("HEGEMON_PQ_STRICT_COMPATIBILITY")
+                    .ok()
+                    .map(|value| {
+                        matches!(
+                            value.to_ascii_lowercase().as_str(),
+                            "1" | "true" | "yes" | "on"
+                        )
+                    })
+                    .unwrap_or(true);
                 // Opportunistically dial a small number of cached peers on startup. This helps
                 // nodes recover connectivity even if a seed is temporarily unreachable.
                 use crate::substrate::discovery::is_dialable_addr;
-                let cached_dials: Vec<_> = peer_store
-                    .addresses()
-                    .into_iter()
-                    .filter(|addr| is_dialable_addr(addr))
-                    .take(8)
-                    .collect();
-                if !cached_dials.is_empty() {
-                    let pq_backend_for_cached = Arc::clone(&pq_backend);
-                    task_manager.spawn_handle().spawn(
-                        "pq-discovery-cached-dials",
-                        Some("network"),
-                        async move {
-                            for addr in cached_dials {
-                                let _ = pq_backend_for_cached.connect(addr).await;
-                            }
-                        },
+                if !strict_compatibility {
+                    let cached_dials: Vec<_> = peer_store
+                        .addresses()
+                        .into_iter()
+                        .filter(|addr| is_dialable_addr(addr))
+                        .take(8)
+                        .collect();
+                    if !cached_dials.is_empty() {
+                        let pq_backend_for_cached = Arc::clone(&pq_backend);
+                        task_manager.spawn_handle().spawn(
+                            "pq-discovery-cached-dials",
+                            Some("network"),
+                            async move {
+                                for addr in cached_dials {
+                                    let _ = pq_backend_for_cached.connect(addr).await;
+                                }
+                            },
+                        );
+                    }
+                } else {
+                    tracing::info!(
+                        "Strict compatibility enabled; skipping cached discovery dials at startup"
                     );
                 }
                 let discovery_listen_port = pq_service_config.listen_addr.port();
@@ -5804,6 +5820,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                            is_dialable_addr, DiscoveryMessage, DEFAULT_ADDR_LIMIT,
 	                            DEFAULT_DIAL_BATCH, DEFAULT_PEER_GRAPH_LIMIT, DISCOVERY_PROTOCOL,
 	                        };
+	                        use crate::substrate::sync::PeerCompatibility;
 	                        use rand::seq::SliceRandom;
 	                        use std::collections::HashMap;
 	                        use std::collections::HashSet;
@@ -5853,6 +5870,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                        tracing::info!(
 	                            min_peers = discovery_min_peers,
 	                            tick_secs = discovery_tick_secs,
+	                            strict_compatibility,
 	                            "PQ discovery enabled (address exchange)"
 	                        );
 
@@ -5914,19 +5932,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             last_seen: Instant::now(),
                                         },
                                     );
-                                    let msg = DiscoveryMessage::GetPeerGraph {
-                                        limit: DEFAULT_PEER_GRAPH_LIMIT,
-                                    };
-                                    if let Ok(encoded) = bincode::serialize(&msg) {
-                                        let _ = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                DISCOVERY_PROTOCOL.to_string(),
-                                                encoded,
-                                            )
-                                            .await;
-                                    }
-
                                     // Record dialed addresses so we can share them with others.
                                     if is_outbound && is_dialable_addr(&addr) {
                                         if let Err(err) = peer_store.record_connected(addr) {
@@ -5939,29 +5944,49 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
 
-                                    // Send discovery hello + request addresses.
-                                    let hello = DiscoveryMessage::Hello { listen_port };
-                                    if let Ok(encoded) = bincode::serialize(&hello) {
-                                        let _ = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                DISCOVERY_PROTOCOL.to_string(),
-                                                encoded,
-                                            )
-                                            .await;
-                                    }
+                                    if !strict_compatibility {
+                                        let msg = DiscoveryMessage::GetPeerGraph {
+                                            limit: DEFAULT_PEER_GRAPH_LIMIT,
+                                        };
+                                        if let Ok(encoded) = bincode::serialize(&msg) {
+                                            let _ = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    DISCOVERY_PROTOCOL.to_string(),
+                                                    encoded,
+                                                )
+                                                .await;
+                                        }
 
-                                    let get_addrs = DiscoveryMessage::GetAddrs {
-                                        limit: DEFAULT_ADDR_LIMIT,
-                                    };
-                                    if let Ok(encoded) = bincode::serialize(&get_addrs) {
-                                        let _ = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                DISCOVERY_PROTOCOL.to_string(),
-                                                encoded,
-                                            )
-                                            .await;
+                                        // Send discovery hello + request addresses.
+                                        let hello = DiscoveryMessage::Hello { listen_port };
+                                        if let Ok(encoded) = bincode::serialize(&hello) {
+                                            let _ = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    DISCOVERY_PROTOCOL.to_string(),
+                                                    encoded,
+                                                )
+                                                .await;
+                                        }
+
+                                        let get_addrs = DiscoveryMessage::GetAddrs {
+                                            limit: DEFAULT_ADDR_LIMIT,
+                                        };
+                                        if let Ok(encoded) = bincode::serialize(&get_addrs) {
+                                            let _ = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    DISCOVERY_PROTOCOL.to_string(),
+                                                    encoded,
+                                                )
+                                                .await;
+                                        }
+                                    } else {
+                                        tracing::debug!(
+                                            peer = %hex::encode(peer_id),
+                                            "Strict compatibility enabled; delaying discovery exchange until peer is verified"
+                                        );
                                     }
 
                                     // Send our best block to the new peer so they know our chain tip
@@ -6062,6 +6087,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
 	                                    // Handle discovery protocol messages
 	                                    if protocol == DISCOVERY_PROTOCOL {
+	                                        if strict_compatibility {
+	                                            let compatibility = {
+	                                                let sync = sync_service_clone.lock().await;
+	                                                sync.peer_compatibility(&peer_id)
+	                                            };
+	                                            if !matches!(compatibility, PeerCompatibility::Compatible) {
+	                                                tracing::debug!(
+	                                                    peer = %hex::encode(peer_id),
+	                                                    compatibility = ?compatibility,
+	                                                    "Ignoring discovery message from non-compatible peer"
+	                                                );
+	                                                continue;
+	                                            }
+	                                        }
 	                                        let decoded =
 	                                            bincode::deserialize::<DiscoveryMessage>(&data);
 	                                        match decoded {
@@ -6376,13 +6415,35 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                            }
 	                                }
 	                                _ = discovery_tick.tick() => {
-	                                    let current_peers = pq_backend.peer_count().await;
+	                                    let current_peers = if strict_compatibility {
+	                                        let sync = sync_service_clone.lock().await;
+	                                        connected_peers
+	                                            .keys()
+	                                            .filter(|peer_id| {
+	                                                matches!(
+	                                                    sync.peer_compatibility(peer_id),
+	                                                    PeerCompatibility::Compatible
+	                                                )
+	                                            })
+	                                            .count()
+	                                    } else {
+	                                        pq_backend.peer_count().await
+	                                    };
 	                                    if current_peers >= discovery_min_peers {
 	                                        continue;
 	                                    }
 
 	                                    // Ask a random connected peer for addresses.
 	                                    let mut peers: Vec<_> = connected_peers.keys().copied().collect();
+	                                    if strict_compatibility {
+	                                        let sync = sync_service_clone.lock().await;
+	                                        peers.retain(|peer_id| {
+	                                            matches!(
+	                                                sync.peer_compatibility(peer_id),
+	                                                PeerCompatibility::Compatible
+	                                            )
+	                                        });
+	                                    }
 	                                    peers.shuffle(&mut rand::thread_rng());
 	                                    if let Some(peer_id) = peers.first().copied() {
 	                                        let get_addrs = DiscoveryMessage::GetAddrs {
@@ -6397,6 +6458,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                                )
 	                                                .await;
 	                                        }
+	                                    }
+
+	                                    if strict_compatibility {
+	                                        continue;
 	                                    }
 
 	                                    // Dial a small batch of recent peers from the store.
@@ -6440,7 +6505,16 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    }
 	                                }
 	                                _ = peer_graph_tick.tick() => {
-	                                    let peers: Vec<_> = connected_peers.keys().copied().collect();
+	                                    let mut peers: Vec<_> = connected_peers.keys().copied().collect();
+	                                    if strict_compatibility {
+	                                        let sync = sync_service_clone.lock().await;
+	                                        peers.retain(|peer_id| {
+	                                            matches!(
+	                                                sync.peer_compatibility(peer_id),
+	                                                PeerCompatibility::Compatible
+	                                            )
+	                                        });
+	                                    }
 	                                    if peers.is_empty() {
 	                                        continue;
 	                                    }
@@ -6483,9 +6557,31 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             interval.tick().await;
 
                             let mut sync = sync_service_for_tick.lock().await;
+                            let disconnect_incompatible = sync.drain_incompatible_peers();
 
                             // Tick the sync state machine
-                            if let Some((peer_id, request)) = sync.tick() {
+                            let next_request = sync.tick();
+
+                            sync_status_for_tick.store(sync.is_syncing(), Ordering::Relaxed);
+
+                            // Log sync status periodically
+                            let state = sync.state();
+                            if sync.is_syncing() {
+                                tracing::debug!(
+                                    state = ?state,
+                                    peers = sync.peer_count(),
+                                    "Sync in progress"
+                                );
+                            }
+                            drop(sync);
+
+                            for peer_id in disconnect_incompatible {
+                                sync_handle_for_tick
+                                    .disconnect(peer_id, "incompatible genesis")
+                                    .await;
+                            }
+
+                            if let Some((peer_id, request)) = next_request {
                                 // Wrap request in SyncMessage for unambiguous encoding
                                 let msg = SyncMessage::Request(request);
                                 let encoded = msg.encode();
@@ -6499,18 +6595,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         "Failed to send sync request"
                                     );
                                 }
-                            }
-
-                            sync_status_for_tick.store(sync.is_syncing(), Ordering::Relaxed);
-
-                            // Log sync status periodically
-                            let state = sync.state();
-                            if sync.is_syncing() {
-                                tracing::debug!(
-                                    state = ?state,
-                                    peers = sync.peer_count(),
-                                    "Sync in progress"
-                                );
                             }
                         }
                     });

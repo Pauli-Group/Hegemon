@@ -799,6 +799,25 @@ impl PqNetworkHandle {
         self.peers.read().await.keys().copied().collect()
     }
 
+    /// Disconnect a peer and emit a disconnection event.
+    pub async fn disconnect(&self, peer_id: [u8; 32], reason: &str) {
+        if self.peers.write().await.remove(&peer_id).is_some() {
+            let _ = self
+                .event_tx
+                .send(PqNetworkEvent::PeerDisconnected {
+                    peer_id,
+                    reason: reason.to_string(),
+                })
+                .await;
+
+            tracing::info!(
+                peer_id = %hex::encode(peer_id),
+                reason = reason,
+                "Peer disconnected via handle"
+            );
+        }
+    }
+
     /// Broadcast data to all connected peers via channels
     ///
     /// This is used by the mining worker to broadcast newly mined blocks
