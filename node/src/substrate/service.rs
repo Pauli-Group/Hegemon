@@ -113,13 +113,13 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    DEFAULT_DIFFICULTY_BITS, FullBackend, HegemonFullClient, HegemonPowBlockImport,
-    HegemonSelectChain, HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
-    StateExecutionResult,
+    FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
+    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
+    DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
-    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig, create_production_mining_worker,
-    create_production_mining_worker_mock_broadcast,
+    create_production_mining_worker, create_production_mining_worker_mock_broadcast,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -140,20 +140,20 @@ use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    Blake3Algorithm, Blake3Seal, ParallelProofVerifier, aggregation_proof_uncompressed_len,
-    encode_aggregation_proof_bytes,
+    aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes, Blake3Algorithm,
+    Blake3Seal, ParallelProofVerifier,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
-use hyper::http::{Method, header};
+use hyper::http::{header, Method};
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE, FeeParameters};
-use rand::{RngCore, rngs::OsRng};
+use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
+use rand::{rngs::OsRng, RngCore};
 use sc_client_api::BlockchainEvents;
-use sc_service::{Configuration, KeystoreContainer, TaskManager, error::Error as ServiceError};
+use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ProvideRuntimeApi, StorageChanges};
@@ -165,11 +165,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
 };
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 use wallet::address::ShieldedAddress;
@@ -179,9 +179,8 @@ use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
-use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::{Felt, bytes48_to_felts, ciphertext_hash_bytes};
+use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 
@@ -1931,7 +1930,11 @@ const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
     let shards = len.div_ceil(chunk_size);
-    if shards == 0 { 1 } else { shards }
+    if shards == 0 {
+        1
+    } else {
+        shards
+    }
 }
 
 fn da_parity_shards_for_data(data_shards: usize) -> usize {
@@ -2161,61 +2164,6 @@ async fn sample_da_for_block(
     Ok(build)
 }
 
-fn build_commitment_tree_from_chain(
-    client: &HegemonFullClient,
-    parent_hash: H256,
-) -> Result<CommitmentTree, String> {
-    let api = client.runtime_api();
-    let total = api
-        .encrypted_note_count(parent_hash)
-        .map_err(|e| format!("runtime api error (encrypted_note_count): {e:?}"))?;
-    let expected_root = api
-        .merkle_root(parent_hash)
-        .map_err(|e| format!("runtime api error (merkle_root): {e:?}"))?;
-
-    let depth = pallet_shielded_pool::types::MERKLE_TREE_DEPTH as usize;
-    let mut tree =
-        CommitmentTree::new(depth).map_err(|e| format!("commitment tree init failed: {e}"))?;
-
-    if total == 0 {
-        if tree.root() != expected_root {
-            return Err("commitment tree root mismatch for empty tree".into());
-        }
-        return Ok(tree);
-    }
-
-    let mut expected_index = 0u64;
-    while expected_index < total {
-        let batch = api
-            .get_commitments(parent_hash, expected_index, 256)
-            .map_err(|e| format!("runtime api error (get_commitments): {e:?}"))?;
-        if batch.is_empty() {
-            return Err("commitments batch returned empty before expected count".into());
-        }
-        for (index, commitment) in batch {
-            if index != expected_index {
-                return Err(format!(
-                    "commitment index mismatch: expected {}, got {}",
-                    expected_index, index
-                ));
-            }
-            tree.append(commitment)
-                .map_err(|e| format!("commitment tree append failed: {e}"))?;
-            expected_index += 1;
-        }
-    }
-
-    if tree.root() != expected_root {
-        return Err(format!(
-            "commitment tree root mismatch: expected {}, got {}",
-            hex::encode(expected_root),
-            hex::encode(tree.root())
-        ));
-    }
-
-    Ok(tree)
-}
-
 fn build_commitment_block_proof(
     client: &HegemonFullClient,
     parent_hash: H256,
@@ -2235,7 +2183,10 @@ fn build_commitment_block_proof(
         return Ok(None);
     }
 
-    let mut tree = build_commitment_tree_from_chain(client, parent_hash)?;
+    // Use compact runtime snapshots (root/frontier/history) instead of replaying the entire
+    // on-chain commitment set for every proving job. This keeps per-job setup bounded as chain
+    // height grows.
+    let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
     let mut decoded = Vec::with_capacity(extrinsics.len());
     for ext_bytes in extrinsics {
         let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
@@ -2260,7 +2211,7 @@ fn build_commitment_block_proof(
     let starting_root = tree.root();
     for (index, proof) in proofs.iter().enumerate() {
         let anchor = proof.public_inputs.merkle_root;
-        if !tree.root_history().contains(&anchor) {
+        if !tree.contains_root(&anchor) {
             return Err(format!(
                 "transaction {index} anchor not found in commitment tree history"
             ));
@@ -4031,8 +3982,8 @@ pub fn wire_block_builder_api(
 use crate::substrate::mining_worker::BlockTemplate;
 use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult};
 use sp_consensus::BlockOrigin;
-use sp_runtime::DigestItem;
 use sp_runtime::generic::Digest;
+use sp_runtime::DigestItem;
 
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
@@ -6277,7 +6228,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 task_manager
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
-                        use crate::substrate::network_bridge::{SYNC_PROTOCOL, SyncMessage};
+                        use crate::substrate::network_bridge::{SyncMessage, SYNC_PROTOCOL};
 
                         let mut interval =
                             tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -6353,7 +6304,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("tx-propagation", Some("txpool"), async move {
                         use crate::substrate::network_bridge::{
-                            TRANSACTIONS_PROTOCOL, TransactionMessage,
+                            TransactionMessage, TRANSACTIONS_PROTOCOL,
                         };
                         use sc_transaction_pool_api::{
                             InPoolTransaction, TransactionPool as ScTransactionPool,
@@ -7822,10 +7773,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
-        use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
         use sc_rpc::state::{ChildStateApiServer, StateApiServer};
         use sc_rpc::system::{System, SystemApiServer};
+        use sc_rpc::SubscriptionTaskExecutor;
         use sc_utils::mpsc::tracing_unbounded;
 
         let mut module = RpcModule::new(());
@@ -7999,7 +7950,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     // But libp2p uses protobuf encoding for keys in PeerId
                     // Simpler: use identity multihash with raw 32 bytes
                     // 0x00 = identity hash, 0x20 = 32 bytes length
-                    let mut multihash = vec![0x00, 0x24]; // identity + 36 bytes
+                    let mut multihash = vec![0x00, 0x24];
+                    // identity + 36 bytes
                     // Add ed25519 public key protobuf prefix (type=1, length=32)
                     multihash.extend_from_slice(&[0x08, 0x01, 0x12, 0x20]);
                     multihash.extend_from_slice(id);
@@ -8557,13 +8509,10 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(
-        &crate::substrate::mining_worker::BlockTemplate,
-        &Blake3Seal,
-    ) -> Result<H256, String>
-    + Send
-    + Sync
-    + 'static {
+    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String>
+           + Send
+           + Sync
+           + 'static {
         let stats = self.stats.clone();
         let best_number = self.best_number.clone();
         let best_hash = self.best_hash.clone();

@@ -743,6 +743,7 @@ where
         let check_interval = Duration::from_millis(self.config.work_check_interval_ms);
         let mut current_template: Option<BlockTemplate> = None;
         let mut last_best_hash = H256::zero();
+        let mut last_pending_root = H256::zero();
         let mut was_syncing = false;
         let mut was_mining = false;
 
@@ -752,6 +753,7 @@ where
                 if was_mining {
                     self.pow_handle.clear_work();
                     current_template = None;
+                    last_pending_root = H256::zero();
                     was_mining = false;
                 }
                 tokio::time::sleep(check_interval).await;
@@ -771,6 +773,7 @@ where
                 was_syncing = true;
                 self.pow_handle.clear_work();
                 current_template = None;
+                last_pending_root = H256::zero();
                 tokio::time::sleep(check_interval).await;
                 continue;
             }
@@ -781,8 +784,11 @@ where
 
             // Check for new work (best block changed)
             let best_hash = self.chain_state.best_hash();
+            let pending_root = compute_extrinsics_root(&self.chain_state.pending_transactions());
+            let parent_changed = best_hash != last_best_hash;
+            let pending_changed = pending_root != last_pending_root;
 
-            if best_hash != last_best_hash || current_template.is_none() {
+            if parent_changed || pending_changed || current_template.is_none() {
                 // Build block template with state execution (Task 11.4)
                 // This handles:
                 // - Getting pending transactions
@@ -813,6 +819,8 @@ where
 
                 if self.config.verbose {
                     tracing::debug!(
+                        parent_changed,
+                        pending_changed,
                         height = template.number,
                         parent_hash = %hex::encode(template.parent_hash.as_bytes()),
                         difficulty = format!("{:08x}", template.difficulty_bits),
@@ -824,6 +832,7 @@ where
 
                 current_template = Some(template);
                 last_best_hash = best_hash;
+                last_pending_root = pending_root;
             }
 
             // Check for solutions
@@ -894,6 +903,7 @@ where
 
                         // Clear template to force new work
                         current_template = None;
+                        last_pending_root = H256::zero();
                     }
                     Err(e) => {
                         tracing::error!(
