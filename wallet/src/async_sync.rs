@@ -114,6 +114,30 @@ impl AsyncWalletSyncEngine {
                 }
             }
 
+            // Detect deep rewrites when genesis stays the same but historical blocks changed.
+            // Without this check, a wallet can keep stale commitments and build invalid anchors.
+            let stored_height = self.store.last_synced_height()?;
+            if stored_height > 0 {
+                if let Some(stored_hash) = self.store.last_synced_block_hash()? {
+                    if let Some(observed_hash) = self.client.block_hash(stored_height).await? {
+                        if observed_hash != stored_hash {
+                            if attempt == 0 {
+                                eprintln!(
+                                    "Detected chain rewrite at height {} (wallet={}, node={}); resetting wallet sync state...",
+                                    stored_height,
+                                    hex::encode(stored_hash),
+                                    hex::encode(observed_hash),
+                                );
+                                self.store.reset_sync_state()?;
+                                self.store.set_genesis_hash(metadata.genesis_hash)?;
+                                continue;
+                            }
+                            return Err(WalletError::InvalidState("chain rewrite detected"));
+                        }
+                    }
+                }
+            }
+
             // Get current note status from node
             let note_status = self.client.note_status().await?;
             self.store.set_tree_depth(note_status.depth as u32)?;
@@ -308,6 +332,8 @@ impl AsyncWalletSyncEngine {
             // Update pending transactions
             let latest = self.client.latest_block().await?;
             self.store.refresh_pending(latest.height, &nullifier_set)?;
+            let latest_hash = parse_hash_32(&latest.hash)?;
+            self.store.set_last_synced_block_hash(latest_hash)?;
             self.store.set_last_synced_height(latest.height)?;
 
             return Ok(outcome);
@@ -386,6 +412,21 @@ impl AsyncWalletSyncEngine {
 
         Ok(())
     }
+}
+
+fn parse_hash_32(input: &str) -> Result<[u8; 32], WalletError> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex::decode(trimmed)
+        .map_err(|e| WalletError::Serialization(format!("Invalid hash hex: {e}")))?;
+    if bytes.len() != 32 {
+        return Err(WalletError::Serialization(format!(
+            "invalid hash length: expected 32 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 /// Sync engine with shared state for concurrent access

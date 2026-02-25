@@ -847,8 +847,50 @@ fn tx_send(
             .await
             .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
 
-        let built = build_transaction(&store, &recipients, params.fee)
+        let mut built = build_transaction(&store, &recipients, params.fee)
             .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
+
+        let mut anchor_attempt = 0u8;
+        loop {
+            let anchor_valid = client
+                .is_valid_anchor(&built.bundle.anchor)
+                .await
+                .map_err(|e| {
+                    WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                })?;
+            if anchor_valid {
+                break;
+            }
+
+            if anchor_attempt >= 2 {
+                return Err(WalletdError::new(
+                    WalletdErrorCode::TransactionFailed,
+                    format!(
+                        "wallet built an invalid anchor ({}) even after resync + full rescan",
+                        hex::encode(built.bundle.anchor)
+                    ),
+                ));
+            }
+
+            if anchor_attempt == 1 {
+                store.reset_sync_state().map_err(WalletdError::internal)?;
+            }
+            anchor_attempt = anchor_attempt.saturating_add(1);
+
+            engine
+                .sync_once()
+                .await
+                .map_err(|e| WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string()))?;
+            precheck_nullifiers(&store, &client, &recipients, params.fee)
+                .await
+                .map_err(|e| {
+                    WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                })?;
+            built = build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+            })?;
+        }
+
         store
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
