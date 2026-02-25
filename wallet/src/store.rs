@@ -143,7 +143,7 @@ impl WalletStore {
             )
             .map_err(|_| WalletError::DecryptionFailure)?;
         let state: WalletState = match file.version {
-            FILE_VERSION => bincode::deserialize(&plaintext)?,
+            FILE_VERSION => deserialize_wallet_state(&plaintext)?,
             other => {
                 return Err(WalletError::Serialization(format!(
                     "unsupported wallet file version {other} (expected {FILE_VERSION})"
@@ -927,6 +927,18 @@ impl WalletStore {
     }
 }
 
+fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    match bincode::deserialize::<WalletState>(bytes) {
+        Ok(state) => Ok(state),
+        Err(current_err) => match bincode::deserialize::<WalletStateV6Legacy>(bytes) {
+            Ok(legacy) => Ok(legacy.into()),
+            Err(legacy_err) => Err(WalletError::Serialization(format!(
+                "failed to deserialize wallet state with current layout ({current_err}) or legacy v6 layout ({legacy_err})"
+            ))),
+        },
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WalletMode {
     Full,
@@ -959,6 +971,78 @@ struct WalletState {
     /// Used to detect chain resets/mismatches.
     #[serde(default, with = "serde_option_bytes32")]
     genesis_hash: Option<[u8; 32]>,
+}
+
+/// Legacy v6 layout before `last_synced_block_hash` was added.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV6Legacy {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+}
+
+impl From<WalletStateV6Legacy> for WalletState {
+    fn from(legacy: WalletStateV6Legacy) -> Self {
+        Self {
+            mode: legacy.mode,
+            tree_depth: legacy.tree_depth,
+            root_secret: legacy.root_secret,
+            derived: legacy.derived,
+            incoming: legacy.incoming,
+            full_viewing_key: legacy.full_viewing_key,
+            outgoing: legacy.outgoing,
+            next_address_index: legacy.next_address_index,
+            notes: legacy.notes,
+            pending: legacy.pending,
+            commitments: legacy.commitments,
+            next_commitment_index: legacy.next_commitment_index,
+            next_ciphertext_index: legacy.next_ciphertext_index,
+            last_synced_height: legacy.last_synced_height,
+            last_synced_block_hash: None,
+            outgoing_disclosures: legacy.outgoing_disclosures,
+            genesis_hash: legacy.genesis_hash,
+        }
+    }
+}
+
+impl From<WalletState> for WalletStateV6Legacy {
+    fn from(state: WalletState) -> Self {
+        Self {
+            mode: state.mode,
+            tree_depth: state.tree_depth,
+            root_secret: state.root_secret,
+            derived: state.derived,
+            incoming: state.incoming,
+            full_viewing_key: state.full_viewing_key,
+            outgoing: state.outgoing,
+            next_address_index: state.next_address_index,
+            notes: state.notes,
+            pending: state.pending,
+            commitments: state.commitments,
+            next_commitment_index: state.next_commitment_index,
+            next_ciphertext_index: state.next_ciphertext_index,
+            last_synced_height: state.last_synced_height,
+            outgoing_disclosures: state.outgoing_disclosures,
+            genesis_hash: state.genesis_hash,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1317,6 +1401,59 @@ mod tests {
         let reopened = WalletStore::open(&path, "passphrase").unwrap();
         let addr2 = reopened.next_address().unwrap();
         assert_ne!(addr1.pk_recipient, addr2.pk_recipient);
+    }
+
+    #[test]
+    fn open_supports_legacy_v6_layout_without_block_hash() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        store.set_last_synced_height(42).unwrap();
+        let expected_genesis = [7u8; 32];
+        store.set_genesis_hash(expected_genesis).unwrap();
+        drop(store);
+
+        let file_bytes = fs::read(&path).unwrap();
+        let file: WalletFile = bincode::deserialize(&file_bytes).unwrap();
+        let key = derive_key("passphrase", &file.salt).unwrap();
+        let cipher = ChaCha20Poly1305::new(&key.into());
+        let plaintext = cipher
+            .decrypt(
+                &file.nonce.into(),
+                Payload {
+                    msg: &file.ciphertext,
+                    aad: &file.salt,
+                },
+            )
+            .unwrap();
+        let current_state: WalletState = bincode::deserialize(&plaintext).unwrap();
+        let legacy_state = WalletStateV6Legacy::from(current_state);
+        let legacy_plaintext = bincode::serialize(&legacy_state).unwrap();
+
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce[0] = 1;
+        let legacy_ciphertext = cipher
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &legacy_plaintext,
+                    aad: &file.salt,
+                },
+            )
+            .unwrap();
+        let legacy_file = WalletFile {
+            version: FILE_VERSION,
+            salt: file.salt,
+            nonce,
+            ciphertext: legacy_ciphertext,
+        };
+        let legacy_file_bytes = bincode::serialize(&legacy_file).unwrap();
+        fs::write(&path, legacy_file_bytes).unwrap();
+
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        assert_eq!(reopened.last_synced_height().unwrap(), 42);
+        assert_eq!(reopened.last_synced_block_hash().unwrap(), None);
+        assert_eq!(reopened.genesis_hash().unwrap(), Some(expected_genesis));
     }
 
     #[test]
