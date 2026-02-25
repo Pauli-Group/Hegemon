@@ -228,19 +228,6 @@ impl ProofVerifier for ParallelProofVerifier {
         }
 
         let verification_mode = block.proof_verification_mode;
-        let missing_proven_batch_error = if matches!(
-            verification_mode,
-            ProofVerificationMode::SelfContainedAggregation
-        ) {
-            ProofError::MissingProvenBatchForSelfContained
-        } else {
-            ProofError::MissingCommitmentProof
-        };
-        let proven_batch = block
-            .proven_batch
-            .as_ref()
-            .ok_or(missing_proven_batch_error)?;
-        let commitment_proof = &proven_batch.commitment_proof;
         let transaction_proofs = block.transaction_proofs.as_ref();
 
         let tx_proof_bytes_total: usize = transaction_proofs
@@ -259,6 +246,81 @@ impl ProofVerifier for ParallelProofVerifier {
         {
             return Err(ProofError::MissingTransactionProofs);
         }
+
+        if block.proven_batch.is_none() {
+            if matches!(
+                verification_mode,
+                ProofVerificationMode::SelfContainedAggregation
+            ) {
+                return Err(ProofError::MissingProvenBatchForSelfContained);
+            }
+
+            let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
+            proofs
+                .par_iter()
+                .zip(&block.transactions)
+                .enumerate()
+                .try_for_each(|(index, (proof, tx))| {
+                    verify_transaction_proof_inputs(index, tx, proof)?;
+                    Ok::<_, ProofError>(())
+                })?;
+            let start_tx = Instant::now();
+            proofs
+                .par_iter()
+                .enumerate()
+                .try_for_each(|(index, proof)| {
+                    verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
+                        ProofError::TransactionProofVerification {
+                            index,
+                            message: err.to_string(),
+                        }
+                    })?;
+                    Ok::<_, ProofError>(())
+                })?;
+            let tx_verify_ms = start_tx.elapsed().as_millis();
+
+            let expected_tree = apply_commitments(parent_commitment_tree, &block.transactions)?;
+            let anchors: Vec<[u8; 48]> = proofs
+                .iter()
+                .map(|proof| proof.public_inputs.merkle_root)
+                .collect();
+            let result = verify_and_apply_tree_transition(
+                parent_commitment_tree,
+                parent_commitment_tree.root(),
+                expected_tree.root(),
+                &block.transactions,
+                &anchors,
+            )?;
+
+            tracing::info!(
+                target: "consensus::metrics",
+                tx_count,
+                tx_proof_bytes_total,
+                commitment_proof_bytes,
+                aggregation_proof_bytes,
+                aggregation_proof_uncompressed_bytes,
+                ciphertext_bytes_total,
+                commitment_verify_ms = 0u128,
+                aggregation_verify_ms = 0u128,
+                aggregation_verify_batch_ms = 0u128,
+                aggregation_cache_hit = false,
+                aggregation_cache_build_ms = 0u128,
+                aggregation_cache_prewarm_hit = false,
+                aggregation_cache_prewarm_build_ms = 0u128,
+                aggregation_cache_prewarm_total_ms = 0u128,
+                tx_verify_ms,
+                total_verify_ms = start_total.elapsed().as_millis(),
+                aggregation_verified = false,
+                "block_proof_verification_metrics"
+            );
+            return Ok(result);
+        }
+
+        let proven_batch = block
+            .proven_batch
+            .as_ref()
+            .ok_or(ProofError::MissingCommitmentProof)?;
+        let commitment_proof = &proven_batch.commitment_proof;
 
         let start_commitment = Instant::now();
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;

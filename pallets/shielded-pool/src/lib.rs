@@ -2991,24 +2991,21 @@ pub mod pallet {
                     let aggregation_mode = AggregationProofRequired::<T>::get();
                     let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
 
-                    if proof.data.is_empty() {
-                        if !aggregation_mode {
-                            log::info!(
-                                target: "shielded-pool",
-                                "  REJECTED: proof bytes missing outside aggregation mode"
-                            );
-                            return InvalidTransaction::Custom(12).into();
-                        }
-
-                        if !matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained) {
-                            log::info!(
-                                target: "shielded-pool",
-                                "  REJECTED: proof bytes required by policy"
-                            );
-                            return InvalidTransaction::Custom(12).into();
-                        }
+                    if proof.data.is_empty()
+                        && !matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained)
+                    {
+                        log::info!(
+                            target: "shielded-pool",
+                            "  REJECTED: proof bytes required by policy"
+                        );
+                        return InvalidTransaction::Custom(12).into();
                     }
-                    if !aggregation_mode {
+                    // Validation is performed against the current block state. For proofless
+                    // sidecar transfers in SelfContained mode, a block author can still make the
+                    // transaction valid by placing `enable_aggregation_mode` before transfers in
+                    // the candidate block, so mempool admission must not force inline proof
+                    // verification when proof bytes are intentionally omitted.
+                    if !aggregation_mode && !proof.data.is_empty() {
                         log::info!(target: "shielded-pool", "  Verifying STARK proof...");
                         match verifier.verify_stark(proof, &inputs, &vk) {
                             VerificationResult::Valid => {
@@ -3032,7 +3029,9 @@ pub mod pallet {
                     let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
                         .priority(100)
                         .longevity(64)
-                        .propagate(!proof.data.is_empty());
+                        // Proofless sidecar transfers must still propagate so non-submitting
+                        // miners can include them once aggregation mode is enabled in-block.
+                        .propagate(true);
 
                     let mut provided_any = false;
                     for nf in nullifiers.iter() {

@@ -25,7 +25,7 @@ rand = { version = "0.8", features = ["std"] }
 [features]
 default = ["plonky3"]
 fast-proofs = ["stark-fast"]
-stark-fast = []
+stark-fast = ["transaction-circuit/stark-fast", "transaction-core/stark-fast"]
 plonky3 = [
     "transaction-core",
     "dep:p3-air",

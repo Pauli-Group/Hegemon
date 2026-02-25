@@ -24,17 +24,30 @@ pub const FRI_LOG_BLOWUP_PROD: usize = 4;
 pub const FRI_NUM_QUERIES_PROD: usize = 32;
 
 // Debug builds use lower FRI parameters unless the e2e feature is enabled.
+// Release builds can also opt into the fast profile via the explicit `stark-fast` feature.
 //
 // Note: `cfg(test)` does not apply to dependency crates, so use `debug_assertions` to keep
-// integration tests fast while ensuring release builds always use production parameters.
-#[cfg(all(debug_assertions, not(feature = "plonky3-e2e")))]
+// integration tests fast while ensuring normal release builds still use production parameters.
+#[cfg(any(
+    feature = "stark-fast",
+    all(debug_assertions, not(feature = "plonky3-e2e"))
+))]
 pub const FRI_LOG_BLOWUP: usize = FRI_LOG_BLOWUP_FAST;
-#[cfg(any(not(debug_assertions), feature = "plonky3-e2e"))]
+#[cfg(all(
+    not(feature = "stark-fast"),
+    any(not(debug_assertions), feature = "plonky3-e2e")
+))]
 pub const FRI_LOG_BLOWUP: usize = FRI_LOG_BLOWUP_PROD;
 
-#[cfg(all(debug_assertions, not(feature = "plonky3-e2e")))]
+#[cfg(any(
+    feature = "stark-fast",
+    all(debug_assertions, not(feature = "plonky3-e2e"))
+))]
 pub const FRI_NUM_QUERIES: usize = FRI_NUM_QUERIES_FAST;
-#[cfg(any(not(debug_assertions), feature = "plonky3-e2e"))]
+#[cfg(all(
+    not(feature = "stark-fast"),
+    any(not(debug_assertions), feature = "plonky3-e2e")
+))]
 pub const FRI_NUM_QUERIES: usize = FRI_NUM_QUERIES_PROD;
 
 pub const FRI_POW_BITS: usize = 0;

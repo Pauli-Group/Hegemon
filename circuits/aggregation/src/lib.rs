@@ -12,7 +12,7 @@ use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, 
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::{generate_challenges, verify_circuit};
-use p3_uni_stark::{get_log_num_quotient_chunks, Val as StarkVal};
+use p3_uni_stark::Val as StarkVal;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,8 +23,9 @@ use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
     p3_config::{
         config_with_fri, Challenge, Compress, Config, Hash, TransactionProofP3, Val, DIGEST_ELEMS,
-        FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS, POSEIDON2_RATE,
+        FRI_POW_BITS, POSEIDON2_RATE,
     },
+    p3_verifier::infer_transaction_fri_profile_p3,
     TransactionAirP3, TransactionProof,
 };
 
@@ -103,6 +104,8 @@ pub enum AggregationError {
     InvalidPublicInputs { index: usize, message: String },
     #[error("transaction proof {index} encoding invalid")]
     InvalidProofFormat { index: usize },
+    #[error("transaction proof {index} shape invalid: {message}")]
+    InvalidProofShape { index: usize, message: String },
     #[error(
         "transaction proof {index} public input length mismatch (expected {expected}, got {observed})"
     )]
@@ -133,7 +136,7 @@ fn build_aggregation_prover_cache_entry(
     key: AggregationProverKey,
     representative_proof: &TransactionProofP3,
 ) -> Result<AggregationProverCacheEntry, AggregationError> {
-    let inner_config = config_with_fri(key.log_blowup, FRI_NUM_QUERIES);
+    let inner_config = config_with_fri(key.log_blowup, key.shape.query_count);
     let final_poly_len = key.shape.final_poly_len;
     if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
         return Err(AggregationError::InvalidFinalPolynomialLength);
@@ -246,6 +249,7 @@ pub fn prove_aggregation(
     let mut public_inputs = Vec::with_capacity(transaction_proofs.len());
     let mut expected_inputs_len: Option<usize> = None;
     let mut expected_shape: Option<ProofShape> = None;
+    let mut expected_log_blowup: Option<usize> = None;
 
     for (index, proof) in transaction_proofs.iter().enumerate() {
         if proof.stark_proof.is_empty() {
@@ -272,6 +276,25 @@ pub fn prove_aggregation(
 
         let inner_proof: TransactionProofP3 = postcard::from_bytes(&proof.stark_proof)
             .map_err(|_| AggregationError::InvalidProofFormat { index })?;
+        let fri_profile = infer_transaction_fri_profile_p3(&inner_proof).map_err(|err| {
+            AggregationError::InvalidProofShape {
+                index,
+                message: err.to_string(),
+            }
+        })?;
+        match expected_log_blowup {
+            Some(expected) if expected != fri_profile.log_blowup => {
+                return Err(AggregationError::InvalidProofShape {
+                    index,
+                    message: format!(
+                        "log_blowup mismatch (expected {expected}, got {})",
+                        fri_profile.log_blowup
+                    ),
+                });
+            }
+            Some(_) => {}
+            None => expected_log_blowup = Some(fri_profile.log_blowup),
+        }
 
         let shape = ProofShape {
             degree_bits: inner_proof.degree_bits,
@@ -294,8 +317,7 @@ pub fn prove_aggregation(
 
     let pub_inputs_len = expected_inputs_len.ok_or(AggregationError::EmptyBatch)?;
     let expected_shape = expected_shape.ok_or(AggregationError::EmptyBatch)?;
-    let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
-    let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+    let log_blowup = expected_log_blowup.ok_or(AggregationError::EmptyBatch)?;
     let final_poly_len = expected_shape.final_poly_len;
     if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
         return Err(AggregationError::InvalidFinalPolynomialLength);
@@ -316,7 +338,7 @@ pub fn prove_aggregation(
     let query_pow_bits = FRI_POW_BITS;
     let log_final_poly_len = final_poly_len.ilog2() as usize;
     let log_height_max = log_final_poly_len + log_blowup;
-    let inner_config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+    let inner_config = config_with_fri(log_blowup, expected_shape.query_count);
 
     let mut recursion_public_inputs = Vec::new();
     for (index, (proof, pub_inputs_vec)) in

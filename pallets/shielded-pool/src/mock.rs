@@ -1922,10 +1922,14 @@ mod tests {
     }
 
     #[test]
-    fn proofless_sidecar_rejected_without_aggregation_mode() {
+    fn proofless_sidecar_admitted_without_aggregation_mode_but_dispatch_rejects() {
         new_test_ext().execute_with(|| {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
+            assert_ok!(Pallet::<Test>::set_proof_availability_policy(
+                RuntimeOrigin::root(),
+                ProofAvailabilityPolicy::SelfContained,
+            ));
 
             let proof = StarkProof::from_bytes(Vec::new());
             let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
@@ -1947,16 +1951,11 @@ mod tests {
                 anchor,
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
-                fee: 0,
+                fee: 1_000_000,
             };
 
             let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
-            assert!(matches!(
-                validity,
-                Err(TransactionValidityError::Invalid(
-                    InvalidTransaction::Custom(12)
-                ))
-            ));
+            assert!(validity.is_ok());
 
             assert_noop!(
                 Pallet::<Test>::shielded_transfer_unsigned_sidecar(
@@ -1969,7 +1968,7 @@ mod tests {
                     anchor,
                     binding_hash,
                     None,
-                    0,
+                    1_000_000,
                 ),
                 crate::Error::<Test>::ProofBytesRequired
             );
