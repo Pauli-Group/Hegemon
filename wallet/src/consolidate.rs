@@ -53,7 +53,7 @@ impl ConsolidationBatchConfig {
     fn from_env() -> Self {
         let use_da_sidecar = env_bool("HEGEMON_WALLET_CONSOLIDATION_DA_SIDECAR")
             .or_else(|| env_bool("HEGEMON_WALLET_DA_SIDECAR"))
-            .unwrap_or(true);
+            .unwrap_or(false);
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_CONSOLIDATION_PROOF_SIDECAR")
             .or_else(|| env_bool("HEGEMON_WALLET_PROOF_SIDECAR"))
             .unwrap_or(use_da_sidecar);
