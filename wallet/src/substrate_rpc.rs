@@ -638,6 +638,21 @@ impl SubstrateRpcClient {
             .map_err(|e| WalletError::Rpc(format!("hegemon_latestBlock failed: {}", e)))
     }
 
+    /// Get the block hash at a specific height.
+    ///
+    /// Returns `Ok(None)` when the node does not have a hash for that height.
+    pub async fn block_hash(&self, height: u64) -> Result<Option<[u8; 32]>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+
+        let response: Option<String> = client
+            .request("chain_getBlockHash", rpc_params![height])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("chain_getBlockHash({height}) failed: {e}")))?;
+
+        response.map(|hash| hex_to_array(&hash)).transpose()
+    }
+
     /// Submit a shielded transaction to the network
     ///
     /// Submits a signed transaction bundle containing the STARK proof,
@@ -1857,6 +1872,11 @@ impl BlockingSubstrateRpcClient {
     /// Get latest block information
     pub fn latest_block(&self) -> Result<LatestBlock, WalletError> {
         self.runtime.block_on(self.inner.latest_block())
+    }
+
+    /// Get block hash at a specific height.
+    pub fn block_hash(&self, height: u64) -> Result<Option<[u8; 32]>, WalletError> {
+        self.runtime.block_on(self.inner.block_hash(height))
     }
 
     /// Get note status

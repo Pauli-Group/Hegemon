@@ -1,9 +1,12 @@
 //! Verify pallet commitment helpers match circuit hashing.
 
 use pallet_shielded_pool::commitment::circuit_note_commitment;
+use pallet_shielded_pool::merkle::CompactMerkleTree;
+use state_merkle::CommitmentTree;
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, felts_to_bytes48, merkle_node, merkle_node_bytes, note_commitment_bytes,
 };
+use transaction_circuit::note::MERKLE_TREE_DEPTH;
 
 #[test]
 fn note_commitment_matches_circuit() {
@@ -31,4 +34,37 @@ fn merkle_node_bytes_matches_felts_path() {
     let expected = felts_to_bytes48(&node_felts);
 
     assert_eq!(node_bytes, expected);
+}
+
+#[test]
+fn wallet_tree_matches_runtime_tree_root_progression() {
+    let mut wallet_tree =
+        CommitmentTree::new(MERKLE_TREE_DEPTH).expect("wallet commitment tree init");
+    let mut runtime_tree = CompactMerkleTree::new();
+
+    // Cross the 2^10 frontier boundary to catch common divergence bugs while keeping runtime low.
+    // Use cheap deterministic canonical encodings to keep the test fast.
+    for i in 0..1_300u64 {
+        let mut commitment = [0u8; 48];
+        commitment[40..48].copy_from_slice(&i.to_be_bytes());
+
+        let (_, wallet_root) = wallet_tree
+            .append(commitment)
+            .expect("wallet tree append should succeed");
+        let runtime_root = runtime_tree
+            .append(commitment)
+            .expect("runtime tree append should succeed");
+
+        assert_eq!(
+            wallet_root, runtime_root,
+            "merkle root mismatch at append index {}",
+            i
+        );
+    }
+
+    assert_eq!(
+        wallet_tree.root(),
+        runtime_tree.root(),
+        "final roots must match"
+    );
 }

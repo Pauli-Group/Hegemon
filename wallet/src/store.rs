@@ -76,6 +76,7 @@ impl WalletStore {
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
+            last_synced_block_hash: None,
             outgoing_disclosures: Vec::new(),
             genesis_hash: None,
         };
@@ -102,6 +103,7 @@ impl WalletStore {
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
+            last_synced_block_hash: None,
             outgoing_disclosures: Vec::new(),
             genesis_hash: None,
         };
@@ -226,8 +228,19 @@ impl WalletStore {
         })
     }
 
+    pub fn set_last_synced_block_hash(&self, hash: [u8; 32]) -> Result<(), WalletError> {
+        self.with_mut(|state| {
+            state.last_synced_block_hash = Some(hash);
+            Ok(())
+        })
+    }
+
     pub fn last_synced_height(&self) -> Result<u64, WalletError> {
         self.with_state(|state| Ok(state.last_synced_height))
+    }
+
+    pub fn last_synced_block_hash(&self) -> Result<Option<[u8; 32]>, WalletError> {
+        self.with_state(|state| Ok(state.last_synced_block_hash))
     }
 
     /// Get the genesis hash this wallet was synced with, if any.
@@ -266,6 +279,7 @@ impl WalletStore {
             state.next_commitment_index = 0;
             state.next_ciphertext_index = 0;
             state.last_synced_height = 0;
+            state.last_synced_block_hash = None;
             state.genesis_hash = None;
             Ok(())
         })
@@ -937,6 +951,8 @@ struct WalletState {
     next_commitment_index: u64,
     next_ciphertext_index: u64,
     last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
     #[serde(default)]
     outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
     /// Genesis hash of the chain this wallet was synced with.
