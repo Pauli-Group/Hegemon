@@ -96,10 +96,14 @@ pub struct ProverCoordinatorConfig {
 
 impl ProverCoordinatorConfig {
     pub fn from_env(default_target_txs: usize) -> Self {
+        let default_workers = std::thread::available_parallelism()
+            .map(|threads| threads.get().min(2))
+            .unwrap_or(1usize)
+            .max(1);
         let workers = std::env::var("HEGEMON_PROVER_WORKERS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(1usize)
+            .unwrap_or(default_workers)
             .max(1);
         let target_txs = std::env::var("HEGEMON_BATCH_TARGET_TXS")
             .ok()
@@ -109,12 +113,14 @@ impl ProverCoordinatorConfig {
         let queue_capacity = std::env::var("HEGEMON_BATCH_QUEUE_CAPACITY")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(2usize)
+            .unwrap_or(4usize)
             .max(1);
         let job_timeout_ms = std::env::var("HEGEMON_BATCH_JOB_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(55_000u64);
+            // Default above nominal 60s block time so heavy proving jobs can finish
+            // under typical load instead of being cut off too aggressively.
+            .unwrap_or(180_000u64);
         let work_package_ttl_ms = std::env::var("HEGEMON_PROVER_WORK_PACKAGE_TTL_MS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -425,17 +431,14 @@ impl ProverCoordinator {
             return;
         }
 
-        let queue_capacity = self.config.queue_capacity.max(1);
-        let mut candidate_variants = VecDeque::new();
-        for trim in 0..queue_capacity {
-            let tx_count = candidate.len().saturating_sub(trim);
-            if tx_count == 0 {
-                break;
-            }
-            candidate_variants.push_back(candidate[..tx_count].to_vec());
-        }
-        if candidate_variants.is_empty() {
+        let variant_tx_counts =
+            Self::candidate_variant_tx_counts(candidate.len(), self.config.queue_capacity);
+        if variant_tx_counts.is_empty() {
             return;
+        }
+        let mut candidate_variants = VecDeque::with_capacity(variant_tx_counts.len());
+        for tx_count in variant_tx_counts.iter().copied() {
+            candidate_variants.push_back(candidate[..tx_count].to_vec());
         }
 
         let mut state = self.state.lock();
@@ -447,7 +450,16 @@ impl ProverCoordinator {
             return;
         }
 
-        if let Some(primary_candidate) = candidate_variants.front().cloned() {
+        tracing::debug!(
+            block_number = best_number.saturating_add(1),
+            candidate_tx_count = candidate.len(),
+            variant_tx_counts = ?variant_tx_counts,
+            "Scheduling proven-batch candidate variants"
+        );
+
+        // Publish the largest candidate as the work package while local workers run
+        // liveness-first variants in parallel.
+        if let Some(primary_candidate) = candidate_variants.back().cloned() {
             let package = Self::build_work_package(
                 parent_hash,
                 best_number.saturating_add(1),
@@ -477,6 +489,31 @@ impl ProverCoordinator {
             state.next_job_id = state.next_job_id.wrapping_add(1);
             state.pending_jobs.push_back(job);
         }
+    }
+
+    fn candidate_variant_tx_counts(total_txs: usize, queue_capacity: usize) -> Vec<usize> {
+        if total_txs == 0 {
+            return Vec::new();
+        }
+        let capacity = queue_capacity.max(1);
+        if capacity == 1 || total_txs == 1 {
+            return vec![total_txs];
+        }
+
+        // Take the largest geometric trims first, then always include a
+        // singleton liveness lane so local authoring can keep progressing even
+        // under heavy proving load.
+        let mut counts = Vec::with_capacity(capacity);
+        let mut next = total_txs;
+        counts.push(next);
+        while counts.len() < capacity.saturating_sub(1) && next > 1 {
+            next = next.div_ceil(2);
+            counts.push(next);
+        }
+        counts.push(1);
+        counts.sort_unstable();
+        counts.dedup();
+        counts
     }
 
     fn build_work_package(
@@ -569,6 +606,10 @@ impl ProverCoordinator {
                     block_number,
                     candidate_txs,
                 } = job;
+                let candidate_tx_count = candidate_txs.len();
+                let candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>();
+                let job_package_id =
+                    Self::work_package_id(parent_hash, block_number, &candidate_txs);
 
                 let build = tokio::time::timeout(
                     timeout,
@@ -582,6 +623,17 @@ impl ProverCoordinator {
                 guard.inflight_jobs.remove(&id);
 
                 if guard.current_parent != Some(parent_hash) || guard.generation != generation {
+                    tracing::debug!(
+                        job_id = id,
+                        block_number,
+                        tx_count = candidate_tx_count,
+                        package_id = %job_package_id,
+                        current_parent = ?guard.current_parent,
+                        expected_parent = ?Some(parent_hash),
+                        current_generation = guard.generation,
+                        expected_generation = generation,
+                        "Dropping stale proven-batch build result"
+                    );
                     guard.stale_count = guard.stale_count.saturating_add(1);
                     return;
                 }
@@ -589,7 +641,16 @@ impl ProverCoordinator {
                 let built = match build {
                     Ok(join) => match join {
                         Ok(result) => result,
-                        Err(_) => {
+                        Err(err) => {
+                            tracing::warn!(
+                                job_id = id,
+                                block_number,
+                                tx_count = candidate_tx_count,
+                                candidate_bytes,
+                                package_id = %job_package_id,
+                                error = ?err,
+                                "Prover coordinator job panicked while preparing proven batch"
+                            );
                             guard.stale_count = guard.stale_count.saturating_add(1);
                             if guard.prepared.is_empty() {
                                 guard.selected_txs.clear();
@@ -598,6 +659,15 @@ impl ProverCoordinator {
                         }
                     },
                     Err(_) => {
+                        tracing::warn!(
+                            job_id = id,
+                            block_number,
+                            tx_count = candidate_tx_count,
+                            candidate_bytes,
+                            timeout_ms = timeout.as_millis() as u64,
+                            package_id = %job_package_id,
+                            "Prover coordinator job timed out while preparing proven batch"
+                        );
                         guard.stale_count = guard.stale_count.saturating_add(1);
                         if guard.prepared.is_empty() {
                             guard.selected_txs.clear();
@@ -616,9 +686,27 @@ impl ProverCoordinator {
                         if candidate_len >= target_txs {
                             guard.pending_jobs.clear();
                         }
+                        tracing::info!(
+                            job_id = id,
+                            block_number,
+                            tx_count = candidate_len,
+                            candidate_bytes,
+                            build_ms = bundle.build_ms,
+                            package_id = %job_package_id,
+                            "Prepared proven batch candidate"
+                        );
                         guard.prepared.insert(bundle.key.clone(), bundle);
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        tracing::warn!(
+                            job_id = id,
+                            block_number,
+                            tx_count = candidate_tx_count,
+                            candidate_bytes,
+                            package_id = %job_package_id,
+                            error = %error,
+                            "Failed to prepare proven batch candidate"
+                        );
                         if guard.prepared.is_empty() {
                             guard.selected_txs.clear();
                         }
@@ -874,5 +962,29 @@ mod tests {
             .submit_external_work_result("alice", &package.package_id, oversized)
             .expect_err("oversized payload should fail");
         assert!(err.contains("max size"));
+    }
+
+    #[test]
+    fn candidate_variant_tx_counts_keep_liveness_lane() {
+        assert_eq!(
+            ProverCoordinator::candidate_variant_tx_counts(1000, 1),
+            vec![1000]
+        );
+        assert_eq!(
+            ProverCoordinator::candidate_variant_tx_counts(1000, 2),
+            vec![1, 1000]
+        );
+        assert_eq!(
+            ProverCoordinator::candidate_variant_tx_counts(1000, 3),
+            vec![1, 500, 1000]
+        );
+        assert_eq!(
+            ProverCoordinator::candidate_variant_tx_counts(1000, 4),
+            vec![1, 250, 500, 1000]
+        );
+        assert_eq!(
+            ProverCoordinator::candidate_variant_tx_counts(3, 4),
+            vec![1, 2, 3]
+        );
     }
 }
