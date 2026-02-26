@@ -3649,6 +3649,118 @@ fn reorder_shielded_transfers(extrinsics: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, St
     Ok(out)
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct ShieldedConflictFilterStats {
+    total: usize,
+    kept: usize,
+    dropped_decode_errors: usize,
+    dropped_binding_conflicts: usize,
+    dropped_nullifier_conflicts: usize,
+}
+
+impl ShieldedConflictFilterStats {
+    fn dropped_total(&self) -> usize {
+        self.dropped_decode_errors
+            .saturating_add(self.dropped_binding_conflicts)
+            .saturating_add(self.dropped_nullifier_conflicts)
+    }
+}
+
+fn shielded_conflict_keys_from_call(
+    call: &ShieldedPoolCall,
+) -> Option<(Option<[u8; 64]>, Vec<[u8; 48]>)> {
+    match call {
+        ShieldedPoolCall::shielded_transfer {
+            binding_hash,
+            nullifiers,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned {
+            binding_hash,
+            nullifiers,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_sidecar {
+            binding_hash,
+            nullifiers,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            binding_hash,
+            nullifiers,
+            ..
+        } => Some((
+            Some(binding_hash.data),
+            nullifiers
+                .iter()
+                .copied()
+                .filter(|nf| *nf != [0u8; 48])
+                .collect(),
+        )),
+        ShieldedPoolCall::batch_shielded_transfer { nullifiers, .. } => Some((
+            None,
+            nullifiers
+                .iter()
+                .copied()
+                .filter(|nf| *nf != [0u8; 48])
+                .collect(),
+        )),
+        _ => None,
+    }
+}
+
+fn filter_conflicting_shielded_transfers(
+    extrinsics: &[Vec<u8>],
+) -> (Vec<Vec<u8>>, ShieldedConflictFilterStats) {
+    let mut out = Vec::with_capacity(extrinsics.len());
+    let mut stats = ShieldedConflictFilterStats {
+        total: extrinsics.len(),
+        ..Default::default()
+    };
+    let mut seen_binding_hashes = std::collections::HashSet::<[u8; 64]>::new();
+    let mut seen_nullifiers = std::collections::HashSet::<[u8; 48]>::new();
+
+    for ext_bytes in extrinsics {
+        let decoded = match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
+            Ok(extrinsic) => extrinsic,
+            Err(_) => {
+                stats.dropped_decode_errors = stats.dropped_decode_errors.saturating_add(1);
+                continue;
+            }
+        };
+
+        let mut conflict = false;
+        if let runtime::RuntimeCall::ShieldedPool(call) = &decoded.function {
+            if let Some((binding_hash, nullifiers)) = shielded_conflict_keys_from_call(call) {
+                if let Some(binding_hash) = binding_hash {
+                    if !seen_binding_hashes.insert(binding_hash) {
+                        stats.dropped_binding_conflicts =
+                            stats.dropped_binding_conflicts.saturating_add(1);
+                        conflict = true;
+                    }
+                }
+                if !conflict && nullifiers.iter().any(|nf| seen_nullifiers.contains(nf)) {
+                    stats.dropped_nullifier_conflicts =
+                        stats.dropped_nullifier_conflicts.saturating_add(1);
+                    conflict = true;
+                }
+                if !conflict {
+                    for nullifier in nullifiers {
+                        seen_nullifiers.insert(nullifier);
+                    }
+                }
+            }
+        }
+
+        if !conflict {
+            out.push(ext_bytes.clone());
+        }
+    }
+
+    stats.kept = out.len();
+    (out, stats)
+}
+
 fn hydrate_proofless_sidecar_call(
     call: &mut ShieldedPoolCall,
     pending_proofs: &PendingProofStore,
@@ -4015,6 +4127,19 @@ pub fn wire_block_builder_api(
             hydrated_extrinsics
         };
         let ordered_extrinsics = reorder_shielded_transfers(&sidecar_ready_extrinsics)?;
+        let (ordered_extrinsics, filter_stats) =
+            filter_conflicting_shielded_transfers(&ordered_extrinsics);
+        if filter_stats.dropped_total() > 0 {
+            tracing::warn!(
+                block_number,
+                total_candidates = filter_stats.total,
+                kept_candidates = filter_stats.kept,
+                dropped_decode_errors = filter_stats.dropped_decode_errors,
+                dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                "Filtered conflicting shielded transfers before block assembly"
+            );
+        }
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
         let mut defer_proofless_until_ready_batch = false;
@@ -8242,6 +8367,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // Build async proven-batch coordinator
         // =======================================================================
         let max_block_txs = production_config.max_block_transactions;
+        let coordinator_candidate_overscan_factor =
+            env_usize("HEGEMON_BATCH_CANDIDATE_OVERSCAN_FACTOR")
+                .unwrap_or(4)
+                .max(1);
         let requested_commitment_block_fast = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
@@ -8267,12 +8396,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let pending_for_coord = {
             let pool = Arc::clone(&pool_bridge);
             let tx_pool = transaction_pool.clone();
+            let overscan_factor = coordinator_candidate_overscan_factor;
             Arc::new(move |target_txs: usize| {
                 use sc_transaction_pool_api::{
                     InPoolTransaction, TransactionPool as ScTransactionPool,
                 };
 
-                let mut txs = pool.ready_for_block(target_txs);
+                let fetch_limit = target_txs
+                    .saturating_mul(overscan_factor)
+                    .max(target_txs)
+                    .max(1);
+                let mut txs = pool.ready_for_block(fetch_limit);
 
                 // Mining must include locally submitted RPC transactions too; they live in the
                 // substrate transaction pool and may not round-trip through the bridge network.
@@ -8286,13 +8420,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     let digest = sp_core::hashing::blake2_256(&bytes);
                     if seen.insert(digest) {
                         txs.push(bytes);
-                        if txs.len() >= target_txs {
+                        if txs.len() >= fetch_limit {
                             break;
                         }
                     }
                 }
 
-                if txs.len() < target_txs {
+                if txs.len() < fetch_limit {
                     // Proofless sidecar transfers can sit in the pool's "future" queue until a
                     // matching proven batch is available. The coordinator must consider those
                     // candidates, otherwise it can never prepare the proven batch needed to move
@@ -8302,13 +8436,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         let digest = sp_core::hashing::blake2_256(&bytes);
                         if seen.insert(digest) {
                             txs.push(bytes);
-                            if txs.len() >= target_txs {
+                            if txs.len() >= fetch_limit {
                                 break;
                             }
                         }
                     }
                 }
-                let mut ordered = match reorder_shielded_transfers(&txs) {
+                let ordered = match reorder_shielded_transfers(&txs) {
                     Ok(ordered) => ordered,
                     Err(err) => {
                         tracing::warn!(
@@ -8319,8 +8453,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         txs
                     }
                 };
-                ordered.truncate(target_txs);
-                ordered
+                let (mut filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                if filter_stats.dropped_total() > 0 {
+                    tracing::info!(
+                        target_txs,
+                        fetch_limit,
+                        total_candidates = filter_stats.total,
+                        kept_candidates = filter_stats.kept,
+                        dropped_decode_errors = filter_stats.dropped_decode_errors,
+                        dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                        dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                        "Filtered conflicting shielded transfers from prover candidate set"
+                    );
+                }
+                filtered.truncate(target_txs);
+                filtered
             })
         };
         let build_for_coord = {
@@ -8330,6 +8477,18 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             Arc::new(
                 move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
                     let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                    let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                    if filter_stats.dropped_total() > 0 {
+                        tracing::warn!(
+                            block_number,
+                            total_candidates = filter_stats.total,
+                            kept_candidates = filter_stats.kept,
+                            dropped_decode_errors = filter_stats.dropped_decode_errors,
+                            dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                            dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                            "Filtered conflicting shielded transfers before proven-batch preparation"
+                        );
+                    }
                     // Clone pending sidecar stores up front so we never hold these locks while
                     // generating commitment/aggregation proofs (which can take seconds).
                     let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
@@ -8338,7 +8497,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         client.as_ref(),
                         parent_hash,
                         block_number,
-                        ordered,
+                        filtered,
                         da_params,
                         &pending_ciphertexts_snapshot,
                         &pending_proofs_snapshot,
@@ -8374,6 +8533,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         tracing::info!(
             max_block_transactions = max_block_txs,
+            prover_candidate_overscan_factor = coordinator_candidate_overscan_factor,
             prover_workers = coordinator_cfg.workers,
             prover_batch_target_txs = coordinator_cfg.target_txs,
             prover_batch_queue_capacity = coordinator_cfg.queue_capacity,
@@ -9044,6 +9204,72 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
+        let nullifiers =
+            frame_support::BoundedVec::try_from(vec![nullifier]).expect("bounded nullifiers");
+        let commitments = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
+            .expect("bounded commitments");
+        let ciphertext_hashes = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
+            .expect("bounded ciphertext hashes");
+        let ciphertext_sizes =
+            frame_support::BoundedVec::try_from(vec![32u32]).expect("bounded ciphertext sizes");
+
+        runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::ShieldedPool(
+            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+                proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor: [7u8; 48],
+                binding_hash: pallet_shielded_pool::types::BindingHash {
+                    data: [binding_byte; 64],
+                },
+                stablecoin: None,
+                fee: 0,
+            },
+        ))
+        .encode()
+    }
+
+    #[test]
+    fn filter_conflicting_shielded_transfers_drops_binding_and_nullifier_conflicts() {
+        let keep = test_sidecar_transfer_extrinsic(1, [9u8; 48]);
+        let drop_nullifier = test_sidecar_transfer_extrinsic(2, [9u8; 48]);
+        let drop_binding = test_sidecar_transfer_extrinsic(1, [8u8; 48]);
+        let malformed = vec![1u8, 2, 3];
+
+        let (filtered, stats) = filter_conflicting_shielded_transfers(&[
+            keep.clone(),
+            drop_nullifier,
+            drop_binding,
+            malformed,
+        ]);
+
+        assert_eq!(filtered, vec![keep]);
+        assert_eq!(stats.total, 4);
+        assert_eq!(stats.kept, 1);
+        assert_eq!(stats.dropped_nullifier_conflicts, 1);
+        assert_eq!(stats.dropped_binding_conflicts, 1);
+        assert_eq!(stats.dropped_decode_errors, 1);
+        assert_eq!(stats.dropped_total(), 3);
+    }
+
+    #[test]
+    fn filter_conflicting_shielded_transfers_ignores_zero_nullifier_padding() {
+        let zero = [0u8; 48];
+        let first = test_sidecar_transfer_extrinsic(3, zero);
+        let second = test_sidecar_transfer_extrinsic(4, zero);
+
+        let (filtered, stats) =
+            filter_conflicting_shielded_transfers(&[first.clone(), second.clone()]);
+
+        assert_eq!(filtered, vec![first, second]);
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.kept, 2);
+        assert_eq!(stats.dropped_total(), 0);
+    }
 
     #[test]
     fn test_mining_config_default() {
