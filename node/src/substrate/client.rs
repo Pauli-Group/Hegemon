@@ -856,16 +856,21 @@ impl ChainStateProvider for ProductionChainStateProvider {
             Err(mut e) => {
                 if !pending.is_empty() && Self::is_missing_ready_proven_batch_error(&e) {
                     let wait_budget = Self::pending_proven_batch_wait_budget();
-                    let retry_interval = Duration::from_millis(100);
+                    let max_attempts = Self::pending_proven_batch_max_attempts();
+                    let mut retry_interval = Duration::from_millis(200);
+                    let max_retry_interval = Duration::from_millis(2_000);
                     let deadline = Instant::now() + wait_budget;
-                    while Instant::now() < deadline {
+                    let mut attempts = 0usize;
+                    while attempts < max_attempts && Instant::now() < deadline {
                         std::thread::sleep(retry_interval);
+                        attempts = attempts.saturating_add(1);
                         match self.execute_extrinsics(&parent_hash, block_number, &pending) {
                             Ok(result) => {
                                 tracing::info!(
                                     block_number,
                                     pending_txs = pending.len(),
                                     wait_ms = wait_budget.as_millis() as u64,
+                                    attempts,
                                     "Recovered pending tx template after waiting for proven batch"
                                 );
                                 if self.config.verbose {
@@ -891,12 +896,26 @@ impl ChainStateProvider for ProductionChainStateProvider {
                                 if Self::is_missing_ready_proven_batch_error(&retry_err) =>
                             {
                                 e = retry_err;
+                                retry_interval = std::cmp::min(
+                                    retry_interval.saturating_mul(2),
+                                    max_retry_interval,
+                                );
                             }
                             Err(retry_err) => {
                                 e = retry_err;
                                 break;
                             }
                         }
+                    }
+                    if Self::is_missing_ready_proven_batch_error(&e) {
+                        tracing::warn!(
+                            block_number,
+                            pending_txs = pending.len(),
+                            wait_ms = wait_budget.as_millis() as u64,
+                            attempts,
+                            max_attempts,
+                            "Pending proven-batch retry budget exhausted; falling back to empty pending set"
+                        );
                     }
                 }
 
@@ -965,9 +984,22 @@ impl ProductionChainStateProvider {
         let wait_ms = std::env::var("HEGEMON_PENDING_PROVEN_BATCH_WAIT_MS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(3_000)
+            .or_else(|| {
+                std::env::var("HEGEMON_BATCH_JOB_TIMEOUT_MS")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+            })
+            .unwrap_or(30_000)
             .max(100);
         Duration::from_millis(wait_ms)
+    }
+
+    fn pending_proven_batch_max_attempts() -> usize {
+        std::env::var("HEGEMON_PENDING_PROVEN_BATCH_MAX_ATTEMPTS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(20)
+            .max(1)
     }
 }
 

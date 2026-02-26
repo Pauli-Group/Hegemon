@@ -3016,6 +3016,7 @@ fn verify_proof_carrying_block(
 ) -> Result<Option<CommitmentBlockProof>, String> {
     use consensus::ProofVerifier;
 
+    let accept_legacy_proofless_blocks = load_accept_legacy_proofless_blocks();
     let proven_batch_payload = extract_proven_batch_payload(extrinsics)?;
     ensure_shielded_transfer_ordering(extrinsics)?;
     ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
@@ -3066,6 +3067,14 @@ fn verify_proof_carrying_block(
             );
         }
         if proven_batch_payload.is_none() {
+            if accept_legacy_proofless_blocks {
+                tracing::warn!(
+                    block_number,
+                    missing_proof_bindings = missing_proof_bindings.len(),
+                    "Accepting legacy block without submit_proven_batch (proof verification skipped)"
+                );
+                return Ok(None);
+            }
             return Err(
                 "missing proof bytes require submit_proven_batch in the same block".to_string(),
             );
@@ -3416,6 +3425,18 @@ fn load_max_shielded_transfers_per_block() -> usize {
 
 fn load_disable_proofless_hydration() -> bool {
     std::env::var("HEGEMON_DISABLE_PROOFLESS_HYDRATION")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn load_accept_legacy_proofless_blocks() -> bool {
+    std::env::var("HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS")
         .ok()
         .map(|value| {
             matches!(
@@ -4019,6 +4040,7 @@ pub fn wire_block_builder_api(
             }
         }
 
+        let mut deferred_proofless_sidecar_count = 0usize;
         for ext_bytes in ordered_extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
@@ -4038,6 +4060,8 @@ pub fn wire_block_builder_api(
                         && defer_proofless_until_ready_batch
                         && is_proofless_sidecar
                     {
+                        deferred_proofless_sidecar_count =
+                            deferred_proofless_sidecar_count.saturating_add(1);
                         tracing::warn!(
                             block_number,
                             "Deferring proofless shielded transfer until proven batch is ready"
@@ -4072,6 +4096,21 @@ pub fn wire_block_builder_api(
                     failed += 1;
                 }
             }
+        }
+
+        if aggregation_proofs_enabled
+            && deferred_proofless_sidecar_count > 0
+            && shielded_transfer_count == 0
+        {
+            tracing::info!(
+                block_number,
+                deferred_proofless_sidecar_count,
+                "Waiting for proven batch candidate before sealing block"
+            );
+            return Err(
+                "shielded block with omitted proof bytes requires a ready proven batch"
+                    .to_string(),
+            );
         }
 
         let mut decoded_applied = Vec::with_capacity(applied.len());
@@ -7032,9 +7071,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
+                                let accept_legacy_proofless_blocks =
+                                    load_accept_legacy_proofless_blocks();
                                 let mut da_build = if needs_self_contained_batch {
-                                    let payload = match extract_proven_batch_payload(&extrinsics) {
-                                        Ok(Some(payload)) => payload.payload,
+                                    let maybe_payload = match extract_proven_batch_payload(&extrinsics)
+                                    {
+                                        Ok(Some(payload)) => Some(payload.payload),
+                                        Ok(None) if accept_legacy_proofless_blocks => {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&downloaded.from_peer),
+                                                block_number,
+                                                "Accepting synced block without submit_proven_batch due compatibility override"
+                                            );
+                                            None
+                                        }
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
@@ -7055,57 +7105,61 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             continue;
                                         }
                                     };
-                                    match da_policy {
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
-                                            match fetch_da_for_block(
-                                                downloaded.from_peer,
-                                                payload.da_root,
-                                                &extrinsics,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                Ok(build) => Some(build),
-                                                Err(err) => {
+                                    if let Some(payload) = maybe_payload {
+                                        match da_policy {
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
+                                                match fetch_da_for_block(
+                                                    downloaded.from_peer,
+                                                    payload.da_root,
+                                                    &extrinsics,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(build) => Some(build),
+                                                    Err(err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&downloaded.from_peer),
+                                                            block_number,
+                                                            error = %err,
+                                                            "Rejecting synced block (DA fetch failed)"
+                                                        );
+                                                        blocks_failed += 1;
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
+                                                if let Err(err) = sample_da_for_root(
+                                                    downloaded.from_peer,
+                                                    payload.da_root,
+                                                    payload.da_chunk_count,
+                                                    downloaded.hash,
+                                                    da_sampling_secret_for_import,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
                                                     tracing::warn!(
                                                         peer = %hex::encode(&downloaded.from_peer),
                                                         block_number,
                                                         error = %err,
-                                                        "Rejecting synced block (DA fetch failed)"
+                                                        "Rejecting synced block (DA sampling failed)"
                                                     );
                                                     blocks_failed += 1;
                                                     continue;
                                                 }
+                                                None
                                             }
                                         }
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
-                                            if let Err(err) = sample_da_for_root(
-                                                downloaded.from_peer,
-                                                payload.da_root,
-                                                payload.da_chunk_count,
-                                                downloaded.hash,
-                                                da_sampling_secret_for_import,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting synced block (DA sampling failed)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            None
-                                        }
+                                    } else {
+                                        None
                                     }
                                 } else if requires_sidecar {
                                     // Sidecar extrinsics with inline proofs can be verified from
@@ -7609,9 +7663,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
+                                let accept_legacy_proofless_blocks =
+                                    load_accept_legacy_proofless_blocks();
                                 let mut da_build = if needs_self_contained_batch {
-                                    let payload = match extract_proven_batch_payload(&extrinsics) {
-                                        Ok(Some(payload)) => payload.payload,
+                                    let maybe_payload = match extract_proven_batch_payload(&extrinsics)
+                                    {
+                                        Ok(Some(payload)) => Some(payload.payload),
+                                        Ok(None) if accept_legacy_proofless_blocks => {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&peer_id),
+                                                block_number,
+                                                "Accepting announced block without submit_proven_batch due compatibility override"
+                                            );
+                                            None
+                                        }
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&peer_id),
@@ -7632,57 +7697,61 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             continue;
                                         }
                                     };
-                                    match da_policy {
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
-                                            match fetch_da_for_block(
-                                                peer_id,
-                                                payload.da_root,
-                                                &extrinsics,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                Ok(build) => Some(build),
-                                                Err(err) => {
+                                    if let Some(payload) = maybe_payload {
+                                        match da_policy {
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
+                                                match fetch_da_for_block(
+                                                    peer_id,
+                                                    payload.da_root,
+                                                    &extrinsics,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(build) => Some(build),
+                                                    Err(err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&peer_id),
+                                                            block_number,
+                                                            error = %err,
+                                                            "Rejecting announced block (DA fetch failed)"
+                                                        );
+                                                        blocks_failed += 1;
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
+                                                if let Err(err) = sample_da_for_root(
+                                                    peer_id,
+                                                    payload.da_root,
+                                                    payload.da_chunk_count,
+                                                    block_hash_bytes,
+                                                    da_sampling_secret_for_import,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
                                                     tracing::warn!(
                                                         peer = %hex::encode(&peer_id),
                                                         block_number,
                                                         error = %err,
-                                                        "Rejecting announced block (DA fetch failed)"
+                                                        "Rejecting announced block (DA sampling failed)"
                                                     );
                                                     blocks_failed += 1;
                                                     continue;
                                                 }
+                                                None
                                             }
                                         }
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
-                                            if let Err(err) = sample_da_for_root(
-                                                peer_id,
-                                                payload.da_root,
-                                                payload.da_chunk_count,
-                                                block_hash_bytes,
-                                                da_sampling_secret_for_import,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&peer_id),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting announced block (DA sampling failed)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            None
-                                        }
+                                    } else {
+                                        None
                                     }
                                 } else if requires_sidecar {
                                     // Sidecar extrinsics with inline proofs can be verified from
@@ -8122,9 +8191,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 };
 
                 let mut txs = pool.ready_for_block(target_txs);
-                if txs.len() >= target_txs {
-                    return txs;
-                }
 
                 // Mining must include locally submitted RPC transactions too; they live in the
                 // substrate transaction pool and may not round-trip through the bridge network.
@@ -8160,7 +8226,19 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         }
                     }
                 }
-                txs
+                let mut ordered = match reorder_shielded_transfers(&txs) {
+                    Ok(ordered) => ordered,
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            candidate_count = txs.len(),
+                            "Falling back to unsorted tx candidate set for prover coordinator"
+                        );
+                        txs
+                    }
+                };
+                ordered.truncate(target_txs);
+                ordered
             })
         };
         let build_for_coord = {

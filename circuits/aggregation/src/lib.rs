@@ -12,6 +12,7 @@ use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, 
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::{generate_challenges, verify_circuit};
+use p3_uni_stark::verify as verify_stark;
 use p3_uni_stark::Val as StarkVal;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -23,9 +24,8 @@ use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
     p3_config::{
         config_with_fri, Challenge, Compress, Config, Hash, TransactionProofP3, Val, DIGEST_ELEMS,
-        FRI_POW_BITS, POSEIDON2_RATE,
+        FRI_LOG_BLOWUP_FAST, FRI_LOG_BLOWUP_PROD, FRI_POW_BITS, POSEIDON2_RATE,
     },
-    p3_verifier::infer_transaction_fri_profile_p3,
     TransactionAirP3, TransactionProof,
 };
 
@@ -130,6 +130,78 @@ pub enum AggregationError {
     SerializeFailed,
     #[error("aggregation payload serialization failed")]
     PayloadSerializeFailed,
+}
+
+fn resolve_log_blowup(
+    proof: &TransactionProofP3,
+    pub_inputs: &[Val],
+    query_count: usize,
+) -> Result<usize, String> {
+    if query_count == 0 {
+        return Err("proof has zero FRI queries".to_string());
+    }
+
+    let inferred = infer_log_blowup_from_proof_shape(proof);
+
+    let mut candidates = Vec::new();
+    let mut push_unique = |value: usize| {
+        if !candidates.contains(&value) {
+            candidates.push(value);
+        }
+    };
+
+    if let Some(log_blowup) = inferred {
+        push_unique(log_blowup);
+        for delta in 1..=2 {
+            push_unique(log_blowup.saturating_sub(delta));
+            push_unique(log_blowup.saturating_add(delta));
+        }
+    }
+    push_unique(FRI_LOG_BLOWUP_PROD);
+    push_unique(FRI_LOG_BLOWUP_FAST);
+    for fallback in 0..=8 {
+        push_unique(fallback);
+    }
+
+    for log_blowup in candidates.iter().copied() {
+        let config = config_with_fri(log_blowup, query_count);
+        if verify_stark(&config.config, &TransactionAirP3, proof, pub_inputs).is_ok() {
+            return Ok(log_blowup);
+        }
+    }
+
+    Err(format!(
+        "unable to resolve FRI log_blowup (inferred={inferred:?}, attempted={candidates:?})"
+    ))
+}
+
+fn infer_log_blowup_from_proof_shape(proof: &TransactionProofP3) -> Option<usize> {
+    let final_poly_len = proof.opening_proof.final_poly.len();
+    if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
+        return None;
+    }
+    let log_final_poly_len = final_poly_len.ilog2() as usize;
+    let commit_phase_len = proof.opening_proof.commit_phase_commits.len();
+    let baseline = commit_phase_len + log_final_poly_len;
+
+    let mut observed_log_max_height: Option<usize> = None;
+    for query_proof in proof.opening_proof.query_proofs.iter() {
+        let query_max = query_proof
+            .input_proof
+            .iter()
+            .map(|batch| batch.opening_proof.len())
+            .max()?;
+        if query_max < baseline {
+            return None;
+        }
+        match observed_log_max_height {
+            Some(expected) if expected != query_max => return None,
+            Some(_) => {}
+            None => observed_log_max_height = Some(query_max),
+        }
+    }
+
+    observed_log_max_height?.checked_sub(baseline)
 }
 
 fn build_aggregation_prover_cache_entry(
@@ -276,24 +348,21 @@ pub fn prove_aggregation(
 
         let inner_proof: TransactionProofP3 = postcard::from_bytes(&proof.stark_proof)
             .map_err(|_| AggregationError::InvalidProofFormat { index })?;
-        let fri_profile = infer_transaction_fri_profile_p3(&inner_proof).map_err(|err| {
-            AggregationError::InvalidProofShape {
-                index,
-                message: err.to_string(),
-            }
-        })?;
+        let query_count = inner_proof.opening_proof.query_proofs.len();
+        let resolved_log_blowup = resolve_log_blowup(&inner_proof, &pub_inputs_vec, query_count)
+            .map_err(|message| AggregationError::InvalidProofShape { index, message })?;
         match expected_log_blowup {
-            Some(expected) if expected != fri_profile.log_blowup => {
+            Some(expected) if expected != resolved_log_blowup => {
                 return Err(AggregationError::InvalidProofShape {
                     index,
                     message: format!(
                         "log_blowup mismatch (expected {expected}, got {})",
-                        fri_profile.log_blowup
+                        resolved_log_blowup
                     ),
                 });
             }
             Some(_) => {}
-            None => expected_log_blowup = Some(fri_profile.log_blowup),
+            None => expected_log_blowup = Some(resolved_log_blowup),
         }
 
         let shape = ProofShape {
