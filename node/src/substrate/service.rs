@@ -147,8 +147,8 @@ use crypto::hashes::blake3_384;
 use futures::StreamExt;
 use hyper::http::{header, Method};
 use network::{
-    PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
-    PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
+    PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
+    PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
@@ -4756,12 +4756,33 @@ pub struct PeerConnectionSnapshot {
     pub best_hash: [u8; 32],
     /// Last time we heard from this peer.
     pub last_seen: std::time::Instant,
+    /// Total bytes sent on this connection snapshot.
+    pub bytes_sent: u64,
+    /// Total bytes received on this connection snapshot.
+    pub bytes_received: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct PeerGraphReport {
     pub reported_at: std::time::Instant,
     pub peers: Vec<crate::substrate::discovery::PeerGraphEntry>,
+}
+
+async fn refresh_peer_connection_counters(
+    pq_backend: &Arc<PqNetworkBackend>,
+    peer_details: &Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
+) {
+    let infos = pq_backend.peer_info().await;
+    if infos.is_empty() {
+        return;
+    }
+    let mut details = peer_details.write();
+    for info in infos {
+        if let Some(entry) = details.get_mut(&info.peer_id) {
+            entry.bytes_sent = info.bytes_sent;
+            entry.bytes_received = info.bytes_received;
+        }
+    }
 }
 
 impl Default for PqServiceConfig {
@@ -6010,6 +6031,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             best_height: 0,
                                             best_hash: [0u8; 32],
                                             last_seen: Instant::now(),
+                                            bytes_sent: 0,
+                                            bytes_received: 0,
                                         },
                                     );
                                     // Record dialed addresses so we can share them with others.
@@ -6320,7 +6343,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,
                                         DA_CHUNKS_PROTOCOL, SYNC_PROTOCOL,
                                     };
-                                    use crate::substrate::network_bridge::SyncMessage;
+                                    use crate::substrate::network_bridge::{
+                                        SyncMessage, SyncRequest, SyncResponse,
+                                    };
                                     // Handle sync protocol messages
                                     if protocol == SYNC_PROTOCOL {
                                         // Decode using SyncMessage wrapper for unambiguous request/response distinction
@@ -6333,7 +6358,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         "Received sync request from peer"
                                                     );
                                                     let mut sync = sync_service_clone.lock().await;
-                                                    if let Some(response) = sync.handle_sync_request(peer_id, request) {
+                                                    if let Some(response) =
+                                                        sync.handle_sync_request(peer_id, None, request)
+                                                    {
                                                         // Send response back to peer wrapped in SyncMessage
                                                         let msg = SyncMessage::Response(response);
                                                         let encoded = msg.encode();
@@ -6355,6 +6382,43 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         }
                                                     }
                                                 }
+                                                SyncMessage::RequestV2(envelope) => {
+                                                    tracing::info!(
+                                                        peer = %hex::encode(peer_id),
+                                                        request_id = envelope.request_id,
+                                                        request = ?envelope.request,
+                                                        "Received sync request v2 from peer"
+                                                    );
+                                                    let mut sync = sync_service_clone.lock().await;
+                                                    if let Some(response) = sync.handle_sync_request(
+                                                        peer_id,
+                                                        Some(envelope.request_id),
+                                                        envelope.request,
+                                                    ) {
+                                                        let msg = SyncMessage::Response(response);
+                                                        let encoded = msg.encode();
+                                                        tracing::info!(
+                                                            peer = %hex::encode(peer_id),
+                                                            request_id = envelope.request_id,
+                                                            response_len = encoded.len(),
+                                                            "Sending sync response to peer"
+                                                        );
+                                                        if let Err(e) = pq_handle_for_sync
+                                                            .send_message(
+                                                                peer_id,
+                                                                SYNC_PROTOCOL.to_string(),
+                                                                encoded,
+                                                            )
+                                                            .await
+                                                        {
+                                                            tracing::warn!(
+                                                                peer = %hex::encode(peer_id),
+                                                                error = %e,
+                                                                "Failed to send sync response"
+                                                            );
+                                                        }
+                                                    }
+                                                }
                                                 SyncMessage::Response(response) => {
                                                     tracing::info!(
                                                         peer = %hex::encode(peer_id),
@@ -6366,6 +6430,43 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     tracing::info!("🔄 SYNC: handle_sync_response completed");
                                                 }
                                             }
+                                        } else if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
+                                            tracing::info!(
+                                                peer = %hex::encode(peer_id),
+                                                request = ?request,
+                                                "Received bare sync request from peer"
+                                            );
+                                            let mut sync = sync_service_clone.lock().await;
+                                            if let Some(response) =
+                                                sync.handle_sync_request(peer_id, None, request)
+                                            {
+                                                let msg = SyncMessage::Response(response);
+                                                let encoded = msg.encode();
+                                                if let Err(e) = pq_handle_for_sync
+                                                    .send_message(
+                                                        peer_id,
+                                                        SYNC_PROTOCOL.to_string(),
+                                                        encoded,
+                                                    )
+                                                    .await
+                                                {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(peer_id),
+                                                        error = %e,
+                                                        "Failed to send sync response"
+                                                    );
+                                                }
+                                            }
+                                        } else if let Ok(response) =
+                                            SyncResponse::decode(&mut &data[..])
+                                        {
+                                            tracing::info!(
+                                                peer = %hex::encode(peer_id),
+                                                response = ?response,
+                                                "Received bare sync response from peer"
+                                            );
+                                            let mut sync = sync_service_clone.lock().await;
+                                            sync.handle_sync_response(peer_id, response);
                                         } else {
                                             tracing::debug!(
                                                 peer = %hex::encode(peer_id),
@@ -6493,8 +6594,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                }
 	                                _ => {}
 	                            }
+
+                                refresh_peer_connection_counters(
+                                    &pq_backend,
+                                    &peer_details_for_events,
+                                )
+                                .await;
 	                                }
 	                                _ = discovery_tick.tick() => {
+                                        refresh_peer_connection_counters(
+                                            &pq_backend,
+                                            &peer_details_for_events,
+                                        )
+                                        .await;
+
 	                                    let current_peers = if strict_compatibility {
 	                                        let sync = sync_service_clone.lock().await;
 	                                        connected_peers
@@ -6585,6 +6698,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    }
 	                                }
 	                                _ = peer_graph_tick.tick() => {
+                                        refresh_peer_connection_counters(
+                                            &pq_backend,
+                                            &peer_details_for_events,
+                                        )
+                                        .await;
+
 	                                    let mut peers: Vec<_> = connected_peers.keys().copied().collect();
 	                                    if strict_compatibility {
 	                                        let sync = sync_service_clone.lock().await;
@@ -6627,7 +6746,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 task_manager
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
-                        use crate::substrate::network_bridge::{SyncMessage, SYNC_PROTOCOL};
+                        use crate::substrate::network_bridge::{
+                            SyncMessage, SyncRequestEnvelope, SYNC_PROTOCOL,
+                        };
 
                         let mut interval =
                             tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -6661,9 +6782,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     .await;
                             }
 
-                            if let Some((peer_id, request)) = next_request {
-                                // Wrap request in SyncMessage for unambiguous encoding
-                                let msg = SyncMessage::Request(request);
+                            if let Some((peer_id, request_id, request)) = next_request {
+                                // Send request with explicit correlation id.
+                                let msg = SyncMessage::RequestV2(SyncRequestEnvelope {
+                                    request_id,
+                                    request,
+                                });
                                 let encoded = msg.encode();
                                 if let Err(e) = sync_handle_for_tick
                                     .send_message(peer_id, SYNC_PROTOCOL.to_string(), encoded)
