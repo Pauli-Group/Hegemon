@@ -8385,7 +8385,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             false
         };
 
-        let coordinator_cfg = ProverCoordinatorConfig::from_env(max_block_txs);
+        let default_batch_target_txs = env_usize("HEGEMON_BATCH_DEFAULT_TARGET_TXS")
+            .unwrap_or(32)
+            .max(1);
+        let coordinator_default_target_txs = max_block_txs.min(default_batch_target_txs).max(1);
+        if std::env::var("HEGEMON_BATCH_TARGET_TXS").is_err()
+            && max_block_txs > coordinator_default_target_txs
+        {
+            tracing::info!(
+                max_block_transactions = max_block_txs,
+                default_batch_target_txs = coordinator_default_target_txs,
+                "No HEGEMON_BATCH_TARGET_TXS override set; capping default proven-batch target to keep preparation latency bounded"
+            );
+        }
+        let coordinator_cfg = ProverCoordinatorConfig::from_env(coordinator_default_target_txs);
         let best_for_coord = {
             let client = client.clone();
             Arc::new(move || {

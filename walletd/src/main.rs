@@ -734,6 +734,73 @@ fn sync_once(
     })
 }
 
+fn env_bool(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
+}
+
+fn is_proof_sidecar_rejection(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("proofbytesrequired")
+        || lower.contains("missing proof bytes")
+        || lower.contains("proof bytes require")
+        || lower.contains("policy is not selfcontained")
+}
+
+fn is_sidecar_method_unavailable(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("method not found") || lower.contains("unknown method")
+}
+
+fn is_invalid_anchor_submission(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("invalid transaction")
+        || lower.contains("invalidtransaction")
+        || lower.contains("invalidtransaction::custom"))
+        && (lower.contains("custom error: 3")
+            || lower.contains("custom error 3")
+            || lower.contains("invalid anchor"))
+}
+
+async fn submit_bundle_with_fallback(
+    client: &SubstrateRpcClient,
+    bundle: &wallet::TransactionBundle,
+    use_da_sidecar: bool,
+    mut use_proof_sidecar: bool,
+) -> Result<[u8; 32], WalletError> {
+    if !use_da_sidecar {
+        return client.submit_shielded_transfer_unsigned(bundle).await;
+    }
+
+    match client
+        .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, Some(use_proof_sidecar))
+        .await
+    {
+        Ok(hash) => Ok(hash),
+        Err(WalletError::Rpc(msg)) if use_proof_sidecar && is_proof_sidecar_rejection(&msg) => {
+            use_proof_sidecar = false;
+            client
+                .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+                    bundle,
+                    Some(use_proof_sidecar),
+                )
+                .await
+        }
+        Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => {
+            let _ = (use_da_sidecar, use_proof_sidecar);
+            client.submit_shielded_transfer_unsigned(bundle).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
 fn tx_send(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
@@ -897,68 +964,139 @@ fn tx_send(
 
         // Default to inline ciphertext submission for reliability across mixed miners.
         // Sidecar mode remains available via HEGEMON_WALLET_DA_SIDECAR=1.
-        let use_da_sidecar = std::env::var("HEGEMON_WALLET_DA_SIDECAR")
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
-        let result = if use_da_sidecar {
-            client
-                .submit_shielded_transfer_unsigned_sidecar(&built.bundle)
-                .await
-        } else {
-            client
-                .submit_shielded_transfer_unsigned(&built.bundle)
-                .await
-        };
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
+        let mut retried_invalid_anchor = false;
 
-        match result {
-            Ok(tx_hash) => {
-                let genesis_hash = match store.genesis_hash().map_err(WalletdError::internal)? {
-                    Some(hash) => hash,
-                    None => {
-                        let metadata = client.get_chain_metadata().await.map_err(|e| {
-                            WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string())
+        loop {
+            let result = submit_bundle_with_fallback(
+                &client,
+                &built.bundle,
+                use_da_sidecar,
+                use_proof_sidecar,
+            )
+            .await;
+
+            match result {
+                Ok(tx_hash) => {
+                    let genesis_hash = match store.genesis_hash().map_err(WalletdError::internal)? {
+                        Some(hash) => hash,
+                        None => {
+                            let metadata = client.get_chain_metadata().await.map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::RpcConnectionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                            store
+                                .set_genesis_hash(metadata.genesis_hash)
+                                .map_err(WalletdError::internal)?;
+                            metadata.genesis_hash
+                        }
+                    };
+                    store
+                        .record_outgoing_disclosures(
+                            tx_hash,
+                            genesis_hash,
+                            built.outgoing_disclosures.clone(),
+                        )
+                        .map_err(WalletdError::internal)?;
+                    store
+                        .record_pending_submission(
+                            tx_hash,
+                            built.nullifiers.clone(),
+                            built.spent_note_indexes.clone(),
+                            metadata.clone(),
+                            params.fee,
+                        )
+                        .map_err(WalletdError::internal)?;
+                    return Ok(SendResponse {
+                        tx_hash: format!("0x{}", hex::encode(tx_hash)),
+                        recipients: metadata,
+                    });
+                }
+                Err(WalletError::Rpc(msg))
+                    if !retried_invalid_anchor && is_invalid_anchor_submission(&msg) =>
+                {
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, false)
+                        .map_err(WalletdError::internal)?;
+                    retried_invalid_anchor = true;
+
+                    engine.sync_once().await.map_err(|e| {
+                        WalletdError::new(
+                            WalletdErrorCode::SyncFailed,
+                            format!("sync failed after invalid anchor submission: {e}"),
+                        )
+                    })?;
+
+                    precheck_nullifiers(&store, &client, &recipients, params.fee)
+                        .await
+                        .map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
                         })?;
-                        store
-                            .set_genesis_hash(metadata.genesis_hash)
-                            .map_err(WalletdError::internal)?;
-                        metadata.genesis_hash
+                    built = build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                        WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                    })?;
+
+                    let mut anchor_retry = 0u8;
+                    loop {
+                        let anchor_valid = client
+                            .is_valid_anchor(&built.bundle.anchor)
+                            .await
+                            .map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                        if anchor_valid {
+                            break;
+                        }
+                        if anchor_retry >= 1 {
+                            return Err(WalletdError::new(
+                                WalletdErrorCode::TransactionFailed,
+                                format!(
+                                    "wallet rebuilt an invalid anchor after submission retry ({})",
+                                    hex::encode(built.bundle.anchor)
+                                ),
+                            ));
+                        }
+                        anchor_retry = anchor_retry.saturating_add(1);
+                        engine.sync_once().await.map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())
+                        })?;
+                        precheck_nullifiers(&store, &client, &recipients, params.fee)
+                            .await
+                            .map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                        built =
+                            build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
                     }
-                };
-                store
-                    .record_outgoing_disclosures(
-                        tx_hash,
-                        genesis_hash,
-                        built.outgoing_disclosures.clone(),
-                    )
-                    .map_err(WalletdError::internal)?;
-                store
-                    .record_pending_submission(
-                        tx_hash,
-                        built.nullifiers.clone(),
-                        built.spent_note_indexes.clone(),
-                        metadata.clone(),
-                        params.fee,
-                    )
-                    .map_err(WalletdError::internal)?;
-                Ok(SendResponse {
-                    tx_hash: format!("0x{}", hex::encode(tx_hash)),
-                    recipients: metadata,
-                })
-            }
-            Err(err) => {
-                store
-                    .mark_notes_pending(&built.spent_note_indexes, false)
-                    .map_err(WalletdError::internal)?;
-                Err(WalletdError::new(
-                    WalletdErrorCode::TransactionFailed,
-                    format!("Transaction submission failed: {err}"),
-                ))
+
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, true)
+                        .map_err(WalletdError::internal)?;
+                    continue;
+                }
+                Err(err) => {
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, false)
+                        .map_err(WalletdError::internal)?;
+                    return Err(WalletdError::new(
+                        WalletdErrorCode::TransactionFailed,
+                        format!("Transaction submission failed: {err}"),
+                    ));
+                }
             }
         }
     })

@@ -1497,6 +1497,72 @@ fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
     })
 }
 
+fn env_bool(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
+}
+
+fn is_proof_sidecar_rejection(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("proofbytesrequired")
+        || lower.contains("missing proof bytes")
+        || lower.contains("proof bytes require")
+        || lower.contains("policy is not selfcontained")
+}
+
+fn is_sidecar_method_unavailable(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("method not found") || lower.contains("unknown method")
+}
+
+fn is_invalid_anchor_submission(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("invalid transaction")
+        || lower.contains("invalidtransaction")
+        || lower.contains("invalidtransaction::custom"))
+        && (lower.contains("custom error: 3")
+            || lower.contains("custom error 3")
+            || lower.contains("invalid anchor"))
+}
+
+async fn submit_bundle_with_fallback(
+    client: &SubstrateRpcClient,
+    bundle: &wallet::TransactionBundle,
+    use_da_sidecar: bool,
+    mut use_proof_sidecar: bool,
+) -> Result<[u8; 32], WalletError> {
+    if !use_da_sidecar {
+        return client.submit_shielded_transfer_unsigned(bundle).await;
+    }
+
+    match client
+        .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, Some(use_proof_sidecar))
+        .await
+    {
+        Ok(hash) => Ok(hash),
+        Err(WalletError::Rpc(msg)) if use_proof_sidecar && is_proof_sidecar_rejection(&msg) => {
+            use_proof_sidecar = false;
+            client
+                .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+                    bundle,
+                    Some(use_proof_sidecar),
+                )
+                .await
+        }
+        Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => {
+            client.submit_shielded_transfer_unsigned(bundle).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Send transaction using Substrate WebSocket RPC
 fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
@@ -1640,7 +1706,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
 
         // Build transaction (creates STARK proof)
         println!("Building shielded transaction with STARK proof...");
-        let built = build_transaction(&store_arc, &recipients, args.fee)?;
+        let mut built = build_transaction(&store_arc, &recipients, args.fee)?;
         if built.bundle.value_balance != 0 {
             return Err(anyhow!(
                 "transparent pool disabled: value_balance must be 0 (got {})",
@@ -1648,12 +1714,36 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             ));
         }
 
+        let mut anchor_attempt = 0u8;
+        loop {
+            let anchor_valid = client.is_valid_anchor(&built.bundle.anchor).await?;
+            if anchor_valid {
+                break;
+            }
+            if anchor_attempt >= 2 {
+                return Err(anyhow!(
+                    "wallet built an invalid anchor ({}) even after resync + full rescan",
+                    hex::encode(built.bundle.anchor)
+                ));
+            }
+            if anchor_attempt == 1 {
+                store_arc.reset_sync_state()?;
+            }
+            anchor_attempt = anchor_attempt.saturating_add(1);
+            engine
+                .sync_once()
+                .await
+                .map_err(|e| anyhow!("Sync failed: {}", e))?;
+            wallet::tx_builder::precheck_nullifiers(&store_arc, &client, &recipients, args.fee)
+                .await
+                .map_err(anyhow::Error::from)?;
+            built = build_transaction(&store_arc, &recipients, args.fee)?;
+        }
+
         store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
 
-        let outgoing_disclosures = built.outgoing_disclosures.clone();
-        let use_da_sidecar = std::env::var("HEGEMON_WALLET_DA_SIDECAR")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
         if use_da_sidecar {
             println!("Submitting unsigned shielded-to-shielded transfer (DA sidecar)...");
             println!("  (Ciphertexts uploaded out-of-band via da_submitCiphertexts)");
@@ -1663,45 +1753,97 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             println!("  (No transparent account required - ZK proof authenticates the spend)");
         }
 
-        let result = if use_da_sidecar {
-            client
-                .submit_shielded_transfer_unsigned_sidecar(&built.bundle)
-                .await
-        } else {
-            client
-                .submit_shielded_transfer_unsigned(&built.bundle)
-                .await
-        };
+        let mut retried_invalid_anchor = false;
+        loop {
+            let result = submit_bundle_with_fallback(
+                &client,
+                &built.bundle,
+                use_da_sidecar,
+                use_proof_sidecar,
+            )
+            .await;
 
-        match result {
-            Ok(tx_hash) => {
-                let genesis_hash = match store_arc.genesis_hash()? {
-                    Some(hash) => hash,
-                    None => {
-                        let metadata = client.get_chain_metadata().await?;
-                        store_arc.set_genesis_hash(metadata.genesis_hash)?;
-                        metadata.genesis_hash
+            match result {
+                Ok(tx_hash) => {
+                    let genesis_hash = match store_arc.genesis_hash()? {
+                        Some(hash) => hash,
+                        None => {
+                            let metadata = client.get_chain_metadata().await?;
+                            store_arc.set_genesis_hash(metadata.genesis_hash)?;
+                            metadata.genesis_hash
+                        }
+                    };
+                    store_arc.record_outgoing_disclosures(
+                        tx_hash,
+                        genesis_hash,
+                        built.outgoing_disclosures.clone(),
+                    )?;
+                    store_arc.record_pending_submission(
+                        tx_hash,
+                        built.nullifiers.clone(),
+                        built.spent_note_indexes.clone(),
+                        metadata,
+                        args.fee,
+                    )?;
+                    println!("✓ Transaction submitted successfully!");
+                    println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                    return Ok(());
+                }
+                Err(WalletError::Rpc(msg))
+                    if !retried_invalid_anchor && is_invalid_anchor_submission(&msg) =>
+                {
+                    store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
+                    retried_invalid_anchor = true;
+
+                    engine
+                        .sync_once()
+                        .await
+                        .map_err(|e| anyhow!("Sync failed after invalid anchor: {}", e))?;
+                    wallet::tx_builder::precheck_nullifiers(
+                        &store_arc,
+                        &client,
+                        &recipients,
+                        args.fee,
+                    )
+                    .await
+                    .map_err(anyhow::Error::from)?;
+
+                    built = build_transaction(&store_arc, &recipients, args.fee)?;
+                    let mut retry_anchor_attempt = 0u8;
+                    loop {
+                        let anchor_valid = client.is_valid_anchor(&built.bundle.anchor).await?;
+                        if anchor_valid {
+                            break;
+                        }
+                        if retry_anchor_attempt >= 1 {
+                            return Err(anyhow!(
+                                "wallet rebuilt an invalid anchor after submission retry ({})",
+                                hex::encode(built.bundle.anchor)
+                            ));
+                        }
+                        retry_anchor_attempt = retry_anchor_attempt.saturating_add(1);
+                        engine
+                            .sync_once()
+                            .await
+                            .map_err(|e| anyhow!("Sync failed after invalid anchor: {}", e))?;
+                        wallet::tx_builder::precheck_nullifiers(
+                            &store_arc,
+                            &client,
+                            &recipients,
+                            args.fee,
+                        )
+                        .await
+                        .map_err(anyhow::Error::from)?;
+                        built = build_transaction(&store_arc, &recipients, args.fee)?;
                     }
-                };
-                store_arc.record_outgoing_disclosures(
-                    tx_hash,
-                    genesis_hash,
-                    outgoing_disclosures,
-                )?;
-                store_arc.record_pending_submission(
-                    tx_hash,
-                    built.nullifiers.clone(),
-                    built.spent_note_indexes.clone(),
-                    metadata,
-                    args.fee,
-                )?;
-                println!("✓ Transaction submitted successfully!");
-                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
-                Ok(())
-            }
-            Err(e) => {
-                store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
-                Err(anyhow!("Transaction submission failed: {}", e))
+
+                    store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
+                    continue;
+                }
+                Err(e) => {
+                    store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
+                    return Err(anyhow!("Transaction submission failed: {}", e));
+                }
             }
         }
     })
