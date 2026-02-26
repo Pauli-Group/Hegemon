@@ -7026,16 +7026,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 }
 
                                 let requires_sidecar = has_sidecar_transfers(&extrinsics);
+                                let missing_statement_hashes =
+                                    missing_proof_binding_hashes(&extrinsics);
+                                let needs_self_contained_batch =
+                                    requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
-                                let mut da_build = if requires_sidecar {
+                                let mut da_build = if needs_self_contained_batch {
                                     let payload = match extract_proven_batch_payload(&extrinsics) {
                                         Ok(Some(payload)) => payload.payload,
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
-                                                "Rejecting synced block (missing proven batch)"
+                                                "Rejecting synced block (missing proven batch for proofless sidecar transfers)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -7103,6 +7107,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             None
                                         }
                                     }
+                                } else if requires_sidecar {
+                                    // Sidecar extrinsics with inline proofs can be verified from
+                                    // statement hashes without a same-block submit_proven_batch.
+                                    None
                                 } else {
                                     match da_policy {
                                         pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
@@ -7153,7 +7161,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 };
 
-                                let missing_statement_hashes = missing_proof_binding_hashes(&extrinsics);
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
                                     if !missing_statement_hashes.is_empty() {
@@ -7596,16 +7603,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                block_hash_bytes.copy_from_slice(block_hash.as_bytes());
 
                                 let requires_sidecar = has_sidecar_transfers(&extrinsics);
+                                let missing_statement_hashes =
+                                    missing_proof_binding_hashes(&extrinsics);
+                                let needs_self_contained_batch =
+                                    requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
-                                let mut da_build = if requires_sidecar {
+                                let mut da_build = if needs_self_contained_batch {
                                     let payload = match extract_proven_batch_payload(&extrinsics) {
                                         Ok(Some(payload)) => payload.payload,
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&peer_id),
                                                 block_number,
-                                                "Rejecting announced block (missing proven batch)"
+                                                "Rejecting announced block (missing proven batch for proofless sidecar transfers)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -7673,6 +7684,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             None
                                         }
                                     }
+                                } else if requires_sidecar {
+                                    // Sidecar extrinsics with inline proofs can be verified from
+                                    // statement hashes without a same-block submit_proven_batch.
+                                    None
                                 } else {
                                     match da_policy {
                                         pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
@@ -7723,7 +7738,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 };
 
-                                let missing_statement_hashes = missing_proof_binding_hashes(&extrinsics);
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
                                     if !missing_statement_hashes.is_empty() {
