@@ -333,6 +333,18 @@ impl PqNetworkBackend {
                                                         recv_result = conn.recv() => {
                                                             match recv_result {
                                                                 Ok(Some(data)) => {
+                                                                    if let Some(peer) = peers_for_task
+                                                                        .write()
+                                                                        .await
+                                                                        .get_mut(&peer_id)
+                                                                    {
+                                                                        peer.info.bytes_received = peer
+                                                                            .info
+                                                                            .bytes_received
+                                                                            .saturating_add(
+                                                                                data.len() as u64,
+                                                                            );
+                                                                    }
                                                                     // Decode framed message
                                                                     #[derive(serde::Deserialize)]
                                                                     struct FramedMessage {
@@ -380,6 +392,18 @@ impl PqNetworkBackend {
                                                                     "Failed to send to peer"
                                                                 );
                                                                 break;
+                                                            }
+                                                            if let Some(peer) = peers_for_task
+                                                                .write()
+                                                                .await
+                                                                .get_mut(&peer_id)
+                                                            {
+                                                                peer.info.bytes_sent = peer
+                                                                    .info
+                                                                    .bytes_sent
+                                                                    .saturating_add(
+                                                                        data.len() as u64,
+                                                                    );
                                                             }
                                                         }
                                                     }
@@ -599,6 +623,14 @@ impl PqNetworkBackend {
                     recv_result = conn.recv() => {
                         match recv_result {
                             Ok(Some(data)) => {
+                                if let Some(peer) =
+                                    peers_for_task.write().await.get_mut(&peer_id)
+                                {
+                                    peer.info.bytes_received = peer
+                                        .info
+                                        .bytes_received
+                                        .saturating_add(data.len() as u64);
+                                }
                                 // Decode framed message
                                 #[derive(serde::Deserialize)]
                                 struct FramedMessage {
@@ -646,6 +678,12 @@ impl PqNetworkBackend {
                                 "Failed to send to peer"
                             );
                             break;
+                        }
+                        if let Some(peer) = peers_for_task.write().await.get_mut(&peer_id) {
+                            peer.info.bytes_sent = peer
+                                .info
+                                .bytes_sent
+                                .saturating_add(data.len() as u64);
                         }
                     }
                 }

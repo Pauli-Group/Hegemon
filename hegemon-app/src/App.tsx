@@ -16,6 +16,7 @@ import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
+const approvedSeeds = 'hegemon.pauli.group:30333,75.155.93.185:30333';
 const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
@@ -406,7 +407,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
   rpcCorsAll: false,
-  seeds: 'hegemon.pauli.group'
+  seeds: approvedSeeds
 });
 
 const buildTestnetConnection = (): NodeConnection => ({
@@ -428,7 +429,7 @@ const buildTestnetConnection = (): NodeConnection => ({
   rpcMethods: 'safe',
   rpcCorsAll: false,
   chainSpecPath: 'testnet',
-  seeds: 'hegemon.pauli.group'
+  seeds: approvedSeeds
 });
 
 const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
@@ -449,8 +450,12 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
   }
 
-  if ((isDefaultLocal || isDefaultTestnet) && connection.seeds === 'hegemon.pauli.group:30333') {
-    next = { ...next, seeds: 'hegemon.pauli.group' };
+  if (
+    (isDefaultLocal || isDefaultTestnet) &&
+    (connection.seeds === 'hegemon.pauli.group' ||
+      connection.seeds === 'hegemon.pauli.group:30333')
+  ) {
+    next = { ...next, seeds: approvedSeeds };
   }
 
   return next;

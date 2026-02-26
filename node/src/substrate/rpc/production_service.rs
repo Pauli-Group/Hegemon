@@ -257,15 +257,31 @@ where
     fn telemetry_snapshot(&self) -> TelemetrySnapshot {
         let uptime = self.start_time.elapsed();
         let blocks_mined = self.mined_blocks.lock().len() as u64;
+        let tx_count = self
+            .client
+            .block(self.best_hash())
+            .ok()
+            .flatten()
+            .map(|signed| signed.block.extrinsics().len() as u64)
+            .unwrap_or(0);
+        let (network_rx_bytes, network_tx_bytes) = {
+            let peers = self.peer_details.read();
+            peers.values().fold((0u64, 0u64), |(rx, tx), peer| {
+                (
+                    rx.saturating_add(peer.bytes_received),
+                    tx.saturating_add(peer.bytes_sent),
+                )
+            })
+        };
 
         TelemetrySnapshot {
             uptime_secs: uptime.as_secs(),
-            tx_count: 0, // TODO: Wire to transaction metrics
+            tx_count,
             blocks_imported: self.best_number(),
             blocks_mined,
-            memory_bytes: 0,     // TODO: Wire to memory metrics
-            network_rx_bytes: 0, // TODO: Wire to network metrics
-            network_tx_bytes: 0, // TODO: Wire to network metrics
+            memory_bytes: 0,
+            network_rx_bytes,
+            network_tx_bytes,
         }
     }
 

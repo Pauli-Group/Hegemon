@@ -559,6 +559,7 @@ To ensure early-joining nodes continue to learn about peers that connect later, 
 Nodes also request peer graphs on a periodic tick (default: `HEGEMON_PQ_PEER_GRAPH_TICK_SECS=30`) so monitoring tools can render the network topology.
 
 Sync source selection is gated by a genesis-compatibility probe instead of a "peer is not too far ahead" heuristic. For unknown peers, the node first issues `GetBlocks { start_height: 0, max_blocks: 1 }`, recomputes the hash of the returned height-0 header, and compares it to the local genesis hash. Only peers that match are marked sync-compatible; mismatches are marked incompatible and excluded from sync candidate selection. This keeps bootstrap for brand-new nodes unbounded by height while still filtering legacy/wrong-chain noise deterministically.
+Sync request/response correlation uses explicit request identifiers in `SyncMessage::RequestV2 { request_id, request }`; responders echo that ID in `SyncResponse`, and clients accept responses only when `(peer_id, request_id, request_type)` matches a tracked pending request.
 Sync scheduling prioritizes already-compatible peers before probing unknown peers, so legacy/high-noise peers cannot stall catch-up when a valid peer is available. Peers newly marked incompatible are disconnected automatically. By default (`HEGEMON_PQ_STRICT_COMPATIBILITY=1`), discovery address/graph traffic and cached discovery dials are restricted to genesis-compatible peers to prevent legacy nodes from polluting the active peer set.
 When no compatible peer currently advertises a higher tip, nodes run a lightweight tip-poll state (`GetBlocks` from `best+1`) that does not mark the node as "actively syncing", so mining continues without pause/resume churn while still recovering from missed announces.
 
@@ -968,7 +969,7 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 2. Connect the desktop app or Polkadot.js Apps to the node RPC endpoint to view live telemetry. When using the desktop app, prefer a persistent base path (avoid `--tmp`), and set `--listen-addr /ip4/0.0.0.0/tcp/30333` only when you intend to accept IPv4 peer traffic. Expose RPC externally only on trusted networks.
    The desktop app is organized into Overview, Node, Wallet, Send, Disclosure, and Console workspaces. Its global status bar always shows the active node, wallet store, and genesis hash so operators can detect mismatches before sending or mining.
    Use `hegemon_peerGraph` to retrieve connected peer details plus reported peers (address, direction, best height/hash); `system_peers` remains empty on the PQ transport.
-3. For multi-node setups, start additional nodes with `--bootnodes /ip4/127.0.0.1/tcp/30333` pointing to the first node.
+3. For multi-node setups, start additional nodes with the same `HEGEMON_SEEDS` list (for local testing, `HEGEMON_SEEDS=127.0.0.1:30333` for the first node endpoint).
 
 ### Security assurance workflow
 

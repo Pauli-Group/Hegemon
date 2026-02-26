@@ -252,7 +252,7 @@ where
 }
 
 /// A pending sync request
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)] // Reserved for future sync protocol implementation
 struct PendingRequest {
     /// Type of request
@@ -281,11 +281,74 @@ enum PendingRequestType {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingRequestKind {
+    GenesisProbe,
+    GetBlocks,
+    Headers,
+    Bodies,
+}
+
+impl PendingRequestType {
+    fn kind(&self) -> PendingRequestKind {
+        match self {
+            PendingRequestType::GenesisProbe => PendingRequestKind::GenesisProbe,
+            PendingRequestType::GetBlocks { .. } => PendingRequestKind::GetBlocks,
+            PendingRequestType::Headers { .. } => PendingRequestKind::Headers,
+            PendingRequestType::Bodies { .. } => PendingRequestKind::Bodies,
+        }
+    }
+}
+
 impl<Block, Client> ChainSyncService<Block, Client>
 where
     Block: BlockT,
     Client: HeaderBackend<Block> + BlockBackend<Block> + Send + Sync + 'static,
 {
+    fn response_request_id(&mut self, incoming_request_id: Option<u64>) -> u64 {
+        incoming_request_id.unwrap_or_else(|| self.next_request_id())
+    }
+
+    fn pending_request_matches(
+        &self,
+        peer_id: PeerId,
+        request_id: u64,
+        expected: &[PendingRequestKind],
+    ) -> bool {
+        let Some(pending) = self.pending_requests.get(&request_id) else {
+            tracing::debug!(
+                peer = %hex::encode(peer_id),
+                request_id,
+                "Ignoring sync response with unknown request_id"
+            );
+            return false;
+        };
+
+        if pending.peer != peer_id {
+            tracing::warn!(
+                peer = %hex::encode(peer_id),
+                expected_peer = %hex::encode(pending.peer),
+                request_id,
+                "Ignoring sync response from unexpected peer for request_id"
+            );
+            return false;
+        }
+
+        let type_matches = expected.contains(&pending.request_type.kind());
+
+        if !type_matches {
+            tracing::warn!(
+                peer = %hex::encode(peer_id),
+                request_id,
+                pending = ?pending.request_type,
+                "Ignoring sync response with mismatched pending request type"
+            );
+            return false;
+        }
+
+        true
+    }
+
     fn best_hash_bytes(&self) -> [u8; 32] {
         let info = self.client.info();
         let mut bytes = [0u8; 32];
@@ -567,6 +630,7 @@ where
     pub fn handle_sync_request(
         &mut self,
         peer_id: PeerId,
+        request_id: Option<u64>,
         request: SyncRequest,
     ) -> Option<SyncResponse> {
         self.stats.requests_handled += 1;
@@ -576,15 +640,19 @@ where
                 start_hash,
                 max_headers,
                 ascending,
-            } => self.handle_headers_request(peer_id, start_hash, max_headers, ascending),
-            SyncRequest::BlockBodies { hashes } => self.handle_bodies_request(peer_id, hashes),
+            } => {
+                self.handle_headers_request(peer_id, start_hash, max_headers, ascending, request_id)
+            }
+            SyncRequest::BlockBodies { hashes } => {
+                self.handle_bodies_request(peer_id, hashes, request_id)
+            }
             SyncRequest::StateRequest { block_hash, keys } => {
-                self.handle_state_request(peer_id, block_hash, keys)
+                self.handle_state_request(peer_id, block_hash, keys, request_id)
             }
             SyncRequest::GetBlocks {
                 start_height,
                 max_blocks,
-            } => self.handle_get_blocks_request(peer_id, start_height, max_blocks),
+            } => self.handle_get_blocks_request(peer_id, start_height, max_blocks, request_id),
         }
     }
 
@@ -596,6 +664,7 @@ where
         peer_id: PeerId,
         start_height: u64,
         max_blocks: u32,
+        request_id: Option<u64>,
     ) -> Option<SyncResponse> {
         use crate::substrate::network_bridge::SyncBlock;
 
@@ -619,7 +688,7 @@ where
                 "🔄 SYNC SERVER: GetBlocks requested height beyond our chain"
             );
             return Some(SyncResponse::Blocks {
-                request_id: self.next_request_id(),
+                request_id: self.response_request_id(request_id),
                 blocks: vec![],
             });
         }
@@ -683,7 +752,7 @@ where
         self.stats.responses_sent += 1;
 
         Some(SyncResponse::Blocks {
-            request_id: self.next_request_id(),
+            request_id: self.response_request_id(request_id),
             blocks,
         })
     }
@@ -695,6 +764,7 @@ where
         start_hash: [u8; 32],
         max_headers: u32,
         ascending: bool,
+        request_id: Option<u64>,
     ) -> Option<SyncResponse> {
         let max_headers = max_headers.min(MAX_HEADERS_PER_RESPONSE);
         let mut headers = Vec::new();
@@ -712,7 +782,7 @@ where
                     "Headers request: start block not found"
                 );
                 return Some(SyncResponse::BlockHeaders {
-                    request_id: self.next_request_id(),
+                    request_id: self.response_request_id(request_id),
                     headers: vec![],
                 });
             }
@@ -772,7 +842,7 @@ where
         self.stats.responses_sent += 1;
 
         Some(SyncResponse::BlockHeaders {
-            request_id: self.next_request_id(),
+            request_id: self.response_request_id(request_id),
             headers,
         })
     }
@@ -782,6 +852,7 @@ where
         &mut self,
         peer_id: PeerId,
         hashes: Vec<[u8; 32]>,
+        request_id: Option<u64>,
     ) -> Option<SyncResponse> {
         let hashes: Vec<_> = hashes.into_iter().take(MAX_BODIES_PER_RESPONSE).collect();
         let mut bodies = Vec::new();
@@ -822,7 +893,7 @@ where
         self.stats.responses_sent += 1;
 
         Some(SyncResponse::BlockBodies {
-            request_id: self.next_request_id(),
+            request_id: self.response_request_id(request_id),
             bodies,
         })
     }
@@ -833,6 +904,7 @@ where
         peer_id: PeerId,
         block_hash: [u8; 32],
         _keys: Vec<Vec<u8>>,
+        request_id: Option<u64>,
     ) -> Option<SyncResponse> {
         // State requests are more complex and require state access
         // For now, return empty response
@@ -845,7 +917,7 @@ where
         self.stats.responses_sent += 1;
 
         Some(SyncResponse::StateResponse {
-            request_id: self.next_request_id(),
+            request_id: self.response_request_id(request_id),
             entries: vec![],
         })
     }
@@ -896,10 +968,21 @@ where
             "🔄 SYNC: handle_blocks_response CALLED"
         );
 
-        // We only allow one outstanding request at a time. The protocol currently does not
-        // correlate request/response IDs, so clear pending unconditionally to avoid leaks.
-        let _ = request_id;
-        self.pending_requests.clear();
+        if !self.pending_request_matches(
+            peer_id,
+            request_id,
+            &[
+                PendingRequestKind::GenesisProbe,
+                PendingRequestKind::GetBlocks,
+            ],
+        ) {
+            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+            }
+            self.stats.failed_requests = self.stats.failed_requests.saturating_add(1);
+            return;
+        }
+        self.pending_requests.remove(&request_id);
 
         // Clear request pending flag
         match &mut self.state {
@@ -1247,8 +1330,14 @@ where
     fn handle_headers_response(&mut self, peer_id: PeerId, request_id: u64, headers: Vec<Vec<u8>>) {
         self.stats.headers_received += headers.len() as u64;
 
-        // Find the corresponding pending request
-        let _pending = self.pending_requests.remove(&request_id);
+        if !self.pending_request_matches(peer_id, request_id, &[PendingRequestKind::Headers]) {
+            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+            }
+            self.stats.failed_requests = self.stats.failed_requests.saturating_add(1);
+            return;
+        }
+        self.pending_requests.remove(&request_id);
 
         // Clear request pending flag in state
         if let SyncState::Downloading {
@@ -1296,8 +1385,14 @@ where
         let found = bodies.iter().filter(|b| b.is_some()).count();
         self.stats.bodies_received += found as u64;
 
-        // Find the corresponding pending request
-        let _pending = self.pending_requests.remove(&request_id);
+        if !self.pending_request_matches(peer_id, request_id, &[PendingRequestKind::Bodies]) {
+            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+            }
+            self.stats.failed_requests = self.stats.failed_requests.saturating_add(1);
+            return;
+        }
+        self.pending_requests.remove(&request_id);
 
         // Clear request pending flag in state
         if let SyncState::Downloading {
@@ -1452,7 +1547,7 @@ where
         peer_id: PeerId,
         our_best: u64,
         now: Instant,
-    ) -> Option<(PeerId, SyncRequest)> {
+    ) -> Option<(PeerId, u64, SyncRequest)> {
         self.last_tip_poll = Some(now);
         self.state = SyncState::TipPolling {
             peer: peer_id,
@@ -1468,7 +1563,7 @@ where
     ///
     /// Called periodically (e.g., every second) to drive sync progress.
     /// Returns an optional request to send to a peer.
-    pub fn tick(&mut self) -> Option<(PeerId, SyncRequest)> {
+    pub fn tick(&mut self) -> Option<(PeerId, u64, SyncRequest)> {
         let our_best = self.best_number();
         let now = Instant::now();
 
@@ -1800,7 +1895,7 @@ where
         &mut self,
         peer_id: PeerId,
         announced_best: u64,
-    ) -> Option<(PeerId, SyncRequest)> {
+    ) -> Option<(PeerId, u64, SyncRequest)> {
         let request_id = self.next_request_id();
         let request = SyncRequest::GetBlocks {
             start_height: 0,
@@ -1831,7 +1926,7 @@ where
             "Sending genesis compatibility probe"
         );
 
-        Some((peer_id, request))
+        Some((peer_id, request_id, request))
     }
 
     /// Create a block request for the sync protocol (PoW-style GetBlocks)
@@ -1839,7 +1934,7 @@ where
         &mut self,
         peer_id: PeerId,
         from_height: u64,
-    ) -> Option<(PeerId, SyncRequest)> {
+    ) -> Option<(PeerId, u64, SyncRequest)> {
         let request_id = self.next_request_id();
 
         // Use the new GetBlocks request type for PoW-style sync
@@ -1892,7 +1987,7 @@ where
             "Sending GetBlocks request"
         );
 
-        Some((peer_id, request))
+        Some((peer_id, request_id, request))
     }
 }
 
