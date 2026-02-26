@@ -10,6 +10,7 @@ use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, 
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::verify_circuit;
+use p3_uni_stark::get_log_num_quotient_chunks;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,10 +21,10 @@ use transaction_circuit::{
     TransactionAirP3, TransactionProof, TransactionPublicInputsP3,
     hashing_pq::felts_to_bytes48,
     p3_config::{
-        Challenge, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash, POSEIDON2_RATE,
-        TransactionProofP3, Val, config_with_fri,
+        Challenge, Compress, Config, DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_POW_BITS, Hash,
+        POSEIDON2_RATE, TransactionProofP3, Val, config_with_fri,
     },
-    p3_verifier::{infer_transaction_fri_profile_p3, verify_transaction_proof_p3},
+    p3_verifier::verify_transaction_proof_p3,
 };
 use zstd::stream::{decode_all, encode_all};
 
@@ -209,6 +210,11 @@ fn build_aggregation_verifier_cache_entry(
         common,
         public_table_indices,
     })
+}
+
+fn transaction_log_blowup_for_public_inputs(pub_inputs_len: usize) -> usize {
+    let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
+    FRI_LOG_BLOWUP.max(log_chunks)
 }
 
 fn get_or_build_aggregation_verifier_cache_entry(
@@ -550,13 +556,7 @@ pub fn warm_aggregation_cache(
         final_poly_len: inner_proof.opening_proof.final_poly.len(),
         query_count: inner_proof.opening_proof.query_proofs.len(),
     };
-    let log_blowup = infer_transaction_fri_profile_p3(&inner_proof)
-        .map_err(|err| {
-            ProofError::AggregationProofInputsMismatch(format!(
-                "failed to infer transaction proof FRI profile: {err}"
-            ))
-        })?
-        .log_blowup;
+    let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_vec.len());
     let cache_key = AggregationVerifierKey {
         tx_count,
         pub_inputs_len: pub_inputs_vec.len(),
@@ -667,13 +667,7 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         final_poly_len: representative_proof.opening_proof.final_poly.len(),
         query_count: representative_proof.opening_proof.query_proofs.len(),
     };
-    let log_blowup = infer_transaction_fri_profile_p3(&representative_proof)
-        .map_err(|err| {
-            ProofError::AggregationProofInputsMismatch(format!(
-                "failed to infer transaction proof FRI profile: {err}"
-            ))
-        })?
-        .log_blowup;
+    let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_len);
     let cache_key = AggregationVerifierKey {
         tx_count,
         pub_inputs_len,
@@ -804,13 +798,7 @@ pub fn verify_aggregation_proof_with_metrics(
         final_poly_len: representative_proof.opening_proof.final_poly.len(),
         query_count: representative_proof.opening_proof.query_proofs.len(),
     };
-    let log_blowup = infer_transaction_fri_profile_p3(&representative_proof)
-        .map_err(|err| {
-            ProofError::AggregationProofInputsMismatch(format!(
-                "failed to infer transaction proof FRI profile: {err}"
-            ))
-        })?
-        .log_blowup;
+    let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_len);
     let cache_key = AggregationVerifierKey {
         tx_count,
         pub_inputs_len,
