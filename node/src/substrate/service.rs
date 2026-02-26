@@ -3478,6 +3478,76 @@ fn is_proofless_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
     }
 }
 
+fn proofless_binding_hash_from_call(call: &runtime::RuntimeCall) -> Option<[u8; 64]> {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return None;
+    };
+
+    match call {
+        ShieldedPoolCall::shielded_transfer {
+            proof,
+            binding_hash,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned {
+            proof,
+            binding_hash,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_sidecar {
+            proof,
+            binding_hash,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            proof,
+            binding_hash,
+            ..
+        } => proof.data.is_empty().then_some(binding_hash.data),
+        _ => None,
+    }
+}
+
+fn ready_proofless_binding_hashes_for_preview(
+    prover_coordinator: &ProverCoordinator,
+    parent_hash: H256,
+    preview_extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<BTreeSet<[u8; 64]>, String> {
+    let mut candidate = preview_extrinsics.to_vec();
+
+    loop {
+        let missing = missing_proof_binding_hashes(&candidate);
+        if missing.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+
+        let statement_hashes = statement_hashes_from_extrinsics(&candidate);
+        let shielded_tx_count = statement_hashes.len() as u32;
+        if shielded_tx_count == 0 {
+            return Ok(BTreeSet::new());
+        }
+
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
+
+        if prover_coordinator
+            .lookup_prepared_bundle(parent_hash, tx_statements_commitment, shielded_tx_count)
+            .is_some()
+        {
+            return Ok(missing.into_iter().collect());
+        }
+
+        let Some(drop_idx) = candidate
+            .iter()
+            .rposition(|extrinsic| is_proofless_shielded_transfer_call(&extrinsic.function))
+        else {
+            return Ok(BTreeSet::new());
+        };
+        candidate.remove(drop_idx);
+    }
+}
+
 fn shielded_transfer_order_key(call: &ShieldedPoolCall) -> [u8; 32] {
     sp_core::hashing::blake2_256(&call.encode())
 }
@@ -3948,6 +4018,7 @@ pub fn wire_block_builder_api(
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
         let mut defer_proofless_until_ready_batch = false;
+        let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
         if aggregation_proofs_enabled {
             let mut preview_extrinsics = Vec::new();
             for ext_bytes in &applied {
@@ -3988,33 +4059,36 @@ pub fn wire_block_builder_api(
                         "Deferring proofless sidecar transfers: ProofAvailabilityPolicy is not SelfContained"
                     );
                 } else {
-                    let preview_statement_hashes = statement_hashes_from_extrinsics(&preview_extrinsics);
-                    let preview_shielded_tx_count = preview_statement_hashes.len() as u32;
-                    let preview_has_ready_bundle = if preview_shielded_tx_count == 0 {
-                        false
-                    } else {
-                        let tx_statements_commitment =
-                            CommitmentBlockProver::commitment_from_statement_hashes(
-                                &preview_statement_hashes,
-                            )
-                            .map_err(|err| {
-                                format!("tx_statements_commitment preflight failed: {err}")
-                            })?;
-                        prover_coordinator
-                            .lookup_prepared_bundle(
-                                parent_substrate_hash,
-                                tx_statements_commitment,
-                                preview_shielded_tx_count,
-                            )
-                            .is_some()
-                    };
-                    if !preview_has_ready_bundle {
+                    let ready_bindings = ready_proofless_binding_hashes_for_preview(
+                        prover_coordinator.as_ref(),
+                        parent_substrate_hash,
+                        &preview_extrinsics,
+                    )?;
+                    if ready_bindings.is_empty() {
                         defer_proofless_until_ready_batch = true;
                         tracing::warn!(
                             block_number,
                             missing_proof_bindings = missing_preview.len(),
-                            "Deferring proofless sidecar transfers until a proven batch is ready"
+                            "Deferring proofless sidecar transfers until a proven batch is ready (no ready subset)"
                         );
+                    } else {
+                        let deferred = missing_preview.len().saturating_sub(ready_bindings.len());
+                        if deferred > 0 {
+                            defer_proofless_until_ready_batch = true;
+                            tracing::warn!(
+                                block_number,
+                                ready_proofless_sidecar = ready_bindings.len(),
+                                deferred_proofless_sidecar = deferred,
+                                "Using ready proofless subset while larger proven batch is still building"
+                            );
+                        } else {
+                            tracing::debug!(
+                                block_number,
+                                ready_proofless_sidecar = ready_bindings.len(),
+                                "Ready proven batch found for full proofless candidate set"
+                            );
+                        }
+                        ready_proofless_bindings = Some(ready_bindings);
                     }
                 }
             }
@@ -4060,6 +4134,19 @@ pub fn wire_block_builder_api(
                         && defer_proofless_until_ready_batch
                         && is_proofless_sidecar
                     {
+                        let allow_ready_subset = ready_proofless_bindings
+                            .as_ref()
+                            .and_then(|bindings| {
+                                proofless_binding_hash_from_call(&extrinsic.function)
+                                    .map(|binding_hash| bindings.contains(&binding_hash))
+                            })
+                            .unwrap_or(false);
+                        if allow_ready_subset {
+                            tracing::debug!(
+                                block_number,
+                                "Including proofless shielded transfer from ready subset"
+                            );
+                        } else {
                         deferred_proofless_sidecar_count =
                             deferred_proofless_sidecar_count.saturating_add(1);
                         tracing::warn!(
@@ -4067,6 +4154,7 @@ pub fn wire_block_builder_api(
                             "Deferring proofless shielded transfer until proven batch is ready"
                         );
                         continue;
+                    }
                     }
                     if is_shielded && shielded_transfer_count >= max_shielded_transfers_per_block {
                         tracing::warn!(
@@ -4098,18 +4186,12 @@ pub fn wire_block_builder_api(
             }
         }
 
-        if aggregation_proofs_enabled
-            && deferred_proofless_sidecar_count > 0
-            && shielded_transfer_count == 0
-        {
+        if aggregation_proofs_enabled && deferred_proofless_sidecar_count > 0 {
             tracing::info!(
                 block_number,
                 deferred_proofless_sidecar_count,
-                "Waiting for proven batch candidate before sealing block"
-            );
-            return Err(
-                "shielded block with omitted proof bytes requires a ready proven batch"
-                    .to_string(),
+                included_shielded_transfers = shielded_transfer_count,
+                "Deferred proofless sidecar transfers this block"
             );
         }
 
