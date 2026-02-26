@@ -19,6 +19,7 @@ MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
 STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven batch is absent
 STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-600}"
+MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
 
 # Throughput profile:
@@ -40,22 +41,18 @@ case "$TP_PROFILE" in
   safe)
     DEFAULT_RAYON_THREADS=2
     DEFAULT_CARGO_JOBS=1
-    DEFAULT_MINE_THREADS=1
     ;;
   max)
     DEFAULT_RAYON_THREADS="$HOST_THREADS"
     DEFAULT_CARGO_JOBS="$HOST_THREADS"
-    DEFAULT_MINE_THREADS="$HOST_THREADS"
     ;;
   auto)
     if [ "$HOST_MEM_GIB" -ge 128 ]; then
       DEFAULT_RAYON_THREADS="$HOST_THREADS"
       DEFAULT_CARGO_JOBS="$HOST_THREADS"
-      DEFAULT_MINE_THREADS="$HOST_THREADS"
     else
       DEFAULT_RAYON_THREADS=2
       DEFAULT_CARGO_JOBS=1
-      DEFAULT_MINE_THREADS=1
     fi
     ;;
   *)
@@ -66,6 +63,7 @@ esac
 
 RAYON_THREADS="${HEGEMON_TP_RAYON_THREADS:-$DEFAULT_RAYON_THREADS}"
 CARGO_JOBS="${HEGEMON_TP_CARGO_JOBS:-$DEFAULT_CARGO_JOBS}"
+DEFAULT_MINE_THREADS=1
 MINE_THREADS="${HEGEMON_TP_MINE_THREADS:-$DEFAULT_MINE_THREADS}"
 
 if [ "$RAYON_THREADS" -lt 1 ] || [ "$CARGO_JOBS" -lt 1 ] || [ "$MINE_THREADS" -lt 1 ]; then
@@ -93,6 +91,14 @@ case "$TPS_EFFECTIVE_MODE" in
 esac
 if ! [[ "$STRICT_PREPARE_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [ "$STRICT_PREPARE_TIMEOUT_SECS" -lt 1 ]; then
   echo "HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS must be a positive integer (got '$STRICT_PREPARE_TIMEOUT_SECS')." >&2
+  exit 1
+fi
+if ! [[ "$MIN_PREPARED_TXS" =~ ^[0-9]+$ ]] || [ "$MIN_PREPARED_TXS" -lt 1 ]; then
+  echo "HEGEMON_TP_MIN_PREPARED_TXS must be a positive integer (got '$MIN_PREPARED_TXS')." >&2
+  exit 1
+fi
+if [ "$MIN_PREPARED_TXS" -gt "$TX_COUNT" ]; then
+  echo "HEGEMON_TP_MIN_PREPARED_TXS (${MIN_PREPARED_TXS}) cannot exceed HEGEMON_TP_TX_COUNT (${TX_COUNT})." >&2
   exit 1
 fi
 
@@ -367,6 +373,7 @@ env $WALLET_FAST_ENV ./target/release/wallet substrate-sync \
 
 if [ "$WORKERS" -gt 1 ]; then
   echo "Funding worker wallets from miner..." >&2
+  funding_sends=0
   for i in "${!WORKER_STORES[@]}"; do
     worker_tx_count="${WORKER_TX_COUNTS[$i]}"
     if [ "$worker_tx_count" -le 0 ]; then
@@ -391,30 +398,38 @@ EOF
         --recipients "$fund_json" \
         --ws-url "$RPC_WS" \
         --fee "$FEE" >/dev/null
+      funding_sends=$((funding_sends + 1))
+
+      # Confirm each funding send before issuing the next one so the miner wallet
+      # never reuses a just-spent nullifier.
+      before_funding_mine="$(current_block_number)"
+      curl -s -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
+        "$RPC_HTTP" >/dev/null
+      funding_target=$((before_funding_mine + 1))
+      current="$before_funding_mine"
+      for k in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
+        current="$(current_block_number)"
+        if [ "$current" -ge "$funding_target" ]; then
+          break
+        fi
+        sleep 1
+      done
+      if [ "$current" -lt "$funding_target" ]; then
+        echo "Timed out while confirming worker funding transfer (target block ${funding_target}, got ${current})." >&2
+        exit 1
+      fi
+      curl -s -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
+        "$RPC_HTTP" >/dev/null
+
+      env $WALLET_FAST_ENV ./target/release/wallet substrate-sync \
+        --store "$WALLET_A" --passphrase "$PASS_A" \
+        --ws-url "$RPC_WS" --force-rescan >/dev/null
     done
   done
 
-  echo "Mining worker-funding transfers..." >&2
-  before_funding_mine="$(current_block_number)"
-  curl -s -H "Content-Type: application/json" \
-    -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
-    "$RPC_HTTP" >/dev/null
-  funding_target=$((before_funding_mine + 2))
-  for i in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
-    current="$(current_block_number)"
-    if [ "$current" -ge "$funding_target" ]; then
-      break
-    fi
-    sleep 1
-  done
-  if [ "$current" -lt "$funding_target" ]; then
-    echo "Timed out while mining worker funding transfers (target block ${funding_target}, got ${current})." >&2
-    exit 1
-  fi
-
-  curl -s -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
-    "$RPC_HTTP" >/dev/null
+  echo "Completed worker funding sends: ${funding_sends}" >&2
 
   echo "Syncing worker wallets..." >&2
   for i in "${!WORKER_STORES[@]}"; do
@@ -475,17 +490,32 @@ SEND_TOTAL_MS=$((SEND_END_MS - SEND_START_MS))
 echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
 
 if [ "$STRICT_AGGREGATION" = "1" ]; then
-  echo "Strict mode: waiting for local proven batch candidate before mining..." >&2
+  echo "Strict mode: waiting for local proven batch candidate before mining (min_prepared_txs=${MIN_PREPARED_TXS})..." >&2
   PREPARED_LINE=""
+  BEST_PREPARED_LINE=""
+  BEST_PREPARED_TX_COUNT=0
   for i in $(seq 1 "$STRICT_PREPARE_TIMEOUT_SECS"); do
-    PREPARED_LINE="$(search_log "Prepared proven batch candidate" | tail -n 1 || true)"
-    if [ -n "$PREPARED_LINE" ]; then
-      break
+    LATEST_PREPARED_LINE="$(search_log "Prepared proven batch candidate" | tail -n 1 || true)"
+    if [ -n "$LATEST_PREPARED_LINE" ]; then
+      LATEST_PREPARED_TX_COUNT="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\btx_count=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LATEST_PREPARED_LINE")"
+      if [ "$LATEST_PREPARED_TX_COUNT" -gt "$BEST_PREPARED_TX_COUNT" ]; then
+        BEST_PREPARED_TX_COUNT="$LATEST_PREPARED_TX_COUNT"
+        BEST_PREPARED_LINE="$LATEST_PREPARED_LINE"
+      fi
+      if [ "$LATEST_PREPARED_TX_COUNT" -ge "$MIN_PREPARED_TXS" ]; then
+        PREPARED_LINE="$LATEST_PREPARED_LINE"
+        break
+      fi
     fi
     sleep 1
   done
   if [ -z "$PREPARED_LINE" ]; then
-    echo "Strict aggregation mode: timed out waiting for local proven batch candidate." >&2
+    if [ "$BEST_PREPARED_TX_COUNT" -gt 0 ]; then
+      echo "Strict aggregation mode: timed out waiting for prepared batch >= ${MIN_PREPARED_TXS}; best_seen_tx_count=${BEST_PREPARED_TX_COUNT}." >&2
+      echo "$BEST_PREPARED_LINE" >&2
+    else
+      echo "Strict aggregation mode: timed out waiting for local proven batch candidate." >&2
+    fi
     echo "Inspect logs: $LOG_FILE" >&2
     exit 1
   fi
