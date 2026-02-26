@@ -503,6 +503,8 @@ echo "Waiting for size + verify metrics in logs..." >&2
 touch "$LOG_FILE"
 FOUND=""
 FOUND_BLOCK=""
+FOUND_TX_COUNT=0
+FOUND_AT_MS="$INCLUSION_START_MS"
 for i in $(seq 1 1200); do
   LINE="$(search_log "block_payload_size_metrics" | tail -n 1 || true)"
   if [ -z "$LINE" ]; then
@@ -519,19 +521,28 @@ for i in $(seq 1 1200); do
     sleep 1
     continue
   fi
-  FOUND="$LINE"
-  FOUND_BLOCK="$LINE_BLOCK"
-  break
+  LINE_TX_COUNT="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\btx_count=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
+  if [ "$LINE_TX_COUNT" -gt "$FOUND_TX_COUNT" ]; then
+    FOUND="$LINE"
+    FOUND_BLOCK="$LINE_BLOCK"
+    FOUND_TX_COUNT="$LINE_TX_COUNT"
+    FOUND_AT_MS="$(now_ms)"
+  fi
+  if [ "$LINE_TX_COUNT" -ge "$TX_COUNT" ]; then
+    break
+  fi
+  sleep 1
 done
 
-if [ -z "$FOUND" ]; then
+if [ -z "$FOUND" ] || [ "$FOUND_TX_COUNT" -le 0 ]; then
   echo "Timed out waiting for metrics; inspect logs: $LOG_FILE" >&2
   echo "Attach: tmux attach -t $SESSION" >&2
   exit 1
 fi
-ROUND_END_MS="$(now_ms)"
+ROUND_END_MS="$FOUND_AT_MS"
 ROUND_TOTAL_MS=$((ROUND_END_MS - ROUND_START_MS))
 INCLUSION_TOTAL_MS=$((ROUND_END_MS - INCLUSION_START_MS))
+INCLUDED_TX_COUNT="$FOUND_TX_COUNT"
 
 SUBMISSION_TPS="$(python3 - <<PY
 tx_count = int("${TX_COUNT}")
@@ -540,13 +551,13 @@ print(f"{(tx_count / (send_total_ms / 1000.0)):.6f}" if send_total_ms > 0 else "
 PY
 )"
 INCLUSION_TPS="$(python3 - <<PY
-tx_count = int("${TX_COUNT}")
+tx_count = int("${INCLUDED_TX_COUNT}")
 inclusion_total_ms = int("${INCLUSION_TOTAL_MS}")
 print(f"{(tx_count / (inclusion_total_ms / 1000.0)):.6f}" if inclusion_total_ms > 0 else "0.000000")
 PY
 )"
 END_TO_END_TPS="$(python3 - <<PY
-tx_count = int("${TX_COUNT}")
+tx_count = int("${INCLUDED_TX_COUNT}")
 round_total_ms = int("${ROUND_TOTAL_MS}")
 print(f"{(tx_count / (round_total_ms / 1000.0)):.6f}" if round_total_ms > 0 else "0.000000")
 PY
@@ -610,6 +621,9 @@ fi
 echo "" >&2
 echo "=== Latest payload size metrics ===" >&2
 echo "$FOUND" >&2
+if [ "$INCLUDED_TX_COUNT" -lt "$TX_COUNT" ]; then
+  echo "WARNING: Included tx_count (${INCLUDED_TX_COUNT}) is below requested tx_count (${TX_COUNT}); TPS uses included_tx_count." >&2
+fi
 echo "=== Latest import verify time ===" >&2
 if [ -n "$VERIFY_LINE" ]; then
   echo "$VERIFY_LINE" >&2
@@ -623,7 +637,7 @@ else
   search_log "block_proof_verification_metrics" | tail -n 1 >&2 || true
 fi
 echo "" >&2
-echo "throughput_round_metrics tx_count=${TX_COUNT} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
+echo "throughput_round_metrics tx_count=${TX_COUNT} included_tx_count=${INCLUDED_TX_COUNT} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
 
 echo "Done. Node is still running in tmux." >&2
 echo "  Attach: tmux attach -t $SESSION" >&2
