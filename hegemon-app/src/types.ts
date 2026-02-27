@@ -91,6 +91,11 @@ export type NodeSummary = {
   hashRate: number | null;
   blocksFound: number | null;
   difficulty: number | null;
+  aggregationProofFormat: string | null;
+  proverStageType: string | null;
+  proverStageLevel: number | null;
+  proverStageArity: number | null;
+  proverReadyBundleAgeMs: number | null;
   blockHeight: number | null;
   supplyDigest: string | null;
   storage: NodeStorageFootprint | null;

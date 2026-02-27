@@ -267,6 +267,11 @@ elif [ "$STRICT_AGGREGATION" = "1" ]; then
 else
   PROVER_BATCH_JOB_TIMEOUT_MS=180000
 fi
+if [ -n "${HEGEMON_TP_ADAPTIVE_LIVENESS_MS:-}" ]; then
+  ADAPTIVE_LIVENESS_MS="${HEGEMON_TP_ADAPTIVE_LIVENESS_MS}"
+else
+  ADAPTIVE_LIVENESS_MS=""
+fi
 WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
 WALLET_RPC_REQUEST_TIMEOUT_SECS="${HEGEMON_TP_WALLET_RPC_REQUEST_TIMEOUT_SECS:-180}"
 SEND_RETRIES="${HEGEMON_TP_SEND_RETRIES:-4}"
@@ -369,7 +374,7 @@ cd "$ROOT_DIR"
 
 echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
 echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
-echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY" >&2
+echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
 echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
 echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
 echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
@@ -420,6 +425,10 @@ if ! [[ "$PROVER_WORKERS" =~ ^[0-9]+$ ]]; then
 fi
 if ! [[ "$PROVER_BATCH_JOB_TIMEOUT_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_BATCH_JOB_TIMEOUT_MS" -lt 1 ]; then
   echo "HEGEMON_TP_BATCH_JOB_TIMEOUT_MS must be a positive integer (got '$PROVER_BATCH_JOB_TIMEOUT_MS')." >&2
+  exit 1
+fi
+if [ -n "$ADAPTIVE_LIVENESS_MS" ] && ! [[ "$ADAPTIVE_LIVENESS_MS" =~ ^[0-9]+$ ]]; then
+  echo "HEGEMON_TP_ADAPTIVE_LIVENESS_MS must be an integer >= 0 (got '$ADAPTIVE_LIVENESS_MS')." >&2
   exit 1
 fi
 if [ "$WORKERS" -gt "$TX_COUNT" ]; then
@@ -567,6 +576,10 @@ NODE_STRICT_ENV=""
 if [ "$STRICT_AGGREGATION" = "1" ] && [ "$AGGREGATION_PROOFS_ENABLED" = "1" ]; then
   NODE_STRICT_ENV="HEGEMON_DISABLE_PROOFLESS_HYDRATION=1"
 fi
+NODE_ADAPTIVE_LIVENESS_ENV=""
+if [ -n "$ADAPTIVE_LIVENESS_MS" ]; then
+  NODE_ADAPTIVE_LIVENESS_ENV="HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS=${ADAPTIVE_LIVENESS_MS}"
+fi
 
 wallet_sync() {
   local store="$1"
@@ -646,6 +659,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_MINE_THREADS='${MINE_THREADS}' \
      HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
      HEGEMON_PROVER_LIVENESS_LANE='${PROVER_LIVENESS_LANE}' \
+     $NODE_ADAPTIVE_LIVENESS_ENV \
      HEGEMON_BATCH_QUEUE_CAPACITY='${BATCH_QUEUE_CAPACITY}' \
      HEGEMON_BATCH_INCREMENTAL_UPSIZE='${BATCH_INCREMENTAL_UPSIZE}' \
      HEGEMON_BATCH_TARGET_TXS='${TX_COUNT}' \

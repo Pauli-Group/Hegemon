@@ -196,7 +196,7 @@ pub struct BlockProofBundle {
     pub da_chunk_count: u32,
     /// Commitment proof bytes.
     pub commitment_proof: StarkProof,
-    /// Aggregation proof bytes (V3 payload format).
+    /// Aggregation proof bytes (V4 payload format).
     pub aggregation_proof: StarkProof,
     /// Optional external prover payout claim.
     pub prover_claim: Option<ProverCompensationClaim>,
