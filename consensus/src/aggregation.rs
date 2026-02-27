@@ -91,14 +91,19 @@ const AGGREGATION_PROOF_VERSION: u8 = 1;
 const AGGREGATION_PROOF_HEADER_LEN: usize = 4 + 1 + 4;
 const AGGREGATION_PROOF_ZSTD_LEVEL: i32 = 3;
 const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
-pub const AGGREGATION_PROOF_FORMAT_VERSION_V3: u8 = 3;
+pub const AGGREGATION_PROOF_FORMAT_VERSION_V4: u8 = 4;
 const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
 const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
 const STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct AggregationProofV3Payload {
+struct AggregationProofV4Payload {
     version: u8,
+    proof_format: u8,
+    tree_arity: u16,
+    tree_levels: u16,
+    root_level: u16,
+    shape_id: [u8; 32],
     tx_count: u32,
     tx_statements_commitment: Vec<u8>,
     public_values_encoding: u8,
@@ -232,6 +237,97 @@ fn build_aggregation_verifier_cache_entry(
 fn transaction_log_blowup_for_public_inputs(pub_inputs_len: usize) -> usize {
     let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
     FRI_LOG_BLOWUP.max(log_chunks)
+}
+
+fn tree_levels_for_tx_count(tx_count: usize, arity: u16) -> u16 {
+    if tx_count <= 1 {
+        return 1;
+    }
+    let mut levels = 1u16;
+    let mut width = tx_count;
+    let radix = arity.max(2) as usize;
+    while width > 1 {
+        width = width.div_ceil(radix);
+        levels = levels.saturating_add(1);
+    }
+    levels
+}
+
+fn aggregation_shape_id(
+    tx_count: usize,
+    pub_inputs_len: usize,
+    log_blowup: usize,
+    shape: ProofShape,
+) -> [u8; 32] {
+    let mut bytes = Vec::with_capacity(8 * 8);
+    bytes.extend_from_slice(&(AGGREGATION_PROOF_FORMAT_VERSION_V4 as u64).to_le_bytes());
+    bytes.extend_from_slice(&(tx_count as u64).to_le_bytes());
+    bytes.extend_from_slice(&(pub_inputs_len as u64).to_le_bytes());
+    bytes.extend_from_slice(&(log_blowup as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.degree_bits as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.commit_phase_len as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.final_poly_len as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.query_count as u64).to_le_bytes());
+    sp_core::hashing::blake2_256(&bytes)
+}
+
+fn validate_payload_header(
+    payload: &AggregationProofV4Payload,
+    tx_count: usize,
+    expected_statement_commitment: &[u8; 48],
+) -> Result<(), ProofError> {
+    if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V4 {
+        return Err(ProofError::AggregationProofV4Decode(format!(
+            "unsupported aggregation proof payload version {}",
+            payload.version
+        )));
+    }
+    if payload.proof_format != AGGREGATION_PROOF_FORMAT_VERSION_V4 {
+        return Err(ProofError::AggregationProofV4Decode(format!(
+            "unsupported aggregation proof format {}",
+            payload.proof_format
+        )));
+    }
+    if payload.tree_arity < 2 {
+        return Err(ProofError::AggregationProofV4Decode(
+            "tree_arity must be at least 2".to_string(),
+        ));
+    }
+    if payload.tree_levels == 0 {
+        return Err(ProofError::AggregationProofV4Decode(
+            "tree_levels must be non-zero".to_string(),
+        ));
+    }
+    let expected_levels = tree_levels_for_tx_count(tx_count, payload.tree_arity);
+    if payload.tree_levels != expected_levels {
+        return Err(ProofError::AggregationProofV4Binding(format!(
+            "tree_levels mismatch (payload {}, expected {})",
+            payload.tree_levels, expected_levels
+        )));
+    }
+    if payload.root_level >= payload.tree_levels {
+        return Err(ProofError::AggregationProofV4Decode(format!(
+            "root_level {} must be less than tree_levels {}",
+            payload.root_level, payload.tree_levels
+        )));
+    }
+    if payload.tx_count as usize != tx_count {
+        return Err(ProofError::AggregationProofV4Binding(format!(
+            "tx_count mismatch (payload {}, expected {})",
+            payload.tx_count, tx_count
+        )));
+    }
+    if payload.tx_statements_commitment.len() != 48 {
+        return Err(ProofError::AggregationProofV4Decode(
+            "tx_statements_commitment length invalid".to_string(),
+        ));
+    }
+    if payload.tx_statements_commitment.as_slice() != expected_statement_commitment.as_slice() {
+        return Err(ProofError::AggregationProofV4Binding(
+            "tx_statements_commitment mismatch".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn get_or_build_aggregation_verifier_cache_entry(
@@ -372,7 +468,7 @@ fn decode_aggregation_proof_bytes(bytes: &[u8]) -> Result<Vec<u8>, ProofError> {
 fn decode_signed_i128_from_parts(sign: Val, magnitude: Val) -> Result<i128, ProofError> {
     let sign_bit = sign.as_canonical_u64();
     if sign_bit > 1 {
-        return Err(ProofError::AggregationProofV3Binding(
+        return Err(ProofError::AggregationProofV4Binding(
             "invalid value_balance_sign in aggregated statement".to_string(),
         ));
     }
@@ -390,13 +486,13 @@ fn active_prefix_len(flags: &[Val], label: &str) -> Result<usize, ProofError> {
     for (idx, flag) in flags.iter().enumerate() {
         let bit = flag.as_canonical_u64();
         if bit > 1 {
-            return Err(ProofError::AggregationProofV3Binding(format!(
+            return Err(ProofError::AggregationProofV4Binding(format!(
                 "{label}[{idx}] is not boolean"
             )));
         }
         if bit == 1 {
             if seen_zero {
-                return Err(ProofError::AggregationProofV3Binding(format!(
+                return Err(ProofError::AggregationProofV4Binding(format!(
                     "{label} contains non-prefix active slot at index {idx}"
                 )));
             }
@@ -415,7 +511,7 @@ fn ensure_zeroed_suffix(
 ) -> Result<(), ProofError> {
     for (idx, value) in values.iter().enumerate().skip(active_len) {
         if felts_to_bytes48(value) != [0u8; 48] {
-            return Err(ProofError::AggregationProofV3Binding(format!(
+            return Err(ProofError::AggregationProofV4Binding(format!(
                 "{label}[{idx}] must be zero when inactive"
             )));
         }
@@ -497,7 +593,7 @@ fn statement_commitment_from_public_inputs(
     }
 
     CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes).map_err(|err| {
-        ProofError::AggregationProofV3Binding(format!(
+        ProofError::AggregationProofV4Binding(format!(
             "statement commitment derivation failed: {err}"
         ))
     })
@@ -510,26 +606,26 @@ fn decode_public_inputs_from_packed_public_values(
 ) -> Result<Vec<TransactionPublicInputsP3>, ProofError> {
     let ext_degree = <Challenge as BasedVectorSpace<Val>>::DIMENSION;
     if !packed_public_values.len().is_multiple_of(ext_degree) {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "packed_public_values length is not aligned to extension degree".to_string(),
         ));
     }
 
     if tx_count == 0 {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "tx_count must be greater than zero".to_string(),
         ));
     }
 
     let total_extension_values = packed_public_values.len() / ext_degree;
     if !total_extension_values.is_multiple_of(tx_count) {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "packed_public_values length does not align with tx_count".to_string(),
         ));
     }
     let per_tx_extension_values = total_extension_values / tx_count;
     if per_tx_extension_values < pub_inputs_len {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "packed_public_values missing transaction public inputs".to_string(),
         ));
     }
@@ -549,7 +645,7 @@ fn decode_public_inputs_from_packed_public_values(
             let base_coeff = tx_public_words[coeff_offset];
             for limb in 1..ext_degree {
                 if tx_public_words[coeff_offset + limb] != 0 {
-                    return Err(ProofError::AggregationProofV3Binding(format!(
+                    return Err(ProofError::AggregationProofV4Binding(format!(
                         "tx {tx_index} public input {idx} is not base-lifted"
                     )));
                 }
@@ -559,7 +655,7 @@ fn decode_public_inputs_from_packed_public_values(
 
         let tx_public =
             TransactionPublicInputsP3::try_from_slice(&tx_public_values).map_err(|err| {
-                ProofError::AggregationProofV3Binding(format!(
+                ProofError::AggregationProofV4Binding(format!(
                     "tx {tx_index} public input decode failed: {err}"
                 ))
             })?;
@@ -628,45 +724,24 @@ pub fn warm_aggregation_cache_from_proof_bytes(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
-    let payload: AggregationProofV3Payload = postcard::from_bytes(&decoded).map_err(|_| {
-        ProofError::AggregationProofV3Decode("aggregation V3 payload encoding invalid".to_string())
+    let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
+        ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
 
-    if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V3 {
-        return Err(ProofError::AggregationProofV3Decode(format!(
-            "unsupported aggregation proof payload version {}",
-            payload.version
-        )));
-    }
-    if payload.tx_count as usize != tx_count {
-        return Err(ProofError::AggregationProofV3Binding(format!(
-            "tx_count mismatch (payload {}, expected {})",
-            payload.tx_count, tx_count
-        )));
-    }
-    if payload.tx_statements_commitment.len() != 48 {
-        return Err(ProofError::AggregationProofV3Decode(
-            "tx_statements_commitment length invalid".to_string(),
-        ));
-    }
-    if payload.tx_statements_commitment.as_slice() != expected_statement_commitment.as_slice() {
-        return Err(ProofError::AggregationProofV3Binding(
-            "tx_statements_commitment mismatch".to_string(),
-        ));
-    }
+    validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "representative proof missing".to_string(),
         ));
     }
     let pub_inputs_len = payload.inner_public_inputs_len as usize;
     if pub_inputs_len == 0 {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "inner_public_inputs_len must be non-zero".to_string(),
         ));
     }
     if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V1 {
-        return Err(ProofError::AggregationProofV3Decode(format!(
+        return Err(ProofError::AggregationProofV4Decode(format!(
             "unsupported packed public values encoding version {}",
             payload.public_values_encoding
         )));
@@ -677,7 +752,7 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         pub_inputs_len,
     )?;
     if derived_statement_commitment != *expected_statement_commitment {
-        return Err(ProofError::AggregationProofV3Binding(
+        return Err(ProofError::AggregationProofV4Binding(
             "statement commitment derived from aggregated public inputs does not match expected commitment"
                 .to_string(),
         ));
@@ -689,14 +764,14 @@ pub fn warm_aggregation_cache_from_proof_bytes(
                 cache_build_ms: 0,
             });
         }
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "outer aggregation proof missing".to_string(),
         ));
     }
 
     let representative_proof: TransactionProofP3 =
         postcard::from_bytes(&payload.representative_proof).map_err(|_| {
-            ProofError::AggregationProofV3Decode(
+            ProofError::AggregationProofV4Decode(
                 "representative proof encoding invalid".to_string(),
             )
         })?;
@@ -710,6 +785,12 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         query_count: representative_proof.opening_proof.query_proofs.len(),
     };
     let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_len);
+    let expected_shape_id = aggregation_shape_id(tx_count, pub_inputs_len, log_blowup, shape);
+    if payload.shape_id != expected_shape_id {
+        return Err(ProofError::AggregationProofV4Binding(
+            "shape_id mismatch".to_string(),
+        ));
+    }
     let cache_key = AggregationVerifierKey {
         tx_count,
         pub_inputs_len,
@@ -742,45 +823,24 @@ pub fn verify_aggregation_proof_with_metrics(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
-    let payload: AggregationProofV3Payload = postcard::from_bytes(&decoded).map_err(|_| {
-        ProofError::AggregationProofV3Decode("aggregation V3 payload encoding invalid".to_string())
+    let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
+        ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
 
-    if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V3 {
-        return Err(ProofError::AggregationProofV3Decode(format!(
-            "unsupported aggregation proof payload version {}",
-            payload.version
-        )));
-    }
-    if payload.tx_count as usize != tx_count {
-        return Err(ProofError::AggregationProofV3Binding(format!(
-            "tx_count mismatch (payload {}, expected {})",
-            payload.tx_count, tx_count
-        )));
-    }
-    if payload.tx_statements_commitment.len() != 48 {
-        return Err(ProofError::AggregationProofV3Decode(
-            "tx_statements_commitment length invalid".to_string(),
-        ));
-    }
-    if payload.tx_statements_commitment.as_slice() != expected_statement_commitment.as_slice() {
-        return Err(ProofError::AggregationProofV3Binding(
-            "tx_statements_commitment mismatch".to_string(),
-        ));
-    }
+    validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "representative proof missing".to_string(),
         ));
     }
     let pub_inputs_len = payload.inner_public_inputs_len as usize;
     if pub_inputs_len == 0 {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "inner_public_inputs_len must be non-zero".to_string(),
         ));
     }
     if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V1 {
-        return Err(ProofError::AggregationProofV3Decode(format!(
+        return Err(ProofError::AggregationProofV4Decode(format!(
             "unsupported packed public values encoding version {}",
             payload.public_values_encoding
         )));
@@ -792,7 +852,7 @@ pub fn verify_aggregation_proof_with_metrics(
     )?;
     let derived_statement_commitment = statement_commitment_from_public_inputs(&tx_public_inputs)?;
     if derived_statement_commitment != *expected_statement_commitment {
-        return Err(ProofError::AggregationProofV3Binding(
+        return Err(ProofError::AggregationProofV4Binding(
             "statement commitment derived from aggregated public inputs does not match expected commitment"
                 .to_string(),
         ));
@@ -800,20 +860,20 @@ pub fn verify_aggregation_proof_with_metrics(
 
     let representative_proof: TransactionProofP3 =
         postcard::from_bytes(&payload.representative_proof).map_err(|_| {
-            ProofError::AggregationProofV3Decode(
+            ProofError::AggregationProofV4Decode(
                 "representative proof encoding invalid".to_string(),
             )
         })?;
     if payload.outer_proof.is_empty() {
         if tx_count != 1 {
-            return Err(ProofError::AggregationProofV3Decode(
+            return Err(ProofError::AggregationProofV4Decode(
                 "outer aggregation proof missing".to_string(),
             ));
         }
         verify_transaction_proof_p3(
             &representative_proof,
             tx_public_inputs.first().ok_or_else(|| {
-                ProofError::AggregationProofV3Decode(
+                ProofError::AggregationProofV4Decode(
                     "singleton aggregation payload missing public inputs".to_string(),
                 )
             })?,
@@ -841,6 +901,12 @@ pub fn verify_aggregation_proof_with_metrics(
         query_count: representative_proof.opening_proof.query_proofs.len(),
     };
     let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_len);
+    let expected_shape_id = aggregation_shape_id(tx_count, pub_inputs_len, log_blowup, shape);
+    if payload.shape_id != expected_shape_id {
+        return Err(ProofError::AggregationProofV4Binding(
+            "shape_id mismatch".to_string(),
+        ));
+    }
     let cache_key = AggregationVerifierKey {
         tx_count,
         pub_inputs_len,
@@ -852,13 +918,13 @@ pub fn verify_aggregation_proof_with_metrics(
 
     let outer_proof: BatchProof<circuit_config::GoldilocksConfig> =
         postcard::from_bytes(&payload.outer_proof).map_err(|_| {
-            ProofError::AggregationProofV3Decode(
+            ProofError::AggregationProofV4Decode(
                 "outer aggregation proof encoding invalid".to_string(),
             )
         })?;
     let public_values = unpack_recursion_public_values(&payload.packed_public_values);
     if public_values.is_empty() {
-        return Err(ProofError::AggregationProofV3Decode(
+        return Err(ProofError::AggregationProofV4Decode(
             "packed_public_values missing".to_string(),
         ));
     }
@@ -1018,7 +1084,7 @@ mod tests {
 
         let err = derive_statement_commitment_from_packed_public_values(&packed, 1, pub_inputs_len)
             .expect_err("non-base-lifted input should fail");
-        assert!(matches!(err, ProofError::AggregationProofV3Binding(_)));
+        assert!(matches!(err, ProofError::AggregationProofV4Binding(_)));
     }
 
     #[test]

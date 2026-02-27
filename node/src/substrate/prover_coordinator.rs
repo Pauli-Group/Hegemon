@@ -24,6 +24,11 @@ pub struct WorkPackage {
     pub package_id: String,
     pub parent_hash: H256,
     pub block_number: u64,
+    pub stage_type: String,
+    pub level: u16,
+    pub arity: u16,
+    pub shape_id: [u8; 32],
+    pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<Vec<u8>>,
     pub created_at_ms: u64,
@@ -69,6 +74,12 @@ struct QueuedJob {
     generation: u64,
     parent_hash: H256,
     block_number: u64,
+    stage_type: String,
+    level: u16,
+    arity: u16,
+    shape_id: [u8; 32],
+    dependencies: Vec<String>,
+    enqueued_at: Instant,
     candidate_txs: Vec<Vec<u8>>,
 }
 
@@ -87,6 +98,7 @@ pub struct ProverCoordinatorConfig {
     pub target_txs: usize,
     pub queue_capacity: usize,
     pub liveness_lane: bool,
+    pub adaptive_liveness_timeout: Duration,
     pub incremental_upsizing: bool,
     pub poll_interval: Duration,
     pub job_timeout: Duration,
@@ -125,6 +137,12 @@ impl ProverCoordinatorConfig {
                 )
             })
             .unwrap_or(true);
+        let adaptive_liveness_timeout_ms = std::env::var("HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            // In throughput-first mode, keep one adaptive liveness escape hatch so
+            // cold target-batch proving does not wedge inclusion indefinitely.
+            .unwrap_or(if liveness_lane { 0 } else { 30_000u64 });
         let incremental_upsizing = std::env::var("HEGEMON_BATCH_INCREMENTAL_UPSIZE")
             .ok()
             .map(|value| {
@@ -164,6 +182,7 @@ impl ProverCoordinatorConfig {
             target_txs,
             queue_capacity,
             liveness_lane,
+            adaptive_liveness_timeout: Duration::from_millis(adaptive_liveness_timeout_ms),
             incremental_upsizing,
             poll_interval: Duration::from_millis(250),
             job_timeout: Duration::from_millis(job_timeout_ms),
@@ -185,6 +204,8 @@ struct WorkPackageRecord {
 struct CoordinatorState {
     current_parent: Option<H256>,
     generation: u64,
+    target_batch_scheduled_at_ms: Option<u64>,
+    adaptive_liveness_fired_generation: Option<u64>,
     selected_txs: Vec<Vec<u8>>,
     prepared: HashMap<BundleMatchKey, PreparedBundle>,
     work_packages: HashMap<String, WorkPackageRecord>,
@@ -200,6 +221,57 @@ struct CoordinatorState {
 }
 
 impl ProverCoordinator {
+    fn aggregation_tree_arity() -> u16 {
+        std::env::var("HEGEMON_AGG_TREE_ARITY")
+            .ok()
+            .and_then(|raw| raw.parse::<u16>().ok())
+            .map(|value| value.max(2))
+            .unwrap_or(8)
+    }
+
+    fn tree_levels_for_tx_count(tx_count: usize, arity: u16) -> u16 {
+        if tx_count <= 1 {
+            return 1;
+        }
+        let mut levels = 1u16;
+        let mut width = tx_count;
+        let radix = arity.max(2) as usize;
+        while width > 1 {
+            width = width.div_ceil(radix);
+            levels = levels.saturating_add(1);
+        }
+        levels
+    }
+
+    fn work_package_shape_id(
+        parent_hash: H256,
+        block_number: u64,
+        stage_type: &str,
+        level: u16,
+        arity: u16,
+        candidate_txs: &[Vec<u8>],
+    ) -> [u8; 32] {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(parent_hash.as_bytes());
+        bytes.extend_from_slice(&block_number.to_le_bytes());
+        bytes.extend_from_slice(stage_type.as_bytes());
+        bytes.extend_from_slice(&level.to_le_bytes());
+        bytes.extend_from_slice(&arity.to_le_bytes());
+        for tx in candidate_txs {
+            bytes.extend_from_slice(&(tx.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(tx);
+        }
+        sp_core::hashing::blake2_256(&bytes)
+    }
+
+    fn stage_mem_budget_mb() -> usize {
+        std::env::var("HEGEMON_PROVER_STAGE_MEM_BUDGET_MB")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(4096)
+            .max(256)
+    }
+
     fn inflight_current_generation_count(state: &CoordinatorState) -> usize {
         state
             .inflight_jobs
@@ -296,6 +368,8 @@ impl ProverCoordinator {
         if state.selected_txs == included_txs {
             state.selected_txs.clear();
         }
+        state.target_batch_scheduled_at_ms = None;
+        state.adaptive_liveness_fired_generation = None;
         state.prepared.clear();
         state.work_packages.clear();
         state.latest_work_package = None;
@@ -456,6 +530,8 @@ impl ProverCoordinator {
             if state.current_parent != Some(parent_hash) {
                 state.current_parent = Some(parent_hash);
                 state.generation = state.generation.wrapping_add(1);
+                state.target_batch_scheduled_at_ms = None;
+                state.adaptive_liveness_fired_generation = None;
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.latest_work_package = None;
@@ -482,6 +558,8 @@ impl ProverCoordinator {
         let mut existing_best = Self::best_candidate_len_locked(&state);
         if candidate.is_empty() {
             if existing_best == 0 {
+                state.target_batch_scheduled_at_ms = None;
+                state.adaptive_liveness_fired_generation = None;
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.latest_work_package = None;
@@ -499,6 +577,13 @@ impl ProverCoordinator {
 
         // Allow upsizing on the same parent as more pool transactions arrive.
         if candidate.len() <= existing_best {
+            self.maybe_schedule_adaptive_liveness_lane(
+                &mut state,
+                parent_hash,
+                best_number,
+                &candidate,
+                existing_best,
+            );
             return;
         }
 
@@ -521,6 +606,8 @@ impl ProverCoordinator {
                 "Preempting in-flight proven-batch jobs for larger candidate set"
             );
             state.generation = state.generation.wrapping_add(1);
+            state.target_batch_scheduled_at_ms = None;
+            state.adaptive_liveness_fired_generation = None;
             state.selected_txs.clear();
             state.pending_jobs.clear();
             // Stop counting stale jobs against scheduler capacity. They will
@@ -587,6 +674,10 @@ impl ProverCoordinator {
         // Publish the largest candidate as the external work package while
         // local workers run liveness-first variants in parallel.
         if let Some(primary_candidate) = candidate_variants.back().cloned() {
+            if primary_candidate.len() >= self.config.target_txs {
+                state.target_batch_scheduled_at_ms = Some(Self::now_ms());
+                state.adaptive_liveness_fired_generation = None;
+            }
             let package = Self::build_work_package(
                 parent_hash,
                 best_number.saturating_add(1),
@@ -606,16 +697,115 @@ impl ProverCoordinator {
         }
 
         while let Some(candidate_txs) = candidate_variants.pop_front() {
+            let arity = Self::aggregation_tree_arity();
+            let levels = Self::tree_levels_for_tx_count(candidate_txs.len(), arity);
+            let level = levels.saturating_sub(1);
+            let stage_type = "root_finalize".to_string();
+            let shape_id = Self::work_package_shape_id(
+                parent_hash,
+                best_number.saturating_add(1),
+                &stage_type,
+                level,
+                arity,
+                &candidate_txs,
+            );
             let job = QueuedJob {
                 id: state.next_job_id,
                 generation: state.generation,
                 parent_hash,
                 block_number: best_number.saturating_add(1),
+                stage_type,
+                level,
+                arity,
+                shape_id,
+                dependencies: Vec::new(),
+                enqueued_at: Instant::now(),
                 candidate_txs,
             };
             state.next_job_id = state.next_job_id.wrapping_add(1);
             state.pending_jobs.push_back(job);
         }
+    }
+
+    fn maybe_schedule_adaptive_liveness_lane(
+        &self,
+        state: &mut CoordinatorState,
+        parent_hash: H256,
+        best_number: u64,
+        candidate: &[Vec<u8>],
+        existing_best: usize,
+    ) {
+        if self.config.liveness_lane || self.config.adaptive_liveness_timeout.is_zero() {
+            return;
+        }
+        if candidate.is_empty() || existing_best < self.config.target_txs {
+            return;
+        }
+        if Self::best_prepared_candidate_locked(state).is_some() {
+            return;
+        }
+        if state.adaptive_liveness_fired_generation == Some(state.generation) {
+            return;
+        }
+        let Some(target_scheduled_at_ms) = state.target_batch_scheduled_at_ms else {
+            return;
+        };
+        let now_ms = Self::now_ms();
+        if now_ms <= target_scheduled_at_ms {
+            return;
+        }
+        let elapsed_ms = now_ms - target_scheduled_at_ms;
+        if elapsed_ms < self.config.adaptive_liveness_timeout.as_millis() as u64 {
+            return;
+        }
+
+        let singleton_candidate = vec![candidate[0].clone()];
+        let singleton_queued = state.pending_jobs.iter().any(|job| {
+            job.generation == state.generation
+                && job.parent_hash == parent_hash
+                && job.candidate_txs.len() == 1
+        });
+        let singleton_inflight = state.inflight_candidates.values().any(|txs| txs.len() == 1);
+        if singleton_queued || singleton_inflight {
+            state.adaptive_liveness_fired_generation = Some(state.generation);
+            return;
+        }
+
+        if state.selected_txs.is_empty() || state.selected_txs.len() > 1 {
+            state.selected_txs = singleton_candidate.clone();
+        }
+        let job = QueuedJob {
+            id: state.next_job_id,
+            generation: state.generation,
+            parent_hash,
+            block_number: best_number.saturating_add(1),
+            stage_type: "root_finalize".to_string(),
+            level: 0,
+            arity: Self::aggregation_tree_arity(),
+            shape_id: Self::work_package_shape_id(
+                parent_hash,
+                best_number.saturating_add(1),
+                "root_finalize",
+                0,
+                Self::aggregation_tree_arity(),
+                &singleton_candidate,
+            ),
+            dependencies: Vec::new(),
+            enqueued_at: Instant::now(),
+            candidate_txs: singleton_candidate,
+        };
+        state.next_job_id = state.next_job_id.wrapping_add(1);
+        state.pending_jobs.push_front(job);
+        state.adaptive_liveness_fired_generation = Some(state.generation);
+
+        tracing::warn!(
+            block_number = best_number.saturating_add(1),
+            target_txs = self.config.target_txs,
+            elapsed_ms,
+            adaptive_liveness_timeout_ms = self.config.adaptive_liveness_timeout.as_millis() as u64,
+            generation = state.generation,
+            "Scheduling adaptive singleton liveness lane while target-batch proving remains cold"
+        );
     }
 
     fn best_candidate_len_locked(state: &CoordinatorState) -> usize {
@@ -682,11 +872,28 @@ impl ProverCoordinator {
         let created_at_ms = Self::now_ms();
         let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
         let tx_count = candidate_txs.len() as u32;
+        let arity = Self::aggregation_tree_arity();
+        let tree_levels = Self::tree_levels_for_tx_count(candidate_txs.len(), arity);
+        let level = tree_levels.saturating_sub(1);
+        let stage_type = "root_finalize".to_string();
+        let shape_id = Self::work_package_shape_id(
+            parent_hash,
+            block_number,
+            &stage_type,
+            level,
+            arity,
+            &candidate_txs,
+        );
         let package_id = Self::work_package_id(parent_hash, block_number, &candidate_txs);
         WorkPackage {
             package_id,
             parent_hash,
             block_number,
+            stage_type,
+            level,
+            arity,
+            shape_id,
+            dependencies: Vec::new(),
             tx_count,
             candidate_txs,
             created_at_ms,
@@ -759,11 +966,12 @@ impl ProverCoordinator {
                 let Some(job) = state.pending_jobs.pop_front() else {
                     return;
                 };
+                let queue_depth_after_pop = state.pending_jobs.len();
                 state.inflight_jobs.insert(job.id, job.generation);
                 state
                     .inflight_candidates
                     .insert(job.id, job.candidate_txs.clone());
-                job
+                (job, queue_depth_after_pop)
             };
 
             let prepare_bundle_fn = Arc::clone(&self.prepare_bundle_fn);
@@ -771,13 +979,23 @@ impl ProverCoordinator {
             let state = Arc::clone(&self.state);
             let target_txs = self.config.target_txs;
             tokio::spawn(async move {
-                let QueuedJob {
-                    id,
-                    generation,
-                    parent_hash,
-                    block_number,
-                    candidate_txs,
-                } = job;
+                let (
+                    QueuedJob {
+                        id,
+                        generation,
+                        parent_hash,
+                        block_number,
+                        stage_type,
+                        level,
+                        arity,
+                        shape_id,
+                        dependencies,
+                        enqueued_at,
+                        candidate_txs,
+                    },
+                    queue_depth_after_pop,
+                ) = job;
+                let queue_wait_ms = enqueued_at.elapsed().as_millis();
                 let candidate_tx_count = candidate_txs.len();
                 let candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>();
                 let job_package_id =
@@ -807,6 +1025,9 @@ impl ProverCoordinator {
                         tracing::warn!(
                             job_id = id,
                             block_number,
+                            stage_type = %stage_type,
+                            level,
+                            arity,
                             tx_count = candidate_tx_count,
                             candidate_bytes,
                             package_id = %job_package_id,
@@ -820,13 +1041,16 @@ impl ProverCoordinator {
 
                 if build_elapsed_ms > timeout.as_millis() {
                     tracing::warn!(
-                        job_id = id,
-                        block_number,
-                        tx_count = candidate_tx_count,
-                        candidate_bytes,
-                        elapsed_ms = build_elapsed_ms as u64,
-                        timeout_ms = timeout.as_millis() as u64,
-                        package_id = %job_package_id,
+                            job_id = id,
+                            block_number,
+                            stage_type = %stage_type,
+                            level,
+                            arity,
+                            tx_count = candidate_tx_count,
+                            candidate_bytes,
+                            elapsed_ms = build_elapsed_ms as u64,
+                            timeout_ms = timeout.as_millis() as u64,
+                            package_id = %job_package_id,
                         "Prover coordinator job exceeded timeout budget while preparing proven batch"
                     );
                 }
@@ -842,8 +1066,17 @@ impl ProverCoordinator {
                             guard.pending_jobs.clear();
                         }
                         tracing::info!(
+                            target: "prover::stage_metrics",
                             job_id = id,
                             block_number,
+                            stage_type = %stage_type,
+                            level,
+                            arity,
+                            shape_id = %hex::encode(shape_id),
+                            dependencies = dependencies.len(),
+                            queue_depth = queue_depth_after_pop,
+                            queue_wait_ms,
+                            stage_mem_budget_mb = Self::stage_mem_budget_mb(),
                             tx_count = candidate_len,
                             candidate_bytes,
                             build_ms = bundle.build_ms,
@@ -858,6 +1091,9 @@ impl ProverCoordinator {
                         tracing::warn!(
                             job_id = id,
                             block_number,
+                            stage_type = %stage_type,
+                            level,
+                            arity,
                             tx_count = candidate_tx_count,
                             candidate_bytes,
                             package_id = %job_package_id,
@@ -943,6 +1179,7 @@ mod tests {
             target_txs: 1,
             queue_capacity: 1,
             liveness_lane: true,
+            adaptive_liveness_timeout: Duration::from_millis(0),
             incremental_upsizing: false,
             poll_interval: Duration::from_millis(10),
             job_timeout: Duration::from_secs(2),
@@ -1340,6 +1577,7 @@ mod tests {
         config.target_txs = 4;
         config.queue_capacity = 1;
         config.liveness_lane = false;
+        config.adaptive_liveness_timeout = Duration::from_millis(0);
         config.workers = 1;
         config.poll_interval = Duration::from_millis(10);
 
@@ -1383,6 +1621,48 @@ mod tests {
             .get_work_package()
             .expect("target-sized work package should exist");
         assert_eq!(package.tx_count, 4);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn throughput_mode_adaptive_liveness_unjams_cold_target_batches() {
+        let parent_hash = H256::repeat_byte(77);
+        let mut config = test_config();
+        config.target_txs = 4;
+        config.queue_capacity = 1;
+        config.liveness_lane = false;
+        config.adaptive_liveness_timeout = Duration::from_millis(40);
+        config.workers = 2;
+        config.poll_interval = Duration::from_millis(10);
+
+        let best = Arc::new(move || (parent_hash, 16u64));
+        let pending =
+            Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8], vec![3u8], vec![4u8]]);
+        let build = Arc::new(
+            move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                let tx_count = candidate_txs.len() as u32;
+                let sleep_ms = if tx_count == 1 { 20 } else { 260 };
+                std::thread::sleep(Duration::from_millis(sleep_ms));
+                let commitment = [tx_count as u8; 48];
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: parent,
+                        tx_statements_commitment: commitment,
+                        tx_count,
+                    },
+                    payload: ready_payload(tx_count, commitment),
+                    candidate_txs,
+                    build_ms: sleep_ms as u128,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+
+        tokio::time::sleep(Duration::from_millis(140)).await;
+        // Target proving is still cold; adaptive singleton lane should be
+        // prepared and visible for local block assembly.
+        assert_eq!(coordinator.pending_transactions(8).len(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

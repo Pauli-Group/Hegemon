@@ -915,6 +915,11 @@ export default function App() {
             hashRate: null,
             blocksFound: null,
             difficulty: null,
+            aggregationProofFormat: null,
+            proverStageType: null,
+            proverStageLevel: null,
+            proverStageArity: null,
+            proverReadyBundleAgeMs: null,
             blockHeight: null,
             supplyDigest: null,
             storage: null,
@@ -1919,6 +1924,15 @@ export default function App() {
           <p className="text-xs text-surfaceMuted/70 mt-0.5">
             Version {activeSummary?.nodeVersion ?? 'N/A'}
             {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? ' · External RPC (not managed by app)' : ''}
+          </p>
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">
+            Proof format {activeSummary?.aggregationProofFormat ?? 'N/A'}
+            {activeSummary?.proverStageType
+              ? ` · Stage ${activeSummary.proverStageType} (L${activeSummary.proverStageLevel ?? 0}, k${activeSummary.proverStageArity ?? 0})`
+              : ''}
+            {typeof activeSummary?.proverReadyBundleAgeMs === 'number'
+              ? ` · Bundle age ${formatNumber(activeSummary.proverReadyBundleAgeMs)} ms`
+              : ''}
           </p>
         </div>
         <div className="status-group">

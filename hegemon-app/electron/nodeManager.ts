@@ -225,6 +225,11 @@ export class NodeManager extends EventEmitter {
         hashRate: null,
         blocksFound: null,
         difficulty: null,
+        aggregationProofFormat: null,
+        proverStageType: null,
+        proverStageLevel: null,
+        proverStageArity: null,
+        proverReadyBundleAgeMs: null,
         blockHeight: null,
         supplyDigest: null,
         storage: null,
@@ -243,6 +248,12 @@ export class NodeManager extends EventEmitter {
     const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
     const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
     const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
+    const workPackage = await this.safeRpcCall('prover_getWorkPackage', [], request.httpUrl);
+    const nowMs = Date.now();
+    const proverReadyBundleAgeMs =
+      workPackage && typeof workPackage.created_at_ms === 'number'
+        ? Math.max(0, nowMs - Number(workPackage.created_at_ms))
+        : null;
 
     return {
       connectionId: request.connectionId,
@@ -260,6 +271,13 @@ export class NodeManager extends EventEmitter {
       hashRate: mining?.hash_rate ?? null,
       blocksFound: mining?.blocks_found ?? null,
       difficulty: mining?.difficulty ?? null,
+      aggregationProofFormat: 'V4',
+      proverStageType: workPackage?.stage_type ? String(workPackage.stage_type) : null,
+      proverStageLevel:
+        workPackage && typeof workPackage.level === 'number' ? Number(workPackage.level) : null,
+      proverStageArity:
+        workPackage && typeof workPackage.arity === 'number' ? Number(workPackage.arity) : null,
+      proverReadyBundleAgeMs,
       blockHeight: mining?.block_height ?? null,
       supplyDigest: consensus?.supply_digest ? String(consensus.supply_digest) : null,
       storage: storage

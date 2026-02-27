@@ -8630,6 +8630,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             prover_batch_target_txs = coordinator_cfg.target_txs,
             prover_batch_queue_capacity = coordinator_cfg.queue_capacity,
             prover_liveness_lane = coordinator_cfg.liveness_lane,
+            prover_adaptive_liveness_timeout_ms =
+                coordinator_cfg.adaptive_liveness_timeout.as_millis() as u64,
             prover_batch_job_timeout_ms = coordinator_cfg.job_timeout.as_millis() as u64,
             "Transaction pool wired to chain state provider"
         );

@@ -63,3 +63,5 @@ declare global {
     hegemon: HegemonApi;
   }
 }
+
+declare module '*.wav';

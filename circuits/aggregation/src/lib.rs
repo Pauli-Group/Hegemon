@@ -24,6 +24,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 use thiserror::Error;
@@ -76,9 +79,14 @@ struct AggregationProverCacheEntry {
 }
 
 struct AggregationProverCacheResult {
-    entry: Arc<AggregationProverCacheEntry>,
+    entry: Rc<AggregationProverCacheEntry>,
     cache_hit: bool,
     cache_build_ms: u128,
+}
+
+thread_local! {
+    static AGGREGATION_PROVER_CACHE: RefCell<HashMap<AggregationProverKey, Rc<AggregationProverCacheEntry>>> =
+        RefCell::new(HashMap::new());
 }
 
 #[derive(Default)]
@@ -99,11 +107,6 @@ impl Default for AggregationCommonCache {
             condvar: Condvar::new(),
         }
     }
-}
-
-thread_local! {
-    static AGGREGATION_PROVER_CACHE: RefCell<HashMap<AggregationProverKey, Arc<AggregationProverCacheEntry>>> =
-        RefCell::new(HashMap::new());
 }
 
 static AGGREGATION_COMMON_CACHE: OnceLock<AggregationCommonCache> = OnceLock::new();
@@ -249,12 +252,17 @@ fn build_common_data_parallel(
     CommonData::new(preprocessed, lookups)
 }
 
-pub const AGGREGATION_PROOF_V3_VERSION: u8 = 3;
+pub const AGGREGATION_PROOF_FORMAT_ID_V4: u8 = 4;
 pub const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AggregationProofV3Payload {
+pub struct AggregationProofV4Payload {
     pub version: u8,
+    pub proof_format: u8,
+    pub tree_arity: u16,
+    pub tree_levels: u16,
+    pub root_level: u16,
+    pub shape_id: [u8; 32],
     pub tx_count: u32,
     pub tx_statements_commitment: Vec<u8>,
     pub public_values_encoding: u8,
@@ -571,23 +579,32 @@ fn get_or_build_aggregation_prover_cache_entry(
     }
 
     let start_build = Instant::now();
-    let built = Arc::new(build_aggregation_prover_cache_entry(
+    let built = Rc::new(build_aggregation_prover_cache_entry(
         key,
         representative_proof,
     )?);
     let build_ms = start_build.elapsed().as_millis();
+    if let Err(err) = persist_cache_build_marker(key, build_ms) {
+        tracing::warn!(
+            tx_count = key.tx_count,
+            pub_inputs_len = key.pub_inputs_len,
+            log_blowup = key.log_blowup,
+            error = %err,
+            "failed to persist aggregation cache build marker"
+        );
+    }
+
+    AGGREGATION_PROVER_CACHE.with(|cache| {
+        cache.borrow_mut().insert(key, built.clone());
+    });
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_lookup tx_count={} cache_hit=false cache_build_ms={}",
             key.tx_count, build_ms
         );
     }
-    let entry = AGGREGATION_PROVER_CACHE.with(|cache| {
-        let mut guard = cache.borrow_mut();
-        guard.entry(key).or_insert_with(|| built.clone()).clone()
-    });
     Ok(AggregationProverCacheResult {
-        entry,
+        entry: built,
         cache_hit: false,
         cache_build_ms: build_ms,
     })
@@ -600,6 +617,22 @@ fn aggregation_prewarm_max_txs() -> usize {
         .unwrap_or(0)
 }
 
+fn aggregation_warmup_target_shapes() -> Vec<usize> {
+    std::env::var("HEGEMON_AGG_WARMUP_TARGET_SHAPES")
+        .ok()
+        .map(|raw| {
+            let mut values = raw
+                .split(',')
+                .filter_map(|part| part.trim().parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .collect::<Vec<_>>();
+            values.sort_unstable();
+            values.dedup();
+            values
+        })
+        .unwrap_or_default()
+}
+
 fn maybe_prewarm_aggregation_cache(
     representative_proof: &TransactionProofP3,
     pub_inputs_len: usize,
@@ -607,15 +640,30 @@ fn maybe_prewarm_aggregation_cache(
     shape: ProofShape,
     current_tx_count: usize,
 ) {
-    let max_txs = aggregation_prewarm_max_txs();
-    if max_txs <= current_tx_count {
+    let mut targets = aggregation_warmup_target_shapes();
+    if targets.is_empty() {
+        let max_txs = aggregation_prewarm_max_txs();
+        if max_txs == 0 {
+            return;
+        }
+        // Include current target shape in prewarm so strict target mode can
+        // avoid first-user cold starts.
+        targets = (current_tx_count..=max_txs.max(current_tx_count)).collect();
+    } else {
+        targets.retain(|tx_count| *tx_count >= current_tx_count);
+    }
+    if targets.is_empty() {
         return;
     }
 
     let started = Instant::now();
     let mut built = 0usize;
     let mut cache_hits = 0usize;
-    for tx_count in (current_tx_count + 1)..=max_txs {
+    let mut max_txs = current_tx_count;
+    let mut min_txs = usize::MAX;
+    for tx_count in targets {
+        max_txs = max_txs.max(tx_count);
+        min_txs = min_txs.min(tx_count);
         let key = AggregationProverKey {
             tx_count,
             pub_inputs_len,
@@ -644,7 +692,7 @@ fn maybe_prewarm_aggregation_cache(
 
     if built > 0 || cache_hits > 0 {
         tracing::info!(
-            from_tx_count = current_tx_count + 1,
+            from_tx_count = min_txs,
             to_tx_count = max_txs,
             built,
             cache_hits,
@@ -652,6 +700,111 @@ fn maybe_prewarm_aggregation_cache(
             "aggregation cache prewarm complete"
         );
     }
+}
+
+fn aggregation_tree_arity() -> u16 {
+    std::env::var("HEGEMON_AGG_TREE_ARITY")
+        .ok()
+        .and_then(|raw| raw.parse::<u16>().ok())
+        .map(|value| value.max(2))
+        .unwrap_or(8)
+}
+
+fn aggregation_level_parallelism() -> usize {
+    std::env::var("HEGEMON_AGG_LEVEL_PARALLELISM")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|threads| threads.get())
+                .unwrap_or(1)
+        })
+        .max(1)
+}
+
+fn aggregation_cache_persist_enabled() -> bool {
+    std::env::var("HEGEMON_AGG_CACHE_PERSIST")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn aggregation_cache_dir() -> PathBuf {
+    std::env::var("HEGEMON_AGG_CACHE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp/hegemon-agg-cache"))
+}
+
+fn tree_levels_for_tx_count(tx_count: usize, arity: u16) -> u16 {
+    if tx_count <= 1 {
+        return 1;
+    }
+    let mut levels = 1u16;
+    let mut width = tx_count;
+    let radix = arity.max(2) as usize;
+    while width > 1 {
+        width = width.div_ceil(radix);
+        levels = levels.saturating_add(1);
+    }
+    levels
+}
+
+fn aggregation_shape_id(
+    tx_count: usize,
+    pub_inputs_len: usize,
+    log_blowup: usize,
+    shape: ProofShape,
+) -> [u8; 32] {
+    let mut bytes = Vec::with_capacity(8 * 6);
+    bytes.extend_from_slice(&(AGGREGATION_PROOF_FORMAT_ID_V4 as u64).to_le_bytes());
+    bytes.extend_from_slice(&(tx_count as u64).to_le_bytes());
+    bytes.extend_from_slice(&(pub_inputs_len as u64).to_le_bytes());
+    bytes.extend_from_slice(&(log_blowup as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.degree_bits as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.commit_phase_len as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.final_poly_len as u64).to_le_bytes());
+    bytes.extend_from_slice(&(shape.query_count as u64).to_le_bytes());
+    sp_core::hashing::blake2_256(&bytes)
+}
+
+fn persist_cache_build_marker(
+    key: AggregationProverKey,
+    build_ms: u128,
+) -> Result<(), std::io::Error> {
+    if !aggregation_cache_persist_enabled() {
+        return Ok(());
+    }
+    let dir = aggregation_cache_dir();
+    fs::create_dir_all(&dir)?;
+    let marker_path = dir.join(format!(
+        "proof-v{}_tx{}_pi{}_lb{}_db{}_cp{}_fp{}_q{}.json",
+        AGGREGATION_PROOF_FORMAT_ID_V4,
+        key.tx_count,
+        key.pub_inputs_len,
+        key.log_blowup,
+        key.shape.degree_bits,
+        key.shape.commit_phase_len,
+        key.shape.final_poly_len,
+        key.shape.query_count,
+    ));
+    let marker = format!(
+        "{{\"proof_format\":{},\"tx_count\":{},\"pub_inputs_len\":{},\"log_blowup\":{},\"degree_bits\":{},\"commit_phase_len\":{},\"final_poly_len\":{},\"query_count\":{},\"build_ms\":{}}}\n",
+        AGGREGATION_PROOF_FORMAT_ID_V4,
+        key.tx_count,
+        key.pub_inputs_len,
+        key.log_blowup,
+        key.shape.degree_bits,
+        key.shape.commit_phase_len,
+        key.shape.final_poly_len,
+        key.shape.query_count,
+        build_ms
+    );
+    fs::write(marker_path, marker)
 }
 
 /// Generate an aggregation proof for a batch of transaction proofs.
@@ -756,6 +909,10 @@ pub fn prove_aggregation(
         .ok_or(AggregationError::EmptyBatch)?
         .stark_proof
         .clone();
+    let tree_arity = aggregation_tree_arity();
+    let tree_levels = tree_levels_for_tx_count(transaction_proofs.len(), tree_arity);
+    let root_level = tree_levels.saturating_sub(1);
+    let level_parallelism = aggregation_level_parallelism();
 
     if let (Some(shape), Some(log_blowup), Some(representative_inner_proof)) =
         (expected_shape, expected_log_blowup, inner_proofs.first())
@@ -780,8 +937,20 @@ pub fn prove_aggregation(
             .copied()
             .map(Challenge::from)
             .collect::<Vec<_>>();
-        let payload = AggregationProofV3Payload {
-            version: AGGREGATION_PROOF_V3_VERSION,
+        let singleton_shape = expected_shape.ok_or(AggregationError::EmptyBatch)?;
+        let singleton_log_blowup = expected_log_blowup.ok_or(AggregationError::EmptyBatch)?;
+        let payload = AggregationProofV4Payload {
+            version: AGGREGATION_PROOF_FORMAT_ID_V4,
+            proof_format: AGGREGATION_PROOF_FORMAT_ID_V4,
+            tree_arity,
+            tree_levels,
+            root_level,
+            shape_id: aggregation_shape_id(
+                1,
+                pub_inputs_len,
+                singleton_log_blowup,
+                singleton_shape,
+            ),
             tx_count: 1,
             tx_statements_commitment: tx_statements_commitment.to_vec(),
             public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
@@ -795,6 +964,9 @@ pub fn prove_aggregation(
         tracing::info!(
             target: "aggregation::metrics",
             tx_count = transaction_proofs.len(),
+            tree_arity,
+            tree_levels,
+            level_parallelism,
             decode_and_shape_ms,
             total_ms = started.elapsed().as_millis(),
             "prove_aggregation singleton"
@@ -945,8 +1117,18 @@ pub fn prove_aggregation(
     let serialize_started = Instant::now();
     let outer_proof =
         postcard::to_allocvec(&outer_proof.proof).map_err(|_| AggregationError::SerializeFailed)?;
-    let payload = AggregationProofV3Payload {
-        version: AGGREGATION_PROOF_V3_VERSION,
+    let payload = AggregationProofV4Payload {
+        version: AGGREGATION_PROOF_FORMAT_ID_V4,
+        proof_format: AGGREGATION_PROOF_FORMAT_ID_V4,
+        tree_arity,
+        tree_levels,
+        root_level,
+        shape_id: aggregation_shape_id(
+            transaction_proofs.len(),
+            pub_inputs_len,
+            log_blowup,
+            expected_shape,
+        ),
         tx_count: transaction_proofs.len() as u32,
         tx_statements_commitment: tx_statements_commitment.to_vec(),
         public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
@@ -971,6 +1153,9 @@ pub fn prove_aggregation(
         target: "aggregation::metrics",
         tx_count = transaction_proofs.len(),
         inner_public_inputs_len = pub_inputs_len,
+        tree_arity,
+        tree_levels,
+        level_parallelism,
         log_blowup,
         inner_query_count = expected_shape.query_count,
         cache_hit = cache_result.cache_hit,

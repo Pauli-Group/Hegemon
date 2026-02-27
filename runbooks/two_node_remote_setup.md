@@ -329,6 +329,14 @@ Offline transaction crafting (`wallet tx-craft`) is not exposed by walletd yet.
 | `HEGEMON_PQ_VERBOSE` | `false` | Enable verbose PQ handshake logging |
 | `HEGEMON_SEEDS` | *(unset)* | Comma-separated seed peers (`IP:port`, `host:port`) |
 | `HEGEMON_BLOCK_TIME_MS` | `10000` | Target block time in milliseconds |
+| `HEGEMON_AGG_TREE_ARITY` | `8` | Aggregation recursion tree fanout (V4 payload metadata) |
+| `HEGEMON_AGG_LEVEL_PARALLELISM` | `CPU count` | Parallel worker count per recursion level |
+| `HEGEMON_AGG_WARMUP_TARGET_SHAPES` | *(unset)* | Comma-separated tx-count shapes to prewarm (`1,8,32,128`) |
+| `HEGEMON_AGG_CACHE_PERSIST` | `0` | Persist cache build markers (`1` enables) |
+| `HEGEMON_AGG_CACHE_DIR` | `/tmp/hegemon-agg-cache` | Directory for persistent aggregation cache markers |
+| `HEGEMON_PROVER_STAGE_MEM_BUDGET_MB` | `4096` | Soft per-stage memory budget hint surfaced in stage metrics |
+
+Use the same approved `HEGEMON_SEEDS` list on all miners and keep NTP/chrony time sync enabled on every host. PoW headers outside the future-skew bound are rejected.
 
 ---
 

@@ -1,5 +1,5 @@
 use aggregation_circuit::{
-    prove_aggregation, AggregationProofV3Payload, AGGREGATION_PROOF_V3_VERSION,
+    prove_aggregation, AggregationProofV4Payload, AGGREGATION_PROOF_FORMAT_ID_V4,
     AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
 };
 use block_circuit::CommitmentBlockProver;
@@ -192,7 +192,7 @@ fn aggregation_proof_roundtrip() {
     verify_aggregation_proof(&aggregation_bytes, proofs.len(), &tx_statements_commitment)
         .expect("verify aggregation proof");
 
-    let mut corrupted_payload: aggregation_circuit::AggregationProofV3Payload =
+    let mut corrupted_payload: aggregation_circuit::AggregationProofV4Payload =
         postcard::from_bytes(&aggregation_bytes).expect("decode payload");
     corrupted_payload.outer_proof[0] ^= 0x01;
     let corrupted_bytes = postcard::to_allocvec(&corrupted_payload).expect("encode payload");
@@ -208,8 +208,13 @@ fn aggregation_proof_roundtrip() {
 #[test]
 fn aggregation_payload_validation_rejects_invalid_encodings() {
     let expected_commitment = [0u8; 48];
-    let payload = AggregationProofV3Payload {
-        version: AGGREGATION_PROOF_V3_VERSION,
+    let payload = AggregationProofV4Payload {
+        version: AGGREGATION_PROOF_FORMAT_ID_V4,
+        proof_format: AGGREGATION_PROOF_FORMAT_ID_V4,
+        tree_arity: 8,
+        tree_levels: 1,
+        root_level: 0,
+        shape_id: [0u8; 32],
         tx_count: 1,
         tx_statements_commitment: expected_commitment.to_vec(),
         public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
@@ -223,7 +228,7 @@ fn aggregation_payload_validation_rejects_invalid_encodings() {
         .expect_err("invalid proof encoding must be rejected");
     assert!(matches!(
         err,
-        consensus::ProofError::AggregationProofV3Decode(_)
-            | consensus::ProofError::AggregationProofV3Binding(_)
+        consensus::ProofError::AggregationProofV4Decode(_)
+            | consensus::ProofError::AggregationProofV4Binding(_)
     ));
 }
