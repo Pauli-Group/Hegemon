@@ -611,7 +611,16 @@ fn get_or_build_aggregation_prover_cache_entry(
 }
 
 fn aggregation_prewarm_max_txs() -> usize {
-    std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
+    if let Some(explicit) = std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+    {
+        return explicit;
+    }
+    // Keep strict aggregation from paying first-user cold-start latency:
+    // if no explicit prewarm cap is set, prewarm at least the configured
+    // target batch size.
+    std::env::var("HEGEMON_BATCH_TARGET_TXS")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(0)
