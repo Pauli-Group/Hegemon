@@ -9,8 +9,8 @@ use p3_batch_stark::{CommonData, StarkGenericConfig};
 use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::common::CircuitTableAir;
-use p3_commit::Pcs;
 use p3_circuit_prover::{config as circuit_config, BatchStarkProver, TablePacking};
+use p3_commit::Pcs;
 use p3_field::{BasedVectorSpace, PrimeField64};
 use p3_matrix::Matrix;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
@@ -18,13 +18,13 @@ use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::{generate_challenges, verify_circuit};
 use p3_uni_stark::verify as verify_stark;
-use p3_uni_stark::Val as StarkVal;
 use p3_uni_stark::SymbolicAirBuilder;
+use p3_uni_stark::Val as StarkVal;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 use thiserror::Error;
 use transaction_circuit::proof::stark_public_inputs_p3;
@@ -81,9 +81,35 @@ struct AggregationProverCacheResult {
     cache_build_ms: u128,
 }
 
+#[derive(Default)]
+struct AggregationCommonCacheState {
+    entries: HashMap<AggregationProverKey, Arc<CommonData<circuit_config::GoldilocksConfig>>>,
+    in_progress: HashSet<AggregationProverKey>,
+}
+
+struct AggregationCommonCache {
+    state: Mutex<AggregationCommonCacheState>,
+    condvar: Condvar,
+}
+
+impl Default for AggregationCommonCache {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(AggregationCommonCacheState::default()),
+            condvar: Condvar::new(),
+        }
+    }
+}
+
 thread_local! {
     static AGGREGATION_PROVER_CACHE: RefCell<HashMap<AggregationProverKey, Arc<AggregationProverCacheEntry>>> =
         RefCell::new(HashMap::new());
+}
+
+static AGGREGATION_COMMON_CACHE: OnceLock<AggregationCommonCache> = OnceLock::new();
+
+fn aggregation_common_cache() -> &'static AggregationCommonCache {
+    AGGREGATION_COMMON_CACHE.get_or_init(AggregationCommonCache::default)
 }
 
 fn aggregation_lookup_threads() -> usize {
@@ -120,7 +146,9 @@ fn build_common_data_parallel(
     let mut matrix_to_instance: Vec<usize> = Vec::new();
     let mut domains_and_traces = Vec::new();
 
-    for (instance_index, (air, &ext_db)) in airs.iter().zip(trace_ext_degree_bits.iter()).enumerate() {
+    for (instance_index, (air, &ext_db)) in
+        airs.iter().zip(trace_ext_degree_bits.iter()).enumerate()
+    {
         let base_db = ext_db.saturating_sub(is_zk);
         let maybe_preprocessed = air.preprocessed_trace();
         let Some(preprocessed) = maybe_preprocessed else {
@@ -196,11 +224,7 @@ fn build_common_data_parallel(
         {
             Ok(pool) => pool.install(|| {
                 airs.par_iter_mut()
-                    .map(
-                        Air::<
-                            SymbolicAirBuilder<Val, Challenge>,
-                        >::get_lookups,
-                    )
+                    .map(Air::<SymbolicAirBuilder<Val, Challenge>>::get_lookups)
                     .collect::<Vec<_>>()
             }),
             Err(_) => airs
@@ -445,7 +469,8 @@ fn build_aggregation_prover_cache_entry(
 
     let outer_config = circuit_config::goldilocks().build();
     let common_started = Instant::now();
-    let common = build_common_data_parallel(&outer_config, &mut airs, &degrees);
+    let common =
+        get_or_build_aggregation_common_data(key, &outer_config, &mut airs, &degrees, profile);
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_common_data tx_count={} common_ms={} total_ms={}",
@@ -458,9 +483,70 @@ fn build_aggregation_prover_cache_entry(
     Ok(AggregationProverCacheEntry {
         circuit,
         verifier_inputs,
-        common: Arc::new(common),
+        common,
         witness_multiplicities,
     })
+}
+
+fn get_or_build_aggregation_common_data(
+    key: AggregationProverKey,
+    outer_config: &circuit_config::GoldilocksConfig,
+    airs: &mut [CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
+    degrees: &[usize],
+    profile: bool,
+) -> Arc<CommonData<circuit_config::GoldilocksConfig>> {
+    let cache = aggregation_common_cache();
+    loop {
+        let mut state = cache
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(common) = state.entries.get(&key).cloned() {
+            if profile {
+                eprintln!(
+                    "aggregation_profile stage=cache_common_lookup tx_count={} cache_hit=true cache_build_ms=0",
+                    key.tx_count
+                );
+            }
+            return common;
+        }
+
+        if state.in_progress.insert(key) {
+            drop(state);
+
+            let build_started = Instant::now();
+            let built = Arc::new(build_common_data_parallel(outer_config, airs, degrees));
+            let build_ms = build_started.elapsed().as_millis();
+
+            let mut state = cache
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.in_progress.remove(&key);
+            let common = state
+                .entries
+                .entry(key)
+                .or_insert_with(|| built.clone())
+                .clone();
+            cache.condvar.notify_all();
+
+            if profile {
+                eprintln!(
+                    "aggregation_profile stage=cache_common_lookup tx_count={} cache_hit=false cache_build_ms={}",
+                    key.tx_count,
+                    build_ms
+                );
+            }
+            return common;
+        }
+
+        while state.in_progress.contains(&key) {
+            state = cache
+                .condvar
+                .wait(state)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
 }
 
 fn get_or_build_aggregation_prover_cache_entry(
@@ -493,8 +579,7 @@ fn get_or_build_aggregation_prover_cache_entry(
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_lookup tx_count={} cache_hit=false cache_build_ms={}",
-            key.tx_count,
-            build_ms
+            key.tx_count, build_ms
         );
     }
     let entry = AGGREGATION_PROVER_CACHE.with(|cache| {

@@ -21,6 +21,72 @@ STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven ba
 STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-600}"
 MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
+PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}" # aggregation|single
+
+case "$PROOF_MODE" in
+  aggregation|single)
+    ;;
+  *)
+    echo "HEGEMON_TP_PROOF_MODE must be aggregation or single (got '$PROOF_MODE')." >&2
+    exit 1
+    ;;
+esac
+
+if [ -n "${HEGEMON_TP_SEND_PROOF_SIDECAR:-}" ]; then
+  SEND_PROOF_SIDECAR="${HEGEMON_TP_SEND_PROOF_SIDECAR}"
+elif [ "$PROOF_MODE" = "single" ]; then
+  SEND_PROOF_SIDECAR=0
+else
+  SEND_PROOF_SIDECAR=1
+fi
+if ! [[ "$SEND_PROOF_SIDECAR" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_SEND_PROOF_SIDECAR must be 0 or 1 (got '$SEND_PROOF_SIDECAR')." >&2
+  exit 1
+fi
+if [ "$PROOF_MODE" = "single" ] && [ "$SEND_PROOF_SIDECAR" != "0" ]; then
+  echo "HEGEMON_TP_PROOF_MODE=single requires HEGEMON_TP_SEND_PROOF_SIDECAR=0." >&2
+  exit 1
+fi
+
+if [ -n "${HEGEMON_TP_SEND_NO_SYNC:-}" ]; then
+  SEND_NO_SYNC_DEFAULT="${HEGEMON_TP_SEND_NO_SYNC}"
+elif [ "$PROOF_MODE" = "single" ]; then
+  # Inline proofs mutate note state locally; forcing a sync between sends avoids
+  # nullifier reuse during benchmark generation.
+  SEND_NO_SYNC_DEFAULT=0
+else
+  SEND_NO_SYNC_DEFAULT=1
+fi
+if ! [[ "$SEND_NO_SYNC_DEFAULT" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_SEND_NO_SYNC must be 0 or 1 (got '$SEND_NO_SYNC_DEFAULT')." >&2
+  exit 1
+fi
+
+if [ "$PROOF_MODE" = "single" ]; then
+  if [ "$STRICT_AGGREGATION" = "1" ]; then
+    echo "Disabling strict aggregation checks for HEGEMON_TP_PROOF_MODE=single." >&2
+  fi
+  STRICT_AGGREGATION=0
+  AGGREGATION_PROOFS_ENABLED=0
+else
+  AGGREGATION_PROOFS_ENABLED=1
+fi
+
+if [ -n "${HEGEMON_TP_INCLUSION_TARGET_MODE:-}" ]; then
+  INCLUSION_TARGET_MODE="${HEGEMON_TP_INCLUSION_TARGET_MODE}"
+elif [ "$PROOF_MODE" = "single" ]; then
+  INCLUSION_TARGET_MODE="cumulative"
+else
+  INCLUSION_TARGET_MODE="single_block"
+fi
+case "$INCLUSION_TARGET_MODE" in
+  single_block|cumulative)
+    ;;
+  *)
+    echo "HEGEMON_TP_INCLUSION_TARGET_MODE must be single_block or cumulative (got '$INCLUSION_TARGET_MODE')." >&2
+    exit 1
+    ;;
+esac
 
 if [ -n "${HEGEMON_TP_PROVER_LIVENESS_LANE:-}" ]; then
   PROVER_LIVENESS_LANE="${HEGEMON_TP_PROVER_LIVENESS_LANE}"
@@ -36,6 +102,7 @@ elif [ "$PROVER_LIVENESS_LANE" = "0" ]; then
 else
   BATCH_QUEUE_CAPACITY=4
 fi
+BATCH_INCREMENTAL_UPSIZE="${HEGEMON_TP_BATCH_INCREMENTAL_UPSIZE:-0}" # 1 = legacy +1 upsizing
 MIN_READY_BATCH_TXS="${HEGEMON_TP_MIN_READY_BATCH_TXS:-$MIN_PREPARED_TXS}"
 
 # Throughput profile:
@@ -104,6 +171,7 @@ else
 fi
 AGG_PREPARE_THREADS="${HEGEMON_TP_AGG_PREPARE_THREADS:-1}"
 AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-0}"
+PREWARM_ONLY="${HEGEMON_TP_PREWARM_ONLY:-0}" # 1 = stop after prepared batch is available
 
 if [ "$NODE_RAYON_THREADS" -lt 1 ] || [ "$CARGO_JOBS" -lt 1 ] || [ "$MINE_THREADS" -lt 1 ]; then
   echo "Thread settings must be >= 1 (node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS)" >&2
@@ -123,6 +191,10 @@ if ! [[ "$AGG_PREPARE_THREADS" =~ ^[0-9]+$ ]] || [ "$AGG_PREPARE_THREADS" -lt 1 
 fi
 if ! [[ "$AGG_PREWARM_MAX_TXS" =~ ^[0-9]+$ ]]; then
   echo "HEGEMON_TP_AGG_PREWARM_MAX_TXS must be an integer >= 0 (got '$AGG_PREWARM_MAX_TXS')." >&2
+  exit 1
+fi
+if ! [[ "$PREWARM_ONLY" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_PREWARM_ONLY must be 0 or 1 (got '$PREWARM_ONLY')." >&2
   exit 1
 fi
 
@@ -162,6 +234,10 @@ if ! [[ "$BATCH_QUEUE_CAPACITY" =~ ^[0-9]+$ ]] || [ "$BATCH_QUEUE_CAPACITY" -lt 
   echo "HEGEMON_TP_BATCH_QUEUE_CAPACITY must be a positive integer (got '$BATCH_QUEUE_CAPACITY')." >&2
   exit 1
 fi
+if ! [[ "$BATCH_INCREMENTAL_UPSIZE" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_BATCH_INCREMENTAL_UPSIZE must be 0 or 1 (got '$BATCH_INCREMENTAL_UPSIZE')." >&2
+  exit 1
+fi
 if ! [[ "$MIN_READY_BATCH_TXS" =~ ^[0-9]+$ ]] || [ "$MIN_READY_BATCH_TXS" -lt 1 ]; then
   echo "HEGEMON_TP_MIN_READY_BATCH_TXS must be a positive integer (got '$MIN_READY_BATCH_TXS')." >&2
   exit 1
@@ -177,7 +253,13 @@ PASS_A="${HEGEMON_TP_PASS_A:-testwallet1}"
 PASS_B="${HEGEMON_TP_PASS_B:-testwallet2}"
 RECIPIENTS_JSON="${HEGEMON_TP_RECIPIENTS_JSON:-/tmp/hegemon-throughput-recipients.json}"
 WORKERS="${HEGEMON_TP_WORKERS:-1}"
-PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS:-1}"
+if [ -n "${HEGEMON_TP_PROVER_WORKERS:-}" ]; then
+  PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS}"
+elif [ "$PROOF_MODE" = "single" ]; then
+  PROVER_WORKERS=0
+else
+  PROVER_WORKERS=1
+fi
 if [ -n "${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-}" ]; then
   PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS}"
 elif [ "$STRICT_AGGREGATION" = "1" ]; then
@@ -189,6 +271,8 @@ WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
 WALLET_RPC_REQUEST_TIMEOUT_SECS="${HEGEMON_TP_WALLET_RPC_REQUEST_TIMEOUT_SECS:-180}"
 SEND_RETRIES="${HEGEMON_TP_SEND_RETRIES:-4}"
 SEND_RETRY_DELAY_SECS="${HEGEMON_TP_SEND_RETRY_DELAY_SECS:-2}"
+TP_SEEDS="${HEGEMON_TP_SEEDS:-}"
+TP_MAX_PEERS="${HEGEMON_TP_MAX_PEERS:-0}"
 if [ -n "${HEGEMON_TP_WALLET_RAYON_THREADS:-}" ]; then
   WALLET_RAYON_THREADS="${HEGEMON_TP_WALLET_RAYON_THREADS}"
 else
@@ -287,6 +371,8 @@ echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$
 echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
 echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY" >&2
 echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
+echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
+echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   if [ "${HEGEMON_TP_FORCE:-0}" = "1" ]; then
@@ -478,7 +564,7 @@ if [ "$FAST" = "1" ]; then
   WALLET_FAST_ENV="HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1"
 fi
 NODE_STRICT_ENV=""
-if [ "$STRICT_AGGREGATION" = "1" ]; then
+if [ "$STRICT_AGGREGATION" = "1" ] && [ "$AGGREGATION_PROOFS_ENABLED" = "1" ]; then
   NODE_STRICT_ENV="HEGEMON_DISABLE_PROOFLESS_HYDRATION=1"
 fi
 
@@ -525,7 +611,7 @@ wallet_send_with_retry() {
   local passphrase="$2"
   local recipients_json="$3"
   local no_sync="${4:-0}"
-  local proof_sidecar="${5:-1}"
+  local proof_sidecar="${5:-$SEND_PROOF_SIDECAR}"
   local attempt=1
   while true; do
     local output
@@ -554,19 +640,20 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_RAYON_THREADS='${NODE_RAYON_THREADS}' \
      $NODE_FAST_ENV \
      $NODE_STRICT_ENV \
-     HEGEMON_SEEDS='' \
-     HEGEMON_MAX_PEERS=0 \
+     HEGEMON_SEEDS='${TP_SEEDS}' \
+     HEGEMON_MAX_PEERS='${TP_MAX_PEERS}' \
      HEGEMON_MINE=1 \
      HEGEMON_MINE_THREADS='${MINE_THREADS}' \
      HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
      HEGEMON_PROVER_LIVENESS_LANE='${PROVER_LIVENESS_LANE}' \
      HEGEMON_BATCH_QUEUE_CAPACITY='${BATCH_QUEUE_CAPACITY}' \
+     HEGEMON_BATCH_INCREMENTAL_UPSIZE='${BATCH_INCREMENTAL_UPSIZE}' \
      HEGEMON_BATCH_TARGET_TXS='${TX_COUNT}' \
      HEGEMON_BATCH_JOB_TIMEOUT_MS='${PROVER_BATCH_JOB_TIMEOUT_MS}' \
      HEGEMON_MIN_READY_PROVEN_BATCH_TXS='${MIN_READY_BATCH_TXS}' \
      HEGEMON_MINE_TEST=1 \
      HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
-     HEGEMON_AGGREGATION_PROOFS=1 \
+     HEGEMON_AGGREGATION_PROOFS='${AGGREGATION_PROOFS_ENABLED}' \
      HEGEMON_PARALLEL_PROOF_VERIFICATION=1 \
      HEGEMON_FULL_IMPORT=1 \
      HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK='${TX_COUNT}' \
@@ -684,13 +771,13 @@ EOF
   done
 fi
 
-echo "Submitting ${TX_COUNT} sidecar transfers (this may take a while)..." >&2
+echo "Submitting ${TX_COUNT} transfers (proof_mode=${PROOF_MODE}, proof_sidecar=${SEND_PROOF_SIDECAR})..." >&2
 ROUND_START_MS="$(now_ms)"
 SEND_START_MS="$ROUND_START_MS"
 if [ "$WORKERS" -le 1 ]; then
   for i in $(seq 1 "$TX_COUNT"); do
     echo "  sending ${i}/${TX_COUNT}..." >&2
-    wallet_send_with_retry "$WALLET_A" "$PASS_A" "$RECIPIENTS_JSON" 1
+    wallet_send_with_retry "$WALLET_A" "$PASS_A" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT"
   done
 else
   pids=()
@@ -705,7 +792,7 @@ else
     (
       for j in $(seq 1 "$worker_tx_count"); do
         echo "  worker ${worker_id} sending ${j}/${worker_tx_count}..." >&2
-        wallet_send_with_retry "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" 1
+        wallet_send_with_retry "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT"
       done
     ) &
     pids+=("$!")
@@ -728,6 +815,7 @@ echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
 
 if [ "$STRICT_AGGREGATION" = "1" ]; then
   echo "Strict mode: waiting for local proven batch candidate before mining (min_prepared_txs=${MIN_PREPARED_TXS})..." >&2
+  STRICT_WAIT_START_MS="$(now_ms)"
   PREPARED_LINE=""
   BEST_PREPARED_LINE=""
   BEST_PREPARED_TX_COUNT=0
@@ -757,6 +845,18 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
     exit 1
   fi
   echo "$PREPARED_LINE" >&2
+  STRICT_WAIT_END_MS="$(now_ms)"
+  STRICT_WAIT_MS=$((STRICT_WAIT_END_MS - STRICT_WAIT_START_MS))
+  echo "Prepared batch became ready in strict_wait_ms=${STRICT_WAIT_MS}" >&2
+  if [ "$PREWARM_ONLY" = "1" ]; then
+    echo "Prewarm-only mode: exiting before inclusion/mining stage." >&2
+    echo "prewarm_metrics tx_count=${TX_COUNT} proof_mode=${PROOF_MODE} strict_wait_ms=${STRICT_WAIT_MS} min_prepared_txs=${MIN_PREPARED_TXS}" >&2
+    echo "Done. Node is still running in tmux." >&2
+    echo "  Attach: tmux attach -t $SESSION" >&2
+    echo "  Logs:   $LOG_FILE" >&2
+    echo "  Kill:   tmux kill-session -t $SESSION" >&2
+    exit 0
+  fi
 fi
 
 INCLUSION_START_BLOCK="$(current_block_number)"
@@ -772,36 +872,76 @@ FOUND=""
 FOUND_BLOCK=""
 FOUND_TX_COUNT=0
 FOUND_AT_MS="$INCLUSION_START_MS"
+INCLUDED_TOTAL_TX=0
+TOTAL_TX_PROOF_BYTES=0
+TOTAL_PROVEN_BATCH_BYTES=0
+LAST_SCANNED_BLOCK="$INCLUSION_START_BLOCK"
 for i in $(seq 1 1200); do
-  LINE="$(search_log "block_payload_size_metrics" | tail -n 1 || true)"
-  if [ -z "$LINE" ]; then
-    sleep 1
-    continue
-  fi
-  LINE_BLOCK="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\bblock_number=(\d+)\b", s); print(m.group(1) if m else "")' <<<"$LINE")"
-  if [ -z "$LINE_BLOCK" ]; then
-    sleep 1
-    continue
-  fi
-  # Ignore stale payload lines from pre-round blocks (e.g., worker-funding inclusion).
-  if [ "$LINE_BLOCK" -le "$INCLUSION_START_BLOCK" ]; then
-    sleep 1
-    continue
-  fi
-  LINE_TX_COUNT="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\btx_count=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
-  if [ "$LINE_TX_COUNT" -gt "$FOUND_TX_COUNT" ]; then
-    FOUND="$LINE"
-    FOUND_BLOCK="$LINE_BLOCK"
-    FOUND_TX_COUNT="$LINE_TX_COUNT"
-    FOUND_AT_MS="$(now_ms)"
-  fi
-  if [ "$LINE_TX_COUNT" -ge "$TX_COUNT" ]; then
-    break
+  if [ "$INCLUSION_TARGET_MODE" = "single_block" ]; then
+    LINE="$(search_log "block_payload_size_metrics" | tail -n 1 || true)"
+    if [ -z "$LINE" ]; then
+      sleep 1
+      continue
+    fi
+    LINE_BLOCK="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\bblock_number=(\d+)\b", s); print(m.group(1) if m else "")' <<<"$LINE")"
+    if [ -z "$LINE_BLOCK" ]; then
+      sleep 1
+      continue
+    fi
+    # Ignore stale payload lines from pre-round blocks (e.g., worker-funding inclusion).
+    if [ "$LINE_BLOCK" -le "$INCLUSION_START_BLOCK" ]; then
+      sleep 1
+      continue
+    fi
+    LINE_TX_COUNT="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\btx_count=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
+    if [ "$LINE_TX_COUNT" -gt "$FOUND_TX_COUNT" ]; then
+      FOUND="$LINE"
+      FOUND_BLOCK="$LINE_BLOCK"
+      FOUND_TX_COUNT="$LINE_TX_COUNT"
+      FOUND_AT_MS="$(now_ms)"
+    fi
+    if [ "$LINE_TX_COUNT" -ge "$TX_COUNT" ]; then
+      INCLUDED_TOTAL_TX="$LINE_TX_COUNT"
+      TOTAL_TX_PROOF_BYTES="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\btx_proof_bytes_total=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
+      TOTAL_PROVEN_BATCH_BYTES="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\bproven_batch_bytes=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
+      break
+    fi
+  else
+    CURRENT_BLOCK="$(current_block_number)"
+    if [ "$CURRENT_BLOCK" -le "$LAST_SCANNED_BLOCK" ]; then
+      sleep 1
+      continue
+    fi
+    for block in $(seq $((LAST_SCANNED_BLOCK + 1)) "$CURRENT_BLOCK"); do
+      LINE="$(search_log "block_payload_size_metrics block_number=${block}" | tail -n 1 || true)"
+      if [ -z "$LINE" ]; then
+        continue
+      fi
+      LINE_TX_COUNT="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\btx_count=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
+      LINE_TX_PROOF_BYTES="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\btx_proof_bytes_total=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
+      LINE_PROVEN_BATCH_BYTES="$(python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"\bproven_batch_bytes=(\d+)\b", s); print(m.group(1) if m else "0")' <<<"$LINE")"
+      INCLUDED_TOTAL_TX=$((INCLUDED_TOTAL_TX + LINE_TX_COUNT))
+      TOTAL_TX_PROOF_BYTES=$((TOTAL_TX_PROOF_BYTES + LINE_TX_PROOF_BYTES))
+      TOTAL_PROVEN_BATCH_BYTES=$((TOTAL_PROVEN_BATCH_BYTES + LINE_PROVEN_BATCH_BYTES))
+      if [ "$LINE_TX_COUNT" -gt "$FOUND_TX_COUNT" ]; then
+        FOUND_TX_COUNT="$LINE_TX_COUNT"
+      fi
+      FOUND="$LINE"
+      FOUND_BLOCK="$block"
+      FOUND_AT_MS="$(now_ms)"
+      if [ "$INCLUDED_TOTAL_TX" -ge "$TX_COUNT" ]; then
+        break
+      fi
+    done
+    LAST_SCANNED_BLOCK="$CURRENT_BLOCK"
+    if [ "$INCLUDED_TOTAL_TX" -ge "$TX_COUNT" ]; then
+      break
+    fi
   fi
   sleep 1
 done
 
-if [ -z "$FOUND" ] || [ "$FOUND_TX_COUNT" -le 0 ]; then
+if [ -z "$FOUND" ] || [ "$INCLUDED_TOTAL_TX" -le 0 ]; then
   echo "Timed out waiting for metrics; inspect logs: $LOG_FILE" >&2
   echo "Attach: tmux attach -t $SESSION" >&2
   exit 1
@@ -809,7 +949,17 @@ fi
 ROUND_END_MS="$FOUND_AT_MS"
 ROUND_TOTAL_MS=$((ROUND_END_MS - ROUND_START_MS))
 INCLUSION_TOTAL_MS=$((ROUND_END_MS - INCLUSION_START_MS))
-INCLUDED_TX_COUNT="$FOUND_TX_COUNT"
+INCLUDED_TX_COUNT="$INCLUDED_TOTAL_TX"
+TX_PROOF_BYTES_TOTAL="$TOTAL_TX_PROOF_BYTES"
+PROVEN_BATCH_BYTES_TOTAL="$TOTAL_PROVEN_BATCH_BYTES"
+PAYLOAD_BYTES_PER_TX="$(python3 - <<PY
+tx_count = int("${INCLUDED_TX_COUNT}")
+tx_proof_bytes = int("${TX_PROOF_BYTES_TOTAL}")
+proven_batch_bytes = int("${PROVEN_BATCH_BYTES_TOTAL}")
+total = tx_proof_bytes + proven_batch_bytes
+print(f"{(total / tx_count):.2f}" if tx_count > 0 else "0.00")
+PY
+)"
 
 SUBMISSION_TPS="$(python3 - <<PY
 tx_count = int("${TX_COUNT}")
@@ -888,6 +1038,7 @@ fi
 echo "" >&2
 echo "=== Latest payload size metrics ===" >&2
 echo "$FOUND" >&2
+echo "payload_cost_metrics included_tx_count=${INCLUDED_TX_COUNT} tx_proof_bytes_total=${TX_PROOF_BYTES_TOTAL} proven_batch_bytes=${PROVEN_BATCH_BYTES_TOTAL} payload_bytes_per_tx=${PAYLOAD_BYTES_PER_TX}" >&2
 if [ "$INCLUDED_TX_COUNT" -lt "$TX_COUNT" ]; then
   echo "WARNING: Included tx_count (${INCLUDED_TX_COUNT}) is below requested tx_count (${TX_COUNT}); TPS uses included_tx_count." >&2
 fi
@@ -904,7 +1055,7 @@ else
   search_log "block_proof_verification_metrics" | tail -n 1 >&2 || true
 fi
 echo "" >&2
-echo "throughput_round_metrics tx_count=${TX_COUNT} included_tx_count=${INCLUDED_TX_COUNT} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
+echo "throughput_round_metrics tx_count=${TX_COUNT} included_tx_count=${INCLUDED_TX_COUNT} proof_mode=${PROOF_MODE} inclusion_target_mode=${INCLUSION_TARGET_MODE} send_proof_sidecar=${SEND_PROOF_SIDECAR} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
 
 echo "Done. Node is still running in tmux." >&2
 echo "  Attach: tmux attach -t $SESSION" >&2
