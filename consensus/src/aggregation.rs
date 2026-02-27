@@ -1105,4 +1105,54 @@ mod tests {
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].to_vec(), tx.to_vec());
     }
+
+    #[test]
+    fn verify_aggregation_proof_rejects_legacy_payload_version() {
+        let commitment = [0u8; 48];
+        let payload = AggregationProofV4Payload {
+            version: AGGREGATION_PROOF_FORMAT_VERSION_V4 - 1,
+            proof_format: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            tree_arity: 8,
+            tree_levels: 1,
+            root_level: 0,
+            shape_id: [0u8; 32],
+            tx_count: 1,
+            tx_statements_commitment: commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+            inner_public_inputs_len: 1,
+            representative_proof: vec![0u8],
+            packed_public_values: vec![0u64, 0u64],
+            outer_proof: Vec::new(),
+        };
+
+        let encoded = postcard::to_allocvec(&payload).expect("encode");
+        let err = verify_aggregation_proof(&encoded, 1, &commitment)
+            .expect_err("legacy payload version must be rejected");
+        assert!(matches!(err, ProofError::AggregationProofV4Decode(_)));
+    }
+
+    #[test]
+    fn verify_aggregation_proof_rejects_legacy_proof_format_id() {
+        let commitment = [0u8; 48];
+        let payload = AggregationProofV4Payload {
+            version: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            proof_format: AGGREGATION_PROOF_FORMAT_VERSION_V4 - 1,
+            tree_arity: 8,
+            tree_levels: 1,
+            root_level: 0,
+            shape_id: [0u8; 32],
+            tx_count: 1,
+            tx_statements_commitment: commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+            inner_public_inputs_len: 1,
+            representative_proof: vec![0u8],
+            packed_public_values: vec![0u64, 0u64],
+            outer_proof: Vec::new(),
+        };
+
+        let encoded = postcard::to_allocvec(&payload).expect("encode");
+        let err = verify_aggregation_proof(&encoded, 1, &commitment)
+            .expect_err("legacy payload format id must be rejected");
+        assert!(matches!(err, ProofError::AggregationProofV4Decode(_)));
+    }
 }
