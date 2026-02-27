@@ -61,7 +61,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::substrate::network_bridge::{BlockAnnounce, SyncRequest, SyncResponse};
+use crate::substrate::network_bridge::{
+    BlockAnnounce, SyncRequest, SyncResponse, SYNC_PROTOCOL_VERSION,
+};
+use aggregation_circuit::AGGREGATION_PROOF_FORMAT_ID_V4;
 
 /// Maximum number of headers to return in a single response
 pub const MAX_HEADERS_PER_RESPONSE: u32 = 128;
@@ -105,8 +108,8 @@ pub enum PeerCompatibility {
 pub enum SyncState {
     /// Not actively syncing
     Idle,
-    /// Probing a peer's genesis hash before considering it as a sync source.
-    ProbingGenesis {
+    /// Probing a peer's compatibility metadata before considering it as a sync source.
+    ProbingCompatibility {
         /// Peer being probed
         peer: PeerId,
         /// Best height this peer advertised when probe started
@@ -268,7 +271,7 @@ struct PendingRequest {
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Reserved for future sync protocol implementation
 enum PendingRequestType {
-    GenesisProbe,
+    CompatibilityProbe,
     /// Requesting blocks starting from a height
     GetBlocks {
         from_height: u64,
@@ -283,7 +286,7 @@ enum PendingRequestType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingRequestKind {
-    GenesisProbe,
+    CompatibilityProbe,
     GetBlocks,
     Headers,
     Bodies,
@@ -292,7 +295,7 @@ enum PendingRequestKind {
 impl PendingRequestType {
     fn kind(&self) -> PendingRequestKind {
         match self {
-            PendingRequestType::GenesisProbe => PendingRequestKind::GenesisProbe,
+            PendingRequestType::CompatibilityProbe => PendingRequestKind::CompatibilityProbe,
             PendingRequestType::GetBlocks { .. } => PendingRequestKind::GetBlocks,
             PendingRequestType::Headers { .. } => PendingRequestKind::Headers,
             PendingRequestType::Bodies { .. } => PendingRequestKind::Bodies,
@@ -371,6 +374,29 @@ where
         let mut hash_bytes = [0u8; 32];
         hash_bytes.copy_from_slice(genesis_hash.as_ref());
         Some(hash_bytes)
+    }
+
+    fn local_sync_protocol_version(&self) -> u32 {
+        SYNC_PROTOCOL_VERSION
+    }
+
+    fn local_aggregation_proof_format(&self) -> u8 {
+        AGGREGATION_PROOF_FORMAT_ID_V4
+    }
+
+    fn mark_peer_incompatible(&mut self, peer_id: PeerId, reason: &str) {
+        if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+            peer_state.compatibility = PeerCompatibility::Incompatible;
+            peer_state.failed_requests = MAX_PEER_FAILURES;
+        }
+        if !self.incompatible_peers.contains(&peer_id) {
+            self.incompatible_peers.push_back(peer_id);
+        }
+        tracing::warn!(
+            peer = %hex::encode(peer_id),
+            reason = reason,
+            "Marked peer as incompatible"
+        );
     }
 
     /// Create a new sync service
@@ -543,7 +569,7 @@ where
                 tracing::debug!(
                     peer = %hex::encode(peer_id),
                     peer_best = announce.number,
-                    "Deferring sync from peer until genesis compatibility probe completes"
+                    "Deferring sync from peer until strict compatibility probe completes"
                 );
                 return;
             }
@@ -603,7 +629,7 @@ where
         // If we were syncing/probing this peer, reset to idle
         match &self.state {
             SyncState::Downloading { peer, .. }
-            | SyncState::ProbingGenesis { peer, .. }
+            | SyncState::ProbingCompatibility { peer, .. }
             | SyncState::TipPolling { peer, .. } => {
                 if peer == peer_id {
                     tracing::warn!(
@@ -636,6 +662,17 @@ where
         self.stats.requests_handled += 1;
 
         match request {
+            SyncRequest::CompatibilityProbe {
+                local_genesis_hash,
+                sync_protocol_version,
+                aggregation_proof_format,
+            } => self.handle_compatibility_probe_request(
+                peer_id,
+                local_genesis_hash,
+                sync_protocol_version,
+                aggregation_proof_format,
+                request_id,
+            ),
             SyncRequest::BlockHeaders {
                 start_hash,
                 max_headers,
@@ -654,6 +691,43 @@ where
                 max_blocks,
             } => self.handle_get_blocks_request(peer_id, start_height, max_blocks, request_id),
         }
+    }
+
+    fn handle_compatibility_probe_request(
+        &mut self,
+        peer_id: PeerId,
+        remote_genesis_hash: [u8; 32],
+        remote_sync_protocol_version: u32,
+        remote_aggregation_proof_format: u8,
+        request_id: Option<u64>,
+    ) -> Option<SyncResponse> {
+        let local_genesis_hash = self.genesis_hash_bytes()?;
+        let local_sync_protocol_version = self.local_sync_protocol_version();
+        let local_aggregation_proof_format = self.local_aggregation_proof_format();
+        let accepted = remote_genesis_hash == local_genesis_hash
+            && remote_sync_protocol_version == local_sync_protocol_version
+            && remote_aggregation_proof_format == local_aggregation_proof_format;
+
+        tracing::debug!(
+            peer = %hex::encode(peer_id),
+            accepted,
+            remote_genesis = %hex::encode(remote_genesis_hash),
+            local_genesis = %hex::encode(local_genesis_hash),
+            remote_sync_protocol_version,
+            local_sync_protocol_version,
+            remote_aggregation_proof_format,
+            local_aggregation_proof_format,
+            "Handled sync compatibility probe"
+        );
+
+        self.stats.responses_sent += 1;
+        Some(SyncResponse::Compatibility {
+            request_id: self.response_request_id(request_id),
+            accepted,
+            local_genesis_hash,
+            sync_protocol_version: local_sync_protocol_version,
+            aggregation_proof_format: local_aggregation_proof_format,
+        })
     }
 
     /// Handle a GetBlocks request (PoW-style sync)
@@ -927,6 +1001,22 @@ where
     /// This is the core of the sync protocol - process blocks and queue for import.
     pub fn handle_sync_response(&mut self, peer_id: PeerId, response: SyncResponse) {
         match response {
+            SyncResponse::Compatibility {
+                request_id,
+                accepted,
+                local_genesis_hash,
+                sync_protocol_version,
+                aggregation_proof_format,
+            } => {
+                self.handle_compatibility_probe_response(
+                    peer_id,
+                    request_id,
+                    accepted,
+                    local_genesis_hash,
+                    sync_protocol_version,
+                    aggregation_proof_format,
+                );
+            }
             SyncResponse::BlockHeaders {
                 request_id,
                 headers,
@@ -968,14 +1058,7 @@ where
             "🔄 SYNC: handle_blocks_response CALLED"
         );
 
-        if !self.pending_request_matches(
-            peer_id,
-            request_id,
-            &[
-                PendingRequestKind::GenesisProbe,
-                PendingRequestKind::GetBlocks,
-            ],
-        ) {
+        if !self.pending_request_matches(peer_id, request_id, &[PendingRequestKind::GetBlocks]) {
             if let Some(peer_state) = self.peers.get_mut(&peer_id) {
                 peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
             }
@@ -989,7 +1072,7 @@ where
             SyncState::Downloading {
                 request_pending, ..
             }
-            | SyncState::ProbingGenesis {
+            | SyncState::ProbingCompatibility {
                 request_pending, ..
             }
             | SyncState::TipPolling {
@@ -998,11 +1081,6 @@ where
                 *request_pending = false;
             }
             _ => {}
-        }
-
-        if matches!(self.state, SyncState::ProbingGenesis { .. }) {
-            self.handle_genesis_probe_response(peer_id, blocks);
-            return;
         }
 
         let tip_poll_snapshot = match &self.state {
@@ -1201,12 +1279,36 @@ where
         );
     }
 
-    fn handle_genesis_probe_response(
+    fn handle_compatibility_probe_response(
         &mut self,
         peer_id: PeerId,
-        blocks: Vec<crate::substrate::network_bridge::SyncBlock>,
+        request_id: u64,
+        accepted: bool,
+        peer_genesis_hash: [u8; 32],
+        peer_sync_protocol_version: u32,
+        peer_aggregation_proof_format: u8,
     ) {
-        let SyncState::ProbingGenesis {
+        if !self.pending_request_matches(
+            peer_id,
+            request_id,
+            &[PendingRequestKind::CompatibilityProbe],
+        ) {
+            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+            }
+            self.stats.failed_requests = self.stats.failed_requests.saturating_add(1);
+            return;
+        }
+        self.pending_requests.remove(&request_id);
+
+        if let SyncState::ProbingCompatibility {
+            request_pending, ..
+        } = &mut self.state
+        {
+            *request_pending = false;
+        }
+
+        let SyncState::ProbingCompatibility {
             peer: expected_peer,
             announced_best,
             ..
@@ -1219,81 +1321,37 @@ where
             tracing::debug!(
                 peer = %hex::encode(peer_id),
                 expected_peer = %hex::encode(expected_peer),
-                "Ignoring genesis probe response from unexpected peer"
+                "Ignoring compatibility response from unexpected peer"
             );
             return;
         }
 
-        let local_genesis = match self.genesis_hash_bytes() {
-            Some(hash) => hash,
-            None => {
-                tracing::warn!("Failed to load local genesis hash during peer compatibility probe");
-                self.state = SyncState::Idle;
-                return;
-            }
-        };
-
-        let Some(genesis_block) = blocks.first() else {
-            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
-                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
-            }
-            self.stats.failed_requests += 1;
-            tracing::warn!(
-                peer = %hex::encode(peer_id),
-                "Peer returned empty response to genesis probe"
-            );
+        let Some(local_genesis_hash) = self.genesis_hash_bytes() else {
+            tracing::warn!("Failed to load local genesis hash during compatibility validation");
             self.state = SyncState::Idle;
             return;
         };
 
-        if genesis_block.number != 0 {
-            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
-                peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
-            }
-            self.stats.failed_requests += 1;
+        let local_sync_protocol_version = self.local_sync_protocol_version();
+        let local_aggregation_proof_format = self.local_aggregation_proof_format();
+
+        let compatible = accepted
+            && peer_genesis_hash == local_genesis_hash
+            && peer_sync_protocol_version == local_sync_protocol_version
+            && peer_aggregation_proof_format == local_aggregation_proof_format;
+
+        if !compatible {
+            self.mark_peer_incompatible(peer_id, "compatibility probe mismatch");
             tracing::warn!(
                 peer = %hex::encode(peer_id),
-                first_number = genesis_block.number,
-                "Peer returned non-genesis block for genesis probe"
-            );
-            self.state = SyncState::Idle;
-            return;
-        }
-
-        let header = match <Block::Header as Decode>::decode(&mut &genesis_block.header[..]) {
-            Ok(header) => header,
-            Err(err) => {
-                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
-                    peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
-                }
-                self.stats.failed_requests += 1;
-                tracing::warn!(
-                    peer = %hex::encode(peer_id),
-                    error = %err,
-                    "Failed to decode header in genesis probe response"
-                );
-                self.state = SyncState::Idle;
-                return;
-            }
-        };
-
-        let header_hash = HeaderT::hash(&header);
-        let mut peer_genesis = [0u8; 32];
-        peer_genesis.copy_from_slice(header_hash.as_ref());
-
-        if peer_genesis != local_genesis {
-            if let Some(peer_state) = self.peers.get_mut(&peer_id) {
-                peer_state.compatibility = PeerCompatibility::Incompatible;
-                peer_state.failed_requests = MAX_PEER_FAILURES;
-            }
-            if !self.incompatible_peers.contains(&peer_id) {
-                self.incompatible_peers.push_back(peer_id);
-            }
-            tracing::warn!(
-                peer = %hex::encode(peer_id),
-                peer_genesis = %hex::encode(peer_genesis),
-                local_genesis = %hex::encode(local_genesis),
-                "Marked peer as incompatible due to genesis mismatch"
+                accepted,
+                peer_genesis = %hex::encode(peer_genesis_hash),
+                local_genesis = %hex::encode(local_genesis_hash),
+                peer_sync_protocol_version,
+                local_sync_protocol_version,
+                peer_aggregation_proof_format,
+                local_aggregation_proof_format,
+                "Peer failed compatibility probe"
             );
             self.state = SyncState::Idle;
             return;
@@ -1306,8 +1364,10 @@ where
         }
         tracing::info!(
             peer = %hex::encode(peer_id),
-            genesis = %hex::encode(local_genesis),
-            "Peer genesis verified"
+            genesis = %hex::encode(local_genesis_hash),
+            sync_protocol_version = local_sync_protocol_version,
+            aggregation_proof_format = local_aggregation_proof_format,
+            "Peer compatibility verified"
         );
 
         let our_best = self.best_number();
@@ -1647,12 +1707,12 @@ where
 
                 // Probe unknown peers only when not currently behind a known compatible peer.
                 if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
-                    return self.create_genesis_probe_request(peer_id, announced_best);
+                    return self.create_compatibility_probe_request(peer_id, announced_best);
                 }
 
                 None
             }
-            SyncState::ProbingGenesis {
+            SyncState::ProbingCompatibility {
                 peer,
                 announced_best,
                 request_pending,
@@ -1661,7 +1721,7 @@ where
                 if !self.peers.contains_key(&peer) {
                     tracing::debug!(
                         peer = %hex::encode(peer),
-                        "Genesis probe peer disconnected; resetting to idle"
+                        "Compatibility probe peer disconnected; resetting to idle"
                     );
                     self.state = SyncState::Idle;
                     return None;
@@ -1673,7 +1733,7 @@ where
                         {
                             tracing::warn!(
                                 peer = %hex::encode(peer),
-                                "Genesis probe timed out"
+                                "Compatibility probe timed out"
                             );
                             if let Some(peer_state) = self.peers.get_mut(&peer) {
                                 peer_state.failed_requests =
@@ -1686,7 +1746,7 @@ where
                     return None;
                 }
 
-                self.create_genesis_probe_request(peer, announced_best)
+                self.create_compatibility_probe_request(peer, announced_best)
             }
             SyncState::TipPolling {
                 peer,
@@ -1883,7 +1943,7 @@ where
 
                 // Otherwise keep probing unknown peers in the background.
                 if let Some((peer_id, announced_best)) = self.next_peer_to_probe() {
-                    return self.create_genesis_probe_request(peer_id, announced_best);
+                    return self.create_compatibility_probe_request(peer_id, announced_best);
                 }
 
                 None
@@ -1891,28 +1951,30 @@ where
         }
     }
 
-    fn create_genesis_probe_request(
+    fn create_compatibility_probe_request(
         &mut self,
         peer_id: PeerId,
         announced_best: u64,
     ) -> Option<(PeerId, u64, SyncRequest)> {
+        let local_genesis_hash = self.genesis_hash_bytes()?;
         let request_id = self.next_request_id();
-        let request = SyncRequest::GetBlocks {
-            start_height: 0,
-            max_blocks: 1,
+        let request = SyncRequest::CompatibilityProbe {
+            local_genesis_hash,
+            sync_protocol_version: self.local_sync_protocol_version(),
+            aggregation_proof_format: self.local_aggregation_proof_format(),
         };
 
         self.pending_requests.insert(
             request_id,
             PendingRequest {
-                request_type: PendingRequestType::GenesisProbe,
+                request_type: PendingRequestType::CompatibilityProbe,
                 peer: peer_id,
                 sent_at: Instant::now(),
                 request_id,
             },
         );
 
-        self.state = SyncState::ProbingGenesis {
+        self.state = SyncState::ProbingCompatibility {
             peer: peer_id,
             announced_best,
             request_pending: true,
@@ -1923,7 +1985,10 @@ where
         tracing::debug!(
             peer = %hex::encode(peer_id),
             request_id,
-            "Sending genesis compatibility probe"
+            local_genesis = %hex::encode(local_genesis_hash),
+            sync_protocol_version = self.local_sync_protocol_version(),
+            aggregation_proof_format = self.local_aggregation_proof_format(),
+            "Sending strict compatibility probe"
         );
 
         Some((peer_id, request_id, request))
