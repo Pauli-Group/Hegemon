@@ -87,6 +87,7 @@ pub struct ProverCoordinatorConfig {
     pub target_txs: usize,
     pub queue_capacity: usize,
     pub liveness_lane: bool,
+    pub incremental_upsizing: bool,
     pub poll_interval: Duration,
     pub job_timeout: Duration,
     pub work_package_ttl: Duration,
@@ -124,6 +125,15 @@ impl ProverCoordinatorConfig {
                 )
             })
             .unwrap_or(true);
+        let incremental_upsizing = std::env::var("HEGEMON_BATCH_INCREMENTAL_UPSIZE")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
         let job_timeout_ms = std::env::var("HEGEMON_BATCH_JOB_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -154,6 +164,7 @@ impl ProverCoordinatorConfig {
             target_txs,
             queue_capacity,
             liveness_lane,
+            incremental_upsizing,
             poll_interval: Duration::from_millis(250),
             job_timeout: Duration::from_millis(job_timeout_ms),
             work_package_ttl: Duration::from_millis(work_package_ttl_ms),
@@ -526,11 +537,25 @@ impl ProverCoordinator {
             }
         }
 
+        // In checkpoint mode, candidate upsizing follows a deterministic ladder derived
+        // from target_txs instead of every +1 mempool increment. This prevents building
+        // a new heavy recursion shape for each intermediate tx_count.
+        let plan_total_txs = if self.config.incremental_upsizing
+            || !self.config.liveness_lane
+            || self.config.queue_capacity <= 1
+        {
+            candidate.len()
+        } else {
+            self.config.target_txs.max(candidate.len())
+        };
         let mut variant_tx_counts = Self::candidate_variant_tx_counts(
-            candidate.len(),
+            plan_total_txs,
             self.config.queue_capacity,
             self.config.liveness_lane,
         );
+        if plan_total_txs != candidate.len() {
+            variant_tx_counts.retain(|count| *count <= candidate.len());
+        }
         variant_tx_counts.retain(|count| *count > existing_best);
         if variant_tx_counts.is_empty() {
             return;
@@ -545,7 +570,9 @@ impl ProverCoordinator {
             block_number = best_number.saturating_add(1),
             existing_best_tx_count = existing_best,
             candidate_tx_count = candidate.len(),
+            plan_total_txs,
             variant_tx_counts = ?variant_tx_counts,
+            incremental_upsizing = self.config.incremental_upsizing,
             "Scheduling proven-batch candidate variants"
         );
 
@@ -916,6 +943,7 @@ mod tests {
             target_txs: 1,
             queue_capacity: 1,
             liveness_lane: true,
+            incremental_upsizing: false,
             poll_interval: Duration::from_millis(10),
             job_timeout: Duration::from_secs(2),
             work_package_ttl: Duration::from_secs(2),
@@ -1355,6 +1383,169 @@ mod tests {
             .get_work_package()
             .expect("target-sized work package should exist");
         assert_eq!(package.tx_count, 4);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn checkpoint_upsizing_uses_planned_ladder_by_default() {
+        let parent_hash = H256::repeat_byte(75);
+        let mut config = test_config();
+        config.target_txs = 8;
+        config.queue_capacity = 4;
+        config.liveness_lane = true;
+        config.incremental_upsizing = false;
+        config.workers = 1;
+        config.poll_interval = Duration::from_millis(10);
+
+        let pending_size = Arc::new(AtomicUsize::new(1));
+        let best = Arc::new(move || (parent_hash, 14u64));
+        let pending = {
+            let pending_size = Arc::clone(&pending_size);
+            Arc::new(move |_max_txs: usize| {
+                let size = pending_size.load(Ordering::SeqCst);
+                (0..size).map(|idx| vec![(idx + 1) as u8]).collect()
+            })
+        };
+        let build = Arc::new(
+            move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                let tx_count = candidate_txs.len() as u32;
+                let commitment = [tx_count as u8; 48];
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: parent,
+                        tx_statements_commitment: commitment,
+                        tx_count,
+                    },
+                    payload: ready_payload(tx_count, commitment),
+                    candidate_txs,
+                    build_ms: 1,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(
+            coordinator
+                .get_work_package()
+                .expect("initial work package should exist")
+                .tx_count,
+            1
+        );
+
+        pending_size.store(3, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        // Ladder for target=8, queue=4 is [1,2,4,8], so size 3 snaps to 2.
+        assert_eq!(
+            coordinator
+                .get_work_package()
+                .expect("ladder work package should exist")
+                .tx_count,
+            2
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn incremental_upsizing_can_restore_per_step_growth() {
+        let parent_hash = H256::repeat_byte(76);
+        let mut config = test_config();
+        config.target_txs = 8;
+        config.queue_capacity = 4;
+        config.liveness_lane = true;
+        config.incremental_upsizing = true;
+        config.workers = 1;
+        config.poll_interval = Duration::from_millis(10);
+
+        let pending_size = Arc::new(AtomicUsize::new(1));
+        let best = Arc::new(move || (parent_hash, 15u64));
+        let pending = {
+            let pending_size = Arc::clone(&pending_size);
+            Arc::new(move |_max_txs: usize| {
+                let size = pending_size.load(Ordering::SeqCst);
+                (0..size).map(|idx| vec![(idx + 1) as u8]).collect()
+            })
+        };
+        let build = Arc::new(
+            move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                let tx_count = candidate_txs.len() as u32;
+                let commitment = [tx_count as u8; 48];
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: parent,
+                        tx_statements_commitment: commitment,
+                        tx_count,
+                    },
+                    payload: ready_payload(tx_count, commitment),
+                    candidate_txs,
+                    build_ms: 1,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(
+            coordinator
+                .get_work_package()
+                .expect("initial work package should exist")
+                .tx_count,
+            1
+        );
+
+        pending_size.store(3, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(
+            coordinator
+                .get_work_package()
+                .expect("incremental work package should exist")
+                .tx_count,
+            3
+        );
+    }
+
+    #[test]
+    fn checkpoint_mode_reduces_unique_batch_shapes_during_ramp() {
+        fn scheduled_best_counts(
+            target_txs: usize,
+            queue_capacity: usize,
+            liveness_lane: bool,
+            incremental_upsizing: bool,
+        ) -> Vec<usize> {
+            let mut existing_best = 0usize;
+            let mut out = Vec::new();
+            for candidate_len in 1..=target_txs {
+                let plan_total_txs =
+                    if incremental_upsizing || !liveness_lane || queue_capacity <= 1 {
+                        candidate_len
+                    } else {
+                        target_txs.max(candidate_len)
+                    };
+                let mut variant_tx_counts = ProverCoordinator::candidate_variant_tx_counts(
+                    plan_total_txs,
+                    queue_capacity,
+                    liveness_lane,
+                );
+                if plan_total_txs != candidate_len {
+                    variant_tx_counts.retain(|count| *count <= candidate_len);
+                }
+                variant_tx_counts.retain(|count| *count > existing_best);
+                if variant_tx_counts.is_empty() {
+                    continue;
+                }
+                let best = variant_tx_counts.into_iter().max().unwrap_or(existing_best);
+                existing_best = best;
+                out.push(best);
+            }
+            out
+        }
+
+        let checkpoint = scheduled_best_counts(8, 4, true, false);
+        let incremental = scheduled_best_counts(8, 4, true, true);
+
+        assert_eq!(checkpoint, vec![1, 2, 4, 8]);
+        assert_eq!(incremental, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert!(checkpoint.len() < incremental.len());
     }
 
     #[test]

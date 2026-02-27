@@ -217,6 +217,7 @@ mod tests {
             target_txs: 1,
             queue_capacity: 1,
             liveness_lane: true,
+            incremental_upsizing: false,
             poll_interval: Duration::from_millis(10),
             job_timeout: Duration::from_secs(1),
             work_package_ttl: Duration::from_secs(2),
