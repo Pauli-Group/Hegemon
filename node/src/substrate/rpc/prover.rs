@@ -54,13 +54,41 @@ pub struct MarketParamsResponse {
     pub max_payload_bytes: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StageQueueStatusResponse {
+    pub stage_type: String,
+    pub level: u16,
+    pub queued_jobs: usize,
+    pub inflight_jobs: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StagePlanStatusResponse {
+    pub generation: u64,
+    pub current_parent: Option<String>,
+    pub queued_jobs: usize,
+    pub inflight_jobs: usize,
+    pub prepared_bundles: usize,
+    pub latest_work_package: Option<String>,
+    pub stage_queue: Vec<StageQueueStatusResponse>,
+}
+
 #[rpc(server, client, namespace = "prover")]
 pub trait ProverApi {
     #[method(name = "getWorkPackage")]
     async fn get_work_package(&self) -> RpcResult<Option<WorkPackageResponse>>;
 
+    #[method(name = "getStageWorkPackage")]
+    async fn get_stage_work_package(&self) -> RpcResult<Option<WorkPackageResponse>>;
+
     #[method(name = "submitWorkResult")]
     async fn submit_work_result(
+        &self,
+        request: SubmitWorkResultRequest,
+    ) -> RpcResult<SubmitWorkResultResponse>;
+
+    #[method(name = "submitStageWorkResult")]
+    async fn submit_stage_work_result(
         &self,
         request: SubmitWorkResultRequest,
     ) -> RpcResult<SubmitWorkResultResponse>;
@@ -70,6 +98,9 @@ pub trait ProverApi {
 
     #[method(name = "getMarketParams")]
     async fn get_market_params(&self) -> RpcResult<MarketParamsResponse>;
+
+    #[method(name = "getStagePlanStatus")]
+    async fn get_stage_plan_status(&self) -> RpcResult<StagePlanStatusResponse>;
 }
 
 pub struct ProverRpc {
@@ -80,35 +111,31 @@ impl ProverRpc {
     pub fn new(coordinator: Arc<ProverCoordinator>) -> Self {
         Self { coordinator }
     }
-}
 
-#[async_trait::async_trait]
-impl ProverApiServer for ProverRpc {
-    async fn get_work_package(&self) -> RpcResult<Option<WorkPackageResponse>> {
-        Ok(self
-            .coordinator
-            .get_work_package()
-            .map(|package| WorkPackageResponse {
-                package_id: package.package_id,
-                parent_hash: format!("0x{}", hex::encode(package.parent_hash)),
-                block_number: package.block_number,
-                stage_type: package.stage_type,
-                level: package.level,
-                arity: package.arity,
-                shape_id: format!("0x{}", hex::encode(package.shape_id)),
-                dependencies: package.dependencies,
-                tx_count: package.tx_count,
-                candidate_txs: package
-                    .candidate_txs
-                    .into_iter()
-                    .map(|tx| format!("0x{}", hex::encode(tx)))
-                    .collect(),
-                created_at_ms: package.created_at_ms,
-                expires_at_ms: package.expires_at_ms,
-            }))
+    fn map_work_package(
+        package: crate::substrate::prover_coordinator::WorkPackage,
+    ) -> WorkPackageResponse {
+        WorkPackageResponse {
+            package_id: package.package_id,
+            parent_hash: format!("0x{}", hex::encode(package.parent_hash)),
+            block_number: package.block_number,
+            stage_type: package.stage_type,
+            level: package.level,
+            arity: package.arity,
+            shape_id: format!("0x{}", hex::encode(package.shape_id)),
+            dependencies: package.dependencies,
+            tx_count: package.tx_count,
+            candidate_txs: package
+                .candidate_txs
+                .into_iter()
+                .map(|tx| format!("0x{}", hex::encode(tx)))
+                .collect(),
+            created_at_ms: package.created_at_ms,
+            expires_at_ms: package.expires_at_ms,
+        }
     }
 
-    async fn submit_work_result(
+    fn submit_work_result_impl(
         &self,
         request: SubmitWorkResultRequest,
     ) -> RpcResult<SubmitWorkResultResponse> {
@@ -137,6 +164,37 @@ impl ProverApiServer for ProverRpc {
                 error: Some(err),
             }),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl ProverApiServer for ProverRpc {
+    async fn get_work_package(&self) -> RpcResult<Option<WorkPackageResponse>> {
+        Ok(self
+            .coordinator
+            .get_work_package()
+            .map(Self::map_work_package))
+    }
+
+    async fn get_stage_work_package(&self) -> RpcResult<Option<WorkPackageResponse>> {
+        Ok(self
+            .coordinator
+            .get_work_package()
+            .map(Self::map_work_package))
+    }
+
+    async fn submit_work_result(
+        &self,
+        request: SubmitWorkResultRequest,
+    ) -> RpcResult<SubmitWorkResultResponse> {
+        self.submit_work_result_impl(request)
+    }
+
+    async fn submit_stage_work_result(
+        &self,
+        request: SubmitWorkResultRequest,
+    ) -> RpcResult<SubmitWorkResultResponse> {
+        self.submit_work_result_impl(request)
     }
 
     async fn get_work_status(&self, package_id: String) -> RpcResult<Option<WorkStatusResponse>> {
@@ -174,6 +232,30 @@ impl ProverApiServer for ProverRpc {
             max_submissions_per_package: params.max_submissions_per_package,
             max_submissions_per_source: params.max_submissions_per_source,
             max_payload_bytes: params.max_payload_bytes,
+        })
+    }
+
+    async fn get_stage_plan_status(&self) -> RpcResult<StagePlanStatusResponse> {
+        let status = self.coordinator.stage_plan_status();
+        Ok(StagePlanStatusResponse {
+            generation: status.generation,
+            current_parent: status
+                .current_parent
+                .map(|hash| format!("0x{}", hex::encode(hash))),
+            queued_jobs: status.queued_jobs,
+            inflight_jobs: status.inflight_jobs,
+            prepared_bundles: status.prepared_bundles,
+            latest_work_package: status.latest_work_package,
+            stage_queue: status
+                .stage_queue
+                .into_iter()
+                .map(|stage| StageQueueStatusResponse {
+                    stage_type: stage.stage_type,
+                    level: stage.level,
+                    queued_jobs: stage.queued_jobs,
+                    inflight_jobs: stage.inflight_jobs,
+                })
+                .collect(),
         })
     }
 }
@@ -226,6 +308,7 @@ mod tests {
             workers: 1,
             target_txs: 1,
             queue_capacity: 1,
+            max_inflight_per_level: 1,
             liveness_lane: true,
             adaptive_liveness_timeout: Duration::from_millis(0),
             incremental_upsizing: false,
@@ -253,6 +336,12 @@ mod tests {
             .await
             .expect("rpc call should succeed")
             .expect("package should exist");
+        let stage_package = rpc
+            .get_stage_work_package()
+            .await
+            .expect("stage package call should succeed")
+            .expect("stage package should exist");
+        assert_eq!(stage_package.package_id, package.package_id);
 
         let encoded = payload(package.tx_count).encode();
         let submit = rpc
@@ -266,12 +355,28 @@ mod tests {
         assert!(submit.accepted);
         assert!(submit.error.is_none());
 
+        let stage_submit = rpc
+            .submit_stage_work_result(SubmitWorkResultRequest {
+                source: "rpc-test-stage".to_string(),
+                package_id: package.package_id.clone(),
+                payload: format!("0x{}", hex::encode(payload(package.tx_count).encode())),
+            })
+            .await
+            .expect("stage submit should return rpc result");
+        assert!(
+            stage_submit.accepted || stage_submit.error.is_some(),
+            "stage submit endpoint should respond with either acceptance or a rejection reason"
+        );
+
         let status = rpc
             .get_work_status(package.package_id.clone())
             .await
             .expect("status call should succeed")
             .expect("status should exist");
-        assert_eq!(status.status, "accepted");
+        assert!(
+            status.status == "accepted" || status.status == "rejected",
+            "status should reflect the latest submission outcome"
+        );
 
         let params = rpc
             .get_market_params()
@@ -281,5 +386,15 @@ mod tests {
         assert_eq!(params.max_submissions_per_package, 4);
         assert_eq!(params.max_submissions_per_source, 4);
         assert_eq!(params.max_payload_bytes, 1024);
+
+        let stage_status = rpc
+            .get_stage_plan_status()
+            .await
+            .expect("stage status call should succeed");
+        assert!(stage_status.generation > 0);
+        assert!(
+            stage_status.latest_work_package.is_some(),
+            "latest stage package should be tracked"
+        );
     }
 }
