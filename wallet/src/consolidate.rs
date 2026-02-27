@@ -6,6 +6,7 @@
 use crate::async_sync::AsyncWalletSyncEngine;
 use crate::error::WalletError;
 use crate::store::{TransferRecipient, WalletStore};
+use crate::submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
 use crate::substrate_rpc::SubstrateRpcClient;
 use crate::tx_builder::build_consolidation_transaction;
 use std::sync::Arc;
@@ -447,6 +448,30 @@ pub async fn execute_consolidation(
                     None
                 }
                 Err(err) => {
+                    if is_ambiguous_submission_error(&err) {
+                        let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                        let recipient_address = store.primary_address()?.encode()?;
+                        store.record_pending_submission(
+                            provisional_tx_id,
+                            built.nullifiers.clone(),
+                            built.spent_note_indexes.clone(),
+                            vec![TransferRecipient {
+                                address: recipient_address,
+                                value: total.saturating_sub(fee_per_tx),
+                                asset_id: NATIVE_ASSET_ID,
+                                memo: Some("consolidation".to_string()),
+                            }],
+                            fee_per_tx,
+                        )?;
+                        if verbose {
+                            println!(
+                                "    Submission status unknown; keeping notes pending until reconciliation."
+                            );
+                        }
+                        batch_nullifiers.extend_from_slice(&built.nullifiers);
+                        pair_index = pair_index.saturating_add(1);
+                        continue;
+                    }
                     store.mark_notes_pending(&built.spent_note_indexes, false)?;
                     if !batch_nullifiers.is_empty() {
                         let _ = wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers)

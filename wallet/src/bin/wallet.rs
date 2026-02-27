@@ -33,9 +33,10 @@ use wallet::{
         decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
         DisclosurePackage, DisclosureProof,
     },
+    is_ambiguous_submission_error,
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
-    parse_recipients, precheck_nullifiers_with_binding,
+    parse_recipients, precheck_nullifiers_with_binding, provisional_pending_tx_id,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
     transfer_recipients_from_specs,
@@ -300,6 +301,9 @@ struct SubstrateSendArgs {
     /// Show what would happen without executing
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+    /// Skip the initial sync (advanced/benchmark use only)
+    #[arg(long, default_value_t = false)]
+    no_sync: bool,
 }
 
 /// Arguments for Substrate batch send (multiple transactions in one proof)
@@ -1588,11 +1592,15 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         let store_arc = Arc::new(store);
         let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
 
-        println!("Syncing wallet...");
-        engine
-            .sync_once()
-            .await
-            .map_err(|e| anyhow!("Sync failed: {}", e))?;
+        if args.no_sync {
+            println!("Skipping initial sync (--no-sync).");
+        } else {
+            println!("Syncing wallet...");
+            engine
+                .sync_once()
+                .await
+                .map_err(|e| anyhow!("Sync failed: {}", e))?;
+        }
 
         // Parse recipients (use store_arc for read operations)
         let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
@@ -1841,6 +1849,20 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                     continue;
                 }
                 Err(e) => {
+                    if is_ambiguous_submission_error(&e) {
+                        let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                        store_arc.record_pending_submission(
+                            provisional_tx_id,
+                            built.nullifiers.clone(),
+                            built.spent_note_indexes.clone(),
+                            metadata.clone(),
+                            args.fee,
+                        )?;
+                        return Err(anyhow!(
+                            "Transaction submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                            e
+                        ));
+                    }
                     store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
                     return Err(anyhow!("Transaction submission failed: {}", e));
                 }
@@ -1925,6 +1947,12 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
         let result = client
             .submit_shielded_transfer_signed(&built.bundle, &signing_seed)
             .await;
+        let mint_metadata = vec![TransferRecipient {
+            address: args.recipient.clone(),
+            value: args.amount,
+            asset_id: args.asset_id,
+            memo: args.memo.clone(),
+        }];
 
         match result {
             Ok(tx_hash) => {
@@ -1936,12 +1964,6 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
                         metadata.genesis_hash
                     }
                 };
-                let metadata = vec![TransferRecipient {
-                    address: args.recipient,
-                    value: args.amount,
-                    asset_id: args.asset_id,
-                    memo: args.memo,
-                }];
                 store_arc.record_outgoing_disclosures(
                     tx_hash,
                     genesis_hash,
@@ -1951,7 +1973,7 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
                     tx_hash,
                     built.nullifiers.clone(),
                     built.spent_note_indexes.clone(),
-                    metadata,
+                    mint_metadata,
                     args.fee,
                 )?;
                 println!("✓ Mint submitted successfully!");
@@ -1959,6 +1981,20 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
                 Ok(())
             }
             Err(e) => {
+                if is_ambiguous_submission_error(&e) {
+                    let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                    store_arc.record_pending_submission(
+                        provisional_tx_id,
+                        built.nullifiers.clone(),
+                        built.spent_note_indexes.clone(),
+                        mint_metadata,
+                        args.fee,
+                    )?;
+                    return Err(anyhow!(
+                        "Mint submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                        e
+                    ));
+                }
                 store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
                 Err(anyhow!("Mint submission failed: {}", e))
             }
@@ -2056,6 +2092,20 @@ fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
                 Ok(())
             }
             Err(e) => {
+                if is_ambiguous_submission_error(&e) {
+                    let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                    store_arc.record_pending_submission(
+                        provisional_tx_id,
+                        built.nullifiers.clone(),
+                        built.spent_note_indexes.clone(),
+                        Vec::new(),
+                        args.fee,
+                    )?;
+                    return Err(anyhow!(
+                        "Burn submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                        e
+                    ));
+                }
                 store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
                 Err(anyhow!("Burn submission failed: {}", e))
             }

@@ -36,6 +36,7 @@ After this work, a developer can run a local devnet and observe all of the follo
 - [x] (2026-02-20T01:00Z) Deep recursion challenger placeholder removed: recursive Fiat-Shamir sampling is now constrained in-circuit and sampled challenge public inputs are connected to derived transcript values.
 - [x] (2026-02-20T02:30Z) Phase D cutover landed: runtime call surface now uses single `submit_proven_batch`, consensus `Block` uses `proven_batch`, node authoring path attaches only ready proven batches, and synchronous in-closure proof generation was removed from `wire_block_builder_api`.
 - [x] (2026-02-20T03:20Z) Upgraded the in-node prover coordinator to a bounded multi-job scheduler: `HEGEMON_PROVER_WORKERS` and `HEGEMON_BATCH_QUEUE_CAPACITY` now actively control concurrent proving jobs, stale-parent results are discarded fail-closed, and new coordinator unit tests cover ready lookup, stale cancellation, and failure slot release.
+- [x] (2026-02-27T00:00Z) Added aggregation-verifier cache singleflight in consensus so concurrent import workers do not duplicate recursion cache builds for the same `(tx_count, pub_inputs_len, proof_shape)` key under first-seen load.
 - [ ] (2026-02-19T00:00Z) Phase C closure checklist (completed: core codepath migration + compile/test target checks; remaining: full throughput/e2e reruns and final metrics capture under `SelfContained` mode).
 - [x] (2026-01-21T00:00Z) Draft world-commerce scalability ExecPlan (this file).
 - [x] (2026-01-22T18:47Z) Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
@@ -106,6 +107,10 @@ After this work, a developer can run a local devnet and observe all of the follo
 
 - Observation: Aggregation verification work included avoidable per-block setup (recursion circuit/air build), which can cause large RAM spikes on laptops; caching moves that cost to a one-time warmup per batch shape, and the remaining steady-state verification cost is tens of ms.
   Evidence: `consensus/src/aggregation.rs` caches verifier artifacts keyed by (tx_count, public_inputs_len, proof shape), and `aggregation_verify_breakdown_metrics` shows `verify_batch_ms≈31–33ms` once the cache is built.
+
+- Observation: Under concurrent import/proving load, first-seen aggregation shapes can still trigger duplicate cold cache builds if multiple workers race for the same key.
+  Evidence: live logs on `hegemon-prover` showed first-seen `tx_count=2` runs with very large one-time costs (`aggregation_cache_prewarm_build_ms` and multi-minute `prepare_block_proof_bundle` spans) even though steady-state verify/prove stages are fast once warm.
+  Consequence: cache build paths need singleflight semantics (one builder per key) and explicit warmup discipline for production rollouts.
 
 - Observation: Transaction STARK proofs are currently failing verification in Plonky3 e2e mode (`OodEvaluationMismatch`), blocking the end-to-end commerce demo and wallet sends.
   Evidence: `cargo test -p transaction-circuit proving_and_verification_succeeds --features plonky3-e2e --release` fails with `STARK verification failed: OodEvaluationMismatch`.

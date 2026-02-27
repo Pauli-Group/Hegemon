@@ -22,6 +22,22 @@ STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-600}"
 MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
 
+if [ -n "${HEGEMON_TP_PROVER_LIVENESS_LANE:-}" ]; then
+  PROVER_LIVENESS_LANE="${HEGEMON_TP_PROVER_LIVENESS_LANE}"
+elif [ "$STRICT_AGGREGATION" = "1" ]; then
+  PROVER_LIVENESS_LANE=0
+else
+  PROVER_LIVENESS_LANE=1
+fi
+if [ -n "${HEGEMON_TP_BATCH_QUEUE_CAPACITY:-}" ]; then
+  BATCH_QUEUE_CAPACITY="${HEGEMON_TP_BATCH_QUEUE_CAPACITY}"
+elif [ "$PROVER_LIVENESS_LANE" = "0" ]; then
+  BATCH_QUEUE_CAPACITY=1
+else
+  BATCH_QUEUE_CAPACITY=4
+fi
+MIN_READY_BATCH_TXS="${HEGEMON_TP_MIN_READY_BATCH_TXS:-$MIN_PREPARED_TXS}"
+
 # Throughput profile:
 # - safe: conservative laptop defaults
 # - max:  use all visible CPU threads
@@ -32,10 +48,17 @@ HOST_THREADS="$(
     || nproc 2>/dev/null \
     || echo 1
 )"
-HOST_MEM_GIB="$(
-  awk '/MemTotal:/ {print int($2 / 1024 / 1024)}' /proc/meminfo 2>/dev/null \
-    || echo 0
-)"
+HOST_MEM_GIB=0
+if [ -r /proc/meminfo ]; then
+  HOST_MEM_GIB="$(
+    awk '/MemTotal:/ {print int($2 / 1024 / 1024)}' /proc/meminfo 2>/dev/null \
+      || echo 0
+  )"
+elif mem_bytes="$(sysctl -n hw.memsize 2>/dev/null)"; then
+  if [[ "$mem_bytes" =~ ^[0-9]+$ ]] && [ "$mem_bytes" -gt 0 ]; then
+    HOST_MEM_GIB=$((mem_bytes / 1024 / 1024 / 1024))
+  fi
+fi
 
 case "$TP_PROFILE" in
   safe)
@@ -61,18 +84,48 @@ case "$TP_PROFILE" in
     ;;
 esac
 
-RAYON_THREADS="${HEGEMON_TP_RAYON_THREADS:-$DEFAULT_RAYON_THREADS}"
+NODE_RAYON_THREADS="${HEGEMON_TP_NODE_RAYON_THREADS:-${HEGEMON_TP_RAYON_THREADS:-$DEFAULT_RAYON_THREADS}}"
 CARGO_JOBS="${HEGEMON_TP_CARGO_JOBS:-$DEFAULT_CARGO_JOBS}"
 DEFAULT_MINE_THREADS=1
 MINE_THREADS="${HEGEMON_TP_MINE_THREADS:-$DEFAULT_MINE_THREADS}"
+AGG_PROFILE="${HEGEMON_TP_AGG_PROFILE:-0}"
+if [ -n "${HEGEMON_TP_AGG_PROVER_THREADS:-}" ]; then
+  AGG_PROVER_THREADS="${HEGEMON_TP_AGG_PROVER_THREADS}"
+elif [ "$TP_PROFILE" = "safe" ]; then
+  AGG_PROVER_THREADS=1
+elif [ "$HOST_MEM_GIB" -ge 128 ]; then
+  AGG_PROVER_THREADS="$HOST_THREADS"
+else
+  if [ "$HOST_THREADS" -gt 2 ]; then
+    AGG_PROVER_THREADS=2
+  else
+    AGG_PROVER_THREADS="$HOST_THREADS"
+  fi
+fi
+AGG_PREPARE_THREADS="${HEGEMON_TP_AGG_PREPARE_THREADS:-1}"
+AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-0}"
 
-if [ "$RAYON_THREADS" -lt 1 ] || [ "$CARGO_JOBS" -lt 1 ] || [ "$MINE_THREADS" -lt 1 ]; then
-  echo "Thread settings must be >= 1 (rayon=$RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS)" >&2
+if [ "$NODE_RAYON_THREADS" -lt 1 ] || [ "$CARGO_JOBS" -lt 1 ] || [ "$MINE_THREADS" -lt 1 ]; then
+  echo "Thread settings must be >= 1 (node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS)" >&2
+  exit 1
+fi
+if ! [[ "$AGG_PROFILE" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_AGG_PROFILE must be 0 or 1 (got '$AGG_PROFILE')." >&2
+  exit 1
+fi
+if ! [[ "$AGG_PROVER_THREADS" =~ ^[0-9]+$ ]]; then
+  echo "HEGEMON_TP_AGG_PROVER_THREADS must be an integer >= 0 (got '$AGG_PROVER_THREADS')." >&2
+  exit 1
+fi
+if ! [[ "$AGG_PREPARE_THREADS" =~ ^[0-9]+$ ]] || [ "$AGG_PREPARE_THREADS" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_PREPARE_THREADS must be a positive integer (got '$AGG_PREPARE_THREADS')." >&2
+  exit 1
+fi
+if ! [[ "$AGG_PREWARM_MAX_TXS" =~ ^[0-9]+$ ]]; then
+  echo "HEGEMON_TP_AGG_PREWARM_MAX_TXS must be an integer >= 0 (got '$AGG_PREWARM_MAX_TXS')." >&2
   exit 1
 fi
 
-export RAYON_NUM_THREADS="$RAYON_THREADS"
-export HEGEMON_RAYON_THREADS="$RAYON_THREADS"
 export CARGO_BUILD_JOBS="$CARGO_JOBS"
 
 if [ "${HEGEMON_TP_UNSAFE:-0}" != "1" ] && [ "$FAST" != "1" ] && [ "$TX_COUNT" -gt 32 ]; then
@@ -101,6 +154,22 @@ if [ "$MIN_PREPARED_TXS" -gt "$TX_COUNT" ]; then
   echo "HEGEMON_TP_MIN_PREPARED_TXS (${MIN_PREPARED_TXS}) cannot exceed HEGEMON_TP_TX_COUNT (${TX_COUNT})." >&2
   exit 1
 fi
+if ! [[ "$PROVER_LIVENESS_LANE" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_PROVER_LIVENESS_LANE must be 0 or 1 (got '$PROVER_LIVENESS_LANE')." >&2
+  exit 1
+fi
+if ! [[ "$BATCH_QUEUE_CAPACITY" =~ ^[0-9]+$ ]] || [ "$BATCH_QUEUE_CAPACITY" -lt 1 ]; then
+  echo "HEGEMON_TP_BATCH_QUEUE_CAPACITY must be a positive integer (got '$BATCH_QUEUE_CAPACITY')." >&2
+  exit 1
+fi
+if ! [[ "$MIN_READY_BATCH_TXS" =~ ^[0-9]+$ ]] || [ "$MIN_READY_BATCH_TXS" -lt 1 ]; then
+  echo "HEGEMON_TP_MIN_READY_BATCH_TXS must be a positive integer (got '$MIN_READY_BATCH_TXS')." >&2
+  exit 1
+fi
+if [ "$MIN_READY_BATCH_TXS" -gt "$TX_COUNT" ]; then
+  echo "HEGEMON_TP_MIN_READY_BATCH_TXS (${MIN_READY_BATCH_TXS}) cannot exceed HEGEMON_TP_TX_COUNT (${TX_COUNT})." >&2
+  exit 1
+fi
 
 WALLET_A="${HEGEMON_TP_WALLET_A:-/tmp/hegemon-throughput-wallet-a}"
 WALLET_B="${HEGEMON_TP_WALLET_B:-/tmp/hegemon-throughput-wallet-b}"
@@ -109,8 +178,22 @@ PASS_B="${HEGEMON_TP_PASS_B:-testwallet2}"
 RECIPIENTS_JSON="${HEGEMON_TP_RECIPIENTS_JSON:-/tmp/hegemon-throughput-recipients.json}"
 WORKERS="${HEGEMON_TP_WORKERS:-1}"
 PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS:-1}"
-PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-180000}"
+if [ -n "${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-}" ]; then
+  PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS}"
+elif [ "$STRICT_AGGREGATION" = "1" ]; then
+  PROVER_BATCH_JOB_TIMEOUT_MS=900000
+else
+  PROVER_BATCH_JOB_TIMEOUT_MS=180000
+fi
 WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
+WALLET_RPC_REQUEST_TIMEOUT_SECS="${HEGEMON_TP_WALLET_RPC_REQUEST_TIMEOUT_SECS:-180}"
+SEND_RETRIES="${HEGEMON_TP_SEND_RETRIES:-4}"
+SEND_RETRY_DELAY_SECS="${HEGEMON_TP_SEND_RETRY_DELAY_SECS:-2}"
+if [ -n "${HEGEMON_TP_WALLET_RAYON_THREADS:-}" ]; then
+  WALLET_RAYON_THREADS="${HEGEMON_TP_WALLET_RAYON_THREADS}"
+else
+  WALLET_RAYON_THREADS=0
+fi
 
 require_bin() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -122,6 +205,38 @@ require_bin() {
 require_bin tmux
 require_bin curl
 require_bin python3
+
+find_rpc_listener_pids() {
+  local pids=""
+  if command -v lsof >/dev/null 2>&1; then
+    pids="$(
+      lsof -tiTCP:"${RPC_PORT}" -sTCP:LISTEN 2>/dev/null | sort -u | paste -sd' ' - || true
+    )"
+  elif command -v ss >/dev/null 2>&1; then
+    pids="$(
+      ss -lntp "( sport = :${RPC_PORT} )" 2>/dev/null \
+        | awk -F'pid=' 'NR > 1 {split($2, a, ","); if (a[1] ~ /^[0-9]+$/) print a[1]}' \
+        | sort -u \
+        | paste -sd' ' - \
+        || true
+    )"
+  elif command -v netstat >/dev/null 2>&1; then
+    pids="$(
+      netstat -lntp 2>/dev/null \
+        | awk -v port=":${RPC_PORT}" '$4 ~ port {split($7, a, "/"); if (a[1] ~ /^[0-9]+$/) print a[1]}' \
+        | sort -u \
+        | paste -sd' ' - \
+        || true
+    )"
+  fi
+  echo "$pids"
+}
+
+print_pid_commands() {
+  for pid in "$@"; do
+    ps -p "$pid" -o pid=,comm=,args= 2>/dev/null || true
+  done
+}
 
 if command -v rg >/dev/null 2>&1; then
   SEARCH_BIN="rg"
@@ -169,7 +284,9 @@ PY
 cd "$ROOT_DIR"
 
 echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
-echo "Thread config: RAYON_NUM_THREADS=$RAYON_THREADS CARGO_BUILD_JOBS=$CARGO_JOBS mine_threads=$MINE_THREADS" >&2
+echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
+echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY" >&2
+echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   if [ "${HEGEMON_TP_FORCE:-0}" = "1" ]; then
@@ -183,12 +300,36 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   fi
 fi
 
+RPC_LISTENER_PIDS="$(find_rpc_listener_pids)"
+if [ -n "$RPC_LISTENER_PIDS" ]; then
+  echo "RPC port ${RPC_PORT} is already in use by:" >&2
+  # shellcheck disable=SC2086
+  print_pid_commands $RPC_LISTENER_PIDS >&2
+  if [ "${HEGEMON_TP_FORCE:-0}" = "1" ]; then
+    echo "HEGEMON_TP_FORCE=1 set; terminating existing RPC listeners on port ${RPC_PORT}." >&2
+    for pid in $RPC_LISTENER_PIDS; do
+      kill "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    RPC_LISTENER_PIDS="$(find_rpc_listener_pids)"
+    if [ -n "$RPC_LISTENER_PIDS" ]; then
+      echo "Failed to free RPC port ${RPC_PORT}; still in use by:" >&2
+      # shellcheck disable=SC2086
+      print_pid_commands $RPC_LISTENER_PIDS >&2
+      exit 1
+    fi
+  else
+    echo "Stop the existing node or rerun with HEGEMON_TP_FORCE=1." >&2
+    exit 1
+  fi
+fi
+
 if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [ "$WORKERS" -lt 1 ]; then
   echo "HEGEMON_TP_WORKERS must be a positive integer (got '$WORKERS')." >&2
   exit 1
 fi
-if ! [[ "$PROVER_WORKERS" =~ ^[0-9]+$ ]] || [ "$PROVER_WORKERS" -lt 1 ]; then
-  echo "HEGEMON_TP_PROVER_WORKERS must be a positive integer (got '$PROVER_WORKERS')." >&2
+if ! [[ "$PROVER_WORKERS" =~ ^[0-9]+$ ]]; then
+  echo "HEGEMON_TP_PROVER_WORKERS must be an integer >= 0 (got '$PROVER_WORKERS')." >&2
   exit 1
 fi
 if ! [[ "$PROVER_BATCH_JOB_TIMEOUT_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_BATCH_JOB_TIMEOUT_MS" -lt 1 ]; then
@@ -198,6 +339,38 @@ fi
 if [ "$WORKERS" -gt "$TX_COUNT" ]; then
   WORKERS="$TX_COUNT"
 fi
+if ! [[ "$WALLET_RPC_REQUEST_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [ "$WALLET_RPC_REQUEST_TIMEOUT_SECS" -lt 1 ]; then
+  echo "HEGEMON_TP_WALLET_RPC_REQUEST_TIMEOUT_SECS must be a positive integer (got '$WALLET_RPC_REQUEST_TIMEOUT_SECS')." >&2
+  exit 1
+fi
+if ! [[ "$SEND_RETRIES" =~ ^[0-9]+$ ]] || [ "$SEND_RETRIES" -lt 1 ]; then
+  echo "HEGEMON_TP_SEND_RETRIES must be a positive integer (got '$SEND_RETRIES')." >&2
+  exit 1
+fi
+if ! [[ "$SEND_RETRY_DELAY_SECS" =~ ^[0-9]+$ ]] || [ "$SEND_RETRY_DELAY_SECS" -lt 1 ]; then
+  echo "HEGEMON_TP_SEND_RETRY_DELAY_SECS must be a positive integer (got '$SEND_RETRY_DELAY_SECS')." >&2
+  exit 1
+fi
+if ! [[ "$WALLET_RAYON_THREADS" =~ ^[0-9]+$ ]]; then
+  echo "HEGEMON_TP_WALLET_RAYON_THREADS must be an integer (got '$WALLET_RAYON_THREADS')." >&2
+  exit 1
+fi
+if [ "$WALLET_RAYON_THREADS" -le 0 ]; then
+  # Default wallet proving threads: split host CPU between sender workers and local node prover workers.
+  local_prover_workers="$PROVER_WORKERS"
+  if [ "$local_prover_workers" -lt 1 ]; then
+    local_prover_workers=1
+  fi
+  denom=$((WORKERS + local_prover_workers))
+  if [ "$denom" -lt 1 ]; then
+    denom=1
+  fi
+  WALLET_RAYON_THREADS=$((HOST_THREADS / denom))
+  if [ "$WALLET_RAYON_THREADS" -lt 1 ]; then
+    WALLET_RAYON_THREADS=1
+  fi
+fi
+echo "Wallet send config: workers=$WORKERS wallet_rayon=$WALLET_RAYON_THREADS wallet_rpc_timeout_s=$WALLET_RPC_REQUEST_TIMEOUT_SECS send_retries=$SEND_RETRIES" >&2
 
 if [ "$FAST" = "1" ]; then
   echo "Building node (fast proofs enabled)..." >&2
@@ -211,6 +384,12 @@ fi
 
 echo "Building wallet..." >&2
 cargo build --release -p wallet
+
+WALLET_SEND_SUPPORTS_NO_SYNC=0
+if ./target/release/wallet substrate-send --help 2>&1 | grep -q -- "--no-sync"; then
+  WALLET_SEND_SUPPORTS_NO_SYNC=1
+fi
+echo "Wallet substrate-send --no-sync support: $WALLET_SEND_SUPPORTS_NO_SYNC" >&2
 
 declare -a WORKER_STORES=()
 declare -a WORKER_PASSES=()
@@ -303,11 +482,76 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
   NODE_STRICT_ENV="HEGEMON_DISABLE_PROOFLESS_HYDRATION=1"
 fi
 
+wallet_sync() {
+  local store="$1"
+  local passphrase="$2"
+  env \
+    HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS="$WALLET_RPC_REQUEST_TIMEOUT_SECS" \
+    RAYON_NUM_THREADS="$WALLET_RAYON_THREADS" \
+    HEGEMON_RAYON_THREADS="$WALLET_RAYON_THREADS" \
+    $WALLET_FAST_ENV \
+    ./target/release/wallet substrate-sync \
+      --store "$store" --passphrase "$passphrase" \
+      --ws-url "$RPC_WS" --force-rescan
+}
+
+wallet_send_once() {
+  local store="$1"
+  local passphrase="$2"
+  local recipients_json="$3"
+  local no_sync="${4:-0}"
+  local proof_sidecar="${5:-1}"
+  local maybe_no_sync=""
+  if [ "$no_sync" = "1" ] && [ "$WALLET_SEND_SUPPORTS_NO_SYNC" = "1" ]; then
+    maybe_no_sync="--no-sync"
+  fi
+  env \
+    HEGEMON_WALLET_DA_SIDECAR=1 \
+    HEGEMON_WALLET_PROOF_SIDECAR="$proof_sidecar" \
+    HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS="$WALLET_RPC_REQUEST_TIMEOUT_SECS" \
+    RAYON_NUM_THREADS="$WALLET_RAYON_THREADS" \
+    HEGEMON_RAYON_THREADS="$WALLET_RAYON_THREADS" \
+    $WALLET_FAST_ENV \
+    ./target/release/wallet substrate-send \
+      --store "$store" --passphrase "$passphrase" \
+      --recipients "$recipients_json" \
+      --ws-url "$RPC_WS" \
+      --fee "$FEE" \
+      $maybe_no_sync >/dev/null
+}
+
+wallet_send_with_retry() {
+  local store="$1"
+  local passphrase="$2"
+  local recipients_json="$3"
+  local no_sync="${4:-0}"
+  local proof_sidecar="${5:-1}"
+  local attempt=1
+  while true; do
+    local output
+    if output="$(wallet_send_once "$store" "$passphrase" "$recipients_json" "$no_sync" "$proof_sidecar" 2>&1)"; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$SEND_RETRIES" ] && grep -qiE "request timeout|connection closed|transport error" <<<"$output"; then
+      echo "    wallet send transient failure (attempt ${attempt}/${SEND_RETRIES}); retrying in ${SEND_RETRY_DELAY_SECS}s..." >&2
+      sleep "$SEND_RETRY_DELAY_SECS"
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    echo "$output" >&2
+    return 1
+  done
+}
+
 echo "Starting node in tmux session '$SESSION' (logs: $LOG_FILE)..." >&2
 tmux new-session -d -s "$SESSION" -n node \
   "cd '$ROOT_DIR' && \
    env \
      RUST_LOG=info \
+     RAYON_NUM_THREADS='${NODE_RAYON_THREADS}' \
+     HEGEMON_RAYON_THREADS='${NODE_RAYON_THREADS}' \
      $NODE_FAST_ENV \
      $NODE_STRICT_ENV \
      HEGEMON_SEEDS='' \
@@ -315,13 +559,21 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_MINE=1 \
      HEGEMON_MINE_THREADS='${MINE_THREADS}' \
      HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
+     HEGEMON_PROVER_LIVENESS_LANE='${PROVER_LIVENESS_LANE}' \
+     HEGEMON_BATCH_QUEUE_CAPACITY='${BATCH_QUEUE_CAPACITY}' \
+     HEGEMON_BATCH_TARGET_TXS='${TX_COUNT}' \
      HEGEMON_BATCH_JOB_TIMEOUT_MS='${PROVER_BATCH_JOB_TIMEOUT_MS}' \
+     HEGEMON_MIN_READY_PROVEN_BATCH_TXS='${MIN_READY_BATCH_TXS}' \
      HEGEMON_MINE_TEST=1 \
      HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
      HEGEMON_AGGREGATION_PROOFS=1 \
      HEGEMON_PARALLEL_PROOF_VERIFICATION=1 \
      HEGEMON_FULL_IMPORT=1 \
      HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK='${TX_COUNT}' \
+     HEGEMON_AGG_PROFILE='${AGG_PROFILE}' \
+     HEGEMON_AGG_PREPARE_THREADS='${AGG_PREPARE_THREADS}' \
+     HEGEMON_AGG_PROVER_THREADS='${AGG_PROVER_THREADS}' \
+     HEGEMON_AGG_PREWARM_MAX_TXS='${AGG_PREWARM_MAX_TXS}' \
      HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
      ./target/release/hegemon-node --dev --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
 
@@ -367,9 +619,7 @@ curl -s -H "Content-Type: application/json" \
   "$RPC_HTTP" >/dev/null
 
 echo "Syncing miner wallet..." >&2
-env $WALLET_FAST_ENV ./target/release/wallet substrate-sync \
-  --store "$WALLET_A" --passphrase "$PASS_A" \
-  --ws-url "$RPC_WS" --force-rescan
+wallet_sync "$WALLET_A" "$PASS_A"
 
 if [ "$WORKERS" -gt 1 ]; then
   echo "Funding worker wallets from miner..." >&2
@@ -393,11 +643,10 @@ if [ "$WORKERS" -gt 1 ]; then
 EOF
     echo "  funding worker $((i + 1)) with ${worker_tx_count} note(s) of ${fund_note_value} units..." >&2
     for j in $(seq 1 "$worker_tx_count"); do
-      env HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROOF_SIDECAR=1 $WALLET_FAST_ENV ./target/release/wallet substrate-send \
-        --store "$WALLET_A" --passphrase "$PASS_A" \
-        --recipients "$fund_json" \
-        --ws-url "$RPC_WS" \
-        --fee "$FEE" >/dev/null
+      # Funding must be mined deterministically before worker send loops begin.
+      # Use inline proof bytes here (proof_sidecar=0) so strict aggregation mode
+      # cannot defer these transfers as proofless sidecar calls.
+      wallet_send_with_retry "$WALLET_A" "$PASS_A" "$fund_json" 0 0
       funding_sends=$((funding_sends + 1))
 
       # Confirm each funding send before issuing the next one so the miner wallet
@@ -423,9 +672,7 @@ EOF
         -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
         "$RPC_HTTP" >/dev/null
 
-      env $WALLET_FAST_ENV ./target/release/wallet substrate-sync \
-        --store "$WALLET_A" --passphrase "$PASS_A" \
-        --ws-url "$RPC_WS" --force-rescan >/dev/null
+      wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
     done
   done
 
@@ -433,9 +680,7 @@ EOF
 
   echo "Syncing worker wallets..." >&2
   for i in "${!WORKER_STORES[@]}"; do
-    env $WALLET_FAST_ENV ./target/release/wallet substrate-sync \
-      --store "${WORKER_STORES[$i]}" --passphrase "${WORKER_PASSES[$i]}" \
-      --ws-url "$RPC_WS" --force-rescan >/dev/null
+    wallet_sync "${WORKER_STORES[$i]}" "${WORKER_PASSES[$i]}" >/dev/null
   done
 fi
 
@@ -445,11 +690,7 @@ SEND_START_MS="$ROUND_START_MS"
 if [ "$WORKERS" -le 1 ]; then
   for i in $(seq 1 "$TX_COUNT"); do
     echo "  sending ${i}/${TX_COUNT}..." >&2
-    env HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROOF_SIDECAR=1 $WALLET_FAST_ENV ./target/release/wallet substrate-send \
-      --store "$WALLET_A" --passphrase "$PASS_A" \
-      --recipients "$RECIPIENTS_JSON" \
-      --ws-url "$RPC_WS" \
-      --fee "$FEE" >/dev/null
+    wallet_send_with_retry "$WALLET_A" "$PASS_A" "$RECIPIENTS_JSON" 1
   done
 else
   pids=()
@@ -464,11 +705,7 @@ else
     (
       for j in $(seq 1 "$worker_tx_count"); do
         echo "  worker ${worker_id} sending ${j}/${worker_tx_count}..." >&2
-        env HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROOF_SIDECAR=1 $WALLET_FAST_ENV ./target/release/wallet substrate-send \
-          --store "$worker_store" --passphrase "$worker_pass" \
-          --recipients "$RECIPIENTS_JSON" \
-          --ws-url "$RPC_WS" \
-          --fee "$FEE" >/dev/null
+        wallet_send_with_retry "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" 1
       done
     ) &
     pids+=("$!")

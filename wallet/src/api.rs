@@ -16,7 +16,9 @@ use tokio::task;
 use crate::{
     address::ShieldedAddress,
     build_transaction,
+    is_ambiguous_submission_error,
     notes::MemoPlaintext,
+    provisional_pending_tx_id,
     rpc::WalletRpcClient,
     store::{PendingStatus, PendingTransaction, TransferRecipient, WalletMode, WalletStore},
     tx_builder::Recipient,
@@ -295,6 +297,24 @@ fn process_transfer_submission(
             Ok(record)
         }
         Err(err) => {
+            if is_ambiguous_submission_error(&err) {
+                let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                store.record_pending_submission(
+                    provisional_tx_id,
+                    built.nullifiers.clone(),
+                    built.spent_note_indexes.clone(),
+                    metadata,
+                    fee,
+                )?;
+                let latest = store.last_synced_height()?;
+                let pending = store.pending_transactions()?;
+                let record = pending
+                    .iter()
+                    .find(|tx| tx.tx_id == provisional_tx_id)
+                    .map(|tx| render_transfer(tx, latest))
+                    .ok_or(WalletError::InvalidState("pending transfer missing"))?;
+                return Ok(record);
+            }
             store.mark_notes_pending(&built.spent_note_indexes, false)?;
             Err(err)
         }
