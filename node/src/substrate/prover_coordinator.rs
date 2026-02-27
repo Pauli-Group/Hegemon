@@ -1,6 +1,8 @@
 use parking_lot::Mutex;
 use sp_core::H256;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -102,13 +104,139 @@ struct QueuedJob {
     candidate_txs: Vec<Vec<u8>>,
 }
 
+#[derive(Debug)]
+enum WorkerOutcome {
+    StageOnly,
+    Bundle(Box<Result<PreparedBundle, String>>),
+    Panicked(String),
+}
+
+#[derive(Debug)]
+struct WorkerJobResult {
+    job: QueuedJob,
+    queue_depth_after_pop: usize,
+    build_elapsed_ms: u128,
+    outcome: WorkerOutcome,
+}
+
+enum WorkerCommand {
+    Run {
+        job: QueuedJob,
+        queue_depth_after_pop: usize,
+    },
+    Stop,
+}
+
+struct WorkerPool {
+    senders: Vec<Sender<WorkerCommand>>,
+    results_rx: Mutex<Receiver<WorkerJobResult>>,
+}
+
+impl WorkerPool {
+    fn new(workers: usize, prepare_bundle_fn: Arc<PrepareBundleFn>) -> Self {
+        let (results_tx, results_rx) = mpsc::channel();
+        let mut senders = Vec::with_capacity(workers);
+        for worker_index in 0..workers {
+            let (worker_tx, worker_rx) = mpsc::channel();
+            let worker_results_tx = results_tx.clone();
+            let worker_prepare_bundle_fn = Arc::clone(&prepare_bundle_fn);
+            let worker_name = format!("hegemon-prover-worker-{worker_index}");
+            let _ = std::thread::Builder::new()
+                .name(worker_name)
+                .spawn(move || {
+                    while let Ok(command) = worker_rx.recv() {
+                        let WorkerCommand::Run {
+                            job,
+                            queue_depth_after_pop,
+                        } = command
+                        else {
+                            break;
+                        };
+                        let build_started = Instant::now();
+                        let outcome = if job.stage_type == "root_finalize" {
+                            let parent_hash = job.parent_hash;
+                            let block_number = job.block_number;
+                            let candidate_txs = job.candidate_txs.clone();
+                            match panic::catch_unwind(AssertUnwindSafe(|| {
+                                worker_prepare_bundle_fn(parent_hash, block_number, candidate_txs)
+                            })) {
+                                Ok(result) => WorkerOutcome::Bundle(Box::new(result)),
+                                Err(panic_payload) => {
+                                    let message = if let Some(as_str) =
+                                        panic_payload.downcast_ref::<&'static str>()
+                                    {
+                                        (*as_str).to_string()
+                                    } else if let Some(as_string) =
+                                        panic_payload.downcast_ref::<String>()
+                                    {
+                                        as_string.clone()
+                                    } else {
+                                        "unknown panic payload".to_string()
+                                    };
+                                    WorkerOutcome::Panicked(message)
+                                }
+                            }
+                        } else {
+                            WorkerOutcome::StageOnly
+                        };
+                        let build_elapsed_ms = build_started.elapsed().as_millis();
+                        let _ = worker_results_tx.send(WorkerJobResult {
+                            job,
+                            queue_depth_after_pop,
+                            build_elapsed_ms,
+                            outcome,
+                        });
+                    }
+                });
+            senders.push(worker_tx);
+        }
+        Self {
+            senders,
+            results_rx: Mutex::new(results_rx),
+        }
+    }
+
+    fn dispatch(&self, worker_index: usize, job: QueuedJob, queue_depth_after_pop: usize) -> bool {
+        if self.senders.is_empty() {
+            return false;
+        }
+        self.senders
+            .get(worker_index % self.senders.len())
+            .and_then(|sender| {
+                sender
+                    .send(WorkerCommand::Run {
+                        job,
+                        queue_depth_after_pop,
+                    })
+                    .ok()
+            })
+            .is_some()
+    }
+
+    fn try_recv(&self) -> Result<WorkerJobResult, TryRecvError> {
+        self.results_rx.lock().try_recv()
+    }
+
+    fn worker_count(&self) -> usize {
+        self.senders.len()
+    }
+}
+
+impl Drop for WorkerPool {
+    fn drop(&mut self) {
+        for sender in &self.senders {
+            let _ = sender.send(WorkerCommand::Stop);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ProverCoordinator {
     state: Arc<Mutex<CoordinatorState>>,
     config: ProverCoordinatorConfig,
     best_block_fn: Arc<BestBlockFn>,
     pending_txs_fn: Arc<PendingTxsFn>,
-    prepare_bundle_fn: Arc<PrepareBundleFn>,
+    worker_pool: Arc<WorkerPool>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -438,12 +566,16 @@ impl ProverCoordinator {
         pending_txs_fn: Arc<PendingTxsFn>,
         prepare_bundle_fn: Arc<PrepareBundleFn>,
     ) -> Arc<Self> {
+        let worker_pool = Arc::new(WorkerPool::new(
+            config.workers,
+            Arc::clone(&prepare_bundle_fn),
+        ));
         Arc::new(Self {
             state: Arc::new(Mutex::new(CoordinatorState::default())),
             config,
             best_block_fn,
             pending_txs_fn,
-            prepare_bundle_fn,
+            worker_pool,
         })
     }
 
@@ -717,6 +849,7 @@ impl ProverCoordinator {
     }
 
     async fn tick(self: &Arc<Self>) {
+        self.drain_worker_results();
         let (parent_hash, best_number) = (self.best_block_fn)();
         {
             let mut state = self.state.lock();
@@ -1127,9 +1260,171 @@ impl ProverCoordinator {
         }
     }
 
-    fn dispatch_jobs(self: &Arc<Self>) {
+    fn drain_worker_results(&self) {
         loop {
-            let job = {
+            let result = match self.worker_pool.try_recv() {
+                Ok(result) => result,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            };
+            self.handle_worker_result(result);
+        }
+    }
+
+    fn handle_worker_result(&self, result: WorkerJobResult) {
+        let WorkerJobResult {
+            job:
+                QueuedJob {
+                    id,
+                    generation,
+                    parent_hash,
+                    block_number,
+                    stage_type,
+                    level,
+                    arity,
+                    shape_id,
+                    dependencies,
+                    enqueued_at,
+                    candidate_txs,
+                },
+            queue_depth_after_pop,
+            build_elapsed_ms,
+            outcome,
+        } = result;
+
+        let queue_wait_ms = enqueued_at.elapsed().as_millis();
+        let candidate_tx_count = candidate_txs.len();
+        let candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>();
+        let job_package_id = Self::work_package_id(parent_hash, block_number, &candidate_txs);
+        let timeout = self.config.job_timeout;
+        let target_txs = self.config.target_txs;
+        let stage_max_inflight_per_level = self.config.max_inflight_per_level;
+
+        let mut guard = self.state.lock();
+        guard.inflight_jobs.remove(&id);
+        guard.inflight_stage_meta.remove(&id);
+        guard.inflight_candidates.remove(&id);
+
+        let stale_parent = guard.current_parent != Some(parent_hash);
+        let stale_generation = guard.generation != generation;
+        let is_stale = stale_parent || stale_generation;
+        if is_stale {
+            guard.stale_count = guard.stale_count.saturating_add(1);
+        }
+
+        if build_elapsed_ms > timeout.as_millis() {
+            tracing::warn!(
+                job_id = id,
+                block_number,
+                stage_type = %stage_type,
+                level,
+                arity,
+                tx_count = candidate_tx_count,
+                candidate_bytes,
+                elapsed_ms = build_elapsed_ms as u64,
+                timeout_ms = timeout.as_millis() as u64,
+                package_id = %job_package_id,
+                "Prover coordinator job exceeded timeout budget while preparing proven batch"
+            );
+        }
+
+        match outcome {
+            WorkerOutcome::StageOnly => {
+                tracing::info!(
+                    target: "prover::stage_metrics",
+                    job_id = id,
+                    block_number,
+                    stage_type = %stage_type,
+                    level,
+                    arity,
+                    shape_id = %hex::encode(shape_id),
+                    dependencies = dependencies.len(),
+                    queue_depth = queue_depth_after_pop,
+                    queue_wait_ms,
+                    stage_mem_budget_mb = Self::stage_mem_budget_mb(),
+                    stage_max_inflight_per_level,
+                    tx_count = candidate_tx_count,
+                    candidate_bytes,
+                    build_ms = build_elapsed_ms,
+                    package_id = %job_package_id,
+                    stale_parent,
+                    stale_generation,
+                    "Completed non-root recursion stage"
+                );
+            }
+            WorkerOutcome::Bundle(result) => match *result {
+                Ok(bundle) => {
+                    let candidate_len = bundle.candidate_txs.len();
+                    guard.last_build_ms = bundle.build_ms;
+                    if !is_stale && candidate_len > guard.selected_txs.len() {
+                        guard.selected_txs = bundle.candidate_txs.clone();
+                    }
+                    if !is_stale && candidate_len >= target_txs {
+                        guard.pending_jobs.clear();
+                    }
+                    tracing::info!(
+                        target: "prover::stage_metrics",
+                        job_id = id,
+                        block_number,
+                        stage_type = %stage_type,
+                        level,
+                        arity,
+                        shape_id = %hex::encode(shape_id),
+                        dependencies = dependencies.len(),
+                        queue_depth = queue_depth_after_pop,
+                        queue_wait_ms,
+                        stage_mem_budget_mb = Self::stage_mem_budget_mb(),
+                        stage_max_inflight_per_level,
+                        tx_count = candidate_len,
+                        candidate_bytes,
+                        build_ms = bundle.build_ms,
+                        package_id = %job_package_id,
+                        stale_parent,
+                        stale_generation,
+                        "Prepared proven batch candidate"
+                    );
+                    guard.prepared.insert(bundle.key.clone(), bundle);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        job_id = id,
+                        block_number,
+                        stage_type = %stage_type,
+                        level,
+                        arity,
+                        tx_count = candidate_tx_count,
+                        candidate_bytes,
+                        package_id = %job_package_id,
+                        error = %error,
+                        "Failed to prepare proven batch candidate"
+                    );
+                }
+            },
+            WorkerOutcome::Panicked(error) => {
+                tracing::warn!(
+                    job_id = id,
+                    block_number,
+                    stage_type = %stage_type,
+                    level,
+                    arity,
+                    tx_count = candidate_tx_count,
+                    candidate_bytes,
+                    package_id = %job_package_id,
+                    error = %error,
+                    "Prover coordinator job panicked while preparing proven batch"
+                );
+                guard.stale_count = guard.stale_count.saturating_add(1);
+            }
+        }
+    }
+
+    fn dispatch_jobs(self: &Arc<Self>) {
+        if self.worker_pool.worker_count() == 0 {
+            return;
+        }
+
+        loop {
+            let (job, queue_depth_after_pop, worker_index) = {
                 let mut state = self.state.lock();
                 let inflight_current = Self::inflight_current_generation_count(&state);
                 if inflight_current >= self.config.workers {
@@ -1163,141 +1458,30 @@ impl ProverCoordinator {
                 state
                     .inflight_candidates
                     .insert(job.id, job.candidate_txs.clone());
-                (job, queue_depth_after_pop)
+                let hash_prefix =
+                    u64::from_le_bytes(job.shape_id[..8].try_into().unwrap_or([0u8; 8]));
+                let worker_index = hash_prefix as usize % self.worker_pool.worker_count();
+                (job, queue_depth_after_pop, worker_index)
             };
 
-            let prepare_bundle_fn = Arc::clone(&self.prepare_bundle_fn);
-            let timeout = self.config.job_timeout;
-            let state = Arc::clone(&self.state);
-            let target_txs = self.config.target_txs;
-            let stage_max_inflight_per_level = self.config.max_inflight_per_level;
-            tokio::spawn(async move {
-                let (
-                    QueuedJob {
-                        id,
-                        generation,
-                        parent_hash,
-                        block_number,
-                        stage_type,
-                        level,
-                        arity,
-                        shape_id,
-                        dependencies,
-                        enqueued_at,
-                        candidate_txs,
-                    },
-                    queue_depth_after_pop,
-                ) = job;
-                let queue_wait_ms = enqueued_at.elapsed().as_millis();
-                let candidate_tx_count = candidate_txs.len();
-                let candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>();
-                let job_package_id =
-                    Self::work_package_id(parent_hash, block_number, &candidate_txs);
-
-                let build_started = Instant::now();
-                let build = tokio::task::spawn_blocking(move || {
-                    prepare_bundle_fn(parent_hash, block_number, candidate_txs)
-                })
-                .await;
-                let build_elapsed_ms = build_started.elapsed().as_millis();
-
-                let mut guard = state.lock();
-                guard.inflight_jobs.remove(&id);
-                guard.inflight_stage_meta.remove(&id);
-                guard.inflight_candidates.remove(&id);
-
-                let stale_parent = guard.current_parent != Some(parent_hash);
-                let stale_generation = guard.generation != generation;
-                let is_stale = stale_parent || stale_generation;
-                if is_stale {
-                    guard.stale_count = guard.stale_count.saturating_add(1);
-                }
-
-                let built = match build {
-                    Ok(result) => result,
-                    Err(err) => {
-                        tracing::warn!(
-                            job_id = id,
-                            block_number,
-                            stage_type = %stage_type,
-                            level,
-                            arity,
-                            tx_count = candidate_tx_count,
-                            candidate_bytes,
-                            package_id = %job_package_id,
-                            error = ?err,
-                            "Prover coordinator job panicked while preparing proven batch"
-                        );
-                        guard.stale_count = guard.stale_count.saturating_add(1);
-                        return;
-                    }
-                };
-
-                if build_elapsed_ms > timeout.as_millis() {
-                    tracing::warn!(
-                            job_id = id,
-                            block_number,
-                            stage_type = %stage_type,
-                            level,
-                            arity,
-                            tx_count = candidate_tx_count,
-                            candidate_bytes,
-                            elapsed_ms = build_elapsed_ms as u64,
-                            timeout_ms = timeout.as_millis() as u64,
-                            package_id = %job_package_id,
-                        "Prover coordinator job exceeded timeout budget while preparing proven batch"
-                    );
-                }
-
-                match built {
-                    Ok(bundle) => {
-                        let candidate_len = bundle.candidate_txs.len();
-                        guard.last_build_ms = bundle.build_ms;
-                        if !is_stale && candidate_len > guard.selected_txs.len() {
-                            guard.selected_txs = bundle.candidate_txs.clone();
-                        }
-                        if !is_stale && candidate_len >= target_txs {
-                            guard.pending_jobs.clear();
-                        }
-                        tracing::info!(
-                            target: "prover::stage_metrics",
-                            job_id = id,
-                            block_number,
-                            stage_type = %stage_type,
-                            level,
-                            arity,
-                            shape_id = %hex::encode(shape_id),
-                            dependencies = dependencies.len(),
-                            queue_depth = queue_depth_after_pop,
-                            queue_wait_ms,
-                            stage_mem_budget_mb = Self::stage_mem_budget_mb(),
-                            stage_max_inflight_per_level,
-                            tx_count = candidate_len,
-                            candidate_bytes,
-                            build_ms = bundle.build_ms,
-                            package_id = %job_package_id,
-                            stale_parent,
-                            stale_generation,
-                            "Prepared proven batch candidate"
-                        );
-                        guard.prepared.insert(bundle.key.clone(), bundle);
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            job_id = id,
-                            block_number,
-                            stage_type = %stage_type,
-                            level,
-                            arity,
-                            tx_count = candidate_tx_count,
-                            candidate_bytes,
-                            package_id = %job_package_id,
-                            error = %error,
-                            "Failed to prepare proven batch candidate"
-                        );
-                    }
-                }
-            });
+            if !self
+                .worker_pool
+                .dispatch(worker_index, job.clone(), queue_depth_after_pop)
+            {
+                let mut state = self.state.lock();
+                state.inflight_jobs.remove(&job.id);
+                state.inflight_stage_meta.remove(&job.id);
+                state.inflight_candidates.remove(&job.id);
+                state.stale_count = state.stale_count.saturating_add(1);
+                tracing::warn!(
+                    job_id = job.id,
+                    stage_type = %job.stage_type,
+                    level = job.level,
+                    tx_count = job.candidate_txs.len(),
+                    worker_index,
+                    "Failed to dispatch proven-batch job to worker"
+                );
+            }
         }
     }
 

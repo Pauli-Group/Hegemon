@@ -992,3 +992,14 @@ Whenever you touch an API, threat mitigation, or performance assumption:
 5. Mention the change in `docs/CONTRIBUTING.md` so future contributors know which CI jobs/benchmarks cover it.
 
 PRs missing any of these sync points should be blocked during review; CI surfaces the changed docs alongside code so reviewers can verify everything moved together.
+
+### Aggregation runtime update (February 27, 2026)
+
+- Local prover execution in `node/src/substrate/prover_coordinator.rs` now uses a dedicated long-lived worker pool instead of per-job `spawn_blocking` tasks. This keeps thread-local recursion artifacts on stable worker threads and reduces repeated cold cache rebuilds caused by thread churn.
+- Aggregation cache warmup is now explicit and checkpointed by default:
+  - `HEGEMON_AGG_PREWARM_MAX_TXS` controls whether breadth warmup is attempted at all (unset defaults to no automatic max-target expansion on the hot path).
+  - `HEGEMON_AGG_PREWARM_MODE=checkpoint` (default) expands warmup shapes geometrically (`1,2,4,8,...`) when a max tx cap is provided.
+  - `HEGEMON_AGG_PREWARM_MODE=linear` restores legacy linear warmup.
+  - `HEGEMON_AGG_WARMUP_TARGET_SHAPES` continues to support explicit shape lists.
+
+Operationally, this change removes hidden O(target) warmup churn from live proving and makes warmup policy explicit in runbooks and benchmark configs.

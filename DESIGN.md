@@ -520,3 +520,15 @@ These scaffolds exist to keep the design’s PQ security assumptions observable.
 - **Continuous adversarial testing** – The `security-adversarial` CI job runs the new property-based tests for transaction validation, network handshakes, wallet address encoding, and the root-level adversarial flow in `tests/security_pipeline.rs`. Operators follow `runbooks/security_testing.md` when the job fails, capturing artifacts for auditors before re-running.
 
 Together these loops ensure PQ parameter choices, circuit semantics, and miner logic stay observable and auditable as the system evolves.
+
+## 9. Aggregation Runtime Update (February 27, 2026)
+
+The prover coordinator now runs local proving work on a dedicated long-lived worker pool (`hegemon-prover-worker-*`) instead of spawning one-off blocking tasks for each candidate. This keeps thread-local aggregation caches resident on stable worker threads and avoids cache churn under repeated candidate proving.
+
+Aggregation cache prewarm behavior was also tightened for throughput stability:
+
+- `HEGEMON_AGG_PREWARM_MAX_TXS` is now explicit-only (unset means no automatic breadth prewarm expansion on the proving hot path).
+- `HEGEMON_AGG_PREWARM_MODE=checkpoint` is the default when warmup targets are derived from a max tx count, using geometric checkpoints (for example `1,2,4,8,...`) instead of linear `1..N`.
+- Operators can still request linear warmup with `HEGEMON_AGG_PREWARM_MODE=linear` or explicit shapes with `HEGEMON_AGG_WARMUP_TARGET_SHAPES`.
+
+This preserves fail-closed proof semantics while removing avoidable O(target) recursion-shape churn from live transaction paths.
