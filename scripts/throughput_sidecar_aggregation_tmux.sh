@@ -278,6 +278,9 @@ SEND_RETRIES="${HEGEMON_TP_SEND_RETRIES:-4}"
 SEND_RETRY_DELAY_SECS="${HEGEMON_TP_SEND_RETRY_DELAY_SECS:-2}"
 TP_SEEDS="${HEGEMON_TP_SEEDS:-}"
 TP_MAX_PEERS="${HEGEMON_TP_MAX_PEERS:-0}"
+ARTIFACTS_DIR="${HEGEMON_TP_ARTIFACTS_DIR:-/tmp/hegemon-throughput-artifacts}"
+RUN_ID="${HEGEMON_TP_RUN_ID:-${PROOF_MODE}-tx${TX_COUNT}-$(date -u +%Y%m%dT%H%M%SZ)}"
+ARTIFACT_JSON="${ARTIFACTS_DIR}/${RUN_ID}.json"
 if [ -n "${HEGEMON_TP_WALLET_RAYON_THREADS:-}" ]; then
   WALLET_RAYON_THREADS="${HEGEMON_TP_WALLET_RAYON_THREADS}"
 else
@@ -370,7 +373,107 @@ print(int(time.time() * 1000))
 PY
 }
 
+metric_from_line() {
+  local line="$1"
+  local key="$2"
+  python3 -c 'import re,sys; key=re.escape(sys.argv[1]); line=sys.stdin.read(); m=re.search(rf"\b{key}=([0-9]+(?:\.[0-9]+)?)\b", line); print(m.group(1) if m else "")' "$key" <<<"$line"
+}
+
+bool_metric_from_line() {
+  local line="$1"
+  local key="$2"
+  python3 -c 'import re,sys; key=re.escape(sys.argv[1]); line=sys.stdin.read(); m=re.search(rf"\b{key}=(true|false)\b", line, re.IGNORECASE); print(m.group(1).lower() if m else "")' "$key" <<<"$line"
+}
+
+emit_metrics_artifact() {
+  local mode="$1"
+  mkdir -p "$ARTIFACTS_DIR"
+  python3 - "$ARTIFACT_JSON" "$mode" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+mode = sys.argv[2]
+
+def getenv(name, default=""):
+    value = os.getenv(name)
+    return value if value is not None else default
+
+def to_int(name):
+    value = getenv(name, "")
+    if value == "":
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+def to_float(name):
+    value = getenv(name, "")
+    if value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+payload = {
+    "run_id": getenv("RUN_ID"),
+    "mode": mode,
+    "timestamp_utc": getenv("RUN_TIMESTAMP_UTC"),
+    "git_commit": getenv("GIT_COMMIT"),
+    "genesis_hash": getenv("GENESIS_HASH"),
+    "network": {
+        "seeds": getenv("TP_SEEDS"),
+        "max_peers": to_int("TP_MAX_PEERS"),
+    },
+    "config": {
+        "proof_mode": getenv("PROOF_MODE"),
+        "strict_aggregation": to_int("STRICT_AGGREGATION"),
+        "tx_count_requested": to_int("TX_COUNT"),
+        "workers": to_int("WORKERS"),
+        "prover_workers": to_int("PROVER_WORKERS"),
+        "profile": getenv("TP_PROFILE"),
+        "target_txs": to_int("TX_COUNT"),
+        "batch_queue_capacity": to_int("BATCH_QUEUE_CAPACITY"),
+    },
+    "timings_ms": {
+        "send_total_ms": to_int("SEND_TOTAL_MS"),
+        "inclusion_total_ms": to_int("INCLUSION_TOTAL_MS"),
+        "round_total_ms": to_int("ROUND_TOTAL_MS"),
+        "strict_wait_ms": to_int("STRICT_WAIT_MS"),
+        "context_stage_ms": to_int("CONTEXT_STAGE_MS"),
+        "commitment_stage_ms": to_int("COMMITMENT_STAGE_MS"),
+        "aggregation_stage_ms": to_int("AGGREGATION_STAGE_MS"),
+    },
+    "metrics": {
+        "included_tx_count": to_int("INCLUDED_TX_COUNT"),
+        "submission_tps": to_float("SUBMISSION_TPS"),
+        "inclusion_tps": to_float("INCLUSION_TPS"),
+        "end_to_end_tps": to_float("END_TO_END_TPS"),
+        "effective_tps": to_float("EFFECTIVE_TPS"),
+        "payload_bytes_per_tx": to_float("PAYLOAD_BYTES_PER_TX"),
+        "tx_proof_bytes_total": to_int("TX_PROOF_BYTES_TOTAL"),
+        "proven_batch_bytes_total": to_int("PROVEN_BATCH_BYTES_TOTAL"),
+        "queue_depth": to_int("QUEUE_DEPTH"),
+        "queue_wait_ms": to_int("QUEUE_WAIT_MS"),
+        "cache_hit": getenv("CACHE_HIT"),
+        "cache_build_ms": to_int("CACHE_BUILD_MS"),
+    },
+}
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+print(f"metrics_artifact_path={path}", file=sys.stderr)
+PY
+}
+
 cd "$ROOT_DIR"
+
+GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+RUN_TIMESTAMP_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+GENESIS_HASH=""
 
 echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
 echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
@@ -378,6 +481,7 @@ echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_
 echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
 echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
 echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
+echo "Artifacts: run_id=${RUN_ID} json=${ARTIFACT_JSON}" >&2
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   if [ "${HEGEMON_TP_FORCE:-0}" = "1" ]; then
@@ -692,6 +796,13 @@ for i in $(seq 1 60); do
   fi
 done
 
+GENESIS_HASH="$(
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[0],"id":1}' \
+    "$RPC_HTTP" \
+    | python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; print((obj.get("result") or ""))'
+)"
+
 echo "Starting mining to generate coinbase notes..." >&2
 curl -s -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
@@ -826,6 +937,24 @@ fi
 SEND_END_MS="$(now_ms)"
 SEND_TOTAL_MS=$((SEND_END_MS - SEND_START_MS))
 echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
+STRICT_WAIT_MS=0
+INCLUSION_TOTAL_MS=0
+ROUND_TOTAL_MS=0
+INCLUDED_TX_COUNT=0
+TX_PROOF_BYTES_TOTAL=0
+PROVEN_BATCH_BYTES_TOTAL=0
+PAYLOAD_BYTES_PER_TX=0
+SUBMISSION_TPS=0
+INCLUSION_TPS=0
+END_TO_END_TPS=0
+EFFECTIVE_TPS=0
+CONTEXT_STAGE_MS=0
+COMMITMENT_STAGE_MS=0
+AGGREGATION_STAGE_MS=0
+QUEUE_DEPTH=0
+QUEUE_WAIT_MS=0
+CACHE_HIT=""
+CACHE_BUILD_MS=0
 
 if [ "$STRICT_AGGREGATION" = "1" ]; then
   echo "Strict mode: waiting for local proven batch candidate before mining (min_prepared_txs=${MIN_PREPARED_TXS})..." >&2
@@ -859,10 +988,22 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
     exit 1
   fi
   echo "$PREPARED_LINE" >&2
+  QUEUE_DEPTH="$(metric_from_line "$PREPARED_LINE" "queue_depth")"
+  QUEUE_WAIT_MS="$(metric_from_line "$PREPARED_LINE" "queue_wait_ms")"
   STRICT_WAIT_END_MS="$(now_ms)"
   STRICT_WAIT_MS=$((STRICT_WAIT_END_MS - STRICT_WAIT_START_MS))
   echo "Prepared batch became ready in strict_wait_ms=${STRICT_WAIT_MS}" >&2
   if [ "$PREWARM_ONLY" = "1" ]; then
+    CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context" | tail -n 1 || true)"
+    STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and aggregation proofs" | tail -n 1 || true)"
+    AGG_LINE="$(search_log "prove_aggregation completed" | tail -n 1 || true)"
+    CONTEXT_STAGE_MS="$(metric_from_line "$CONTEXT_LINE" "stage_ms")"
+    COMMITMENT_STAGE_MS="$(metric_from_line "$STAGE_LINE" "commitment_stage_ms")"
+    AGGREGATION_STAGE_MS="$(metric_from_line "$STAGE_LINE" "aggregation_stage_ms")"
+    CACHE_HIT="$(bool_metric_from_line "$AGG_LINE" "cache_hit")"
+    CACHE_BUILD_MS="$(metric_from_line "$AGG_LINE" "cache_build_ms")"
+    export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS CACHE_HIT CACHE_BUILD_MS
+    emit_metrics_artifact "prewarm"
     echo "Prewarm-only mode: exiting before inclusion/mining stage." >&2
     echo "prewarm_metrics tx_count=${TX_COUNT} proof_mode=${PROOF_MODE} strict_wait_ms=${STRICT_WAIT_MS} min_prepared_txs=${MIN_PREPARED_TXS}" >&2
     echo "Done. Node is still running in tmux." >&2
@@ -1070,6 +1211,20 @@ else
 fi
 echo "" >&2
 echo "throughput_round_metrics tx_count=${TX_COUNT} included_tx_count=${INCLUDED_TX_COUNT} proof_mode=${PROOF_MODE} inclusion_target_mode=${INCLUSION_TARGET_MODE} send_proof_sidecar=${SEND_PROOF_SIDECAR} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
+
+PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate" | tail -n 1 || true)"
+CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context" | tail -n 1 || true)"
+STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and aggregation proofs" | tail -n 1 || true)"
+AGG_LINE="$(search_log "prove_aggregation completed" | tail -n 1 || true)"
+QUEUE_DEPTH="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_depth")"
+QUEUE_WAIT_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_wait_ms")"
+CONTEXT_STAGE_MS="$(metric_from_line "$CONTEXT_LINE" "stage_ms")"
+COMMITMENT_STAGE_MS="$(metric_from_line "$STAGE_LINE" "commitment_stage_ms")"
+AGGREGATION_STAGE_MS="$(metric_from_line "$STAGE_LINE" "aggregation_stage_ms")"
+CACHE_HIT="$(bool_metric_from_line "$AGG_LINE" "cache_hit")"
+CACHE_BUILD_MS="$(metric_from_line "$AGG_LINE" "cache_build_ms")"
+export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS CACHE_HIT CACHE_BUILD_MS
+emit_metrics_artifact "throughput"
 
 echo "Done. Node is still running in tmux." >&2
 echo "  Attach: tmux attach -t $SESSION" >&2

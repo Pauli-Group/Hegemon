@@ -1290,220 +1290,6 @@ fn resolve_sidecar_proof_bytes(
     })
 }
 
-fn extract_transaction_proofs_from_extrinsics(
-    extrinsics: &[Vec<u8>],
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
-    pending_proofs: Option<&PendingProofStore>,
-) -> Result<Vec<TransactionProof>, String> {
-    let mut proofs = Vec::new();
-    let mut ciphertext_cursor = 0usize;
-
-    for ext_bytes in extrinsics {
-        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        let runtime::RuntimeCall::ShieldedPool(call) = extrinsic.function else {
-            continue;
-        };
-
-        let mut next_resolved_ciphertexts = || -> Result<Option<Vec<Vec<u8>>>, String> {
-            let resolved = match resolved_ciphertexts {
-                Some(resolved) => resolved,
-                None => return Ok(None),
-            };
-            if ciphertext_cursor >= resolved.len() {
-                return Err("resolved ciphertexts exhausted".to_string());
-            }
-            let ciphertexts = resolved[ciphertext_cursor].clone();
-            ciphertext_cursor += 1;
-            Ok(Some(ciphertexts))
-        };
-
-        match call {
-            ShieldedPoolCall::mint_coinbase { .. } => {
-                // Coinbase ciphertexts are stored separately from the DA blob.
-            }
-            ShieldedPoolCall::shielded_transfer {
-                proof,
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                value_balance,
-                ..
-            } => {
-                let ciphertexts = match next_resolved_ciphertexts()? {
-                    Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
-                        .iter()
-                        .map(encrypted_note_bytes)
-                        .collect::<Vec<_>>(),
-                };
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = build_transaction_proof(
-                    proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
-                    &ciphertexts,
-                    anchor,
-                    stablecoin.clone(),
-                    fee,
-                    value_balance,
-                )?;
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ..
-            } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
-                let ciphertexts = match next_resolved_ciphertexts()? {
-                    Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
-                        .iter()
-                        .map(encrypted_note_bytes)
-                        .collect::<Vec<_>>(),
-                };
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = build_transaction_proof(
-                    proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
-                    &ciphertexts,
-                    anchor,
-                    None,
-                    fee,
-                    0,
-                )?;
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                value_balance,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = match maybe_ciphertexts.as_ref() {
-                    Some(ciphertexts) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            &ciphertext_sizes,
-                            &ciphertext_hashes,
-                        )?;
-                        build_transaction_proof(
-                            proof_bytes,
-                            nullifiers.iter().copied().collect(),
-                            commitments.iter().copied().collect(),
-                            ciphertexts,
-                            anchor,
-                            stablecoin.clone(),
-                            fee,
-                            value_balance,
-                        )?
-                    }
-                    None => build_transaction_proof_with_hashes(
-                        proof_bytes,
-                        nullifiers.iter().copied().collect(),
-                        commitments.iter().copied().collect(),
-                        &ciphertext_hashes,
-                        anchor,
-                        stablecoin.clone(),
-                        fee,
-                        value_balance,
-                    )?,
-                };
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
-                let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = match maybe_ciphertexts.as_ref() {
-                    Some(ciphertexts) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            &ciphertext_sizes,
-                            &ciphertext_hashes,
-                        )?;
-                        build_transaction_proof(
-                            proof_bytes,
-                            nullifiers.iter().copied().collect(),
-                            commitments.iter().copied().collect(),
-                            ciphertexts,
-                            anchor,
-                            None,
-                            fee,
-                            0,
-                        )?
-                    }
-                    None => build_transaction_proof_with_hashes(
-                        proof_bytes,
-                        nullifiers.iter().copied().collect(),
-                        commitments.iter().copied().collect(),
-                        &ciphertext_hashes,
-                        anchor,
-                        None,
-                        fee,
-                        0,
-                    )?,
-                };
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::batch_shielded_transfer { .. } => {
-                return Err(
-                    "batch shielded transfers are not supported in recursive block proofs".into(),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(resolved) = resolved_ciphertexts {
-        if ciphertext_cursor != resolved.len() {
-            return Err("resolved ciphertexts count mismatch".to_string());
-        }
-    }
-
-    Ok(proofs)
-}
-
 fn encrypted_note_bytes(note: &pallet_shielded_pool::types::EncryptedNote) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
     bytes.extend_from_slice(&note.ciphertext);
@@ -2164,35 +1950,47 @@ async fn sample_da_for_block(
     Ok(build)
 }
 
-fn build_commitment_block_proof(
-    client: &HegemonFullClient,
-    parent_hash: H256,
-    extrinsics: &[Vec<u8>],
-    da_params: DaParams,
-    da_root_override: Option<DaRoot>,
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
-    pending_proofs: Option<&PendingProofStore>,
-    _fast: bool,
-) -> Result<Option<CommitmentBlockProof>, String> {
-    let proofs = extract_transaction_proofs_from_extrinsics(
-        extrinsics,
-        resolved_ciphertexts,
-        pending_proofs,
-    )?;
-    if proofs.is_empty() {
-        return Ok(None);
-    }
+#[derive(Clone, Debug)]
+struct CandidateBlockContext {
+    decoded_extrinsics: Vec<runtime::UncheckedExtrinsic>,
+    extracted_transactions: Vec<consensus::types::Transaction>,
+    tx_proofs: Arc<Vec<TransactionProof>>,
+    statement_hashes: Vec<[u8; 48]>,
+    tx_statements_commitment: [u8; 48],
+    da_root: DaRoot,
+    da_chunk_count: u32,
+    da_blob_bytes: usize,
+    resolved_ciphertexts: Vec<Vec<Vec<u8>>>,
+}
 
-    // Use compact runtime snapshots (root/frontier/history) instead of replaying the entire
-    // on-chain commitment set for every proving job. This keeps per-job setup bounded as chain
-    // height grows.
-    let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
-    let mut decoded = Vec::with_capacity(extrinsics.len());
-    for ext_bytes in extrinsics {
+fn build_candidate_context(
+    candidate_txs: &[Vec<u8>],
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<CandidateBlockContext, String> {
+    let mut decoded = Vec::with_capacity(candidate_txs.len());
+    for ext_bytes in candidate_txs {
         let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+            .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
         decoded.push(extrinsic);
     }
+
+    let da_blob = build_da_blob_from_extrinsics(&decoded, Some(pending_ciphertexts))
+        .map_err(|err| format!("failed to build DA blob for proven batch: {err}"))?;
+    let da_blob_bytes = da_blob.blob.len();
+    let encoding = state_da::encode_da_blob(&da_blob.blob, da_params)
+        .map_err(|err| format!("failed to encode DA blob for proven batch: {err}"))?;
+    let da_root = encoding.root();
+    let da_chunk_count = encoding.chunks().len() as u32;
+    let resolved_ciphertexts = da_blob.transactions;
+
+    let (transactions, proofs) = extract_shielded_transfers_for_parallel_verification(
+        &decoded,
+        Some(resolved_ciphertexts.as_slice()),
+        Some(pending_proofs),
+        false,
+    )?;
     let statement_hashes = statement_hashes_from_extrinsics(&decoded);
     if statement_hashes.len() != proofs.len() {
         return Err(format!(
@@ -2201,13 +1999,38 @@ fn build_commitment_block_proof(
             statement_hashes.len()
         ));
     }
-    let da_root = if let Some(root) = da_root_override {
-        root
-    } else {
-        let DaEncodingBuild { encoding, .. } =
-            build_da_encoding_from_extrinsics(&decoded, da_params, None)?;
-        encoding.root()
-    };
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+
+    Ok(CandidateBlockContext {
+        decoded_extrinsics: decoded,
+        extracted_transactions: transactions,
+        tx_proofs: Arc::new(proofs),
+        statement_hashes,
+        tx_statements_commitment,
+        da_root,
+        da_chunk_count,
+        da_blob_bytes,
+        resolved_ciphertexts,
+    })
+}
+
+fn build_commitment_block_proof_from_materials(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    statement_hashes: &[[u8; 48]],
+    proofs: &[TransactionProof],
+    da_root: DaRoot,
+) -> Result<Option<CommitmentBlockProof>, String> {
+    if proofs.is_empty() {
+        return Ok(None);
+    }
+
+    // Use compact runtime snapshots (root/frontier/history) instead of replaying the entire
+    // on-chain commitment set for every proving job. This keeps per-job setup bounded as chain
+    // height grows.
+    let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
     let starting_root = tree.root();
     for (index, proof) in proofs.iter().enumerate() {
         let anchor = proof.public_inputs.merkle_root;
@@ -2224,7 +2047,7 @@ fn build_commitment_block_proof(
     let ending_root = tree.root();
 
     let mut nullifiers = Vec::new();
-    for proof in &proofs {
+    for proof in proofs {
         nullifiers.extend_from_slice(&proof.nullifiers);
     }
     let mut sorted_nullifiers = nullifiers.clone();
@@ -2234,7 +2057,7 @@ fn build_commitment_block_proof(
     let prover = CommitmentBlockProver::new();
     let proof = prover
         .prove_from_statement_hashes_with_inputs(
-            &statement_hashes,
+            statement_hashes,
             starting_root,
             ending_root,
             nullifier_root,
@@ -2245,6 +2068,22 @@ fn build_commitment_block_proof(
         .map_err(|e| format!("commitment block proof failed: {e}"))?;
 
     Ok(Some(proof))
+}
+
+fn build_aggregation_proof_from_materials(
+    proofs: Arc<Vec<TransactionProof>>,
+    tx_statements_commitment: [u8; 48],
+) -> Result<AggregationProofOutcome, String> {
+    if proofs.is_empty() {
+        return Ok(AggregationProofOutcome::default());
+    }
+    let proof_bytes = run_aggregation_prepare_job(move || {
+        prove_aggregation(proofs.as_ref(), tx_statements_commitment)
+    })
+    .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
+    Ok(AggregationProofOutcome {
+        proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
+    })
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2292,40 +2131,6 @@ where
     }
 }
 
-fn build_aggregation_proof(
-    extrinsics: &[Vec<u8>],
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
-    pending_proofs: Option<&PendingProofStore>,
-) -> Result<AggregationProofOutcome, String> {
-    let mut decoded = Vec::with_capacity(extrinsics.len());
-    for ext_bytes in extrinsics {
-        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        decoded.push(extrinsic);
-    }
-
-    let (_transactions, proofs) = extract_shielded_transfers_for_parallel_verification(
-        &decoded,
-        resolved_ciphertexts,
-        pending_proofs,
-        false,
-    )?;
-    if proofs.is_empty() {
-        return Ok(AggregationProofOutcome::default());
-    }
-    let statement_hashes = statement_hashes_from_extrinsics(&decoded);
-    let tx_statements_commitment =
-        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
-
-    let proof_bytes =
-        run_aggregation_prepare_job(move || prove_aggregation(&proofs, tx_statements_commitment))
-            .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
-    Ok(AggregationProofOutcome {
-        proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
-    })
-}
-
 fn maybe_corrupt_aggregation_proof(mut proof_bytes: Vec<u8>) -> Vec<u8> {
     let corrupt = std::env::var("HEGEMON_AGGREGATION_PROOF_CORRUPT")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -2357,96 +2162,82 @@ fn prepare_block_proof_bundle(
         candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>(),
         "prepare_block_proof_bundle: start"
     );
-    let mut decoded = Vec::with_capacity(candidate_txs.len());
-    let decode_started = Instant::now();
-    for ext_bytes in &candidate_txs {
-        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
-        decoded.push(extrinsic);
-    }
-    tracing::info!(
-        block_number,
-        tx_count = decoded.len(),
-        stage_ms = decode_started.elapsed().as_millis(),
-        total_ms = started.elapsed().as_millis(),
-        "prepare_block_proof_bundle: decoded candidate extrinsics"
-    );
-
-    let da_started = Instant::now();
-    let da_blob = build_da_blob_from_extrinsics(&decoded, Some(pending_ciphertexts))
-        .map_err(|err| format!("failed to build DA blob for proven batch: {err}"))?;
-    let encoding = state_da::encode_da_blob(&da_blob.blob, da_params)
-        .map_err(|err| format!("failed to encode DA blob for proven batch: {err}"))?;
-    let da_root = encoding.root();
-    let da_chunk_count = encoding.chunks().len() as u32;
-    let resolved_ciphertexts = Some(da_blob.transactions.as_slice());
-    tracing::info!(
-        block_number,
-        da_blob_bytes = da_blob.blob.len(),
-        da_chunk_count,
-        stage_ms = da_started.elapsed().as_millis(),
-        total_ms = started.elapsed().as_millis(),
-        "prepare_block_proof_bundle: built DA blob and encoding"
-    );
-
-    let commitment_started = Instant::now();
-    let commitment_proof = build_commitment_block_proof(
-        client,
-        parent_hash,
+    let context_started = Instant::now();
+    let context = build_candidate_context(
         &candidate_txs,
         da_params,
-        Some(da_root),
-        resolved_ciphertexts,
-        Some(pending_proofs),
-        commitment_block_fast,
-    )?
-    .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
+        pending_ciphertexts,
+        pending_proofs,
+    )?;
     tracing::info!(
         block_number,
-        commitment_bytes = commitment_proof.proof_bytes.len(),
-        stage_ms = commitment_started.elapsed().as_millis(),
+        tx_count = context.statement_hashes.len(),
+        decoded_extrinsics = context.decoded_extrinsics.len(),
+        extracted_transactions = context.extracted_transactions.len(),
+        resolved_ciphertext_txs = context.resolved_ciphertexts.len(),
+        da_blob_bytes = context.da_blob_bytes,
+        da_chunk_count = context.da_chunk_count,
+        stage_ms = context_started.elapsed().as_millis(),
         total_ms = started.elapsed().as_millis(),
-        "prepare_block_proof_bundle: built commitment proof"
+        "prepare_block_proof_bundle: built shared candidate context"
     );
 
-    let aggregation_started = Instant::now();
-    let aggregation_outcome =
-        build_aggregation_proof(&candidate_txs, resolved_ciphertexts, Some(pending_proofs))?;
+    let statement_hashes = context.statement_hashes.clone();
+    let tx_statements_commitment = context.tx_statements_commitment;
+    let tx_count = statement_hashes.len() as u32;
+    if tx_count == 0 {
+        return Err("candidate tx set has no shielded transfers".to_string());
+    }
+
+    let proofs_for_commitment = Arc::clone(&context.tx_proofs);
+    let proofs_for_aggregation = Arc::clone(&context.tx_proofs);
+    let da_root = context.da_root;
+    let ((commitment_result, commitment_stage_ms), (aggregation_result, aggregation_stage_ms)) =
+        rayon::join(
+            || {
+                let _ = commitment_block_fast;
+                let stage_started = Instant::now();
+                let result = build_commitment_block_proof_from_materials(
+                    client,
+                    parent_hash,
+                    &statement_hashes,
+                    proofs_for_commitment.as_ref(),
+                    da_root,
+                );
+                (result, stage_started.elapsed().as_millis())
+            },
+            || {
+                let stage_started = Instant::now();
+                let result = build_aggregation_proof_from_materials(
+                    proofs_for_aggregation,
+                    tx_statements_commitment,
+                );
+                (result, stage_started.elapsed().as_millis())
+            },
+        );
+    let commitment_proof = commitment_result?
+        .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
+    let aggregation_outcome = aggregation_result?;
     let aggregation_raw = aggregation_outcome
         .proof_bytes
         .ok_or_else(|| "candidate tx set has no aggregation proof material".to_string())?;
     let aggregation_proof = encode_aggregation_proof_bytes(aggregation_raw);
     tracing::info!(
         block_number,
+        commitment_bytes = commitment_proof.proof_bytes.len(),
         aggregation_bytes = aggregation_proof.len(),
-        stage_ms = aggregation_started.elapsed().as_millis(),
+        commitment_stage_ms,
+        aggregation_stage_ms,
         total_ms = started.elapsed().as_millis(),
-        "prepare_block_proof_bundle: built aggregation proof"
+        "prepare_block_proof_bundle: built commitment and aggregation proofs"
     );
-
-    let commitment_started = Instant::now();
-    let statement_hashes = statement_hashes_from_extrinsics(&decoded);
-    let tx_statements_commitment =
-        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
-    tracing::debug!(
-        block_number,
-        tx_count = statement_hashes.len(),
-        stage_ms = commitment_started.elapsed().as_millis(),
-        total_ms = started.elapsed().as_millis(),
-        "prepare_block_proof_bundle: computed statements commitment"
-    );
-    let tx_count = statement_hashes.len() as u32;
-    if tx_count == 0 {
-        return Err("candidate tx set has no shielded transfers".to_string());
-    }
 
     let payload = pallet_shielded_pool::types::BlockProofBundle {
         version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
         tx_count,
         tx_statements_commitment,
-        da_root,
-        da_chunk_count,
+        da_root: context.da_root,
+        da_chunk_count: context.da_chunk_count,
         commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
             commitment_proof.proof_bytes.clone(),
         ),
