@@ -140,9 +140,10 @@ impl ProverCoordinatorConfig {
         let adaptive_liveness_timeout_ms = std::env::var("HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS")
             .ok()
             .and_then(|v| v.parse().ok())
-            // In throughput-first mode, keep one adaptive liveness escape hatch so
-            // cold target-batch proving does not wedge inclusion indefinitely.
-            .unwrap_or(if liveness_lane { 0 } else { 30_000u64 });
+            // Default to disabled so throughput mode remains deadline-driven:
+            // do not silently downshift to singleton lanes unless explicitly
+            // configured by operators.
+            .unwrap_or(0u64);
         let incremental_upsizing = std::env::var("HEGEMON_BATCH_INCREMENTAL_UPSIZE")
             .ok()
             .map(|value| {
