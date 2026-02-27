@@ -786,19 +786,31 @@ fn get_or_build_aggregation_prover_cache_entry(
 }
 
 fn aggregation_prewarm_max_txs() -> usize {
-    if let Some(explicit) = std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-    {
-        return explicit;
-    }
-    // Keep strict aggregation from paying first-user cold-start latency:
-    // if no explicit prewarm cap is set, prewarm at least the configured
-    // target batch size.
-    std::env::var("HEGEMON_BATCH_TARGET_TXS")
+    std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(0)
+}
+
+fn aggregation_prewarm_mode() -> String {
+    std::env::var("HEGEMON_AGG_PREWARM_MODE")
+        .map(|raw| raw.to_ascii_lowercase())
+        .unwrap_or_else(|_| "checkpoint".to_string())
+}
+
+fn checkpoint_warmup_targets(current_tx_count: usize, max_txs: usize) -> Vec<usize> {
+    let mut targets = Vec::new();
+    let mut next = current_tx_count.max(1);
+    targets.push(next);
+    while next < max_txs {
+        next = next.saturating_mul(2).min(max_txs);
+        if targets.last().copied() != Some(next) {
+            targets.push(next);
+        } else {
+            break;
+        }
+    }
+    targets
 }
 
 fn aggregation_warmup_target_shapes() -> Vec<usize> {
@@ -830,9 +842,15 @@ fn maybe_prewarm_aggregation_cache(
         if max_txs == 0 {
             return;
         }
-        // Include current target shape in prewarm so strict target mode can
-        // avoid first-user cold starts.
-        targets = (current_tx_count..=max_txs.max(current_tx_count)).collect();
+        let mode = aggregation_prewarm_mode();
+        let capped_max = max_txs.max(current_tx_count);
+        // Checkpoint mode is default to avoid O(target) shape churn in the hot
+        // path. Operators can opt into legacy linear warmup explicitly.
+        targets = if mode == "linear" {
+            (current_tx_count..=capped_max).collect()
+        } else {
+            checkpoint_warmup_targets(current_tx_count, capped_max)
+        };
     } else {
         targets.retain(|tx_count| *tx_count >= current_tx_count);
     }
