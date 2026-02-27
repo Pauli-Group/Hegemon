@@ -7103,7 +7103,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                             for peer_id in disconnect_incompatible {
                                 sync_handle_for_tick
-                                    .disconnect(peer_id, "incompatible genesis")
+                                    .disconnect(peer_id, "incompatible chain/protocol")
                                     .await;
                             }
 

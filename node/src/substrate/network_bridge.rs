@@ -40,6 +40,8 @@ use tokio::sync::mpsc;
 pub const BLOCK_ANNOUNCE_PROTOCOL: &str = BLOCK_ANNOUNCES_PQ;
 pub const TRANSACTIONS_PROTOCOL: &str = TRANSACTIONS_PQ;
 pub const SYNC_PROTOCOL: &str = SYNC_PQ;
+/// Sync protocol compatibility version.
+pub const SYNC_PROTOCOL_VERSION: u32 = 1;
 /// Data-availability chunk request/response protocol (PQ version).
 pub const DA_CHUNKS_PROTOCOL: &str = "/hegemon/da/chunks/pq/1";
 
@@ -160,6 +162,15 @@ pub struct SyncRequestEnvelope {
 /// Sync request message
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum SyncRequest {
+    /// Request compatibility metadata before considering the peer as a sync source.
+    CompatibilityProbe {
+        /// Local chain genesis hash for strict chain identity checks.
+        local_genesis_hash: [u8; 32],
+        /// Local sync protocol compatibility version.
+        sync_protocol_version: u32,
+        /// Active aggregation proof payload format id.
+        aggregation_proof_format: u8,
+    },
     /// Request block headers starting from a hash
     BlockHeaders {
         /// Starting block hash
@@ -193,6 +204,19 @@ pub enum SyncRequest {
 /// Sync response message
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum SyncResponse {
+    /// Compatibility response for sync admission checks.
+    Compatibility {
+        /// Request ID for correlation.
+        request_id: u64,
+        /// Whether the responding peer considers the requester compatible.
+        accepted: bool,
+        /// Responding peer chain genesis hash.
+        local_genesis_hash: [u8; 32],
+        /// Responding peer sync protocol compatibility version.
+        sync_protocol_version: u32,
+        /// Responding peer active aggregation proof payload format id.
+        aggregation_proof_format: u8,
+    },
     /// Block headers response
     BlockHeaders {
         /// Request ID for correlation
@@ -892,6 +916,58 @@ mod tests {
                 }
             }
             _ => panic!("Wrong sync message variant"),
+        }
+    }
+
+    #[test]
+    fn test_sync_compatibility_probe_encoding() {
+        let request = SyncRequest::CompatibilityProbe {
+            local_genesis_hash: [9u8; 32],
+            sync_protocol_version: SYNC_PROTOCOL_VERSION,
+            aggregation_proof_format: 4,
+        };
+        let encoded = request.encode();
+        let decoded = SyncRequest::decode(&mut &encoded[..]).unwrap();
+        match decoded {
+            SyncRequest::CompatibilityProbe {
+                local_genesis_hash,
+                sync_protocol_version,
+                aggregation_proof_format,
+            } => {
+                assert_eq!(local_genesis_hash, [9u8; 32]);
+                assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
+                assert_eq!(aggregation_proof_format, 4);
+            }
+            _ => panic!("Wrong request variant"),
+        }
+    }
+
+    #[test]
+    fn test_sync_compatibility_response_encoding() {
+        let response = SyncResponse::Compatibility {
+            request_id: 7,
+            accepted: true,
+            local_genesis_hash: [5u8; 32],
+            sync_protocol_version: SYNC_PROTOCOL_VERSION,
+            aggregation_proof_format: 4,
+        };
+        let encoded = response.encode();
+        let decoded = SyncResponse::decode(&mut &encoded[..]).unwrap();
+        match decoded {
+            SyncResponse::Compatibility {
+                request_id,
+                accepted,
+                local_genesis_hash,
+                sync_protocol_version,
+                aggregation_proof_format,
+            } => {
+                assert_eq!(request_id, 7);
+                assert!(accepted);
+                assert_eq!(local_genesis_hash, [5u8; 32]);
+                assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
+                assert_eq!(aggregation_proof_format, 4);
+            }
+            _ => panic!("Wrong response variant"),
         }
     }
 
