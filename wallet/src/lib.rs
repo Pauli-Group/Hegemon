@@ -14,6 +14,7 @@ pub mod scanner;
 mod serde_bytes48;
 pub mod shielded_tx;
 pub mod store;
+pub mod submission;
 pub mod substrate_rpc;
 pub mod sync;
 pub mod tx_builder;
@@ -40,6 +41,7 @@ pub use store::{
     OutgoingDisclosureDraft, OutgoingDisclosureRecord, PendingStatus, PendingTransaction,
     SpendableNote, TrackedNoteView, TransferRecipient, WalletMode, WalletStore,
 };
+pub use submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
 pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, SubstrateRpcConfig};
 pub use sync::SyncOutcome;
 pub use tx_builder::{

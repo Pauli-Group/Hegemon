@@ -2252,6 +2252,46 @@ struct AggregationProofOutcome {
     proof_bytes: Option<Vec<u8>>,
 }
 
+fn aggregation_prepare_threads() -> usize {
+    std::env::var("HEGEMON_AGG_PREPARE_THREADS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
+static AGGREGATION_PREPARE_POOL: once_cell::sync::Lazy<Option<rayon::ThreadPool>> =
+    once_cell::sync::Lazy::new(|| {
+        let threads = aggregation_prepare_threads();
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|idx| format!("hegemon-agg-prepare-{idx}"))
+            .build()
+        {
+            Ok(pool) => Some(pool),
+            Err(error) => {
+                tracing::warn!(
+                    threads,
+                    error = %error,
+                    "Failed to initialize aggregation prepare thread pool; falling back to caller thread"
+                );
+                None
+            }
+        }
+    });
+
+fn run_aggregation_prepare_job<F, T>(job: F) -> T
+where
+    F: FnOnce() -> T + Send,
+    T: Send,
+{
+    if let Some(pool) = AGGREGATION_PREPARE_POOL.as_ref() {
+        pool.install(job)
+    } else {
+        job()
+    }
+}
+
 fn build_aggregation_proof(
     extrinsics: &[Vec<u8>],
     resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
@@ -2278,8 +2318,9 @@ fn build_aggregation_proof(
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
 
-    let proof_bytes = prove_aggregation(&proofs, tx_statements_commitment)
-        .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
+    let proof_bytes =
+        run_aggregation_prepare_job(move || prove_aggregation(&proofs, tx_statements_commitment))
+            .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
     Ok(AggregationProofOutcome {
         proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
     })
@@ -3252,7 +3293,7 @@ fn verify_proof_carrying_block(
         let start_verify = Instant::now();
         verifier
             .verify_block(&block, &parent_tree)
-            .map_err(|err| format!("proof verification failed: {err}"))?;
+            .map_err(|err| format!("proof verification failed ({err:?}): {err}"))?;
         let verify_ms = start_verify.elapsed().as_millis();
         tracing::info!(
             target: "node::metrics",
@@ -3308,7 +3349,7 @@ fn verify_proof_carrying_block(
     let start_verify = Instant::now();
     verifier
         .verify_block(&block, &parent_tree)
-        .map_err(|err| format!("proof verification failed: {err}"))?;
+        .map_err(|err| format!("proof verification failed ({err:?}): {err}"))?;
     let verify_ms = start_verify.elapsed().as_millis();
     tracing::info!(
         target: "node::metrics",
@@ -3435,6 +3476,12 @@ fn load_disable_proofless_hydration() -> bool {
         .unwrap_or(false)
 }
 
+fn load_min_ready_proven_batch_txs() -> usize {
+    env_usize("HEGEMON_MIN_READY_PROVEN_BATCH_TXS")
+        .unwrap_or(1)
+        .max(1)
+}
+
 fn load_accept_legacy_proofless_blocks() -> bool {
     std::env::var("HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS")
         .ok()
@@ -3512,6 +3559,7 @@ fn ready_proofless_binding_hashes_for_preview(
     prover_coordinator: &ProverCoordinator,
     parent_hash: H256,
     preview_extrinsics: &[runtime::UncheckedExtrinsic],
+    min_ready_batch_txs: usize,
 ) -> Result<BTreeSet<[u8; 64]>, String> {
     let mut candidate = preview_extrinsics.to_vec();
 
@@ -3526,15 +3574,21 @@ fn ready_proofless_binding_hashes_for_preview(
         if shielded_tx_count == 0 {
             return Ok(BTreeSet::new());
         }
+        if shielded_tx_count < min_ready_batch_txs as u32 {
+            return Ok(BTreeSet::new());
+        }
 
         let tx_statements_commitment =
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
 
-        if prover_coordinator
+        let ready = prover_coordinator
             .lookup_prepared_bundle(parent_hash, tx_statements_commitment, shielded_tx_count)
-            .is_some()
-        {
+            .or_else(|| {
+                prover_coordinator
+                    .lookup_prepared_bundle_any_parent(tx_statements_commitment, shielded_tx_count)
+            });
+        if ready.is_some() {
             return Ok(missing.into_iter().collect());
         }
 
@@ -3986,10 +4040,17 @@ pub fn wire_block_builder_api(
         .unwrap_or(false);
     let disable_proofless_hydration = load_disable_proofless_hydration();
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
+    let min_ready_proven_batch_txs = load_min_ready_proven_batch_txs();
 
     if disable_proofless_hydration {
         tracing::warn!(
             "Proofless sidecar hydration disabled via HEGEMON_DISABLE_PROOFLESS_HYDRATION=1"
+        );
+    }
+    if min_ready_proven_batch_txs > 1 {
+        tracing::info!(
+            min_ready_proven_batch_txs,
+            "Proofless transfers require a ready proven batch of at least this size before inclusion"
         );
     }
 
@@ -4188,12 +4249,14 @@ pub fn wire_block_builder_api(
                         prover_coordinator.as_ref(),
                         parent_substrate_hash,
                         &preview_extrinsics,
+                        min_ready_proven_batch_txs,
                     )?;
                     if ready_bindings.is_empty() {
                         defer_proofless_until_ready_batch = true;
                         tracing::warn!(
                             block_number,
                             missing_proof_bindings = missing_preview.len(),
+                            min_ready_proven_batch_txs,
                             "Deferring proofless sidecar transfers until a proven batch is ready (no ready subset)"
                         );
                     } else {
@@ -4204,12 +4267,14 @@ pub fn wire_block_builder_api(
                                 block_number,
                                 ready_proofless_sidecar = ready_bindings.len(),
                                 deferred_proofless_sidecar = deferred,
+                                min_ready_proven_batch_txs,
                                 "Using ready proofless subset while larger proven batch is still building"
                             );
                         } else {
                             tracing::debug!(
                                 block_number,
                                 ready_proofless_sidecar = ready_bindings.len(),
+                                min_ready_proven_batch_txs,
                                 "Ready proven batch found for full proofless candidate set"
                             );
                         }
@@ -4357,11 +4422,22 @@ pub fn wire_block_builder_api(
             let tx_statements_commitment =
                 CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                     .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
-            let ready_batch = prover_coordinator.lookup_prepared_bundle(
+            let exact_ready_batch = prover_coordinator.lookup_prepared_bundle(
                 parent_substrate_hash,
                 tx_statements_commitment,
                 shielded_tx_count,
             );
+            let (ready_batch, used_any_parent_match) = if let Some(batch) = exact_ready_batch {
+                (Some(batch), false)
+            } else {
+                (
+                    prover_coordinator.lookup_prepared_bundle_any_parent(
+                        tx_statements_commitment,
+                        shielded_tx_count,
+                    ),
+                    true,
+                )
+            };
 
             if let Some(ready_batch) = ready_batch {
                 let proof_size = ready_batch.payload.commitment_proof.data.len()
@@ -4384,6 +4460,9 @@ pub fn wire_block_builder_api(
                             proof_size_uncompressed,
                             proven_batch_build_ms = ready_batch.build_ms,
                             proven_batch_stale_count = prover_coordinator.stale_count(),
+                            used_any_parent_match,
+                            prepared_parent = ?ready_batch.key.parent_hash,
+                            current_parent = ?parent_substrate_hash,
                             "Proven batch extrinsic attached"
                         );
                     }
@@ -8550,6 +8629,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             prover_workers = coordinator_cfg.workers,
             prover_batch_target_txs = coordinator_cfg.target_txs,
             prover_batch_queue_capacity = coordinator_cfg.queue_capacity,
+            prover_liveness_lane = coordinator_cfg.liveness_lane,
             prover_batch_job_timeout_ms = coordinator_cfg.job_timeout.as_millis() as u64,
             "Transaction pool wired to chain state provider"
         );

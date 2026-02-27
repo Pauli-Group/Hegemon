@@ -11,9 +11,9 @@ use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::verify_circuit;
 use p3_uni_stark::get_log_num_quotient_chunks;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use transaction_circuit::proof::stark_public_inputs_p3;
@@ -64,9 +64,27 @@ struct AggregationVerifierCacheEntry {
     public_table_indices: Vec<usize>,
 }
 
-static AGGREGATION_VERIFIER_CACHE: OnceLock<
-    Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>>,
-> = OnceLock::new();
+#[derive(Default)]
+struct AggregationVerifierCacheState {
+    entries: HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>,
+    in_progress: HashSet<AggregationVerifierKey>,
+}
+
+struct AggregationVerifierCache {
+    state: Mutex<AggregationVerifierCacheState>,
+    condvar: Condvar,
+}
+
+impl Default for AggregationVerifierCache {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(AggregationVerifierCacheState::default()),
+            condvar: Condvar::new(),
+        }
+    }
+}
+
+static AGGREGATION_VERIFIER_CACHE: OnceLock<AggregationVerifierCache> = OnceLock::new();
 
 const AGGREGATION_PROOF_MAGIC: [u8; 4] = *b"HGA0";
 const AGGREGATION_PROOF_VERSION: u8 = 1;
@@ -90,9 +108,8 @@ struct AggregationProofV3Payload {
     outer_proof: Vec<u8>,
 }
 
-fn aggregation_verifier_cache()
--> &'static Mutex<HashMap<AggregationVerifierKey, Arc<AggregationVerifierCacheEntry>>> {
-    AGGREGATION_VERIFIER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn aggregation_verifier_cache() -> &'static AggregationVerifierCache {
+    AGGREGATION_VERIFIER_CACHE.get_or_init(AggregationVerifierCache::default)
 }
 
 struct AggregationCacheResult {
@@ -222,26 +239,51 @@ fn get_or_build_aggregation_verifier_cache_entry(
     representative_proof: &TransactionProofP3,
 ) -> Result<AggregationCacheResult, ProofError> {
     let cache = aggregation_verifier_cache();
-    if let Some(entry) = cache.lock().get(&key).cloned() {
-        return Ok(AggregationCacheResult {
-            entry,
-            cache_hit: true,
-            cache_build_ms: 0,
-        });
-    }
+    loop {
+        let mut state = cache.state.lock();
+        if let Some(entry) = state.entries.get(&key).cloned() {
+            return Ok(AggregationCacheResult {
+                entry,
+                cache_hit: true,
+                cache_build_ms: 0,
+            });
+        }
 
-    let start_build = Instant::now();
-    let built = Arc::new(build_aggregation_verifier_cache_entry(
-        key,
-        representative_proof,
-    )?);
-    let build_ms = start_build.elapsed().as_millis();
-    let mut guard = cache.lock();
-    Ok(AggregationCacheResult {
-        entry: guard.entry(key).or_insert_with(|| built.clone()).clone(),
-        cache_hit: false,
-        cache_build_ms: build_ms,
-    })
+        if state.in_progress.insert(key) {
+            drop(state);
+
+            let start_build = Instant::now();
+            let built =
+                build_aggregation_verifier_cache_entry(key, representative_proof).map(Arc::new);
+            let build_ms = start_build.elapsed().as_millis();
+
+            let mut state = cache.state.lock();
+            state.in_progress.remove(&key);
+            match built {
+                Ok(built_entry) => {
+                    let entry = state
+                        .entries
+                        .entry(key)
+                        .or_insert_with(|| built_entry.clone())
+                        .clone();
+                    cache.condvar.notify_all();
+                    return Ok(AggregationCacheResult {
+                        entry,
+                        cache_hit: false,
+                        cache_build_ms: build_ms,
+                    });
+                }
+                Err(err) => {
+                    cache.condvar.notify_all();
+                    return Err(err);
+                }
+            }
+        }
+
+        while state.in_progress.contains(&key) {
+            cache.condvar.wait(&mut state);
+        }
+    }
 }
 
 pub fn encode_aggregation_proof_bytes(raw_bytes: Vec<u8>) -> Vec<u8> {

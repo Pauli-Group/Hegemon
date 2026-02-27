@@ -78,6 +78,34 @@ impl SubstrateRpcConfig {
             ..Default::default()
         }
     }
+
+    /// Apply optional timeout/reconnect overrides from env.
+    ///
+    /// Supported variables:
+    /// - HEGEMON_WALLET_RPC_CONNECT_TIMEOUT_SECS
+    /// - HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS
+    /// - HEGEMON_WALLET_RPC_RECONNECT_ATTEMPTS
+    /// - HEGEMON_WALLET_RPC_RECONNECT_DELAY_SECS
+    pub fn apply_env_overrides(&mut self) {
+        if let Some(secs) = env_u64("HEGEMON_WALLET_RPC_CONNECT_TIMEOUT_SECS") {
+            self.connection_timeout = Duration::from_secs(secs.max(1));
+        }
+        if let Some(secs) = env_u64("HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS") {
+            self.request_timeout = Duration::from_secs(secs.max(1));
+        }
+        if let Some(attempts) = env_u64("HEGEMON_WALLET_RPC_RECONNECT_ATTEMPTS") {
+            self.max_reconnect_attempts = attempts.max(1) as u32;
+        }
+        if let Some(secs) = env_u64("HEGEMON_WALLET_RPC_RECONNECT_DELAY_SECS") {
+            self.reconnect_delay = Duration::from_secs(secs.max(1));
+        }
+    }
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
 }
 
 /// Note status response from the node
@@ -369,6 +397,7 @@ impl SubstrateRpcClient {
         if config.archive_endpoint.is_none() {
             config.archive_endpoint = std::env::var("HEGEMON_WALLET_ARCHIVE_WS_URL").ok();
         }
+        config.apply_env_overrides();
         Self::connect_with_config(config).await
     }
 
@@ -377,6 +406,7 @@ impl SubstrateRpcClient {
         if config.archive_endpoint.is_none() {
             config.archive_endpoint = std::env::var("HEGEMON_WALLET_ARCHIVE_WS_URL").ok();
         }
+        config.apply_env_overrides();
         let client = Self::build_client(&config).await?;
         Ok(Self {
             client: Arc::new(RwLock::new(client)),

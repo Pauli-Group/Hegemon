@@ -12,9 +12,14 @@ p3-circuit-prover = { workspace = true, features = ["parallel"] }
 p3-recursion = { workspace = true }
 p3-field = { workspace = true }
 p3-uni-stark = { workspace = true }
+p3-air = { workspace = true }
+p3-matrix = { workspace = true }
+p3-commit = { workspace = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1.0"
+tracing = "0.1"
+rayon = "1"
 transaction-circuit = { path = "../transaction", package = "transaction-circuit" }
 block-circuit = { path = "../block" }
 crypto = { package = "synthetic-crypto", path = "../../crypto" }

@@ -2,7 +2,7 @@ use parking_lot::Mutex;
 use sp_core::H256;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BundleMatchKey {
@@ -86,6 +86,7 @@ pub struct ProverCoordinatorConfig {
     pub workers: usize,
     pub target_txs: usize,
     pub queue_capacity: usize,
+    pub liveness_lane: bool,
     pub poll_interval: Duration,
     pub job_timeout: Duration,
     pub work_package_ttl: Duration,
@@ -103,8 +104,7 @@ impl ProverCoordinatorConfig {
         let workers = std::env::var("HEGEMON_PROVER_WORKERS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(default_workers)
-            .max(1);
+            .unwrap_or(default_workers);
         let target_txs = std::env::var("HEGEMON_BATCH_TARGET_TXS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -115,6 +115,15 @@ impl ProverCoordinatorConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(4usize)
             .max(1);
+        let liveness_lane = std::env::var("HEGEMON_PROVER_LIVENESS_LANE")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(true);
         let job_timeout_ms = std::env::var("HEGEMON_BATCH_JOB_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -144,6 +153,7 @@ impl ProverCoordinatorConfig {
             workers,
             target_txs,
             queue_capacity,
+            liveness_lane,
             poll_interval: Duration::from_millis(250),
             job_timeout: Duration::from_millis(job_timeout_ms),
             work_package_ttl: Duration::from_millis(work_package_ttl_ms),
@@ -247,6 +257,16 @@ impl ProverCoordinator {
             tx_count,
         };
         state.prepared.get(&key).cloned()
+    }
+
+    pub fn lookup_prepared_bundle_any_parent(
+        &self,
+        tx_statements_commitment: [u8; 48],
+        tx_count: u32,
+    ) -> Option<PreparedBundle> {
+        let state = self.state.lock();
+        Self::best_prepared_bundle_for_statement_locked(&state, tx_statements_commitment, tx_count)
+            .cloned()
     }
 
     #[allow(deprecated)]
@@ -426,7 +446,6 @@ impl ProverCoordinator {
                 state.current_parent = Some(parent_hash);
                 state.generation = state.generation.wrapping_add(1);
                 state.selected_txs.clear();
-                state.prepared.clear();
                 state.work_packages.clear();
                 state.latest_work_package = None;
                 state.work_status.clear();
@@ -441,25 +460,17 @@ impl ProverCoordinator {
     }
 
     fn ensure_job_queue(&self, parent_hash: H256, best_number: u64) {
-        let needs_jobs = {
-            let state = self.state.lock();
-            state.prepared.is_empty()
-                && state.pending_jobs.is_empty()
-                && Self::inflight_current_generation_count(&state) == 0
-        };
-        if !needs_jobs {
+        let mut candidate = (self.pending_txs_fn)(self.config.target_txs);
+        candidate.truncate(self.config.target_txs);
+
+        let mut state = self.state.lock();
+        if state.current_parent != Some(parent_hash) {
             return;
         }
 
-        let mut candidate = (self.pending_txs_fn)(self.config.target_txs);
-        candidate.truncate(self.config.target_txs);
+        let mut existing_best = Self::best_candidate_len_locked(&state);
         if candidate.is_empty() {
-            let mut state = self.state.lock();
-            if state.current_parent == Some(parent_hash)
-                && state.prepared.is_empty()
-                && state.pending_jobs.is_empty()
-                && Self::inflight_current_generation_count(&state) == 0
-            {
+            if existing_best == 0 {
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.latest_work_package = None;
@@ -469,41 +480,85 @@ impl ProverCoordinator {
             return;
         }
 
-        let variant_tx_counts =
-            Self::candidate_variant_tx_counts(candidate.len(), self.config.queue_capacity);
+        // Throughput-first mode: when the liveness lane is disabled, wait for
+        // a full target batch before scheduling expensive proving work.
+        if !self.config.liveness_lane && candidate.len() < self.config.target_txs {
+            return;
+        }
+
+        // Allow upsizing on the same parent as more pool transactions arrive.
+        if candidate.len() <= existing_best {
+            return;
+        }
+
+        // If a larger candidate arrives while current-generation jobs are still
+        // proving, rotate generation so scheduler can dispatch the larger batch
+        // immediately instead of waiting for stale low-tx jobs to finish.
+        let inflight_current = Self::inflight_current_generation_count(&state);
+        let full_target_ready = candidate.len() >= self.config.target_txs;
+        let full_target_not_yet_scheduled = existing_best < self.config.target_txs;
+        if inflight_current > 0 && full_target_ready && full_target_not_yet_scheduled {
+            let dropped_inflight = state.inflight_jobs.len();
+            tracing::info!(
+                block_number = best_number.saturating_add(1),
+                existing_best_tx_count = existing_best,
+                candidate_tx_count = candidate.len(),
+                inflight_current,
+                dropped_inflight,
+                target_txs = self.config.target_txs,
+                generation = state.generation,
+                "Preempting in-flight proven-batch jobs for larger candidate set"
+            );
+            state.generation = state.generation.wrapping_add(1);
+            state.selected_txs.clear();
+            state.pending_jobs.clear();
+            // Stop counting stale jobs against scheduler capacity. They will
+            // still finish in the background and be ignored by generation.
+            state.inflight_jobs.clear();
+            state.inflight_candidates.clear();
+            state.work_packages.clear();
+            state.latest_work_package = None;
+            state.work_status.clear();
+            state.source_submissions.clear();
+            existing_best = Self::best_candidate_len_locked(&state);
+            if candidate.len() <= existing_best {
+                return;
+            }
+        }
+
+        let mut variant_tx_counts = Self::candidate_variant_tx_counts(
+            candidate.len(),
+            self.config.queue_capacity,
+            self.config.liveness_lane,
+        );
+        variant_tx_counts.retain(|count| *count > existing_best);
         if variant_tx_counts.is_empty() {
             return;
         }
+
         let mut candidate_variants = VecDeque::with_capacity(variant_tx_counts.len());
         for tx_count in variant_tx_counts.iter().copied() {
             candidate_variants.push_back(candidate[..tx_count].to_vec());
         }
 
-        let mut state = self.state.lock();
-        if state.current_parent != Some(parent_hash)
-            || !state.prepared.is_empty()
-            || !state.pending_jobs.is_empty()
-            || Self::inflight_current_generation_count(&state) > 0
-        {
-            return;
-        }
-
         tracing::debug!(
             block_number = best_number.saturating_add(1),
+            existing_best_tx_count = existing_best,
             candidate_tx_count = candidate.len(),
             variant_tx_counts = ?variant_tx_counts,
             "Scheduling proven-batch candidate variants"
         );
 
-        // Keep local block assembly on the singleton liveness lane first; this
-        // allows fast-ready proofs to land while larger candidates are still
-        // proving in the background.
-        if let Some(liveness_candidate) = candidate_variants.front().cloned() {
-            state.selected_txs = liveness_candidate;
+        // Keep local block assembly on a liveness lane first so mining does not
+        // stall while larger candidates are still proving.
+        if state.selected_txs.is_empty() {
+            if let Some(liveness_candidate) = candidate_variants.front().cloned() {
+                state.selected_txs = liveness_candidate;
+            }
         }
 
-        // Publish the largest candidate as the work package while local workers run
-        // liveness-first variants in parallel.
+        // Publish the largest candidate as the external work package while
+        // local workers run liveness-first variants in parallel.
         if let Some(primary_candidate) = candidate_variants.back().cloned() {
             let package = Self::build_work_package(
                 parent_hash,
@@ -536,9 +591,39 @@ impl ProverCoordinator {
         }
     }
 
-    fn candidate_variant_tx_counts(total_txs: usize, queue_capacity: usize) -> Vec<usize> {
+    fn best_candidate_len_locked(state: &CoordinatorState) -> usize {
+        let selected = state.selected_txs.len();
+        let prepared = state
+            .prepared
+            .values()
+            .map(|bundle| bundle.candidate_txs.len())
+            .max()
+            .unwrap_or(0);
+        let pending = state
+            .pending_jobs
+            .iter()
+            .map(|job| job.candidate_txs.len())
+            .max()
+            .unwrap_or(0);
+        let inflight = state
+            .inflight_candidates
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
+        selected.max(prepared).max(pending).max(inflight)
+    }
+
+    fn candidate_variant_tx_counts(
+        total_txs: usize,
+        queue_capacity: usize,
+        liveness_lane: bool,
+    ) -> Vec<usize> {
         if total_txs == 0 {
             return Vec::new();
+        }
+        if !liveness_lane {
+            return vec![total_txs];
         }
         let capacity = queue_capacity.max(1);
         if capacity == 1 || total_txs == 1 {
@@ -671,74 +756,62 @@ impl ProverCoordinator {
                 let job_package_id =
                     Self::work_package_id(parent_hash, block_number, &candidate_txs);
 
-                let build = tokio::time::timeout(
-                    timeout,
-                    tokio::task::spawn_blocking(move || {
-                        prepare_bundle_fn(parent_hash, block_number, candidate_txs)
-                    }),
-                )
+                let build_started = Instant::now();
+                let build = tokio::task::spawn_blocking(move || {
+                    prepare_bundle_fn(parent_hash, block_number, candidate_txs)
+                })
                 .await;
+                let build_elapsed_ms = build_started.elapsed().as_millis();
 
                 let mut guard = state.lock();
                 guard.inflight_jobs.remove(&id);
                 guard.inflight_candidates.remove(&id);
 
-                if guard.current_parent != Some(parent_hash) || guard.generation != generation {
-                    tracing::debug!(
-                        job_id = id,
-                        block_number,
-                        tx_count = candidate_tx_count,
-                        package_id = %job_package_id,
-                        current_parent = ?guard.current_parent,
-                        expected_parent = ?Some(parent_hash),
-                        current_generation = guard.generation,
-                        expected_generation = generation,
-                        "Dropping stale proven-batch build result"
-                    );
+                let stale_parent = guard.current_parent != Some(parent_hash);
+                let stale_generation = guard.generation != generation;
+                let is_stale = stale_parent || stale_generation;
+                if is_stale {
                     guard.stale_count = guard.stale_count.saturating_add(1);
-                    return;
                 }
 
                 let built = match build {
-                    Ok(join) => match join {
-                        Ok(result) => result,
-                        Err(err) => {
-                            tracing::warn!(
-                                job_id = id,
-                                block_number,
-                                tx_count = candidate_tx_count,
-                                candidate_bytes,
-                                package_id = %job_package_id,
-                                error = ?err,
-                                "Prover coordinator job panicked while preparing proven batch"
-                            );
-                            guard.stale_count = guard.stale_count.saturating_add(1);
-                            return;
-                        }
-                    },
-                    Err(_) => {
+                    Ok(result) => result,
+                    Err(err) => {
                         tracing::warn!(
                             job_id = id,
                             block_number,
                             tx_count = candidate_tx_count,
                             candidate_bytes,
-                            timeout_ms = timeout.as_millis() as u64,
                             package_id = %job_package_id,
-                            "Prover coordinator job timed out while preparing proven batch"
+                            error = ?err,
+                            "Prover coordinator job panicked while preparing proven batch"
                         );
                         guard.stale_count = guard.stale_count.saturating_add(1);
                         return;
                     }
                 };
 
+                if build_elapsed_ms > timeout.as_millis() {
+                    tracing::warn!(
+                        job_id = id,
+                        block_number,
+                        tx_count = candidate_tx_count,
+                        candidate_bytes,
+                        elapsed_ms = build_elapsed_ms as u64,
+                        timeout_ms = timeout.as_millis() as u64,
+                        package_id = %job_package_id,
+                        "Prover coordinator job exceeded timeout budget while preparing proven batch"
+                    );
+                }
+
                 match built {
                     Ok(bundle) => {
                         let candidate_len = bundle.candidate_txs.len();
                         guard.last_build_ms = bundle.build_ms;
-                        if candidate_len > guard.selected_txs.len() {
+                        if !is_stale && candidate_len > guard.selected_txs.len() {
                             guard.selected_txs = bundle.candidate_txs.clone();
                         }
-                        if candidate_len >= target_txs {
+                        if !is_stale && candidate_len >= target_txs {
                             guard.pending_jobs.clear();
                         }
                         tracing::info!(
@@ -748,6 +821,8 @@ impl ProverCoordinator {
                             candidate_bytes,
                             build_ms = bundle.build_ms,
                             package_id = %job_package_id,
+                            stale_parent,
+                            stale_generation,
                             "Prepared proven batch candidate"
                         );
                         guard.prepared.insert(bundle.key.clone(), bundle);
@@ -792,18 +867,41 @@ impl ProverCoordinator {
     }
 
     fn best_prepared_candidate_locked(state: &CoordinatorState) -> Option<Vec<Vec<u8>>> {
-        let current_parent = state.current_parent?;
-        let mut best: Option<&PreparedBundle> = None;
+        let current_parent = state.current_parent;
+        let mut best_current_parent: Option<&PreparedBundle> = None;
+        let mut best_any_parent: Option<&PreparedBundle> = None;
         for bundle in state.prepared.values() {
-            if bundle.key.parent_hash != current_parent {
-                continue;
+            if best_any_parent
+                .is_none_or(|current| bundle.candidate_txs.len() > current.candidate_txs.len())
+            {
+                best_any_parent = Some(bundle);
             }
-            if best.is_none_or(|current| bundle.candidate_txs.len() > current.candidate_txs.len()) {
-                best = Some(bundle);
+            if Some(bundle.key.parent_hash) == current_parent
+                && best_current_parent
+                    .is_none_or(|current| bundle.candidate_txs.len() > current.candidate_txs.len())
+            {
+                best_current_parent = Some(bundle);
             }
         }
 
-        best.map(|bundle| bundle.candidate_txs.clone())
+        best_current_parent
+            .or(best_any_parent)
+            .map(|bundle| bundle.candidate_txs.clone())
+    }
+
+    fn best_prepared_bundle_for_statement_locked(
+        state: &CoordinatorState,
+        tx_statements_commitment: [u8; 48],
+        tx_count: u32,
+    ) -> Option<&PreparedBundle> {
+        state
+            .prepared
+            .values()
+            .filter(|bundle| {
+                bundle.key.tx_statements_commitment == tx_statements_commitment
+                    && bundle.key.tx_count == tx_count
+            })
+            .max_by_key(|bundle| bundle.candidate_txs.len())
     }
 }
 
@@ -817,6 +915,7 @@ mod tests {
             workers: 1,
             target_txs: 1,
             queue_capacity: 1,
+            liveness_lane: true,
             poll_interval: Duration::from_millis(10),
             job_timeout: Duration::from_secs(2),
             work_package_ttl: Duration::from_secs(2),
@@ -877,7 +976,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn stale_parent_results_are_discarded() {
+    async fn stale_parent_results_are_preserved_for_reuse() {
         let first_parent = H256::repeat_byte(21);
         let second_parent = H256::repeat_byte(22);
         let best_state = Arc::new(Mutex::new((first_parent, 12u64)));
@@ -918,7 +1017,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(260)).await;
 
         let stale_lookup = coordinator.lookup_prepared_bundle(first_parent, [1u8; 48], 1);
-        assert!(stale_lookup.is_none());
+        assert!(stale_lookup.is_some());
+        let any_parent_lookup = coordinator.lookup_prepared_bundle_any_parent([1u8; 48], 1);
+        assert!(any_parent_lookup.is_some());
         assert!(coordinator.stale_count() > 0);
     }
 
@@ -953,7 +1054,9 @@ mod tests {
 
         assert_eq!(coordinator.active_jobs(), 0);
         assert_eq!(coordinator.queued_jobs(), 0);
-        assert!(coordinator.pending_transactions(8).is_empty());
+        // Keep a liveness candidate visible even after a failed build so local
+        // block assembly can continue attempting inclusion.
+        assert_eq!(coordinator.pending_transactions(8), vec![vec![4u8]]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1144,27 +1247,149 @@ mod tests {
         assert_eq!(coordinator.pending_transactions(8).len(), 8);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn work_package_upsizes_while_smaller_job_is_inflight() {
+        let parent_hash = H256::repeat_byte(73);
+        let mut config = test_config();
+        config.target_txs = 8;
+        config.queue_capacity = 1;
+        config.liveness_lane = true;
+        config.workers = 1;
+        config.poll_interval = Duration::from_millis(10);
+        config.job_timeout = Duration::from_secs(2);
+
+        let pending_size = Arc::new(AtomicUsize::new(1));
+        let best = Arc::new(move || (parent_hash, 12u64));
+        let pending = {
+            let pending_size = Arc::clone(&pending_size);
+            Arc::new(move |_max_txs: usize| {
+                let size = pending_size.load(Ordering::SeqCst);
+                (0..size).map(|idx| vec![(idx + 1) as u8]).collect()
+            })
+        };
+        let build = Arc::new(
+            move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                let tx_count = candidate_txs.len() as u32;
+                let sleep_ms = if tx_count == 1 { 300 } else { 20 };
+                std::thread::sleep(Duration::from_millis(sleep_ms));
+                let commitment = [tx_count as u8; 48];
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: parent,
+                        tx_statements_commitment: commitment,
+                        tx_count,
+                    },
+                    payload: ready_payload(tx_count, commitment),
+                    candidate_txs,
+                    build_ms: sleep_ms as u128,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        let first = coordinator
+            .get_work_package()
+            .expect("initial work package should exist");
+        assert_eq!(first.tx_count, 1);
+
+        pending_size.store(8, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        let upsized = coordinator
+            .get_work_package()
+            .expect("upsized work package should exist");
+        assert_eq!(upsized.tx_count, 8);
+        assert_ne!(upsized.package_id, first.package_id);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn throughput_mode_defers_until_target_batch_is_available() {
+        let parent_hash = H256::repeat_byte(74);
+        let mut config = test_config();
+        config.target_txs = 4;
+        config.queue_capacity = 1;
+        config.liveness_lane = false;
+        config.workers = 1;
+        config.poll_interval = Duration::from_millis(10);
+
+        let pending_size = Arc::new(AtomicUsize::new(1));
+        let best = Arc::new(move || (parent_hash, 13u64));
+        let pending = {
+            let pending_size = Arc::clone(&pending_size);
+            Arc::new(move |_max_txs: usize| {
+                let size = pending_size.load(Ordering::SeqCst);
+                (0..size).map(|idx| vec![(idx + 1) as u8]).collect()
+            })
+        };
+        let build = Arc::new(
+            move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                let tx_count = candidate_txs.len() as u32;
+                let commitment = [tx_count as u8; 48];
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: parent,
+                        tx_statements_commitment: commitment,
+                        tx_count,
+                    },
+                    payload: ready_payload(tx_count, commitment),
+                    candidate_txs,
+                    build_ms: 1,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        assert!(coordinator.get_work_package().is_none());
+        assert_eq!(coordinator.pending_transactions(8).len(), 0);
+
+        pending_size.store(4, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        let package = coordinator
+            .get_work_package()
+            .expect("target-sized work package should exist");
+        assert_eq!(package.tx_count, 4);
+    }
+
     #[test]
     fn candidate_variant_tx_counts_keep_liveness_lane() {
         assert_eq!(
-            ProverCoordinator::candidate_variant_tx_counts(1000, 1),
+            ProverCoordinator::candidate_variant_tx_counts(1000, 1, true),
             vec![1000]
         );
         assert_eq!(
-            ProverCoordinator::candidate_variant_tx_counts(1000, 2),
+            ProverCoordinator::candidate_variant_tx_counts(1000, 2, true),
             vec![1, 1000]
         );
         assert_eq!(
-            ProverCoordinator::candidate_variant_tx_counts(1000, 3),
+            ProverCoordinator::candidate_variant_tx_counts(1000, 3, true),
             vec![1, 500, 1000]
         );
         assert_eq!(
-            ProverCoordinator::candidate_variant_tx_counts(1000, 4),
+            ProverCoordinator::candidate_variant_tx_counts(1000, 4, true),
             vec![1, 250, 500, 1000]
         );
         assert_eq!(
-            ProverCoordinator::candidate_variant_tx_counts(3, 4),
+            ProverCoordinator::candidate_variant_tx_counts(3, 4, true),
             vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn candidate_variant_tx_counts_can_disable_liveness_lane() {
+        assert_eq!(
+            ProverCoordinator::candidate_variant_tx_counts(1000, 4, false),
+            vec![1000]
+        );
+        assert_eq!(
+            ProverCoordinator::candidate_variant_tx_counts(3, 4, false),
+            vec![3]
         );
     }
 }

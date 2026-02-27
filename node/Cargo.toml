@@ -23,6 +23,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 once_cell = "1.19"
 parking_lot = "0.12"
+rayon = "1"
 pq-noise = { path = "../pq-noise" }
 protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning" }
 rcgen = "0.13"
