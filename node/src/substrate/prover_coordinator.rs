@@ -243,25 +243,118 @@ impl ProverCoordinator {
         levels
     }
 
+    fn candidate_digest(candidate_txs: &[Vec<u8>]) -> [u8; 32] {
+        let mut bytes = Vec::new();
+        for tx in candidate_txs {
+            bytes.extend_from_slice(&(tx.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(tx);
+        }
+        sp_core::hashing::blake2_256(&bytes)
+    }
+
     fn work_package_shape_id(
         parent_hash: H256,
         block_number: u64,
         stage_type: &str,
         level: u16,
+        stage_index: u32,
         arity: u16,
-        candidate_txs: &[Vec<u8>],
+        tx_count: u32,
+        candidate_digest: [u8; 32],
     ) -> [u8; 32] {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(parent_hash.as_bytes());
         bytes.extend_from_slice(&block_number.to_le_bytes());
         bytes.extend_from_slice(stage_type.as_bytes());
         bytes.extend_from_slice(&level.to_le_bytes());
+        bytes.extend_from_slice(&stage_index.to_le_bytes());
         bytes.extend_from_slice(&arity.to_le_bytes());
-        for tx in candidate_txs {
-            bytes.extend_from_slice(&(tx.len() as u64).to_le_bytes());
-            bytes.extend_from_slice(tx);
-        }
+        bytes.extend_from_slice(&tx_count.to_le_bytes());
+        bytes.extend_from_slice(&candidate_digest);
         sp_core::hashing::blake2_256(&bytes)
+    }
+
+    fn stage_work_id(
+        parent_hash: H256,
+        block_number: u64,
+        stage_type: &str,
+        level: u16,
+        stage_index: u32,
+        arity: u16,
+        tx_count: u32,
+        candidate_digest: [u8; 32],
+    ) -> String {
+        hex::encode(Self::work_package_shape_id(
+            parent_hash,
+            block_number,
+            stage_type,
+            level,
+            stage_index,
+            arity,
+            tx_count,
+            candidate_digest,
+        ))
+    }
+
+    fn root_stage_metadata(
+        parent_hash: H256,
+        block_number: u64,
+        candidate_txs: &[Vec<u8>],
+        arity: u16,
+    ) -> (u16, [u8; 32], Vec<String>) {
+        let tx_count = candidate_txs.len().max(1) as u32;
+        let candidate_digest = Self::candidate_digest(candidate_txs);
+        let radix = arity.max(2) as usize;
+
+        let mut level_widths = vec![tx_count as usize];
+        while level_widths.last().copied().unwrap_or(1) > 1 {
+            let next = level_widths.last().copied().unwrap_or(1).div_ceil(radix);
+            level_widths.push(next);
+        }
+
+        let root_level = level_widths.len().saturating_sub(1) as u16;
+        debug_assert_eq!(
+            root_level.saturating_add(1),
+            Self::tree_levels_for_tx_count(tx_count as usize, arity)
+        );
+        let root_shape_id = Self::work_package_shape_id(
+            parent_hash,
+            block_number,
+            "root_finalize",
+            root_level,
+            0,
+            arity,
+            tx_count,
+            candidate_digest,
+        );
+
+        let dependencies = if root_level == 0 {
+            Vec::new()
+        } else {
+            let parent_level = root_level.saturating_sub(1) as usize;
+            let parent_stage = if parent_level == 0 {
+                "leaf_verify"
+            } else {
+                "merge"
+            };
+            let parent_width = level_widths[parent_level];
+            (0..parent_width)
+                .map(|idx| {
+                    Self::stage_work_id(
+                        parent_hash,
+                        block_number,
+                        parent_stage,
+                        parent_level as u16,
+                        idx as u32,
+                        arity,
+                        tx_count,
+                        candidate_digest,
+                    )
+                })
+                .collect()
+        };
+
+        (root_level, root_shape_id, dependencies)
     }
 
     fn stage_mem_budget_mb() -> usize {
@@ -698,17 +791,13 @@ impl ProverCoordinator {
 
         while let Some(candidate_txs) = candidate_variants.pop_front() {
             let arity = Self::aggregation_tree_arity();
-            let levels = Self::tree_levels_for_tx_count(candidate_txs.len(), arity);
-            let level = levels.saturating_sub(1);
-            let stage_type = "root_finalize".to_string();
-            let shape_id = Self::work_package_shape_id(
+            let (level, shape_id, dependencies) = Self::root_stage_metadata(
                 parent_hash,
                 best_number.saturating_add(1),
-                &stage_type,
-                level,
-                arity,
                 &candidate_txs,
+                arity,
             );
+            let stage_type = "root_finalize".to_string();
             let job = QueuedJob {
                 id: state.next_job_id,
                 generation: state.generation,
@@ -718,7 +807,7 @@ impl ProverCoordinator {
                 level,
                 arity,
                 shape_id,
-                dependencies: Vec::new(),
+                dependencies,
                 enqueued_at: Instant::now(),
                 candidate_txs,
             };
@@ -774,23 +863,23 @@ impl ProverCoordinator {
         if state.selected_txs.is_empty() || state.selected_txs.len() > 1 {
             state.selected_txs = singleton_candidate.clone();
         }
+        let arity = Self::aggregation_tree_arity();
+        let (level, shape_id, dependencies) = Self::root_stage_metadata(
+            parent_hash,
+            best_number.saturating_add(1),
+            &singleton_candidate,
+            arity,
+        );
         let job = QueuedJob {
             id: state.next_job_id,
             generation: state.generation,
             parent_hash,
             block_number: best_number.saturating_add(1),
             stage_type: "root_finalize".to_string(),
-            level: 0,
-            arity: Self::aggregation_tree_arity(),
-            shape_id: Self::work_package_shape_id(
-                parent_hash,
-                best_number.saturating_add(1),
-                "root_finalize",
-                0,
-                Self::aggregation_tree_arity(),
-                &singleton_candidate,
-            ),
-            dependencies: Vec::new(),
+            level,
+            arity,
+            shape_id,
+            dependencies,
             enqueued_at: Instant::now(),
             candidate_txs: singleton_candidate,
         };
@@ -873,17 +962,9 @@ impl ProverCoordinator {
         let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
         let tx_count = candidate_txs.len() as u32;
         let arity = Self::aggregation_tree_arity();
-        let tree_levels = Self::tree_levels_for_tx_count(candidate_txs.len(), arity);
-        let level = tree_levels.saturating_sub(1);
+        let (level, shape_id, dependencies) =
+            Self::root_stage_metadata(parent_hash, block_number, &candidate_txs, arity);
         let stage_type = "root_finalize".to_string();
-        let shape_id = Self::work_package_shape_id(
-            parent_hash,
-            block_number,
-            &stage_type,
-            level,
-            arity,
-            &candidate_txs,
-        );
         let package_id = Self::work_package_id(parent_hash, block_number, &candidate_txs);
         WorkPackage {
             package_id,
@@ -893,7 +974,7 @@ impl ProverCoordinator {
             level,
             arity,
             shape_id,
-            dependencies: Vec::new(),
+            dependencies,
             tx_count,
             candidate_txs,
             created_at_ms,
@@ -1568,6 +1649,9 @@ mod tests {
             .expect("upsized work package should exist");
         assert_eq!(upsized.tx_count, 8);
         assert_ne!(upsized.package_id, first.package_id);
+        assert_eq!(upsized.stage_type, "root_finalize");
+        assert_eq!(upsized.level, 1);
+        assert_eq!(upsized.dependencies.len(), 8);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1663,6 +1747,79 @@ mod tests {
         // Target proving is still cold; adaptive singleton lane should be
         // prepared and visible for local block assembly.
         assert_eq!(coordinator.pending_transactions(8).len(), 1);
+    }
+
+    #[test]
+    fn root_stage_metadata_uses_leaf_dependencies_for_two_level_tree() {
+        let parent_hash = H256::repeat_byte(78);
+        let block_number = 17u64;
+        let arity = 8u16;
+        let candidate_txs = vec![vec![1u8], vec![2u8], vec![3u8]];
+        let tx_count = candidate_txs.len() as u32;
+        let candidate_digest = ProverCoordinator::candidate_digest(&candidate_txs);
+
+        let (level, shape_id, dependencies) = ProverCoordinator::root_stage_metadata(
+            parent_hash,
+            block_number,
+            &candidate_txs,
+            arity,
+        );
+
+        assert_eq!(level, 1);
+        assert_ne!(shape_id, [0u8; 32]);
+        assert_eq!(dependencies.len(), 3);
+
+        let expected = (0..3u32)
+            .map(|idx| {
+                ProverCoordinator::stage_work_id(
+                    parent_hash,
+                    block_number,
+                    "leaf_verify",
+                    0,
+                    idx,
+                    arity,
+                    tx_count,
+                    candidate_digest,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(dependencies, expected);
+    }
+
+    #[test]
+    fn root_stage_metadata_uses_merge_dependencies_for_multi_level_tree() {
+        let parent_hash = H256::repeat_byte(79);
+        let block_number = 18u64;
+        let arity = 8u16;
+        let candidate_txs = (0..20u8).map(|v| vec![v]).collect::<Vec<_>>();
+        let tx_count = candidate_txs.len() as u32;
+        let candidate_digest = ProverCoordinator::candidate_digest(&candidate_txs);
+
+        let (level, _shape_id, dependencies) = ProverCoordinator::root_stage_metadata(
+            parent_hash,
+            block_number,
+            &candidate_txs,
+            arity,
+        );
+
+        assert_eq!(level, 2);
+        assert_eq!(dependencies.len(), 3);
+
+        let expected = (0..3u32)
+            .map(|idx| {
+                ProverCoordinator::stage_work_id(
+                    parent_hash,
+                    block_number,
+                    "merge",
+                    1,
+                    idx,
+                    arity,
+                    tx_count,
+                    candidate_digest,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(dependencies, expected);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
