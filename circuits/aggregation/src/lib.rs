@@ -6,7 +6,7 @@
 use p3_air::{Air, BaseAir};
 use p3_batch_stark::common::{GlobalPreprocessed, PreprocessedInstanceMeta};
 use p3_batch_stark::{CommonData, StarkGenericConfig};
-use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner};
+use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner, WitnessId};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::common::CircuitTableAir;
 use p3_circuit_prover::{config as circuit_config, BatchStarkProver, TablePacking};
@@ -51,6 +51,8 @@ type InnerFri = FriProofTargets<
     InputProofTargets<Val, Challenge, RecValMmcs<Val, DIGEST_ELEMS, Hash, Compress>>,
     Witness<Val>,
 >;
+type InnerVerifierInputs =
+    StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ProofShape {
@@ -70,10 +72,14 @@ struct AggregationProverKey {
 
 type OuterWitnessMultiplicities = Vec<StarkVal<circuit_config::GoldilocksConfig>>;
 
+struct ProofWitnessAssignmentPlan {
+    witness_ids: Vec<WitnessId>,
+}
+
 struct AggregationProverCacheEntry {
     circuit: Circuit<Challenge>,
-    verifier_inputs:
-        Vec<StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>>,
+    verifier_inputs: Vec<InnerVerifierInputs>,
+    witness_assignment_plans: Vec<ProofWitnessAssignmentPlan>,
     common: Arc<CommonData<circuit_config::GoldilocksConfig>>,
     witness_multiplicities: OuterWitnessMultiplicities,
 }
@@ -382,6 +388,173 @@ fn infer_log_blowup_from_proof_shape(proof: &TransactionProofP3) -> Option<usize
     observed_log_max_height?.checked_sub(baseline)
 }
 
+fn collect_verifier_witness_targets(inputs: &InnerVerifierInputs) -> Vec<p3_recursion::Target> {
+    let mut targets = Vec::new();
+    let commitment_targets = &inputs.proof_targets.commitments_targets;
+    targets.extend(
+        commitment_targets
+            .trace_targets
+            .hash_targets
+            .iter()
+            .copied(),
+    );
+    targets.extend(
+        commitment_targets
+            .quotient_chunks_targets
+            .hash_targets
+            .iter()
+            .copied(),
+    );
+    if let Some(commit_targets) = commitment_targets.random_commit.as_ref() {
+        targets.extend(commit_targets.hash_targets.iter().copied());
+    }
+
+    let opened_targets = &inputs.proof_targets.opened_values_targets;
+    targets.extend(opened_targets.trace_local_targets.iter().copied());
+    targets.extend(opened_targets.trace_next_targets.iter().copied());
+    if let Some(preprocessed_targets) = opened_targets.preprocessed_local_targets.as_ref() {
+        targets.extend(preprocessed_targets.iter().copied());
+    }
+    if let Some(preprocessed_targets) = opened_targets.preprocessed_next_targets.as_ref() {
+        targets.extend(preprocessed_targets.iter().copied());
+    }
+    for chunk_targets in &opened_targets.quotient_chunks_targets {
+        targets.extend(chunk_targets.iter().copied());
+    }
+    if let Some(random_targets) = opened_targets.random_targets.as_ref() {
+        targets.extend(random_targets.iter().copied());
+    }
+
+    let fri_targets = &inputs.proof_targets.opening_proof;
+    for commit_targets in &fri_targets.commit_phase_commits {
+        targets.extend(commit_targets.hash_targets.iter().copied());
+    }
+    for pow_target in &fri_targets.commit_pow_witnesses {
+        targets.push(pow_target.witness);
+    }
+    targets.extend(fri_targets.final_poly.iter().copied());
+    targets.push(fri_targets.pow_witness.witness);
+
+    for query_targets in &fri_targets.query_proofs {
+        for batch_targets in &query_targets.input_proof {
+            for row_targets in &batch_targets.opened_values {
+                targets.extend(row_targets.iter().copied());
+            }
+            for hash_targets in &batch_targets.opening_proof.hash_proof_targets {
+                targets.extend(hash_targets.iter().copied());
+            }
+        }
+
+        for step_targets in &query_targets.commit_phase_openings {
+            targets.push(step_targets.sibling_value);
+            for hash_targets in &step_targets.opening_proof.hash_proof_targets {
+                targets.extend(hash_targets.iter().copied());
+            }
+        }
+    }
+    targets
+}
+
+fn build_witness_assignment_plans(
+    circuit: &Circuit<Challenge>,
+    verifier_inputs: &[InnerVerifierInputs],
+) -> Result<Vec<ProofWitnessAssignmentPlan>, AggregationError> {
+    verifier_inputs
+        .iter()
+        .map(|inputs| {
+            let targets = collect_verifier_witness_targets(inputs);
+            let mut witness_ids = Vec::with_capacity(targets.len());
+            for target in targets {
+                let witness_id = circuit.expr_to_widx.get(&target).copied().ok_or_else(|| {
+                    AggregationError::CircuitBuild(
+                        "failed to resolve witness index for verifier target".to_string(),
+                    )
+                })?;
+                witness_ids.push(witness_id);
+            }
+            Ok(ProofWitnessAssignmentPlan { witness_ids })
+        })
+        .collect()
+}
+
+fn collect_proof_witness_values(proof: &TransactionProofP3) -> Vec<Challenge> {
+    let mut values = Vec::new();
+    let proof_commitments = &proof.commitments;
+    values.extend(
+        proof_commitments
+            .trace
+            .as_ref()
+            .iter()
+            .copied()
+            .map(Challenge::from),
+    );
+    values.extend(
+        proof_commitments
+            .quotient_chunks
+            .as_ref()
+            .iter()
+            .copied()
+            .map(Challenge::from),
+    );
+    if let Some(random_commitment) = proof_commitments.random.as_ref() {
+        values.extend(
+            random_commitment
+                .as_ref()
+                .iter()
+                .copied()
+                .map(Challenge::from),
+        );
+    }
+
+    let opened_values = &proof.opened_values;
+    values.extend(opened_values.trace_local.iter().copied());
+    values.extend(opened_values.trace_next.iter().copied());
+    if let Some(preprocessed_values) = opened_values.preprocessed_local.as_ref() {
+        values.extend(preprocessed_values.iter().copied());
+    }
+    if let Some(preprocessed_values) = opened_values.preprocessed_next.as_ref() {
+        values.extend(preprocessed_values.iter().copied());
+    }
+    for chunk_values in &opened_values.quotient_chunks {
+        values.extend(chunk_values.iter().copied());
+    }
+    if let Some(random_values) = opened_values.random.as_ref() {
+        values.extend(random_values.iter().copied());
+    }
+
+    let fri_proof = &proof.opening_proof;
+    for commit_values in &fri_proof.commit_phase_commits {
+        values.extend(commit_values.as_ref().iter().copied().map(Challenge::from));
+    }
+    values.extend(
+        fri_proof
+            .commit_pow_witnesses
+            .iter()
+            .copied()
+            .map(Challenge::from),
+    );
+    values.extend(fri_proof.final_poly.iter().copied());
+    values.push(Challenge::from(fri_proof.query_pow_witness));
+
+    for query_proof in &fri_proof.query_proofs {
+        for batch_proof in &query_proof.input_proof {
+            for row_values in &batch_proof.opened_values {
+                values.extend(row_values.iter().copied().map(Challenge::from));
+            }
+            for hash_values in &batch_proof.opening_proof {
+                values.extend(hash_values.iter().copied().map(Challenge::from));
+            }
+        }
+        for step_proof in &query_proof.commit_phase_openings {
+            values.push(step_proof.sibling_value);
+            for hash_values in &step_proof.opening_proof {
+                values.extend(hash_values.iter().copied().map(Challenge::from));
+            }
+        }
+    }
+    values
+}
+
 fn build_aggregation_prover_cache_entry(
     key: AggregationProverKey,
     representative_proof: &TransactionProofP3,
@@ -448,6 +621,7 @@ fn build_aggregation_prover_cache_entry(
     let circuit = circuit_builder
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    let witness_assignment_plans = build_witness_assignment_plans(&circuit, &verifier_inputs)?;
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_circuit_build tx_count={} build_ms={} total_ms={}",
@@ -491,6 +665,7 @@ fn build_aggregation_prover_cache_entry(
     Ok(AggregationProverCacheEntry {
         circuit,
         verifier_inputs,
+        witness_assignment_plans,
         common,
         witness_multiplicities,
     })
@@ -1014,30 +1189,75 @@ pub fn prove_aggregation(
     let log_height_max = log_final_poly_len + log_blowup;
     let inner_config = config_with_fri(log_blowup, expected_shape.query_count);
 
-    let mut recursion_public_inputs = Vec::new();
     let pack_started = Instant::now();
+    let challenge_jobs = || {
+        inner_proofs
+            .par_iter()
+            .zip(public_inputs.par_iter())
+            .enumerate()
+            .map(|(index, (proof, pub_inputs_vec))| {
+                generate_challenges(
+                    &TransactionAirP3,
+                    &inner_config.config,
+                    proof,
+                    pub_inputs_vec,
+                    Some(&[query_pow_bits, log_height_max]),
+                )
+                .map_err(|err| AggregationError::ChallengeDerivation {
+                    index,
+                    message: format!("{err:?}"),
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let challenge_results = if level_parallelism > 1 {
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(level_parallelism)
+            .build()
+        {
+            Ok(pool) => pool.install(challenge_jobs),
+            Err(_) => challenge_jobs(),
+        }
+    } else {
+        inner_proofs
+            .iter()
+            .zip(public_inputs.iter())
+            .enumerate()
+            .map(|(index, (proof, pub_inputs_vec))| {
+                generate_challenges(
+                    &TransactionAirP3,
+                    &inner_config.config,
+                    proof,
+                    pub_inputs_vec,
+                    Some(&[query_pow_bits, log_height_max]),
+                )
+                .map_err(|err| AggregationError::ChallengeDerivation {
+                    index,
+                    message: format!("{err:?}"),
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let challenges = challenge_results
+        .into_iter()
+        .collect::<Result<Vec<_>, AggregationError>>()?;
+
+    let mut recursion_public_inputs = Vec::new();
     for (index, (proof, pub_inputs_vec)) in
         inner_proofs.iter().zip(public_inputs.iter()).enumerate()
     {
-        let challenges = generate_challenges(
-            &TransactionAirP3,
-            &inner_config.config,
-            proof,
-            pub_inputs_vec,
-            Some(&[query_pow_bits, log_height_max]),
-        )
-        .map_err(|err| AggregationError::ChallengeDerivation {
-            index,
-            message: format!("{err:?}"),
-        })?;
         let num_queries = proof.opening_proof.query_proofs.len();
         let packed = cache_result.entry.verifier_inputs[index].pack_values(
             pub_inputs_vec,
             proof,
             &None,
-            &challenges,
+            &challenges[index],
             num_queries,
         );
+        if index == 0 {
+            recursion_public_inputs
+                .reserve(packed.len().saturating_mul(transaction_proofs.len().max(1)));
+        }
         recursion_public_inputs.extend(packed);
     }
     let pack_ms = pack_started.elapsed().as_millis();
@@ -1057,10 +1277,9 @@ pub fn prove_aggregation(
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
     let set_public_ms = set_public_started.elapsed().as_millis();
     let set_witness_started = Instant::now();
-    set_stark_verifier_witnesses(
-        &cache_result.entry.circuit,
+    set_stark_verifier_witnesses_with_plans(
         &mut runner,
-        &cache_result.entry.verifier_inputs,
+        &cache_result.entry.witness_assignment_plans,
         &inner_proofs,
     )
     .map_err(|err| AggregationError::CircuitRun(format!("set witness targets: {err:?}")))?;
@@ -1217,263 +1436,32 @@ fn pack_recursion_public_values_v1(values: &[Challenge]) -> Vec<u64> {
     out
 }
 
-fn set_target(
-    circuit: &Circuit<Challenge>,
+fn set_stark_verifier_witnesses_with_plans(
     runner: &mut CircuitRunner<Challenge>,
-    target: p3_recursion::Target,
-    value: Challenge,
-) -> Result<(), CircuitError> {
-    let witness_id = circuit
-        .expr_to_widx
-        .get(&target)
-        .copied()
-        .ok_or(CircuitError::ExprIdNotFound { expr_id: target })?;
-    runner.set_witness_value(witness_id, value)
-}
-
-fn set_targets(
-    circuit: &Circuit<Challenge>,
-    runner: &mut CircuitRunner<Challenge>,
-    targets: &[p3_recursion::Target],
-    values: &[Challenge],
-) -> Result<(), CircuitError> {
-    if targets.len() != values.len() {
-        return Err(CircuitError::PublicInputLengthMismatch {
-            expected: targets.len(),
-            got: values.len(),
-        });
-    }
-    for (target, value) in targets.iter().copied().zip(values.iter().copied()) {
-        set_target(circuit, runner, target, value)?;
-    }
-    Ok(())
-}
-
-fn set_hash_targets<T: Into<Challenge>>(
-    circuit: &Circuit<Challenge>,
-    runner: &mut CircuitRunner<Challenge>,
-    targets: &[p3_recursion::Target; DIGEST_ELEMS],
-    values: impl IntoIterator<Item = T>,
-) -> Result<(), CircuitError> {
-    let values_vec: Vec<T> = values.into_iter().collect();
-    if values_vec.len() != DIGEST_ELEMS {
-        return Err(CircuitError::PublicInputLengthMismatch {
-            expected: DIGEST_ELEMS,
-            got: values_vec.len(),
-        });
-    }
-    for (target, value) in targets.iter().copied().zip(values_vec.into_iter()) {
-        set_target(circuit, runner, target, value.into())?;
-    }
-    Ok(())
-}
-
-fn set_stark_verifier_witnesses(
-    circuit: &Circuit<Challenge>,
-    runner: &mut CircuitRunner<Challenge>,
-    verifier_inputs: &[StarkVerifierInputsBuilder<
-        Config,
-        HashTargets<Val, DIGEST_ELEMS>,
-        InnerFri,
-    >],
+    witness_assignment_plans: &[ProofWitnessAssignmentPlan],
     proofs: &[TransactionProofP3],
 ) -> Result<(), CircuitError> {
-    for (inputs, proof) in verifier_inputs.iter().zip(proofs.iter()) {
-        let commitment_targets = &inputs.proof_targets.commitments_targets;
-        let proof_commitments = &proof.commitments;
-        set_hash_targets(
-            circuit,
-            runner,
-            &commitment_targets.trace_targets.hash_targets,
-            proof_commitments.trace.as_ref().iter().copied(),
-        )?;
-        set_hash_targets(
-            circuit,
-            runner,
-            &commitment_targets.quotient_chunks_targets.hash_targets,
-            proof_commitments.quotient_chunks.as_ref().iter().copied(),
-        )?;
-        if let (Some(commit_targets), Some(commit_values)) = (
-            commitment_targets.random_commit.as_ref(),
-            proof_commitments.random.as_ref(),
-        ) {
-            set_hash_targets(
-                circuit,
-                runner,
-                &commit_targets.hash_targets,
-                commit_values.as_ref().iter().copied(),
-            )?;
-        }
-
-        let opened_targets = &inputs.proof_targets.opened_values_targets;
-        let opened_values = &proof.opened_values;
-        set_targets(
-            circuit,
-            runner,
-            &opened_targets.trace_local_targets,
-            &opened_values.trace_local,
-        )?;
-        set_targets(
-            circuit,
-            runner,
-            &opened_targets.trace_next_targets,
-            &opened_values.trace_next,
-        )?;
-        match (
-            opened_targets.preprocessed_local_targets.as_ref(),
-            opened_values.preprocessed_local.as_ref(),
-        ) {
-            (Some(targets), Some(values)) => {
-                set_targets(circuit, runner, targets, values)?;
-            }
-            (None, None) => {}
-            _ => {
-                return Err(CircuitError::PublicInputLengthMismatch {
-                    expected: usize::from(opened_targets.preprocessed_local_targets.is_some()),
-                    got: usize::from(opened_values.preprocessed_local.is_some()),
-                });
-            }
-        }
-        match (
-            opened_targets.preprocessed_next_targets.as_ref(),
-            opened_values.preprocessed_next.as_ref(),
-        ) {
-            (Some(targets), Some(values)) => {
-                set_targets(circuit, runner, targets, values)?;
-            }
-            (None, None) => {}
-            _ => {
-                return Err(CircuitError::PublicInputLengthMismatch {
-                    expected: usize::from(opened_targets.preprocessed_next_targets.is_some()),
-                    got: usize::from(opened_values.preprocessed_next.is_some()),
-                });
-            }
-        }
-        if opened_targets.quotient_chunks_targets.len() != opened_values.quotient_chunks.len() {
+    if witness_assignment_plans.len() != proofs.len() {
+        return Err(CircuitError::PublicInputLengthMismatch {
+            expected: witness_assignment_plans.len(),
+            got: proofs.len(),
+        });
+    }
+    for (assignment_plan, proof) in witness_assignment_plans.iter().zip(proofs.iter()) {
+        let values = collect_proof_witness_values(proof);
+        if assignment_plan.witness_ids.len() != values.len() {
             return Err(CircuitError::PublicInputLengthMismatch {
-                expected: opened_targets.quotient_chunks_targets.len(),
-                got: opened_values.quotient_chunks.len(),
+                expected: assignment_plan.witness_ids.len(),
+                got: values.len(),
             });
         }
-        for (chunk_targets, chunk_values) in opened_targets
-            .quotient_chunks_targets
+        for (witness_id, value) in assignment_plan
+            .witness_ids
             .iter()
-            .zip(opened_values.quotient_chunks.iter())
+            .copied()
+            .zip(values.into_iter())
         {
-            set_targets(circuit, runner, chunk_targets, chunk_values)?;
-        }
-        match (
-            opened_targets.random_targets.as_ref(),
-            opened_values.random.as_ref(),
-        ) {
-            (Some(targets), Some(values)) => {
-                set_targets(circuit, runner, targets, values)?;
-            }
-            (None, None) => {}
-            _ => {
-                return Err(CircuitError::PublicInputLengthMismatch {
-                    expected: usize::from(opened_targets.random_targets.is_some()),
-                    got: usize::from(opened_values.random.is_some()),
-                });
-            }
-        }
-
-        let fri_targets = &inputs.proof_targets.opening_proof;
-        let fri_proof = &proof.opening_proof;
-        for (commit_targets, commit_values) in fri_targets
-            .commit_phase_commits
-            .iter()
-            .zip(fri_proof.commit_phase_commits.iter())
-        {
-            set_hash_targets(
-                circuit,
-                runner,
-                &commit_targets.hash_targets,
-                commit_values.as_ref().iter().copied(),
-            )?;
-        }
-        for (pow_target, pow_value) in fri_targets
-            .commit_pow_witnesses
-            .iter()
-            .zip(fri_proof.commit_pow_witnesses.iter())
-        {
-            set_target(
-                circuit,
-                runner,
-                pow_target.witness,
-                Challenge::from(*pow_value),
-            )?;
-        }
-        set_targets(
-            circuit,
-            runner,
-            &fri_targets.final_poly,
-            &fri_proof.final_poly,
-        )?;
-        set_target(
-            circuit,
-            runner,
-            fri_targets.pow_witness.witness,
-            Challenge::from(fri_proof.query_pow_witness),
-        )?;
-
-        for (query_targets, query_proof) in fri_targets
-            .query_proofs
-            .iter()
-            .zip(fri_proof.query_proofs.iter())
-        {
-            // Input proofs (MMCS openings).
-            for (batch_targets, batch_proof) in query_targets
-                .input_proof
-                .iter()
-                .zip(query_proof.input_proof.iter())
-            {
-                for (row_targets, row_values) in batch_targets
-                    .opened_values
-                    .iter()
-                    .zip(batch_proof.opened_values.iter())
-                {
-                    for (t, v) in row_targets.iter().zip(row_values.iter()) {
-                        set_target(circuit, runner, *t, Challenge::from(*v))?;
-                    }
-                }
-
-                for (hash_targets, hash_values) in batch_targets
-                    .opening_proof
-                    .hash_proof_targets
-                    .iter()
-                    .zip(batch_proof.opening_proof.iter())
-                {
-                    for (t, v) in hash_targets.iter().zip(hash_values.iter()) {
-                        set_target(circuit, runner, *t, Challenge::from(*v))?;
-                    }
-                }
-            }
-
-            // Commit phase openings.
-            for (step_targets, step_proof) in query_targets
-                .commit_phase_openings
-                .iter()
-                .zip(query_proof.commit_phase_openings.iter())
-            {
-                set_target(
-                    circuit,
-                    runner,
-                    step_targets.sibling_value,
-                    step_proof.sibling_value,
-                )?;
-
-                for (hash_targets, hash_values) in step_targets
-                    .opening_proof
-                    .hash_proof_targets
-                    .iter()
-                    .zip(step_proof.opening_proof.iter())
-                {
-                    for (t, v) in hash_targets.iter().zip(hash_values.iter()) {
-                        set_target(circuit, runner, *t, Challenge::from(*v))?;
-                    }
-                }
-            }
+            runner.set_witness_value(witness_id, value)?;
         }
     }
     Ok(())

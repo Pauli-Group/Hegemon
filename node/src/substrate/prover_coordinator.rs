@@ -1,6 +1,6 @@
 use parking_lot::Mutex;
 use sp_core::H256;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -41,6 +41,25 @@ pub enum WorkStatus {
     Accepted,
     Rejected(String),
     Expired,
+}
+
+#[derive(Clone, Debug)]
+pub struct StageQueueStatus {
+    pub stage_type: String,
+    pub level: u16,
+    pub queued_jobs: usize,
+    pub inflight_jobs: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct StagePlanStatus {
+    pub generation: u64,
+    pub current_parent: Option<H256>,
+    pub queued_jobs: usize,
+    pub inflight_jobs: usize,
+    pub prepared_bundles: usize,
+    pub latest_work_package: Option<String>,
+    pub stage_queue: Vec<StageQueueStatus>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -97,6 +116,7 @@ pub struct ProverCoordinatorConfig {
     pub workers: usize,
     pub target_txs: usize,
     pub queue_capacity: usize,
+    pub max_inflight_per_level: usize,
     pub liveness_lane: bool,
     pub adaptive_liveness_timeout: Duration,
     pub incremental_upsizing: bool,
@@ -114,19 +134,34 @@ impl ProverCoordinatorConfig {
             .map(|threads| threads.get().min(2))
             .unwrap_or(1usize)
             .max(1);
-        let workers = std::env::var("HEGEMON_PROVER_WORKERS")
+        let workers = std::env::var("HEGEMON_AGG_STAGE_LOCAL_PARALLELISM")
             .ok()
             .and_then(|v| v.parse().ok())
+            .or_else(|| {
+                std::env::var("HEGEMON_PROVER_WORKERS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+            })
             .unwrap_or(default_workers);
         let target_txs = std::env::var("HEGEMON_BATCH_TARGET_TXS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(default_target_txs)
             .max(1);
-        let queue_capacity = std::env::var("HEGEMON_BATCH_QUEUE_CAPACITY")
+        let queue_capacity = std::env::var("HEGEMON_AGG_STAGE_QUEUE_DEPTH")
             .ok()
             .and_then(|v| v.parse().ok())
+            .or_else(|| {
+                std::env::var("HEGEMON_BATCH_QUEUE_CAPACITY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+            })
             .unwrap_or(4usize)
+            .max(1);
+        let max_inflight_per_level = std::env::var("HEGEMON_PROVER_STAGE_MAX_INFLIGHT_PER_LEVEL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(workers.max(1))
             .max(1);
         let liveness_lane = std::env::var("HEGEMON_PROVER_LIVENESS_LANE")
             .ok()
@@ -182,6 +217,7 @@ impl ProverCoordinatorConfig {
             workers,
             target_txs,
             queue_capacity,
+            max_inflight_per_level,
             liveness_lane,
             adaptive_liveness_timeout: Duration::from_millis(adaptive_liveness_timeout_ms),
             incremental_upsizing,
@@ -215,6 +251,7 @@ struct CoordinatorState {
     source_submissions: HashMap<String, u32>,
     pending_jobs: VecDeque<QueuedJob>,
     inflight_jobs: HashMap<u64, u64>,
+    inflight_stage_meta: HashMap<u64, (String, u16)>,
     inflight_candidates: HashMap<u64, Vec<Vec<u8>>>,
     next_job_id: u64,
     stale_count: u64,
@@ -374,6 +411,21 @@ impl ProverCoordinator {
             .count()
     }
 
+    fn inflight_current_generation_count_for_level(state: &CoordinatorState, level: u16) -> usize {
+        state
+            .inflight_jobs
+            .iter()
+            .filter(|(_, generation)| **generation == state.generation)
+            .filter(|(job_id, _)| {
+                state
+                    .inflight_stage_meta
+                    .get(job_id)
+                    .map(|(_, inflight_level)| *inflight_level == level)
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
     fn inflight_total_cap(&self) -> usize {
         // Allow one extra generation overlap so parent changes do not starve
         // scheduling when proving is slower than block production.
@@ -470,6 +522,7 @@ impl ProverCoordinator {
         state.work_status.clear();
         state.source_submissions.clear();
         state.pending_jobs.clear();
+        state.inflight_stage_meta.clear();
         state.inflight_candidates.clear();
     }
 
@@ -487,6 +540,52 @@ impl ProverCoordinator {
 
     pub fn queued_jobs(&self) -> usize {
         self.state.lock().pending_jobs.len()
+    }
+
+    pub fn stage_plan_status(&self) -> StagePlanStatus {
+        let state = self.state.lock();
+        let mut per_stage: BTreeMap<(String, u16), StageQueueStatus> = BTreeMap::new();
+
+        for job in state
+            .pending_jobs
+            .iter()
+            .filter(|job| job.generation == state.generation)
+        {
+            let key = (job.stage_type.clone(), job.level);
+            let entry = per_stage.entry(key.clone()).or_insert(StageQueueStatus {
+                stage_type: key.0.clone(),
+                level: key.1,
+                queued_jobs: 0,
+                inflight_jobs: 0,
+            });
+            entry.queued_jobs = entry.queued_jobs.saturating_add(1);
+        }
+
+        for (job_id, generation) in state.inflight_jobs.iter() {
+            if *generation != state.generation {
+                continue;
+            }
+            if let Some((stage_type, level)) = state.inflight_stage_meta.get(job_id) {
+                let key = (stage_type.clone(), *level);
+                let entry = per_stage.entry(key.clone()).or_insert(StageQueueStatus {
+                    stage_type: key.0.clone(),
+                    level: key.1,
+                    queued_jobs: 0,
+                    inflight_jobs: 0,
+                });
+                entry.inflight_jobs = entry.inflight_jobs.saturating_add(1);
+            }
+        }
+
+        StagePlanStatus {
+            generation: state.generation,
+            current_parent: state.current_parent,
+            queued_jobs: state.pending_jobs.len(),
+            inflight_jobs: state.inflight_jobs.len(),
+            prepared_bundles: state.prepared.len(),
+            latest_work_package: state.latest_work_package.clone(),
+            stage_queue: per_stage.into_values().collect(),
+        }
     }
 
     pub fn market_params(&self) -> ProverMarketParams {
@@ -632,6 +731,7 @@ impl ProverCoordinator {
                 state.work_status.clear();
                 state.source_submissions.clear();
                 state.pending_jobs.clear();
+                state.inflight_stage_meta.clear();
                 state.inflight_candidates.clear();
             }
         }
@@ -707,6 +807,7 @@ impl ProverCoordinator {
             // Stop counting stale jobs against scheduler capacity. They will
             // still finish in the background and be ignored by generation.
             state.inflight_jobs.clear();
+            state.inflight_stage_meta.clear();
             state.inflight_candidates.clear();
             state.work_packages.clear();
             state.latest_work_package = None;
@@ -1045,11 +1146,20 @@ impl ProverCoordinator {
                     );
                     return;
                 }
-                let Some(job) = state.pending_jobs.pop_front() else {
+                let Some(job_index) = state.pending_jobs.iter().position(|job| {
+                    Self::inflight_current_generation_count_for_level(&state, job.level)
+                        < self.config.max_inflight_per_level
+                }) else {
+                    return;
+                };
+                let Some(job) = state.pending_jobs.remove(job_index) else {
                     return;
                 };
                 let queue_depth_after_pop = state.pending_jobs.len();
                 state.inflight_jobs.insert(job.id, job.generation);
+                state
+                    .inflight_stage_meta
+                    .insert(job.id, (job.stage_type.clone(), job.level));
                 state
                     .inflight_candidates
                     .insert(job.id, job.candidate_txs.clone());
@@ -1060,6 +1170,7 @@ impl ProverCoordinator {
             let timeout = self.config.job_timeout;
             let state = Arc::clone(&self.state);
             let target_txs = self.config.target_txs;
+            let stage_max_inflight_per_level = self.config.max_inflight_per_level;
             tokio::spawn(async move {
                 let (
                     QueuedJob {
@@ -1092,6 +1203,7 @@ impl ProverCoordinator {
 
                 let mut guard = state.lock();
                 guard.inflight_jobs.remove(&id);
+                guard.inflight_stage_meta.remove(&id);
                 guard.inflight_candidates.remove(&id);
 
                 let stale_parent = guard.current_parent != Some(parent_hash);
@@ -1159,6 +1271,7 @@ impl ProverCoordinator {
                             queue_depth = queue_depth_after_pop,
                             queue_wait_ms,
                             stage_mem_budget_mb = Self::stage_mem_budget_mb(),
+                            stage_max_inflight_per_level,
                             tx_count = candidate_len,
                             candidate_bytes,
                             build_ms = bundle.build_ms,
@@ -1260,6 +1373,7 @@ mod tests {
             workers: 1,
             target_txs: 1,
             queue_capacity: 1,
+            max_inflight_per_level: 1,
             liveness_lane: true,
             adaptive_liveness_timeout: Duration::from_millis(0),
             incremental_upsizing: false,
