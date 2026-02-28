@@ -247,6 +247,17 @@ if [ "$MIN_READY_BATCH_TXS" -gt "$TX_COUNT" ]; then
   exit 1
 fi
 
+CHAIN_SPEC="${HEGEMON_TP_CHAIN_SPEC:-}"
+NODE_CHAIN_ARGS="--dev"
+if [ -n "$CHAIN_SPEC" ]; then
+  if [ ! -f "$CHAIN_SPEC" ]; then
+    echo "HEGEMON_TP_CHAIN_SPEC file not found: $CHAIN_SPEC" >&2
+    exit 1
+  fi
+  CHAIN_SPEC_ABS="$(cd "$(dirname "$CHAIN_SPEC")" && pwd)/$(basename "$CHAIN_SPEC")"
+  NODE_CHAIN_ARGS="--dev --chain '${CHAIN_SPEC_ABS}'"
+fi
+
 WALLET_A="${HEGEMON_TP_WALLET_A:-/tmp/hegemon-throughput-wallet-a}"
 WALLET_B="${HEGEMON_TP_WALLET_B:-/tmp/hegemon-throughput-wallet-b}"
 PASS_A="${HEGEMON_TP_PASS_A:-testwallet1}"
@@ -780,7 +791,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_AGG_PROVER_THREADS='${AGG_PROVER_THREADS}' \
      HEGEMON_AGG_PREWARM_MAX_TXS='${AGG_PREWARM_MAX_TXS}' \
      HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
-     ./target/release/hegemon-node --dev --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
+     ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
 
 echo "Waiting for RPC to respond..." >&2
 for i in $(seq 1 60); do
