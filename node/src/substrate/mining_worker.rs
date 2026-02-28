@@ -916,6 +916,12 @@ where
                             let mut stats = self.stats.write();
                             stats.import_failures += 1;
                         }
+
+                        // Drop the current template after an import failure.
+                        // Retrying the same sealed template can loop indefinitely when
+                        // the underlying proof bundle is stale or invalid for the live parent.
+                        current_template = None;
+                        last_pending_root = H256::zero();
                     }
                 }
             }
