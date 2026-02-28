@@ -260,6 +260,7 @@ fn build_common_data_parallel(
 
 pub const AGGREGATION_PROOF_FORMAT_ID_V4: u8 = 4;
 pub const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
+const MAX_AGGREGATION_SLOT_PADDING_FACTOR: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregationProofV4Payload {
@@ -269,6 +270,7 @@ pub struct AggregationProofV4Payload {
     pub tree_levels: u16,
     pub root_level: u16,
     pub shape_id: [u8; 32],
+    /// Number of recursion slots proven by the outer proof (can exceed block tx count).
     pub tx_count: u32,
     pub tx_statements_commitment: Vec<u8>,
     pub public_values_encoding: u8,
@@ -924,6 +926,33 @@ fn aggregation_level_parallelism() -> usize {
         .max(1)
 }
 
+fn aggregation_slot_count(actual_tx_count: usize) -> usize {
+    let fixed = std::env::var("HEGEMON_AGG_FIXED_SLOT_COUNT")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .filter(|value| *value > 0);
+    let mut slot_count = fixed.unwrap_or_else(|| {
+        actual_tx_count
+            .checked_next_power_of_two()
+            .unwrap_or(actual_tx_count)
+    });
+    slot_count = slot_count.max(actual_tx_count);
+
+    let max_slot_count = actual_tx_count
+        .saturating_mul(MAX_AGGREGATION_SLOT_PADDING_FACTOR)
+        .max(actual_tx_count);
+    if slot_count > max_slot_count {
+        tracing::warn!(
+            actual_tx_count,
+            requested_slot_count = slot_count,
+            max_slot_count,
+            "aggregation slot count exceeded max padding factor; clamping"
+        );
+        slot_count = max_slot_count;
+    }
+    slot_count
+}
+
 fn aggregation_cache_persist_enabled() -> bool {
     std::env::var("HEGEMON_AGG_CACHE_PERSIST")
         .ok()
@@ -1105,6 +1134,8 @@ pub fn prove_aggregation(
         );
     }
 
+    let actual_tx_count = transaction_proofs.len();
+    let slot_tx_count = aggregation_slot_count(actual_tx_count);
     let pub_inputs_len = expected_inputs_len.ok_or(AggregationError::EmptyBatch)?;
     let representative_proof = transaction_proofs
         .first()
@@ -1112,9 +1143,29 @@ pub fn prove_aggregation(
         .stark_proof
         .clone();
     let tree_arity = aggregation_tree_arity();
-    let tree_levels = tree_levels_for_tx_count(transaction_proofs.len(), tree_arity);
+    let tree_levels = tree_levels_for_tx_count(slot_tx_count, tree_arity);
     let root_level = tree_levels.saturating_sub(1);
     let level_parallelism = aggregation_level_parallelism();
+
+    if slot_tx_count > actual_tx_count {
+        let pad_count = slot_tx_count - actual_tx_count;
+        let representative_public = public_inputs
+            .first()
+            .ok_or(AggregationError::EmptyBatch)?
+            .clone();
+        for _ in 0..pad_count {
+            let padded_inner: TransactionProofP3 = postcard::from_bytes(&representative_proof)
+                .map_err(|_| AggregationError::InvalidProofFormat { index: 0 })?;
+            inner_proofs.push(padded_inner);
+        }
+        public_inputs.extend(std::iter::repeat_n(representative_public, pad_count));
+        tracing::info!(
+            actual_tx_count,
+            slot_tx_count,
+            pad_count,
+            "aggregation slot padding enabled"
+        );
+    }
 
     if let (Some(shape), Some(log_blowup), Some(representative_inner_proof)) =
         (expected_shape, expected_log_blowup, inner_proofs.first())
@@ -1127,11 +1178,11 @@ pub fn prove_aggregation(
             pub_inputs_len,
             log_blowup,
             shape,
-            transaction_proofs.len(),
+            slot_tx_count,
         );
     }
 
-    if transaction_proofs.len() == 1 {
+    if slot_tx_count == 1 {
         let singleton_public_values = public_inputs
             .first()
             .ok_or(AggregationError::EmptyBatch)?
@@ -1165,7 +1216,8 @@ pub fn prove_aggregation(
             postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed);
         tracing::info!(
             target: "aggregation::metrics",
-            tx_count = transaction_proofs.len(),
+            tx_count = actual_tx_count,
+            slot_tx_count,
             tree_arity,
             tree_levels,
             level_parallelism,
@@ -1175,7 +1227,7 @@ pub fn prove_aggregation(
         );
         if profile {
             eprintln!(
-                "aggregation_profile tx_count=1 decode_and_shape_ms={} total_ms={}",
+                "aggregation_profile tx_count=1 slot_tx_count=1 decode_and_shape_ms={} total_ms={}",
                 decode_and_shape_ms,
                 started.elapsed().as_millis()
             );
@@ -1190,7 +1242,7 @@ pub fn prove_aggregation(
         return Err(AggregationError::InvalidFinalPolynomialLength);
     }
     let cache_key = AggregationProverKey {
-        tx_count: transaction_proofs.len(),
+        tx_count: slot_tx_count,
         pub_inputs_len,
         log_blowup,
         shape: expected_shape,
@@ -1273,8 +1325,7 @@ pub fn prove_aggregation(
             num_queries,
         );
         if index == 0 {
-            recursion_public_inputs
-                .reserve(packed.len().saturating_mul(transaction_proofs.len().max(1)));
+            recursion_public_inputs.reserve(packed.len().saturating_mul(inner_proofs.len().max(1)));
         }
         recursion_public_inputs.extend(packed);
     }
@@ -1282,7 +1333,7 @@ pub fn prove_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=pack_public_values tx_count={} pack_ms={} total_ms={}",
-            transaction_proofs.len(),
+            slot_tx_count,
             pack_ms,
             started.elapsed().as_millis()
         );
@@ -1305,7 +1356,7 @@ pub fn prove_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=set_targets tx_count={} set_public_ms={} set_witness_ms={} total_ms={}",
-            transaction_proofs.len(),
+            slot_tx_count,
             set_public_ms,
             set_witness_ms,
             started.elapsed().as_millis()
@@ -1319,7 +1370,7 @@ pub fn prove_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=runner_run tx_count={} run_ms={} total_ms={}",
-            transaction_proofs.len(),
+            slot_tx_count,
             run_ms,
             started.elapsed().as_millis()
         );
@@ -1354,7 +1405,7 @@ pub fn prove_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=outer_prove tx_count={} outer_prove_ms={} total_ms={}",
-            transaction_proofs.len(),
+            slot_tx_count,
             outer_prove_ms,
             started.elapsed().as_millis()
         );
@@ -1369,13 +1420,8 @@ pub fn prove_aggregation(
         tree_arity,
         tree_levels,
         root_level,
-        shape_id: aggregation_shape_id(
-            transaction_proofs.len(),
-            pub_inputs_len,
-            log_blowup,
-            expected_shape,
-        ),
-        tx_count: transaction_proofs.len() as u32,
+        shape_id: aggregation_shape_id(slot_tx_count, pub_inputs_len, log_blowup, expected_shape),
+        tx_count: slot_tx_count as u32,
         tx_statements_commitment: tx_statements_commitment.to_vec(),
         public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
         inner_public_inputs_len: pub_inputs_len as u32,
@@ -1389,7 +1435,7 @@ pub fn prove_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=serialize tx_count={} serialize_ms={} total_ms={}",
-            transaction_proofs.len(),
+            slot_tx_count,
             serialize_ms,
             started.elapsed().as_millis()
         );
@@ -1397,7 +1443,8 @@ pub fn prove_aggregation(
 
     tracing::info!(
         target: "aggregation::metrics",
-        tx_count = transaction_proofs.len(),
+        tx_count = actual_tx_count,
+        slot_tx_count,
         inner_public_inputs_len = pub_inputs_len,
         tree_arity,
         tree_levels,
@@ -1420,8 +1467,9 @@ pub fn prove_aggregation(
     );
     if profile {
         eprintln!(
-            "aggregation_profile tx_count={} inner_public_inputs_len={} log_blowup={} inner_query_count={} cache_hit={} cache_build_ms={} cache_lookup_ms={} decode_and_shape_ms={} pack_ms={} set_public_ms={} set_witness_ms={} run_ms={} outer_prove_ms={} agg_prover_threads={} serialize_ms={} total_ms={}",
-            transaction_proofs.len(),
+            "aggregation_profile tx_count={} slot_tx_count={} inner_public_inputs_len={} log_blowup={} inner_query_count={} cache_hit={} cache_build_ms={} cache_lookup_ms={} decode_and_shape_ms={} pack_ms={} set_public_ms={} set_witness_ms={} run_ms={} outer_prove_ms={} agg_prover_threads={} serialize_ms={} total_ms={}",
+            actual_tx_count,
+            slot_tx_count,
             pub_inputs_len,
             log_blowup,
             expected_shape.query_count,
