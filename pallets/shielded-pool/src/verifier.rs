@@ -844,6 +844,49 @@ impl BatchVerifier for AcceptAllBatchProofs {
 #[derive(Clone, Debug, Default)]
 pub struct StarkBatchVerifier;
 
+#[cfg(all(feature = "batch-proofs", feature = "std"))]
+fn ensure_batch_verifier_cache_warm(batch_size: u32) {
+    use std::collections::BTreeSet;
+    use std::sync::{Mutex, OnceLock};
+
+    static PREWARMED_BATCH_SIZES: OnceLock<Mutex<BTreeSet<usize>>> = OnceLock::new();
+    let target = batch_size as usize;
+    let cache = PREWARMED_BATCH_SIZES.get_or_init(|| Mutex::new(BTreeSet::new()));
+    {
+        let guard = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.contains(&target) {
+            return;
+        }
+    }
+
+    match batch_circuit::prewarm_batch_verifier_cache(&[target]) {
+        Ok(warmed) => {
+            let mut guard = cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.insert(target);
+            log::info!(
+                "batch verifier preprocessed cache warmed for batch_size={} newly_warmed={}",
+                target,
+                warmed
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "batch verifier preprocessed cache warmup failed for batch_size={}: {:?}",
+                target,
+                err
+            );
+        }
+    }
+}
+
+#[cfg(not(all(feature = "batch-proofs", feature = "std")))]
+#[allow(dead_code)]
+fn ensure_batch_verifier_cache_warm(_batch_size: u32) {}
+
 impl BatchVerifier for StarkBatchVerifier {
     fn verify_batch(
         &self,
@@ -924,6 +967,8 @@ impl BatchVerifier for StarkBatchVerifier {
                 BatchPublicInputs as CircuitBatchPublicInputs, MAX_BATCH_SIZE,
             };
             use transaction_core::hashing_pq::bytes48_to_felts;
+
+            ensure_batch_verifier_cache_warm(inputs.batch_size);
 
             let anchor = match bytes48_to_felts(&inputs.anchor) {
                 Some(value) => value,

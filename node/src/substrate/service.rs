@@ -136,7 +136,8 @@ use crate::substrate::transaction_pool::{
 };
 use aggregation_circuit::prove_aggregation;
 use batch_circuit::{
-    verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs, BatchTransactionProver,
+    prewarm_batch_verifier_cache, verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs,
+    BatchTransactionProver,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
@@ -2254,6 +2255,50 @@ fn batch_slot_txs() -> usize {
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(16)
         .clamp(1, u16::MAX as usize)
+}
+
+fn batch_verifier_prewarm_sizes() -> Vec<usize> {
+    if let Ok(raw) = std::env::var("HEGEMON_BATCH_VERIFY_PREWARM_TXS") {
+        let mut parsed = raw
+            .split(',')
+            .filter_map(|part| part.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .map(largest_power_of_two_at_most)
+            .collect::<Vec<_>>();
+        parsed.sort_unstable();
+        parsed.dedup();
+        if !parsed.is_empty() {
+            return parsed;
+        }
+    }
+
+    vec![largest_power_of_two_at_most(batch_slot_txs())]
+}
+
+fn prewarm_batch_verifier_cache_on_startup() {
+    let mut sizes = batch_verifier_prewarm_sizes();
+    let max_batch = batch_circuit::MAX_BATCH_SIZE;
+    sizes.retain(|size| *size <= max_batch);
+    if sizes.is_empty() {
+        return;
+    }
+
+    match prewarm_batch_verifier_cache(&sizes) {
+        Ok(warmed) => {
+            tracing::info!(
+                ?sizes,
+                warmed,
+                "batch verifier preprocessed cache warmup complete"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                ?sizes,
+                ?error,
+                "batch verifier preprocessed cache warmup failed"
+            );
+        }
+    }
 }
 
 fn largest_power_of_two_at_most(value: usize) -> usize {
@@ -6362,6 +6407,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         pq_enabled = %network_config.enable_pq_transport,
         "Hegemon node started with FULL SUBSTRATE CLIENT"
     );
+
+    prewarm_batch_verifier_cache_on_startup();
 
     // Log PQ network configuration
     if let Some(ref keypair) = network_keypair {
