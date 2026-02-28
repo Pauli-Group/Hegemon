@@ -8,7 +8,7 @@ use crate::constants::MAX_INPUTS;
 use crate::constants::MAX_OUTPUTS;
 use crate::p3_air::{
     COMMITMENT_CYCLES as STARK_COMMITMENT_CYCLES, CYCLES_PER_INPUT as STARK_CYCLES_PER_INPUT,
-    CYCLE_LENGTH, MERKLE_CYCLES as STARK_MERKLE_CYCLES, MIN_TRACE_LENGTH,
+    CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_CYCLES as STARK_MERKLE_CYCLES, MIN_TRACE_LENGTH,
     NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
 };
 use crate::p3_config::FRI_NUM_QUERIES;
@@ -69,7 +69,7 @@ pub const CYCLES_PER_INPUT: usize = STARK_CYCLES_PER_INPUT;
 /// The nullifier hash output appears at the last row of its cycle group.
 pub fn nullifier_output_row(tx_index: usize, input_index: usize) -> usize {
     let slot_start = slot_start_row(tx_index);
-    let start_cycle = input_index * CYCLES_PER_INPUT;
+    let start_cycle = DUMMY_CYCLES + input_index * CYCLES_PER_INPUT;
     slot_start + (start_cycle + COMMITMENT_CYCLES + MERKLE_CYCLES + NULLIFIER_CYCLES) * CYCLE_LENGTH
         - 1
 }
@@ -79,7 +79,7 @@ pub fn nullifier_output_row(tx_index: usize, input_index: usize) -> usize {
 /// The Merkle root appears after verifying the full path.
 pub fn merkle_root_output_row(tx_index: usize, input_index: usize) -> usize {
     let slot_start = slot_start_row(tx_index);
-    let start_cycle = input_index * CYCLES_PER_INPUT + COMMITMENT_CYCLES;
+    let start_cycle = DUMMY_CYCLES + input_index * CYCLES_PER_INPUT + COMMITMENT_CYCLES;
     slot_start + (start_cycle + MERKLE_CYCLES) * CYCLE_LENGTH - 1
 }
 
@@ -88,7 +88,7 @@ pub fn merkle_root_output_row(tx_index: usize, input_index: usize) -> usize {
 /// Commitments are computed after all inputs have been processed.
 pub fn commitment_output_row(tx_index: usize, output_index: usize) -> usize {
     let slot_start = slot_start_row(tx_index);
-    let input_total_cycles = MAX_INPUTS * CYCLES_PER_INPUT;
+    let input_total_cycles = DUMMY_CYCLES + MAX_INPUTS * CYCLES_PER_INPUT;
     let start_cycle = input_total_cycles + output_index * COMMITMENT_CYCLES;
     slot_start + (start_cycle + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
 }
@@ -123,6 +123,7 @@ pub fn validate_batch_size(batch_size: usize) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::p3_air;
 
     #[test]
     fn test_batch_dimensions_power_of_two() {
@@ -222,6 +223,45 @@ mod tests {
                     row,
                     slot_start,
                     slot_end
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_slot0_rows_match_transaction_air_schedule() {
+        for input in 0..MAX_INPUTS {
+            assert_eq!(nullifier_output_row(0, input), p3_air::nullifier_output_row(input));
+            assert_eq!(
+                merkle_root_output_row(0, input),
+                p3_air::merkle_root_output_row(input)
+            );
+        }
+        for output in 0..MAX_OUTPUTS {
+            assert_eq!(
+                commitment_output_row(0, output),
+                p3_air::commitment_output_row(output)
+            );
+        }
+    }
+
+    #[test]
+    fn test_slot_offsets_match_rows_per_tx() {
+        for tx in 1..4 {
+            for input in 0..MAX_INPUTS {
+                assert_eq!(
+                    nullifier_output_row(tx, input),
+                    nullifier_output_row(0, input) + tx * ROWS_PER_TX
+                );
+                assert_eq!(
+                    merkle_root_output_row(tx, input),
+                    merkle_root_output_row(0, input) + tx * ROWS_PER_TX
+                );
+            }
+            for output in 0..MAX_OUTPUTS {
+                assert_eq!(
+                    commitment_output_row(tx, output),
+                    commitment_output_row(0, output) + tx * ROWS_PER_TX
                 );
             }
         }
