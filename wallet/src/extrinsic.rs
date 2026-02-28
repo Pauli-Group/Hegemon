@@ -665,7 +665,7 @@ fn encode_balances_transfer_call(recipient: &[u8; 32], amount: u128) -> Vec<u8> 
 /// Batch shielded transfer call data
 #[derive(Clone, Debug)]
 pub struct BatchShieldedTransferCall {
-    /// Batch size (2, 4, 8, or 16)
+    /// Batch size (2, 4, 8, 16, or 32)
     pub batch_size: u32,
     /// All nullifiers from all transactions
     pub nullifiers: Vec<[u8; 48]>,

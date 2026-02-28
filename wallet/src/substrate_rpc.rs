@@ -1484,7 +1484,7 @@ impl SubstrateRpcClient {
     ///
     /// # Arguments
     ///
-    /// * `batch_size` - Number of transactions in batch (2, 4, 8, or 16)
+    /// * `batch_size` - Number of transactions in batch (2, 4, 8, 16, or 32)
     /// * `nullifiers` - All nullifiers from all transactions
     /// * `commitments` - All commitments from all transactions
     /// * `ciphertexts` - All encrypted notes from all transactions
@@ -1506,9 +1506,9 @@ impl SubstrateRpcClient {
         use crate::extrinsic::{build_unsigned_batch_shielded_transfer, BatchShieldedTransferCall};
 
         // Validate batch size
-        if !batch_size.is_power_of_two() || !(2..=16).contains(&batch_size) {
+        if !batch_size.is_power_of_two() || !(2..=32).contains(&batch_size) {
             return Err(WalletError::InvalidArgument(
-                "Batch size must be 2, 4, 8, or 16",
+                "Batch size must be 2, 4, 8, 16, or 32",
             ));
         }
 

@@ -668,7 +668,7 @@ pub mod pallet {
         InlineCiphertextsDisabled,
         /// DA chunk count is invalid for this block.
         InvalidDaChunkCount,
-        /// Invalid batch size (must be power of 2: 2, 4, 8, or 16).
+        /// Invalid batch size (must be power of 2: 2, 4, 8, 16, or 32).
         InvalidBatchSize,
         // ========================================
         // EPOCH ERRORS
@@ -2034,7 +2034,7 @@ pub mod pallet {
         /// - All transactions must use the same Merkle anchor
         /// - Single batch proof verifies all transactions together
         /// - Each nullifier is checked for double-spend
-        /// - Batch size must be a power of 2 (2, 4, 8, or 16)
+        /// - Batch size must be a power of 2 (2, 4, 8, 16, or 32)
         #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,

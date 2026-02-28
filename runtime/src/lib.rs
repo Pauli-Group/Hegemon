@@ -1263,10 +1263,10 @@ parameter_types! {
     pub const MaxCommitmentsPerTx: u32 = 2;
     /// Maximum encrypted notes per transaction.
     pub const MaxEncryptedNotesPerTx: u32 = 2;
-    /// Maximum nullifiers per batch (16 txs * 2 nullifiers each).
-    pub const MaxNullifiersPerBatch: u32 = 32;
-    /// Maximum commitments per batch (16 txs * 2 commitments each).
-    pub const MaxCommitmentsPerBatch: u32 = 32;
+    /// Maximum nullifiers per batch (32 txs * 2 nullifiers each).
+    pub const MaxNullifiersPerBatch: u32 = 64;
+    /// Maximum commitments per batch (32 txs * 2 commitments each).
+    pub const MaxCommitmentsPerBatch: u32 = 64;
     /// Number of historical Merkle roots to keep for anchor validation.
     /// Must comfortably exceed the largest expected same-anchor transfer batch.
     pub const MerkleRootHistorySize: u32 = 4096;

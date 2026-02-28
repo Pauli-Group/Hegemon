@@ -1,7 +1,7 @@
 //! Batch circuit constants shared across backends.
 
 /// Maximum transactions per batch (power of 2 for trace efficiency).
-pub const MAX_BATCH_SIZE: usize = 16;
+pub const MAX_BATCH_SIZE: usize = 32;
 
 /// Maximum inputs per transaction.
 pub const MAX_INPUTS: usize = 2;

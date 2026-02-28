@@ -665,7 +665,7 @@ impl DecodeWithMemTracking for VerifyingKeyParams {}
 // ================================================================================================
 
 /// Maximum batch size for batch proofs.
-pub const MAX_BATCH_SIZE: u32 = 16;
+pub const MAX_BATCH_SIZE: u32 = 32;
 
 /// STARK batch proof for proving multiple transactions together.
 ///
@@ -676,7 +676,7 @@ pub struct BatchStarkProof {
     /// Variable-length proof data.
     /// Contains the combined proof for all transactions in the batch.
     pub data: Vec<u8>,
-    /// Number of transactions in this batch (2, 4, 8, or 16).
+    /// Number of transactions in this batch (2, 4, 8, 16, or 32).
     pub batch_size: u32,
 }
 
