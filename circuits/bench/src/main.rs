@@ -233,11 +233,22 @@ fn run_benchmark(
         for batch_idx in 0..iterations {
             let witness_start = Instant::now();
             // Batch AIR requires a shared anchor for every tx in the batch.
-            // Reuse one valid witness shape per iteration to keep the benchmark
-            // focused on proving throughput rather than witness construction.
+            // Reuse one valid witness shape per iteration while mutating spend
+            // keys/output randomness to avoid duplicate nullifier/commitment rows.
             let seed = (batch_idx as u64) << 16;
             let base_witness = synthetic_witness(&mut rng, seed);
-            let witnesses = vec![base_witness; batch_size];
+            let mut witnesses = Vec::with_capacity(batch_size);
+            for tx_idx in 0..batch_size {
+                let mut witness = base_witness.clone();
+                witness.sk_spend[0] ^= tx_idx as u8;
+                witness.sk_spend[1] ^= (tx_idx >> 8) as u8;
+                for output in &mut witness.outputs {
+                    output.note.pk_recipient[0] ^= tx_idx as u8;
+                    output.note.rho[0] ^= tx_idx as u8;
+                    output.note.r[0] ^= tx_idx.wrapping_mul(31) as u8;
+                }
+                witnesses.push(witness);
+            }
             batch_witness_time += witness_start.elapsed();
 
             let prove_start = Instant::now();
