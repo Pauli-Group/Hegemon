@@ -21,6 +21,20 @@ pub struct PreparedBundle {
     pub build_ms: u128,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct PreparedLookupDiagnostics {
+    pub prepared_total: usize,
+    pub same_parent: usize,
+    pub same_statement: usize,
+    pub same_tx_count: usize,
+    pub same_parent_and_statement: usize,
+    pub same_parent_and_tx_count: usize,
+    pub same_statement_and_tx_count: usize,
+    pub sample_same_parent_commitment: Option<[u8; 48]>,
+    pub sample_same_statement_parent: Option<H256>,
+    pub sample_same_parent_tx_count: Option<u32>,
+}
+
 fn block_proof_bundle_payload_bytes(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> usize {
@@ -678,6 +692,53 @@ impl ProverCoordinator {
 
     pub fn stale_count(&self) -> u64 {
         self.state.lock().stale_count
+    }
+
+    pub fn prepared_lookup_diagnostics(
+        &self,
+        parent_hash: H256,
+        tx_statements_commitment: [u8; 48],
+        tx_count: u32,
+    ) -> PreparedLookupDiagnostics {
+        let state = self.state.lock();
+        let mut diagnostics = PreparedLookupDiagnostics {
+            prepared_total: state.prepared.len(),
+            ..PreparedLookupDiagnostics::default()
+        };
+        for key in state.prepared.keys() {
+            if key.parent_hash == parent_hash {
+                diagnostics.same_parent = diagnostics.same_parent.saturating_add(1);
+                diagnostics
+                    .sample_same_parent_commitment
+                    .get_or_insert(key.tx_statements_commitment);
+                diagnostics.sample_same_parent_tx_count.get_or_insert(key.tx_count);
+            }
+            if key.tx_statements_commitment == tx_statements_commitment {
+                diagnostics.same_statement = diagnostics.same_statement.saturating_add(1);
+                diagnostics
+                    .sample_same_statement_parent
+                    .get_or_insert(key.parent_hash);
+            }
+            if key.tx_count == tx_count {
+                diagnostics.same_tx_count = diagnostics.same_tx_count.saturating_add(1);
+            }
+            if key.parent_hash == parent_hash
+                && key.tx_statements_commitment == tx_statements_commitment
+            {
+                diagnostics.same_parent_and_statement =
+                    diagnostics.same_parent_and_statement.saturating_add(1);
+            }
+            if key.parent_hash == parent_hash && key.tx_count == tx_count {
+                diagnostics.same_parent_and_tx_count =
+                    diagnostics.same_parent_and_tx_count.saturating_add(1);
+            }
+            if key.tx_statements_commitment == tx_statements_commitment && key.tx_count == tx_count
+            {
+                diagnostics.same_statement_and_tx_count =
+                    diagnostics.same_statement_and_tx_count.saturating_add(1);
+            }
+        }
+        diagnostics
     }
 
     pub fn last_build_ms(&self) -> u128 {
@@ -1399,6 +1460,9 @@ impl ProverCoordinator {
                         target: "prover::stage_metrics",
                         job_id = id,
                         block_number,
+                        key_parent_hash = ?bundle.key.parent_hash,
+                        key_tx_statements_commitment = %hex::encode(bundle.key.tx_statements_commitment),
+                        key_tx_count = bundle.key.tx_count,
                         stage_type = %stage_type,
                         level,
                         arity,
