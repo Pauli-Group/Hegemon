@@ -173,8 +173,8 @@ parameter_types! {
     pub const MaxNullifiersPerTx: u32 = 2;
     pub const MaxCommitmentsPerTx: u32 = 2;
     pub const MaxEncryptedNotesPerTx: u32 = 2;
-    pub const MaxNullifiersPerBatch: u32 = 32;  // 16 txs * 2 nullifiers
-    pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
+    pub const MaxNullifiersPerBatch: u32 = 64;  // 32 txs * 2 nullifiers
+    pub const MaxCommitmentsPerBatch: u32 = 64; // 32 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
     pub const MaxForcedInclusions: u32 = 8;

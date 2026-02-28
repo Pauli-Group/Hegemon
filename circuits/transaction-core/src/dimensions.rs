@@ -41,7 +41,7 @@ pub const MERKLE_EQUALITY_DEGREE: usize = 1;
 pub const BALANCE_DEGREE: usize = 1;
 
 /// Maximum batch size (power of 2).
-pub const MAX_BATCH_SIZE: usize = 16;
+pub const MAX_BATCH_SIZE: usize = 32;
 
 fn log2_rows(rows: usize) -> usize {
     if rows == 0 {
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn test_batch_dimensions_power_of_two() {
         // All batch sizes must produce power-of-2 trace lengths
-        for batch_size in [1, 2, 4, 8, 16] {
+        for batch_size in [1, 2, 4, 8, 16, 32] {
             let rows = batch_trace_rows(batch_size);
             assert!(
                 rows.is_power_of_two(),
@@ -146,16 +146,16 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_16_fits_exactly() {
-        // Batch trace length must be a power-of-two, and for 16 it should not pad.
-        let raw = 16 * ROWS_PER_TX;
+    fn test_batch_32_fits_exactly() {
+        // Batch trace length must be a power-of-two, and for 32 it should not pad.
+        let raw = 32 * ROWS_PER_TX;
         assert!(raw.is_power_of_two());
-        assert_eq!(batch_trace_rows(16), raw);
+        assert_eq!(batch_trace_rows(32), raw);
     }
 
     #[test]
     fn test_slot_boundaries_non_overlapping() {
-        for batch_size in [2, 4, 8, 16] {
+        for batch_size in [2, 4, 8, 16, 32] {
             for tx in 0..batch_size {
                 let start = slot_start_row(tx);
                 let end = if tx + 1 < batch_size {
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn print_estimated_proof_sizes() {
         println!("\nEstimated proof sizes:");
-        for batch_size in [1, 2, 4, 8, 16] {
+        for batch_size in [1, 2, 4, 8, 16, 32] {
             let rows = batch_trace_rows(batch_size);
             let size = estimated_proof_size(rows, TRACE_WIDTH);
             let individual_total = batch_size * estimated_proof_size(ROWS_PER_TX, TRACE_WIDTH);
@@ -312,10 +312,11 @@ mod tests {
         assert!(validate_batch_size(4).is_ok());
         assert!(validate_batch_size(8).is_ok());
         assert!(validate_batch_size(16).is_ok());
+        assert!(validate_batch_size(32).is_ok());
 
         assert!(validate_batch_size(0).is_err());
         assert!(validate_batch_size(3).is_err()); // Not power of 2
-        assert!(validate_batch_size(32).is_err()); // Exceeds max
+        assert!(validate_batch_size(64).is_err()); // Exceeds max
     }
 
     #[test]

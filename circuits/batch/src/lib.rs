@@ -19,7 +19,7 @@
 //! // Create prover with default options
 //! let prover = BatchTransactionProver::with_default_options();
 //!
-//! // Collect transaction witnesses (2, 4, 8, or 16)
+//! // Collect transaction witnesses (2, 4, 8, 16, or 32)
 //! let witnesses: Vec<TransactionWitness> = vec![/* ... */];
 //!
 //! // Generate batch proof
