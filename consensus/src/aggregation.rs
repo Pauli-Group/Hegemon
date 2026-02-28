@@ -93,6 +93,7 @@ const AGGREGATION_PROOF_ZSTD_LEVEL: i32 = 3;
 const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 pub const AGGREGATION_PROOF_FORMAT_VERSION_V4: u8 = 4;
 const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
+const MAX_AGGREGATION_SLOT_PADDING_FACTOR: usize = 16;
 const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
 const STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
 
@@ -104,6 +105,7 @@ struct AggregationProofV4Payload {
     tree_levels: u16,
     root_level: u16,
     shape_id: [u8; 32],
+    // Number of recursion slots carried by this payload (can be padded above block tx count).
     tx_count: u32,
     tx_statements_commitment: Vec<u8>,
     public_values_encoding: u8,
@@ -275,7 +277,7 @@ fn validate_payload_header(
     payload: &AggregationProofV4Payload,
     tx_count: usize,
     expected_statement_commitment: &[u8; 48],
-) -> Result<(), ProofError> {
+) -> Result<usize, ProofError> {
     if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V4 {
         return Err(ProofError::AggregationProofV4Decode(format!(
             "unsupported aggregation proof payload version {}",
@@ -298,7 +300,29 @@ fn validate_payload_header(
             "tree_levels must be non-zero".to_string(),
         ));
     }
-    let expected_levels = tree_levels_for_tx_count(tx_count, payload.tree_arity);
+    let slot_tx_count = payload.tx_count as usize;
+    if slot_tx_count == 0 {
+        return Err(ProofError::AggregationProofV4Decode(
+            "tx_count must be greater than zero".to_string(),
+        ));
+    }
+    if slot_tx_count < tx_count {
+        return Err(ProofError::AggregationProofV4Binding(format!(
+            "slot tx_count {} cannot be lower than block tx_count {}",
+            slot_tx_count, tx_count
+        )));
+    }
+    let max_slot_tx_count = tx_count
+        .saturating_mul(MAX_AGGREGATION_SLOT_PADDING_FACTOR)
+        .max(tx_count);
+    if slot_tx_count > max_slot_tx_count {
+        return Err(ProofError::AggregationProofV4Binding(format!(
+            "slot tx_count {} exceeds max allowed {} for block tx_count {}",
+            slot_tx_count, max_slot_tx_count, tx_count
+        )));
+    }
+
+    let expected_levels = tree_levels_for_tx_count(slot_tx_count, payload.tree_arity);
     if payload.tree_levels != expected_levels {
         return Err(ProofError::AggregationProofV4Binding(format!(
             "tree_levels mismatch (payload {}, expected {})",
@@ -311,12 +335,6 @@ fn validate_payload_header(
             payload.root_level, payload.tree_levels
         )));
     }
-    if payload.tx_count as usize != tx_count {
-        return Err(ProofError::AggregationProofV4Binding(format!(
-            "tx_count mismatch (payload {}, expected {})",
-            payload.tx_count, tx_count
-        )));
-    }
     if payload.tx_statements_commitment.len() != 48 {
         return Err(ProofError::AggregationProofV4Decode(
             "tx_statements_commitment length invalid".to_string(),
@@ -327,7 +345,7 @@ fn validate_payload_header(
             "tx_statements_commitment mismatch".to_string(),
         ));
     }
-    Ok(())
+    Ok(slot_tx_count)
 }
 
 fn get_or_build_aggregation_verifier_cache_entry(
@@ -572,15 +590,23 @@ fn statement_hash_from_binding_hash(binding_hash: &[u8; 64]) -> [u8; 48] {
 
 fn derive_statement_commitment_from_packed_public_values(
     packed_public_values: &[u64],
-    tx_count: usize,
+    slot_tx_count: usize,
+    active_tx_count: usize,
     pub_inputs_len: usize,
 ) -> Result<[u8; 48], ProofError> {
     let tx_public_inputs = decode_public_inputs_from_packed_public_values(
         packed_public_values,
-        tx_count,
+        slot_tx_count,
         pub_inputs_len,
     )?;
-    statement_commitment_from_public_inputs(&tx_public_inputs)
+    if tx_public_inputs.len() < active_tx_count {
+        return Err(ProofError::AggregationProofV4Binding(format!(
+            "decoded slot public inputs {} shorter than active tx_count {}",
+            tx_public_inputs.len(),
+            active_tx_count
+        )));
+    }
+    statement_commitment_from_public_inputs(&tx_public_inputs[..active_tx_count])
 }
 
 fn statement_commitment_from_public_inputs(
@@ -601,7 +627,7 @@ fn statement_commitment_from_public_inputs(
 
 fn decode_public_inputs_from_packed_public_values(
     packed_public_values: &[u64],
-    tx_count: usize,
+    slot_tx_count: usize,
     pub_inputs_len: usize,
 ) -> Result<Vec<TransactionPublicInputsP3>, ProofError> {
     let ext_degree = <Challenge as BasedVectorSpace<Val>>::DIMENSION;
@@ -611,19 +637,19 @@ fn decode_public_inputs_from_packed_public_values(
         ));
     }
 
-    if tx_count == 0 {
+    if slot_tx_count == 0 {
         return Err(ProofError::AggregationProofV4Decode(
             "tx_count must be greater than zero".to_string(),
         ));
     }
 
     let total_extension_values = packed_public_values.len() / ext_degree;
-    if !total_extension_values.is_multiple_of(tx_count) {
+    if !total_extension_values.is_multiple_of(slot_tx_count) {
         return Err(ProofError::AggregationProofV4Decode(
-            "packed_public_values length does not align with tx_count".to_string(),
+            "packed_public_values length does not align with slot tx_count".to_string(),
         ));
     }
-    let per_tx_extension_values = total_extension_values / tx_count;
+    let per_tx_extension_values = total_extension_values / slot_tx_count;
     if per_tx_extension_values < pub_inputs_len {
         return Err(ProofError::AggregationProofV4Decode(
             "packed_public_values missing transaction public inputs".to_string(),
@@ -633,8 +659,8 @@ fn decode_public_inputs_from_packed_public_values(
     let per_tx_word_stride = per_tx_extension_values * ext_degree;
     let public_values_word_len = pub_inputs_len * ext_degree;
 
-    let mut tx_public_inputs = Vec::with_capacity(tx_count);
-    for tx_index in 0..tx_count {
+    let mut tx_public_inputs = Vec::with_capacity(slot_tx_count);
+    for tx_index in 0..slot_tx_count {
         let tx_offset_words = tx_index * per_tx_word_stride;
         let tx_public_words =
             &packed_public_values[tx_offset_words..tx_offset_words + public_values_word_len];
@@ -728,7 +754,7 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
 
-    validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
+    let slot_tx_count = validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
         return Err(ProofError::AggregationProofV4Decode(
             "representative proof missing".to_string(),
@@ -748,6 +774,7 @@ pub fn warm_aggregation_cache_from_proof_bytes(
     }
     let derived_statement_commitment = derive_statement_commitment_from_packed_public_values(
         &payload.packed_public_values,
+        slot_tx_count,
         tx_count,
         pub_inputs_len,
     )?;
@@ -758,7 +785,7 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         ));
     }
     if payload.outer_proof.is_empty() {
-        if tx_count == 1 {
+        if tx_count == 1 && slot_tx_count == 1 {
             return Ok(AggregationCacheWarmup {
                 cache_hit: false,
                 cache_build_ms: 0,
@@ -785,14 +812,14 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         query_count: representative_proof.opening_proof.query_proofs.len(),
     };
     let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_len);
-    let expected_shape_id = aggregation_shape_id(tx_count, pub_inputs_len, log_blowup, shape);
+    let expected_shape_id = aggregation_shape_id(slot_tx_count, pub_inputs_len, log_blowup, shape);
     if payload.shape_id != expected_shape_id {
         return Err(ProofError::AggregationProofV4Binding(
             "shape_id mismatch".to_string(),
         ));
     }
     let cache_key = AggregationVerifierKey {
-        tx_count,
+        tx_count: slot_tx_count,
         pub_inputs_len,
         log_blowup,
         shape,
@@ -827,7 +854,7 @@ pub fn verify_aggregation_proof_with_metrics(
         ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
 
-    validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
+    let slot_tx_count = validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
         return Err(ProofError::AggregationProofV4Decode(
             "representative proof missing".to_string(),
@@ -847,10 +874,18 @@ pub fn verify_aggregation_proof_with_metrics(
     }
     let tx_public_inputs = decode_public_inputs_from_packed_public_values(
         &payload.packed_public_values,
-        tx_count,
+        slot_tx_count,
         pub_inputs_len,
     )?;
-    let derived_statement_commitment = statement_commitment_from_public_inputs(&tx_public_inputs)?;
+    let derived_statement_commitment = statement_commitment_from_public_inputs(
+        tx_public_inputs.get(..tx_count).ok_or_else(|| {
+            ProofError::AggregationProofV4Binding(format!(
+                "decoded slot public inputs {} shorter than block tx_count {}",
+                tx_public_inputs.len(),
+                tx_count
+            ))
+        })?,
+    )?;
     if derived_statement_commitment != *expected_statement_commitment {
         return Err(ProofError::AggregationProofV4Binding(
             "statement commitment derived from aggregated public inputs does not match expected commitment"
@@ -865,7 +900,7 @@ pub fn verify_aggregation_proof_with_metrics(
             )
         })?;
     if payload.outer_proof.is_empty() {
-        if tx_count != 1 {
+        if tx_count != 1 || slot_tx_count != 1 {
             return Err(ProofError::AggregationProofV4Decode(
                 "outer aggregation proof missing".to_string(),
             ));
@@ -901,14 +936,14 @@ pub fn verify_aggregation_proof_with_metrics(
         query_count: representative_proof.opening_proof.query_proofs.len(),
     };
     let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_len);
-    let expected_shape_id = aggregation_shape_id(tx_count, pub_inputs_len, log_blowup, shape);
+    let expected_shape_id = aggregation_shape_id(slot_tx_count, pub_inputs_len, log_blowup, shape);
     if payload.shape_id != expected_shape_id {
         return Err(ProofError::AggregationProofV4Binding(
             "shape_id mismatch".to_string(),
         ));
     }
     let cache_key = AggregationVerifierKey {
-        tx_count,
+        tx_count: slot_tx_count,
         pub_inputs_len,
         log_blowup,
         shape,
@@ -1070,7 +1105,7 @@ mod tests {
                 .expect("statement commitment");
 
         let observed =
-            derive_statement_commitment_from_packed_public_values(&packed, 2, pub_inputs_len)
+            derive_statement_commitment_from_packed_public_values(&packed, 2, 2, pub_inputs_len)
                 .expect("derived commitment");
         assert_eq!(observed, expected_commitment);
     }
@@ -1082,8 +1117,9 @@ mod tests {
         let mut packed = pack_public_inputs_with_padding(&[tx], pub_inputs_len + 2);
         packed[1] = 9; // second limb of first extension value must stay zero for base-lifted inputs.
 
-        let err = derive_statement_commitment_from_packed_public_values(&packed, 1, pub_inputs_len)
-            .expect_err("non-base-lifted input should fail");
+        let err =
+            derive_statement_commitment_from_packed_public_values(&packed, 1, 1, pub_inputs_len)
+                .expect_err("non-base-lifted input should fail");
         assert!(matches!(err, ProofError::AggregationProofV4Binding(_)));
     }
 
@@ -1154,5 +1190,72 @@ mod tests {
         let err = verify_aggregation_proof(&encoded, 1, &commitment)
             .expect_err("legacy payload format id must be rejected");
         assert!(matches!(err, ProofError::AggregationProofV4Decode(_)));
+    }
+
+    #[test]
+    fn derive_statement_commitment_uses_active_prefix_when_slots_are_padded() {
+        let mut tx0 = TransactionPublicInputsP3::default();
+        tx0.input_flags[0] = Val::ONE;
+        tx0.output_flags[0] = Val::ONE;
+        tx0.merkle_root[0] = Val::from_u64(31);
+        tx0.nullifiers[0][0] = Val::from_u64(32);
+        tx0.commitments[0][0] = Val::from_u64(33);
+        tx0.ciphertext_hashes[0][0] = Val::from_u64(34);
+
+        let mut tx1 = TransactionPublicInputsP3::default();
+        tx1.input_flags[0] = Val::ONE;
+        tx1.output_flags[0] = Val::ONE;
+        tx1.merkle_root[0] = Val::from_u64(41);
+        tx1.nullifiers[0][0] = Val::from_u64(42);
+        tx1.commitments[0][0] = Val::from_u64(43);
+        tx1.ciphertext_hashes[0][0] = Val::from_u64(44);
+
+        let pub_inputs_len = tx0.to_vec().len();
+        let per_tx_extension_values = pub_inputs_len + 2;
+        let packed = pack_public_inputs_with_padding(
+            &[tx0.clone(), tx1.clone(), tx1.clone(), tx1.clone()],
+            per_tx_extension_values,
+        );
+
+        let expected_hashes = vec![
+            statement_hash_from_binding_hash(
+                &binding_hash_from_public_inputs(&tx0).expect("binding hash"),
+            ),
+            statement_hash_from_binding_hash(
+                &binding_hash_from_public_inputs(&tx1).expect("binding hash"),
+            ),
+        ];
+        let expected_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&expected_hashes)
+                .expect("statement commitment");
+
+        let observed =
+            derive_statement_commitment_from_packed_public_values(&packed, 4, 2, pub_inputs_len)
+                .expect("derive commitment from padded slots");
+        assert_eq!(observed, expected_commitment);
+    }
+
+    #[test]
+    fn validate_payload_header_rejects_excessive_slot_padding() {
+        let commitment = [7u8; 48];
+        let payload = AggregationProofV4Payload {
+            version: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            proof_format: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            tree_arity: 8,
+            tree_levels: 2,
+            root_level: 1,
+            shape_id: [0u8; 32],
+            tx_count: 17,
+            tx_statements_commitment: commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+            inner_public_inputs_len: 1,
+            representative_proof: vec![0],
+            packed_public_values: vec![0, 0],
+            outer_proof: vec![0],
+        };
+
+        let err = validate_payload_header(&payload, 1, &commitment)
+            .expect_err("slot padding beyond factor bound must fail");
+        assert!(matches!(err, ProofError::AggregationProofV4Binding(_)));
     }
 }
