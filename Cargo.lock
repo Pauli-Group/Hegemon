@@ -1465,6 +1465,7 @@ name = "circuits-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "batch-circuit",
  "block-circuit",
  "clap",
  "p3-goldilocks",

@@ -16,6 +16,7 @@ protocol-versioning = { path = "../../protocol/versioning" }
 state-merkle = { path = "../../state/merkle" }
 p3-goldilocks = { workspace = true }
 p3-uni-stark = { workspace = true }
+batch-circuit = { path = "../batch" }
 
 [lints]
 workspace = true
