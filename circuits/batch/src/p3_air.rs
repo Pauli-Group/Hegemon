@@ -20,8 +20,9 @@ use transaction_core::dimensions::{
     commitment_output_row, merkle_root_output_row, nullifier_output_row, ROWS_PER_TX,
 };
 use transaction_core::p3_air::{
-    COL_DOMAIN, COL_IN0, COL_IN1, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_RESET, COL_S0, COL_S1,
-    COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, CYCLE_LENGTH,
+    COL_DOMAIN, COL_IN0, COL_IN1, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0,
+    COL_IN_ACTIVE1, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11,
+    COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, CYCLE_LENGTH,
 };
 use transaction_core::poseidon2_constants;
 
@@ -583,9 +584,12 @@ where
             let active = tx_active[tx].clone();
             let nf_base = tx * MAX_INPUTS;
             let cm_base = tx * MAX_OUTPUTS;
+            let input_active_cols = [COL_IN_ACTIVE0, COL_IN_ACTIVE1];
+            let output_active_cols = [COL_OUT_ACTIVE0, COL_OUT_ACTIVE1];
             for nf_idx in 0..MAX_INPUTS {
                 let row_flag: AB::Expr = prep_row[prep_nf_row_col(tx, nf_idx)].clone().into();
-                let gate = row_flag * active.clone();
+                let input_gate: AB::Expr = current[input_active_cols[nf_idx]].clone().into();
+                let gate = row_flag * active.clone() * input_gate.clone();
                 let nf = &nullifiers[nf_base + nf_idx];
                 when.assert_zero(gate.clone() * (current[COL_S0].clone() - nf[0].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S1].clone() - nf[1].clone()));
@@ -595,7 +599,7 @@ where
                 when.assert_zero(gate.clone() * (current[COL_S5].clone() - nf[5].clone()));
 
                 let row_flag: AB::Expr = prep_row[prep_mr_row_col(tx, nf_idx)].clone().into();
-                let gate = row_flag * active.clone();
+                let gate = row_flag * active.clone() * input_gate;
                 when.assert_zero(gate.clone() * (current[COL_S0].clone() - anchor[0].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S1].clone() - anchor[1].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S2].clone() - anchor[2].clone()));
@@ -606,7 +610,8 @@ where
 
             for cm_idx in 0..MAX_OUTPUTS {
                 let row_flag: AB::Expr = prep_row[prep_cm_row_col(tx, cm_idx)].clone().into();
-                let gate = row_flag * active.clone();
+                let output_gate: AB::Expr = current[output_active_cols[cm_idx]].clone().into();
+                let gate = row_flag * active.clone() * output_gate;
                 let cm = &commitments[cm_base + cm_idx];
                 when.assert_zero(gate.clone() * (current[COL_S0].clone() - cm[0].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S1].clone() - cm[1].clone()));
