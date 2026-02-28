@@ -2537,7 +2537,14 @@ enum PreparedAggregationArtifacts {
 }
 
 fn aggregation_prepare_threads() -> usize {
-    std::env::var("HEGEMON_AGG_PREPARE_THREADS")
+    if let Some(explicit) = std::env::var("HEGEMON_AGG_PREPARE_THREADS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+    {
+        return explicit.max(1);
+    }
+
+    std::env::var("HEGEMON_RAYON_THREADS")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(1)
