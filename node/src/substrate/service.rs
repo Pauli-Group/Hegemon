@@ -2297,6 +2297,13 @@ fn build_flat_batch_proofs_from_materials(
         let batch_len = largest_power_of_two_at_most(remaining.min(capped_slot_txs));
         let witness_chunk = witnesses[offset..offset + batch_len].to_vec();
         let proof_chunk = proofs[offset..offset + batch_len].to_vec();
+        let chunk_started = Instant::now();
+        tracing::info!(
+            start_tx_index,
+            batch_len,
+            remaining,
+            "build_flat_batch_proofs_from_materials: proving chunk"
+        );
         let encoded = run_aggregation_prepare_job(move || {
             let prover = BatchTransactionProver::new();
             let (batch_proof, batch_public_inputs) = prover
@@ -2370,6 +2377,13 @@ fn build_flat_batch_proofs_from_materials(
             encode_flat_batch_proof_bytes(&batch_proof_bytes, &batch_public_values)
                 .map_err(|err| format!("flat batch proof encoding failed: {err}"))
         })?;
+        tracing::info!(
+            start_tx_index,
+            batch_len,
+            encoded_bytes = encoded.len(),
+            stage_ms = chunk_started.elapsed().as_millis(),
+            "build_flat_batch_proofs_from_materials: chunk proved"
+        );
         let tx_count_u16 =
             u16::try_from(batch_len).map_err(|_| "flat batch size exceeds u16".to_string())?;
         out.push(pallet_shielded_pool::types::BatchProofItem {
@@ -2552,6 +2566,11 @@ fn prepare_block_proof_bundle(
     // NOTE: Run stages sequentially to avoid nested Rayon pool contention/deadlock
     // when heavy proving jobs execute under strict batching mode.
     let _ = commitment_block_fast;
+    tracing::info!(
+        block_number,
+        tx_count,
+        "prepare_block_proof_bundle: starting commitment stage"
+    );
     let commitment_stage_started = Instant::now();
     let commitment_result = build_commitment_block_proof_from_materials(
         client,
@@ -2561,7 +2580,34 @@ fn prepare_block_proof_bundle(
         da_root,
     );
     let commitment_stage_ms = commitment_stage_started.elapsed().as_millis();
+    match &commitment_result {
+        Ok(Some(_)) => tracing::info!(
+            block_number,
+            tx_count,
+            commitment_stage_ms,
+            "prepare_block_proof_bundle: commitment stage complete"
+        ),
+        Ok(None) => tracing::warn!(
+            block_number,
+            tx_count,
+            commitment_stage_ms,
+            "prepare_block_proof_bundle: commitment stage returned no proof material"
+        ),
+        Err(error) => tracing::warn!(
+            block_number,
+            tx_count,
+            commitment_stage_ms,
+            error = %error,
+            "prepare_block_proof_bundle: commitment stage failed"
+        ),
+    }
 
+    tracing::info!(
+        block_number,
+        tx_count,
+        mode = ?selected_mode,
+        "prepare_block_proof_bundle: starting aggregation stage"
+    );
     let aggregation_stage_started = Instant::now();
     let batch_result = match selected_mode {
         PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
@@ -2577,6 +2623,21 @@ fn prepare_block_proof_bundle(
         .map(PreparedAggregationArtifacts::Merge),
     };
     let aggregation_stage_ms = aggregation_stage_started.elapsed().as_millis();
+    match &batch_result {
+        Ok(_) => tracing::info!(
+            block_number,
+            tx_count,
+            aggregation_stage_ms,
+            "prepare_block_proof_bundle: aggregation stage complete"
+        ),
+        Err(error) => tracing::warn!(
+            block_number,
+            tx_count,
+            aggregation_stage_ms,
+            error = %error,
+            "prepare_block_proof_bundle: aggregation stage failed"
+        ),
+    }
     let commitment_proof = commitment_result?
         .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
     let aggregation_artifacts = batch_result?;
