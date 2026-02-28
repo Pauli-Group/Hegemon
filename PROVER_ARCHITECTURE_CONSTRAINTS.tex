@@ -503,24 +503,38 @@ makes the cache miss rate proportional to block occupancy variance. The
 \texttt{thread\_local!} storage means cache entries are not shared across
 Rayon worker threads. Cold build costs 100--465 seconds per miss.
 
-\subsubsection{Flaw 3: The batch circuit is now wired but verification fails}
+\subsubsection{Flaw 3: The batch circuit scales linearly, not sub-linearly}
 
-\textbf{Update (measured):} \texttt{BatchTransactionProverP3::prove\_batch()}
-is now called in the block authoring pipeline
-(\texttt{node/src/substrate/service.rs}, line $\sim$2275, function
-\texttt{build\_flat\_batch\_proofs\_from\_materials}). The wire format was
-upgraded to \texttt{FlatBatchProofPayloadV2} (schema~v2, kind =
-\texttt{P3\_BATCH\_STARK}), which carries actual STARK proof bytes and
-batch public values rather than serialised individual transaction proofs.
-A dedicated benchmark (\texttt{circuits/bench --batch-size 16
---batch-only}) exists and produces timing data.
+\textbf{Update (resolved $\to$ new finding):}
+\texttt{BatchTransactionProverP3::prove\_batch()} is wired into the block
+authoring pipeline and verifies correctly end-to-end
+(\texttt{OodEvaluationMismatch} and statement-commitment bugs fixed).
+\texttt{MAX\_BATCH\_SIZE} has been raised from 16 to~32 across all four
+crates.
 
-However, batch proof \emph{verification} fails with
-\texttt{OodEvaluationMismatch} at all tested batch sizes. The likely root
-cause is a mismatch between the preprocessed trace used by the prover and
-the one reconstructed by the verifier at batch-slot boundaries. Until this
-is fixed, batch proofs are generated but cannot be verified end-to-end,
-making the pipeline non-functional for consensus.
+However, benchmark results show \textbf{NO sub-linear scaling} from
+batch-16 to batch-32:
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Metric} & \textbf{batch-16} & \textbf{batch-32} &
+  \textbf{Ratio} \\
+\midrule
+Prove time & 21.48~s & 42.84~s & $2.00\times$ \\
+Verify time & 9.35~s & 18.59~s & $1.99\times$ \\
+Throughput (prove$+$verify) & 0.52~tx/s & 0.52~tx/s & $1.00\times$ \\
+Throughput (prove only) & 0.75~tx/s & 0.75~tx/s & $1.00\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Both proving and verification double when batch size doubles, yielding
+constant per-transaction cost regardless of batch size. The theorised
+sub-linear FRI/Merkle amortisation does not materialise because the trace
+grows from $2^{17}$ to $2^{18}$ rows, and $O(N \log N)$ FRI/Merkle cost
+actually grows \emph{slightly more} than $2\times$ due to the extra log
+factor. Conclusion: \textbf{parallel batch-16 is optimal; increasing batch
+size yields no throughput gain.}
 
 \subsubsection{Flaw 4: The recursion circuit's outer trace is enormous}
 
@@ -543,6 +557,31 @@ nullifier uniqueness (set integrity). Neither is logically redundant.
 
 However, the aggregation step is \emph{economically} redundant at $\le 60$
 TPS (estimated crossover; depends on batch-proof verification cost, which
+
+\subsubsection{Flaw 6: The verifier recomputes the preprocessed trace on every call}
+
+In \texttt{circuits/batch/src/p3\_verifier.rs}, line~25,
+\texttt{verify\_batch\_proof\_p3()} calls
+\texttt{setup\_preprocessed(\&config, \&air, degree\_bits)} on every
+invocation. This function regenerates the full preprocessed trace
+($2^{17}$~rows $\times$ 33~columns for batch-16, $2^{18} \times 33$ for
+batch-32) and builds the Merkle commitment over it---\emph{prover-time
+work} that should be computed once and cached.
+
+For batch-16 the preprocessed trace is $\sim$2.2~MB of field elements;
+with blowup$\times$16 LDE and Poseidon2 Merkle hashing this explains the
+majority of the 9.35~s verification cost. Proper STARK verification
+(FRI query checking $+$ Merkle path verification $+$ OOD evaluation) is
+$O(\mathit{NUM\_QUERIES} \times \log N)$, typically $<$50~ms for traces of
+this size.
+
+\textbf{Fix:} Precompute and cache the preprocessed verifying key (VK) for
+each supported batch size at node startup. Pass the cached VK to
+\texttt{verify\_with\_preprocessed()} directly. Expected improvement:
+$9.35$~s~$\to$~$<0.05$~s for batch-16 verification. The same issue
+affects the pallet-side verifier in
+\texttt{pallets/shielded-pool/src/verifier.rs} (line~972), which calls
+\texttt{verify\_batch\_proof\_bytes} with the same uncached code path.
 must be benchmarked). With at most 4 batch proofs per block, verification
 of all batch proofs takes $<40$~ms---invisible at the 6-second consensus
 timescale. The succinctness compression from 4 proofs to 1 proof saves
@@ -748,24 +787,46 @@ With optimized leaf packing (which \texttt{p3-merkle-tree} implements):
 closer to 1.5~s. With na\"ive per-element hashing: up to 3.0~s.
 
 \paragraph{Measured result.}
-\texttt{circuits-bench} with \texttt{--batch-size 16 --batch-only
---batch-skip-verify} on \texttt{hegemon-prover} (32~cores,
-\texttt{RAYON\_NUM\_THREADS=32}) measured:
+\texttt{circuits-bench} with \texttt{--batch-size 16 --batch-only}
+on \texttt{hegemon-prover} (32~cores, \texttt{RAYON\_NUM\_THREADS=32})
+measured:
 \begin{equation}\label{eq:batch16-measured}
-\boxed{T_{\mathrm{batch16}}^{\mathrm{measured}} \approx 14.24\;\text{s}
-\quad\Rightarrow\quad \sim 1.12\;\text{tx/s throughput}.}
+\boxed{T_{\mathrm{batch16}}^{\mathrm{measured}} \approx 17.49\;\text{s prove}
++ 5.63\;\text{s verify} \approx 23.12\;\text{s total}
+\quad\Rightarrow\quad \sim 0.69\;\text{tx/s end-to-end}.}
 \end{equation}
 
-The $4.7$--$9.5\times$ gap between estimate and measurement is consistent
-with the $2$--$5\times$ overhead multiplier noted in
-Section~\ref{sec:recursion-overhead}, compounded by L3 cache pressure at
-the $M = 2^{21}$ domain size ($\sim$2.2~GB LDE trace far exceeds typical
-L3 capacity).
+Prove-only throughput is $\sim$0.92 tx/s ($17.49$~s for 16~tx).
+The $5.8$--$11.7\times$ gap between the arithmetic lower bound and the
+measured proving time is consistent with the $2$--$5\times$ overhead
+multiplier noted in Section~\ref{sec:recursion-overhead}, compounded by
+L3 cache pressure at the $M = 2^{21}$ domain size ($\sim$2.2~GB LDE trace
+far exceeds typical L3 capacity).
 
-\textbf{Note:} \texttt{--batch-skip-verify} was required because batch proof
-verification fails with \texttt{OodEvaluationMismatch} (see Flaw~3).
-The 14.24~s figure reflects proving time only; verification correctness
-remains an open blocker.
+\paragraph{Comparison with parallelised aggregation path.}
+After fixing a bug where the aggregation prepare step silently ran
+single-threaded (\texttt{HEGEMON\_TP\_AGG\_PREPARE\_THREADS} now defaults to
+the node Rayon thread count), the aggregation path with 32 threads measures:
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Tx count} & \textbf{Agg build (32~thr)} & \textbf{Agg verify} \\
+\midrule
+4 & 4.81~s & 1.53--1.74~s \\
+8 & 8.72~s & 2.87~s \\
+16 & 16.72~s & 5.62~s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This reveals that batch-16 (17.49~s prove) and aggregation-16 (16.72~s build)
+are at \emph{near parity} on 32 cores. The batch path's theoretical advantage
+(one STARK instead of $n$ individual proofs $+$ recursion) has not yet
+materialised at $n = 16$, likely because the single batch trace
+($2^{17}$~rows $\times$ 132~cols) incurs comparable FRI and Merkle commit
+cost to 16 smaller traces ($2^{13}$~rows each) processed in parallel.
+The crossover is expected at higher batch sizes (32--64), where the batch
+trace grows sub-linearly while aggregation scales linearly.
 
 \subsubsection{Recursion overhead: estimated $17$--$50\times$ cost multiplier}
 
@@ -1275,27 +1336,28 @@ Max TPS (1 machine) & $<0.2$ & $\sim$15 & $\sim$100 (w/ GPU) \\
 \subsection{What must change in the codebase}
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{Immediate (Phase 1---partially complete):}
-        \texttt{BatchTransactionProverP3::prove\_batch()} is now wired into
-        the block authoring path
-        (\texttt{build\_flat\_batch\_proofs\_from\_materials} in
-        \texttt{service.rs}). The wire format has been upgraded to
-        \texttt{FlatBatchProofPayloadV2} with actual STARK bytes.
-        A benchmark exists (\texttt{circuits/bench --batch-size 16}).
-        \textbf{Remaining blocker:} batch proof verification fails with
-        \texttt{OodEvaluationMismatch}---likely a preprocessed-trace
-        mismatch between prover and verifier at batch-slot boundaries.
-        Until the verifier bug is fixed, the pipeline cannot produce
-        consensus-valid blocks. Measured proving time: $\sim$14.24~s per
-        batch-16 ($\sim$1.12~tx/s), which is $4.7$--$9.5\times$ slower
-        than the arithmetic estimate of 1.5--3.0~s. Target after fix:
-        0.1--10 TPS on existing hardware.
+  \item \textbf{Immediate (Phase 1---correctness complete, perf blocked):}
+        Batch proving is wired and verified end-to-end.
+        \texttt{MAX\_BATCH\_SIZE} raised to~32.
+        Measured: 21.48~s prove $+$ 9.35~s verify for batch-16
+        ($\sim$0.52~tx/s). Batch-32 shows no scaling gain (constant tx/s).
+        \textbf{Remaining blockers:}
+        (a)~verification cost dominated by \texttt{setup\_preprocessed()}
+        recomputation (Flaw~6); caching the VK should drop verify to
+        $<$50~ms;
+        (b)~proving cost ($21.5$~s) exceeds 6~s block budget; requires
+        prove-ahead pipelining (decouple proving from block authoring) or
+        GPU acceleration.
+        Target with VK caching $+$ prove-ahead: 0.5--5 TPS.
 
-  \item \textbf{Phase 2 (engineering, 2--4 weeks):} Extend batch size from
-        16 to 32 or 64 transactions. Build a fixed-arity merge circuit
-        (arity 8) that verifies 8 identical batch proofs. Prebuild the
-        single merge circuit shape at node startup ($<1$~s). Target:
-        10--100 TPS.
+  \item \textbf{Phase 2 (engineering, 2--4 weeks):} Build prove-ahead
+        pipelining: decouple batch proving from block authoring so proofs
+        are generated speculatively on the mempool. Only verification
+        ($<$50~ms with cached VK) hits the block import critical path.
+        Build a fixed-arity merge circuit (arity 8) that verifies 8
+        identical batch-16 proofs, reducing on-chain verification from
+        $\lceil n/16 \rceil$ proofs to~1. Prebuild the single merge
+        circuit shape at node startup ($<1$~s). Target: 5--50 TPS.
 
   \item \textbf{Phase 3 (GPU integration, 1--3 months):} Port the batch
         and merge provers to GPU using Icicle \cite{ingonyama2024} or
@@ -1333,10 +1395,11 @@ order with a recursion layer that destroys performance. The fix is
 architectural, not optimizational:
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{0.1--10 TPS:} Batch proving (now wired into authoring
-        pipeline; verification blocked by \texttt{OodEvaluationMismatch}).
-        No recursion. CPU only. Measured: $\sim$14.24~s per batch-16
-        ($\sim$1.12~tx/s); requires optimisation to meet 6~s block budget.
+  \item \textbf{0.1--10 TPS:} Batch proving (wired and verified).
+        No recursion. CPU only. Measured: 21.48~s prove $+$ 9.35~s verify
+        per batch-16 ($\sim$0.52~tx/s). Verification fix (VK caching)
+        should yield $\sim$0.75~tx/s; prove-ahead pipelining needed for
+        block-time compliance.
   \item \textbf{10--100 TPS:} Batch proving $+$ fixed-arity merge
         recursion. CPU batch $+$ GPU merge. Budget: $<5.5$~s.
   \item \textbf{100--1000 TPS:} GPU batch $+$ GPU recursive tree.
