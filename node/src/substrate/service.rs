@@ -183,6 +183,7 @@ use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
+use transaction_circuit::dimensions::ROWS_PER_TX;
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
 };
