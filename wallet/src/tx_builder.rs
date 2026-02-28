@@ -361,9 +361,12 @@ pub fn build_transaction_with_binding(
         proof_result.fee,
         proof_result.value_balance,
     );
+    let witness_bytes = bincode::serialize(&witness)
+        .map_err(|e| WalletError::Serialization(format!("failed to encode witness: {e}")))?;
 
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
+        Some(witness_bytes),
         proof_result.nullifiers.to_vec(),
         proof_result.commitments.to_vec(),
         &ciphertexts,
@@ -567,9 +570,12 @@ pub fn build_stablecoin_burn(
         proof_result.fee,
         proof_result.value_balance,
     );
+    let witness_bytes = bincode::serialize(&witness)
+        .map_err(|e| WalletError::Serialization(format!("failed to encode witness: {e}")))?;
 
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
+        Some(witness_bytes),
         proof_result.nullifiers.to_vec(),
         proof_result.commitments.to_vec(),
         &ciphertexts,
@@ -743,9 +749,12 @@ pub fn build_consolidation_transaction(
         proof_result.fee,
         proof_result.value_balance,
     );
+    let witness_bytes = bincode::serialize(&witness)
+        .map_err(|e| WalletError::Serialization(format!("failed to encode witness: {e}")))?;
 
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
+        Some(witness_bytes),
         proof_result.nullifiers.to_vec(),
         proof_result.commitments.to_vec(),
         &[ciphertext],

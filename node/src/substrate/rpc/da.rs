@@ -1,6 +1,8 @@
 //! Data-availability RPC endpoints.
 
-use crate::substrate::service::{DaChunkStore, PendingCiphertextStore, PendingProofStore};
+use crate::substrate::service::{
+    DaChunkStore, PendingCiphertextStore, PendingProofStore, PendingWitnessStore,
+};
 use crypto::hashes::blake3_384;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
@@ -11,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use state_da::{DaChunkProof, DaParams, DaRoot};
 use std::sync::Arc;
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
+use transaction_circuit::witness::TransactionWitness;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DaParamsRpc {
@@ -86,6 +89,26 @@ pub struct SubmitProofsEntry {
     pub size: u32,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitWitnessesRequest {
+    pub witnesses: Vec<SubmitWitnessesItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitWitnessesItem {
+    /// Binding hash bytes (0x-prefixed hex).
+    pub binding_hash: String,
+    /// Witness bytes (base64, or 0x-prefixed hex).
+    pub witness: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitWitnessesEntry {
+    pub binding_hash: String,
+    pub witness_hash: String,
+    pub size: u32,
+}
+
 #[rpc(server, client, namespace = "da")]
 pub trait DaApi {
     /// Get a DA chunk proof by root and chunk index.
@@ -120,12 +143,23 @@ pub trait DaApi {
         &self,
         request: SubmitProofsRequest,
     ) -> RpcResult<Vec<SubmitProofsEntry>>;
+
+    /// Stage transaction witness bytes in the node's pending witness pool.
+    ///
+    /// This is used by batch proving paths that synthesize per-block flat batch proofs
+    /// from transaction witnesses (`BatchTransactionProver::prove_batch`).
+    #[method(name = "submitWitnesses")]
+    async fn submit_witnesses(
+        &self,
+        request: SubmitWitnessesRequest,
+    ) -> RpcResult<Vec<SubmitWitnessesEntry>>;
 }
 
 pub struct DaRpc {
     store: Arc<Mutex<DaChunkStore>>,
     pending_ciphertexts: Arc<Mutex<PendingCiphertextStore>>,
     pending_proofs: Arc<Mutex<PendingProofStore>>,
+    pending_witnesses: Arc<Mutex<PendingWitnessStore>>,
     params: DaParams,
 }
 
@@ -134,12 +168,14 @@ impl DaRpc {
         store: Arc<Mutex<DaChunkStore>>,
         pending_ciphertexts: Arc<Mutex<PendingCiphertextStore>>,
         pending_proofs: Arc<Mutex<PendingProofStore>>,
+        pending_witnesses: Arc<Mutex<PendingWitnessStore>>,
         params: DaParams,
     ) -> Self {
         Self {
             store,
             pending_ciphertexts,
             pending_proofs,
+            pending_witnesses,
             params,
         }
     }
@@ -284,6 +320,84 @@ impl DaApiServer for DaRpc {
             entries.push(SubmitProofsEntry {
                 binding_hash: format!("0x{}", hex::encode(binding_hash)),
                 proof_hash: format!("0x{}", hex::encode(proof_hash)),
+                size,
+            });
+        }
+
+        Ok(entries)
+    }
+
+    async fn submit_witnesses(
+        &self,
+        request: SubmitWitnessesRequest,
+    ) -> RpcResult<Vec<SubmitWitnessesEntry>> {
+        const MAX_WITNESSES_PER_REQUEST: usize = 64;
+        const MAX_WITNESS_BYTES: usize = 4 * 1024 * 1024;
+        const MAX_TOTAL_BYTES_PER_REQUEST: usize = 64 * 1024 * 1024;
+
+        if request.witnesses.len() > MAX_WITNESSES_PER_REQUEST {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                format!("too many witnesses (max {})", MAX_WITNESSES_PER_REQUEST),
+                None::<()>,
+            ));
+        }
+
+        let mut total_bytes = 0usize;
+        let mut entries = Vec::with_capacity(request.witnesses.len());
+        let mut pending = self.pending_witnesses.lock();
+
+        for item in request.witnesses {
+            let binding_hash = parse_binding_hash(&item.binding_hash)?;
+            let bytes = parse_bytes(&item.witness)?;
+            if bytes.is_empty() {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    "witness bytes empty",
+                    None::<()>,
+                ));
+            }
+            if bytes.len() > MAX_WITNESS_BYTES {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("witness exceeds max size ({} bytes)", MAX_WITNESS_BYTES),
+                    None::<()>,
+                ));
+            }
+
+            let witness: TransactionWitness = bincode::deserialize(&bytes).map_err(|err| {
+                ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("witness decode failed: {err}"),
+                    None::<()>,
+                )
+            })?;
+            witness.validate().map_err(|err| {
+                ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("witness validation failed: {err}"),
+                    None::<()>,
+                )
+            })?;
+
+            total_bytes = total_bytes.saturating_add(bytes.len());
+            if total_bytes > MAX_TOTAL_BYTES_PER_REQUEST {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!(
+                        "request too large (max {} bytes)",
+                        MAX_TOTAL_BYTES_PER_REQUEST
+                    ),
+                    None::<()>,
+                ));
+            }
+
+            let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+            let witness_hash = blake3_384(&bytes);
+            pending.insert(binding_hash, bytes);
+            entries.push(SubmitWitnessesEntry {
+                binding_hash: format!("0x{}", hex::encode(binding_hash)),
+                witness_hash: format!("0x{}", hex::encode(witness_hash)),
                 size,
             });
         }

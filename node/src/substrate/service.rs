@@ -135,6 +135,7 @@ use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use aggregation_circuit::prove_aggregation;
+use batch_circuit::BatchTransactionProver;
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
@@ -150,6 +151,7 @@ use network::{
     PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
     PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
+use p3_field::PrimeField64;
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
 use sc_client_api::BlockchainEvents;
@@ -180,9 +182,12 @@ use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
+use transaction_circuit::hashing_pq::{
+    bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
+};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+use transaction_circuit::witness::TransactionWitness;
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
@@ -353,6 +358,7 @@ const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY: usize = 128;
 const DEFAULT_PENDING_CIPHERTEXTS_CAPACITY: usize = 4096;
 const DEFAULT_PENDING_PROOFS_CAPACITY: usize = 256;
+const DEFAULT_PENDING_WITNESSES_CAPACITY: usize = 256;
 const CIPHERTEXT_COUNT_KEY: &[u8] = b"ciphertext_count";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -827,6 +833,56 @@ impl PendingProofStore {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingWitnessStore {
+    capacity: usize,
+    order: VecDeque<[u8; 64]>,
+    entries: HashMap<[u8; 64], Vec<u8>>,
+}
+
+impl PendingWitnessStore {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, binding_hash: [u8; 64], bytes: Vec<u8>) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        if let Some(existing) = self.entries.get_mut(&binding_hash) {
+            *existing = bytes;
+            self.order.retain(|entry| entry != &binding_hash);
+            self.order.push_back(binding_hash);
+            return;
+        }
+
+        if self.entries.len() >= self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+
+        self.entries.insert(binding_hash, bytes);
+        self.order.push_back(binding_hash);
+    }
+
+    pub fn get(&self, binding_hash: &[u8; 64]) -> Option<&Vec<u8>> {
+        self.entries.get(binding_hash)
+    }
+
+    pub fn remove_many(&mut self, binding_hashes: &[[u8; 64]]) {
+        for binding_hash in binding_hashes {
+            self.entries.remove(binding_hash);
+            self.order.retain(|entry| entry != binding_hash);
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct DaRequestTracker {
     pending: HashMap<(DaRoot, u32), oneshot::Sender<Option<DaChunkProof>>>,
@@ -1008,6 +1064,19 @@ fn load_pending_proof_capacity() -> usize {
             DEFAULT_PENDING_PROOFS_CAPACITY
         );
         return DEFAULT_PENDING_PROOFS_CAPACITY;
+    }
+    capacity
+}
+
+fn load_pending_witness_capacity() -> usize {
+    let capacity = env_usize("HEGEMON_PENDING_WITNESSES_CAPACITY")
+        .unwrap_or(DEFAULT_PENDING_WITNESSES_CAPACITY);
+    if capacity == 0 {
+        tracing::warn!(
+            "HEGEMON_PENDING_WITNESSES_CAPACITY is zero; falling back to {}",
+            DEFAULT_PENDING_WITNESSES_CAPACITY
+        );
+        return DEFAULT_PENDING_WITNESSES_CAPACITY;
     }
     capacity
 }
@@ -2015,6 +2084,7 @@ struct CandidateBlockContext {
     decoded_extrinsics: Vec<runtime::UncheckedExtrinsic>,
     extracted_transactions: Vec<consensus::types::Transaction>,
     tx_proofs: Arc<Vec<TransactionProof>>,
+    tx_witnesses: Arc<Vec<TransactionWitness>>,
     statement_hashes: Vec<[u8; 48]>,
     tx_statements_commitment: [u8; 48],
     da_root: DaRoot,
@@ -2028,6 +2098,7 @@ fn build_candidate_context(
     da_params: DaParams,
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
+    pending_witnesses: &PendingWitnessStore,
 ) -> Result<CandidateBlockContext, String> {
     let mut decoded = Vec::with_capacity(candidate_txs.len());
     for ext_bytes in candidate_txs {
@@ -2045,12 +2116,42 @@ fn build_candidate_context(
     let da_chunk_count = encoding.chunks().len() as u32;
     let resolved_ciphertexts = da_blob.transactions;
 
-    let (transactions, proofs) = extract_shielded_transfers_for_parallel_verification(
-        &decoded,
-        Some(resolved_ciphertexts.as_slice()),
-        Some(pending_proofs),
-        false,
-    )?;
+    let (transactions, proofs, proof_binding_hashes) =
+        extract_shielded_transfers_for_parallel_verification(
+            &decoded,
+            Some(resolved_ciphertexts.as_slice()),
+            Some(pending_proofs),
+            false,
+        )?;
+    if proof_binding_hashes.len() != proofs.len() {
+        return Err(format!(
+            "proof binding hash count mismatch (expected {}, got {})",
+            proofs.len(),
+            proof_binding_hashes.len()
+        ));
+    }
+    let mut witnesses = Vec::with_capacity(proof_binding_hashes.len());
+    for binding_hash in &proof_binding_hashes {
+        let witness_bytes = pending_witnesses.get(binding_hash).ok_or_else(|| {
+            format!(
+                "missing pending witness bytes for binding hash {}",
+                hex::encode(binding_hash)
+            )
+        })?;
+        let witness: TransactionWitness = bincode::deserialize(witness_bytes).map_err(|err| {
+            format!(
+                "failed to decode pending witness bytes for binding hash {}: {err}",
+                hex::encode(binding_hash)
+            )
+        })?;
+        witness.validate().map_err(|err| {
+            format!(
+                "pending witness validation failed for binding hash {}: {err}",
+                hex::encode(binding_hash)
+            )
+        })?;
+        witnesses.push(witness);
+    }
     let statement_hashes = statement_hashes_from_extrinsics(&decoded);
     if statement_hashes.len() != proofs.len() {
         return Err(format!(
@@ -2067,6 +2168,7 @@ fn build_candidate_context(
         decoded_extrinsics: decoded,
         extracted_transactions: transactions,
         tx_proofs: Arc::new(proofs),
+        tx_witnesses: Arc::new(witnesses),
         statement_hashes,
         tx_statements_commitment,
         da_root,
@@ -2138,6 +2240,12 @@ fn batch_slot_txs() -> usize {
         .clamp(1, u16::MAX as usize)
 }
 
+fn largest_power_of_two_at_most(value: usize) -> usize {
+    debug_assert!(value >= 1);
+    let shift = usize::BITS - 1 - value.leading_zeros();
+    1usize << shift
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreparedProofMode {
     FlatBatches,
@@ -2166,20 +2274,104 @@ fn merge_root_arity_from_env() -> u16 {
 
 fn build_flat_batch_proofs_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
+    witnesses: Arc<Vec<TransactionWitness>>,
     slot_txs: usize,
 ) -> Result<Vec<pallet_shielded_pool::types::BatchProofItem>, String> {
     if proofs.is_empty() {
         return Ok(Vec::new());
     }
+    if witnesses.len() != proofs.len() {
+        return Err(format!(
+            "flat batch witness/proof count mismatch (witnesses {}, proofs {})",
+            witnesses.len(),
+            proofs.len()
+        ));
+    }
+    let max_batch = batch_circuit::MAX_BATCH_SIZE;
+    let capped_slot_txs = slot_txs.clamp(1, max_batch);
     let mut out = Vec::new();
     let mut start_tx_index: u32 = 0;
-    for chunk in proofs.chunks(slot_txs) {
-        let tx_proofs = chunk.to_vec();
-        let encoded =
-            run_aggregation_prepare_job(move || encode_flat_batch_proof_bytes(&tx_proofs))
-                .map_err(|err| format!("flat batch proof encoding failed: {err}"))?;
+    let mut offset = 0usize;
+    while offset < proofs.len() {
+        let remaining = proofs.len() - offset;
+        let batch_len = largest_power_of_two_at_most(remaining.min(capped_slot_txs));
+        let witness_chunk = witnesses[offset..offset + batch_len].to_vec();
+        let proof_chunk = proofs[offset..offset + batch_len].to_vec();
+        let encoded = run_aggregation_prepare_job(move || {
+            let prover = BatchTransactionProver::new();
+            let (batch_proof, batch_public_inputs) = prover
+                .prove_batch(&witness_chunk)
+                .map_err(|err| format!("batch proof generation failed: {err}"))?;
+
+            if batch_public_inputs.batch_size as usize != proof_chunk.len() {
+                return Err(format!(
+                    "batch public input size mismatch (proofs {}, public {})",
+                    proof_chunk.len(),
+                    batch_public_inputs.batch_size
+                ));
+            }
+
+            let mut expected_anchor: Option<[u8; 48]> = None;
+            let mut expected_fee: u128 = 0;
+            let mut expected_nullifiers =
+                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_INPUTS);
+            let mut expected_commitments =
+                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_OUTPUTS);
+            for proof in &proof_chunk {
+                let anchor = proof.public_inputs.merkle_root;
+                if let Some(expected_anchor_value) = expected_anchor {
+                    if anchor != expected_anchor_value {
+                        return Err("batch proof chunk contains mixed anchors".to_string());
+                    }
+                } else {
+                    expected_anchor = Some(anchor);
+                }
+                expected_fee = expected_fee.saturating_add(proof.public_inputs.native_fee as u128);
+                expected_nullifiers.extend_from_slice(&proof.public_inputs.nullifiers);
+                expected_commitments.extend_from_slice(&proof.public_inputs.commitments);
+            }
+            for _ in proof_chunk.len()..batch_circuit::MAX_BATCH_SIZE {
+                expected_nullifiers.extend(std::iter::repeat_n([0u8; 48], MAX_INPUTS));
+                expected_commitments.extend(std::iter::repeat_n([0u8; 48], MAX_OUTPUTS));
+            }
+
+            let observed_anchor = felts_to_bytes48(&batch_public_inputs.anchor);
+            if expected_anchor.is_some() && Some(observed_anchor) != expected_anchor {
+                return Err("batch proof anchor mismatch with transaction proofs".to_string());
+            }
+            if batch_public_inputs.total_fee.as_canonical_u64() as u128 != expected_fee {
+                return Err("batch proof fee sum mismatch with transaction proofs".to_string());
+            }
+
+            let observed_nullifiers: Vec<[u8; 48]> = batch_public_inputs
+                .nullifiers
+                .iter()
+                .map(felts_to_bytes48)
+                .collect();
+            if observed_nullifiers != expected_nullifiers {
+                return Err("batch proof nullifier list mismatch".to_string());
+            }
+            let observed_commitments: Vec<[u8; 48]> = batch_public_inputs
+                .commitments
+                .iter()
+                .map(felts_to_bytes48)
+                .collect();
+            if observed_commitments != expected_commitments {
+                return Err("batch proof commitment list mismatch".to_string());
+            }
+
+            let batch_proof_bytes = bincode::serialize(&batch_proof)
+                .map_err(|err| format!("batch proof serialization failed: {err}"))?;
+            let batch_public_values = batch_public_inputs
+                .to_vec()
+                .iter()
+                .map(|value| value.as_canonical_u64())
+                .collect::<Vec<_>>();
+            encode_flat_batch_proof_bytes(&batch_proof_bytes, &batch_public_values)
+                .map_err(|err| format!("flat batch proof encoding failed: {err}"))
+        })?;
         let tx_count_u16 =
-            u16::try_from(chunk.len()).map_err(|_| "flat batch size exceeds u16".to_string())?;
+            u16::try_from(batch_len).map_err(|_| "flat batch size exceeds u16".to_string())?;
         out.push(pallet_shielded_pool::types::BatchProofItem {
             start_tx_index,
             tx_count: tx_count_u16,
@@ -2187,8 +2379,9 @@ fn build_flat_batch_proofs_from_materials(
             proof: pallet_shielded_pool::types::StarkProof::from_bytes(encoded),
         });
         start_tx_index = start_tx_index
-            .checked_add(chunk.len() as u32)
+            .checked_add(batch_len as u32)
             .ok_or_else(|| "flat batch start index overflow".to_string())?;
+        offset += batch_len;
     }
     Ok(out)
 }
@@ -2312,6 +2505,7 @@ fn prepare_block_proof_bundle(
     da_params: DaParams,
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
+    pending_witnesses: &PendingWitnessStore,
     commitment_block_fast: bool,
 ) -> Result<PreparedBundle, String> {
     let started = Instant::now();
@@ -2327,6 +2521,7 @@ fn prepare_block_proof_bundle(
         da_params,
         pending_ciphertexts,
         pending_proofs,
+        pending_witnesses,
     )?;
     tracing::info!(
         block_number,
@@ -2350,6 +2545,7 @@ fn prepare_block_proof_bundle(
 
     let proofs_for_commitment = Arc::clone(&context.tx_proofs);
     let proofs_for_batching = Arc::clone(&context.tx_proofs);
+    let witnesses_for_batching = Arc::clone(&context.tx_witnesses);
     let batch_slot_txs = batch_slot_txs();
     let selected_mode = prepared_proof_mode_from_env();
     let da_root = context.da_root;
@@ -2370,10 +2566,12 @@ fn prepare_block_proof_bundle(
             || {
                 let stage_started = Instant::now();
                 let result = match selected_mode {
-                    PreparedProofMode::FlatBatches => {
-                        build_flat_batch_proofs_from_materials(proofs_for_batching, batch_slot_txs)
-                            .map(PreparedAggregationArtifacts::Flat)
-                    }
+                    PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
+                        proofs_for_batching,
+                        witnesses_for_batching,
+                        batch_slot_txs,
+                    )
+                    .map(PreparedAggregationArtifacts::Flat),
                     PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
                         proofs_for_batching,
                         tx_statements_commitment,
@@ -2511,9 +2709,17 @@ fn extract_shielded_transfers_for_parallel_verification(
     resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
     pending_proofs: Option<&PendingProofStore>,
     allow_missing_sidecar_proofs: bool,
-) -> Result<(Vec<consensus::types::Transaction>, Vec<TransactionProof>), String> {
+) -> Result<
+    (
+        Vec<consensus::types::Transaction>,
+        Vec<TransactionProof>,
+        Vec<[u8; 64]>,
+    ),
+    String,
+> {
     let mut transactions = Vec::new();
     let mut proofs = Vec::new();
+    let mut proof_binding_hashes = Vec::new();
     let mut ciphertext_cursor = 0usize;
 
     for extrinsic in extrinsics {
@@ -2575,6 +2781,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                 );
                 transactions.push(tx);
                 proofs.push(tx_proof);
+                proof_binding_hashes.push(binding_hash.data);
             }
             ShieldedPoolCall::shielded_transfer_unsigned {
                 proof,
@@ -2615,6 +2822,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                 );
                 transactions.push(tx);
                 proofs.push(tx_proof);
+                proof_binding_hashes.push(binding_hash.data);
             }
             ShieldedPoolCall::shielded_transfer_sidecar {
                 proof,
@@ -2718,6 +2926,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                 transactions.push(tx);
                 if let Some(tx_proof) = tx_proof {
                     proofs.push(tx_proof);
+                    proof_binding_hashes.push(binding_hash.data);
                 }
             }
             ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
@@ -2824,6 +3033,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                 transactions.push(tx);
                 if let Some(tx_proof) = tx_proof {
                     proofs.push(tx_proof);
+                    proof_binding_hashes.push(binding_hash.data);
                 }
             }
             ShieldedPoolCall::batch_shielded_transfer { .. } => {
@@ -2841,7 +3051,15 @@ fn extract_shielded_transfers_for_parallel_verification(
         }
     }
 
-    Ok((transactions, proofs))
+    if proof_binding_hashes.len() != proofs.len() {
+        return Err(format!(
+            "proof binding hash count mismatch after extraction (expected {}, got {})",
+            proofs.len(),
+            proof_binding_hashes.len()
+        ));
+    }
+
+    Ok((transactions, proofs, proof_binding_hashes))
 }
 
 fn load_parent_commitment_tree_state(
@@ -3037,12 +3255,13 @@ fn verify_proof_carrying_block(
     let proven_batch_payload = extract_proven_batch_payload(extrinsics)?;
     ensure_shielded_transfer_ordering(extrinsics)?;
     ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
-    let (transactions, tx_proofs) = extract_shielded_transfers_for_parallel_verification(
-        extrinsics,
-        resolved_ciphertexts,
-        None,
-        true,
-    )?;
+    let (transactions, tx_proofs, _proof_binding_hashes) =
+        extract_shielded_transfers_for_parallel_verification(
+            extrinsics,
+            resolved_ciphertexts,
+            None,
+            true,
+        )?;
     let missing_proof_bindings = missing_proof_binding_hashes(extrinsics);
     let proof_policy = fetch_proof_availability_policy(client, parent_hash)?;
     let aggregation_mode_enabled = extrinsics.iter().any(|extrinsic| {
@@ -4668,6 +4887,8 @@ use sp_runtime::DigestItem;
 /// * `client` - The full Substrate client for header construction
 /// * `da_chunk_store` - Persistent DA chunk store (with in-memory cache) for serving proofs
 /// * `pending_ciphertext_store` - Pending sidecar ciphertext pool for block assembly
+/// * `pending_proof_store` - Pending sidecar transaction proof pool
+/// * `pending_witness_store` - Pending sidecar transaction witness pool
 /// * `commitment_block_proof_store` - In-memory store for commitment block proofs
 /// * `da_params` - DA parameters for encoding chunk data
 ///
@@ -4703,6 +4924,7 @@ fn wire_pow_block_import(
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     pending_proof_store: Arc<ParkingMutex<PendingProofStore>>,
+    pending_witness_store: Arc<ParkingMutex<PendingWitnessStore>>,
     commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>>,
     da_params: DaParams,
 ) {
@@ -4915,6 +5137,15 @@ fn wire_pow_block_import(
                                 "Pending proof store busy after import; deferring cleanup"
                             );
                         }
+                        if let Some(mut pending_witnesses) = pending_witness_store.try_lock() {
+                            pending_witnesses.remove_many(&binding_hashes);
+                        } else {
+                            tracing::warn!(
+                                block_number = template.number,
+                                pending_bindings = binding_hashes.len(),
+                                "Pending witness store busy after import; deferring cleanup"
+                            );
+                        }
                     }
                 }
                 if let Some(proof) = commitment_block_proof.clone() {
@@ -5019,6 +5250,15 @@ fn wire_pow_block_import(
                                 block_number = template.number,
                                 pending_bindings = binding_hashes.len(),
                                 "Pending proof store busy for known block; deferring cleanup"
+                            );
+                        }
+                        if let Some(mut pending_witnesses) = pending_witness_store.try_lock() {
+                            pending_witnesses.remove_many(&binding_hashes);
+                        } else {
+                            tracing::warn!(
+                                block_number = template.number,
+                                pending_bindings = binding_hashes.len(),
+                                "Pending witness store busy for known block; deferring cleanup"
                             );
                         }
                     }
@@ -6028,6 +6268,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let da_store_path = da_store_path(&config);
     let pending_ciphertext_capacity = load_pending_ciphertext_capacity();
     let pending_proof_capacity = load_pending_proof_capacity();
+    let pending_witness_capacity = load_pending_witness_capacity();
     let commitment_block_proof_store_capacity = load_commitment_proof_store_capacity();
     let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> = Arc::new(ParkingMutex::new(
         DaChunkStore::open(
@@ -6044,6 +6285,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let pending_proof_store: Arc<ParkingMutex<PendingProofStore>> = Arc::new(ParkingMutex::new(
         PendingProofStore::new(pending_proof_capacity),
     ));
+    let pending_witness_store: Arc<ParkingMutex<PendingWitnessStore>> = Arc::new(
+        ParkingMutex::new(PendingWitnessStore::new(pending_witness_capacity)),
+    );
     let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
         Arc::new(ParkingMutex::new(DaRequestTracker::default()));
     let commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>> =
@@ -6057,6 +6301,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         da_store_capacity,
         pending_ciphertext_capacity,
         pending_proof_capacity,
+        pending_witness_capacity,
         ciphertext_da_retention_blocks,
         proof_da_retention_blocks,
         da_store_path = %da_store_path.display(),
@@ -8591,6 +8836,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let client = client.clone();
             let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
             let pending_proofs = Arc::clone(&pending_proof_store);
+            let pending_witnesses = Arc::clone(&pending_witness_store);
             Arc::new(
                 move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
                     let ordered = reorder_shielded_transfers(&candidate_txs)?;
@@ -8610,6 +8856,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     // generating commitment/aggregation proofs (which can take seconds).
                     let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
                     let pending_proofs_snapshot = { pending_proofs.lock().clone() };
+                    let pending_witnesses_snapshot = { pending_witnesses.lock().clone() };
                     prepare_block_proof_bundle(
                         client.as_ref(),
                         parent_hash,
@@ -8618,6 +8865,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         da_params,
                         &pending_ciphertexts_snapshot,
                         &pending_proofs_snapshot,
+                        &pending_witnesses_snapshot,
                         commitment_block_fast,
                     )
                 },
@@ -8689,6 +8937,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             Arc::clone(&da_chunk_store),
             Arc::clone(&pending_ciphertext_store),
             Arc::clone(&pending_proof_store),
+            Arc::clone(&pending_witness_store),
             Arc::clone(&commitment_block_proof_store),
             da_params,
         );
@@ -9119,6 +9368,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             Arc::clone(&da_chunk_store),
             Arc::clone(&pending_ciphertext_store),
             Arc::clone(&pending_proof_store),
+            Arc::clone(&pending_witness_store),
             da_params,
         );
         if let Err(e) = module.merge(da_rpc.into_rpc()) {

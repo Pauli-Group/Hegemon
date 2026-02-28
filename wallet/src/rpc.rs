@@ -12,6 +12,13 @@ pub struct TransactionBundle {
     /// STARK proof bytes (serialized Plonky3 proof).
     #[serde(with = "serde_bytes_vec")]
     pub proof_bytes: Vec<u8>,
+    /// Serialized transaction witness bytes for proposer-side batch proving.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_option_bytes_vec"
+    )]
+    pub witness_bytes: Option<Vec<u8>>,
     /// Nullifiers (48 bytes each, left-padded field elements).
     #[serde(with = "crate::serde_bytes48::vec_bytes48")]
     pub nullifiers: Vec<[u8; 48]>,
@@ -40,6 +47,7 @@ impl TransactionBundle {
     /// Create a new transaction bundle from proof components.
     pub fn new(
         proof_bytes: Vec<u8>,
+        witness_bytes: Option<Vec<u8>>,
         nullifiers: Vec<[u8; 48]>,
         commitments: Vec<[u8; 48]>,
         ciphertexts: &[NoteCiphertext],
@@ -61,6 +69,7 @@ impl TransactionBundle {
         }
         Ok(Self {
             proof_bytes,
+            witness_bytes,
             nullifiers,
             commitments,
             ciphertexts: encoded,
@@ -121,6 +130,28 @@ mod serde_bytes_vec {
     {
         let buf: serde_bytes::ByteBuf = serde_bytes::ByteBuf::deserialize(deserializer)?;
         Ok(buf.into_vec())
+    }
+}
+
+mod serde_option_bytes_vec {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(bytes) => serializer.serialize_some(&serde_bytes::Bytes::new(bytes)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: Option<serde_bytes::ByteBuf> = Option::deserialize(deserializer)?;
+        Ok(value.map(|buf| buf.into_vec()))
     }
 }
 
