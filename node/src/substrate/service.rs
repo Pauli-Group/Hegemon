@@ -1794,18 +1794,29 @@ fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) ->
     out
 }
 
-fn statement_hash_from_binding_hash(binding_hash: &[u8; 64]) -> [u8; 48] {
-    let mut message = Vec::with_capacity(16 + binding_hash.len());
-    message.extend_from_slice(b"tx-statement-v1");
-    message.extend_from_slice(binding_hash);
+fn statement_hash_from_transaction(tx: &consensus::types::Transaction) -> [u8; 48] {
+    let mut message = Vec::with_capacity(4 + 32);
+    message.extend_from_slice(b"tx-statement-fallback-v1");
+    message.extend_from_slice(&tx.hash());
     blake3_384(&message)
 }
 
-fn statement_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 48]> {
-    binding_hashes_from_extrinsics(extrinsics)
-        .into_iter()
-        .map(|binding_hash| statement_hash_from_binding_hash(&binding_hash))
-        .collect()
+fn statement_hashes_from_transactions(
+    transactions: &[consensus::types::Transaction],
+) -> Vec<[u8; 48]> {
+    transactions.iter().map(statement_hash_from_transaction).collect()
+}
+
+fn statement_hashes_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<Vec<[u8; 48]>, String> {
+    let (transactions, _, _) = extract_shielded_transfers_for_parallel_verification(
+        extrinsics,
+        None,
+        None,
+        true,
+    )?;
+    Ok(statement_hashes_from_transactions(&transactions))
 }
 
 fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
@@ -2156,7 +2167,7 @@ fn build_candidate_context(
         })?;
         witnesses.push(witness);
     }
-    let statement_hashes = statement_hashes_from_extrinsics(&decoded);
+    let statement_hashes = statement_hashes_from_extrinsics(&decoded)?;
     if statement_hashes.len() != proofs.len() {
         return Err(format!(
             "tx statement hash count mismatch (expected {}, got {})",
@@ -3563,7 +3574,7 @@ fn verify_proof_carrying_block(
             return Err("commitment proof da_chunk_count missing".to_string());
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(extrinsics);
+        let statement_hashes = statement_hashes_from_extrinsics(extrinsics)?;
         let tx_statements_commitment =
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
@@ -3945,7 +3956,7 @@ fn ready_proofless_binding_hashes_for_preview(
             return Ok(BTreeSet::new());
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(&candidate);
+        let statement_hashes = statement_hashes_from_extrinsics(&candidate)?;
         let shielded_tx_count = statement_hashes.len() as u32;
         if shielded_tx_count == 0 {
             return Ok(BTreeSet::new());
@@ -4790,7 +4801,7 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(&decoded_applied);
+        let statement_hashes = statement_hashes_from_extrinsics(&decoded_applied)?;
         let shielded_tx_count = statement_hashes.len() as u32;
         let requires_proven_batch = !missing_proof_bindings.is_empty();
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
