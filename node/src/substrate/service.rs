@@ -2549,38 +2549,34 @@ fn prepare_block_proof_bundle(
     let batch_slot_txs = batch_slot_txs();
     let selected_mode = prepared_proof_mode_from_env();
     let da_root = context.da_root;
-    let ((commitment_result, commitment_stage_ms), (batch_result, aggregation_stage_ms)) =
-        rayon::join(
-            || {
-                let _ = commitment_block_fast;
-                let stage_started = Instant::now();
-                let result = build_commitment_block_proof_from_materials(
-                    client,
-                    parent_hash,
-                    &statement_hashes,
-                    proofs_for_commitment.as_ref(),
-                    da_root,
-                );
-                (result, stage_started.elapsed().as_millis())
-            },
-            || {
-                let stage_started = Instant::now();
-                let result = match selected_mode {
-                    PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
-                        proofs_for_batching,
-                        witnesses_for_batching,
-                        batch_slot_txs,
-                    )
-                    .map(PreparedAggregationArtifacts::Flat),
-                    PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
-                        proofs_for_batching,
-                        tx_statements_commitment,
-                    )
-                    .map(PreparedAggregationArtifacts::Merge),
-                };
-                (result, stage_started.elapsed().as_millis())
-            },
-        );
+    // NOTE: Run stages sequentially to avoid nested Rayon pool contention/deadlock
+    // when heavy proving jobs execute under strict batching mode.
+    let _ = commitment_block_fast;
+    let commitment_stage_started = Instant::now();
+    let commitment_result = build_commitment_block_proof_from_materials(
+        client,
+        parent_hash,
+        &statement_hashes,
+        proofs_for_commitment.as_ref(),
+        da_root,
+    );
+    let commitment_stage_ms = commitment_stage_started.elapsed().as_millis();
+
+    let aggregation_stage_started = Instant::now();
+    let batch_result = match selected_mode {
+        PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
+            proofs_for_batching,
+            witnesses_for_batching,
+            batch_slot_txs,
+        )
+        .map(PreparedAggregationArtifacts::Flat),
+        PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
+            proofs_for_batching,
+            tx_statements_commitment,
+        )
+        .map(PreparedAggregationArtifacts::Merge),
+    };
+    let aggregation_stage_ms = aggregation_stage_started.elapsed().as_millis();
     let commitment_proof = commitment_result?
         .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
     let aggregation_artifacts = batch_result?;
