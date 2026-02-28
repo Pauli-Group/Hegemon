@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use batch_circuit::{verify_batch_proof, BatchTransactionProver};
+use batch_circuit::{prewarm_batch_verifier_cache, verify_batch_proof, BatchTransactionProver};
 use block_circuit::{verify_block_commitment, CommitmentBlockProver};
 use clap::Parser;
 use p3_goldilocks::Goldilocks;
@@ -229,6 +229,9 @@ fn run_benchmark(
     let mut batch_prove_time = Duration::default();
     let mut batch_verify_time = Duration::default();
     if batch_size > 0 {
+        if !batch_skip_verify {
+            prewarm_batch_verifier_cache(&[batch_size]).context("prewarm batch verifier cache")?;
+        }
         let batch_prover = BatchTransactionProver::new();
         for batch_idx in 0..iterations {
             let witness_start = Instant::now();
