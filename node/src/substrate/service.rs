@@ -135,14 +135,15 @@ use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use aggregation_circuit::prove_aggregation;
-use batch_circuit::BatchTransactionProver;
+use batch_circuit::{verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs, BatchTransactionProver};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes,
-    encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal, ParallelProofVerifier,
+    aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
+    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal,
+    ParallelProofVerifier,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
@@ -2310,6 +2311,15 @@ fn build_flat_batch_proofs_from_materials(
                 .prove_batch(&witness_chunk)
                 .map_err(|err| format!("batch proof generation failed: {err}"))?;
 
+            if std::env::var("HEGEMON_BATCH_SELF_VERIFY")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                verify_batch_proof(&batch_proof, &batch_public_inputs).map_err(|err| {
+                    format!("batch proof self verification failed before payload encoding: {err}")
+                })?;
+            }
+
             if batch_public_inputs.batch_size as usize != proof_chunk.len() {
                 return Err(format!(
                     "batch public input size mismatch (proofs {}, public {})",
@@ -2374,8 +2384,29 @@ fn build_flat_batch_proofs_from_materials(
                 .iter()
                 .map(|value| value.as_canonical_u64())
                 .collect::<Vec<_>>();
-            encode_flat_batch_proof_bytes(&batch_proof_bytes, &batch_public_values)
-                .map_err(|err| format!("flat batch proof encoding failed: {err}"))
+            let encoded = encode_flat_batch_proof_bytes(&batch_proof_bytes, &batch_public_values)
+                .map_err(|err| format!("flat batch proof encoding failed: {err}"))?;
+
+            if std::env::var("HEGEMON_BATCH_ROUNDTRIP_VERIFY")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                let payload = decode_flat_batch_proof_bytes(&encoded)
+                    .map_err(|err| format!("flat batch proof roundtrip decode failed: {err}"))?;
+                let roundtrip_public_values: Vec<Felt> = payload
+                    .batch_public_values
+                    .iter()
+                    .map(|value| Felt::from_u64(*value))
+                    .collect();
+                let roundtrip_public_inputs =
+                    BatchPublicInputs::try_from_slice(&roundtrip_public_values).map_err(|err| {
+                        format!("flat batch public input roundtrip decode failed: {err}")
+                    })?;
+                verify_batch_proof_bytes(&payload.batch_proof, &roundtrip_public_inputs).map_err(
+                    |err| format!("flat batch proof roundtrip verification failed: {err}"),
+                )?;
+            }
+            Ok(encoded)
         })?;
         tracing::info!(
             start_tx_index,
