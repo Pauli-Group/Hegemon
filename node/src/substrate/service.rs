@@ -140,8 +140,8 @@ use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes, Blake3Algorithm,
-    Blake3Seal, ParallelProofVerifier,
+    aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes,
+    encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal, ParallelProofVerifier,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
@@ -2130,25 +2130,104 @@ fn build_commitment_block_proof_from_materials(
     Ok(Some(proof))
 }
 
-fn build_aggregation_proof_from_materials(
+fn batch_slot_txs() -> usize {
+    std::env::var("HEGEMON_BATCH_SLOT_TXS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(16)
+        .clamp(1, u16::MAX as usize)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreparedProofMode {
+    FlatBatches,
+    MergeRoot,
+}
+
+fn prepared_proof_mode_from_env() -> PreparedProofMode {
+    let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
+    if raw.eq_ignore_ascii_case("merge")
+        || raw.eq_ignore_ascii_case("merge_root")
+        || raw.eq_ignore_ascii_case("mergeroot")
+    {
+        PreparedProofMode::MergeRoot
+    } else {
+        PreparedProofMode::FlatBatches
+    }
+}
+
+fn merge_root_arity_from_env() -> u16 {
+    std::env::var("HEGEMON_MERGE_ARITY")
+        .ok()
+        .and_then(|raw| raw.parse::<u16>().ok())
+        .unwrap_or(8)
+        .max(2)
+}
+
+fn build_flat_batch_proofs_from_materials(
+    proofs: Arc<Vec<TransactionProof>>,
+    slot_txs: usize,
+) -> Result<Vec<pallet_shielded_pool::types::BatchProofItem>, String> {
+    if proofs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut start_tx_index: u32 = 0;
+    for chunk in proofs.chunks(slot_txs) {
+        let tx_proofs = chunk.to_vec();
+        let encoded =
+            run_aggregation_prepare_job(move || encode_flat_batch_proof_bytes(&tx_proofs))
+                .map_err(|err| format!("flat batch proof encoding failed: {err}"))?;
+        let tx_count_u16 =
+            u16::try_from(chunk.len()).map_err(|_| "flat batch size exceeds u16".to_string())?;
+        out.push(pallet_shielded_pool::types::BatchProofItem {
+            start_tx_index,
+            tx_count: tx_count_u16,
+            proof_format: pallet_shielded_pool::types::BLOCK_PROOF_FORMAT_ID_V5,
+            proof: pallet_shielded_pool::types::StarkProof::from_bytes(encoded),
+        });
+        start_tx_index = start_tx_index
+            .checked_add(chunk.len() as u32)
+            .ok_or_else(|| "flat batch start index overflow".to_string())?;
+    }
+    Ok(out)
+}
+
+fn build_merge_root_proof_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
     tx_statements_commitment: [u8; 48],
-) -> Result<AggregationProofOutcome, String> {
+) -> Result<pallet_shielded_pool::types::MergeRootProofPayload, String> {
     if proofs.is_empty() {
-        return Ok(AggregationProofOutcome::default());
+        return Err("candidate tx set has no merge-root proof material".to_string());
     }
     let proof_bytes = run_aggregation_prepare_job(move || {
         prove_aggregation(proofs.as_ref(), tx_statements_commitment)
     })
-    .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
-    Ok(AggregationProofOutcome {
-        proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
+    .map_err(|err| format!("merge root proof generation failed: {err}"))?;
+    let root_proof = encode_aggregation_proof_bytes(proof_bytes);
+
+    let mut manifest_material = Vec::with_capacity(48 + 2 + 8);
+    manifest_material.extend_from_slice(&tx_statements_commitment);
+    manifest_material.extend_from_slice(&merge_root_arity_from_env().to_le_bytes());
+    manifest_material.extend_from_slice(&(1u32).to_le_bytes());
+    let leaf_manifest_commitment = blake3_384(&manifest_material);
+
+    Ok(pallet_shielded_pool::types::MergeRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(root_proof),
+        metadata: pallet_shielded_pool::types::MergeRootMetadata {
+            tree_arity: merge_root_arity_from_env(),
+            tree_levels: 1,
+            leaf_count: 1,
+            leaf_manifest_commitment,
+        },
+        diagnostics_leaf_proofs: Vec::new(),
     })
 }
 
-#[derive(Clone, Debug, Default)]
-struct AggregationProofOutcome {
-    proof_bytes: Option<Vec<u8>>,
+#[derive(Clone, Debug)]
+enum PreparedAggregationArtifacts {
+    Flat(Vec<pallet_shielded_pool::types::BatchProofItem>),
+    Merge(pallet_shielded_pool::types::MergeRootProofPayload),
 }
 
 fn aggregation_prepare_threads() -> usize {
@@ -2191,18 +2270,38 @@ where
     }
 }
 
-fn maybe_corrupt_aggregation_proof(mut proof_bytes: Vec<u8>) -> Vec<u8> {
-    let corrupt = std::env::var("HEGEMON_AGGREGATION_PROOF_CORRUPT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if !corrupt {
-        return proof_bytes;
+fn block_proof_payload_aggregation_bytes(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> usize {
+    match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
+            .flat_batches
+            .iter()
+            .map(|item| item.proof.data.len())
+            .sum(),
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => payload
+            .merge_root
+            .as_ref()
+            .map(|merge| merge.root_proof.data.len())
+            .unwrap_or(0),
     }
-    if let Some(first) = proof_bytes.first_mut() {
-        *first ^= 0x01;
-        tracing::warn!("Corrupting aggregation proof bytes for test");
+}
+
+fn block_proof_payload_aggregation_uncompressed_bytes(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> usize {
+    match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
+            .flat_batches
+            .iter()
+            .map(|item| item.proof.data.len())
+            .sum(),
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => payload
+            .merge_root
+            .as_ref()
+            .map(|merge| aggregation_proof_uncompressed_len(merge.root_proof.data.as_slice()))
+            .unwrap_or(0),
     }
-    proof_bytes
 }
 
 fn prepare_block_proof_bundle(
@@ -2250,9 +2349,11 @@ fn prepare_block_proof_bundle(
     }
 
     let proofs_for_commitment = Arc::clone(&context.tx_proofs);
-    let proofs_for_aggregation = Arc::clone(&context.tx_proofs);
+    let proofs_for_batching = Arc::clone(&context.tx_proofs);
+    let batch_slot_txs = batch_slot_txs();
+    let selected_mode = prepared_proof_mode_from_env();
     let da_root = context.da_root;
-    let ((commitment_result, commitment_stage_ms), (aggregation_result, aggregation_stage_ms)) =
+    let ((commitment_result, commitment_stage_ms), (batch_result, aggregation_stage_ms)) =
         rayon::join(
             || {
                 let _ = commitment_block_fast;
@@ -2268,31 +2369,25 @@ fn prepare_block_proof_bundle(
             },
             || {
                 let stage_started = Instant::now();
-                let result = build_aggregation_proof_from_materials(
-                    proofs_for_aggregation,
-                    tx_statements_commitment,
-                );
+                let result = match selected_mode {
+                    PreparedProofMode::FlatBatches => {
+                        build_flat_batch_proofs_from_materials(proofs_for_batching, batch_slot_txs)
+                            .map(PreparedAggregationArtifacts::Flat)
+                    }
+                    PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
+                        proofs_for_batching,
+                        tx_statements_commitment,
+                    )
+                    .map(PreparedAggregationArtifacts::Merge),
+                };
                 (result, stage_started.elapsed().as_millis())
             },
         );
     let commitment_proof = commitment_result?
         .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
-    let aggregation_outcome = aggregation_result?;
-    let aggregation_raw = aggregation_outcome
-        .proof_bytes
-        .ok_or_else(|| "candidate tx set has no aggregation proof material".to_string())?;
-    let aggregation_proof = encode_aggregation_proof_bytes(aggregation_raw);
-    tracing::info!(
-        block_number,
-        commitment_bytes = commitment_proof.proof_bytes.len(),
-        aggregation_bytes = aggregation_proof.len(),
-        commitment_stage_ms,
-        aggregation_stage_ms,
-        total_ms = started.elapsed().as_millis(),
-        "prepare_block_proof_bundle: built commitment and aggregation proofs"
-    );
+    let aggregation_artifacts = batch_result?;
 
-    let payload = pallet_shielded_pool::types::BlockProofBundle {
+    let mut payload = pallet_shielded_pool::types::BlockProofBundle {
         version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
         tx_count,
         tx_statements_commitment,
@@ -2301,9 +2396,39 @@ fn prepare_block_proof_bundle(
         commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
             commitment_proof.proof_bytes.clone(),
         ),
-        aggregation_proof: pallet_shielded_pool::types::StarkProof::from_bytes(aggregation_proof),
+        proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+        flat_batches: Vec::new(),
+        merge_root: None,
         prover_claim: None,
     };
+    match aggregation_artifacts {
+        PreparedAggregationArtifacts::Flat(flat_batches) => {
+            if flat_batches.is_empty() {
+                return Err("candidate tx set has no flat batch proof material".to_string());
+            }
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::FlatBatches;
+            payload.flat_batches = flat_batches;
+            payload.merge_root = None;
+        }
+        PreparedAggregationArtifacts::Merge(merge_root) => {
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::MergeRoot;
+            payload.flat_batches.clear();
+            payload.merge_root = Some(merge_root);
+        }
+    }
+
+    tracing::info!(
+        block_number,
+        commitment_bytes = commitment_proof.proof_bytes.len(),
+        aggregation_bytes = block_proof_payload_aggregation_bytes(&payload),
+        batch_count = payload.flat_batches.len(),
+        batch_slot_txs,
+        proof_mode = ?payload.proof_mode,
+        commitment_stage_ms,
+        aggregation_stage_ms,
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: built commitment and bundle proof artifacts"
+    );
 
     let out = PreparedBundle {
         key: BundleMatchKey {
@@ -3039,11 +3164,11 @@ fn verify_proof_carrying_block(
                 }
             }
         }
-        let aggregation_proof_bytes = payload.aggregation_proof.data.clone();
+        let aggregation_payload_bytes = block_proof_payload_aggregation_bytes(&payload);
         if matches!(
             verification_mode,
             consensus::types::ProofVerificationMode::SelfContainedAggregation
-        ) && aggregation_proof_bytes.is_empty()
+        ) && aggregation_payload_bytes == 0
         {
             return Err(
                 "self-contained aggregation block is missing aggregation proof".to_string(),
@@ -3099,8 +3224,7 @@ fn verify_proof_carrying_block(
             transaction_proofs
         };
 
-        let proven_batch_bytes =
-            payload.commitment_proof.data.len() + payload.aggregation_proof.data.len();
+        let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
         tracing::info!(
             target: "node::metrics",
             block_number,
@@ -3113,7 +3237,7 @@ fn verify_proof_carrying_block(
             proven_batch_build_ms = 0u128,
             proven_batch_stale_count = 0u64,
             commitment_proof_bytes = payload.commitment_proof.data.len(),
-            aggregation_proof_bytes = payload.aggregation_proof.data.len(),
+            aggregation_proof_bytes = aggregation_payload_bytes,
             da_chunk_count = payload.da_chunk_count,
             da_root = %hex::encode(payload.da_root),
             da_policy = ?da_policy,
@@ -3134,7 +3258,45 @@ fn verify_proof_carrying_block(
                 da_root: payload.da_root,
                 da_chunk_count: payload.da_chunk_count,
                 commitment_proof: commitment_proof.clone(),
-                aggregation_proof: aggregation_proof_bytes,
+                mode: match payload.proof_mode {
+                    pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
+                        consensus::types::ProvenBatchMode::FlatBatches
+                    }
+                    pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
+                        consensus::types::ProvenBatchMode::MergeRoot
+                    }
+                },
+                flat_batches: payload
+                    .flat_batches
+                    .iter()
+                    .map(|item| consensus::types::BatchProofItem {
+                        start_tx_index: item.start_tx_index,
+                        tx_count: item.tx_count,
+                        proof_format: item.proof_format,
+                        proof: item.proof.data.clone(),
+                    })
+                    .collect(),
+                merge_root: payload.merge_root.as_ref().map(|merge| {
+                    consensus::types::MergeRootProofPayload {
+                        root_proof: merge.root_proof.data.clone(),
+                        metadata: consensus::types::MergeRootMetadata {
+                            tree_arity: merge.metadata.tree_arity,
+                            tree_levels: merge.metadata.tree_levels,
+                            leaf_count: merge.metadata.leaf_count,
+                            leaf_manifest_commitment: merge.metadata.leaf_manifest_commitment,
+                        },
+                        diagnostics_leaf_proofs: merge
+                            .diagnostics_leaf_proofs
+                            .iter()
+                            .map(|item| consensus::types::BatchProofItem {
+                                start_tx_index: item.start_tx_index,
+                                tx_count: item.tx_count,
+                                proof_format: item.proof_format,
+                                proof: item.proof.data.clone(),
+                            })
+                            .collect(),
+                    }
+                }),
             }),
             tx_statements_commitment: Some(tx_statements_commitment),
             transaction_proofs,
@@ -4292,10 +4454,9 @@ pub fn wire_block_builder_api(
 
             if let Some(ready_batch) = ready_batch {
                 let proof_size = ready_batch.payload.commitment_proof.data.len()
-                    + ready_batch.payload.aggregation_proof.data.len();
-                let proof_size_uncompressed = aggregation_proof_uncompressed_len(
-                    ready_batch.payload.aggregation_proof.data.as_slice(),
-                );
+                    + block_proof_payload_aggregation_bytes(&ready_batch.payload);
+                let proof_size_uncompressed =
+                    block_proof_payload_aggregation_uncompressed_bytes(&ready_batch.payload);
                 selected_prover_claim = ready_batch.payload.prover_claim.clone();
                 let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
                     runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {

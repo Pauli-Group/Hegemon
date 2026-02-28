@@ -245,9 +245,10 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{
-        BindingHash, EncryptedNote, FeeParameters, FeeProofKind, ProofAvailabilityPolicy,
-        ProverCompensationClaim, StablecoinPolicyBinding, StarkProof, BLOCK_PROOF_BUNDLE_SCHEMA,
-        CRYPTO_SUITE_GAMMA, NOTE_ENCRYPTION_VERSION,
+        BatchProofItem, BindingHash, BlockProofMode, EncryptedNote, FeeParameters, FeeProofKind,
+        ProofAvailabilityPolicy, ProverCompensationClaim, StablecoinPolicyBinding, StarkProof,
+        BLOCK_PROOF_BUNDLE_SCHEMA, BLOCK_PROOF_FORMAT_ID_V5, CRYPTO_SUITE_GAMMA,
+        NOTE_ENCRYPTION_VERSION,
     };
     use codec::Encode;
     use frame_support::traits::Hooks;
@@ -274,7 +275,14 @@ mod tests {
             da_root: valid_da_root(),
             da_chunk_count: 1,
             commitment_proof: valid_proof(),
-            aggregation_proof: valid_proof(),
+            proof_mode: BlockProofMode::FlatBatches,
+            flat_batches: vec![BatchProofItem {
+                start_tx_index: 0,
+                tx_count: 1,
+                proof_format: BLOCK_PROOF_FORMAT_ID_V5,
+                proof: valid_proof(),
+            }],
+            merge_root: None,
             prover_claim: None,
         }
     }

@@ -64,7 +64,7 @@ use tokio::sync::mpsc;
 use crate::substrate::network_bridge::{
     BlockAnnounce, SyncRequest, SyncResponse, SYNC_PROTOCOL_VERSION,
 };
-use aggregation_circuit::AGGREGATION_PROOF_FORMAT_ID_V4;
+use consensus::BLOCK_PROOF_FORMAT_ID_V5;
 
 /// Maximum number of headers to return in a single response
 pub const MAX_HEADERS_PER_RESPONSE: u32 = 128;
@@ -381,7 +381,7 @@ where
     }
 
     fn local_aggregation_proof_format(&self) -> u8 {
-        AGGREGATION_PROOF_FORMAT_ID_V4
+        BLOCK_PROOF_FORMAT_ID_V5
     }
 
     fn mark_peer_incompatible(&mut self, peer_id: PeerId, reason: &str) {

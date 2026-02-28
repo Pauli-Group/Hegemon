@@ -157,7 +157,13 @@ impl StarkProof {
 }
 
 /// Version tag for the block proof bundle payload format.
-pub const BLOCK_PROOF_BUNDLE_SCHEMA: u8 = 1;
+pub const BLOCK_PROOF_BUNDLE_SCHEMA: u8 = 2;
+/// Proof format id used for flat batch proof items in this branch.
+pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
+/// Maximum number of flat proof batches allowed in a single block payload.
+pub const MAX_FLAT_BATCHES_PER_BLOCK: usize = 1024;
+/// Maximum cumulative proof bytes accepted in a single block payload.
+pub const BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum encoded bytes for a prover recipient address (bech32m payload).
 pub const MAX_PROVER_RECIPIENT_LEN: u32 = 2048;
 /// Maximum encoded bytes for a prover claim signature.
@@ -182,6 +188,65 @@ pub struct ProverCompensationClaim {
 
 /// Per-block payload that carries all consensus-required proof material for
 /// self-contained aggregation blocks.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+)]
+pub enum BlockProofMode {
+    /// Verify a deterministic set of flat proof batches.
+    FlatBatches,
+    /// Verify a recursion root proof over leaf batches.
+    MergeRoot,
+}
+
+/// Flat batch proof item.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct BatchProofItem {
+    /// Start index of the first transaction (inclusive) covered by this item.
+    pub start_tx_index: u32,
+    /// Number of transactions covered by this item.
+    pub tx_count: u16,
+    /// Proof format id (must be BLOCK_PROOF_FORMAT_ID_V5 in this branch).
+    pub proof_format: u8,
+    /// Opaque proof bytes for this batch item.
+    pub proof: StarkProof,
+}
+
+/// Recursion root metadata.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
+)]
+pub struct MergeRootMetadata {
+    /// Tree arity used to build recursion levels.
+    pub tree_arity: u16,
+    /// Total recursion levels from leaves to root.
+    pub tree_levels: u16,
+    /// Number of active leaf proofs.
+    pub leaf_count: u32,
+    /// Commitment to the ordered leaf manifest.
+    pub leaf_manifest_commitment: [u8; 48],
+}
+
+/// Merge-root proof payload.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct MergeRootProofPayload {
+    /// Root proof bytes.
+    pub root_proof: StarkProof,
+    /// Tree metadata bound by the root proof.
+    pub metadata: MergeRootMetadata,
+    /// Optional leaf diagnostics; not consensus-required when root is valid.
+    pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
+}
+
+/// Per-block proof bundle payload.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
 pub struct BlockProofBundle {
     /// Payload format version.
@@ -196,8 +261,12 @@ pub struct BlockProofBundle {
     pub da_chunk_count: u32,
     /// Commitment proof bytes.
     pub commitment_proof: StarkProof,
-    /// Aggregation proof bytes (V4 payload format).
-    pub aggregation_proof: StarkProof,
+    /// Proof mode for this bundle.
+    pub proof_mode: BlockProofMode,
+    /// Flat proof batches (required in FlatBatches mode).
+    pub flat_batches: Vec<BatchProofItem>,
+    /// Optional merge-root proof payload (required in MergeRoot mode).
+    pub merge_root: Option<MergeRootProofPayload>,
     /// Optional external prover payout claim.
     pub prover_claim: Option<ProverCompensationClaim>,
 }

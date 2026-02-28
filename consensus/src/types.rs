@@ -21,6 +21,7 @@ pub type StateRoot = [u8; 48];
 pub type NullifierRoot = [u8; 48];
 pub type SupplyDigest = u128;
 pub type Amount = u64;
+pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transaction {
@@ -212,6 +213,35 @@ impl Default for ProofVerificationMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProvenBatchMode {
+    FlatBatches,
+    MergeRoot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchProofItem {
+    pub start_tx_index: u32,
+    pub tx_count: u16,
+    pub proof_format: u8,
+    pub proof: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MergeRootMetadata {
+    pub tree_arity: u16,
+    pub tree_levels: u16,
+    pub leaf_count: u32,
+    pub leaf_manifest_commitment: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MergeRootProofPayload {
+    pub root_proof: Vec<u8>,
+    pub metadata: MergeRootMetadata,
+    pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvenBatch {
     pub version: u8,
     pub tx_count: u32,
@@ -219,7 +249,9 @@ pub struct ProvenBatch {
     pub da_root: DaRoot,
     pub da_chunk_count: u32,
     pub commitment_proof: CommitmentBlockProof,
-    pub aggregation_proof: Vec<u8>,
+    pub mode: ProvenBatchMode,
+    pub flat_batches: Vec<BatchProofItem>,
+    pub merge_root: Option<MergeRootProofPayload>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

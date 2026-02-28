@@ -2,11 +2,12 @@ use crate::aggregation::{
     aggregation_proof_uncompressed_len, verify_aggregation_proof_with_metrics,
     warm_aggregation_cache_from_proof_bytes,
 };
+use crate::batch_proof::decode_flat_batch_proof_bytes;
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
-    Block, DaParams, DaRoot, FeeCommitment, ProofVerificationMode, StarkCommitment,
-    VersionCommitment, compute_fee_commitment, compute_proof_commitment,
+    Block, DaParams, DaRoot, FeeCommitment, ProofVerificationMode, ProvenBatchMode,
+    StarkCommitment, VersionCommitment, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment, da_root,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
@@ -206,12 +207,12 @@ impl ProofVerifier for ParallelProofVerifier {
         let aggregation_proof_bytes = block
             .proven_batch
             .as_ref()
-            .map(|batch| batch.aggregation_proof.len())
+            .map(total_batch_proof_payload_bytes)
             .unwrap_or(0);
         let aggregation_proof_uncompressed_bytes = block
             .proven_batch
             .as_ref()
-            .map(|batch| aggregation_proof_uncompressed_len(&batch.aggregation_proof))
+            .map(total_batch_proof_uncompressed_bytes)
             .unwrap_or(0);
         let ciphertext_bytes_total: usize = block
             .transactions
@@ -360,8 +361,6 @@ impl ProofVerifier for ParallelProofVerifier {
                 })?;
         }
 
-        let mut aggregation_verify_ms = 0u128;
-        let mut aggregation_verify_batch_ms = 0u128;
         let mut tx_verify_ms = 0u128;
 
         let mut aggregation_cache_hit = None;
@@ -369,41 +368,64 @@ impl ProofVerifier for ParallelProofVerifier {
         let mut aggregation_cache_prewarm_hit = None;
         let mut aggregation_cache_prewarm_build_ms = None;
         let mut aggregation_cache_prewarm_total_ms = None;
-        let aggregation_verified = if !proven_batch.aggregation_proof.is_empty() {
-            let prewarm_start = Instant::now();
-            match warm_aggregation_cache_from_proof_bytes(
-                &proven_batch.aggregation_proof,
-                tx_count,
-                &expected_commitment,
-            ) {
-                Ok(warmup) => {
-                    aggregation_cache_prewarm_hit = Some(warmup.cache_hit);
-                    aggregation_cache_prewarm_build_ms = Some(warmup.cache_build_ms);
+        let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
+            match proven_batch.mode {
+                ProvenBatchMode::FlatBatches => {
+                    let start_flat = Instant::now();
+                    verify_flat_batch_payload(
+                        &self.verifying_key,
+                        &proven_batch.flat_batches,
+                        &block.transactions,
+                        &expected_commitment,
+                    )?;
+                    let verify_ms = start_flat.elapsed().as_millis();
+                    (true, verify_ms, verify_ms)
                 }
-                Err(err) => {
-                    tracing::debug!(
-                        target: "consensus::metrics",
-                        ?err,
-                        tx_count,
-                        "aggregation cache prewarm failed"
-                    );
-                }
-            }
-            aggregation_cache_prewarm_total_ms = Some(prewarm_start.elapsed().as_millis());
+                ProvenBatchMode::MergeRoot => {
+                    let merge_root = proven_batch.merge_root.as_ref().ok_or_else(|| {
+                        ProofError::ProvenBatchBindingMismatch(
+                            "missing merge_root payload for MergeRoot mode".to_string(),
+                        )
+                    })?;
+                    if merge_root.root_proof.is_empty() {
+                        return Err(ProofError::MissingAggregationProofForSelfContainedMode);
+                    }
 
-            let verify_metrics = verify_aggregation_proof_with_metrics(
-                &proven_batch.aggregation_proof,
-                tx_count,
-                &expected_commitment,
-            )?;
-            aggregation_verify_ms = verify_metrics.total_ms;
-            aggregation_verify_batch_ms = verify_metrics.verify_batch_ms;
-            aggregation_cache_hit = Some(verify_metrics.cache_hit);
-            aggregation_cache_build_ms = Some(verify_metrics.cache_build_ms);
-            true
-        } else {
-            false
-        };
+                    let prewarm_start = Instant::now();
+                    match warm_aggregation_cache_from_proof_bytes(
+                        &merge_root.root_proof,
+                        tx_count,
+                        &expected_commitment,
+                    ) {
+                        Ok(warmup) => {
+                            aggregation_cache_prewarm_hit = Some(warmup.cache_hit);
+                            aggregation_cache_prewarm_build_ms = Some(warmup.cache_build_ms);
+                        }
+                        Err(err) => {
+                            tracing::debug!(
+                                target: "consensus::metrics",
+                                ?err,
+                                tx_count,
+                                "aggregation cache prewarm failed"
+                            );
+                        }
+                    }
+                    aggregation_cache_prewarm_total_ms = Some(prewarm_start.elapsed().as_millis());
+
+                    let verify_metrics = verify_aggregation_proof_with_metrics(
+                        &merge_root.root_proof,
+                        tx_count,
+                        &expected_commitment,
+                    )?;
+                    aggregation_cache_hit = Some(verify_metrics.cache_hit);
+                    aggregation_cache_build_ms = Some(verify_metrics.cache_build_ms);
+                    (
+                        true,
+                        verify_metrics.total_ms,
+                        verify_metrics.verify_batch_ms,
+                    )
+                }
+            };
 
         if !aggregation_verified {
             match verification_mode {
@@ -565,6 +587,140 @@ fn statement_hashes_from_transaction_proofs(
         hashes.push(statement_hash_from_proof(proof));
     }
     Ok(hashes)
+}
+
+fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
+    match batch.mode {
+        ProvenBatchMode::FlatBatches => {
+            batch.flat_batches.iter().map(|item| item.proof.len()).sum()
+        }
+        ProvenBatchMode::MergeRoot => batch
+            .merge_root
+            .as_ref()
+            .map(|merge| merge.root_proof.len())
+            .unwrap_or(0),
+    }
+}
+
+fn total_batch_proof_uncompressed_bytes(batch: &crate::types::ProvenBatch) -> usize {
+    match batch.mode {
+        ProvenBatchMode::FlatBatches => {
+            batch.flat_batches.iter().map(|item| item.proof.len()).sum()
+        }
+        ProvenBatchMode::MergeRoot => batch
+            .merge_root
+            .as_ref()
+            .map(|merge| aggregation_proof_uncompressed_len(&merge.root_proof))
+            .unwrap_or(0),
+    }
+}
+
+fn verify_flat_batch_payload(
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    flat_batches: &[crate::types::BatchProofItem],
+    transactions: &[crate::types::Transaction],
+    expected_commitment: &[u8; 48],
+) -> Result<(), ProofError> {
+    if flat_batches.is_empty() {
+        return Err(ProofError::MissingAggregationProofForSelfContainedMode);
+    }
+    if transactions.is_empty() {
+        return Err(ProofError::AggregationProofEmptyBlock);
+    }
+
+    let mut ordered: Vec<&crate::types::BatchProofItem> = flat_batches.iter().collect();
+    ordered.sort_by_key(|item| item.start_tx_index);
+
+    let mut expected_start: usize = 0;
+    let mut all_statement_hashes: Vec<[u8; 48]> = Vec::with_capacity(transactions.len());
+
+    for item in ordered {
+        if item.tx_count == 0 {
+            return Err(ProofError::FlatBatchCoverage(
+                "flat batch item tx_count must be non-zero".to_string(),
+            ));
+        }
+        if item.proof_format != crate::types::BLOCK_PROOF_FORMAT_ID_V5 {
+            return Err(ProofError::FlatBatchCoverage(format!(
+                "flat batch item uses unsupported proof format {}",
+                item.proof_format
+            )));
+        }
+
+        let start = item.start_tx_index as usize;
+        if start != expected_start {
+            let reason = if start < expected_start {
+                "overlap"
+            } else {
+                "gap"
+            };
+            return Err(ProofError::FlatBatchCoverage(format!(
+                "flat batch coverage {reason}: expected start {expected_start}, got {start}"
+            )));
+        }
+
+        let end = start.checked_add(item.tx_count as usize).ok_or_else(|| {
+            ProofError::FlatBatchCoverage("flat batch coverage overflow".to_string())
+        })?;
+        if end > transactions.len() {
+            return Err(ProofError::FlatBatchCoverage(format!(
+                "flat batch range [{start}, {end}) exceeds tx_count {}",
+                transactions.len()
+            )));
+        }
+
+        let tx_proofs = decode_flat_batch_proof_bytes(&item.proof)?;
+        if tx_proofs.len() != (end - start) {
+            return Err(ProofError::TransactionProofCountMismatch {
+                expected: end - start,
+                observed: tx_proofs.len(),
+            });
+        }
+
+        let tx_subset = &transactions[start..end];
+        tx_proofs
+            .iter()
+            .zip(tx_subset)
+            .enumerate()
+            .try_for_each(|(offset, (proof, tx))| {
+                verify_transaction_proof_inputs(start + offset, tx, proof)?;
+                Ok::<_, ProofError>(())
+            })?;
+
+        tx_proofs
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(offset, proof)| {
+                verify_transaction_proof(proof, verifying_key).map_err(|err| {
+                    ProofError::TransactionProofVerification {
+                        index: start + offset,
+                        message: err.to_string(),
+                    }
+                })?;
+                Ok::<_, ProofError>(())
+            })?;
+
+        all_statement_hashes.extend(statement_hashes_from_transaction_proofs(&tx_proofs)?);
+        expected_start = end;
+    }
+
+    if expected_start != transactions.len() {
+        return Err(ProofError::FlatBatchCoverage(format!(
+            "flat batch coverage incomplete: covered {expected_start}, expected {}",
+            transactions.len()
+        )));
+    }
+
+    let observed_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&all_statement_hashes)
+            .map_err(|err| ProofError::AggregationProofInputsMismatch(err.to_string()))?;
+    if &observed_commitment != expected_commitment {
+        return Err(ProofError::ProvenBatchBindingMismatch(
+            "flat batch statement commitment mismatch".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn statement_hashes_from_transactions(transactions: &[crate::types::Transaction]) -> Vec<[u8; 48]> {
