@@ -1359,6 +1359,44 @@ impl SubstrateRpcClient {
             }
         }
 
+        let witness_bytes = bundle.witness_bytes.as_ref().ok_or_else(|| {
+            WalletError::InvalidState(
+                "transaction bundle missing witness bytes for sidecar batch proving",
+            )
+        })?;
+        let binding_hash_hex = format!("0x{}", hex::encode(bundle.binding_hash));
+        let witness_payload = base64::engine::general_purpose::STANDARD.encode(witness_bytes);
+        let uploaded_witnesses: Vec<DaSubmitWitnessesEntry> = client
+            .request(
+                "da_submitWitnesses",
+                rpc_params![DaSubmitWitnessesRequest {
+                    witnesses: vec![DaSubmitWitnessesItem {
+                        binding_hash: binding_hash_hex.clone(),
+                        witness: witness_payload,
+                    }],
+                }],
+            )
+            .await
+            .map_err(|e| WalletError::Rpc(format!("da_submitWitnesses failed: {}", e)))?;
+        if uploaded_witnesses.len() != 1 {
+            return Err(WalletError::Rpc(format!(
+                "da_submitWitnesses returned {} entries (expected 1)",
+                uploaded_witnesses.len()
+            )));
+        }
+        let witness_entry = &uploaded_witnesses[0];
+        let observed_witness_binding = hex_to_array64(&witness_entry.binding_hash)?;
+        if observed_witness_binding != bundle.binding_hash {
+            return Err(WalletError::Rpc(
+                "da_submitWitnesses binding hash mismatch".to_string(),
+            ));
+        }
+        if witness_entry.size != u32::try_from(witness_bytes.len()).unwrap_or(u32::MAX) {
+            return Err(WalletError::Rpc(
+                "da_submitWitnesses size mismatch".to_string(),
+            ));
+        }
+
         // Phase C behavior note:
         // `HEGEMON_WALLET_PROOF_SIDECAR` is proposer staging only. It uploads proof bytes to
         // `da_submitProofs` so local/block-author aggregation builders can fetch them by
@@ -1616,6 +1654,23 @@ struct DaSubmitProofsItem {
 
 #[derive(Clone, Debug, Deserialize)]
 struct DaSubmitProofsEntry {
+    binding_hash: String,
+    size: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitWitnessesRequest {
+    witnesses: Vec<DaSubmitWitnessesItem>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitWitnessesItem {
+    binding_hash: String,
+    witness: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DaSubmitWitnessesEntry {
     binding_hash: String,
     size: u32,
 }

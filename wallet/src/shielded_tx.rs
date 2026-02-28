@@ -300,10 +300,13 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.fee,
             proof_result.value_balance,
         );
+        let witness_bytes = bincode::serialize(&witness)
+            .map_err(|e| WalletError::Serialization(format!("failed to encode witness: {e}")))?;
 
         // Build transaction bundle
         let bundle = TransactionBundle::new(
             proof_result.proof_bytes.clone(),
+            Some(witness_bytes),
             proof_result.nullifiers.to_vec(),
             proof_result.commitments.to_vec(),
             &ciphertexts,

@@ -10,14 +10,15 @@ use crate::types::{
     StarkCommitment, VersionCommitment, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment, da_root,
 };
+use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use crypto::hashes::blake3_384;
+use p3_field::PrimeCharacteristicRing;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
 use std::time::Instant;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
-use transaction_circuit::hashing_pq::felts_to_bytes48;
+use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify as verify_transaction_proof;
 
@@ -616,7 +617,7 @@ fn total_batch_proof_uncompressed_bytes(batch: &crate::types::ProvenBatch) -> us
 }
 
 fn verify_flat_batch_payload(
-    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    _verifying_key: &transaction_circuit::keys::VerifyingKey,
     flat_batches: &[crate::types::BatchProofItem],
     transactions: &[crate::types::Transaction],
     expected_commitment: &[u8; 48],
@@ -669,38 +670,90 @@ fn verify_flat_batch_payload(
             )));
         }
 
-        let tx_proofs = decode_flat_batch_proof_bytes(&item.proof)?;
-        if tx_proofs.len() != (end - start) {
-            return Err(ProofError::TransactionProofCountMismatch {
-                expected: end - start,
-                observed: tx_proofs.len(),
-            });
+        let payload = decode_flat_batch_proof_bytes(&item.proof)?;
+        let batch_public_inputs = decode_batch_public_inputs(&payload.batch_public_values)?;
+
+        if batch_public_inputs.batch_size as usize != (end - start) {
+            return Err(ProofError::FlatBatchCoverage(format!(
+                "flat batch public input tx_count mismatch: expected {}, got {}",
+                end - start,
+                batch_public_inputs.batch_size
+            )));
         }
 
+        verify_batch_proof_bytes(&payload.batch_proof, &batch_public_inputs).map_err(|err| {
+            ProofError::AggregationProofVerification(format!(
+                "flat batch STARK verification failed at tx range [{start}, {end}): {err}"
+            ))
+        })?;
+
         let tx_subset = &transactions[start..end];
-        tx_proofs
+        let expected_nullifiers = padded_nullifiers_from_transactions(tx_subset);
+        let expected_commitments = padded_commitments_from_transactions(tx_subset);
+        let active_nullifier_len = (end - start) * MAX_INPUTS;
+        let active_commitment_len = (end - start) * MAX_OUTPUTS;
+
+        if batch_public_inputs.nullifiers.len() < active_nullifier_len {
+            return Err(ProofError::FlatBatchCoverage(format!(
+                "flat batch public nullifier vector too short: expected at least {}, got {}",
+                active_nullifier_len,
+                batch_public_inputs.nullifiers.len()
+            )));
+        }
+        if batch_public_inputs.commitments.len() < active_commitment_len {
+            return Err(ProofError::FlatBatchCoverage(format!(
+                "flat batch public commitment vector too short: expected at least {}, got {}",
+                active_commitment_len,
+                batch_public_inputs.commitments.len()
+            )));
+        }
+
+        let observed_active_nullifiers: Vec<[u8; 48]> = batch_public_inputs
+            .nullifiers
             .iter()
-            .zip(tx_subset)
-            .enumerate()
-            .try_for_each(|(offset, (proof, tx))| {
-                verify_transaction_proof_inputs(start + offset, tx, proof)?;
-                Ok::<_, ProofError>(())
-            })?;
+            .take(active_nullifier_len)
+            .map(felts_to_bytes48)
+            .collect();
+        if observed_active_nullifiers != expected_nullifiers {
+            return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                "flat batch nullifier mismatch in tx range [{start}, {end})"
+            )));
+        }
 
-        tx_proofs
-            .par_iter()
-            .enumerate()
-            .try_for_each(|(offset, proof)| {
-                verify_transaction_proof(proof, verifying_key).map_err(|err| {
-                    ProofError::TransactionProofVerification {
-                        index: start + offset,
-                        message: err.to_string(),
-                    }
-                })?;
-                Ok::<_, ProofError>(())
-            })?;
+        let observed_active_commitments: Vec<[u8; 48]> = batch_public_inputs
+            .commitments
+            .iter()
+            .take(active_commitment_len)
+            .map(felts_to_bytes48)
+            .collect();
+        if observed_active_commitments != expected_commitments {
+            return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                "flat batch commitment mismatch in tx range [{start}, {end})"
+            )));
+        }
 
-        all_statement_hashes.extend(statement_hashes_from_transaction_proofs(&tx_proofs)?);
+        if batch_public_inputs
+            .nullifiers
+            .iter()
+            .skip(active_nullifier_len)
+            .any(|value| felts_to_bytes48(value) != [0u8; 48])
+        {
+            return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                "flat batch inactive nullifier tail is non-zero in tx range [{start}, {end})"
+            )));
+        }
+        if batch_public_inputs
+            .commitments
+            .iter()
+            .skip(active_commitment_len)
+            .any(|value| felts_to_bytes48(value) != [0u8; 48])
+        {
+            return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                "flat batch inactive commitment tail is non-zero in tx range [{start}, {end})"
+            )));
+        }
+
+        all_statement_hashes.extend(statement_hashes_from_transactions(tx_subset));
         expected_start = end;
     }
 
@@ -721,6 +774,43 @@ fn verify_flat_batch_payload(
     }
 
     Ok(())
+}
+
+fn decode_batch_public_inputs(values: &[u64]) -> Result<BatchPublicInputs, ProofError> {
+    let felts: Vec<Felt> = values.iter().map(|value| Felt::from_u64(*value)).collect();
+    BatchPublicInputs::try_from_slice(&felts).map_err(|err| {
+        ProofError::FlatBatchProofDecodeFailed(format!(
+            "flat batch public input decode failed: {err}"
+        ))
+    })
+}
+
+fn padded_nullifiers_from_transactions(
+    transactions: &[crate::types::Transaction],
+) -> Vec<[u8; 48]> {
+    let mut out = Vec::with_capacity(transactions.len().saturating_mul(MAX_INPUTS));
+    for tx in transactions {
+        out.extend_from_slice(&tx.nullifiers);
+        out.extend(std::iter::repeat_n(
+            [0u8; 48],
+            MAX_INPUTS.saturating_sub(tx.nullifiers.len()),
+        ));
+    }
+    out
+}
+
+fn padded_commitments_from_transactions(
+    transactions: &[crate::types::Transaction],
+) -> Vec<[u8; 48]> {
+    let mut out = Vec::with_capacity(transactions.len().saturating_mul(MAX_OUTPUTS));
+    for tx in transactions {
+        out.extend_from_slice(&tx.commitments);
+        out.extend(std::iter::repeat_n(
+            [0u8; 48],
+            MAX_OUTPUTS.saturating_sub(tx.commitments.len()),
+        ));
+    }
+    out
 }
 
 fn statement_hashes_from_transactions(transactions: &[crate::types::Transaction]) -> Vec<[u8; 48]> {

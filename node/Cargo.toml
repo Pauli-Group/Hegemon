@@ -40,6 +40,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
+batch-circuit = { path = "../circuits/batch", optional = true }
 aggregation-circuit = { path = "../circuits/aggregation", optional = true }
 block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
@@ -80,6 +81,7 @@ sp-api = { workspace = true, features = ["std"], optional = true }
 sp-io = { workspace = true, features = ["std"], optional = true }
 sp-block-builder = { workspace = true, features = ["std"], optional = true }
 sp-inherents = { workspace = true, features = ["std"], optional = true }
+p3-field = { workspace = true, optional = true }
 codec = { workspace = true, optional = true }
 
 # Pallet dependencies for inherent creation
@@ -166,7 +168,9 @@ substrate = [
     "dep:tower-http",
     "dep:block-circuit",
     "dep:aggregation-circuit",
+    "dep:batch-circuit",
     "consensus/substrate",
+    "dep:p3-field",
 ]
 
 [dev-dependencies]

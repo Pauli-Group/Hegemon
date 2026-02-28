@@ -20,8 +20,9 @@ pub use aggregation::{
     verify_aggregation_proof, warm_aggregation_cache,
 };
 pub use batch_proof::{
-    FLAT_BATCH_PROOF_FORMAT_ID_V5, FLAT_BATCH_PROOF_SCHEMA_V1, FlatBatchProofPayloadV1,
-    decode_flat_batch_proof_bytes, encode_flat_batch_proof_bytes,
+    FLAT_BATCH_PROOF_FORMAT_ID_V5, FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
+    FLAT_BATCH_PROOF_SCHEMA_V2, FlatBatchProofPayloadV2, decode_flat_batch_proof_bytes,
+    encode_flat_batch_proof_bytes,
 };
 pub use bft::{BftConsensus, ConsensusUpdate};
 pub use commitment_tree::{

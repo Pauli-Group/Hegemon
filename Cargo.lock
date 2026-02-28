@@ -1594,6 +1594,7 @@ name = "consensus"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "batch-circuit",
  "bincode",
  "blake3",
  "block-circuit",
@@ -3614,6 +3615,7 @@ dependencies = [
  "axum",
  "axum-server",
  "base64",
+ "batch-circuit",
  "bincode",
  "blake3",
  "block-circuit",
@@ -3630,6 +3632,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "once_cell",
+ "p3-field",
  "pallet-archive-market",
  "pallet-coinbase",
  "pallet-shielded-pool",

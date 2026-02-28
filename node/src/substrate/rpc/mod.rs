@@ -80,6 +80,7 @@ pub use wallet::{WalletApiServer, WalletRpc, WalletService};
 use crate::substrate::prover_coordinator::ProverCoordinator;
 use crate::substrate::service::{
     CommitmentBlockProofStore, DaChunkStore, PendingCiphertextStore, PendingProofStore,
+    PendingWitnessStore,
 };
 use state_da::DaParams;
 
@@ -104,6 +105,8 @@ pub struct FullDeps<S, P> {
     pub pending_ciphertext_store: Arc<parking_lot::Mutex<PendingCiphertextStore>>,
     /// Pending transaction proof pool (rollup sidecar).
     pub pending_proof_store: Arc<parking_lot::Mutex<PendingProofStore>>,
+    /// Pending transaction witness pool for batch proving.
+    pub pending_witness_store: Arc<parking_lot::Mutex<PendingWitnessStore>>,
     /// DA parameters
     pub da_params: DaParams,
     /// Optional prover coordinator for prover-market RPC.
@@ -152,6 +155,7 @@ where
         Arc::clone(&deps.da_chunk_store),
         Arc::clone(&deps.pending_ciphertext_store),
         Arc::clone(&deps.pending_proof_store),
+        Arc::clone(&deps.pending_witness_store),
         deps.da_params,
     );
     module.merge(da_rpc.into_rpc())?;
