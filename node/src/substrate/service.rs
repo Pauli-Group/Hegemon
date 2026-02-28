@@ -2340,6 +2340,7 @@ fn build_flat_batch_proofs_from_materials(
                     let trace = single_prover.build_trace(witness).map_err(|err| {
                         format!("single-tx trace build failed for witness {witness_index}: {err}")
                     })?;
+                    let trace_height = trace.values.len() / trace.width;
                     let pub_inputs = single_prover.public_inputs(witness).map_err(|err| {
                         format!(
                             "single-tx public input build failed for witness {witness_index}: {err}"
@@ -2353,6 +2354,8 @@ fn build_flat_batch_proofs_from_materials(
                     })?;
                     tracing::info!(
                         witness_index,
+                        trace_height,
+                        batch_slot_rows = ROWS_PER_TX,
                         "build_flat_batch_proofs_from_materials: single-tx witness verified"
                     );
                 }
