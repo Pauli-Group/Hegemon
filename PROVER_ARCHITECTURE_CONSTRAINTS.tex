@@ -457,11 +457,18 @@ for testing. The feature-flag gating
 
 \subsection{What the current architecture gets wrong}
 
-\subsubsection{Flaw 1: Recursion is the wrong tool for this throughput regime}
+\subsubsection{Flaw 1: The current recursion design is wrong for this throughput regime}
 
-The aggregation circuit builds a Plonky3 recursion circuit that re-verifies $n$
-inner STARK proofs inside an outer STARK. Each inner proof contains
-approximately:
+Recursion is not wrong in principle---it is essential once verifier cost
+for individual batch proofs exceeds the consensus time budget, which we
+estimate occurs around $\sim$60 TPS (see Section~11.5.4; the exact
+crossover depends on verifier implementation efficiency and block time,
+and must be confirmed by benchmarking). But the \emph{current} recursion
+design, which embeds full STARK verifiers for variable-count individual
+transaction proofs inside an outer circuit, is catastrophically mismatched
+to the workload at $\le$60 TPS. The aggregation circuit builds a Plonky3 recursion circuit that
+re-verifies $n$ inner STARK proofs inside an outer STARK. Each inner proof
+contains approximately:
 \begin{align}
 W_{\mathrm{inner}} &\approx \underbrace{2 \times 6}_{\text{commitments}} +
   \underbrace{132 \times 2}_{\text{opened trace}} +
@@ -482,10 +489,12 @@ round becomes a degree-7 symbolic expression, and for 32 queries:
 = 32 \times 17 \times 118 = 64{,}192.
 \end{equation}
 
-The core absurdity: native STARK verification of a single transaction proof
+The core problem: native STARK verification of a single transaction proof
 costs $<10$~ms on one core. Re-verification inside a recursion circuit costs
-seconds because every field operation becomes a constraint row. The recursion
-approach pays $>50\times$ overhead.
+seconds because every field operation becomes a constraint row. The
+\emph{current} recursion approach pays $>50\times$ overhead at this
+throughput regime, where the succinctness gain (1 proof vs.\ a handful)
+is not worth the cost.
 
 \subsubsection{Flaw 2: The cache is thread-local with $O(n_{\max})$ key space}
 
@@ -494,11 +503,13 @@ makes the cache miss rate proportional to block occupancy variance. The
 \texttt{thread\_local!} storage means cache entries are not shared across
 Rayon worker threads. Cold build costs 100--465 seconds per miss.
 
-\subsubsection{Flaw 3: The batch circuit is never used}
+\subsubsection{Flaw 3: The batch circuit is not wired into the authoring/import pipeline}
 
-The complete, tested, working \texttt{BatchTransactionProverP3} is never
-invoked by the aggregation pipeline. The hot path runs individual transaction
-proofs through the recursion circuit instead.
+The complete, tested, working \texttt{BatchTransactionProverP3} exists as a
+standalone crate with passing tests, but is never invoked by the node's
+block authoring or import pipeline. The hot path
+(\texttt{node/src/substrate/service.rs}, line $\sim$2141) runs individual
+transaction proofs through the recursion circuit instead.
 
 \subsubsection{Flaw 4: The recursion circuit's outer trace is enormous}
 
@@ -511,27 +522,48 @@ With blowup 16: $M_{\mathrm{outer}} = 2^{24}$. The LDE trace alone is
 $\sim 50 \times 2^{24} \times 8 = 6.7$~GB, far exceeding the L3 cache
 of any commodity CPU.
 
-\subsubsection{Flaw 5: Wrong composition order}
+\subsubsection{Flaw 5: Unnecessary proof compression at low throughput}
 
-The pipeline runs tx proofs $\to$ aggregation (recursion) $\to$ block commitment.
-The aggregation is redundant: the block commitment circuit already binds
-the transaction set.
+The pipeline runs tx proofs $\to$ aggregation (recursion) $\to$ block
+commitment. The aggregation step and the commitment step serve
+\emph{different} functions: aggregation compresses $n$ validity proofs into
+one (succinctness), while commitment binds the transaction set and enforces
+nullifier uniqueness (set integrity). Neither is logically redundant.
+
+However, the aggregation step is \emph{economically} redundant at $\le 60$
+TPS (estimated crossover; depends on batch-proof verification cost, which
+must be benchmarked). With at most 4 batch proofs per block, verification
+of all batch proofs takes $<40$~ms---invisible at the 6-second consensus
+timescale. The succinctness compression from 4 proofs to 1 proof saves
+$\sim 30$~ms of verifier time while costing $>5$~s of prover time. This is
+a negative-value trade at current throughput. Succinctness becomes
+economically justified only when the verifier cost of $O(n/k)$ batch proofs
+exceeds $\sim 100$~ms---an estimated threshold, not a measured acceptance
+number.
 
 \subsection{Clock cycle budget from first principles}
 
 \subsubsection{Field operation costs on \texttt{hegemon-prover}}
 
 Goldilocks arithmetic on a modern Xeon with AVX2 (4-wide SIMD packing,
-\texttt{p3-goldilocks} implementation):
+\texttt{p3-goldilocks} implementation).
+\textbf{Note:} The cycle counts below are \emph{engineering estimates}
+derived from instruction-level analysis of the \texttt{p3-goldilocks} code
+and known microarchitectural parameters (Intel Ice Lake/Sapphire Rapids).
+They have not been validated by benchmarks in this repository and should
+be treated as approximate until measured. The methodology is:
+operation count (from code) $\times$ amortized cycles per instruction
+(from Intel intrinsics guides and published Goldilocks implementations
+\cite{plonky3recbook}).
 \begin{center}
 \begin{tabular}{@{}lrl@{}}
 \toprule
-\textbf{Operation} & \textbf{Amortized cycles} & \textbf{Notes} \\
+\textbf{Operation} & \textbf{Est.\ cycles} & \textbf{Notes} \\
 \midrule
-Field multiply & 2.5 & Barrett reduction after \texttt{mulhi}/\texttt{mullo} \\
-Field add/sub & 0.5 & Conditional subtraction of $p$ \\
-NTT butterfly & 3.5 & 1 mul $+$ 2 add $+$ twiddle lookup \\
-Poseidon2 permutation & 2{,}420 & $736 \times 2.5 + 1159 \times 0.5$ \\
+Field multiply & $\sim$2.5 & Barrett reduction after \texttt{mulhi}/\texttt{mullo} \\
+Field add/sub & $\sim$0.5 & Conditional subtraction of $p$ \\
+NTT butterfly & $\sim$3.5 & 1 mul $+$ 2 add $+$ twiddle lookup \\
+Poseidon2 permutation & $\sim$2{,}420 & $736 \times 2.5 + 1159 \times 0.5$ \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -632,9 +664,12 @@ C_{\mathrm{tx,prove}} \approx
 = 109 \times 10^6 \;\text{cycles (32 cores).}
 \end{equation}
 Wall-clock at 2.5~GHz: $\sim 44$~ms per single-tx proof. With real-world
-overheads (memory latency, OS scheduling, Rayon task overhead):
+overheads (memory latency, OS scheduling, Rayon task overhead), and applying
+a $2$--$5\times$ gap between arithmetic lower bounds and measured wall-clock
+(typical for STARK provers \cite{plonky3recbook,stwo2024}):
 \begin{equation}
-\boxed{T_{\mathrm{tx,single}} \approx 100\text{--}300\;\text{ms on 32 cores.}}
+\boxed{T_{\mathrm{tx,single}} \approx 100\text{--}300\;\text{ms on 32 cores}
+\quad\textit{(estimate, not measured).}}
 \end{equation}
 
 \subsubsection{Batch-16 proof budget}
@@ -693,14 +728,17 @@ $400$--$600$~ms on 32 cores.
 
 \paragraph{Total batch-16 proof budget.}
 \begin{equation}\label{eq:batch16-budget}
-\boxed{T_{\mathrm{batch16}} \approx 1.5\text{--}3.0\;\text{s on 32 cores.}}
+\boxed{T_{\mathrm{batch16}} \approx 1.5\text{--}3.0\;\text{s on 32 cores}
+\quad\textit{(estimate, not measured).}}
 \end{equation}
 
 The range reflects uncertainty in Merkle tree implementation efficiency.
 With optimized leaf packing (which \texttt{p3-merkle-tree} implements):
 closer to 1.5~s. With na\"ive per-element hashing: up to 3.0~s.
+\textbf{These estimates must be validated by running \texttt{circuits/bench}
+on \texttt{hegemon-prover} hardware before committing to the architecture.}
 
-\subsubsection{Recursion overhead: why it costs $>50\times$ more}
+\subsubsection{Recursion overhead: estimated $17$--$50\times$ cost multiplier}
 
 For the recursion circuit verifying $n = 6$ inner proofs, the outer circuit
 must encode $n$ copies of the FRI verifier. Each verifier copy adds
@@ -749,8 +787,15 @@ Recursion over 6 tx proofs (cold) & $\sim 100$--$465$~s & $250$--$1{,}160 \times
 \end{tabular}
 \end{center}
 
-Recursion is $17\times$--$50\times$ more expensive than batch proving for the
-same transaction set, and $1{,}500\times$ more expensive on cold cache misses.
+Based on these estimates, the current recursion design is $17\times$--$50\times$
+more expensive than batch proving for the same transaction set, and
+$1{,}500\times$ more expensive on cold cache misses. These ratios are
+hypotheses derived from the cycle-count estimates in Sections~11.4.1--11.4.3;
+the exact magnitudes must be confirmed by running both paths on identical
+hardware. The cold-miss figure ($1{,}500\times$) is derived from observed
+\texttt{aggregation\_profile} logs; the hot-path comparison
+($17$--$50\times$) is the ratio of estimated cycle budgets and has not been
+measured end-to-end.
 
 \subsection{Seamless scaling from 0.1 to $>$1000 TPS}
 
@@ -1104,24 +1149,27 @@ The GPU's disadvantage---smaller total memory (80~GB vs.\ 256~GB)---is
 irrelevant for merge proofs: even the largest recursion trace ($2^{24}$
 domain, 50 columns) is $\sim 6.7$~GB, well within HBM capacity.
 
-\paragraph{Expected GPU proving times:}
+\paragraph{Projected GPU proving times (order-of-magnitude estimates):}
+
+The following table extrapolates from published GPU STARK prover benchmarks:
+Icicle/Ingonyama reports $\sim 8\times$ NTT speedup for Goldilocks on A100
+\cite{ingonyama2024}, and Stwo (Circle STARK) achieves sub-second proofs for
+$2^{22}$-row traces on GPU \cite{stwo2024}. These are \emph{directional
+projections}, not measurements on Hegemon's specific AIR. Actual GPU
+performance depends on kernel implementation quality, memory layout
+optimizations, and host$\leftrightarrow$device transfer overhead.
 \begin{center}
 \begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{Proof type} & \textbf{32-core CPU} & \textbf{H100 GPU} \\
+\textbf{Proof type} & \textbf{32-core CPU (est.)} & \textbf{H100 GPU (proj.)} \\
 \midrule
-Single tx ($M = 2^{17}$) & 200~ms & 30~ms \\
-Batch-16 ($M = 2^{21}$) & 2.0~s & 150~ms \\
-Merge-8 ($M = 2^{23}$) & 5.0~s & 500~ms \\
-Recursion root ($M = 2^{24}$) & 10.0~s & 800~ms \\
+Single tx ($M = 2^{17}$) & $\sim$200~ms & $\sim$30~ms \\
+Batch-16 ($M = 2^{21}$) & $\sim$2.0~s & $\sim$150~ms \\
+Merge-8 ($M = 2^{23}$) & $\sim$5.0~s & $\sim$500~ms \\
+Recursion root ($M = 2^{24}$) & $\sim$10.0~s & $\sim$800~ms \\
 \bottomrule
 \end{tabular}
 \end{center}
-
-These estimates are consistent with published GPU STARK prover benchmarks:
-Icicle/Ingonyama reports $\sim 8\times$ speedup for Goldilocks NTT on A100
-\cite{ingonyama2024}, and the Stwo (Circle STARK) GPU prover achieves
-sub-second proofs for $2^{22}$-row traces \cite{stwo2024}.
 
 \subsubsection{Heterogeneous pipeline: CPU batch $+$ GPU recursion}
 
@@ -1142,22 +1190,27 @@ The optimal hardware architecture for Hegemon at scale:
         across machines.
 \end{enumerate}
 
-\paragraph{Scaling table by TPS regime:}
+\paragraph{Scaling table by TPS regime (directional projections):}
 \begin{center}
 \begin{tabular}{@{}rllrl@{}}
 \toprule
-\textbf{TPS} & \textbf{Batch HW} & \textbf{Merge HW} & \textbf{Time} &
-  \textbf{Cost} \\
+\textbf{TPS} & \textbf{Batch HW} & \textbf{Merge HW} & \textbf{Time (est.)} &
+  \textbf{Cost (approx.)} \\
 \midrule
 0.1 & 1 CPU (32c) & none & $<1$~s & \$5K \\
 1 & 1 CPU (32c) & none & $\sim 1$~s & \$5K \\
 10 & 1 CPU (32c) & none & $\sim 4$~s & \$5K \\
-100 & 4 CPU (32c) & 1 GPU & $\sim 5$~s & \$50K \\
-1{,}000 & 8 GPU & 4 GPU & $\sim 2$~s & \$400K \\
-10{,}000 & 64 GPU & 16 GPU & $\sim 5$~s & \$2.5M \\
+100 & 4 CPU (32c) & 1 GPU & $\sim 5$~s & $\sim$\$50K \\
+1{,}000 & 8 GPU & 4 GPU & $\sim 2$~s & $\sim$\$400K \\
+10{,}000 & 64 GPU & 16 GPU & $\sim 5$~s & $\sim$\$2.5M \\
 \bottomrule
 \end{tabular}
 \end{center}
+Rows at $\ge 100$ TPS are speculative projections based on published GPU
+benchmarks and known hardware costs as of early 2026. They illustrate the
+structural scaling properties of the architecture (sub-linear hardware cost
+with TPS) but should not be used for procurement decisions without
+measured prover benchmarks.
 
 Hardware cost scales sub-linearly with TPS because batch proving is
 $O(n)$ total work but $O(1)$ depth with enough parallelism, and recursion
@@ -1195,7 +1248,13 @@ Max TPS (1 machine) & $<0.2$ & $\sim$15 & $\sim$100 (w/ GPU) \\
 \begin{enumerate}[leftmargin=2em]
   \item \textbf{Immediate (Phase 1, ship now):} Wire
         \texttt{BatchTransactionProverP3::prove\_batch()} into the block
-        production pipeline. Replace the aggregation circuit call. Use
+        production pipeline. Replace the call to \texttt{prove\_aggregation}
+        in the block authoring path (currently at
+        \texttt{node/src/substrate/service.rs}). Define a new
+        \texttt{BlockProofPayload} wire format containing a vector of batch
+        proofs plus one commitment proof, replacing the current
+        \texttt{AggregationProofV4Payload}. Update block import to verify
+        each batch proof plus the commitment proof. Use
         \texttt{CommitmentBlockProverP3} for block-level binding. Target:
         0.1--10 TPS on existing hardware.
 
@@ -1241,8 +1300,9 @@ order with a recursion layer that destroys performance. The fix is
 architectural, not optimizational:
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{0.1--10 TPS:} Batch proving (existing code, unused). No
-        recursion. CPU only. Budget: $<4.3$~s out of 6~s.
+  \item \textbf{0.1--10 TPS:} Batch proving (existing code, not wired into
+        authoring pipeline). No recursion. CPU only. Budget: $<4.3$~s out
+        of 6~s.
   \item \textbf{10--100 TPS:} Batch proving $+$ fixed-arity merge
         recursion. CPU batch $+$ GPU merge. Budget: $<5.5$~s.
   \item \textbf{100--1000 TPS:} GPU batch $+$ GPU recursive tree.

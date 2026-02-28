@@ -924,7 +924,7 @@ mod tests {
         let request = SyncRequest::CompatibilityProbe {
             local_genesis_hash: [9u8; 32],
             sync_protocol_version: SYNC_PROTOCOL_VERSION,
-            aggregation_proof_format: 4,
+            aggregation_proof_format: consensus::BLOCK_PROOF_FORMAT_ID_V5,
         };
         let encoded = request.encode();
         let decoded = SyncRequest::decode(&mut &encoded[..]).unwrap();
@@ -936,7 +936,10 @@ mod tests {
             } => {
                 assert_eq!(local_genesis_hash, [9u8; 32]);
                 assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
-                assert_eq!(aggregation_proof_format, 4);
+                assert_eq!(
+                    aggregation_proof_format,
+                    consensus::BLOCK_PROOF_FORMAT_ID_V5
+                );
             }
             _ => panic!("Wrong request variant"),
         }
@@ -949,7 +952,7 @@ mod tests {
             accepted: true,
             local_genesis_hash: [5u8; 32],
             sync_protocol_version: SYNC_PROTOCOL_VERSION,
-            aggregation_proof_format: 4,
+            aggregation_proof_format: consensus::BLOCK_PROOF_FORMAT_ID_V5,
         };
         let encoded = response.encode();
         let decoded = SyncResponse::decode(&mut &encoded[..]).unwrap();
@@ -965,7 +968,10 @@ mod tests {
                 assert!(accepted);
                 assert_eq!(local_genesis_hash, [5u8; 32]);
                 assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
-                assert_eq!(aggregation_proof_format, 4);
+                assert_eq!(
+                    aggregation_proof_format,
+                    consensus::BLOCK_PROOF_FORMAT_ID_V5
+                );
             }
             _ => panic!("Wrong response variant"),
         }

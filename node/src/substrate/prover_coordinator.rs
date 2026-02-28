@@ -21,6 +21,24 @@ pub struct PreparedBundle {
     pub build_ms: u128,
 }
 
+fn block_proof_bundle_payload_bytes(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> usize {
+    let aggregation_bytes = match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
+            .flat_batches
+            .iter()
+            .map(|item| item.proof.data.len())
+            .sum::<usize>(),
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => payload
+            .merge_root
+            .as_ref()
+            .map(|merge| merge.root_proof.data.len())
+            .unwrap_or(0),
+    };
+    payload.commitment_proof.data.len() + aggregation_bytes
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkPackage {
     pub package_id: String,
@@ -791,9 +809,7 @@ impl ProverCoordinator {
             return Err("work result tx_count mismatch".to_string());
         }
 
-        if payload.commitment_proof.data.len() > self.config.max_payload_bytes
-            || payload.aggregation_proof.data.len() > self.config.max_payload_bytes
-        {
+        if block_proof_bundle_payload_bytes(&payload) > self.config.max_payload_bytes {
             state.work_status.insert(
                 package_id.to_string(),
                 WorkStatus::Rejected("payload too large".into()),
@@ -1581,7 +1597,14 @@ mod tests {
             da_root: [7u8; 48],
             da_chunk_count: 1,
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2, 3]),
-            aggregation_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![4, 5, 6]),
+            proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            flat_batches: vec![pallet_shielded_pool::types::BatchProofItem {
+                start_tx_index: 0,
+                tx_count: tx_count.min(u16::MAX as u32) as u16,
+                proof_format: pallet_shielded_pool::types::BLOCK_PROOF_FORMAT_ID_V5,
+                proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![4, 5, 6]),
+            }],
+            merge_root: None,
             prover_claim: None,
         }
     }

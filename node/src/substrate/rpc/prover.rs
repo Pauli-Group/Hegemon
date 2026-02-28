@@ -296,7 +296,14 @@ mod tests {
             da_root: [6u8; 48],
             da_chunk_count: 1,
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2]),
-            aggregation_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![3, 4]),
+            proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            flat_batches: vec![pallet_shielded_pool::types::BatchProofItem {
+                start_tx_index: 0,
+                tx_count: tx_count.min(u16::MAX as u32) as u16,
+                proof_format: pallet_shielded_pool::types::BLOCK_PROOF_FORMAT_ID_V5,
+                proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![3, 4]),
+            }],
+            merge_root: None,
             prover_claim: None,
         }
     }
