@@ -231,7 +231,10 @@ mod tests {
     #[test]
     fn test_slot0_rows_match_transaction_air_schedule() {
         for input in 0..MAX_INPUTS {
-            assert_eq!(nullifier_output_row(0, input), p3_air::nullifier_output_row(input));
+            assert_eq!(
+                nullifier_output_row(0, input),
+                p3_air::nullifier_output_row(input)
+            );
             assert_eq!(
                 merkle_root_output_row(0, input),
                 p3_air::merkle_root_output_row(input)

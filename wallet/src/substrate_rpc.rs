@@ -1359,11 +1359,12 @@ impl SubstrateRpcClient {
             }
         }
 
-        let witness_bytes = bundle.witness_bytes.as_ref().ok_or_else(|| {
-            WalletError::InvalidState(
+        let witness_bytes = bundle
+            .witness_bytes
+            .as_ref()
+            .ok_or(WalletError::InvalidState(
                 "transaction bundle missing witness bytes for sidecar batch proving",
-            )
-        })?;
+            ))?;
         let binding_hash_hex = format!("0x{}", hex::encode(bundle.binding_hash));
         let witness_payload = base64::engine::general_purpose::STANDARD.encode(witness_bytes);
         let uploaded_witnesses: Vec<DaSubmitWitnessesEntry> = client

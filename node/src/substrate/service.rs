@@ -135,7 +135,9 @@ use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use aggregation_circuit::prove_aggregation;
-use batch_circuit::{verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs, BatchTransactionProver};
+use batch_circuit::{
+    verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs, BatchTransactionProver,
+};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
@@ -1804,18 +1806,17 @@ fn statement_hash_from_transaction(tx: &consensus::types::Transaction) -> [u8; 4
 fn statement_hashes_from_transactions(
     transactions: &[consensus::types::Transaction],
 ) -> Vec<[u8; 48]> {
-    transactions.iter().map(statement_hash_from_transaction).collect()
+    transactions
+        .iter()
+        .map(statement_hash_from_transaction)
+        .collect()
 }
 
 fn statement_hashes_from_extrinsics(
     extrinsics: &[runtime::UncheckedExtrinsic],
 ) -> Result<Vec<[u8; 48]>, String> {
-    let (transactions, _, _) = extract_shielded_transfers_for_parallel_verification(
-        extrinsics,
-        None,
-        None,
-        true,
-    )?;
+    let (transactions, _, _) =
+        extract_shielded_transfers_for_parallel_verification(extrinsics, None, None, true)?;
     Ok(statement_hashes_from_transactions(&transactions))
 }
 
@@ -2714,11 +2715,10 @@ fn prepare_block_proof_bundle(
             batch_slot_txs,
         )
         .map(PreparedAggregationArtifacts::Flat),
-        PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
-            proofs_for_batching,
-            tx_statements_commitment,
-        )
-        .map(PreparedAggregationArtifacts::Merge),
+        PreparedProofMode::MergeRoot => {
+            build_merge_root_proof_from_materials(proofs_for_batching, tx_statements_commitment)
+                .map(PreparedAggregationArtifacts::Merge)
+        }
     };
     let aggregation_stage_ms = aggregation_stage_started.elapsed().as_millis();
     match &batch_result {

@@ -144,12 +144,7 @@ mod tests {
                 index: 0,
                 reason: err.to_string(),
             })?;
-        let witnesses = vec![
-            witness.clone(),
-            witness.clone(),
-            witness.clone(),
-            witness,
-        ];
+        let witnesses = vec![witness.clone(), witness.clone(), witness.clone(), witness];
         let prover = BatchTransactionProverP3::new();
         let (proof, pub_inputs) = prover.prove_batch(&witnesses)?;
         verify_batch_proof_p3(&proof, &pub_inputs)
