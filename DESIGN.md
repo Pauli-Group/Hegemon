@@ -532,3 +532,8 @@ Aggregation cache prewarm behavior was also tightened for throughput stability:
 - Operators can still request linear warmup with `HEGEMON_AGG_PREWARM_MODE=linear` or explicit shapes with `HEGEMON_AGG_WARMUP_TARGET_SHAPES`.
 
 This preserves fail-closed proof semantics while removing avoidable O(target) recursion-shape churn from live transaction paths.
+
+Two additional liveness hardening changes were added after burst-load failures on sidecar traffic:
+
+- Prover candidate selection now drops proof-sidecar transfers whose ciphertext bytes are not present in the local pending sidecar store. This prevents nodes that did not receive sidecar payload bytes from repeatedly scheduling impossible proof jobs.
+- Mining workers now invalidate the active template after any import failure. This avoids hashing the same invalid (stale/mismatched) proof bundle repeatedly and forces fresh template/proof construction on the next round.

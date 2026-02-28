@@ -1514,6 +1514,66 @@ struct DaTxLayout {
     ciphertext_sizes: Vec<usize>,
 }
 
+#[derive(Default)]
+struct SidecarReadyFilterStats {
+    dropped_missing_ciphertexts: usize,
+}
+
+fn filter_sidecar_ready_candidates(
+    candidate_txs: Vec<Vec<u8>>,
+    pending_ciphertexts: &PendingCiphertextStore,
+) -> (Vec<Vec<u8>>, SidecarReadyFilterStats) {
+    let mut stats = SidecarReadyFilterStats::default();
+    let mut filtered = Vec::with_capacity(candidate_txs.len());
+
+    for tx_bytes in candidate_txs {
+        let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &tx_bytes[..]) else {
+            // Decode filtering is handled by the existing conflict filter path.
+            filtered.push(tx_bytes);
+            continue;
+        };
+
+        let mut drop_tx = false;
+        if let runtime::RuntimeCall::ShieldedPool(
+            ShieldedPoolCall::shielded_transfer_sidecar {
+                ciphertext_hashes,
+                ciphertext_sizes,
+                ..
+            }
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+                ciphertext_hashes,
+                ciphertext_sizes,
+                ..
+            },
+        ) = &extrinsic.function
+        {
+            let hashes = ciphertext_hashes.as_slice();
+            match pending_ciphertexts
+                .get_many(hashes)
+                .and_then(|ciphertexts| {
+                    validate_ciphertexts_against_hashes(
+                        &ciphertexts,
+                        ciphertext_sizes.as_slice(),
+                        hashes,
+                    )
+                }) {
+                Ok(()) => {}
+                Err(_) => {
+                    drop_tx = true;
+                    stats.dropped_missing_ciphertexts =
+                        stats.dropped_missing_ciphertexts.saturating_add(1);
+                }
+            }
+        }
+
+        if !drop_tx {
+            filtered.push(tx_bytes);
+        }
+    }
+
+    (filtered, stats)
+}
+
 fn has_sidecar_transfers(extrinsics: &[runtime::UncheckedExtrinsic]) -> bool {
     extrinsics.iter().any(|extrinsic| {
         let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
@@ -8280,6 +8340,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let pool = Arc::clone(&pool_bridge);
             let tx_pool = transaction_pool.clone();
             let overscan_factor = coordinator_candidate_overscan_factor;
+            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
             Arc::new(move |target_txs: usize| {
                 use sc_transaction_pool_api::{
                     InPoolTransaction, TransactionPool as ScTransactionPool,
@@ -8336,7 +8397,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         txs
                     }
                 };
-                let (mut filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
                 if filter_stats.dropped_total() > 0 {
                     tracing::info!(
                         target_txs,
@@ -8349,8 +8410,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         "Filtered conflicting shielded transfers from prover candidate set"
                     );
                 }
-                filtered.truncate(target_txs);
-                filtered
+                let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
+                let (mut sidecar_ready, sidecar_stats) =
+                    filter_sidecar_ready_candidates(filtered, &pending_ciphertexts_snapshot);
+                if sidecar_stats.dropped_missing_ciphertexts > 0 {
+                    tracing::debug!(
+                        target_txs,
+                        fetch_limit,
+                        dropped_missing_ciphertexts = sidecar_stats.dropped_missing_ciphertexts,
+                        kept_candidates = sidecar_ready.len(),
+                        "Dropped sidecar candidates missing local ciphertext bytes"
+                    );
+                }
+                sidecar_ready.truncate(target_txs);
+                sidecar_ready
             })
         };
         let build_for_coord = {
