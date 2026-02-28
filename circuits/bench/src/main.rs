@@ -44,6 +44,9 @@ struct Cli {
     /// Skip per-transaction proving and benchmark only `prove_batch`.
     #[arg(long)]
     batch_only: bool,
+    /// Skip batch proof verification (timing prove path only).
+    #[arg(long)]
+    batch_skip_verify: bool,
     /// Depth of the temporary Merkle tree used for witness generation.
     /// Should match CIRCUIT_MERKLE_DEPTH (32) for STARK proof verification.
     #[arg(long, default_value_t = 32)]
@@ -99,6 +102,7 @@ fn main() -> Result<()> {
         cli.tree_depth,
         cli.batch_size,
         cli.batch_only,
+        cli.batch_skip_verify,
     )?;
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -131,6 +135,7 @@ fn run_benchmark(
     _tree_depth: usize,
     batch_size: usize,
     batch_only: bool,
+    batch_skip_verify: bool,
 ) -> Result<BenchReport> {
     if iterations == 0 {
         return Err(anyhow!("iterations must be greater than zero"));
@@ -241,10 +246,12 @@ fn run_benchmark(
                 .context("prove batch transactions")?;
             batch_prove_time += prove_start.elapsed();
 
-            let verify_start = Instant::now();
-            verify_batch_proof(&batch_proof, &batch_pub_inputs)
-                .context("verify batch transactions")?;
-            batch_verify_time += verify_start.elapsed();
+            if !batch_skip_verify {
+                let verify_start = Instant::now();
+                verify_batch_proof(&batch_proof, &batch_pub_inputs)
+                    .context("verify batch transactions")?;
+                batch_verify_time += verify_start.elapsed();
+            }
         }
     }
 
