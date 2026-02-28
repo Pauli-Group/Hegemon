@@ -2138,7 +2138,7 @@ fn build_candidate_context(
                 hex::encode(binding_hash)
             )
         })?;
-        let witness: TransactionWitness = bincode::deserialize(witness_bytes).map_err(|err| {
+        let witness: TransactionWitness = serde_json::from_slice(witness_bytes).map_err(|err| {
             format!(
                 "failed to decode pending witness bytes for binding hash {}: {err}",
                 hex::encode(binding_hash)

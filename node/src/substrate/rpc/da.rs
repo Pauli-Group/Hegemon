@@ -365,7 +365,7 @@ impl DaApiServer for DaRpc {
                 ));
             }
 
-            let witness: TransactionWitness = bincode::deserialize(&bytes).map_err(|err| {
+            let witness: TransactionWitness = serde_json::from_slice(&bytes).map_err(|err| {
                 ErrorObjectOwned::owned(
                     INVALID_PARAMS_CODE,
                     format!("witness decode failed: {err}"),
