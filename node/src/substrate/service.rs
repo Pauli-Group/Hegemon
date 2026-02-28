@@ -2396,7 +2396,7 @@ fn build_flat_batch_proofs_from_materials(
                 let roundtrip_public_values: Vec<Felt> = payload
                     .batch_public_values
                     .iter()
-                    .map(|value| Felt::from_u64(*value))
+                    .map(|value| Felt::new(*value))
                     .collect();
                 let roundtrip_public_inputs =
                     BatchPublicInputs::try_from_slice(&roundtrip_public_values).map_err(|err| {
