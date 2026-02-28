@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
+use batch_circuit::{verify_batch_proof, BatchTransactionProver};
 use block_circuit::{verify_block_commitment, CommitmentBlockProver};
 use clap::Parser;
 use p3_goldilocks::Goldilocks;
@@ -36,6 +37,13 @@ struct Cli {
     /// Run a fast smoke test (caps iterations at 4).
     #[arg(long)]
     smoke: bool,
+    /// Batch size for `BatchTransactionProver::prove_batch` benchmarking.
+    /// Set to 0 to skip batch proving metrics.
+    #[arg(long, default_value_t = 0)]
+    batch_size: usize,
+    /// Skip per-transaction proving and benchmark only `prove_batch`.
+    #[arg(long)]
+    batch_only: bool,
     /// Depth of the temporary Merkle tree used for witness generation.
     /// Should match CIRCUIT_MERKLE_DEPTH (32) for STARK proof verification.
     #[arg(long, default_value_t = 32)]
@@ -70,6 +78,12 @@ struct BenchReport {
     poseidon2_capacity_bits: usize,
     poseidon2_bht_pq_collision_bits: usize,
     transactions_per_second: f64,
+    batch_size: usize,
+    batch_iterations: usize,
+    batch_witness_ns: u128,
+    batch_prove_ns: u128,
+    batch_verify_ns: u128,
+    batch_transactions_per_second: f64,
 }
 
 fn main() -> Result<()> {
@@ -79,12 +93,18 @@ fn main() -> Result<()> {
     } else {
         cli.iterations
     };
-    let report = run_benchmark(iterations, cli.prove, cli.tree_depth)?;
+    let report = run_benchmark(
+        iterations,
+        cli.prove,
+        cli.tree_depth,
+        cli.batch_size,
+        cli.batch_only,
+    )?;
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "circuits-bench: iterations={iterations} tx_proof_avg={}B tx_proof_max={}B witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2}",
+            "circuits-bench: iterations={iterations} tx_proof_avg={}B tx_proof_max={}B witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2} batch_size={} batch_witness_ns={} batch_prove_ns={} batch_verify_ns={} batch_tx/s={:.2}",
             report.tx_proof_bytes_avg,
             report.tx_proof_bytes_max,
             report.witness_ns,
@@ -94,16 +114,33 @@ fn main() -> Result<()> {
             report.commitment_tx_count,
             report.commitment_proof_bytes,
             report.commitment_verify_ns,
-            report.transactions_per_second
+            report.transactions_per_second,
+            report.batch_size,
+            report.batch_witness_ns,
+            report.batch_prove_ns,
+            report.batch_verify_ns,
+            report.batch_transactions_per_second
         );
     }
     Ok(())
 }
 
-fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<BenchReport> {
+fn run_benchmark(
+    iterations: usize,
+    prove: bool,
+    _tree_depth: usize,
+    batch_size: usize,
+    batch_only: bool,
+) -> Result<BenchReport> {
     if iterations == 0 {
         return Err(anyhow!("iterations must be greater than zero"));
     }
+    if batch_only && batch_size == 0 {
+        return Err(anyhow!(
+            "--batch-only requires --batch-size > 0 to benchmark prove_batch"
+        ));
+    }
+
     let (proving_key, verifying_key) = generate_keys();
     let mut proofs = Vec::with_capacity(iterations);
     let mut witness_time = Duration::default();
@@ -115,41 +152,43 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
     let mut tx_log_chunks: Option<usize> = None;
     let mut rng = ChaCha20Rng::seed_from_u64(0xC1C01E75);
 
-    for idx in 0..iterations {
-        let witness_start = Instant::now();
-        let witness = synthetic_witness(&mut rng, idx as u64);
-        witness_time += witness_start.elapsed();
+    if !batch_only {
+        for idx in 0..iterations {
+            let witness_start = Instant::now();
+            let witness = synthetic_witness(&mut rng, idx as u64);
+            witness_time += witness_start.elapsed();
 
-        if tx_log_chunks.is_none() {
-            let prover = TransactionProverP3::new();
-            let pub_inputs: TransactionPublicInputsP3 = prover
-                .public_inputs(&witness)
-                .context("build Plonky3 public inputs")?;
-            let pub_inputs_vec = pub_inputs.to_vec();
-            tx_log_chunks = Some(get_log_num_quotient_chunks::<Goldilocks, _>(
-                &TransactionAirP3,
-                0,
-                pub_inputs_vec.len(),
-                0,
-            ));
+            if tx_log_chunks.is_none() {
+                let prover = TransactionProverP3::new();
+                let pub_inputs: TransactionPublicInputsP3 = prover
+                    .public_inputs(&witness)
+                    .context("build Plonky3 public inputs")?;
+                let pub_inputs_vec = pub_inputs.to_vec();
+                tx_log_chunks = Some(get_log_num_quotient_chunks::<Goldilocks, _>(
+                    &TransactionAirP3,
+                    0,
+                    pub_inputs_vec.len(),
+                    0,
+                ));
+            }
+
+            let prove_start = Instant::now();
+            let proof = proof::prove(&witness, &proving_key).context("prove transaction")?;
+            prove_time += prove_start.elapsed();
+            let tx_proof_bytes = proof.stark_proof.len();
+            tx_proof_bytes_total = tx_proof_bytes_total.saturating_add(tx_proof_bytes);
+            tx_proof_bytes_min = tx_proof_bytes_min.min(tx_proof_bytes);
+            tx_proof_bytes_max = tx_proof_bytes_max.max(tx_proof_bytes);
+
+            let verify_start = Instant::now();
+            let report = proof::verify(&proof, &verifying_key).context("verify transaction")?;
+            if !report.verified {
+                return Err(anyhow!("transaction proof {idx} failed verification"));
+            }
+            verify_time += verify_start.elapsed();
+
+            proofs.push(proof);
         }
-
-        let prove_start = Instant::now();
-        let proof = proof::prove(&witness, &proving_key).context("prove transaction")?;
-        prove_time += prove_start.elapsed();
-        let tx_proof_bytes = proof.stark_proof.len();
-        tx_proof_bytes_total = tx_proof_bytes_total.saturating_add(tx_proof_bytes);
-        tx_proof_bytes_min = tx_proof_bytes_min.min(tx_proof_bytes);
-        tx_proof_bytes_max = tx_proof_bytes_max.max(tx_proof_bytes);
-
-        let verify_start = Instant::now();
-        let report = proof::verify(&proof, &verifying_key).context("verify transaction")?;
-        if !report.verified {
-            return Err(anyhow!("transaction proof {idx} failed verification"));
-        }
-        verify_time += verify_start.elapsed();
-
-        proofs.push(proof);
     }
 
     let mut block_ns = 0u128;
@@ -157,7 +196,7 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
     let mut commitment_verify_ns = 0u128;
     let mut commitment_proof_bytes = 0usize;
     let mut commitment_tx_count = 0usize;
-    if prove {
+    if prove && !proofs.is_empty() {
         let prover = CommitmentBlockProver::new();
         let prove_start = Instant::now();
         let proof = prover
@@ -177,6 +216,40 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
     let total = witness_time + prove_time + verify_time + block_duration;
     let tx_per_sec = if total.as_secs_f64() > 0.0 {
         iterations as f64 / total.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    let mut batch_witness_time = Duration::default();
+    let mut batch_prove_time = Duration::default();
+    let mut batch_verify_time = Duration::default();
+    if batch_size > 0 {
+        let batch_prover = BatchTransactionProver::new();
+        for batch_idx in 0..iterations {
+            let witness_start = Instant::now();
+            let mut witnesses = Vec::with_capacity(batch_size);
+            for tx_idx in 0..batch_size {
+                let seed = ((batch_idx as u64) << 16) | tx_idx as u64;
+                witnesses.push(synthetic_witness(&mut rng, seed));
+            }
+            batch_witness_time += witness_start.elapsed();
+
+            let prove_start = Instant::now();
+            let (batch_proof, batch_pub_inputs) = batch_prover
+                .prove_batch(&witnesses)
+                .context("prove batch transactions")?;
+            batch_prove_time += prove_start.elapsed();
+
+            let verify_start = Instant::now();
+            verify_batch_proof(&batch_proof, &batch_pub_inputs)
+                .context("verify batch transactions")?;
+            batch_verify_time += verify_start.elapsed();
+        }
+    }
+
+    let batch_total = batch_witness_time + batch_prove_time + batch_verify_time;
+    let batch_transactions_per_second = if batch_size > 0 && batch_total.as_secs_f64() > 0.0 {
+        (iterations * batch_size) as f64 / batch_total.as_secs_f64()
     } else {
         0.0
     };
@@ -202,8 +275,16 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         commitment_verify_ns,
         commitment_proof_bytes,
         commitment_tx_count,
-        tx_proof_bytes_avg: tx_proof_bytes_total / iterations,
-        tx_proof_bytes_min,
+        tx_proof_bytes_avg: if iterations > 0 && !batch_only {
+            tx_proof_bytes_total / iterations
+        } else {
+            0
+        },
+        tx_proof_bytes_min: if tx_proof_bytes_min == usize::MAX {
+            0
+        } else {
+            tx_proof_bytes_min
+        },
         tx_proof_bytes_max,
         tx_log_num_quotient_chunks,
         tx_log_blowup_used,
@@ -218,6 +299,12 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         poseidon2_capacity_bits,
         poseidon2_bht_pq_collision_bits,
         transactions_per_second: tx_per_sec,
+        batch_size,
+        batch_iterations: if batch_size > 0 { iterations } else { 0 },
+        batch_witness_ns: batch_witness_time.as_nanos(),
+        batch_prove_ns: batch_prove_time.as_nanos(),
+        batch_verify_ns: batch_verify_time.as_nanos(),
+        batch_transactions_per_second,
     })
 }
 
