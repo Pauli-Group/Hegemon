@@ -2307,7 +2307,7 @@ fn largest_power_of_two_at_most(value: usize) -> usize {
     1usize << shift
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PreparedProofMode {
     FlatBatches,
     MergeRoot,
@@ -2581,6 +2581,110 @@ enum PreparedAggregationArtifacts {
     Merge(pallet_shielded_pool::types::MergeRootProofPayload),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ProveAheadAggregationCacheKey {
+    proof_mode: PreparedProofMode,
+    tx_statements_commitment: [u8; 48],
+    tx_count: u32,
+    flat_slot_txs: u16,
+    merge_arity: u16,
+}
+
+struct ProveAheadAggregationCache {
+    capacity: usize,
+    order: VecDeque<ProveAheadAggregationCacheKey>,
+    entries: HashMap<ProveAheadAggregationCacheKey, Arc<PreparedAggregationArtifacts>>,
+}
+
+impl ProveAheadAggregationCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    fn touch_key(&mut self, key: ProveAheadAggregationCacheKey) {
+        if let Some(position) = self.order.iter().position(|existing| *existing == key) {
+            self.order.remove(position);
+        }
+        self.order.push_back(key);
+    }
+
+    fn get(
+        &mut self,
+        key: ProveAheadAggregationCacheKey,
+    ) -> Option<Arc<PreparedAggregationArtifacts>> {
+        let entry = self.entries.get(&key).cloned();
+        if entry.is_some() {
+            self.touch_key(key);
+        }
+        entry
+    }
+
+    fn insert(
+        &mut self,
+        key: ProveAheadAggregationCacheKey,
+        artifacts: Arc<PreparedAggregationArtifacts>,
+    ) {
+        self.entries.insert(key, artifacts);
+        self.touch_key(key);
+        while self.order.len() > self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+    }
+}
+
+fn load_prove_ahead_aggregation_cache_capacity() -> usize {
+    std::env::var("HEGEMON_PROVE_AHEAD_CACHE_CAPACITY")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .clamp(1, 256)
+}
+
+static PROVE_AHEAD_AGGREGATION_CACHE: once_cell::sync::Lazy<
+    ParkingMutex<ProveAheadAggregationCache>,
+> = once_cell::sync::Lazy::new(|| {
+    ParkingMutex::new(ProveAheadAggregationCache::new(
+        load_prove_ahead_aggregation_cache_capacity(),
+    ))
+});
+
+fn make_prove_ahead_aggregation_cache_key(
+    proof_mode: PreparedProofMode,
+    tx_statements_commitment: [u8; 48],
+    tx_count: u32,
+    flat_slot_txs: usize,
+    merge_arity: u16,
+) -> ProveAheadAggregationCacheKey {
+    ProveAheadAggregationCacheKey {
+        proof_mode,
+        tx_statements_commitment,
+        tx_count,
+        flat_slot_txs: u16::try_from(flat_slot_txs).unwrap_or(u16::MAX),
+        merge_arity,
+    }
+}
+
+fn lookup_prove_ahead_aggregation_artifacts(
+    key: ProveAheadAggregationCacheKey,
+) -> Option<PreparedAggregationArtifacts> {
+    let mut guard = PROVE_AHEAD_AGGREGATION_CACHE.lock();
+    guard.get(key).map(|value| value.as_ref().clone())
+}
+
+fn store_prove_ahead_aggregation_artifacts(
+    key: ProveAheadAggregationCacheKey,
+    artifacts: PreparedAggregationArtifacts,
+) {
+    let mut guard = PROVE_AHEAD_AGGREGATION_CACHE.lock();
+    guard.insert(key, Arc::new(artifacts));
+}
+
 fn aggregation_prepare_threads() -> usize {
     if let Some(explicit) = std::env::var("HEGEMON_AGG_PREPARE_THREADS")
         .ok()
@@ -2713,6 +2817,14 @@ fn prepare_block_proof_bundle(
     let witnesses_for_batching = Arc::clone(&context.tx_witnesses);
     let batch_slot_txs = batch_slot_txs();
     let selected_mode = prepared_proof_mode_from_env();
+    let merge_arity = merge_root_arity_from_env();
+    let aggregation_cache_key = make_prove_ahead_aggregation_cache_key(
+        selected_mode,
+        tx_statements_commitment,
+        tx_count,
+        batch_slot_txs,
+        merge_arity,
+    );
     let da_root = context.da_root;
     // NOTE: Run stages sequentially to avoid nested Rayon pool contention/deadlock
     // when heavy proving jobs execute under strict batching mode.
@@ -2753,6 +2865,7 @@ fn prepare_block_proof_bundle(
         ),
     }
 
+    let mut aggregation_cache_hit = false;
     tracing::info!(
         block_number,
         tx_count,
@@ -2760,37 +2873,50 @@ fn prepare_block_proof_bundle(
         "prepare_block_proof_bundle: starting aggregation stage"
     );
     let aggregation_stage_started = Instant::now();
-    let batch_result = match selected_mode {
-        PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
-            proofs_for_batching,
-            witnesses_for_batching,
-            batch_slot_txs,
-        )
-        .map(PreparedAggregationArtifacts::Flat),
-        PreparedProofMode::MergeRoot => {
-            build_merge_root_proof_from_materials(proofs_for_batching, tx_statements_commitment)
-                .map(PreparedAggregationArtifacts::Merge)
+    let aggregation_result = if let Some(cached) =
+        lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
+    {
+        aggregation_cache_hit = true;
+        Ok(cached)
+    } else {
+        let built = match selected_mode {
+            PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
+                proofs_for_batching,
+                witnesses_for_batching,
+                batch_slot_txs,
+            )
+            .map(PreparedAggregationArtifacts::Flat),
+            PreparedProofMode::MergeRoot => {
+                build_merge_root_proof_from_materials(proofs_for_batching, tx_statements_commitment)
+                    .map(PreparedAggregationArtifacts::Merge)
+            }
+        };
+        if let Ok(ref artifacts) = built {
+            store_prove_ahead_aggregation_artifacts(aggregation_cache_key, artifacts.clone());
         }
+        built
     };
     let aggregation_stage_ms = aggregation_stage_started.elapsed().as_millis();
-    match &batch_result {
+    match &aggregation_result {
         Ok(_) => tracing::info!(
             block_number,
             tx_count,
             aggregation_stage_ms,
+            aggregation_cache_hit,
             "prepare_block_proof_bundle: aggregation stage complete"
         ),
         Err(error) => tracing::warn!(
             block_number,
             tx_count,
             aggregation_stage_ms,
+            aggregation_cache_hit,
             error = %error,
             "prepare_block_proof_bundle: aggregation stage failed"
         ),
     }
     let commitment_proof = commitment_result?
         .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
-    let aggregation_artifacts = batch_result?;
+    let aggregation_artifacts = aggregation_result?;
 
     let mut payload = pallet_shielded_pool::types::BlockProofBundle {
         version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
@@ -2829,6 +2955,7 @@ fn prepare_block_proof_bundle(
         batch_count = payload.flat_batches.len(),
         batch_slot_txs,
         proof_mode = ?payload.proof_mode,
+        aggregation_cache_hit,
         commitment_stage_ms,
         aggregation_stage_ms,
         total_ms = started.elapsed().as_millis(),
@@ -4021,12 +4148,11 @@ fn ready_proofless_binding_hashes_for_preview(
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
 
-        let ready = prover_coordinator
-            .lookup_prepared_bundle(parent_hash, tx_statements_commitment, shielded_tx_count)
-            .or_else(|| {
-                prover_coordinator
-                    .lookup_prepared_bundle_any_parent(tx_statements_commitment, shielded_tx_count)
-            });
+        let ready = prover_coordinator.lookup_prepared_bundle(
+            parent_hash,
+            tx_statements_commitment,
+            shielded_tx_count,
+        );
         if ready.is_some() {
             return Ok(missing.into_iter().collect());
         }
@@ -4861,22 +4987,11 @@ pub fn wire_block_builder_api(
             let tx_statements_commitment =
                 CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                     .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
-            let exact_ready_batch = prover_coordinator.lookup_prepared_bundle(
+            let ready_batch = prover_coordinator.lookup_prepared_bundle(
                 parent_substrate_hash,
                 tx_statements_commitment,
                 shielded_tx_count,
             );
-            let (ready_batch, used_any_parent_match) = if let Some(batch) = exact_ready_batch {
-                (Some(batch), false)
-            } else {
-                (
-                    prover_coordinator.lookup_prepared_bundle_any_parent(
-                        tx_statements_commitment,
-                        shielded_tx_count,
-                    ),
-                    true,
-                )
-            };
 
             if let Some(ready_batch) = ready_batch {
                 let proof_size = ready_batch.payload.commitment_proof.data.len()
@@ -4898,7 +5013,6 @@ pub fn wire_block_builder_api(
                             proof_size_uncompressed,
                             proven_batch_build_ms = ready_batch.build_ms,
                             proven_batch_stale_count = prover_coordinator.stale_count(),
-                            used_any_parent_match,
                             prepared_parent = ?ready_batch.key.parent_hash,
                             current_parent = ?parent_substrate_hash,
                             "Proven batch extrinsic attached"
