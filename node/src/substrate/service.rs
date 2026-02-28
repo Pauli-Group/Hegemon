@@ -2308,6 +2308,30 @@ fn build_flat_batch_proofs_from_materials(
             "build_flat_batch_proofs_from_materials: proving chunk"
         );
         let encoded = run_aggregation_prepare_job(move || {
+            if std::env::var("HEGEMON_BATCH_DEBUG_WITNESS")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                for (witness_index, witness) in witness_chunk.iter().enumerate() {
+                    let anchor_prefix = hex::encode(&witness.merkle_root[..8]);
+                    let input_positions = witness
+                        .inputs
+                        .iter()
+                        .map(|input| input.position)
+                        .collect::<Vec<_>>();
+                    tracing::info!(
+                        witness_index,
+                        inputs = witness.inputs.len(),
+                        outputs = witness.outputs.len(),
+                        fee = witness.fee,
+                        anchor_prefix = %anchor_prefix,
+                        input_positions = ?input_positions,
+                        memo_len = witness.memo.len(),
+                        "build_flat_batch_proofs_from_materials: witness diagnostics"
+                    );
+                }
+            }
+
             if std::env::var("HEGEMON_BATCH_VALIDATE_SINGLE_TX")
                 .map(|value| value == "1")
                 .unwrap_or(false)
@@ -2328,6 +2352,10 @@ fn build_flat_batch_proofs_from_materials(
                             "single-tx proof verification failed for witness {witness_index}: {err}"
                         )
                     })?;
+                    tracing::info!(
+                        witness_index,
+                        "build_flat_batch_proofs_from_materials: single-tx witness verified"
+                    );
                 }
             }
 
