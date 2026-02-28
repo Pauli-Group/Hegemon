@@ -186,6 +186,8 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
 };
+use transaction_circuit::p3_prover::TransactionProverP3;
+use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 use transaction_circuit::witness::TransactionWitness;
@@ -2306,6 +2308,29 @@ fn build_flat_batch_proofs_from_materials(
             "build_flat_batch_proofs_from_materials: proving chunk"
         );
         let encoded = run_aggregation_prepare_job(move || {
+            if std::env::var("HEGEMON_BATCH_VALIDATE_SINGLE_TX")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                let single_prover = TransactionProverP3::new();
+                for (witness_index, witness) in witness_chunk.iter().enumerate() {
+                    let trace = single_prover.build_trace(witness).map_err(|err| {
+                        format!("single-tx trace build failed for witness {witness_index}: {err}")
+                    })?;
+                    let pub_inputs = single_prover.public_inputs(witness).map_err(|err| {
+                        format!(
+                            "single-tx public input build failed for witness {witness_index}: {err}"
+                        )
+                    })?;
+                    let proof = single_prover.prove(trace, &pub_inputs);
+                    verify_transaction_proof_p3(&proof, &pub_inputs).map_err(|err| {
+                        format!(
+                            "single-tx proof verification failed for witness {witness_index}: {err}"
+                        )
+                    })?;
+                }
+            }
+
             let prover = BatchTransactionProver::new();
             let (batch_proof, batch_public_inputs) = prover
                 .prove_batch(&witness_chunk)
