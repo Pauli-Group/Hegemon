@@ -1149,23 +1149,40 @@ impl ProverCoordinator {
     }
 
     fn best_candidate_len_locked(state: &CoordinatorState) -> usize {
+        Self::best_candidate_len_for_parent_locked(state, state.current_parent)
+    }
+
+    fn best_candidate_len_for_parent_locked(
+        state: &CoordinatorState,
+        parent_hash: Option<H256>,
+    ) -> usize {
         let selected = state.selected_txs.len();
         let prepared = state
             .prepared
             .values()
+            .filter(|bundle| Some(bundle.key.parent_hash) == parent_hash)
             .map(|bundle| bundle.candidate_txs.len())
             .max()
             .unwrap_or(0);
         let pending = state
             .pending_jobs
             .iter()
+            .filter(|job| {
+                job.generation == state.generation && Some(job.parent_hash) == parent_hash
+            })
             .map(|job| job.candidate_txs.len())
             .max()
             .unwrap_or(0);
         let inflight = state
             .inflight_candidates
-            .values()
-            .map(Vec::len)
+            .iter()
+            .filter_map(|(job_id, candidate_txs)| {
+                if state.inflight_jobs.get(job_id).copied() == Some(state.generation) {
+                    Some(candidate_txs.len())
+                } else {
+                    None
+                }
+            })
             .max()
             .unwrap_or(0);
         selected.max(prepared).max(pending).max(inflight)
@@ -1689,6 +1706,61 @@ mod tests {
         let any_parent_lookup = coordinator.lookup_prepared_bundle_any_parent([1u8; 48], 1);
         assert!(any_parent_lookup.is_some());
         assert!(coordinator.stale_count() > 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn parent_rollover_still_schedules_new_work_package() {
+        let first_parent = H256::repeat_byte(23);
+        let second_parent = H256::repeat_byte(24);
+        let best_state = Arc::new(Mutex::new((first_parent, 20u64)));
+        let config = test_config();
+        let best = {
+            let state = Arc::clone(&best_state);
+            Arc::new(move || {
+                let guard = state.lock();
+                (guard.0, guard.1)
+            })
+        };
+        let pending = Arc::new(move |_max_txs: usize| vec![vec![0xAAu8]]);
+        let build = Arc::new(
+            move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                std::thread::sleep(Duration::from_millis(40));
+                let commitment = [1u8; 48];
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: parent,
+                        tx_statements_commitment: commitment,
+                        tx_count: 1,
+                    },
+                    payload: ready_payload(1, commitment),
+                    candidate_txs,
+                    build_ms: 40,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let first_package = coordinator
+            .get_work_package()
+            .expect("work package should exist for first parent");
+        assert_eq!(first_package.parent_hash, first_parent);
+        assert_eq!(first_package.tx_count, 1);
+
+        {
+            let mut guard = best_state.lock();
+            guard.0 = second_parent;
+            guard.1 = 21;
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let second_package = coordinator
+            .get_work_package()
+            .expect("work package should be republished for new parent");
+        assert_eq!(second_package.parent_hash, second_parent);
+        assert_eq!(second_package.tx_count, 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
