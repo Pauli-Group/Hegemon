@@ -503,13 +503,24 @@ makes the cache miss rate proportional to block occupancy variance. The
 \texttt{thread\_local!} storage means cache entries are not shared across
 Rayon worker threads. Cold build costs 100--465 seconds per miss.
 
-\subsubsection{Flaw 3: The batch circuit is not wired into the authoring/import pipeline}
+\subsubsection{Flaw 3: The batch circuit is now wired but verification fails}
 
-The complete, tested, working \texttt{BatchTransactionProverP3} exists as a
-standalone crate with passing tests, but is never invoked by the node's
-block authoring or import pipeline. The hot path
-(\texttt{node/src/substrate/service.rs}, line $\sim$2141) runs individual
-transaction proofs through the recursion circuit instead.
+\textbf{Update (measured):} \texttt{BatchTransactionProverP3::prove\_batch()}
+is now called in the block authoring pipeline
+(\texttt{node/src/substrate/service.rs}, line $\sim$2275, function
+\texttt{build\_flat\_batch\_proofs\_from\_materials}). The wire format was
+upgraded to \texttt{FlatBatchProofPayloadV2} (schema~v2, kind =
+\texttt{P3\_BATCH\_STARK}), which carries actual STARK proof bytes and
+batch public values rather than serialised individual transaction proofs.
+A dedicated benchmark (\texttt{circuits/bench --batch-size 16
+--batch-only}) exists and produces timing data.
+
+However, batch proof \emph{verification} fails with
+\texttt{OodEvaluationMismatch} at all tested batch sizes. The likely root
+cause is a mismatch between the preprocessed trace used by the prover and
+the one reconstructed by the verifier at batch-slot boundaries. Until this
+is fixed, batch proofs are generated but cannot be verified end-to-end,
+making the pipeline non-functional for consensus.
 
 \subsubsection{Flaw 4: The recursion circuit's outer trace is enormous}
 
@@ -729,14 +740,32 @@ $400$--$600$~ms on 32 cores.
 \paragraph{Total batch-16 proof budget.}
 \begin{equation}\label{eq:batch16-budget}
 \boxed{T_{\mathrm{batch16}} \approx 1.5\text{--}3.0\;\text{s on 32 cores}
-\quad\textit{(estimate, not measured).}}
+\quad\textit{(arithmetic lower-bound estimate).}}
 \end{equation}
 
 The range reflects uncertainty in Merkle tree implementation efficiency.
 With optimized leaf packing (which \texttt{p3-merkle-tree} implements):
 closer to 1.5~s. With na\"ive per-element hashing: up to 3.0~s.
-\textbf{These estimates must be validated by running \texttt{circuits/bench}
-on \texttt{hegemon-prover} hardware before committing to the architecture.}
+
+\paragraph{Measured result.}
+\texttt{circuits-bench} with \texttt{--batch-size 16 --batch-only
+--batch-skip-verify} on \texttt{hegemon-prover} (32~cores,
+\texttt{RAYON\_NUM\_THREADS=32}) measured:
+\begin{equation}\label{eq:batch16-measured}
+\boxed{T_{\mathrm{batch16}}^{\mathrm{measured}} \approx 14.24\;\text{s}
+\quad\Rightarrow\quad \sim 1.12\;\text{tx/s throughput}.}
+\end{equation}
+
+The $4.7$--$9.5\times$ gap between estimate and measurement is consistent
+with the $2$--$5\times$ overhead multiplier noted in
+Section~\ref{sec:recursion-overhead}, compounded by L3 cache pressure at
+the $M = 2^{21}$ domain size ($\sim$2.2~GB LDE trace far exceeds typical
+L3 capacity).
+
+\textbf{Note:} \texttt{--batch-skip-verify} was required because batch proof
+verification fails with \texttt{OodEvaluationMismatch} (see Flaw~3).
+The 14.24~s figure reflects proving time only; verification correctness
+remains an open blocker.
 
 \subsubsection{Recursion overhead: estimated $17$--$50\times$ cost multiplier}
 
@@ -1246,16 +1275,20 @@ Max TPS (1 machine) & $<0.2$ & $\sim$15 & $\sim$100 (w/ GPU) \\
 \subsection{What must change in the codebase}
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{Immediate (Phase 1, ship now):} Wire
-        \texttt{BatchTransactionProverP3::prove\_batch()} into the block
-        production pipeline. Replace the call to \texttt{prove\_aggregation}
-        in the block authoring path (currently at
-        \texttt{node/src/substrate/service.rs}). Define a new
-        \texttt{BlockProofPayload} wire format containing a vector of batch
-        proofs plus one commitment proof, replacing the current
-        \texttt{AggregationProofV4Payload}. Update block import to verify
-        each batch proof plus the commitment proof. Use
-        \texttt{CommitmentBlockProverP3} for block-level binding. Target:
+  \item \textbf{Immediate (Phase 1---partially complete):}
+        \texttt{BatchTransactionProverP3::prove\_batch()} is now wired into
+        the block authoring path
+        (\texttt{build\_flat\_batch\_proofs\_from\_materials} in
+        \texttt{service.rs}). The wire format has been upgraded to
+        \texttt{FlatBatchProofPayloadV2} with actual STARK bytes.
+        A benchmark exists (\texttt{circuits/bench --batch-size 16}).
+        \textbf{Remaining blocker:} batch proof verification fails with
+        \texttt{OodEvaluationMismatch}---likely a preprocessed-trace
+        mismatch between prover and verifier at batch-slot boundaries.
+        Until the verifier bug is fixed, the pipeline cannot produce
+        consensus-valid blocks. Measured proving time: $\sim$14.24~s per
+        batch-16 ($\sim$1.12~tx/s), which is $4.7$--$9.5\times$ slower
+        than the arithmetic estimate of 1.5--3.0~s. Target after fix:
         0.1--10 TPS on existing hardware.
 
   \item \textbf{Phase 2 (engineering, 2--4 weeks):} Extend batch size from
@@ -1300,9 +1333,10 @@ order with a recursion layer that destroys performance. The fix is
 architectural, not optimizational:
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{0.1--10 TPS:} Batch proving (existing code, not wired into
-        authoring pipeline). No recursion. CPU only. Budget: $<4.3$~s out
-        of 6~s.
+  \item \textbf{0.1--10 TPS:} Batch proving (now wired into authoring
+        pipeline; verification blocked by \texttt{OodEvaluationMismatch}).
+        No recursion. CPU only. Measured: $\sim$14.24~s per batch-16
+        ($\sim$1.12~tx/s); requires optimisation to meet 6~s block budget.
   \item \textbf{10--100 TPS:} Batch proving $+$ fixed-arity merge
         recursion. CPU batch $+$ GPU merge. Budget: $<5.5$~s.
   \item \textbf{100--1000 TPS:} GPU batch $+$ GPU recursive tree.
