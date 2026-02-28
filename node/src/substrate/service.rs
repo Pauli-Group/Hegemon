@@ -2326,7 +2326,6 @@ fn build_flat_batch_proofs_from_materials(
                         fee = witness.fee,
                         anchor_prefix = %anchor_prefix,
                         input_positions = ?input_positions,
-                        memo_len = witness.memo.len(),
                         "build_flat_batch_proofs_from_materials: witness diagnostics"
                     );
                 }
