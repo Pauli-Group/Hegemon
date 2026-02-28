@@ -1815,9 +1815,15 @@ fn statement_hashes_from_transactions(
 
 fn statement_hashes_from_extrinsics(
     extrinsics: &[runtime::UncheckedExtrinsic],
+    pending_proofs: Option<&PendingProofStore>,
 ) -> Result<Vec<[u8; 48]>, String> {
     let (transactions, _, _) =
-        extract_shielded_transfers_for_parallel_verification(extrinsics, None, None, true)?;
+        extract_shielded_transfers_for_parallel_verification(
+            extrinsics,
+            None,
+            pending_proofs,
+            true,
+        )?;
     Ok(statement_hashes_from_transactions(&transactions))
 }
 
@@ -2169,7 +2175,7 @@ fn build_candidate_context(
         })?;
         witnesses.push(witness);
     }
-    let statement_hashes = statement_hashes_from_extrinsics(&decoded)?;
+    let statement_hashes = statement_hashes_from_extrinsics(&decoded, Some(pending_proofs))?;
     if statement_hashes.len() != proofs.len() {
         return Err(format!(
             "tx statement hash count mismatch (expected {}, got {})",
@@ -3753,7 +3759,7 @@ fn verify_proof_carrying_block(
             return Err("commitment proof da_chunk_count missing".to_string());
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(extrinsics)?;
+        let statement_hashes = statement_hashes_from_extrinsics(extrinsics, None)?;
         let tx_statements_commitment =
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
@@ -4125,6 +4131,7 @@ fn ready_proofless_binding_hashes_for_preview(
     prover_coordinator: &ProverCoordinator,
     parent_hash: H256,
     preview_extrinsics: &[runtime::UncheckedExtrinsic],
+    pending_proofs: &PendingProofStore,
     min_ready_batch_txs: usize,
 ) -> Result<BTreeSet<[u8; 64]>, String> {
     let mut candidate = preview_extrinsics.to_vec();
@@ -4135,7 +4142,7 @@ fn ready_proofless_binding_hashes_for_preview(
             return Ok(BTreeSet::new());
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(&candidate)?;
+        let statement_hashes = statement_hashes_from_extrinsics(&candidate, Some(pending_proofs))?;
         let shielded_tx_count = statement_hashes.len() as u32;
         if shielded_tx_count == 0 {
             return Ok(BTreeSet::new());
@@ -4737,10 +4744,10 @@ pub fn wire_block_builder_api(
         // keep liveness even when aggregation proving is unavailable/disabled.
         // Strict test harnesses can disable this fallback to force submit_proven_batch
         // validation through import.
+        let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
         let sidecar_ready_extrinsics = if disable_proofless_hydration {
             extrinsics.to_vec()
         } else {
-            let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
             let (hydrated_extrinsics, hydrated_count) =
                 hydrate_proofless_sidecar_extrinsics(&extrinsics, &pending_proofs_snapshot)?;
             if hydrated_count > 0 {
@@ -4814,6 +4821,7 @@ pub fn wire_block_builder_api(
                         prover_coordinator.as_ref(),
                         parent_substrate_hash,
                         &preview_extrinsics,
+                        &pending_proofs_snapshot,
                         min_ready_proven_batch_txs,
                     )?;
                     if ready_bindings.is_empty() {
@@ -4979,7 +4987,8 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(&decoded_applied)?;
+        let statement_hashes =
+            statement_hashes_from_extrinsics(&decoded_applied, Some(&pending_proofs_snapshot))?;
         let shielded_tx_count = statement_hashes.len() as u32;
         let requires_proven_batch = !missing_proof_bindings.is_empty();
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
