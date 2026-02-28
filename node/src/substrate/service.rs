@@ -818,6 +818,14 @@ impl PendingProofStore {
         self.entries.get(binding_hash)
     }
 
+    pub fn contains(&self, binding_hash: &[u8; 64]) -> bool {
+        self.entries.contains_key(binding_hash)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn get_many(&self, binding_hashes: &[[u8; 64]]) -> Result<Vec<Vec<u8>>, String> {
         let mut out = Vec::with_capacity(binding_hashes.len());
         for binding_hash in binding_hashes {
@@ -1862,6 +1870,16 @@ fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> V
         }
     }
     out
+}
+
+fn pending_proof_match_count(
+    binding_hashes: &[[u8; 64]],
+    pending_proofs: &PendingProofStore,
+) -> usize {
+    binding_hashes
+        .iter()
+        .filter(|binding_hash| pending_proofs.contains(binding_hash))
+        .count()
 }
 
 const DA_MAX_SHARDS: usize = 255;
@@ -4163,6 +4181,20 @@ fn ready_proofless_binding_hashes_for_preview(
         if ready.is_some() {
             return Ok(missing.into_iter().collect());
         }
+        let diagnostics = prover_coordinator.prepared_lookup_diagnostics(
+            parent_hash,
+            tx_statements_commitment,
+            shielded_tx_count,
+        );
+        tracing::debug!(
+            target: "prover::lookup",
+            parent_hash = ?parent_hash,
+            tx_count = shielded_tx_count,
+            tx_statements_commitment = %hex::encode(tx_statements_commitment),
+            missing_proof_bindings = missing.len(),
+            ?diagnostics,
+            "No prepared bundle match for proofless preview candidate"
+        );
 
         let Some(drop_idx) = candidate
             .iter()
@@ -4745,6 +4777,11 @@ pub fn wire_block_builder_api(
         // Strict test harnesses can disable this fallback to force submit_proven_batch
         // validation through import.
         let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
+        tracing::debug!(
+            block_number,
+            pending_proof_entries = pending_proofs_snapshot.len(),
+            "Captured pending proof snapshot for block assembly"
+        );
         let sidecar_ready_extrinsics = if disable_proofless_hydration {
             extrinsics.to_vec()
         } else {
@@ -4805,6 +4842,15 @@ pub fn wire_block_builder_api(
 
             let missing_preview = missing_proof_binding_hashes(&preview_extrinsics);
             if !missing_preview.is_empty() {
+                let pending_matches =
+                    pending_proof_match_count(&missing_preview, &pending_proofs_snapshot);
+                tracing::debug!(
+                    block_number,
+                    missing_proof_bindings = missing_preview.len(),
+                    pending_proof_entries = pending_proofs_snapshot.len(),
+                    pending_proof_matches = pending_matches,
+                    "Proofless preview coverage against pending proof snapshot"
+                );
                 if !matches!(
                     proof_policy,
                     pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
@@ -4965,6 +5011,17 @@ pub fn wire_block_builder_api(
             decoded_applied.push(extrinsic);
         }
         let missing_proof_bindings = missing_proof_binding_hashes(&decoded_applied);
+        if !missing_proof_bindings.is_empty() {
+            let pending_matches =
+                pending_proof_match_count(&missing_proof_bindings, &pending_proofs_snapshot);
+            tracing::debug!(
+                block_number,
+                missing_proof_bindings = missing_proof_bindings.len(),
+                pending_proof_entries = pending_proofs_snapshot.len(),
+                pending_proof_matches = pending_matches,
+                "Final applied block coverage against pending proof snapshot"
+            );
+        }
         let aggregation_mode_enabled = decoded_applied.iter().any(|extrinsic| {
             matches!(
                 &extrinsic.function,
@@ -5041,6 +5098,19 @@ pub fn wire_block_builder_api(
                     }
                 }
             } else if requires_proven_batch {
+                let diagnostics = prover_coordinator.prepared_lookup_diagnostics(
+                    parent_substrate_hash,
+                    tx_statements_commitment,
+                    shielded_tx_count,
+                );
+                tracing::warn!(
+                    block_number,
+                    parent_hash = ?parent_substrate_hash,
+                    tx_count = shielded_tx_count,
+                    tx_statements_commitment = %hex::encode(tx_statements_commitment),
+                    ?diagnostics,
+                    "Missing prepared proven batch for mandatory proofless sidecar set"
+                );
                 return Err(
                     "shielded block with omitted proof bytes requires a ready proven batch"
                         .to_string(),

@@ -317,12 +317,25 @@ impl DaApiServer for DaRpc {
             let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
             let proof_hash = blake3_384(&bytes);
             pending.insert(binding_hash, bytes);
+            tracing::debug!(
+                binding_hash = %hex::encode(binding_hash),
+                proof_size = size,
+                pending_proof_entries = pending.len(),
+                "Staged proof bytes in pending proof store"
+            );
             entries.push(SubmitProofsEntry {
                 binding_hash: format!("0x{}", hex::encode(binding_hash)),
                 proof_hash: format!("0x{}", hex::encode(proof_hash)),
                 size,
             });
         }
+
+        tracing::debug!(
+            proofs_staged = entries.len(),
+            total_bytes,
+            pending_proof_entries = pending.len(),
+            "Completed da_submitProofs request"
+        );
 
         Ok(entries)
     }
