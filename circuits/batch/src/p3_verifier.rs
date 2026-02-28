@@ -3,8 +3,114 @@
 use crate::error::BatchCircuitError;
 use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, PREPROCESSED_WIDTH};
 use crate::p3_prover::BatchProofP3;
-use p3_uni_stark::{get_log_num_quotient_chunks, setup_preprocessed, verify_with_preprocessed};
-use transaction_circuit::p3_config::{config_with_fri, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
+use p3_uni_stark::{
+    get_log_num_quotient_chunks, setup_preprocessed, verify_with_preprocessed,
+    PreprocessedVerifierKey,
+};
+use transaction_circuit::p3_config::{
+    config_with_fri, Config as BatchStarkConfig, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+};
+#[cfg(feature = "std")]
+use transaction_core::dimensions::{batch_trace_rows, validate_batch_size};
+
+#[cfg(feature = "std")]
+use std::collections::BTreeMap;
+#[cfg(feature = "std")]
+use std::sync::{Arc, OnceLock, RwLock};
+
+type BatchPreprocessedVk = PreprocessedVerifierKey<BatchStarkConfig>;
+
+#[cfg(feature = "std")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct BatchVerifierCacheKey {
+    degree_bits: usize,
+    log_blowup: usize,
+}
+
+#[cfg(feature = "std")]
+fn batch_verifier_cache(
+) -> &'static RwLock<BTreeMap<BatchVerifierCacheKey, Arc<BatchPreprocessedVk>>> {
+    static CACHE: OnceLock<RwLock<BTreeMap<BatchVerifierCacheKey, Arc<BatchPreprocessedVk>>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(BTreeMap::new()))
+}
+
+fn build_preprocessed_vk(
+    degree_bits: usize,
+    log_blowup: usize,
+) -> Result<BatchPreprocessedVk, BatchCircuitError> {
+    let trace_len = 1usize << degree_bits;
+    let air = BatchTransactionAirP3::new(trace_len);
+    let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+    setup_preprocessed(&config.config, &air, degree_bits)
+        .map(|(_, vk)| vk)
+        .ok_or_else(|| {
+            BatchCircuitError::VerificationError(
+                "BatchTransactionAirP3 preprocessed verifier key missing".into(),
+            )
+        })
+}
+
+#[cfg(feature = "std")]
+fn get_or_build_cached_preprocessed_vk(
+    degree_bits: usize,
+    log_blowup: usize,
+) -> Result<Arc<BatchPreprocessedVk>, BatchCircuitError> {
+    let key = BatchVerifierCacheKey {
+        degree_bits,
+        log_blowup,
+    };
+    if let Some(vk) = batch_verifier_cache()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+        .cloned()
+    {
+        return Ok(vk);
+    }
+
+    let built = Arc::new(build_preprocessed_vk(degree_bits, log_blowup)?);
+    let mut cache = batch_verifier_cache()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = cache.entry(key).or_insert_with(|| built.clone());
+    Ok(entry.clone())
+}
+
+#[cfg(feature = "std")]
+pub fn prewarm_batch_verifier_cache_p3(batch_sizes: &[usize]) -> Result<usize, BatchCircuitError> {
+    let mut warmed = 0usize;
+    let pub_inputs_len = BatchPublicInputsP3::default().to_vec().len();
+    for &batch_size in batch_sizes {
+        validate_batch_size(batch_size)
+            .map_err(|_| BatchCircuitError::InvalidBatchSize(batch_size))?;
+        let trace_len = batch_trace_rows(batch_size);
+        let degree_bits = trace_len.ilog2() as usize;
+        let air = BatchTransactionAirP3::new(trace_len);
+        let log_chunks =
+            get_log_num_quotient_chunks::<Val, _>(&air, PREPROCESSED_WIDTH, pub_inputs_len, 0);
+        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+
+        let key = BatchVerifierCacheKey {
+            degree_bits,
+            log_blowup,
+        };
+        let already_warm = batch_verifier_cache()
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(&key);
+        let _ = get_or_build_cached_preprocessed_vk(degree_bits, log_blowup)?;
+        if !already_warm {
+            warmed = warmed.saturating_add(1);
+        }
+    }
+    Ok(warmed)
+}
+
+#[cfg(not(feature = "std"))]
+pub fn prewarm_batch_verifier_cache_p3(_batch_sizes: &[usize]) -> Result<usize, BatchCircuitError> {
+    Ok(0)
+}
 
 pub fn verify_batch_proof_p3(
     proof: &BatchProofP3,
@@ -22,11 +128,23 @@ pub fn verify_batch_proof_p3(
         get_log_num_quotient_chunks::<Val, _>(&air, PREPROCESSED_WIDTH, pub_inputs_vec.len(), 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
-    let prep_vk = setup_preprocessed(&config.config, &air, degree_bits)
-        .map(|(_, vk)| vk)
-        .expect("BatchTransactionAirP3 preprocessed trace missing");
-    verify_with_preprocessed(&config.config, &air, proof, &pub_inputs_vec, Some(&prep_vk))
-        .map_err(|err| BatchCircuitError::VerificationError(format!("{err:?}")))
+    #[cfg(feature = "std")]
+    let prep_vk = get_or_build_cached_preprocessed_vk(degree_bits, log_blowup)?;
+    #[cfg(not(feature = "std"))]
+    let prep_vk = build_preprocessed_vk(degree_bits, log_blowup)?;
+    #[cfg(feature = "std")]
+    let prep_vk_ref = prep_vk.as_ref();
+    #[cfg(not(feature = "std"))]
+    let prep_vk_ref = &prep_vk;
+
+    verify_with_preprocessed(
+        &config.config,
+        &air,
+        proof,
+        &pub_inputs_vec,
+        Some(prep_vk_ref),
+    )
+    .map_err(|err| BatchCircuitError::VerificationError(format!("{err:?}")))
 }
 
 pub fn verify_batch_proof_bytes_p3(

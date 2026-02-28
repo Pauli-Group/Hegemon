@@ -56,6 +56,7 @@ pub use p3_prover::{
     BatchProofP3 as BatchProof, BatchTransactionProverP3 as BatchTransactionProver,
 };
 pub use p3_verifier::{
+    prewarm_batch_verifier_cache_p3 as prewarm_batch_verifier_cache,
     verify_batch_proof_bytes_p3 as verify_batch_proof_bytes,
     verify_batch_proof_p3 as verify_batch_proof,
 };
