@@ -161,7 +161,7 @@ use sc_client_api::{BlockBackend, BlockchainEvents};
 use sc_service::{Configuration, KeystoreContainer, TaskManager, error::Error as ServiceError};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
-use sp_api::{ProvideRuntimeApi, StorageChanges};
+use sp_api::{Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
@@ -2784,6 +2784,33 @@ fn block_proof_payload_aggregation_uncompressed_bytes(
     }
 }
 
+const MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION: u32 = 4;
+const MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION: u32 = 2;
+
+fn ensure_runtime_supports_block_proof_bundle_v2(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+) -> Result<(), String> {
+    let runtime_version = client
+        .runtime_api()
+        .version(parent_hash)
+        .map_err(|error| format!("failed to query runtime version for parent {parent_hash:?}: {error:?}"))?;
+
+    if runtime_version.spec_version < MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION
+        || runtime_version.transaction_version < MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION
+    {
+        return Err(format!(
+            "runtime at parent does not support BlockProofBundleV2 (have specVersion={} transactionVersion={}, need specVersion>={} transactionVersion>={}); restart on a fresh V2 runtime chain",
+            runtime_version.spec_version,
+            runtime_version.transaction_version,
+            MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION,
+            MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION
+        ));
+    }
+
+    Ok(())
+}
+
 fn prepare_block_proof_bundle(
     client: &HegemonFullClient,
     parent_hash: H256,
@@ -4096,6 +4123,13 @@ fn load_min_ready_proven_batch_txs() -> usize {
         .max(1)
 }
 
+fn load_proofless_ready_wait() -> Duration {
+    let wait_ms = env_usize("HEGEMON_PROOFLESS_READY_WAIT_MS")
+        .unwrap_or(1_500)
+        .min(30_000) as u64;
+    Duration::from_millis(wait_ms)
+}
+
 fn load_accept_legacy_proofless_blocks() -> bool {
     std::env::var("HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS")
         .ok()
@@ -4175,6 +4209,7 @@ fn ready_proofless_binding_hashes_for_preview(
     preview_extrinsics: &[runtime::UncheckedExtrinsic],
     pending_proofs: &PendingProofStore,
     min_ready_batch_txs: usize,
+    lookup_wait: Duration,
 ) -> Result<BTreeSet<[u8; 64]>, String> {
     let mut candidate = preview_extrinsics.to_vec();
 
@@ -4197,11 +4232,22 @@ fn ready_proofless_binding_hashes_for_preview(
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
 
-        let ready = prover_coordinator.lookup_prepared_bundle(
+        let mut ready = prover_coordinator.lookup_prepared_bundle(
             parent_hash,
             tx_statements_commitment,
             shielded_tx_count,
         );
+        if ready.is_none() && !lookup_wait.is_zero() {
+            let deadline = Instant::now() + lookup_wait;
+            while ready.is_none() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(25));
+                ready = prover_coordinator.lookup_prepared_bundle(
+                    parent_hash,
+                    tx_statements_commitment,
+                    shielded_tx_count,
+                );
+            }
+        }
         if ready.is_some() {
             return Ok(missing.into_iter().collect());
         }
@@ -4713,6 +4759,7 @@ pub fn wire_block_builder_api(
     let disable_proofless_hydration = load_disable_proofless_hydration();
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
     let min_ready_proven_batch_txs = load_min_ready_proven_batch_txs();
+    let proofless_ready_wait = load_proofless_ready_wait();
 
     if disable_proofless_hydration {
         tracing::warn!(
@@ -4723,6 +4770,12 @@ pub fn wire_block_builder_api(
         tracing::info!(
             min_ready_proven_batch_txs,
             "Proofless transfers require a ready proven batch of at least this size before inclusion"
+        );
+    }
+    if !proofless_ready_wait.is_zero() {
+        tracing::info!(
+            proofless_ready_wait_ms = proofless_ready_wait.as_millis() as u64,
+            "Proofless inclusion waits briefly for newly prepared bundles before deferring"
         );
     }
 
@@ -4952,6 +5005,7 @@ pub fn wire_block_builder_api(
                         &preview_extrinsics,
                         &pending_proofs_snapshot,
                         min_ready_proven_batch_txs,
+                        proofless_ready_wait,
                     )?;
                     if ready_bindings.is_empty() {
                         defer_proofless_until_ready_batch = true;
@@ -5147,6 +5201,12 @@ pub fn wire_block_builder_api(
             );
 
             if let Some(ready_batch) = ready_batch {
+                if requires_proven_batch {
+                    ensure_runtime_supports_block_proof_bundle_v2(
+                        client_for_exec.as_ref(),
+                        parent_substrate_hash,
+                    )?;
+                }
                 let proof_size = ready_batch.payload.commitment_proof.data.len()
                     + block_proof_payload_aggregation_bytes(&ready_batch.payload);
                 let proof_size_uncompressed =
@@ -5156,6 +5216,14 @@ pub fn wire_block_builder_api(
                     runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
                         payload: ready_batch.payload,
                     }),
+                );
+                tracing::debug!(
+                    block_number,
+                    tx_count = shielded_tx_count,
+                    proof_size,
+                    proof_size_uncompressed,
+                    encoded_len = proven_batch_extrinsic.encoded_size(),
+                    "Attempting to attach proven batch extrinsic"
                 );
                 match block_builder.push(proven_batch_extrinsic.clone()) {
                     Ok(_) => {
