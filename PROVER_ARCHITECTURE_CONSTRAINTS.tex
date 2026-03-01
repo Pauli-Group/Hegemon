@@ -17,11 +17,14 @@
 
 \begin{abstract}
 We audit Hegemon's Plonky3 STARK prover against its 60-second PoW block
-time, identify seven architectural flaws (five active, two resolved), and
+time, identify seven architectural flaws (four active, three resolved), and
 derive a batch-first pipeline that scales from 0.1 to 1000+ TPS without
 mode switches. Measured end-to-end: batch-16 proves in 21.5\,s on
 32-core Xeon, verifies in 28\,ms (after VK caching), and the prove-ahead
 pipeline includes 16/16 transactions per block at 1.95 inclusion TPS.
+As of 2026-03-01: prover-market fan-out is implemented---the coordinator
+now publishes deterministic chunk work packages and assembles results
+from parallel external provers.
 \end{abstract}
 
 \section{Hard Constraints}
@@ -107,11 +110,16 @@ inside a recursion circuit costs seconds---a $>$50$\times$ overhead.
 At $\le$60\,TPS, the succinctness gain (1 proof vs.\ a handful) is not worth
 this cost.
 
-\subsubsection{Flaw 2: Thread-local cache with $O(n_{\max})$ key space}
+\subsubsection{Flaw 2: Thread-local cache with $O(n_{\max})$ key space (partially mitigated)}
 
 Cache key \texttt{(tx\_count, pub\_inputs\_len, log\_blowup, ProofShape)}
-makes miss rate proportional to block occupancy variance. \texttt{thread\_local!}
-storage prevents sharing across Rayon workers. Cold build: 100--465\,s per miss.
+makes miss rate proportional to block occupancy variance. Full circuit
+artifacts remain \texttt{thread\_local!} (non-\texttt{Sync}), but the
+dominant cost---\texttt{commit\_preprocessed}---is now shared
+process-wide via a singleflight \texttt{CommonData} layer, eliminating
+duplicate cold builds across Rayon workers for the same shape.
+Cold build for a \emph{new} shape: still 100--465\,s, but concurrent
+workers no longer each pay it independently.
 
 \subsubsection{Flaw 3: Batch scaling is linear, not sub-linear}
 
@@ -409,14 +417,22 @@ Max TPS (1 machine) & $<$0.2 & $\sim$15 & $\sim$100 (GPU) \\
 \section{Roadmap}
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{Phase 1 (now---prove-ahead functional):}
-        Batch proving, VK caching, and prove-ahead pipelining verified
-        end-to-end. 16/16 tx included per block. Measured: inclusion
-        TPS $= 1.95$, e2e TPS $= 0.11$ (laptop-limited).
-        \textbf{Immediate next:} move proving to \texttt{hegemon-prover}
-        ($\to$ 21.5\,s build, fits in 60\,s block) and enable prover
-        market fan-out (coordinator currently issues one work package
-        at a time).
+  \item \textbf{Phase 1 (done---prove-ahead $+$ fan-out functional):}
+        Batch proving, VK caching, prove-ahead pipelining, and parallel
+        prover fan-out all verified end-to-end. 16/16 tx included per
+        block. Measured: inclusion TPS $= 1.95$, e2e TPS $= 0.11$
+        (laptop-limited; 21.5\,s on dedicated 32-core prover).
+        The coordinator now splits the largest candidate into
+        deterministic chunk work packages
+        (\texttt{HEGEMON\_BATCH\_SLOT\_TXS}, default 16) and publishes
+        all via \texttt{prover\_getWorkPackage} (rotating queue).
+        External provers submit chunk results independently;
+        once all chunks arrive with matching metadata, the coordinator
+        assembles one contiguous \texttt{FlatBatches} payload.
+        \texttt{HEGEMON\_PROVER\_WORKERS=0} disables in-node proving
+        for external-only deployments.
+        \textbf{Remaining:} run multiple external provers under
+        sustained load to validate chunk assembly at $>$1 TPS.
 
   \item \textbf{Phase 2 (2--4 weeks):}
         Multiple concurrent batch-16 provers on dedicated hardware.
@@ -439,7 +455,10 @@ Max TPS (1 machine) & $<$0.2 & $\sim$15 & $\sim$100 (GPU) \\
 Three correct primitives---the transaction AIR, the batch circuit, and the
 block commitment circuit---exist but are composed with a recursion layer that
 destroys performance. The fix is architectural: batch-first proving with no
-recursion below 60 TPS, fixed-arity merge recursion above. Security is
+recursion below 60 TPS, fixed-arity merge recursion above. Phase~1 is
+complete: the coordinator publishes deterministic fan-out chunk packages,
+assembles parallel external prover results, and supports dedicated-hardware
+deployment (\texttt{HEGEMON\_PROVER\_WORKERS=0}). Security is
 preserved at every stage (same Poseidon2/Goldilocks/FRI, same 128-bit PQ
 target). The only variable is how proofs are composed.
 
