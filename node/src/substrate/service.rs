@@ -113,13 +113,13 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    DEFAULT_DIFFICULTY_BITS, FullBackend, HegemonFullClient, HegemonPowBlockImport,
-    HegemonSelectChain, HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
-    StateExecutionResult,
+    FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
+    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
+    DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
-    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig, create_production_mining_worker,
-    create_production_mining_worker_mock_broadcast,
+    create_production_mining_worker, create_production_mining_worker_mock_broadcast,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -136,29 +136,30 @@ use crate::substrate::transaction_pool::{
 };
 use aggregation_circuit::prove_aggregation;
 use batch_circuit::{
-    BatchPublicInputs, BatchTransactionProver, prewarm_batch_verifier_cache, verify_batch_proof,
-    verify_batch_proof_bytes,
+    prewarm_batch_verifier_cache, verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs,
+    BatchTransactionProver,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    Blake3Algorithm, Blake3Seal, ParallelProofVerifier, aggregation_proof_uncompressed_len,
-    decode_flat_batch_proof_bytes, encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes,
+    aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
+    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal,
+    ParallelProofVerifier,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
-use hyper::http::{Method, header};
+use hyper::http::{header, Method};
 use network::{
     PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
     PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use p3_field::PrimeField64;
-use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE, FeeParameters};
-use rand::{RngCore, rngs::OsRng};
+use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
+use rand::{rngs::OsRng, RngCore};
 use sc_client_api::{BlockBackend, BlockchainEvents};
-use sc_service::{Configuration, KeystoreContainer, TaskManager, error::Error as ServiceError};
+use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
@@ -170,11 +171,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
 };
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 use wallet::address::ShieldedAddress;
@@ -187,7 +188,7 @@ use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::dimensions::ROWS_PER_TX;
 use transaction_circuit::hashing_pq::{
-    Felt, bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48,
+    bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
 };
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
@@ -1884,7 +1885,11 @@ const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
     let shards = len.div_ceil(chunk_size);
-    if shards == 0 { 1 } else { shards }
+    if shards == 0 {
+        1
+    } else {
+        shards
+    }
 }
 
 fn da_parity_shards_for_data(data_shards: usize) -> usize {
@@ -2791,10 +2796,9 @@ fn ensure_runtime_supports_block_proof_bundle_v2(
     client: &HegemonFullClient,
     parent_hash: H256,
 ) -> Result<(), String> {
-    let runtime_version = client
-        .runtime_api()
-        .version(parent_hash)
-        .map_err(|error| format!("failed to query runtime version for parent {parent_hash:?}: {error:?}"))?;
+    let runtime_version = client.runtime_api().version(parent_hash).map_err(|error| {
+        format!("failed to query runtime version for parent {parent_hash:?}: {error:?}")
+    })?;
 
     if runtime_version.spec_version < MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION
         || runtime_version.transaction_version < MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION
@@ -5418,8 +5422,8 @@ pub fn wire_block_builder_api(
 use crate::substrate::mining_worker::BlockTemplate;
 use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult};
 use sp_consensus::BlockOrigin;
-use sp_runtime::DigestItem;
 use sp_runtime::generic::Digest;
+use sp_runtime::DigestItem;
 
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
@@ -7888,7 +7892,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
                         use crate::substrate::network_bridge::{
-                            SYNC_PROTOCOL, SyncMessage, SyncRequestEnvelope,
+                            SyncMessage, SyncRequestEnvelope, SYNC_PROTOCOL,
                         };
 
                         let mut interval =
@@ -7978,7 +7982,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("tx-propagation", Some("txpool"), async move {
                         use crate::substrate::network_bridge::{
-                            TRANSACTIONS_PROTOCOL, TransactionMessage,
+                            TransactionMessage, TRANSACTIONS_PROTOCOL,
                         };
                         use sc_transaction_pool_api::{
                             InPoolTransaction, TransactionPool as ScTransactionPool,
@@ -9617,10 +9621,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
-        use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
         use sc_rpc::state::{ChildStateApiServer, StateApiServer};
         use sc_rpc::system::{System, SystemApiServer};
+        use sc_rpc::SubscriptionTaskExecutor;
         use sc_utils::mpsc::tracing_unbounded;
 
         let mut module = RpcModule::new(());
@@ -10443,13 +10447,10 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(
-        &crate::substrate::mining_worker::BlockTemplate,
-        &Blake3Seal,
-    ) -> Result<H256, String>
-    + Send
-    + Sync
-    + 'static {
+    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String>
+           + Send
+           + Sync
+           + 'static {
         let stats = self.stats.clone();
         let best_number = self.best_number.clone();
         let best_hash = self.best_hash.clone();
