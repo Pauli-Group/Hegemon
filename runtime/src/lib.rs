@@ -731,10 +731,12 @@ pub const VERSION: sp_version::RuntimeVersion = sp_version::RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
     impl_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
     authoring_version: 1,
-    spec_version: 3,
+    // BlockProofBundle V2 hard-cut: call payload encoding changed for
+    // `ShieldedPool::submit_proven_batch`.
+    spec_version: 4,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    transaction_version: 2,
     system_version: 0,
 };
 
