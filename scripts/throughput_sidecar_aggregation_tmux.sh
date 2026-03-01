@@ -1006,8 +1006,8 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
   echo "Prepared batch became ready in strict_wait_ms=${STRICT_WAIT_MS}" >&2
   if [ "$PREWARM_ONLY" = "1" ]; then
     CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context" | tail -n 1 || true)"
-    STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and aggregation proofs" | tail -n 1 || true)"
-    AGG_LINE="$(search_log "prove_aggregation completed" | tail -n 1 || true)"
+    STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts)" | tail -n 1 || true)"
+    AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed)" | tail -n 1 || true)"
     CONTEXT_STAGE_MS="$(metric_from_line "$CONTEXT_LINE" "stage_ms")"
     COMMITMENT_STAGE_MS="$(metric_from_line "$STAGE_LINE" "commitment_stage_ms")"
     AGGREGATION_STAGE_MS="$(metric_from_line "$STAGE_LINE" "aggregation_stage_ms")"
@@ -1225,8 +1225,8 @@ echo "throughput_round_metrics tx_count=${TX_COUNT} included_tx_count=${INCLUDED
 
 PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate" | tail -n 1 || true)"
 CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context" | tail -n 1 || true)"
-STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and aggregation proofs" | tail -n 1 || true)"
-AGG_LINE="$(search_log "prove_aggregation completed" | tail -n 1 || true)"
+STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts)" | tail -n 1 || true)"
+AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed)" | tail -n 1 || true)"
 QUEUE_DEPTH="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_depth")"
 QUEUE_WAIT_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_wait_ms")"
 CONTEXT_STAGE_MS="$(metric_from_line "$CONTEXT_LINE" "stage_ms")"
