@@ -1,9 +1,9 @@
 use parking_lot::Mutex;
 use sp_core::H256;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -58,6 +58,10 @@ pub struct WorkPackage {
     pub package_id: String,
     pub parent_hash: H256,
     pub block_number: u64,
+    pub candidate_set_id: String,
+    pub chunk_start_tx_index: u32,
+    pub chunk_tx_count: u16,
+    pub expected_chunks: u16,
     pub stage_type: String,
     pub level: u16,
     pub arity: u16,
@@ -397,6 +401,23 @@ struct WorkPackageRecord {
     submissions: u32,
 }
 
+#[derive(Clone, Debug)]
+struct ChunkPlan {
+    package_id: String,
+    start_tx_index: u32,
+    tx_count: u16,
+}
+
+#[derive(Clone, Debug)]
+struct FanoutAssemblyState {
+    parent_hash: H256,
+    block_number: u64,
+    candidate_txs: Vec<Vec<u8>>,
+    expected_chunks: u16,
+    chunks: Vec<ChunkPlan>,
+    received: HashMap<String, pallet_shielded_pool::types::BlockProofBundle>,
+}
+
 #[derive(Default)]
 struct CoordinatorState {
     current_parent: Option<H256>,
@@ -406,7 +427,9 @@ struct CoordinatorState {
     selected_txs: Vec<Vec<u8>>,
     prepared: HashMap<BundleMatchKey, PreparedBundle>,
     work_packages: HashMap<String, WorkPackageRecord>,
+    work_package_queue: VecDeque<String>,
     latest_work_package: Option<String>,
+    fanout_assemblies: HashMap<String, FanoutAssemblyState>,
     work_status: HashMap<String, WorkStatus>,
     source_submissions: HashMap<String, u32>,
     pending_jobs: VecDeque<QueuedJob>,
@@ -684,7 +707,9 @@ impl ProverCoordinator {
             state.adaptive_liveness_fired_generation = None;
             state.prepared.clear();
             state.work_packages.clear();
+            state.work_package_queue.clear();
             state.latest_work_package = None;
+            state.fanout_assemblies.clear();
             state.work_status.clear();
             state.source_submissions.clear();
             state.pending_jobs.clear();
@@ -704,7 +729,9 @@ impl ProverCoordinator {
                 state.adaptive_liveness_fired_generation = None;
                 state.selected_txs.clear();
                 state.work_packages.clear();
+                state.work_package_queue.clear();
                 state.latest_work_package = None;
+                state.fanout_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
                 state.pending_jobs.clear();
@@ -839,13 +866,28 @@ impl ProverCoordinator {
     pub fn get_work_package(&self) -> Option<WorkPackage> {
         let mut state = self.state.lock();
         Self::expire_work_packages_locked(&mut state);
-        let package_id = state.latest_work_package.clone()?;
-        let package = state.work_packages.get(&package_id)?.package.clone();
-        state
-            .work_status
-            .entry(package_id)
-            .or_insert(WorkStatus::Pending);
-        Some(package)
+        let queue_len = state.work_package_queue.len();
+        for _ in 0..queue_len {
+            let Some(package_id) = state.work_package_queue.pop_front() else {
+                break;
+            };
+            let Some(record) = state.work_packages.get(&package_id) else {
+                continue;
+            };
+            if record.submissions >= self.config.max_submissions_per_package {
+                continue;
+            }
+            let package = record.package.clone();
+            state.work_package_queue.push_back(package_id.clone());
+            state.latest_work_package = Some(package_id.clone());
+            state
+                .work_status
+                .entry(package_id.clone())
+                .or_insert(WorkStatus::Pending);
+            return Some(package);
+        }
+        state.latest_work_package = None;
+        None
     }
 
     pub fn submit_external_work_result(
@@ -869,6 +911,8 @@ impl ProverCoordinator {
         let Some(record) = state.work_packages.get(package_id) else {
             return Err("unknown or expired work package".to_string());
         };
+        let package = record.package.clone();
+        let existing_submissions = record.submissions;
         if payload.version != pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA {
             state.work_status.insert(
                 package_id.to_string(),
@@ -883,14 +927,14 @@ impl ProverCoordinator {
             );
             return Err("work result tx_count must be non-zero".to_string());
         }
-        if record.submissions >= self.config.max_submissions_per_package {
+        if existing_submissions >= self.config.max_submissions_per_package {
             state.work_status.insert(
                 package_id.to_string(),
                 WorkStatus::Rejected("package saturated".into()),
             );
             return Err("work package submission limit exceeded".to_string());
         }
-        if payload.tx_count != record.package.tx_count {
+        if payload.tx_count != package.tx_count {
             state.work_status.insert(
                 package_id.to_string(),
                 WorkStatus::Rejected("tx_count mismatch".into()),
@@ -906,25 +950,6 @@ impl ProverCoordinator {
             return Err("work result payload exceeds max size".to_string());
         }
 
-        let package_parent = record.package.parent_hash;
-        let package_candidate_txs = record.package.candidate_txs.clone();
-        let key = BundleMatchKey {
-            parent_hash: package_parent,
-            tx_statements_commitment: payload.tx_statements_commitment,
-            tx_count: payload.tx_count,
-        };
-        let incoming = PreparedBundle {
-            key: key.clone(),
-            payload,
-            candidate_txs: package_candidate_txs,
-            build_ms: 0,
-        };
-
-        let should_replace = match state.prepared.get(&key) {
-            Some(existing) => incoming.payload.tx_count > existing.payload.tx_count,
-            None => true,
-        };
-
         if let Some(record) = state.work_packages.get_mut(package_id) {
             record.submissions = record.submissions.saturating_add(1);
         }
@@ -932,19 +957,215 @@ impl ProverCoordinator {
             .source_submissions
             .insert(source_key, source_count.saturating_add(1));
 
-        if should_replace {
-            state.prepared.insert(key, incoming);
+        if package.stage_type == "leaf_batch_prove" {
+            let maybe_bundle =
+                Self::register_chunk_result_and_maybe_assemble(&mut state, &package, payload)?;
             state
                 .work_status
                 .insert(package_id.to_string(), WorkStatus::Accepted);
+            if let Some(incoming) = maybe_bundle {
+                let key = incoming.key.clone();
+                let should_replace = match state.prepared.get(&key) {
+                    Some(existing) => incoming.payload.tx_count > existing.payload.tx_count,
+                    None => true,
+                };
+                if should_replace {
+                    tracing::info!(
+                        block_number = package.block_number,
+                        tx_count = incoming.payload.tx_count,
+                        flat_batches = incoming.payload.flat_batches.len(),
+                        candidate_set_id = %package.candidate_set_id,
+                        "Assembled fan-out external chunk proofs into prepared bundle"
+                    );
+                    state.prepared.insert(key, incoming);
+                }
+            }
             Ok(())
         } else {
-            state.work_status.insert(
-                package_id.to_string(),
-                WorkStatus::Rejected("existing prepared bundle is better".into()),
-            );
-            Err("submission not selected".to_string())
+            let key = BundleMatchKey {
+                parent_hash: package.parent_hash,
+                tx_statements_commitment: payload.tx_statements_commitment,
+                tx_count: payload.tx_count,
+            };
+            let incoming = PreparedBundle {
+                key: key.clone(),
+                payload,
+                candidate_txs: package.candidate_txs,
+                build_ms: 0,
+            };
+
+            let should_replace = match state.prepared.get(&key) {
+                Some(existing) => incoming.payload.tx_count > existing.payload.tx_count,
+                None => true,
+            };
+
+            if should_replace {
+                state.prepared.insert(key, incoming);
+                state
+                    .work_status
+                    .insert(package_id.to_string(), WorkStatus::Accepted);
+                Ok(())
+            } else {
+                state.work_status.insert(
+                    package_id.to_string(),
+                    WorkStatus::Rejected("existing prepared bundle is better".into()),
+                );
+                Err("submission not selected".to_string())
+            }
         }
+    }
+
+    fn register_chunk_result_and_maybe_assemble(
+        state: &mut CoordinatorState,
+        package: &WorkPackage,
+        payload: pallet_shielded_pool::types::BlockProofBundle,
+    ) -> Result<Option<PreparedBundle>, String> {
+        if payload.proof_mode != pallet_shielded_pool::types::BlockProofMode::FlatBatches {
+            return Err("fan-out chunk payload must use FlatBatches mode".to_string());
+        }
+        if payload.flat_batches.is_empty() {
+            return Err("fan-out chunk payload must include at least one batch proof".to_string());
+        }
+        let candidate_set_id = package.candidate_set_id.clone();
+        let (parent_hash, candidate_txs, assembled_payload) = {
+            let Some(assembly) = state.fanout_assemblies.get_mut(&candidate_set_id) else {
+                return Err("missing fan-out assembly state for work package".to_string());
+            };
+            if assembly.parent_hash != package.parent_hash
+                || assembly.block_number != package.block_number
+            {
+                return Err(
+                    "fan-out assembly state does not match package parent/block".to_string()
+                );
+            }
+            let expected_ids = assembly
+                .chunks
+                .iter()
+                .map(|chunk| chunk.package_id.as_str())
+                .collect::<HashSet<_>>();
+            if !expected_ids.contains(package.package_id.as_str()) {
+                return Err("work package is not part of active fan-out chunk plan".to_string());
+            }
+
+            assembly
+                .received
+                .insert(package.package_id.clone(), payload);
+            if assembly.received.len() < assembly.expected_chunks as usize {
+                return Ok(None);
+            }
+
+            let assembled_payload = Self::assemble_fanout_payload(assembly)?;
+            (
+                assembly.parent_hash,
+                assembly.candidate_txs.clone(),
+                assembled_payload,
+            )
+        };
+        state.fanout_assemblies.remove(&candidate_set_id);
+
+        let tx_count = assembled_payload.tx_count;
+        let tx_statements_commitment = assembled_payload.tx_statements_commitment;
+        let key = BundleMatchKey {
+            parent_hash,
+            tx_statements_commitment,
+            tx_count,
+        };
+        Ok(Some(PreparedBundle {
+            key,
+            payload: assembled_payload,
+            candidate_txs,
+            build_ms: 0,
+        }))
+    }
+
+    fn assemble_fanout_payload(
+        assembly: &FanoutAssemblyState,
+    ) -> Result<pallet_shielded_pool::types::BlockProofBundle, String> {
+        let mut chunk_specs = assembly.chunks.clone();
+        chunk_specs.sort_by_key(|chunk| chunk.start_tx_index);
+        let Some(first_spec) = chunk_specs.first() else {
+            return Err("fan-out assembly has no chunk specifications".to_string());
+        };
+        let Some(anchor_payload) = assembly.received.get(&first_spec.package_id) else {
+            return Err("fan-out assembly missing first chunk payload".to_string());
+        };
+        if anchor_payload.proof_mode != pallet_shielded_pool::types::BlockProofMode::FlatBatches {
+            return Err("fan-out assembly anchor payload is not FlatBatches".to_string());
+        }
+        if anchor_payload.flat_batches.is_empty() {
+            return Err("fan-out assembly anchor payload has no batch proofs".to_string());
+        }
+
+        let mut expected_start = 0u32;
+        let mut covered = 0u32;
+        let mut seen_ranges = HashSet::new();
+        let mut flat_batches = Vec::with_capacity(chunk_specs.len());
+        for chunk in chunk_specs {
+            if !seen_ranges.insert((chunk.start_tx_index, chunk.tx_count)) {
+                return Err("fan-out assembly has duplicate chunk range".to_string());
+            }
+            if chunk.start_tx_index != expected_start {
+                return Err("fan-out chunk coverage is non-contiguous".to_string());
+            }
+            let Some(chunk_payload) = assembly.received.get(&chunk.package_id) else {
+                return Err("fan-out assembly missing chunk payload".to_string());
+            };
+            if chunk_payload.proof_mode != pallet_shielded_pool::types::BlockProofMode::FlatBatches
+            {
+                return Err("fan-out chunk payload is not FlatBatches".to_string());
+            }
+            if chunk_payload.flat_batches.is_empty() {
+                return Err("fan-out chunk payload has no batch proofs".to_string());
+            }
+            if chunk_payload.tx_statements_commitment != anchor_payload.tx_statements_commitment {
+                return Err(
+                    "fan-out chunk payload tx_statements_commitment mismatch across chunks"
+                        .to_string(),
+                );
+            }
+            if chunk_payload.da_root != anchor_payload.da_root
+                || chunk_payload.da_chunk_count != anchor_payload.da_chunk_count
+            {
+                return Err("fan-out chunk payload DA metadata mismatch across chunks".to_string());
+            }
+            if chunk_payload.commitment_proof.data != anchor_payload.commitment_proof.data {
+                return Err(
+                    "fan-out chunk payload commitment proof mismatch across chunks".to_string(),
+                );
+            }
+            let chunk_batch = chunk_payload
+                .flat_batches
+                .first()
+                .ok_or_else(|| "fan-out chunk payload missing first batch proof".to_string())?;
+            if chunk_batch.tx_count != chunk.tx_count {
+                return Err("fan-out chunk payload tx_count mismatch".to_string());
+            }
+            flat_batches.push(pallet_shielded_pool::types::BatchProofItem {
+                start_tx_index: chunk.start_tx_index,
+                tx_count: chunk.tx_count,
+                proof_format: chunk_batch.proof_format,
+                proof: chunk_batch.proof.clone(),
+            });
+            expected_start = expected_start.saturating_add(chunk.tx_count as u32);
+            covered = covered.saturating_add(chunk.tx_count as u32);
+        }
+
+        if covered != assembly.candidate_txs.len() as u32 {
+            return Err("fan-out chunk coverage does not match candidate tx count".to_string());
+        }
+
+        Ok(pallet_shielded_pool::types::BlockProofBundle {
+            version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+            tx_count: covered,
+            tx_statements_commitment: anchor_payload.tx_statements_commitment,
+            da_root: anchor_payload.da_root,
+            da_chunk_count: anchor_payload.da_chunk_count,
+            commitment_proof: anchor_payload.commitment_proof.clone(),
+            proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            flat_batches,
+            merge_root: None,
+            prover_claim: anchor_payload.prover_claim.clone(),
+        })
     }
 
     pub fn get_work_status(&self, package_id: &str) -> Option<WorkStatus> {
@@ -965,7 +1186,9 @@ impl ProverCoordinator {
                 state.adaptive_liveness_fired_generation = None;
                 state.selected_txs.clear();
                 state.work_packages.clear();
+                state.work_package_queue.clear();
                 state.latest_work_package = None;
+                state.fanout_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
                 state.pending_jobs.clear();
@@ -994,7 +1217,9 @@ impl ProverCoordinator {
                 state.adaptive_liveness_fired_generation = None;
                 state.selected_txs.clear();
                 state.work_packages.clear();
+                state.work_package_queue.clear();
                 state.latest_work_package = None;
+                state.fanout_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
             }
@@ -1048,7 +1273,9 @@ impl ProverCoordinator {
             state.inflight_stage_meta.clear();
             state.inflight_candidates.clear();
             state.work_packages.clear();
+            state.work_package_queue.clear();
             state.latest_work_package = None;
+            state.fanout_assemblies.clear();
             state.work_status.clear();
             state.source_submissions.clear();
             existing_best = Self::best_candidate_len_locked(&state);
@@ -1104,29 +1331,67 @@ impl ProverCoordinator {
             }
         }
 
-        // Publish the largest candidate as the external work package while
+        // Publish the largest candidate as external fan-out work packages while
         // local workers run liveness-first variants in parallel.
         if let Some(primary_candidate) = candidate_variants.back().cloned() {
             if primary_candidate.len() >= self.config.target_txs {
                 state.target_batch_scheduled_at_ms = Some(Self::now_ms());
                 state.adaptive_liveness_fired_generation = None;
             }
-            let package = Self::build_work_package(
-                parent_hash,
-                best_number.saturating_add(1),
-                primary_candidate,
-                self.config.work_package_ttl,
-            );
-            let package_id = package.package_id.clone();
-            state.latest_work_package = Some(package_id.clone());
-            state.work_packages.insert(
-                package_id.clone(),
-                WorkPackageRecord {
-                    package,
-                    submissions: 0,
+            let block_number = best_number.saturating_add(1);
+            let candidate_set_id =
+                Self::work_package_id(parent_hash, block_number, &primary_candidate);
+            let slot_txs = Self::batch_slot_txs();
+            let chunks = Self::split_candidate_into_chunks(&primary_candidate, slot_txs);
+            let expected_chunks = chunks.len().min(u16::MAX as usize) as u16;
+
+            state.work_packages.clear();
+            state.work_package_queue.clear();
+            state.latest_work_package = None;
+            state.work_status.clear();
+            state.source_submissions.clear();
+            state.fanout_assemblies.clear();
+
+            let mut chunk_plans = Vec::with_capacity(chunks.len());
+            for (chunk_start_tx_index, chunk_txs) in chunks {
+                let package = Self::build_work_package(
+                    parent_hash,
+                    block_number,
+                    candidate_set_id.clone(),
+                    chunk_txs,
+                    chunk_start_tx_index,
+                    expected_chunks,
+                    self.config.work_package_ttl,
+                );
+                let package_id = package.package_id.clone();
+                chunk_plans.push(ChunkPlan {
+                    package_id: package_id.clone(),
+                    start_tx_index: package.chunk_start_tx_index,
+                    tx_count: package.chunk_tx_count,
+                });
+                state.latest_work_package = Some(package_id.clone());
+                state.work_package_queue.push_back(package_id.clone());
+                state.work_packages.insert(
+                    package_id.clone(),
+                    WorkPackageRecord {
+                        package,
+                        submissions: 0,
+                    },
+                );
+                state.work_status.insert(package_id, WorkStatus::Pending);
+            }
+
+            state.fanout_assemblies.insert(
+                candidate_set_id,
+                FanoutAssemblyState {
+                    parent_hash,
+                    block_number,
+                    candidate_txs: primary_candidate,
+                    expected_chunks,
+                    chunks: chunk_plans,
+                    received: HashMap::new(),
                 },
             );
-            state.work_status.insert(package_id, WorkStatus::Pending);
         }
 
         while let Some(candidate_txs) = candidate_variants.pop_front() {
@@ -1309,26 +1574,94 @@ impl ProverCoordinator {
         counts
     }
 
+    fn batch_slot_txs() -> usize {
+        std::env::var("HEGEMON_BATCH_SLOT_TXS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(16)
+            .max(1)
+    }
+
+    fn split_candidate_into_chunks(
+        candidate_txs: &[Vec<u8>],
+        slot_txs: usize,
+    ) -> Vec<(u32, Vec<Vec<u8>>)> {
+        let mut chunks = Vec::new();
+        if candidate_txs.is_empty() {
+            return chunks;
+        }
+        let chunk_size = slot_txs.max(1);
+        let mut start = 0usize;
+        while start < candidate_txs.len() {
+            let end = (start + chunk_size).min(candidate_txs.len());
+            let chunk = candidate_txs[start..end].to_vec();
+            chunks.push((start as u32, chunk));
+            start = end;
+        }
+        chunks
+    }
+
+    fn chunk_work_package_id(
+        parent_hash: H256,
+        block_number: u64,
+        candidate_set_id: &str,
+        chunk_start_tx_index: u32,
+        chunk_tx_count: u16,
+    ) -> String {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(parent_hash.as_bytes());
+        bytes.extend_from_slice(&block_number.to_le_bytes());
+        bytes.extend_from_slice(candidate_set_id.as_bytes());
+        bytes.extend_from_slice(&chunk_start_tx_index.to_le_bytes());
+        bytes.extend_from_slice(&chunk_tx_count.to_le_bytes());
+        hex::encode(sp_core::hashing::blake2_256(&bytes))
+    }
+
     fn build_work_package(
         parent_hash: H256,
         block_number: u64,
+        candidate_set_id: String,
         candidate_txs: Vec<Vec<u8>>,
+        chunk_start_tx_index: u32,
+        expected_chunks: u16,
         ttl: Duration,
     ) -> WorkPackage {
         let created_at_ms = Self::now_ms();
         let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
         let tx_count = candidate_txs.len() as u32;
+        let chunk_tx_count = tx_count.min(u16::MAX as u32) as u16;
         let arity = Self::aggregation_tree_arity();
-        let (level, shape_id, dependencies) =
-            Self::root_stage_metadata(parent_hash, block_number, &candidate_txs, arity);
-        let stage_type = "root_finalize".to_string();
-        let package_id = Self::work_package_id(parent_hash, block_number, &candidate_txs);
+        let candidate_digest = Self::candidate_digest(&candidate_txs);
+        let stage_type = "leaf_batch_prove".to_string();
+        let stage_index = chunk_start_tx_index / Self::batch_slot_txs().max(1) as u32;
+        let shape_id = Self::work_package_shape_id(
+            parent_hash,
+            block_number,
+            &stage_type,
+            0,
+            stage_index,
+            arity,
+            tx_count,
+            candidate_digest,
+        );
+        let dependencies = Vec::new();
+        let package_id = Self::chunk_work_package_id(
+            parent_hash,
+            block_number,
+            &candidate_set_id,
+            chunk_start_tx_index,
+            chunk_tx_count,
+        );
         WorkPackage {
             package_id,
             parent_hash,
             block_number,
+            candidate_set_id,
+            chunk_start_tx_index,
+            chunk_tx_count,
+            expected_chunks,
             stage_type,
-            level,
+            level: 0,
             arity,
             shape_id,
             dependencies,
@@ -1375,6 +1708,15 @@ impl ProverCoordinator {
             state.work_packages.remove(&package_id);
             state.work_status.insert(package_id, WorkStatus::Expired);
         }
+        state
+            .work_package_queue
+            .retain(|package_id| state.work_packages.contains_key(package_id));
+        state.fanout_assemblies.retain(|_, assembly| {
+            assembly
+                .chunks
+                .iter()
+                .any(|chunk| state.work_packages.contains_key(&chunk.package_id))
+        });
         if let Some(latest) = state.latest_work_package.as_ref() {
             if !state.work_packages.contains_key(latest) {
                 state.latest_work_package = None;
@@ -1926,6 +2268,68 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn external_work_fanout_assembles_multi_chunk_flat_batches() {
+        let parent_hash = H256::repeat_byte(42);
+        let mut config = test_config();
+        config.target_txs = 17;
+        config.queue_capacity = 1;
+        config.workers = 0;
+        let best = Arc::new(move || (parent_hash, 8u64));
+        let pending = Arc::new(move |_max_txs: usize| {
+            (0..17usize)
+                .map(|idx| vec![(idx as u8).saturating_add(1)])
+                .collect()
+        });
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("local builder disabled for fanout test".to_string())
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        let mut packages = std::collections::HashMap::new();
+        let mut attempts = 0usize;
+        while packages.len() < 2 && attempts < 16 {
+            attempts = attempts.saturating_add(1);
+            let package = coordinator
+                .get_work_package()
+                .expect("fan-out package should be published");
+            packages.insert(package.package_id.clone(), package);
+        }
+        assert_eq!(packages.len(), 2, "expected two chunk work packages");
+        let expected_chunks = packages
+            .values()
+            .next()
+            .map(|package| package.expected_chunks)
+            .unwrap_or(0);
+        assert_eq!(expected_chunks, 2);
+
+        let commitment = [17u8; 48];
+        for package in packages.values() {
+            let payload = ready_payload(package.tx_count, commitment);
+            coordinator
+                .submit_external_work_result("fanout-worker", &package.package_id, payload)
+                .expect("chunk result should be accepted");
+        }
+
+        let assembled = coordinator
+            .lookup_prepared_bundle(parent_hash, commitment, 17)
+            .expect("assembled full fan-out bundle should be available");
+        assert_eq!(
+            assembled.payload.proof_mode,
+            pallet_shielded_pool::types::BlockProofMode::FlatBatches
+        );
+        assert_eq!(assembled.payload.flat_batches.len(), 2);
+        assert_eq!(assembled.payload.flat_batches[0].start_tx_index, 0);
+        assert_eq!(assembled.payload.flat_batches[0].tx_count, 16);
+        assert_eq!(assembled.payload.flat_batches[1].start_tx_index, 16);
+        assert_eq!(assembled.payload.flat_batches[1].tx_count, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn external_submission_limits_are_enforced() {
         let parent_hash = H256::repeat_byte(51);
         let mut config = test_config();
@@ -2135,9 +2539,11 @@ mod tests {
             .expect("upsized work package should exist");
         assert_eq!(upsized.tx_count, 8);
         assert_ne!(upsized.package_id, first.package_id);
-        assert_eq!(upsized.stage_type, "root_finalize");
-        assert_eq!(upsized.level, 1);
-        assert_eq!(upsized.dependencies.len(), 8);
+        assert_eq!(upsized.stage_type, "leaf_batch_prove");
+        assert_eq!(upsized.level, 0);
+        assert_eq!(upsized.dependencies.len(), 0);
+        assert_eq!(upsized.chunk_start_tx_index, 0);
+        assert_eq!(upsized.expected_chunks, 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
