@@ -595,19 +595,44 @@ economically justified only when the verifier cost of $O(n/k)$ batch proofs
 exceeds $\sim 100$~ms---an estimated threshold, not a measured acceptance
 number.
 
-\subsubsection{Flaw 7: Prove-ahead bundle lookup never matches (\texttt{balance\_tag} hash poisoning)}
+\subsubsection{Flaw 7: Prove-ahead bundle lookup never matches (\texttt{balance\_tag} hash poisoning) (resolved)}
 
-\textbf{Status: OPEN.} The prove-ahead pipelining shipped in commit
-\texttt{053a0fed} introduces a \texttt{ProverCoordinator} (2{,}418 lines in
-\texttt{prover\_coordinator.rs}) that speculatively proves batch bundles in
-background worker threads, keyed by
-\texttt{BundleMatchKey\{parent\_hash, tx\_statements\_commitment, tx\_count\}}.
-During block authoring, the candidate transaction set is hashed via
-\texttt{statement\_hashes\_from\_extrinsics()} and the resulting commitment is
-looked up in the coordinator's prepared-bundle cache.
+\textbf{Update (resolved):} The \texttt{pending\_proofs} threading fix
+was applied to all statement-hash call sites:
+\texttt{statement\_hashes\_from\_extrinsics()} now takes an
+\texttt{Option<\&PendingProofStore>} parameter (\texttt{service.rs}
+line~1824), and all four callers---\texttt{build\_candidate\_context}
+(line~2196), \texttt{verify\_proof\_carrying\_block} (line~3781),
+\texttt{ready\_proofless\_binding\_hashes\_for\_preview} (line~4164), and
+the final-commitment stage (line~5109)---thread resolved proofs through.
+The authoring path now takes fresh \texttt{pending\_proofs\_snapshot}
+clones at hydration, preview, and final-commitment stages.
 
-\textbf{The lookup can never succeed.} The two code paths that compute
-\texttt{tx\_statements\_commitment} diverge on the \texttt{balance\_tag}
+Measured impact (prove-ahead, batch-16, local single-node):
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Bundle build time (full pipeline) & 98{,}333~ms \\
+Bundle ready wait (including coordinator) & 98{,}931~ms \\
+Block import verify (total) & 169~ms \\
+\quad commitment verify & 153~ms \\
+\quad aggregation verify & 13~ms \\
+Proof size & 825{,}210~bytes \\
+Transactions included & 16/16 \\
+Inclusion TPS & 1.737 \\
+End-to-end TPS (wall-clock) & 0.121 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The prove-ahead pipeline is functional: proofless sidecar transactions are
+no longer deferred, the coordinator's \texttt{BundleMatchKey} lookup
+succeeds, and the proven batch extrinsic is attached to the block.
+
+\textbf{Original bug (for the record):} The two code paths that compute
+\texttt{tx\_statements\_commitment} diverged on the \texttt{balance\_tag}
 field of each \texttt{Transaction} struct:
 
 \begin{center}
@@ -623,51 +648,18 @@ Function & \texttt{build\_candidate\_context} & \texttt{statement\_hashes\_from\
 \end{tabular}
 \end{center}
 
-The statement hash is computed by \texttt{compute\_transaction\_id()} in
-\texttt{consensus/src/types.rs}, which feeds \texttt{balance\_tag} into a
-SHA-384 digest (line~196). Different \texttt{balance\_tag} values produce
-different transaction IDs, different statement hashes, and a different
-\texttt{tx\_statements\_commitment}. Therefore
-\texttt{lookup\_prepared\_bundle()} returns \texttt{None} every time, all
-proofless sidecar transactions are deferred, and effective throughput is
-0~TPS.
+Since \texttt{compute\_transaction\_id()} feeds \texttt{balance\_tag} into
+its SHA-384 digest, the lookup could never match.
 
-This is a \emph{deterministic, 100\%-of-the-time failure}---not a race
-condition, timing issue, or network topology problem.
-
-\textbf{Root cause:} \texttt{statement\_hashes\_from\_extrinsics()}
-(\texttt{service.rs} line~1819) calls
-\texttt{extract\_shielded\_transfers\_for\_parallel\_verification()} with
-\texttt{pending\_proofs = None} and \texttt{allow\_missing\_sidecar\_proofs = true}.
-For proofless sidecar extrinsics where the proof bytes cannot be resolved,
-the \texttt{(None, \_)} match arms (lines~3247--3260) construct
-\texttt{Transaction} objects with \texttt{balance\_tag = [0u8; 48]}. The
-coordinator's path resolves real proof bytes from
-\texttt{pending\_proofs} and uses \texttt{proof.public\_inputs.balance\_tag}
-(line~3241).
-
-\textbf{Fix:} \texttt{ready\_proofless\_binding\_hashes\_for\_preview()}
-must pass the \texttt{pending\_proofs\_snapshot} (already available in the
-block-authoring scope at line~4745) through to
-\texttt{statement\_hashes\_from\_extrinsics()}, which must forward it to
-\texttt{extract\_shielded\_transfers\_for\_parallel\_verification()} as the
-\texttt{pending\_proofs} parameter. This is a $\sim$10-line change:
-add a \texttt{pending\_proofs} parameter to both functions and thread it
-through. With real \texttt{balance\_tag} values resolved, the statement
-hashes will match and the lookup will succeed.
-
-\textbf{Observed symptoms (commit \texttt{053a0fed}, 3-node testnet):}
-\begin{itemize}[leftmargin=2em]
-  \item Coordinator logs show ``Prepared proven batch candidate'' with
-        \texttt{build\_ms} = 612--793~ms, \texttt{cache\_hit = true}.
-  \item Block authoring logs show ``Deferring proofless sidecar transfers
-        until a proven batch is ready (no ready subset),
-        missing\_proof\_bindings=16'' at every block.
-  \item 0~TPS effective throughput despite functional batch proving.
-  \item Codex spent cycles adjusting network topology (seeds, peering,
-        strict allowlist) without reading the code to diagnose the
-        deterministic hash mismatch.
-\end{itemize}
+\textbf{Performance analysis:} The 98~s bundle build time breaks down into
+two sequential stages: (1) commitment proof generation and (2) batch
+aggregation proving (\texttt{prepare\_block\_proof\_bundle()} runs them
+serially per a comment about nested Rayon pool deadlock avoidance). The
+$\sim$21~s batch-16 prove time measured earlier was the aggregation-only
+cost in bench mode; the full pipeline includes commitment proof derivation,
+DA encoding, context construction, and Rayon serialization overhead.
+The 0.121 end-to-end TPS ($= 16 / 131.8$~s wall-clock) reflects the full
+pipeline cost dominantly from the $\sim$99~s sequential prove.
 
 \subsection{Clock cycle budget from first principles}
 
@@ -1416,27 +1408,34 @@ Max TPS (1 machine) & $<0.2$ & $\sim$15 & $\sim$100 (w/ GPU) \\
 \subsection{What must change in the codebase}
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{Immediate (Phase 1---prove-ahead shipped but broken):}
-        Batch proving is wired and verified end-to-end.
-        VK caching shipped: verification dropped from 9.35~s to 28~ms
-        ($332\times$). Node import verify dropped from 5{,}751~ms to
-        137~ms. Batch-32 raised but shows no scaling gain (NO-GO;
-        parallel batch-16 is optimal).
-        Prove-ahead pipelining shipped (commit \texttt{053a0fed},
-        2{,}418-line \texttt{ProverCoordinator}) but has a deterministic
-        \texttt{balance\_tag} hash-poisoning bug that prevents the
-        authoring path from ever matching pre-computed bundles (Flaw~7).
-        \textbf{Current throughput:} 0~TPS effective (all proofless txs
-        deferred despite coordinator preparing valid bundles).
-        \textbf{Remaining blocker:} fix Flaw~7 ($\sim$10-line change to
-        thread \texttt{pending\_proofs} into
-        \texttt{statement\_hashes\_from\_extrinsics}).
-        Target with fix applied: 2--5 TPS on current hardware.
+  \item \textbf{Immediate (Phase 1---prove-ahead functional, prove-limited):}
+        Batch proving, VK caching, and prove-ahead pipelining are all
+        wired and verified end-to-end. Flaw~7 (\texttt{balance\_tag}
+        hash poisoning) resolved. 16/16 transactions included in a single
+        block via the \texttt{ProverCoordinator} pipeline.
+        \textbf{Measured throughput:} inclusion TPS~$=1.74$, end-to-end
+        TPS~$=0.12$ (prove-limited at 98~s per full bundle build).
+        Verification is fast: 169~ms total (commitment~153~ms,
+        aggregation~13~ms).
+        \textbf{Remaining blockers:}
+        \begin{itemize}[leftmargin=1em]
+          \item The 98~s bundle build runs commitment and aggregation
+                stages sequentially (Rayon deadlock avoidance). Parallelizing
+                these stages or running commitment out-of-band could halve
+                the build time.
+          \item Only one batch-16 job runs at a time. Overlapping the
+                next batch's prove with the current block's authoring would
+                raise inclusion TPS toward the 6~s block boundary.
+          \item End-to-end TPS is dominated by proving latency, not
+                verification or import. Target: 2--5 TPS with pipeline
+                parallelism on current hardware.
+        \end{itemize}
 
-  \item \textbf{Phase 2 (engineering, 2--4 weeks):} With prove-ahead
-        working (after Flaw~7 fix), run multiple batch-16 provers in
-        parallel for higher throughput across blocks. Build a fixed-arity
-        merge circuit (arity~8) to reduce on-chain verification from
+  \item \textbf{Phase 2 (engineering, 2--4 weeks):} Parallelize
+        commitment and aggregation proving stages within
+        \texttt{prepare\_block\_proof\_bundle()}. Run multiple batch-16
+        provers concurrently across blocks. Build a fixed-arity merge
+        circuit (arity~8) to reduce on-chain verification from
         $\lceil n/16 \rceil$ proofs to~1.
         Target: 5--50 TPS.
 
@@ -1476,12 +1475,12 @@ order with a recursion layer that destroys performance. The fix is
 architectural, not optimizational:
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{0.1--10 TPS:} Batch proving (wired, verified, VK cached).
-        No recursion. CPU only. Measured: 21.48~s prove $+$ 28~ms verify
-        per batch-16 ($\sim$0.74~tx/s, prove-limited). Prove-ahead
-        pipelining shipped but blocked by Flaw~7
-        (\texttt{balance\_tag} hash poisoning). Fix required to decouple
-        proving from 6~s block budget.
+  \item \textbf{0.1--10 TPS:} Batch proving (wired, verified, VK cached)
+        with prove-ahead pipelining (Flaw~7 resolved). No recursion.
+        CPU only. Measured: 98~s full bundle build, 169~ms import verify,
+        inclusion TPS~$=1.74$, end-to-end TPS~$=0.12$. Proving latency
+        is the sole bottleneck; pipeline parallelism needed to reach
+        2--5~TPS.
   \item \textbf{10--100 TPS:} Batch proving $+$ fixed-arity merge
         recursion. CPU batch $+$ GPU merge. Budget: $<5.5$~s.
   \item \textbf{100--1000 TPS:} GPU batch $+$ GPU recursive tree.
