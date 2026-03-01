@@ -2,8 +2,8 @@ use parking_lot::Mutex;
 use sp_core::H256;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -673,21 +673,47 @@ impl ProverCoordinator {
         self.lookup_prepared_bundle(parent_hash, tx_statements_commitment, tx_count)
     }
 
-    pub fn clear_on_import_success(&self, included_txs: &[Vec<u8>]) {
-        let mut state = self.state.lock();
-        if state.selected_txs == included_txs {
-            state.selected_txs.clear();
+    pub fn clear_on_import_success(self: &Arc<Self>, included_txs: &[Vec<u8>]) {
+        self.drain_worker_results();
+        {
+            let mut state = self.state.lock();
+            if state.selected_txs == included_txs {
+                state.selected_txs.clear();
+            }
+            state.target_batch_scheduled_at_ms = None;
+            state.adaptive_liveness_fired_generation = None;
+            state.prepared.clear();
+            state.work_packages.clear();
+            state.latest_work_package = None;
+            state.work_status.clear();
+            state.source_submissions.clear();
+            state.pending_jobs.clear();
+            state.inflight_stage_meta.clear();
+            state.inflight_candidates.clear();
         }
-        state.target_batch_scheduled_at_ms = None;
-        state.adaptive_liveness_fired_generation = None;
-        state.prepared.clear();
-        state.work_packages.clear();
-        state.latest_work_package = None;
-        state.work_status.clear();
-        state.source_submissions.clear();
-        state.pending_jobs.clear();
-        state.inflight_stage_meta.clear();
-        state.inflight_candidates.clear();
+
+        // Kick N+1 prove-ahead scheduling immediately on import success
+        // instead of waiting for the periodic coordinator tick.
+        let (parent_hash, best_number) = (self.best_block_fn)();
+        {
+            let mut state = self.state.lock();
+            if state.current_parent != Some(parent_hash) {
+                state.current_parent = Some(parent_hash);
+                state.generation = state.generation.wrapping_add(1);
+                state.target_batch_scheduled_at_ms = None;
+                state.adaptive_liveness_fired_generation = None;
+                state.selected_txs.clear();
+                state.work_packages.clear();
+                state.latest_work_package = None;
+                state.work_status.clear();
+                state.source_submissions.clear();
+                state.pending_jobs.clear();
+                state.inflight_stage_meta.clear();
+                state.inflight_candidates.clear();
+            }
+        }
+        self.ensure_job_queue(parent_hash, best_number);
+        self.dispatch_jobs();
     }
 
     pub fn stale_count(&self) -> u64 {
@@ -711,7 +737,9 @@ impl ProverCoordinator {
                 diagnostics
                     .sample_same_parent_commitment
                     .get_or_insert(key.tx_statements_commitment);
-                diagnostics.sample_same_parent_tx_count.get_or_insert(key.tx_count);
+                diagnostics
+                    .sample_same_parent_tx_count
+                    .get_or_insert(key.tx_count);
             }
             if key.tx_statements_commitment == tx_statements_commitment {
                 diagnostics.same_statement = diagnostics.same_statement.saturating_add(1);
