@@ -113,13 +113,13 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
-    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
-    DEFAULT_DIFFICULTY_BITS,
+    DEFAULT_DIFFICULTY_BITS, FullBackend, HegemonFullClient, HegemonPowBlockImport,
+    HegemonSelectChain, HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
+    StateExecutionResult,
 };
 use crate::substrate::mining_worker::{
-    create_production_mining_worker, create_production_mining_worker_mock_broadcast,
-    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig, create_production_mining_worker,
+    create_production_mining_worker_mock_broadcast,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -136,30 +136,29 @@ use crate::substrate::transaction_pool::{
 };
 use aggregation_circuit::prove_aggregation;
 use batch_circuit::{
-    prewarm_batch_verifier_cache, verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs,
-    BatchTransactionProver,
+    BatchPublicInputs, BatchTransactionProver, prewarm_batch_verifier_cache, verify_batch_proof,
+    verify_batch_proof_bytes,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
-    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal,
-    ParallelProofVerifier,
+    Blake3Algorithm, Blake3Seal, ParallelProofVerifier, aggregation_proof_uncompressed_len,
+    decode_flat_batch_proof_bytes, encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
-use hyper::http::{header, Method};
+use hyper::http::{Method, header};
 use network::{
     PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
     PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use p3_field::PrimeField64;
-use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
-use rand::{rngs::OsRng, RngCore};
+use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE, FeeParameters};
+use rand::{RngCore, rngs::OsRng};
 use sc_client_api::{BlockBackend, BlockchainEvents};
-use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
+use sc_service::{Configuration, KeystoreContainer, TaskManager, error::Error as ServiceError};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ProvideRuntimeApi, StorageChanges};
@@ -171,11 +170,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 use wallet::address::ShieldedAddress;
@@ -188,7 +187,7 @@ use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::dimensions::ROWS_PER_TX;
 use transaction_circuit::hashing_pq::{
-    bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
+    Felt, bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48,
 };
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
@@ -1825,13 +1824,12 @@ fn statement_hashes_from_extrinsics(
     extrinsics: &[runtime::UncheckedExtrinsic],
     pending_proofs: Option<&PendingProofStore>,
 ) -> Result<Vec<[u8; 48]>, String> {
-    let (transactions, _, _) =
-        extract_shielded_transfers_for_parallel_verification(
-            extrinsics,
-            None,
-            pending_proofs,
-            true,
-        )?;
+    let (transactions, _, _) = extract_shielded_transfers_for_parallel_verification(
+        extrinsics,
+        None,
+        pending_proofs,
+        true,
+    )?;
     Ok(statement_hashes_from_transactions(&transactions))
 }
 
@@ -1886,11 +1884,7 @@ const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
     let shards = len.div_ceil(chunk_size);
-    if shards == 0 {
-        1
-    } else {
-        shards
-    }
+    if shards == 0 { 1 } else { shards }
 }
 
 fn da_parity_shards_for_data(data_shards: usize) -> usize {
@@ -2850,23 +2844,85 @@ fn prepare_block_proof_bundle(
         merge_arity,
     );
     let da_root = context.da_root;
-    // NOTE: Run stages sequentially to avoid nested Rayon pool contention/deadlock
-    // when heavy proving jobs execute under strict batching mode.
+    // commitment and aggregation proving operate on independent materials;
+    // run both in parallel and keep stage-level attribution explicit.
     let _ = commitment_block_fast;
-    tracing::info!(
-        block_number,
-        tx_count,
-        "prepare_block_proof_bundle: starting commitment stage"
-    );
-    let commitment_stage_started = Instant::now();
-    let commitment_result = build_commitment_block_proof_from_materials(
-        client,
-        parent_hash,
-        &statement_hashes,
-        proofs_for_commitment.as_ref(),
-        da_root,
-    );
-    let commitment_stage_ms = commitment_stage_started.elapsed().as_millis();
+    let (commitment_join, aggregation_join) = std::thread::scope(|scope| {
+        let commitment_statement_hashes = statement_hashes.clone();
+        let commitment_proofs = Arc::clone(&proofs_for_commitment);
+        let commitment_handle = scope.spawn(move || {
+            tracing::info!(
+                block_number,
+                tx_count,
+                "prepare_block_proof_bundle: starting commitment stage"
+            );
+            let stage_started = Instant::now();
+            let stage_result = build_commitment_block_proof_from_materials(
+                client,
+                parent_hash,
+                &commitment_statement_hashes,
+                commitment_proofs.as_ref(),
+                da_root,
+            );
+            (stage_result, stage_started.elapsed().as_millis())
+        });
+
+        let aggregation_proofs = Arc::clone(&proofs_for_batching);
+        let aggregation_witnesses = Arc::clone(&witnesses_for_batching);
+        let aggregation_handle = scope.spawn(move || {
+            tracing::info!(
+                block_number,
+                tx_count,
+                mode = ?selected_mode,
+                "prepare_block_proof_bundle: starting aggregation stage"
+            );
+            let stage_started = Instant::now();
+            let mut cache_hit = false;
+            let stage_result = if let Some(cached) =
+                lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
+            {
+                cache_hit = true;
+                Ok(cached)
+            } else {
+                let built = match selected_mode {
+                    PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
+                        aggregation_proofs,
+                        aggregation_witnesses,
+                        batch_slot_txs,
+                    )
+                    .map(PreparedAggregationArtifacts::Flat),
+                    PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
+                        aggregation_proofs,
+                        tx_statements_commitment,
+                    )
+                    .map(PreparedAggregationArtifacts::Merge),
+                };
+                if let Ok(ref artifacts) = built {
+                    store_prove_ahead_aggregation_artifacts(
+                        aggregation_cache_key,
+                        artifacts.clone(),
+                    );
+                }
+                built
+            };
+            (stage_result, stage_started.elapsed().as_millis(), cache_hit)
+        });
+
+        (commitment_handle.join(), aggregation_handle.join())
+    });
+
+    let (commitment_result, commitment_stage_ms) = match commitment_join {
+        Ok(result) => result,
+        Err(_) => {
+            return Err("prepare_block_proof_bundle: commitment stage panicked".to_string());
+        }
+    };
+    let (aggregation_result, aggregation_stage_ms, aggregation_cache_hit) = match aggregation_join {
+        Ok(result) => result,
+        Err(_) => {
+            return Err("prepare_block_proof_bundle: aggregation stage panicked".to_string());
+        }
+    };
     match &commitment_result {
         Ok(Some(_)) => tracing::info!(
             block_number,
@@ -2888,39 +2944,6 @@ fn prepare_block_proof_bundle(
             "prepare_block_proof_bundle: commitment stage failed"
         ),
     }
-
-    let mut aggregation_cache_hit = false;
-    tracing::info!(
-        block_number,
-        tx_count,
-        mode = ?selected_mode,
-        "prepare_block_proof_bundle: starting aggregation stage"
-    );
-    let aggregation_stage_started = Instant::now();
-    let aggregation_result = if let Some(cached) =
-        lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
-    {
-        aggregation_cache_hit = true;
-        Ok(cached)
-    } else {
-        let built = match selected_mode {
-            PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
-                proofs_for_batching,
-                witnesses_for_batching,
-                batch_slot_txs,
-            )
-            .map(PreparedAggregationArtifacts::Flat),
-            PreparedProofMode::MergeRoot => {
-                build_merge_root_proof_from_materials(proofs_for_batching, tx_statements_commitment)
-                    .map(PreparedAggregationArtifacts::Merge)
-            }
-        };
-        if let Ok(ref artifacts) = built {
-            store_prove_ahead_aggregation_artifacts(aggregation_cache_key, artifacts.clone());
-        }
-        built
-    };
-    let aggregation_stage_ms = aggregation_stage_started.elapsed().as_millis();
     match &aggregation_result {
         Ok(_) => tracing::info!(
             block_number,
@@ -5327,8 +5350,8 @@ pub fn wire_block_builder_api(
 use crate::substrate::mining_worker::BlockTemplate;
 use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult};
 use sp_consensus::BlockOrigin;
-use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
+use sp_runtime::generic::Digest;
 
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
@@ -7797,7 +7820,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
                         use crate::substrate::network_bridge::{
-                            SyncMessage, SyncRequestEnvelope, SYNC_PROTOCOL,
+                            SYNC_PROTOCOL, SyncMessage, SyncRequestEnvelope,
                         };
 
                         let mut interval =
@@ -7887,7 +7910,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("tx-propagation", Some("txpool"), async move {
                         use crate::substrate::network_bridge::{
-                            TransactionMessage, TRANSACTIONS_PROTOCOL,
+                            TRANSACTIONS_PROTOCOL, TransactionMessage,
                         };
                         use sc_transaction_pool_api::{
                             InPoolTransaction, TransactionPool as ScTransactionPool,
@@ -9526,10 +9549,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
+        use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
         use sc_rpc::state::{ChildStateApiServer, StateApiServer};
         use sc_rpc::system::{System, SystemApiServer};
-        use sc_rpc::SubscriptionTaskExecutor;
         use sc_utils::mpsc::tracing_unbounded;
 
         let mut module = RpcModule::new(());
@@ -10352,10 +10375,13 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String>
-           + Send
-           + Sync
-           + 'static {
+    ) -> impl Fn(
+        &crate::substrate::mining_worker::BlockTemplate,
+        &Blake3Seal,
+    ) -> Result<H256, String>
+    + Send
+    + Sync
+    + 'static {
         let stats = self.stats.clone();
         let best_number = self.best_number.clone();
         let best_hash = self.best_hash.clone();
