@@ -1038,7 +1038,7 @@ Two approaches:
 
 \paragraph{Option A: Prover cluster (4$\times$ 32-core machines).}
 Each machine runs 10 batch-16 proofs sequentially:
-$10 \times 21.5 = 215$~s \gg 60~s. Still too slow.
+$10 \times 21.5 = 215$~s $\gg 60$~s. Still too slow.
 Need $\sim$8 machines: $5 \times 21.5 = 107$~s, still over.
 With 10--15 machines ($\sim$3 batches each): $\sim 65$~s.
 \textbf{Marginally feasible with $\ge$13 prover machines.}
@@ -1121,8 +1121,6 @@ GPU critical path (pipelined) & $\sim 28$~s & $\checkmark$ fits in 60~s \\
 \end{center}
 
 \textbf{CPU-only is infeasible for 100~TPS.} GPU proving is required.
-\end{tabular}
-\end{center}
 
 \subsubsection{Regime 4: World commerce ($>$1000 TPS, $n > 60{,}000$ tx/block)}
 
