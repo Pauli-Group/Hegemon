@@ -3606,6 +3606,7 @@ fn verify_proof_carrying_block(
     da_params: DaParams,
     da_policy: pallet_shielded_pool::types::DaAvailabilityPolicy,
     resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
+    pending_proofs: Option<&PendingProofStore>,
 ) -> Result<Option<CommitmentBlockProof>, String> {
     use consensus::ProofVerifier;
 
@@ -3617,7 +3618,7 @@ fn verify_proof_carrying_block(
         extract_shielded_transfers_for_parallel_verification(
             extrinsics,
             resolved_ciphertexts,
-            None,
+            pending_proofs,
             true,
         )?;
     let missing_proof_bindings = missing_proof_binding_hashes(extrinsics);
@@ -3777,7 +3778,7 @@ fn verify_proof_carrying_block(
             return Err("commitment proof da_chunk_count missing".to_string());
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(extrinsics, None)?;
+        let statement_hashes = statement_hashes_from_extrinsics(extrinsics, pending_proofs)?;
         let tx_statements_commitment =
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
@@ -4820,17 +4821,17 @@ pub fn wire_block_builder_api(
         // keep liveness even when aggregation proving is unavailable/disabled.
         // Strict test harnesses can disable this fallback to force submit_proven_batch
         // validation through import.
-        let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
+        let pending_proofs_for_hydration = { pending_proof_store_for_exec.lock().clone() };
         tracing::debug!(
             block_number,
-            pending_proof_entries = pending_proofs_snapshot.len(),
-            "Captured pending proof snapshot for block assembly"
+            pending_proof_entries = pending_proofs_for_hydration.len(),
+            "Captured pending proof snapshot for hydration"
         );
         let sidecar_ready_extrinsics = if disable_proofless_hydration {
             extrinsics.to_vec()
         } else {
             let (hydrated_extrinsics, hydrated_count) =
-                hydrate_proofless_sidecar_extrinsics(&extrinsics, &pending_proofs_snapshot)?;
+                hydrate_proofless_sidecar_extrinsics(&extrinsics, &pending_proofs_for_hydration)?;
             if hydrated_count > 0 {
                 tracing::info!(
                     block_number,
@@ -4900,6 +4901,7 @@ pub fn wire_block_builder_api(
 
             let missing_preview = missing_proof_binding_hashes(&preview_extrinsics);
             if !missing_preview.is_empty() {
+                let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
                 let pending_matches =
                     pending_proof_match_count(&missing_preview, &pending_proofs_snapshot);
                 tracing::debug!(
@@ -5070,12 +5072,13 @@ pub fn wire_block_builder_api(
         }
         let missing_proof_bindings = missing_proof_binding_hashes(&decoded_applied);
         if !missing_proof_bindings.is_empty() {
+            let pending_proofs_snapshot_final = { pending_proof_store_for_exec.lock().clone() };
             let pending_matches =
-                pending_proof_match_count(&missing_proof_bindings, &pending_proofs_snapshot);
+                pending_proof_match_count(&missing_proof_bindings, &pending_proofs_snapshot_final);
             tracing::debug!(
                 block_number,
                 missing_proof_bindings = missing_proof_bindings.len(),
-                pending_proof_entries = pending_proofs_snapshot.len(),
+                pending_proof_entries = pending_proofs_snapshot_final.len(),
                 pending_proof_matches = pending_matches,
                 "Final applied block coverage against pending proof snapshot"
             );
@@ -5102,8 +5105,11 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let statement_hashes =
-            statement_hashes_from_extrinsics(&decoded_applied, Some(&pending_proofs_snapshot))?;
+        let pending_proofs_snapshot_final = { pending_proof_store_for_exec.lock().clone() };
+        let statement_hashes = statement_hashes_from_extrinsics(
+            &decoded_applied,
+            Some(&pending_proofs_snapshot_final),
+        )?;
         let shielded_tx_count = statement_hashes.len() as u32;
         let requires_proven_batch = !missing_proof_bindings.is_empty();
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
@@ -5453,6 +5459,7 @@ fn wire_pow_block_import(
         if proof_verification_enabled {
             let da_policy = fetch_da_policy(block_import.as_ref(), template.parent_hash);
             let resolved_ciphertexts = da_build.as_ref().map(|build| build.transactions.as_slice());
+            let pending_proofs_snapshot = { pending_proof_store.lock().clone() };
             commitment_block_proof = verify_proof_carrying_block(
                 &parallel_verifier,
                 block_import.as_ref(),
@@ -5462,6 +5469,7 @@ fn wire_pow_block_import(
                 da_params,
                 da_policy,
                 resolved_ciphertexts,
+                Some(&pending_proofs_snapshot),
             )
             .map_err(|err| format!("mined block proof verification failed: {err}"))?;
         }
@@ -8274,6 +8282,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
+                                        None,
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
@@ -8857,6 +8866,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
+                                        None,
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
