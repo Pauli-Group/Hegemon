@@ -1809,33 +1809,196 @@ fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) ->
     out
 }
 
-fn statement_hash_from_transaction(tx: &consensus::types::Transaction) -> [u8; 48] {
-    let mut message = Vec::with_capacity(4 + 32);
-    message.extend_from_slice(b"tx-statement-fallback-v1");
-    message.extend_from_slice(&tx.hash());
+fn statement_hash_from_materialized_call(
+    anchor: &[u8; 48],
+    nullifiers: &[[u8; 48]],
+    commitments: &[[u8; 48]],
+    ciphertext_hashes: &[[u8; 48]],
+    fee: u64,
+    value_balance: i128,
+    version: protocol_versioning::VersionBinding,
+    stablecoin: Option<&pallet_shielded_pool::types::StablecoinPolicyBinding>,
+) -> [u8; 48] {
+    let mut message = Vec::new();
+    message.extend_from_slice(b"tx-statement-v2");
+    message.extend_from_slice(anchor);
+
+    for nf in nullifiers.iter().take(MAX_INPUTS) {
+        message.extend_from_slice(nf);
+    }
+    for _ in nullifiers.len()..MAX_INPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+
+    for cm in commitments.iter().take(MAX_OUTPUTS) {
+        message.extend_from_slice(cm);
+    }
+    for _ in commitments.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+
+    for ct in ciphertext_hashes.iter().take(MAX_OUTPUTS) {
+        message.extend_from_slice(ct);
+    }
+    for _ in ciphertext_hashes.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+
+    message.extend_from_slice(&fee.to_le_bytes());
+    message.extend_from_slice(&value_balance.to_le_bytes());
+    message.extend_from_slice(&version.circuit.to_le_bytes());
+    message.extend_from_slice(&version.crypto.to_le_bytes());
+
+    if let Some(stablecoin) = stablecoin {
+        message.push(1);
+        message.extend_from_slice(&stablecoin.asset_id.to_le_bytes());
+        message.extend_from_slice(&stablecoin.policy_hash);
+        message.extend_from_slice(&stablecoin.oracle_commitment);
+        message.extend_from_slice(&stablecoin.attestation_commitment);
+        message.extend_from_slice(&stablecoin.issuance_delta.to_le_bytes());
+        message.extend_from_slice(&stablecoin.policy_version.to_le_bytes());
+    } else {
+        message.push(0);
+        message.extend_from_slice(&0u64.to_le_bytes());
+        message.extend_from_slice(&[0u8; 48]);
+        message.extend_from_slice(&[0u8; 48]);
+        message.extend_from_slice(&[0u8; 48]);
+        message.extend_from_slice(&0i128.to_le_bytes());
+        message.extend_from_slice(&0u32.to_le_bytes());
+    }
+
     blake3_384(&message)
 }
 
-fn statement_hashes_from_transactions(
-    transactions: &[consensus::types::Transaction],
-) -> Vec<[u8; 48]> {
-    transactions
-        .iter()
-        .map(statement_hash_from_transaction)
-        .collect()
-}
-
-fn statement_hashes_from_extrinsics(
+fn statement_bindings_from_extrinsics(
     extrinsics: &[runtime::UncheckedExtrinsic],
-    pending_proofs: Option<&PendingProofStore>,
-) -> Result<Vec<[u8; 48]>, String> {
-    let (transactions, _, _) = extract_shielded_transfers_for_parallel_verification(
-        extrinsics,
-        None,
-        pending_proofs,
-        true,
-    )?;
-    Ok(statement_hashes_from_transactions(&transactions))
+) -> Result<Vec<consensus::types::TxStatementBinding>, String> {
+    let mut bindings = Vec::new();
+
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+
+        let version = DEFAULT_VERSION_BINDING;
+        let binding = match call {
+            ShieldedPoolCall::shielded_transfer {
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                stablecoin,
+                fee,
+                value_balance,
+                ..
+            } => {
+                let ciphertext_hashes = ciphertexts
+                    .iter()
+                    .map(encrypted_note_bytes)
+                    .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
+                    .collect::<Vec<_>>();
+                consensus::types::TxStatementBinding {
+                    statement_hash: statement_hash_from_materialized_call(
+                        anchor,
+                        nullifiers.as_slice(),
+                        commitments.as_slice(),
+                        &ciphertext_hashes,
+                        *fee,
+                        *value_balance,
+                        version,
+                        stablecoin.as_ref(),
+                    ),
+                    anchor: *anchor,
+                    fee: *fee,
+                    circuit_version: u32::from(version.circuit),
+                }
+            }
+            ShieldedPoolCall::shielded_transfer_unsigned {
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                fee,
+                ..
+            } => {
+                let ciphertext_hashes = ciphertexts
+                    .iter()
+                    .map(encrypted_note_bytes)
+                    .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
+                    .collect::<Vec<_>>();
+                consensus::types::TxStatementBinding {
+                    statement_hash: statement_hash_from_materialized_call(
+                        anchor,
+                        nullifiers.as_slice(),
+                        commitments.as_slice(),
+                        &ciphertext_hashes,
+                        *fee,
+                        0,
+                        version,
+                        None,
+                    ),
+                    anchor: *anchor,
+                    fee: *fee,
+                    circuit_version: u32::from(version.circuit),
+                }
+            }
+            ShieldedPoolCall::shielded_transfer_sidecar {
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                anchor,
+                stablecoin,
+                fee,
+                value_balance,
+                ..
+            } => consensus::types::TxStatementBinding {
+                statement_hash: statement_hash_from_materialized_call(
+                    anchor,
+                    nullifiers.as_slice(),
+                    commitments.as_slice(),
+                    ciphertext_hashes.as_slice(),
+                    *fee,
+                    *value_balance,
+                    version,
+                    stablecoin.as_ref(),
+                ),
+                anchor: *anchor,
+                fee: *fee,
+                circuit_version: u32::from(version.circuit),
+            },
+            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                anchor,
+                fee,
+                ..
+            } => consensus::types::TxStatementBinding {
+                statement_hash: statement_hash_from_materialized_call(
+                    anchor,
+                    nullifiers.as_slice(),
+                    commitments.as_slice(),
+                    ciphertext_hashes.as_slice(),
+                    *fee,
+                    0,
+                    version,
+                    None,
+                ),
+                anchor: *anchor,
+                fee: *fee,
+                circuit_version: u32::from(version.circuit),
+            },
+            ShieldedPoolCall::batch_shielded_transfer { .. } => {
+                return Err(
+                    "batch shielded transfers are not supported in block proof generation".into(),
+                );
+            }
+            _ => continue,
+        };
+        bindings.push(binding);
+    }
+
+    Ok(bindings)
 }
 
 fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
@@ -2129,7 +2292,7 @@ struct CandidateBlockContext {
     extracted_transactions: Vec<consensus::types::Transaction>,
     tx_proofs: Arc<Vec<TransactionProof>>,
     tx_witnesses: Arc<Vec<TransactionWitness>>,
-    statement_hashes: Vec<[u8; 48]>,
+    statement_bindings: Vec<consensus::types::TxStatementBinding>,
     tx_statements_commitment: [u8; 48],
     da_root: DaRoot,
     da_chunk_count: u32,
@@ -2196,14 +2359,18 @@ fn build_candidate_context(
         })?;
         witnesses.push(witness);
     }
-    let statement_hashes = statement_hashes_from_extrinsics(&decoded, Some(pending_proofs))?;
-    if statement_hashes.len() != proofs.len() {
+    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    if statement_bindings.len() != proofs.len() {
         return Err(format!(
-            "tx statement hash count mismatch (expected {}, got {})",
+            "tx statement binding count mismatch (expected {}, got {})",
             proofs.len(),
-            statement_hashes.len()
+            statement_bindings.len()
         ));
     }
+    let statement_hashes = statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
     let tx_statements_commitment =
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
@@ -2213,7 +2380,7 @@ fn build_candidate_context(
         extracted_transactions: transactions,
         tx_proofs: Arc::new(proofs),
         tx_witnesses: Arc::new(witnesses),
-        statement_hashes,
+        statement_bindings,
         tx_statements_commitment,
         da_root,
         da_chunk_count,
@@ -2847,7 +3014,7 @@ fn prepare_block_proof_bundle(
     )?;
     tracing::info!(
         block_number,
-        tx_count = context.statement_hashes.len(),
+        tx_count = context.statement_bindings.len(),
         decoded_extrinsics = context.decoded_extrinsics.len(),
         extracted_transactions = context.extracted_transactions.len(),
         resolved_ciphertext_txs = context.resolved_ciphertexts.len(),
@@ -2858,7 +3025,11 @@ fn prepare_block_proof_bundle(
         "prepare_block_proof_bundle: built shared candidate context"
     );
 
-    let statement_hashes = context.statement_hashes.clone();
+    let statement_hashes = context
+        .statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
     let tx_statements_commitment = context.tx_statements_commitment;
     let tx_count = statement_hashes.len() as u32;
     if tx_count == 0 {
@@ -3679,6 +3850,14 @@ fn verify_proof_carrying_block(
             pending_proofs,
             true,
         )?;
+    let tx_statement_bindings = statement_bindings_from_extrinsics(extrinsics)?;
+    if tx_statement_bindings.len() != transactions.len() {
+        return Err(format!(
+            "tx statement binding count mismatch (expected {}, got {})",
+            transactions.len(),
+            tx_statement_bindings.len()
+        ));
+    }
     let missing_proof_bindings = missing_proof_binding_hashes(extrinsics);
     let proof_policy = fetch_proof_availability_policy(client, parent_hash)?;
     let aggregation_mode_enabled = extrinsics.iter().any(|extrinsic| {
@@ -3836,7 +4015,10 @@ fn verify_proof_carrying_block(
             return Err("commitment proof da_chunk_count missing".to_string());
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(extrinsics, pending_proofs)?;
+        let statement_hashes = tx_statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
         let tx_statements_commitment =
             CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                 .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
@@ -3934,6 +4116,7 @@ fn verify_proof_carrying_block(
                     }
                 }),
             }),
+            tx_statement_bindings: Some(tx_statement_bindings.clone()),
             tx_statements_commitment: Some(tx_statements_commitment),
             transaction_proofs,
             proof_verification_mode: verification_mode,
@@ -3990,6 +4173,7 @@ fn verify_proof_carrying_block(
         transactions,
         coinbase: None,
         proven_batch: None,
+        tx_statement_bindings: Some(tx_statement_bindings),
         tx_statements_commitment: None,
         transaction_proofs,
         proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
@@ -4139,7 +4323,7 @@ fn load_proofless_ready_wait() -> Duration {
 }
 
 fn load_accept_legacy_proofless_blocks() -> bool {
-    std::env::var("HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS")
+    let requested = std::env::var("HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS")
         .ok()
         .map(|value| {
             matches!(
@@ -4147,7 +4331,24 @@ fn load_accept_legacy_proofless_blocks() -> bool {
                 "1" | "true" | "yes" | "on"
             )
         })
-        .unwrap_or(false)
+        .unwrap_or(false);
+    if !requested {
+        return false;
+    }
+
+    #[cfg(feature = "production")]
+    {
+        tracing::error!("Ignoring HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS in production build");
+        false
+    }
+
+    #[cfg(not(feature = "production"))]
+    {
+        tracing::warn!(
+            "HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS enabled (development compatibility mode)"
+        );
+        true
+    }
 }
 
 fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
@@ -4215,7 +4416,6 @@ fn ready_proofless_binding_hashes_for_preview(
     prover_coordinator: &ProverCoordinator,
     parent_hash: H256,
     preview_extrinsics: &[runtime::UncheckedExtrinsic],
-    pending_proofs: &PendingProofStore,
     min_ready_batch_txs: usize,
     lookup_wait: Duration,
 ) -> Result<BTreeSet<[u8; 64]>, String> {
@@ -4227,7 +4427,11 @@ fn ready_proofless_binding_hashes_for_preview(
             return Ok(BTreeSet::new());
         }
 
-        let statement_hashes = statement_hashes_from_extrinsics(&candidate, Some(pending_proofs))?;
+        let statement_bindings = statement_bindings_from_extrinsics(&candidate)?;
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
         if shielded_tx_count == 0 {
             return Ok(BTreeSet::new());
@@ -5011,7 +5215,6 @@ pub fn wire_block_builder_api(
                         prover_coordinator.as_ref(),
                         parent_substrate_hash,
                         &preview_extrinsics,
-                        &pending_proofs_snapshot,
                         min_ready_proven_batch_txs,
                         proofless_ready_wait,
                     )?;
@@ -5190,11 +5393,11 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let pending_proofs_snapshot_final = { pending_proof_store_for_exec.lock().clone() };
-        let statement_hashes = statement_hashes_from_extrinsics(
-            &decoded_applied,
-            Some(&pending_proofs_snapshot_final),
-        )?;
+        let statement_bindings = statement_bindings_from_extrinsics(&decoded_applied)?;
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
         let requires_proven_batch = !missing_proof_bindings.is_empty();
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;

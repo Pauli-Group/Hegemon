@@ -555,31 +555,26 @@ impl ProofVerifier for StarkVerifier {
 
         use sp_core::hashing::blake2_256;
 
-        // Debug output
-        log::info!(target: "shielded-pool", "verify_binding_hash: anchor = {:02x?}", &inputs.anchor[..8]);
-        log::info!(target: "shielded-pool", "verify_binding_hash: nullifiers.len = {}", inputs.nullifiers.len());
-        for (i, nf) in inputs.nullifiers.iter().enumerate() {
-            log::info!(target: "shielded-pool", "verify_binding_hash: nullifiers[{}] = {:02x?}", i, &nf[..8]);
-        }
-        log::info!(target: "shielded-pool", "verify_binding_hash: commitments.len = {}", inputs.commitments.len());
-        for (i, cm) in inputs.commitments.iter().enumerate() {
-            log::info!(target: "shielded-pool", "verify_binding_hash: commitments[{}] = {:02x?}", i, &cm[..8]);
-        }
-        log::info!(target: "shielded-pool", "verify_binding_hash: value_balance = {}", inputs.value_balance);
+        log::trace!(
+            target: "shielded-pool",
+            "verify_binding_hash: evaluating binding hash (nullifiers={}, commitments={}, ciphertext_hashes={})",
+            inputs.nullifiers.len(),
+            inputs.commitments.len(),
+            inputs.ciphertext_hashes.len()
+        );
 
         let message = Self::binding_hash_message(inputs);
-
-        log::info!(target: "shielded-pool", "verify_binding_hash: message.len = {}", message.len());
 
         // Compute expected commitment
         let expected = Self::binding_hash_from_message(&message, blake2_256);
 
-        log::info!(target: "shielded-pool", "verify_binding_hash: computed_hash = {:02x?}", &expected[..8]);
-        log::info!(target: "shielded-pool", "verify_binding_hash: binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
-
         // Full 64-byte binding hash must match
         let result = binding_hash.data == expected;
-        log::info!(target: "shielded-pool", "verify_binding_hash: result = {}", result);
+        log::trace!(
+            target: "shielded-pool",
+            "verify_binding_hash: completed (result={})",
+            result
+        );
         result
     }
 }

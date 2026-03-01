@@ -96,6 +96,7 @@ use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 
 /// Default difficulty bits when runtime API query fails
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
+const MAX_RPC_MERKLE_WITNESS_NOTES: u64 = 65_536;
 
 /// Production implementation of all RPC service traits.
 ///
@@ -820,6 +821,15 @@ where
     ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
+        let note_count = api
+            .encrypted_note_count(best_hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?;
+        if note_count > MAX_RPC_MERKLE_WITNESS_NOTES {
+            return Err(format!(
+                "merkle witness RPC disabled above {} notes; use indexed witness service",
+                MAX_RPC_MERKLE_WITNESS_NOTES
+            ));
+        }
 
         api.get_merkle_witness(best_hash, position)
             .map_err(|e| format!("Runtime API error: {:?}", e))?

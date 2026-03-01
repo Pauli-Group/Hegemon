@@ -7,6 +7,7 @@ use common::{
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::types::{
     ConsensusBlock, ProofVerificationMode, ProvenBatch, ProvenBatchMode, Transaction,
+    TxStatementBinding,
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
@@ -53,6 +54,16 @@ fn build_block_with_commitment_proof(
         .iter()
         .map(fallback_statement_hash)
         .collect::<Vec<_>>();
+    let statement_bindings = statement_hashes
+        .iter()
+        .copied()
+        .map(|statement_hash| TxStatementBinding {
+            statement_hash,
+            anchor: base_tree.root(),
+            fee: 0,
+            circuit_version: 1,
+        })
+        .collect::<Vec<_>>();
 
     let commitment_proof = CommitmentBlockProver::new()
         .prove_from_statement_hashes_with_inputs(
@@ -80,6 +91,7 @@ fn build_block_with_commitment_proof(
         flat_batches: Vec::new(),
         merge_root: None,
     });
+    block.tx_statement_bindings = Some(statement_bindings);
     block.tx_statements_commitment = Some(tx_statements_commitment);
     block.proof_verification_mode = mode;
 

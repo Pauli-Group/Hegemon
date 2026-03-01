@@ -263,6 +263,8 @@ use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
 use std::marker::PhantomData;
 
+const MAX_RPC_MERKLE_WITNESS_NOTES: u64 = 65_536;
+
 /// Production implementation using Substrate client and runtime API.
 ///
 /// This service queries the runtime's `ShieldedPoolApi` for all read operations
@@ -356,6 +358,15 @@ where
     ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
+        let note_count = api
+            .encrypted_note_count(hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?;
+        if note_count > MAX_RPC_MERKLE_WITNESS_NOTES {
+            return Err(format!(
+                "merkle witness RPC disabled above {} notes; use indexed witness service",
+                MAX_RPC_MERKLE_WITNESS_NOTES
+            ));
+        }
 
         api.get_merkle_witness(hash, position)
             .map_err(|e| format!("Runtime API error: {:?}", e))?
