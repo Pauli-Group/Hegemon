@@ -826,6 +826,10 @@ impl PendingProofStore {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn get_many(&self, binding_hashes: &[[u8; 64]]) -> Result<Vec<Vec<u8>>, String> {
         let mut out = Vec::with_capacity(binding_hashes.len());
         for binding_hash in binding_hashes {
