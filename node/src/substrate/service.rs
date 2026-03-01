@@ -158,7 +158,7 @@ use network::{
 use p3_field::PrimeField64;
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
-use sc_client_api::BlockchainEvents;
+use sc_client_api::{BlockBackend, BlockchainEvents};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
@@ -4228,6 +4228,50 @@ fn shielded_transfer_key_from_extrinsic(
     }
 }
 
+fn parent_shielded_transfer_keys(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+) -> Result<std::collections::HashSet<[u8; 32]>, String> {
+    let parent_body = client
+        .block_body(parent_hash)
+        .map_err(|err| format!("failed to load parent block body: {err}"))?;
+
+    let mut keys = std::collections::HashSet::new();
+    if let Some(extrinsics) = parent_body {
+        for extrinsic in extrinsics {
+            if let Some(key) = shielded_transfer_key_from_extrinsic(&extrinsic) {
+                keys.insert(key);
+            }
+        }
+    }
+    Ok(keys)
+}
+
+fn filter_parent_included_shielded_transfers(
+    extrinsics: &[Vec<u8>],
+    parent_keys: &std::collections::HashSet<[u8; 32]>,
+) -> Result<(Vec<Vec<u8>>, usize), String> {
+    if parent_keys.is_empty() {
+        return Ok((extrinsics.to_vec(), 0));
+    }
+
+    let mut filtered = Vec::with_capacity(extrinsics.len());
+    let mut dropped = 0usize;
+    for ext_bytes in extrinsics {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+        let is_parent_duplicate = shielded_transfer_key_from_extrinsic(&extrinsic)
+            .map(|key| parent_keys.contains(&key))
+            .unwrap_or(false);
+        if is_parent_duplicate {
+            dropped = dropped.saturating_add(1);
+        } else {
+            filtered.push(ext_bytes.clone());
+        }
+    }
+    Ok((filtered, dropped))
+}
+
 fn ensure_shielded_transfer_ordering(
     extrinsics: &[runtime::UncheckedExtrinsic],
 ) -> Result<(), String> {
@@ -4808,6 +4852,20 @@ pub fn wire_block_builder_api(
                 dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
                 dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
                 "Filtered conflicting shielded transfers before block assembly"
+            );
+        }
+        let parent_keys = parent_shielded_transfer_keys(
+            client_for_exec.as_ref(),
+            parent_substrate_hash,
+        )?;
+        let (ordered_extrinsics, dropped_parent_duplicates) =
+            filter_parent_included_shielded_transfers(&ordered_extrinsics, &parent_keys)?;
+        if dropped_parent_duplicates > 0 {
+            tracing::info!(
+                block_number,
+                dropped_parent_duplicates,
+                parent_shielded_transfer_count = parent_keys.len(),
+                "Dropped shielded transfers already included in parent block"
             );
         }
         let proof_policy =
@@ -10041,6 +10099,29 @@ mod tests {
         assert_eq!(stats.total, 2);
         assert_eq!(stats.kept, 2);
         assert_eq!(stats.dropped_total(), 0);
+    }
+
+    #[test]
+    fn filter_parent_included_shielded_transfers_drops_duplicates() {
+        let first = test_sidecar_transfer_extrinsic(7, [7u8; 48]);
+        let second = test_sidecar_transfer_extrinsic(8, [8u8; 48]);
+
+        let first_decoded =
+            runtime::UncheckedExtrinsic::decode(&mut &first[..]).expect("decode first");
+        let first_key =
+            shielded_transfer_key_from_extrinsic(&first_decoded).expect("first shielded key");
+
+        let mut parent_keys = std::collections::HashSet::new();
+        parent_keys.insert(first_key);
+
+        let (filtered, dropped) = filter_parent_included_shielded_transfers(
+            &[first.clone(), second.clone()],
+            &parent_keys,
+        )
+        .expect("filter succeeds");
+
+        assert_eq!(dropped, 1);
+        assert_eq!(filtered, vec![second]);
     }
 
     #[test]
