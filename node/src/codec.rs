@@ -230,6 +230,7 @@ impl StoredBlock {
             transactions,
             coinbase,
             proven_batch: None,
+            tx_statement_bindings: None,
             tx_statements_commitment: None,
             transaction_proofs: None,
             proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,

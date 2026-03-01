@@ -7,13 +7,13 @@ use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofVerificationMode, ProvenBatchMode,
-    StarkCommitment, VersionCommitment, compute_fee_commitment, compute_proof_commitment,
-    compute_version_commitment, da_root,
+    StarkCommitment, TxStatementBinding, VersionCommitment, compute_fee_commitment,
+    compute_proof_commitment, compute_version_commitment, da_root,
 };
 use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use crypto::hashes::blake3_384;
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use rayon::prelude::*;
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -328,19 +328,53 @@ impl ProofVerifier for ParallelProofVerifier {
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
         let commitment_verify_ms = start_commitment.elapsed().as_millis();
 
-        let expected_commitment = if let Some(commitment) = block.tx_statements_commitment {
-            commitment
-        } else {
-            let statement_hashes =
-                if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
-                    let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
-                    statement_hashes_from_transaction_proofs(proofs)?
-                } else {
-                    statement_hashes_from_transactions(&block.transactions)
-                };
-            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-                .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?
-        };
+        let resolved_statement_bindings =
+            if let Some(bindings) = block.tx_statement_bindings.clone() {
+                if bindings.len() != block.transactions.len() {
+                    return Err(ProofError::CommitmentProofInputsMismatch(format!(
+                        "transaction statement binding count mismatch (expected {}, got {})",
+                        block.transactions.len(),
+                        bindings.len()
+                    )));
+                }
+                Some(bindings)
+            } else if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
+                let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
+                Some(statement_bindings_from_transaction_proofs(proofs)?)
+            } else {
+                None
+            };
+
+        if matches!(
+            verification_mode,
+            ProofVerificationMode::SelfContainedAggregation
+        ) && resolved_statement_bindings.is_none()
+        {
+            return Err(ProofError::MissingTransactionStatementBindings);
+        }
+
+        let derived_statement_commitment = resolved_statement_bindings
+            .as_deref()
+            .map(commitment_from_statement_bindings)
+            .transpose()?;
+
+        let expected_commitment =
+            match (block.tx_statements_commitment, derived_statement_commitment) {
+                (Some(expected), Some(derived)) => {
+                    if expected != derived {
+                        return Err(ProofError::CommitmentProofInputsMismatch(
+                            "tx_statements_commitment does not match provided statement bindings"
+                                .to_string(),
+                        ));
+                    }
+                    expected
+                }
+                (Some(expected), None) => expected,
+                (None, Some(derived)) => derived,
+                (None, None) => {
+                    return Err(ProofError::MissingTransactionStatementBindings);
+                }
+            };
         let proof_commitment =
             felts_to_bytes48(&commitment_proof.public_inputs.tx_statements_commitment);
         if expected_commitment != proof_commitment {
@@ -372,11 +406,15 @@ impl ProofVerifier for ParallelProofVerifier {
         let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
             match proven_batch.mode {
                 ProvenBatchMode::FlatBatches => {
+                    let statement_bindings = resolved_statement_bindings
+                        .as_deref()
+                        .ok_or(ProofError::MissingTransactionStatementBindings)?;
                     let start_flat = Instant::now();
                     verify_flat_batch_payload(
                         &self.verifying_key,
                         &proven_batch.flat_batches,
                         &block.transactions,
+                        statement_bindings,
                         &expected_commitment,
                     )?;
                     let verify_ms = start_flat.elapsed().as_millis();
@@ -580,14 +618,25 @@ fn apply_commitments(
     Ok(tree)
 }
 
-fn statement_hashes_from_transaction_proofs(
+fn statement_bindings_from_transaction_proofs(
     proofs: &[transaction_circuit::TransactionProof],
-) -> Result<Vec<[u8; 48]>, ProofError> {
-    let mut hashes = Vec::with_capacity(proofs.len());
+) -> Result<Vec<TxStatementBinding>, ProofError> {
+    let mut bindings = Vec::with_capacity(proofs.len());
     for proof in proofs {
-        hashes.push(statement_hash_from_proof(proof));
+        bindings.push(statement_binding_from_proof(proof));
     }
-    Ok(hashes)
+    Ok(bindings)
+}
+
+fn commitment_from_statement_bindings(
+    bindings: &[TxStatementBinding],
+) -> Result<[u8; 48], ProofError> {
+    let hashes = bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    CommitmentBlockProver::commitment_from_statement_hashes(&hashes)
+        .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))
 }
 
 fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
@@ -620,6 +669,7 @@ fn verify_flat_batch_payload(
     _verifying_key: &transaction_circuit::keys::VerifyingKey,
     flat_batches: &[crate::types::BatchProofItem],
     transactions: &[crate::types::Transaction],
+    statement_bindings: &[TxStatementBinding],
     expected_commitment: &[u8; 48],
 ) -> Result<(), ProofError> {
     if flat_batches.is_empty() {
@@ -627,6 +677,13 @@ fn verify_flat_batch_payload(
     }
     if transactions.is_empty() {
         return Err(ProofError::AggregationProofEmptyBlock);
+    }
+    if statement_bindings.len() != transactions.len() {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "statement binding count mismatch (expected {}, got {})",
+            transactions.len(),
+            statement_bindings.len()
+        )));
     }
 
     let mut ordered: Vec<&crate::types::BatchProofItem> = flat_batches.iter().collect();
@@ -680,6 +737,9 @@ fn verify_flat_batch_payload(
                 batch_public_inputs.batch_size
             )));
         }
+
+        let binding_subset = &statement_bindings[start..end];
+        verify_flat_batch_public_inputs_binding(&batch_public_inputs, binding_subset, start, end)?;
 
         verify_batch_proof_bytes(&payload.batch_proof, &batch_public_inputs).map_err(|err| {
             ProofError::AggregationProofVerification(format!(
@@ -753,7 +813,7 @@ fn verify_flat_batch_payload(
             )));
         }
 
-        all_statement_hashes.extend(statement_hashes_from_transactions(tx_subset));
+        all_statement_hashes.extend(binding_subset.iter().map(|binding| binding.statement_hash));
         expected_start = end;
     }
 
@@ -813,16 +873,58 @@ fn padded_commitments_from_transactions(
     out
 }
 
-fn statement_hashes_from_transactions(transactions: &[crate::types::Transaction]) -> Vec<[u8; 48]> {
-    transactions
+fn verify_flat_batch_public_inputs_binding(
+    batch_public_inputs: &BatchPublicInputs,
+    bindings: &[TxStatementBinding],
+    start: usize,
+    end: usize,
+) -> Result<(), ProofError> {
+    let first = bindings.first().ok_or_else(|| {
+        ProofError::FlatBatchCoverage("empty statement binding subset".to_string())
+    })?;
+    let expected_anchor = first.anchor;
+    if bindings
         .iter()
-        .map(|tx| {
-            let mut data = Vec::with_capacity(4 + 32);
-            data.extend_from_slice(b"tx-statement-fallback-v1");
-            data.extend_from_slice(&tx.hash());
-            blake3_384(&data)
-        })
-        .collect()
+        .any(|binding| binding.anchor != expected_anchor)
+    {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch statement bindings contain mixed anchors in tx range [{start}, {end})"
+        )));
+    }
+
+    let observed_anchor = felts_to_bytes48(&batch_public_inputs.anchor);
+    if observed_anchor != expected_anchor {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch anchor mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    let expected_fee = bindings.iter().fold(0u128, |acc, binding| {
+        acc.saturating_add(u128::from(binding.fee))
+    });
+    let observed_fee = u128::from(batch_public_inputs.total_fee.as_canonical_u64());
+    if observed_fee != expected_fee {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch total fee mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    let expected_circuit_version = first.circuit_version;
+    if bindings
+        .iter()
+        .any(|binding| binding.circuit_version != expected_circuit_version)
+    {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch statement bindings contain mixed circuit versions in tx range [{start}, {end})"
+        )));
+    }
+    if batch_public_inputs.circuit_version != expected_circuit_version {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch circuit version mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    Ok(())
 }
 
 fn statement_hash_from_proof(proof: &transaction_circuit::TransactionProof) -> [u8; 48] {
@@ -852,6 +954,17 @@ fn statement_hash_from_proof(proof: &transaction_circuit::TransactionProof) -> [
     message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
     message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
     blake3_384(&message)
+}
+
+fn statement_binding_from_proof(
+    proof: &transaction_circuit::TransactionProof,
+) -> TxStatementBinding {
+    TxStatementBinding {
+        statement_hash: statement_hash_from_proof(proof),
+        anchor: proof.public_inputs.merkle_root,
+        fee: proof.public_inputs.native_fee,
+        circuit_version: u32::from(proof.public_inputs.circuit_version),
+    }
 }
 
 fn verify_transaction_proof_inputs(
@@ -1014,6 +1127,7 @@ fn verify_and_apply_tree_transition_without_anchors(
 mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
+    use transaction_circuit::hashing_pq::bytes48_to_felts;
 
     fn tx_with_commitments(commitments: Vec<[u8; 48]>) -> crate::types::Transaction {
         crate::types::Transaction::new(
@@ -1089,5 +1203,59 @@ mod tests {
         )
         .expect("valid transition");
         assert_eq!(updated.root(), expected.root());
+    }
+
+    fn binding(anchor: [u8; 48], fee: u64, circuit_version: u32) -> TxStatementBinding {
+        TxStatementBinding {
+            statement_hash: [5u8; 48],
+            anchor,
+            fee,
+            circuit_version,
+        }
+    }
+
+    fn batch_inputs(anchor: [u8; 48], fee: u64, circuit_version: u32) -> BatchPublicInputs {
+        let mut inputs = BatchPublicInputs::default();
+        inputs.batch_size = 1;
+        inputs.anchor = bytes48_to_felts(&anchor).expect("canonical anchor");
+        inputs.total_fee = Felt::from_u64(fee);
+        inputs.circuit_version = circuit_version;
+        inputs
+    }
+
+    #[test]
+    fn flat_batch_binding_rejects_anchor_mismatch() {
+        let inputs = batch_inputs([1u8; 48], 10, 1);
+        let bindings = vec![binding([2u8; 48], 10, 1)];
+        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 1)
+            .expect_err("anchor mismatch should fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn flat_batch_binding_rejects_fee_mismatch() {
+        let inputs = batch_inputs([1u8; 48], 11, 1);
+        let bindings = vec![binding([1u8; 48], 10, 1)];
+        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 1)
+            .expect_err("fee mismatch should fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn flat_batch_binding_rejects_circuit_version_mismatch() {
+        let inputs = batch_inputs([1u8; 48], 10, 2);
+        let bindings = vec![binding([1u8; 48], 10, 1)];
+        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 1)
+            .expect_err("version mismatch should fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn flat_batch_binding_rejects_mixed_anchor_context() {
+        let inputs = batch_inputs([1u8; 48], 20, 1);
+        let bindings = vec![binding([1u8; 48], 10, 1), binding([2u8; 48], 10, 1)];
+        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 2)
+            .expect_err("mixed anchor context should fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
     }
 }

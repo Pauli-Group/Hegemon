@@ -2691,9 +2691,13 @@ pub mod pallet {
         /// off-chain or using a different data structure.
         pub fn get_merkle_witness(index: u64) -> Option<merkle::MerkleWitness> {
             use merkle::IncrementalMerkleTree;
+            const MAX_RPC_WITNESS_REBUILD_NOTES: u64 = 65_536;
 
             let tree = MerkleTree::<T>::get();
             if index >= tree.len() {
+                return None;
+            }
+            if tree.len() > MAX_RPC_WITNESS_REBUILD_NOTES {
                 return None;
             }
 
@@ -2777,7 +2781,7 @@ pub mod pallet {
         type Call = Call<T>;
 
         fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
-            log::info!(target: "shielded-pool", "ValidateUnsigned::validate_unsigned called");
+            log::trace!(target: "shielded-pool", "ValidateUnsigned::validate_unsigned called");
             match call {
                 Call::shielded_transfer_unsigned {
                     proof,
@@ -2789,14 +2793,15 @@ pub mod pallet {
                     stablecoin,
                     fee,
                 } => {
-                    log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned");
-                    log::info!(target: "shielded-pool", "  proof.len = {}", proof.data.len());
-                    log::info!(target: "shielded-pool", "  nullifiers.len = {}", nullifiers.len());
-                    log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
-                    log::info!(target: "shielded-pool", "  ciphertexts.len = {}", ciphertexts.len());
-                    log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
-                    log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
-                    log::info!(target: "shielded-pool", "  fee = {}", fee);
+                    log::debug!(
+                        target: "shielded-pool",
+                        "Validating shielded_transfer_unsigned (proof_len={}, nullifiers={}, commitments={}, ciphertexts={}, fee={})",
+                        proof.data.len(),
+                        nullifiers.len(),
+                        commitments.len(),
+                        ciphertexts.len(),
+                        fee
+                    );
 
                     if stablecoin.is_some() {
                         log::info!(
@@ -2895,26 +2900,26 @@ pub mod pallet {
                     };
 
                     // Verify the STARK proof (this is the main validation)
-                    log::info!(target: "shielded-pool", "  Verifying STARK proof...");
+                    log::debug!(target: "shielded-pool", "  Verifying STARK proof...");
                     let verifier = T::ProofVerifier::default();
                     match verifier.verify_stark(proof, &inputs, &vk) {
                         VerificationResult::Valid => {
-                            log::info!(target: "shielded-pool", "  STARK proof PASSED");
+                            log::debug!(target: "shielded-pool", "  STARK proof PASSED");
                         }
                         other => {
-                            log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
+                            log::debug!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
                             return InvalidTransaction::BadProof.into();
                         }
                     }
 
                     // Verify binding hash
-                    log::info!(target: "shielded-pool", "  Verifying binding hash...");
+                    log::debug!(target: "shielded-pool", "  Verifying binding hash...");
                     if !verifier.verify_binding_hash(binding_hash, &inputs) {
-                        log::info!(target: "shielded-pool", "  binding hash FAILED");
+                        log::debug!(target: "shielded-pool", "  binding hash FAILED");
                         return InvalidTransaction::BadSigner.into();
                     }
-                    log::info!(target: "shielded-pool", "  binding hash PASSED");
-                    log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
+                    log::debug!(target: "shielded-pool", "  binding hash PASSED");
+                    log::debug!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
                     // Create tags based on the nullifiers.
                     //
@@ -2953,15 +2958,16 @@ pub mod pallet {
                     stablecoin,
                     fee,
                 } => {
-                    log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned_sidecar");
-                    log::info!(target: "shielded-pool", "  proof.len = {}", proof.data.len());
-                    log::info!(target: "shielded-pool", "  nullifiers.len = {}", nullifiers.len());
-                    log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
-                    log::info!(target: "shielded-pool", "  ciphertext_hashes.len = {}", ciphertext_hashes.len());
-                    log::info!(target: "shielded-pool", "  ciphertext_sizes.len = {}", ciphertext_sizes.len());
-                    log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
-                    log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
-                    log::info!(target: "shielded-pool", "  fee = {}", fee);
+                    log::debug!(
+                        target: "shielded-pool",
+                        "Validating shielded_transfer_unsigned_sidecar (proof_len={}, nullifiers={}, commitments={}, ciphertext_hashes={}, ciphertext_sizes={}, fee={})",
+                        proof.data.len(),
+                        nullifiers.len(),
+                        commitments.len(),
+                        ciphertext_hashes.len(),
+                        ciphertext_sizes.len(),
+                        fee
+                    );
 
                     if stablecoin.is_some() {
                         log::info!(
@@ -3086,25 +3092,25 @@ pub mod pallet {
                     // the candidate block, so mempool admission must not force inline proof
                     // verification when proof bytes are intentionally omitted.
                     if !aggregation_mode && !proof.data.is_empty() {
-                        log::info!(target: "shielded-pool", "  Verifying STARK proof...");
+                        log::debug!(target: "shielded-pool", "  Verifying STARK proof...");
                         match verifier.verify_stark(proof, &inputs, &vk) {
                             VerificationResult::Valid => {
-                                log::info!(target: "shielded-pool", "  STARK proof PASSED");
+                                log::debug!(target: "shielded-pool", "  STARK proof PASSED");
                             }
                             other => {
-                                log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
+                                log::debug!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
                                 return InvalidTransaction::BadProof.into();
                             }
                         }
                     }
 
-                    log::info!(target: "shielded-pool", "  Verifying binding hash...");
+                    log::debug!(target: "shielded-pool", "  Verifying binding hash...");
                     if !verifier.verify_binding_hash(binding_hash, &inputs) {
-                        log::info!(target: "shielded-pool", "  binding hash FAILED");
+                        log::debug!(target: "shielded-pool", "  binding hash FAILED");
                         return InvalidTransaction::BadSigner.into();
                     }
-                    log::info!(target: "shielded-pool", "  binding hash PASSED");
-                    log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
+                    log::debug!(target: "shielded-pool", "  binding hash PASSED");
+                    log::debug!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
                     let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
                         .priority(100)

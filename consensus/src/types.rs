@@ -255,11 +255,22 @@ pub struct ProvenBatch {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxStatementBinding {
+    pub statement_hash: [u8; 48],
+    pub anchor: [u8; 48],
+    pub fee: u64,
+    pub circuit_version: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block<BH> {
     pub header: BH,
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
     pub proven_batch: Option<ProvenBatch>,
+    /// Canonical per-transaction statement bindings in transaction order.
+    /// Each binding carries the transaction statement hash and the flat-batch public context.
+    pub tx_statement_bindings: Option<Vec<TxStatementBinding>>,
     /// Optional commitment to transaction statement hashes, derived by the caller in canonical
     /// transaction order (for example from binding-hash statements on Substrate imports).
     pub tx_statements_commitment: Option<[u8; 48]>,
@@ -274,6 +285,7 @@ impl<BH> Block<BH> {
             transactions: self.transactions,
             coinbase: self.coinbase,
             proven_batch: self.proven_batch,
+            tx_statement_bindings: self.tx_statement_bindings,
             tx_statements_commitment: self.tx_statements_commitment,
             transaction_proofs: self.transaction_proofs,
             proof_verification_mode: self.proof_verification_mode,
