@@ -365,7 +365,6 @@ const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY: usize = 128;
 const DEFAULT_PENDING_CIPHERTEXTS_CAPACITY: usize = 4096;
 const DEFAULT_PENDING_PROOFS_CAPACITY: usize = 256;
-const DEFAULT_PENDING_WITNESSES_CAPACITY: usize = 256;
 const CIPHERTEXT_COUNT_KEY: &[u8] = b"ciphertext_count";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -852,56 +851,6 @@ impl PendingProofStore {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PendingWitnessStore {
-    capacity: usize,
-    order: VecDeque<[u8; 64]>,
-    entries: HashMap<[u8; 64], Vec<u8>>,
-}
-
-impl PendingWitnessStore {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            order: VecDeque::new(),
-            entries: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, binding_hash: [u8; 64], bytes: Vec<u8>) {
-        if self.capacity == 0 {
-            return;
-        }
-
-        if let Some(existing) = self.entries.get_mut(&binding_hash) {
-            *existing = bytes;
-            self.order.retain(|entry| entry != &binding_hash);
-            self.order.push_back(binding_hash);
-            return;
-        }
-
-        if self.entries.len() >= self.capacity {
-            if let Some(evicted) = self.order.pop_front() {
-                self.entries.remove(&evicted);
-            }
-        }
-
-        self.entries.insert(binding_hash, bytes);
-        self.order.push_back(binding_hash);
-    }
-
-    pub fn get(&self, binding_hash: &[u8; 64]) -> Option<&Vec<u8>> {
-        self.entries.get(binding_hash)
-    }
-
-    pub fn remove_many(&mut self, binding_hashes: &[[u8; 64]]) {
-        for binding_hash in binding_hashes {
-            self.entries.remove(binding_hash);
-            self.order.retain(|entry| entry != binding_hash);
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 struct DaRequestTracker {
     pending: HashMap<(DaRoot, u32), oneshot::Sender<Option<DaChunkProof>>>,
@@ -1083,19 +1032,6 @@ fn load_pending_proof_capacity() -> usize {
             DEFAULT_PENDING_PROOFS_CAPACITY
         );
         return DEFAULT_PENDING_PROOFS_CAPACITY;
-    }
-    capacity
-}
-
-fn load_pending_witness_capacity() -> usize {
-    let capacity = env_usize("HEGEMON_PENDING_WITNESSES_CAPACITY")
-        .unwrap_or(DEFAULT_PENDING_WITNESSES_CAPACITY);
-    if capacity == 0 {
-        tracing::warn!(
-            "HEGEMON_PENDING_WITNESSES_CAPACITY is zero; falling back to {}",
-            DEFAULT_PENDING_WITNESSES_CAPACITY
-        );
-        return DEFAULT_PENDING_WITNESSES_CAPACITY;
     }
     capacity
 }
@@ -2291,7 +2227,6 @@ struct CandidateBlockContext {
     decoded_extrinsics: Vec<runtime::UncheckedExtrinsic>,
     extracted_transactions: Vec<consensus::types::Transaction>,
     tx_proofs: Arc<Vec<TransactionProof>>,
-    tx_witnesses: Arc<Vec<TransactionWitness>>,
     statement_bindings: Vec<consensus::types::TxStatementBinding>,
     tx_statements_commitment: [u8; 48],
     da_root: DaRoot,
@@ -2305,7 +2240,6 @@ fn build_candidate_context(
     da_params: DaParams,
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
-    pending_witnesses: &PendingWitnessStore,
 ) -> Result<CandidateBlockContext, String> {
     let mut decoded = Vec::with_capacity(candidate_txs.len());
     for ext_bytes in candidate_txs {
@@ -2337,28 +2271,6 @@ fn build_candidate_context(
             proof_binding_hashes.len()
         ));
     }
-    let mut witnesses = Vec::with_capacity(proof_binding_hashes.len());
-    for binding_hash in &proof_binding_hashes {
-        let witness_bytes = pending_witnesses.get(binding_hash).ok_or_else(|| {
-            format!(
-                "missing pending witness bytes for binding hash {}",
-                hex::encode(binding_hash)
-            )
-        })?;
-        let witness: TransactionWitness = serde_json::from_slice(witness_bytes).map_err(|err| {
-            format!(
-                "failed to decode pending witness bytes for binding hash {}: {err}",
-                hex::encode(binding_hash)
-            )
-        })?;
-        witness.validate().map_err(|err| {
-            format!(
-                "pending witness validation failed for binding hash {}: {err}",
-                hex::encode(binding_hash)
-            )
-        })?;
-        witnesses.push(witness);
-    }
     let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
     if statement_bindings.len() != proofs.len() {
         return Err(format!(
@@ -2379,7 +2291,6 @@ fn build_candidate_context(
         decoded_extrinsics: decoded,
         extracted_transactions: transactions,
         tx_proofs: Arc::new(proofs),
-        tx_witnesses: Arc::new(witnesses),
         statement_bindings,
         tx_statements_commitment,
         da_root,
@@ -2509,13 +2420,13 @@ enum PreparedProofMode {
 
 fn prepared_proof_mode_from_env() -> PreparedProofMode {
     let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
-    if raw.eq_ignore_ascii_case("merge")
-        || raw.eq_ignore_ascii_case("merge_root")
-        || raw.eq_ignore_ascii_case("mergeroot")
+    if raw.eq_ignore_ascii_case("flat")
+        || raw.eq_ignore_ascii_case("flat_batches")
+        || raw.eq_ignore_ascii_case("flatbatches")
     {
-        PreparedProofMode::MergeRoot
-    } else {
         PreparedProofMode::FlatBatches
+    } else {
+        PreparedProofMode::MergeRoot
     }
 }
 
@@ -2527,6 +2438,7 @@ fn merge_root_arity_from_env() -> u16 {
         .max(2)
 }
 
+#[allow(dead_code)]
 fn build_flat_batch_proofs_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
     witnesses: Arc<Vec<TransactionWitness>>,
@@ -2771,6 +2683,7 @@ fn build_merge_root_proof_from_materials(
 
 #[derive(Clone, Debug)]
 enum PreparedAggregationArtifacts {
+    #[allow(dead_code)]
     Flat(Vec<pallet_shielded_pool::types::BatchProofItem>),
     Merge(pallet_shielded_pool::types::MergeRootProofPayload),
 }
@@ -2994,7 +2907,6 @@ fn prepare_block_proof_bundle(
     da_params: DaParams,
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
-    pending_witnesses: &PendingWitnessStore,
     commitment_block_fast: bool,
 ) -> Result<PreparedBundle, String> {
     let started = Instant::now();
@@ -3010,7 +2922,6 @@ fn prepare_block_proof_bundle(
         da_params,
         pending_ciphertexts,
         pending_proofs,
-        pending_witnesses,
     )?;
     tracing::info!(
         block_number,
@@ -3038,7 +2949,6 @@ fn prepare_block_proof_bundle(
 
     let proofs_for_commitment = Arc::clone(&context.tx_proofs);
     let proofs_for_batching = Arc::clone(&context.tx_proofs);
-    let witnesses_for_batching = Arc::clone(&context.tx_witnesses);
     let batch_slot_txs = batch_slot_txs();
     let selected_mode = prepared_proof_mode_from_env();
     let merge_arity = merge_root_arity_from_env();
@@ -3074,7 +2984,6 @@ fn prepare_block_proof_bundle(
         });
 
         let aggregation_proofs = Arc::clone(&proofs_for_batching);
-        let aggregation_witnesses = Arc::clone(&witnesses_for_batching);
         let aggregation_handle = scope.spawn(move || {
             tracing::info!(
                 block_number,
@@ -3091,12 +3000,10 @@ fn prepare_block_proof_bundle(
                 Ok(cached)
             } else {
                 let built = match selected_mode {
-                    PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
-                        aggregation_proofs,
-                        aggregation_witnesses,
-                        batch_slot_txs,
-                    )
-                    .map(PreparedAggregationArtifacts::Flat),
+                    PreparedProofMode::FlatBatches => Err(
+                        "flat batch proof mode is disabled: witness sidecar uploads are blocked; use merge-root aggregation proofs"
+                            .to_string(),
+                    ),
                     PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
                         aggregation_proofs,
                         tx_statements_commitment,
@@ -5654,7 +5561,6 @@ use sp_runtime::DigestItem;
 /// * `da_chunk_store` - Persistent DA chunk store (with in-memory cache) for serving proofs
 /// * `pending_ciphertext_store` - Pending sidecar ciphertext pool for block assembly
 /// * `pending_proof_store` - Pending sidecar transaction proof pool
-/// * `pending_witness_store` - Pending sidecar transaction witness pool
 /// * `commitment_block_proof_store` - In-memory store for commitment block proofs
 /// * `da_params` - DA parameters for encoding chunk data
 ///
@@ -5690,7 +5596,6 @@ fn wire_pow_block_import(
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     pending_proof_store: Arc<ParkingMutex<PendingProofStore>>,
-    pending_witness_store: Arc<ParkingMutex<PendingWitnessStore>>,
     commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>>,
     da_params: DaParams,
 ) {
@@ -5905,15 +5810,6 @@ fn wire_pow_block_import(
                                 "Pending proof store busy after import; deferring cleanup"
                             );
                         }
-                        if let Some(mut pending_witnesses) = pending_witness_store.try_lock() {
-                            pending_witnesses.remove_many(&binding_hashes);
-                        } else {
-                            tracing::warn!(
-                                block_number = template.number,
-                                pending_bindings = binding_hashes.len(),
-                                "Pending witness store busy after import; deferring cleanup"
-                            );
-                        }
                     }
                 }
                 if let Some(proof) = commitment_block_proof.clone() {
@@ -6018,15 +5914,6 @@ fn wire_pow_block_import(
                                 block_number = template.number,
                                 pending_bindings = binding_hashes.len(),
                                 "Pending proof store busy for known block; deferring cleanup"
-                            );
-                        }
-                        if let Some(mut pending_witnesses) = pending_witness_store.try_lock() {
-                            pending_witnesses.remove_many(&binding_hashes);
-                        } else {
-                            tracing::warn!(
-                                block_number = template.number,
-                                pending_bindings = binding_hashes.len(),
-                                "Pending witness store busy for known block; deferring cleanup"
                             );
                         }
                     }
@@ -7038,7 +6925,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let da_store_path = da_store_path(&config);
     let pending_ciphertext_capacity = load_pending_ciphertext_capacity();
     let pending_proof_capacity = load_pending_proof_capacity();
-    let pending_witness_capacity = load_pending_witness_capacity();
     let commitment_block_proof_store_capacity = load_commitment_proof_store_capacity();
     let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> = Arc::new(ParkingMutex::new(
         DaChunkStore::open(
@@ -7055,9 +6941,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let pending_proof_store: Arc<ParkingMutex<PendingProofStore>> = Arc::new(ParkingMutex::new(
         PendingProofStore::new(pending_proof_capacity),
     ));
-    let pending_witness_store: Arc<ParkingMutex<PendingWitnessStore>> = Arc::new(
-        ParkingMutex::new(PendingWitnessStore::new(pending_witness_capacity)),
-    );
     let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
         Arc::new(ParkingMutex::new(DaRequestTracker::default()));
     let commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>> =
@@ -7071,7 +6954,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         da_store_capacity,
         pending_ciphertext_capacity,
         pending_proof_capacity,
-        pending_witness_capacity,
         ciphertext_da_retention_blocks,
         proof_da_retention_blocks,
         da_store_path = %da_store_path.display(),
@@ -9608,7 +9490,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let client = client.clone();
             let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
             let pending_proofs = Arc::clone(&pending_proof_store);
-            let pending_witnesses = Arc::clone(&pending_witness_store);
             Arc::new(
                 move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
                     let ordered = reorder_shielded_transfers(&candidate_txs)?;
@@ -9628,7 +9509,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     // generating commitment/aggregation proofs (which can take seconds).
                     let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
                     let pending_proofs_snapshot = { pending_proofs.lock().clone() };
-                    let pending_witnesses_snapshot = { pending_witnesses.lock().clone() };
                     prepare_block_proof_bundle(
                         client.as_ref(),
                         parent_hash,
@@ -9637,7 +9517,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         da_params,
                         &pending_ciphertexts_snapshot,
                         &pending_proofs_snapshot,
-                        &pending_witnesses_snapshot,
                         commitment_block_fast,
                     )
                 },
@@ -9709,7 +9588,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             Arc::clone(&da_chunk_store),
             Arc::clone(&pending_ciphertext_store),
             Arc::clone(&pending_proof_store),
-            Arc::clone(&pending_witness_store),
             Arc::clone(&commitment_block_proof_store),
             da_params,
         );
@@ -10102,7 +9980,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         };
 
         // Add Hegemon RPC (mining, consensus, telemetry)
-        let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone(), config_snapshot);
+        let hegemon_rpc = HegemonRpc::new(
+            rpc_service.clone(),
+            pow_handle.clone(),
+            config_snapshot,
+            rpc_deny_unsafe,
+        );
         if let Err(e) = module.merge(hegemon_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Hegemon RPC");
         } else {
@@ -10140,7 +10023,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             Arc::clone(&da_chunk_store),
             Arc::clone(&pending_ciphertext_store),
             Arc::clone(&pending_proof_store),
-            Arc::clone(&pending_witness_store),
             da_params,
         );
         if let Err(e) = module.merge(da_rpc.into_rpc()) {
@@ -10566,9 +10448,13 @@ impl FullBlockImportConfig {
             .map(|v| v != "0" && v.to_lowercase() != "false")
             .unwrap_or(true);
 
-        let verify_pow = std::env::var("HEGEMON_VERIFY_POW")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(true);
+        if let Ok(value) = std::env::var("HEGEMON_VERIFY_POW") {
+            if value == "0" || value.eq_ignore_ascii_case("false") {
+                tracing::warn!(
+                    "HEGEMON_VERIFY_POW is ignored; full import tracker always verifies PoW"
+                );
+            }
+        }
 
         let verbose = std::env::var("HEGEMON_IMPORT_VERBOSE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
@@ -10576,7 +10462,7 @@ impl FullBlockImportConfig {
 
         Self {
             enabled,
-            verify_pow,
+            verify_pow: true,
             verbose,
         }
     }

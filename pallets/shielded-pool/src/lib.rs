@@ -2450,8 +2450,10 @@ pub mod pallet {
         fn expected_coinbase_commitment(coinbase_data: &types::CoinbaseNoteData) -> [u8; 48] {
             let pk_recipient =
                 commitment::pk_recipient_from_address(&coinbase_data.recipient_address);
+            let pk_auth = commitment::pk_auth_from_address(&coinbase_data.recipient_address);
             commitment::circuit_coinbase_commitment(
                 &pk_recipient,
+                &pk_auth,
                 coinbase_data.amount,
                 &coinbase_data.public_seed,
                 0,
@@ -3245,9 +3247,10 @@ mod tests {
         use commitment::circuit_note_commitment;
 
         let pk_recipient = [1u8; 32];
+        let pk_auth = [9u8; 32];
         let rho = [2u8; 32];
         let r = [3u8; 32];
-        let cm = circuit_note_commitment(1000, 0, &pk_recipient, &rho, &r);
+        let cm = circuit_note_commitment(1000, 0, &pk_recipient, &pk_auth, &rho, &r);
 
         assert_eq!(cm.len(), 48);
     }

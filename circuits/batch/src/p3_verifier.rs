@@ -188,10 +188,13 @@ mod tests {
     }
 
     fn single_input_two_output_witness() -> TransactionWitness {
+        let sk_spend = [11u8; 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
         let input_note = NoteData {
             value: 100,
             asset_id: 0,
             pk_recipient: [1u8; 32],
+            pk_auth,
             rho: [2u8; 32],
             r: [3u8; 32],
         };
@@ -199,6 +202,7 @@ mod tests {
             value: 40,
             asset_id: 0,
             pk_recipient: [4u8; 32],
+            pk_auth: [14u8; 32],
             rho: [5u8; 32],
             r: [6u8; 32],
         };
@@ -206,6 +210,7 @@ mod tests {
             value: 60,
             asset_id: 0,
             pk_recipient: [7u8; 32],
+            pk_auth: [17u8; 32],
             rho: [8u8; 32],
             r: [9u8; 32],
         };
@@ -214,6 +219,7 @@ mod tests {
             input_note.value,
             input_note.asset_id,
             &input_note.pk_recipient,
+            &input_note.pk_auth,
             &input_note.rho,
             &input_note.r,
         );
@@ -230,7 +236,7 @@ mod tests {
                 OutputNoteWitness { note: output1 },
             ],
             ciphertext_hashes: vec![[0u8; 48]; 2],
-            sk_spend: [11u8; 32],
+            sk_spend,
             merkle_root,
             fee: 0,
             value_balance: 0,

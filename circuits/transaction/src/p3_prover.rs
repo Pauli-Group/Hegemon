@@ -2,33 +2,37 @@
 
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove};
 
-use crate::TransactionCircuitError;
 use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, MERKLE_DOMAIN_TAG,
     NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
 };
 use crate::hashing_pq::{
-    HashFelt, bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key,
+    bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use crate::p3_config::{FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3, config_with_fri};
+use crate::p3_config::{config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
 use crate::witness::TransactionWitness;
+use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
 use transaction_core::p3_air::{
-    COL_CT0_0, COL_CT0_1, COL_CT0_2, COL_CT0_3, COL_CT0_4, COL_CT0_5, COL_CT1_0, COL_CT1_1,
-    COL_CT1_2, COL_CT1_3, COL_CT1_4, COL_CT1_5, COL_DIR, COL_DOMAIN, COL_FEE, COL_IN_ACTIVE0,
-    COL_IN_ACTIVE1, COL_IN0, COL_IN0_ASSET, COL_IN0_RHO0, COL_IN0_RHO1, COL_IN0_RHO2, COL_IN0_RHO3,
-    COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_RHO0, COL_IN1_RHO1, COL_IN1_RHO2, COL_IN1_RHO3,
-    COL_IN1_VALUE, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_MERKLE_LEFT, COL_MERKLE_RIGHT,
-    COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1,
-    COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5, COL_PRF_DERIVED,
+    build_schedule_trace, commitment_output_row, cycle_is_merkle_left, cycle_is_merkle_right,
+    cycle_is_output, cycle_reset_domain, merkle_root_output_row, note_start_row_input,
+    note_start_row_output, nullifier_output_row, TransactionAirP3, TransactionPublicInputsP3,
+    COL_AUTH_DERIVED0, COL_AUTH_DERIVED1, COL_AUTH_DERIVED2, COL_AUTH_DERIVED3, COL_CT0_0,
+    COL_CT0_1, COL_CT0_2, COL_CT0_3, COL_CT0_4, COL_CT0_5, COL_CT1_0, COL_CT1_1, COL_CT1_2,
+    COL_CT1_3, COL_CT1_4, COL_CT1_5, COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET,
+    COL_IN0_RHO0, COL_IN0_RHO1, COL_IN0_RHO2, COL_IN0_RHO3, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET,
+    COL_IN1_RHO0, COL_IN1_RHO1, COL_IN1_RHO2, COL_IN1_RHO3, COL_IN1_VALUE, COL_IN2, COL_IN3,
+    COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0,
+    COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3,
+    COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED,
     COL_RANGE_FEE_BITS_START, COL_RANGE_ISSUANCE_BITS_START, COL_RANGE_NOTE_BITS_START,
-    COL_RANGE_VB_BITS_START, COL_RESET, COL_S0, COL_S1, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6,
-    COL_S7, COL_S8, COL_S9, COL_S10, COL_S11, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0,
+    COL_RANGE_VB_BITS_START, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4,
+    COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0,
     COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1,
     COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1,
     COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1,
@@ -45,10 +49,7 @@ use transaction_core::p3_air::{
     COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3,
     COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH,
     DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES,
-    PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH, TransactionAirP3,
-    TransactionPublicInputsP3, VALUE_RANGE_BITS, build_schedule_trace, commitment_output_row,
-    cycle_is_merkle_left, cycle_is_merkle_right, cycle_is_output, cycle_reset_domain,
-    merkle_root_output_row, note_start_row_input, note_start_row_output, nullifier_output_row,
+    PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH, VALUE_RANGE_BITS,
 };
 use transaction_core::poseidon2::poseidon2_step;
 
@@ -108,6 +109,7 @@ impl TransactionProverP3 {
         let stablecoin_inputs = stablecoin_binding_inputs(witness, &slot_assets)?;
         let sk_words = bytes32_to_vals(&witness.sk_spend);
         let derived_prf = prf_key(&witness.sk_spend);
+        let derived_auth = spend_auth_key(&witness.sk_spend);
         let in0_rho_words = bytes32_to_vals(&input_notes[0].note.rho);
         let in1_rho_words = bytes32_to_vals(&input_notes[1].note.rho);
         let vb_mag_u64 = u64::try_from(witness.value_balance.unsigned_abs()).map_err(|_| {
@@ -207,6 +209,10 @@ impl TransactionProverP3 {
             row_slice[COL_SK2] = sk_words[2];
             row_slice[COL_SK3] = sk_words[3];
             row_slice[COL_PRF_DERIVED] = derived_prf;
+            row_slice[COL_AUTH_DERIVED0] = derived_auth[0];
+            row_slice[COL_AUTH_DERIVED1] = derived_auth[1];
+            row_slice[COL_AUTH_DERIVED2] = derived_auth[2];
+            row_slice[COL_AUTH_DERIVED3] = derived_auth[3];
             row_slice[COL_IN0_RHO0] = in0_rho_words[0];
             row_slice[COL_IN0_RHO1] = in0_rho_words[1];
             row_slice[COL_IN0_RHO2] = in0_rho_words[2];
@@ -612,6 +618,7 @@ impl TransactionProverP3 {
                     note.note.value,
                     note.note.asset_id,
                     &note.note.pk_recipient,
+                    &note.note.pk_auth,
                     &note.note.rho,
                     &note.note.r,
                 )
@@ -839,7 +846,11 @@ fn flag_to_felt(active: bool) -> Val {
 
 fn bool_trace_value(value: Val, is_final: bool) -> Val {
     if value == Val::ONE {
-        if is_final { Val::ONE } else { Val::ZERO }
+        if is_final {
+            Val::ONE
+        } else {
+            Val::ZERO
+        }
     } else if is_final {
         Val::ZERO
     } else {
@@ -881,6 +892,7 @@ fn commitment_inputs(note: &NoteData) -> Vec<Val> {
     inputs.extend(bytes_to_vals(&note.pk_recipient));
     inputs.extend(bytes_to_vals(&note.rho));
     inputs.extend(bytes_to_vals(&note.r));
+    inputs.extend(bytes_to_vals(&note.pk_auth));
     inputs
 }
 
@@ -928,6 +940,7 @@ fn dummy_input() -> InputNoteWitness {
             value: 0,
             asset_id: 0,
             pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
             rho: [0u8; 32],
             r: [0u8; 32],
         },
@@ -943,6 +956,7 @@ fn dummy_output() -> OutputNoteWitness {
             value: 0,
             asset_id: 0,
             pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
             rho: [0u8; 32],
             r: [0u8; 32],
         },
@@ -1086,6 +1100,7 @@ fn build_cycle_specs(
             input.note.value,
             input.note.asset_id,
             &input.note.pk_recipient,
+            &input.note.pk_auth,
             &input.note.rho,
             &input.note.r,
         );
@@ -1170,10 +1185,10 @@ fn build_cycle_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StablecoinPolicyBinding;
-    use crate::hashing_pq::{HashFelt, felts_to_bytes48, merkle_node, note_commitment};
+    use crate::hashing_pq::{felts_to_bytes48, merkle_node, note_commitment, HashFelt};
     use crate::note::{MerklePath, NoteData};
     use crate::p3_verifier::verify_transaction_proof_p3;
+    use crate::StablecoinPolicyBinding;
     use std::panic::catch_unwind;
 
     fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
@@ -1191,10 +1206,13 @@ mod tests {
     }
 
     fn sample_witness() -> TransactionWitness {
+        let sk_spend = [8u8; 32];
+        let pk_auth = crate::hashing_pq::spend_auth_key_bytes(&sk_spend);
         let input_note = NoteData {
             value: 100,
             asset_id: 0,
             pk_recipient: [1u8; 32],
+            pk_auth,
             rho: [2u8; 32],
             r: [3u8; 32],
         };
@@ -1202,6 +1220,7 @@ mod tests {
             value: 80,
             asset_id: 0,
             pk_recipient: [4u8; 32],
+            pk_auth: [14u8; 32],
             rho: [5u8; 32],
             r: [6u8; 32],
         };
@@ -1210,6 +1229,7 @@ mod tests {
             input_note.value,
             input_note.asset_id,
             &input_note.pk_recipient,
+            &input_note.pk_auth,
             &input_note.rho,
             &input_note.r,
         );
@@ -1224,7 +1244,7 @@ mod tests {
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             ciphertext_hashes: vec![[9u8; 48]; 1],
-            sk_spend: [8u8; 32],
+            sk_spend,
             merkle_root,
             fee: 0,
             value_balance: -20,
@@ -1404,6 +1424,27 @@ mod tests {
             assert!(
                 verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
                 "verification should fail for unconstrained PRF tampering"
+            );
+        }
+    }
+
+    #[test]
+    fn ownership_binding_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let mut trace = prover.build_trace(&witness).expect("trace build");
+
+        let row = transaction_core::p3_air::commitment_auth_row(0);
+        let idx = row * trace.width + COL_IN2;
+        trace.values[idx] += Val::ONE;
+
+        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        if let Ok(proof) = result {
+            assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail for spend-key ownership tampering"
             );
         }
     }

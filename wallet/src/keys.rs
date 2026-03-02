@@ -10,11 +10,12 @@ use synthetic_crypto::{
     ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSecretKey, MlKemSharedSecret},
     traits::KemKeyPair,
 };
+use transaction_circuit::hashing_pq::spend_auth_key_bytes;
 
 use crate::{address::ShieldedAddress, error::WalletError};
 
 const KEY_SIZE: usize = 32;
-const ADDRESS_VERSION: u8 = 2;
+const ADDRESS_VERSION: u8 = 3;
 const ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_GAMMA;
 
 /// Root secret key - the master seed for the wallet.
@@ -59,11 +60,12 @@ pub struct DerivedKeys {
 
 impl DerivedKeys {
     pub fn address(&self, index: u32) -> Result<AddressKeyMaterial, WalletError> {
-        AddressKeyMaterial::derive_with_components(
+        AddressKeyMaterial::derive_with_spend(
             index,
             &self.view,
             &self.encryption,
             &self.diversifier,
+            &self.spend,
         )
     }
 }
@@ -76,6 +78,10 @@ pub struct SpendKey(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 impl SpendKey {
     pub fn to_bytes(&self) -> [u8; KEY_SIZE] {
         self.0
+    }
+
+    pub fn auth_key(&self) -> [u8; KEY_SIZE] {
+        spend_auth_key_bytes(&self.0)
     }
 
     pub fn nullifier_key(&self) -> [u8; KEY_SIZE] {
@@ -146,15 +152,27 @@ pub struct AddressKeyMaterial {
     pub diversifier_index: u32,
     diversifier: [u8; KEY_SIZE],
     pub pk_recipient: [u8; KEY_SIZE],
+    pub pk_auth: [u8; KEY_SIZE],
     keypair: MlKemKeyPair,
 }
 
 impl AddressKeyMaterial {
+    pub fn derive_with_spend(
+        index: u32,
+        view: &ViewKey,
+        encryption: &EncryptionSeed,
+        diversifier_key: &DiversifierKey,
+        spend: &SpendKey,
+    ) -> Result<Self, WalletError> {
+        Self::derive_with_components(index, view, encryption, diversifier_key, spend.auth_key())
+    }
+
     pub fn derive_with_components(
         index: u32,
         view: &ViewKey,
         encryption: &EncryptionSeed,
         diversifier_key: &DiversifierKey,
+        pk_auth: [u8; KEY_SIZE],
     ) -> Result<Self, WalletError> {
         let diversifier = diversifier_key.derive(index);
         let pk_recipient = view.pk_recipient(&diversifier);
@@ -165,8 +183,18 @@ impl AddressKeyMaterial {
             diversifier_index: index,
             diversifier,
             pk_recipient,
+            pk_auth,
             keypair,
         })
+    }
+
+    pub fn derive_view_only(
+        index: u32,
+        view: &ViewKey,
+        encryption: &EncryptionSeed,
+        diversifier_key: &DiversifierKey,
+    ) -> Result<Self, WalletError> {
+        Self::derive_with_components(index, view, encryption, diversifier_key, [0u8; KEY_SIZE])
     }
 
     pub fn shielded_address(&self) -> ShieldedAddress {
@@ -175,6 +203,7 @@ impl AddressKeyMaterial {
             crypto_suite: self.crypto_suite,
             diversifier_index: self.diversifier_index,
             pk_recipient: self.pk_recipient,
+            pk_auth: self.pk_auth,
             pk_enc: self.keypair.public_key(),
         }
     }
@@ -267,5 +296,6 @@ mod tests {
         let shield = addr.shielded_address();
         assert_eq!(shield.diversifier_index, 5);
         assert_eq!(shield.pk_recipient, addr.pk_recipient);
+        assert_eq!(shield.pk_auth, addr.pk_auth);
     }
 }

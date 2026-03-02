@@ -349,10 +349,10 @@ From this we derive:
   * `sk_spend` remains in the wallet for authorization/signing and is never embedded in viewing keys.
 * **Nullifier key material**:
 
-  * `vk_nf = H("view_nf" || sk_view)` is used inside the STARK to derive `nk` and nullifiers.
+  * `nk = H_f("nk" || sk_spend)` is derived in-circuit from spend key material.
 * **Viewing keys**:
 
-  * `vk_full`: includes enough to derive both incoming and outgoing note info plus `vk_nf` for spentness tracking.
+  * `vk_full`: includes enough to derive incoming/outgoing note info plus a spend-derived nullifier PRF output for spentness tracking.
   * `vk_incoming`: only the KEM/AEAD decryption info and the ability to scan for your notes, not to reconstruct spends.
 
 Everything is done via hash-based PRFs / KDFs; no ECC.
@@ -373,14 +373,14 @@ You can have multiple diversified addresses derived from the same underlying key
 The repository now contains a `wallet` crate that wires these ideas into code:
 
 * `wallet/src/keys.rs` defines `RootSecret`, `DerivedKeys`, and `AddressKeyMaterial`. A SHA-256-based HKDF (`wallet-hkdf`) produces `sk_spend`, `sk_view`, `sk_enc`, and `sk_derive`, and diversified addresses are computed deterministically from `(sk_view, sk_enc, sk_derive, index)`.
-* `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, crypto suite, diversifier index, ML-KEM public key, and `pk_recipient`. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
+* `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, crypto suite, diversifier index, ML-KEM public key, `pk_recipient`, and spend-auth key `pk_auth`. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
 * `wallet/src/notes.rs` handles ML-KEM encapsulation plus ChaCha20-Poly1305 AEAD wrapping for both the note payload and memo. The shared secret is expanded with a domain-separated label (`wallet-aead`) plus the crypto suite so note payloads and memos use independent nonces/keys and suite-confusion fails authentication.
 * `walletd/` is a sidecar daemon that opens a wallet store and exposes a versioned newline-delimited JSON protocol over stdin/stdout so GUI clients (like `hegemon-app`) can drive sync, send, and disclosure workflows without re-implementing cryptography. The protocol includes capability discovery plus structured error codes, and `walletd` enforces an exclusive lock file alongside the store to prevent concurrent access.
-* `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the view-derived nullifier key (`vk_nf = BLAKE3("view_nf" || sk_view)`) needed for spentness tracking.
+* `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add spend-derived nullifier PRF material needed for spentness tracking without carrying `sk_spend`.
 * `wallet/src/bin/wallet.rs` ships a CLI with the following flow:
   * `wallet generate --count N` prints a JSON export containing the root secret (hex), the first `N` addresses, and serialized viewing keys.
   * `wallet address --root <hex> --index <n>` derives additional diversified addresses on demand.
-  * `wallet tx-craft ...` reads JSON inputs/recipients, creates `TransactionWitness` JSON for the circuit, and emits ML-KEM note ciphertexts for the recipients.
+  * `wallet tx-craft ...` reads JSON inputs/recipients, creates redacted `TransactionWitness` JSON (omits `sk_spend`), and emits ML-KEM note ciphertexts for the recipients.
   * `wallet scan --ivk <path> --ledger <path>` decrypts ledger ciphertexts with an incoming viewing key and returns per-asset balances plus recovered note summaries.
   * `wallet substrate-sync`, `wallet substrate-daemon`, and `wallet substrate-send` are the live Substrate RPC flows; `wallet substrate-send` uses proof-backed `submitShieldedTransfer`.
 
@@ -398,7 +398,7 @@ The Polkadot.js Apps dashboard (https://polkadot.js.org/apps/) connects to the n
 
 ### 4.4 Disclosure on demand (payment proofs)
 
-When a sender must prove a specific shielded payment to an exchange or auditor without revealing a viewing key, the wallet can generate a targeted **payment proof**. A disclosure package includes a STARK proof from `circuits/disclosure` binding `(value, asset_id, pk_recipient, commitment)` to the note-opening secrets `(rho, r)`, plus non-ZK confirmation data (Merkle inclusion path, anchor root) and the chain `genesis_hash`. The wallet stores outgoing note openings in the encrypted `WalletStore`, then `wallet payment-proof create` produces the package on demand. `wallet payment-proof verify` checks the STARK proof, Merkle path, `hegemon_isValidAnchor`, and the disclosed chain identity. Optional `disclosed_memo` fields are treated as user-supplied context and are not bound by the ZK proof.
+When a sender must prove a specific shielded payment to an exchange or auditor without revealing a viewing key, the wallet can generate a targeted **payment proof**. A disclosure package includes a STARK proof from `circuits/disclosure` binding `(value, asset_id, pk_recipient, pk_auth, commitment)` to the note-opening secrets `(rho, r)`, plus non-ZK confirmation data (Merkle inclusion path, anchor root) and the chain `genesis_hash`. The wallet stores outgoing note openings in the encrypted `WalletStore`, then `wallet payment-proof create` produces the package on demand. `wallet payment-proof verify` checks the STARK proof, Merkle path, `hegemon_isValidAnchor`, and the disclosed chain identity. Optional `disclosed_memo` fields are treated as user-supplied context and are not bound by the ZK proof.
 
 ## 5. Privacy & “store now, decrypt later”
 

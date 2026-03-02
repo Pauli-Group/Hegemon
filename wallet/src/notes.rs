@@ -68,11 +68,12 @@ impl NotePlaintext {
         }
     }
 
-    pub fn to_note_data(&self, pk_recipient: [u8; 32]) -> NoteData {
+    pub fn to_note_data(&self, pk_recipient: [u8; 32], pk_auth: [u8; 32]) -> NoteData {
         NoteData {
             value: self.value,
             asset_id: self.asset_id,
             pk_recipient,
+            pk_auth,
             rho: self.rho,
             r: self.r,
         }

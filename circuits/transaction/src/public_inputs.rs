@@ -1,11 +1,11 @@
-use protocol_versioning::{CircuitVersion, CryptoSuiteId, DEFAULT_VERSION_BINDING, VersionBinding};
+use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
 pub use transaction_core::BalanceSlot;
 
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, NATIVE_ASSET_ID},
     error::TransactionCircuitError,
-    hashing_pq::{Commitment, balance_commitment_bytes},
+    hashing_pq::{balance_commitment_bytes, Commitment},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

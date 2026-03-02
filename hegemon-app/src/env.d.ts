@@ -14,7 +14,8 @@ import type {
   WalletSendPlanRequest,
   WalletSendPlanResult,
   WalletStatus,
-  WalletSyncResult
+  WalletSyncResult,
+  WalletUnlockSession
 } from './types';
 
 export type HegemonApi = {
@@ -27,27 +28,32 @@ export type HegemonApi = {
     managedStatus: () => Promise<NodeManagedStatus>;
   };
   wallet: {
-    init: (storePath: string, passphrase: string) => Promise<WalletStatus>;
-    restore: (storePath: string, passphrase: string) => Promise<WalletStatus>;
-    status: (storePath: string, passphrase: string, noSync?: boolean) => Promise<WalletStatus>;
-    sync: (storePath: string, passphrase: string, wsUrl: string, forceRescan?: boolean) => Promise<WalletSyncResult>;
+    init: (storePath: string, passphrase: string) => Promise<WalletUnlockSession>;
+    restore: (storePath: string, passphrase: string) => Promise<WalletUnlockSession>;
+    status: (storePath: string, unlockToken: string, noSync?: boolean) => Promise<WalletStatus>;
+    sync: (
+      storePath: string,
+      unlockToken: string,
+      wsUrl: string,
+      forceRescan?: boolean
+    ) => Promise<WalletSyncResult>;
     send: (request: WalletSendRequest) => Promise<WalletSendResult>;
     sendPlan: (request: WalletSendPlanRequest) => Promise<WalletSendPlanResult>;
     lock: () => Promise<void>;
     disclosureCreate: (
       storePath: string,
-      passphrase: string,
+      unlockToken: string,
       wsUrl: string,
       txId: string,
       output: number
     ) => Promise<WalletDisclosureCreateResult>;
     disclosureVerify: (
       storePath: string,
-      passphrase: string,
+      unlockToken: string,
       wsUrl: string,
       packageJson: object
     ) => Promise<WalletDisclosureVerifyResult>;
-    disclosureList: (storePath: string, passphrase: string) => Promise<WalletDisclosureRecord[]>;
+    disclosureList: (storePath: string, unlockToken: string) => Promise<WalletDisclosureRecord[]>;
   };
   contacts: {
     list: () => Promise<Contact[] | null>;

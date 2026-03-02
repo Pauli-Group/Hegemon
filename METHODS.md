@@ -16,14 +16,15 @@ A **note** is conceptually:
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
 * `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 48-byte outputs with six 64-bit limbs for 384-bit capacity, and application-level types use 48-byte digests end-to-end. `0` = native coin (ZEC-like).
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
+* `pk_auth` – a spend-authorization public key derived from the owner’s spend secret
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
 
 We define the note commitment:
 
 ```text
-cm = Com_note(value, asset_id, pk_recipient, rho, r)
-   = Hc("note" || enc(value) || asset_id || pk_recipient || rho || r)
+cm = Com_note(value, asset_id, pk_recipient, pk_auth, rho, r)
+   = Hc("note" || enc(value) || asset_id || pk_recipient || rho || r || pk_auth)
 ```
 
 * `Hc` is a commitment‑strength hash (could be domain‑separated Poseidon or Blake3; binding+hiding rely on hash + randomness).
@@ -58,11 +59,11 @@ The core statement the STARK proves:
 >
 > * for each input `i` in `[0..M-1]`:
 >
->   * `(value_i, asset_i, pk_i, rho_i, r_i, pos_i)`
->   * `sk_nf` (nullifier secret derived from `sk_view`)
+>   * `(value_i, asset_i, pk_recipient_i, pk_auth_i, rho_i, r_i, pos_i)`
+>   * `sk_spend`
 > * for each output `j` in `[0..N-1]`:
 >
->   * `(value'_j, asset'_j, pk'_j, rho'_j, r'_j)`
+>   * `(value'_j, asset'_j, pk'_j, pk'_auth_j, rho'_j, r'_j)`
 >
 > such that:
 >
@@ -71,8 +72,8 @@ The core statement the STARK proves:
 >    * For all inputs/outputs:
 >
 >      ```text
->      cm_i  = Com_note(value_i,  asset_i,  pk_i,  rho_i,  r_i)
->      cm'_j = Com_note(value'_j, asset'_j, pk'_j, rho'_j, r'_j)
+>      cm_i  = Com_note(value_i,  asset_i,  pk_recipient_i,  pk_auth_i,  rho_i,  r_i)
+>      cm'_j = Com_note(value'_j, asset'_j, pk'_j, pk'_auth_j, rho'_j, r'_j)
 >      ```
 >    * And the published `cm'_j` equal these.
 > 2. **Inputs are in the tree (membership)**
@@ -89,7 +90,7 @@ The core statement the STARK proves:
 >    * Derive a nullifier key:
 >
 >      ```text
->      nk = H("nk" || sk_nf)
+>      nk = H("nk" || sk_spend)
 >      ```
 >    * For each input note:
 >
@@ -308,10 +309,10 @@ We define:
   * `sk_spend` used for wallet authorization and extrinsic signing; it is not embedded in viewing keys.
 * **Nullifier key material**:
 
-  * `sk_nf = H("view_nf" || sk_view)` used inside the STARK to derive nullifiers.
+  * `prf_nf = Hf("nk" || sk_spend)` for nullifier computation in viewing flows.
 * **Viewing key material**:
 
-  * `vk_full = (sk_view, sk_enc, sk_nf, public_params…)`
+  * `vk_full = (sk_view, sk_enc, prf_nf, public_params…)`
 * **Incoming‑only viewing key**:
 
   * `vk_incoming = (sk_view, sk_enc, diversifier params)`
@@ -319,18 +320,17 @@ We define:
 
 ### 4.2 Nullifier key
 
-Inside proofs we don’t want to expose `sk_nf` or `nk`, but we need a deterministic nullifier.
+Inside proofs we don’t want to expose `sk_spend`, but we need a deterministic nullifier.
 
 Define:
 
 ```text
-sk_nf = H("view_nf" || sk_view)
-nk = Hf("nk" || sk_nf)
+nk = Hf("nk" || sk_spend)
 nf = Hf("nf" || nk || rho || pos)
 ```
 
-Only someone knowing `sk_nf` can compute `nf` for a given `(rho, pos)`; the STARK proves consistency while the wallet keeps
-`sk_spend` separate for authorization/signing.
+Only someone knowing `sk_spend` can satisfy the ownership constraints for a note. The wallet can still track spentness using
+`prf_nf`, which is the derived nullifier PRF output rather than the spend secret itself.
 
 ### 4.3 Addresses and encryption keys (ML‑KEM)
 
@@ -359,7 +359,7 @@ To derive per‑address KEM keys *deterministically*:
 Then an **address** is:
 
 ```text
-addr_d = EncAddr(version || d || pk_recipient(d) || pk_enc(d))
+addr_d = EncAddr(version || d || pk_recipient(d) || pk_auth || pk_enc(d))
 ```
 where `pk_recipient(d)` is derived from the viewing key and the diversifier.
 
@@ -414,26 +414,26 @@ Given that ML‑KEM decapsulation is not *that* expensive and users don’t have
   * enough info to recompute nullifiers (`nk` or a view‑equivalent),
   * so it can see which of “its” notes have been spent.
 
-Hegemon chooses the watch‑only path: full viewing keys include `sk_nf = H("view_nf" || sk_view)` so wallets can compute
+Hegemon chooses the watch‑only path: full viewing keys include the spend-derived nullifier PRF output (`prf_nf`) so wallets can compute
 nullifiers for spentness tracking without embedding `sk_spend`.
 
 ### 4.5 Implementation details
 
-*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier. `wallet/src/address.rs` serializes `(version, crypto_suite, index, pk_recipient, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
+*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier while `pk_auth` is derived from the spend key via the Poseidon2 key schedule used by the circuit. `wallet/src/address.rs` serializes `(version, crypto_suite, index, pk_recipient, pk_auth, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
 
 *Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label || crypto_suite, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the version, crypto suite, diversifier index, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption. The AEAD AAD binds `(version, crypto_suite, diversifier_index)` so header tampering fails authentication.
 
-*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive `pk_recipient` for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
+*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive `pk_recipient` for audit), and `FullViewingKey` (incoming + spend-authority metadata). Full viewing keys now store the spend-derived nullifier PRF output (not the spend secret), so wallets can compute chain nullifiers while the transaction witness still proves knowledge of `sk_spend` in-circuit. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
 
 *CLI, daemon, and fixtures.* `wallet/src/bin/wallet.rs` now ships three families of commands:
 
-  * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md.
+  * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md. `tx-craft` emits redacted witness JSON (no serialized `sk_spend`) so exported artifacts are safe to share.
 * Wallet management over Substrate RPC (`wallet init`, `wallet substrate-sync`, `wallet substrate-daemon`, `wallet substrate-send`, `wallet status`, `wallet export-viewing-key`). `wallet init` writes an encrypted store (Argon2 + ChaCha20-Poly1305) containing the root secret or an imported viewing key. `wallet substrate-sync` and `wallet substrate-daemon` use WebSocket RPC to fetch commitments/ciphertexts/nullifiers and maintain a local Merkle tree/nullifier set, while `wallet substrate-send` crafts witnesses, proves them locally, and submits a shielded transfer before tracking pending nullifiers.
   * Ciphertext sync is robust to DA/sidecar quirks: ciphertext indices can have gaps (retention) and may include non-canonical ciphertexts during forks. The wallet maps decrypted notes back to commitment positions via the commitment list and skips any decrypted note whose commitment cannot be found locally.
 * Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
   * Compliance tooling (`payment-proof create`, `payment-proof verify`, `payment-proof purge`) that emits disclosure packages and verifies them against Merkle inclusion plus `hegemon_isValidAnchor` and the chain genesis hash.
 
-JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
+JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation used by the witness builder, with spend secrets intentionally excluded from serialized witness files. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
 
 ---
 
@@ -599,8 +599,8 @@ requires each limb to be strictly less than the field modulus.
 
 #### 2.4 Nullifier
 
-* Nullifier secret: \(sk_{\text{nf}}\) is a 256-bit integer (derived from `sk_view` with a `view_nf` domain tag in the wallet) and never placed on chain.
-* Nullifier key: first map \(sk_{\text{nf}}\) to field elements \(ssk_0, \ldots, ssk_3 \in \mathbb{F}_p\) (four 64-bit chunks), then
+* Nullifier secret: \(sk_{\text{spend}}\) is a 256-bit integer and never placed on chain.
+* Nullifier key: first map \(sk_{\text{spend}}\) to field elements \(ssk_0, \ldots, ssk_3 \in \mathbb{F}_p\) (four 64-bit chunks), then
 
 \[
 nk = H_f(\text{domain}_{nk}, ssk_0, ssk_1, ssk_2, ssk_3).
@@ -648,29 +648,30 @@ To get multiple addresses from one wallet, for diversifier index \(i \in \{0, \l
 ```
 div_i      = SHA256("div" || sk_view || i)   // 256 bits
 pk_recipient_i = H(sk_view || div_i)         // 256 bits
+pk_auth    = Poseidon2("auth" || sk_spend)   // 256 bits (4 field limbs encoded as 32 bytes)
 (pk_enc_i, sk_enc_i) = MLKEM.KeyGen(seed = sk_enc || encode(i))
 ```
 
 The address \(\text{Addr}_i\) is then
 
 ```
-Addr_i = Encode(version || crypto_suite || i || pk_recipient_i || pk_enc_i)
+Addr_i = Encode(version || crypto_suite || i || pk_recipient_i || pk_auth || pk_enc_i)
 ```
 
-Today, `version = 2` and `crypto_suite = CRYPTO_SUITE_GAMMA` (ML-KEM-1024).
+Today, `version = 3` and `crypto_suite = CRYPTO_SUITE_GAMMA` (ML-KEM-1024).
 
 The wallet stores `sk_spend`, `sk_view`, and either `sk_enc` or all `sk_enc_i` derived on demand.
 
 #### 3.3 Viewing keys
 
 * Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `pk_recipient_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
-* Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, vk_nf)` where `vk_nf = BLAKE3("view_nf" || sk_view)`.
+* Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, prf_nf)` where `prf_nf = H_f(domain_nk, sk_spend)` is the circuit-compatible nullifier PRF output (not `sk_spend` itself).
 
-In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)` from the view-derived nullifier secret, and for viewing we derive `vk_nf` with the `view_nf` domain tag so watch-only wallets can detect spent notes without embedding `sk_spend`.
+In-circuit, nullifiers are derived from `sk_spend` and each input note is additionally bound to `pk_auth = Poseidon2("auth" || sk_spend)` via commitment preimage constraints, closing the ownership gap that previously allowed alternate nullifier secrets.
 
 ### 4. Note encryption details
 
-Given recipient \(\text{Addr}_i\) with `(version, crypto_suite, diversifier_index, pk_enc_i, pk_recipient_i)`:
+Given recipient \(\text{Addr}_i\) with `(version, crypto_suite, diversifier_index, pk_enc_i, pk_recipient_i, pk_auth)`:
 
 #### 4.1 Plaintext
 
@@ -769,17 +770,19 @@ For each input `i`:
 * `v_in[i] ∈ [0, 2^61)`
 * `a_in[i]` (asset id) as a single 64-bit field element
 * `pk_recipient_in[i]` as 4 field elements (32 bytes split into 4 x 64-bit limbs)
+* `pk_auth_in[i]` as 4 field elements
 * `rho_in[i]` as 4 field elements
 * `r_in[i]` as 4 field elements
 * Merkle auth path: `sibling_in[i][d]` is a 6-limb node for `d = 0 .. D-1`
 * `pos_in[i]` as a 64-bit field element used by the prover to order left/right siblings
-* The nullifier secret `sk_nf` (view-derived)
+* The spend secret `sk_spend`
 
 For each output `j`:
 
 * `v_out[j] ∈ [0, 2^61)`
 * `a_out[j]` as a single 64-bit field element
 * `pk_recipient_out[j]` as 4 field elements
+* `pk_auth_out[j]` as 4 field elements
 * `rho_out[j]` as 4 field elements
 * `r_out[j]` as 4 field elements
 * `pos_out[j]` (if the transaction is responsible for tree updates; otherwise position is implicit or handled at block level)
@@ -793,15 +796,16 @@ For each input `i`:
    * Compute
 
    \[
-   cm_{\text{in}}[i] = H_f(\text{domain}_{cm}, v_{\text{in}}[i], a_{\text{in}}[i], \text{pk\_recipient}_{\text{in}}[i][0..3], \rho_{\text{in}}[i][0..3], r_{\text{in}}[i][0..3]).
+   cm_{\text{in}}[i] = H_f(\text{domain}_{cm}, v_{\text{in}}[i], a_{\text{in}}[i], \text{pk\_recipient}_{\text{in}}[i][0..3], \rho_{\text{in}}[i][0..3], r_{\text{in}}[i][0..3], \text{pk\_auth}_{\text{in}}[i][0..3]).
    \]
 
    * Compute the root via the Merkle path by iterating the sponge with `domain_merkle` using the left/right ordering derived from `pos_in[i]`.
    * Constrain the resulting root to equal `root_before`. (The position bits are not separately constrained in the current AIR.)
 
-2. **Nullifier**
+2. **Nullifier + ownership binding**
 
-   * Derive the nullifier key once: split `sk_nf` into four field words `ssk_0 .. ssk_3` and compute `nk = H_f(domain_nk, ssk_0, ssk_1, ssk_2, ssk_3)`.
+   * Derive the nullifier key once: split `sk_spend` into four field words `ssk_0 .. ssk_3` and compute `nk = H_f(domain_nk, ssk_0, ssk_1, ssk_2, ssk_3)`.
+   * Derive the authorization key in-circuit from the same secret and constrain it to match `pk_auth_in[i]` absorbed by the note-commitment phase.
    * For each input note, compute
 
    \[
@@ -810,14 +814,15 @@ For each input `i`:
 
    and constrain `nf_calc[i] == nf_in[i]`.
    * The AIR now binds `rho_in[i]` across phases: the four rho limbs absorbed in the commitment cycle are copied into dedicated trace columns and must match the rho limbs absorbed in the nullifier cycle.
-   * The AIR also derives `nk` in-circuit from `sk_nf` (first cycle) and constrains each nullifier absorb row to use that derived key.
+   * The AIR also derives `nk` in-circuit from `sk_spend` (first cycle) and constrains each nullifier absorb row to use that derived key.
+   * The AIR derives `pk_auth` from the same `sk_spend` derivation state and constrains each active input commitment to absorb that exact `pk_auth`.
 
 #### 5.4 Constraints: output commitments
 
 For each output `j`, enforce
 
 \[
-cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[j], \text{pk\_recipient}_{\text{out}}[j][0..3], \rho_{\text{out}}[j][0..3], r_{\text{out}}[j][0..3]) = cm_{\text{out}}[j].
+cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[j], \text{pk\_recipient}_{\text{out}}[j][0..3], \rho_{\text{out}}[j][0..3], r_{\text{out}}[j][0..3], \text{pk\_auth}_{\text{out}}[j][0..3]) = cm_{\text{out}}[j].
 \]
 
 #### 5.5 Value range checks

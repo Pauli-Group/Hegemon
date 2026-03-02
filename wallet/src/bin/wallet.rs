@@ -518,7 +518,7 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
         let ciphertext = map_wallet(NoteCiphertext::encrypt(&address, &note, &mut rng))?;
         ciphertexts.push(ciphertext);
         outputs.push(OutputNoteWitness {
-            note: note.to_note_data(address.pk_recipient),
+            note: note.to_note_data(address.pk_recipient, address.pk_auth),
         });
     }
     let ciphertext_hashes = ciphertexts
@@ -532,7 +532,7 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
         inputs,
         outputs,
         ciphertext_hashes,
-        sk_spend: keys.view.nullifier_key(),
+        sk_spend: keys.spend.to_bytes(),
         merkle_root: parse_merkle_root(params.merkle_root)?,
         fee: params.fee,
         value_balance: 0,
@@ -871,6 +871,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
             record.note.value,
             record.note.asset_id,
             &record.note.pk_recipient,
+            &record.note.pk_auth,
             &record.note.rho,
             &record.note.r,
         );
@@ -882,6 +883,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
             value: record.note.value,
             asset_id: record.note.asset_id,
             pk_recipient: record.note.pk_recipient,
+            pk_auth: record.note.pk_auth,
             commitment: record.commitment,
         };
         let witness = PaymentDisclosureWitness {
@@ -909,6 +911,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
             claim: DisclosureClaim {
                 recipient_address: record.recipient_address.clone(),
                 pk_recipient: record.note.pk_recipient,
+                pk_auth: record.note.pk_auth,
                 value: record.note.value,
                 asset_id: record.note.asset_id,
                 commitment: record.commitment,
@@ -1012,6 +1015,7 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
             value: package.claim.value,
             asset_id: package.claim.asset_id,
             pk_recipient: package.claim.pk_recipient,
+            pk_auth: package.claim.pk_auth,
             commitment: package.claim.commitment,
         },
         proof_bytes,

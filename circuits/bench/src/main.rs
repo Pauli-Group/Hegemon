@@ -14,7 +14,7 @@ use serde::Serialize;
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
-    hashing_pq::{bytes48_to_felts, felts_to_bytes48, HashFelt},
+    hashing_pq::{bytes48_to_felts, felts_to_bytes48, spend_auth_key_bytes, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     p3_config::{DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS},
@@ -359,12 +359,16 @@ fn build_commitment_tree(leaves: &[HashFelt]) -> Result<(Vec<MerklePath>, [u8; 4
 }
 
 fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness {
+    let sk_spend = random_bytes(rng);
+    let input_pk_auth = spend_auth_key_bytes(&sk_spend);
+
     // Create input notes
     let input_notes: Vec<NoteData> = (0..MAX_INPUTS)
         .map(|_| NoteData {
             value: 10_000 + (rng.gen_range(0..1_000)) as u64,
             asset_id: 0,
             pk_recipient: random_bytes(rng),
+            pk_auth: input_pk_auth,
             rho: random_bytes(rng),
             r: random_bytes(rng),
         })
@@ -401,6 +405,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
                 value: first_output_value,
                 asset_id: 0,
                 pk_recipient: random_bytes(rng),
+                pk_auth: random_bytes(rng),
                 rho: random_bytes(rng),
                 r: random_bytes(rng),
             },
@@ -410,6 +415,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
                 value: second_output_value,
                 asset_id: 0,
                 pk_recipient: random_bytes(rng),
+                pk_auth: random_bytes(rng),
                 rho: random_bytes(rng),
                 r: random_bytes(rng),
             },
@@ -421,7 +427,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         inputs: input_witnesses,
         outputs,
         ciphertext_hashes,
-        sk_spend: random_bytes(rng),
+        sk_spend,
         merkle_root,
         fee,
         value_balance: 0,

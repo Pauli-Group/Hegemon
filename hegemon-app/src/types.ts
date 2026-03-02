@@ -174,6 +174,12 @@ export type WalletStatus = {
   genesisHash?: string | null;
 };
 
+export type WalletUnlockSession = {
+  status: WalletStatus;
+  unlockToken: string;
+  expiresAt: number;
+};
+
 export type WalletSyncResult = {
   newHeight: number;
   commitments: number;
@@ -264,7 +270,7 @@ export type NodeMiningRequest = {
 
 export type WalletSendRequest = {
   storePath: string;
-  passphrase: string;
+  unlockToken: string;
   wsUrl: string;
   recipients: Array<{ address: string; value: number; asset_id: number; memo?: string | null }>;
   fee: number;
@@ -273,7 +279,7 @@ export type WalletSendRequest = {
 
 export type WalletSendPlanRequest = {
   storePath: string;
-  passphrase: string;
+  unlockToken: string;
   recipients: Array<{ address: string; value: number; asset_id: number; memo?: string | null }>;
   fee: number;
 };

@@ -312,8 +312,14 @@ mod tests {
         public_seed: [u8; 32],
     ) -> crate::types::CoinbaseNoteData {
         let pk_recipient = crate::commitment::pk_recipient_from_address(&recipient_address);
-        let commitment =
-            crate::commitment::circuit_coinbase_commitment(&pk_recipient, amount, &public_seed, 0);
+        let pk_auth = crate::commitment::pk_auth_from_address(&recipient_address);
+        let commitment = crate::commitment::circuit_coinbase_commitment(
+            &pk_recipient,
+            &pk_auth,
+            amount,
+            &public_seed,
+            0,
+        );
 
         crate::types::CoinbaseNoteData {
             commitment,

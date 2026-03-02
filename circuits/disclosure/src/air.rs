@@ -1,7 +1,7 @@
 //! Plonky3 AIR for disclosure circuit proofs.
 //!
 //! Proves knowledge of rho and r such that the note commitment matches
-//! the public claim (value, asset_id, pk_recipient, commitment).
+//! the public claim (value, asset_id, pk_recipient, pk_auth, commitment).
 
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
 use p3_field::PrimeCharacteristicRing;
@@ -78,7 +78,8 @@ pub const PREP_RC11: usize = PREP_RC10 + 1;
 pub const PREP_RESET: usize = PREP_RC11 + 1;
 pub const PREP_DOMAIN: usize = PREP_RESET + 1;
 pub const PREP_INPUT_ROW: usize = PREP_DOMAIN + 1;
-pub const PREP_COMMITMENT_ROW: usize = PREP_INPUT_ROW + 1;
+pub const PREP_AUTH_ROW: usize = PREP_INPUT_ROW + 1;
+pub const PREP_COMMITMENT_ROW: usize = PREP_AUTH_ROW + 1;
 pub const PREPROCESSED_WIDTH: usize = PREP_COMMITMENT_ROW + 1;
 
 #[derive(Clone, Debug)]
@@ -86,12 +87,13 @@ pub struct DisclosurePublicInputsP3 {
     pub value: Felt,
     pub asset_id: Felt,
     pub pk_recipient: [Felt; 4],
+    pub pk_auth: [Felt; 4],
     pub commitment: [Felt; 6],
 }
 
 impl DisclosurePublicInputsP3 {
     pub fn expected_len() -> usize {
-        12
+        16
     }
 
     pub fn to_vec(&self) -> Vec<Felt> {
@@ -99,6 +101,7 @@ impl DisclosurePublicInputsP3 {
         elements.push(self.value);
         elements.push(self.asset_id);
         elements.extend_from_slice(&self.pk_recipient);
+        elements.extend_from_slice(&self.pk_auth);
         elements.extend_from_slice(&self.commitment);
         elements
     }
@@ -114,18 +117,20 @@ impl DisclosurePublicInputsP3 {
         let value = elements[0];
         let asset_id = elements[1];
         let pk_recipient = [elements[2], elements[3], elements[4], elements[5]];
+        let pk_auth = [elements[6], elements[7], elements[8], elements[9]];
         let commitment = [
-            elements[6],
-            elements[7],
-            elements[8],
-            elements[9],
             elements[10],
             elements[11],
+            elements[12],
+            elements[13],
+            elements[14],
+            elements[15],
         ];
         Ok(Self {
             value,
             asset_id,
             pk_recipient,
+            pk_auth,
             commitment,
         })
     }
@@ -138,6 +143,7 @@ impl DisclosurePublicInputsP3 {
 fn build_preprocessed_trace(trace_len: usize) -> RowMajorMatrix<Felt> {
     let mut values = vec![Felt::ZERO; trace_len * PREPROCESSED_WIDTH];
     let input_row = absorb_row(0);
+    let auth_row = absorb_row(INPUT_CHUNKS - 1);
     let commitment_row = commitment_row();
 
     for row in 0..trace_len {
@@ -197,6 +203,9 @@ fn build_preprocessed_trace(trace_len: usize) -> RowMajorMatrix<Felt> {
             }
             if row == input_row {
                 row_slice[PREP_INPUT_ROW] = Felt::ONE;
+            }
+            if row == auth_row {
+                row_slice[PREP_AUTH_ROW] = Felt::ONE;
             }
             if row == commitment_row {
                 row_slice[PREP_COMMITMENT_ROW] = Felt::ONE;
@@ -262,6 +271,7 @@ where
         let prep_reset: AB::Expr = prep_row[PREP_RESET].clone().into();
         let prep_domain: AB::Expr = prep_row[PREP_DOMAIN].clone().into();
         let prep_input_row: AB::Expr = prep_row[PREP_INPUT_ROW].clone().into();
+        let prep_auth_row: AB::Expr = prep_row[PREP_AUTH_ROW].clone().into();
         let prep_commitment_row: AB::Expr = prep_row[PREP_COMMITMENT_ROW].clone().into();
 
         let sbox = |value: AB::Expr| -> AB::Expr {
@@ -448,12 +458,16 @@ where
         let pk1 = pv(3);
         let pk2 = pv(4);
         let pk3 = pv(5);
-        let cm0 = pv(6);
-        let cm1 = pv(7);
-        let cm2 = pv(8);
-        let cm3 = pv(9);
-        let cm4 = pv(10);
-        let cm5 = pv(11);
+        let auth0 = pv(6);
+        let auth1 = pv(7);
+        let auth2 = pv(8);
+        let auth3 = pv(9);
+        let cm0 = pv(10);
+        let cm1 = pv(11);
+        let cm2 = pv(12);
+        let cm3 = pv(13);
+        let cm4 = pv(14);
+        let cm5 = pv(15);
 
         builder
             .when(prep_input_row.clone())
@@ -473,6 +487,19 @@ where
         builder
             .when(prep_input_row.clone())
             .assert_zero(current[COL_IN5].clone() - pk3);
+
+        builder
+            .when(prep_auth_row.clone())
+            .assert_zero(current[COL_IN2].clone() - auth0);
+        builder
+            .when(prep_auth_row.clone())
+            .assert_zero(current[COL_IN3].clone() - auth1);
+        builder
+            .when(prep_auth_row.clone())
+            .assert_zero(current[COL_IN4].clone() - auth2);
+        builder
+            .when(prep_auth_row.clone())
+            .assert_zero(current[COL_IN5].clone() - auth3);
 
         builder
             .when(prep_commitment_row.clone())

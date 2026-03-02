@@ -13,19 +13,20 @@ fn note_commitment_matches_circuit() {
     let value = 1000u64;
     let asset_id = 42u64;
     let pk_recipient = [1u8; 32];
+    let pk_auth = [9u8; 32];
     let rho = [2u8; 32];
     let r = [3u8; 32];
 
-    let pallet_cm = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r);
-    let circuit_cm = note_commitment_bytes(value, asset_id, &pk_recipient, &rho, &r);
+    let pallet_cm = circuit_note_commitment(value, asset_id, &pk_recipient, &pk_auth, &rho, &r);
+    let circuit_cm = note_commitment_bytes(value, asset_id, &pk_recipient, &pk_auth, &rho, &r);
 
     assert_eq!(pallet_cm, circuit_cm);
 }
 
 #[test]
 fn merkle_node_bytes_matches_felts_path() {
-    let left = note_commitment_bytes(10, 0, &[4u8; 32], &[5u8; 32], &[6u8; 32]);
-    let right = note_commitment_bytes(11, 0, &[7u8; 32], &[8u8; 32], &[9u8; 32]);
+    let left = note_commitment_bytes(10, 0, &[4u8; 32], &[7u8; 32], &[5u8; 32], &[6u8; 32]);
+    let right = note_commitment_bytes(11, 0, &[8u8; 32], &[10u8; 32], &[9u8; 32], &[11u8; 32]);
 
     let node_bytes = merkle_node_bytes(&left, &right).expect("canonical");
     let left_felts = bytes48_to_felts(&left).expect("canonical");

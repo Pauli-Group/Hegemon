@@ -58,13 +58,40 @@ fn bytes_to_field_elements(bytes: &[u8]) -> Vec<Felt> {
         .collect()
 }
 
-pub fn note_commitment(value: u64, asset_id: u64, pk: &[u8], rho: &[u8], r: &[u8]) -> HashFelt {
+fn felts4_to_bytes32(felts: &[Felt; 4]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (idx, felt) in felts.iter().enumerate() {
+        let start = idx * 8;
+        out[start..start + 8].copy_from_slice(&felt.as_canonical_u64().to_be_bytes());
+    }
+    out
+}
+
+pub fn spend_auth_key(sk_spend: &[u8]) -> [Felt; 4] {
+    let elements = bytes_to_field_elements(sk_spend);
+    let hash = sponge_hash(NULLIFIER_DOMAIN_TAG, &elements);
+    [hash[1], hash[2], hash[3], hash[4]]
+}
+
+pub fn spend_auth_key_bytes(sk_spend: &[u8]) -> [u8; 32] {
+    felts4_to_bytes32(&spend_auth_key(sk_spend))
+}
+
+pub fn note_commitment(
+    value: u64,
+    asset_id: u64,
+    pk_recipient: &[u8],
+    pk_auth: &[u8],
+    rho: &[u8],
+    r: &[u8],
+) -> HashFelt {
     let mut inputs = Vec::new();
     inputs.push(Felt::from_u64(value));
     inputs.push(Felt::from_u64(asset_id));
-    inputs.extend(bytes_to_field_elements(pk));
+    inputs.extend(bytes_to_field_elements(pk_recipient));
     inputs.extend(bytes_to_field_elements(rho));
     inputs.extend(bytes_to_field_elements(r));
+    inputs.extend(bytes_to_field_elements(pk_auth));
     sponge_hash(NOTE_DOMAIN_TAG, &inputs)
 }
 
@@ -97,11 +124,19 @@ pub fn prf_key(sk_spend: &[u8]) -> Felt {
 pub fn note_commitment_bytes(
     value: u64,
     asset_id: u64,
-    pk: &[u8],
+    pk_recipient: &[u8],
+    pk_auth: &[u8],
     rho: &[u8],
     r: &[u8],
 ) -> Commitment {
-    felts_to_bytes48(&note_commitment(value, asset_id, pk, rho, r))
+    felts_to_bytes48(&note_commitment(
+        value,
+        asset_id,
+        pk_recipient,
+        pk_auth,
+        rho,
+        r,
+    ))
 }
 
 pub fn nullifier_bytes(prf_key: Felt, rho: &[u8], position: u64) -> Commitment {

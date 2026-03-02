@@ -1272,6 +1272,7 @@ fn disclosure_create(
             record.note.value,
             record.note.asset_id,
             &record.note.pk_recipient,
+            &record.note.pk_auth,
             &record.note.rho,
             &record.note.r,
         );
@@ -1286,6 +1287,7 @@ fn disclosure_create(
             value: record.note.value,
             asset_id: record.note.asset_id,
             pk_recipient: record.note.pk_recipient,
+            pk_auth: record.note.pk_auth,
             commitment: record.commitment,
         };
         let witness = PaymentDisclosureWitness {
@@ -1326,6 +1328,7 @@ fn disclosure_create(
             claim: DisclosureClaim {
                 recipient_address: record.recipient_address.clone(),
                 pk_recipient: record.note.pk_recipient,
+                pk_auth: record.note.pk_auth,
                 value: record.note.value,
                 asset_id: record.note.asset_id,
                 commitment: record.commitment,
@@ -1429,6 +1432,7 @@ fn disclosure_verify(
             value: package.claim.value,
             asset_id: package.claim.asset_id,
             pk_recipient: package.claim.pk_recipient,
+            pk_auth: package.claim.pk_auth,
             commitment: package.claim.commitment,
         },
         proof_bytes,
