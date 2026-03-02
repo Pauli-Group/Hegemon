@@ -8,7 +8,7 @@ pub enum TransactionCircuitError {
     #[error("too many output notes provided: {0}")]
     TooManyOutputs(usize),
 
-    #[error("note value exceeds 64-bit range: {0}")]
+    #[error("note value exceeds in-circuit range: {0}")]
     ValueOutOfRange(u128),
 
     #[error("asset identifier must be 64 bits or fewer")]
@@ -20,7 +20,10 @@ pub enum TransactionCircuitError {
     #[error("balance delta for asset {0} does not match expected total")]
     BalanceMismatch(u64),
 
-    #[error("value balance magnitude exceeds 64-bit range: {0}")]
+    #[error("fee exceeds in-circuit range: {0}")]
+    FeeOutOfRange(u128),
+
+    #[error("value balance magnitude exceeds in-circuit range: {0}")]
     ValueBalanceOutOfRange(u128),
 
     #[error("balance delta for asset {0} exceeds 64-bit range: {1}")]
@@ -35,9 +38,7 @@ pub enum TransactionCircuitError {
     #[error("ciphertext hash mismatch at index {0}")]
     CiphertextHashMismatch(usize),
 
-    #[error(
-        "zero nullifier produced at index {0} - this indicates malicious witness construction"
-    )]
+    #[error("zero nullifier produced at index {0} - this indicates malicious witness construction")]
     ZeroNullifier(usize),
 
     #[error("constraint system violated: {0}")]

@@ -743,8 +743,11 @@ The circuit's public inputs (fed into its transcript) are:
 * `root_before` - Merkle root anchor encoded as six field elements.
 * For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 6-limb nullifier, with inactive inputs using all-zero limbs.
 * For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 6-limb commitment, with inactive outputs using all-zero limbs.
-* `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 64-bit magnitude so all values fit in one field element.
+* For each output `j`: `ct_hash[j]` as a 6-limb ciphertext hash (padded with zeros for inactive outputs).
+* `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 61-bit magnitude.
   In production, `value_balance` is required to be zero because there is no transparent pool.
+
+The AIR now binds `ct_hash[j]` at the final-row gate (the hash value itself is still computed outside the circuit from ciphertext bytes).
 
 The transaction envelope also carries `balance_slots` and a `balance_tag`, which are validated outside the STARK for now.
 `root_after` and any `txid` binding are handled at the block circuit layer (or a future transaction-circuit revision).
@@ -752,7 +755,7 @@ The transaction envelope also carries `balance_slots` and a `balance_tag`, which
 As an additional integrity check outside the STARK, the runtime and wallet compute a 64-byte binding hash over the public inputs:
 
 ```
-message = anchor || nullifiers || commitments || fee || value_balance
+message = anchor || nullifiers || commitments || ciphertext_hashes || fee || value_balance
 binding_hash = Blake2_256("binding-hash-v1" || 0 || message)
              || Blake2_256("binding-hash-v1" || 1 || message)
 ```
@@ -763,7 +766,7 @@ Verifiers must compare all 64 bytes; this is a defense-in-depth commitment, not 
 
 For each input `i`:
 
-* `v_in[i] ∈ [0, 2^64)`
+* `v_in[i] ∈ [0, 2^61)`
 * `a_in[i]` (asset id) as a single 64-bit field element
 * `pk_recipient_in[i]` as 4 field elements (32 bytes split into 4 x 64-bit limbs)
 * `rho_in[i]` as 4 field elements
@@ -774,7 +777,7 @@ For each input `i`:
 
 For each output `j`:
 
-* `v_out[j]`
+* `v_out[j] ∈ [0, 2^61)`
 * `a_out[j]` as a single 64-bit field element
 * `pk_recipient_out[j]` as 4 field elements
 * `rho_out[j]` as 4 field elements
@@ -806,6 +809,8 @@ For each input `i`:
    \]
 
    and constrain `nf_calc[i] == nf_in[i]`.
+   * The AIR now binds `rho_in[i]` across phases: the four rho limbs absorbed in the commitment cycle are copied into dedicated trace columns and must match the rho limbs absorbed in the nullifier cycle.
+   * The AIR also derives `nk` in-circuit from `sk_nf` (first cycle) and constrains each nullifier absorb row to use that derived key.
 
 #### 5.4 Constraints: output commitments
 
@@ -817,7 +822,14 @@ cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[
 
 #### 5.5 Value range checks
 
-The current transaction circuit enforces value bounds in witness validation: note values are `u64` and must be `<= MAX_NOTE_VALUE`. In-circuit range checks (bit decomposition or lookup gates) are planned for a future circuit version.
+The transaction AIR enforces monetary range bounds in-circuit using bit decomposition columns:
+
+* note values (`v_in`, `v_out`) are decomposed into 61 boolean bits at note-start rows,
+* `fee_native`, `|value_balance|`, and `|stablecoin_issuance_delta|` are decomposed into 61 boolean bits at the final row.
+
+This 61-bit cap (`MAX_IN_CIRCUIT_VALUE = 2^61 - 1`) prevents modular-wrap balance equalities under the current 2-input/2-output shape while keeping amounts large enough for practical usage.
+
+Witness validation mirrors the same bound so invalid amounts are rejected before proving.
 
 #### 5.6 MASP: per-asset balance with a small number of slots
 

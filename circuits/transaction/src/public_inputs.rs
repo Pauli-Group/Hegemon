@@ -1,11 +1,11 @@
-use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding, DEFAULT_VERSION_BINDING};
+use protocol_versioning::{CircuitVersion, CryptoSuiteId, DEFAULT_VERSION_BINDING, VersionBinding};
 use serde::{Deserialize, Serialize};
 pub use transaction_core::BalanceSlot;
 
 use crate::{
-    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
+    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, NATIVE_ASSET_ID},
     error::TransactionCircuitError,
-    hashing_pq::{balance_commitment_bytes, Commitment},
+    hashing_pq::{Commitment, balance_commitment_bytes},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,6 +118,14 @@ impl TransactionPublicInputs {
                 "balance slot vector must match BALANCE_SLOTS",
             ));
         }
+        if native_fee as u128 > MAX_NOTE_VALUE {
+            return Err(TransactionCircuitError::FeeOutOfRange(native_fee as u128));
+        }
+        if value_balance.unsigned_abs() > MAX_NOTE_VALUE {
+            return Err(TransactionCircuitError::ValueBalanceOutOfRange(
+                value_balance.unsigned_abs(),
+            ));
+        }
 
         if !transaction_core::hashing_pq::is_canonical_bytes48(&merkle_root) {
             return Err(TransactionCircuitError::ConstraintViolation(
@@ -166,7 +174,7 @@ impl TransactionPublicInputs {
                     "stablecoin binding encoding is non-canonical",
                 ));
             }
-            if transaction_core::hashing::signed_parts(stablecoin.issuance_delta).is_none() {
+            if stablecoin.issuance_delta.unsigned_abs() > MAX_NOTE_VALUE {
                 return Err(TransactionCircuitError::ValueBalanceOutOfRange(
                     stablecoin.issuance_delta.unsigned_abs(),
                 ));
