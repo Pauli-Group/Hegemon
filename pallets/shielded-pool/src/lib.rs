@@ -3159,26 +3159,53 @@ pub mod pallet {
                 // We return a valid transaction here; the actual validation happens in check_inherent.
                 Call::mint_coinbase { reward_bundle } => {
                     if _source != TransactionSource::InBlock {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: source != InBlock"
+                        );
                         return InvalidTransaction::Call.into();
                     }
                     if CoinbaseProcessed::<T>::get() {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: CoinbaseProcessed already set"
+                        );
                         return InvalidTransaction::Stale.into();
                     }
                     if Self::ensure_coinbase_subsidy(reward_bundle.miner_note.amount).is_err() {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: subsidy exceeds safety cap (amount={})",
+                            reward_bundle.miner_note.amount
+                        );
                         return InvalidTransaction::Custom(9).into();
                     }
                     let expected_commitment =
                         Self::expected_coinbase_commitment(&reward_bundle.miner_note);
                     if reward_bundle.miner_note.commitment != expected_commitment {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: miner commitment mismatch"
+                        );
                         return InvalidTransaction::BadProof.into();
                     }
                     if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
                         let expected_prover_commitment =
                             Self::expected_coinbase_commitment(prover_note);
                         if prover_note.commitment != expected_prover_commitment {
+                            log::info!(
+                                target: "shielded-pool",
+                                "ValidateUnsigned mint_coinbase REJECTED: prover commitment mismatch"
+                            );
                             return InvalidTransaction::BadProof.into();
                         }
                     }
+                    log::info!(
+                        target: "shielded-pool",
+                        "ValidateUnsigned mint_coinbase ACCEPTED (miner_amount={}, has_prover_note={})",
+                        reward_bundle.miner_note.amount,
+                        reward_bundle.prover_note.is_some()
+                    );
                     ValidTransaction::with_tag_prefix("ShieldedPoolCoinbase")
                         .priority(TransactionPriority::MAX) // Inherents have highest priority
                         .longevity(1) // Only valid for current block
