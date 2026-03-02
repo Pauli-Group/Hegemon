@@ -966,7 +966,7 @@ fn tx_send(
         // Sidecar mode remains available via HEGEMON_WALLET_DA_SIDECAR=1.
         let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
-        let mut retried_invalid_anchor = false;
+        let mut invalid_anchor_retries: u8 = 0;
 
         loop {
             let result = submit_bundle_with_fallback(
@@ -1016,12 +1016,16 @@ fn tx_send(
                     });
                 }
                 Err(WalletError::Rpc(msg))
-                    if !retried_invalid_anchor && is_invalid_anchor_submission(&msg) =>
+                    if is_invalid_anchor_submission(&msg) && invalid_anchor_retries < 3 =>
                 {
                     store
                         .mark_notes_pending(&built.spent_note_indexes, false)
                         .map_err(WalletdError::internal)?;
-                    retried_invalid_anchor = true;
+                    invalid_anchor_retries = invalid_anchor_retries.saturating_add(1);
+
+                    if invalid_anchor_retries >= 2 {
+                        store.reset_sync_state().map_err(WalletdError::internal)?;
+                    }
 
                     engine.sync_once().await.map_err(|e| {
                         WalletdError::new(
