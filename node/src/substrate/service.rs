@@ -158,7 +158,7 @@ use network::{
 use p3_field::PrimeField64;
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
-use sc_client_api::{BlockBackend, BlockchainEvents};
+use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
@@ -5540,6 +5540,30 @@ use sp_consensus::BlockOrigin;
 use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
 
+fn finalize_imported_block(
+    client: &Arc<HegemonFullClient>,
+    block_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
+    block_number: u64,
+    source: &'static str,
+) {
+    if let Err(err) = client.finalize_block(block_hash, None, true) {
+        tracing::warn!(
+            block_number,
+            block_hash = %hex::encode(block_hash.as_bytes()),
+            source,
+            error = ?err,
+            "Failed to finalize imported block"
+        );
+    } else {
+        tracing::debug!(
+            block_number,
+            block_hash = %hex::encode(block_hash.as_bytes()),
+            source,
+            "Finalized imported block"
+        );
+    }
+}
+
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
 /// This sets the `import_fn` callback on the chain state provider to use
@@ -5729,6 +5753,12 @@ fn wire_pow_block_import(
 
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
+                finalize_imported_block(
+                    &block_import,
+                    block_hash,
+                    template.number,
+                    "local_mining",
+                );
                 if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
@@ -5835,6 +5865,12 @@ fn wire_pow_block_import(
                 Ok(block_hash)
             }
             Ok(ImportResult::AlreadyInChain) => {
+                finalize_imported_block(
+                    &block_import,
+                    block_hash,
+                    template.number,
+                    "local_already_in_chain",
+                );
                 if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
@@ -6053,86 +6089,95 @@ impl PqServiceConfig {
         const DEFAULT_P2P_PORT: u16 = 30333;
         let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
             .map(|s| {
-                s.split(',')
-                    .filter_map(|addr| {
-                        let addr = addr.trim();
-                        if addr.is_empty() {
-                            return None;
-                        }
-                        // First try direct parse (for IP:port)
-                        if let Ok(sock_addr) = addr.parse() {
-                            return Some(sock_addr);
-                        }
-                        if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
-                            return Some(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
-                        }
-                        // If that fails, try DNS resolution (for hostname[:port])
-                        let resolve_host = |target: &str| -> Result<
-                            Option<std::net::SocketAddr>,
-                            std::io::Error,
-                        > {
+                let mut nodes = Vec::new();
+                for addr in s.split(',') {
+                    let addr = addr.trim();
+                    if addr.is_empty() {
+                        continue;
+                    }
+                    // First try direct parse (for IP:port)
+                    if let Ok(sock_addr) = addr.parse() {
+                        nodes.push(sock_addr);
+                        continue;
+                    }
+                    if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
+                        nodes.push(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
+                        continue;
+                    }
+                    // If that fails, try DNS resolution (for hostname[:port]). Keep all
+                    // resolved addresses so we can fail over between IPv6/IPv4 routes.
+                    let resolve_host =
+                        |target: &str| -> Result<Vec<std::net::SocketAddr>, std::io::Error> {
                             std::net::ToSocketAddrs::to_socket_addrs(target)
-                                .map(|mut addrs| addrs.next())
+                                .map(|addrs| addrs.collect())
                         };
 
-                        match resolve_host(addr) {
-                            Ok(Some(resolved)) => {
-                                tracing::info!(
-                                    addr = %addr,
-                                    resolved = %resolved,
-                                    "Resolved seed hostname"
-                                );
-                                Some(resolved)
-                            }
-                            Ok(None) => {
-                                tracing::warn!(
-                                    addr = %addr,
-                                    "DNS resolved but no addresses returned"
-                                );
-                                None
-                            }
-                            Err(err) => {
-                                if !addr.contains(':') {
-                                    let with_port = format!("{addr}:{DEFAULT_P2P_PORT}");
-                                    return match resolve_host(&with_port) {
-                                        Ok(Some(resolved)) => {
-                                            tracing::info!(
-                                                addr = %addr,
-                                                resolved = %resolved,
-                                                default_port = DEFAULT_P2P_PORT,
-                                                "Resolved seed hostname with default port"
-                                            );
-                                            Some(resolved)
-                                        }
-                                        Ok(None) => {
-                                            tracing::warn!(
-                                                addr = %addr,
-                                                default_port = DEFAULT_P2P_PORT,
-                                                "DNS resolved but no addresses returned"
-                                            );
-                                            None
-                                        }
-                                        Err(err) => {
-                                            tracing::warn!(
-                                                addr = %addr,
-                                                default_port = DEFAULT_P2P_PORT,
-                                                error = %err,
-                                                "Failed to resolve seed address"
-                                            );
-                                            None
-                                        }
-                                    };
+                    let mut resolved = match resolve_host(addr) {
+                        Ok(resolved) if !resolved.is_empty() => resolved,
+                        Ok(_) => {
+                            tracing::warn!(
+                                addr = %addr,
+                                "DNS resolved but no addresses returned"
+                            );
+                            Vec::new()
+                        }
+                        Err(err) => {
+                            if !addr.contains(':') {
+                                let with_port = format!("{addr}:{DEFAULT_P2P_PORT}");
+                                match resolve_host(&with_port) {
+                                    Ok(resolved) if !resolved.is_empty() => {
+                                        tracing::info!(
+                                            addr = %addr,
+                                            resolved_count = resolved.len(),
+                                            default_port = DEFAULT_P2P_PORT,
+                                            "Resolved seed hostname with default port"
+                                        );
+                                        resolved
+                                    }
+                                    Ok(_) => {
+                                        tracing::warn!(
+                                            addr = %addr,
+                                            default_port = DEFAULT_P2P_PORT,
+                                            "DNS resolved but no addresses returned"
+                                        );
+                                        Vec::new()
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            addr = %addr,
+                                            default_port = DEFAULT_P2P_PORT,
+                                            error = %err,
+                                            "Failed to resolve seed address"
+                                        );
+                                        Vec::new()
+                                    }
                                 }
+                            } else {
                                 tracing::warn!(
                                     addr = %addr,
                                     error = %err,
                                     "Failed to resolve seed address"
                                 );
-                                None
+                                Vec::new()
                             }
                         }
-                    })
-                    .collect()
+                    };
+
+                    if resolved.is_empty() {
+                        continue;
+                    }
+                    // Prefer IPv4 routes first for environments where IPv6 egress is absent.
+                    resolved.sort_by_key(|socket| !socket.ip().is_ipv4());
+                    tracing::info!(
+                        addr = %addr,
+                        resolved = ?resolved,
+                        "Resolved seed hostname"
+                    );
+                    nodes.extend(resolved);
+                }
+                nodes.sort();
+                nodes.dedup();
+                nodes
             })
             .unwrap_or_default();
 
@@ -8553,6 +8598,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_initial_sync",
+                                        );
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
                                         if da_build.is_some() {
@@ -8643,6 +8694,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_initial_sync_already_in_chain",
+                                        );
                                         // Treat AlreadyInChain as progress for the sync cursor, so a node that
                                         // reconnects after mining on a fork can still advance without stalling.
                                         {
@@ -9115,6 +9172,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_broadcast",
+                                        );
                                         blocks_imported += 1;
                                         if da_build.is_some() {
                                             let mut store = da_chunk_store_for_import.lock();
@@ -9188,6 +9251,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_broadcast_already_in_chain",
+                                        );
                                         if da_build.is_some() {
                                             let mut store = da_chunk_store_for_import.lock();
 
