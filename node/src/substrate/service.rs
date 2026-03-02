@@ -5472,8 +5472,60 @@ pub fn wire_block_builder_api(
                         "Added shielded coinbase extrinsic for block reward"
                     );
                 }
-                Err(e) => {
-                    return Err(format!("failed to push shielded coinbase extrinsic: {e:?}"));
+                Err(primary_error) => {
+                    tracing::warn!(
+                        block_number,
+                        subsidy,
+                        miner_fees = fee_buckets.miner_fees,
+                        prover_fees = fee_buckets.prover_fees,
+                        has_prover_claim = selected_prover_claim.is_some(),
+                        error = ?primary_error,
+                        "Primary shielded coinbase build failed; attempting subsidy-only fallback"
+                    );
+
+                    // Keep transaction inclusion live even if fee-derived reward construction
+                    // diverges. Try subsidy-only reward first, then continue without coinbase.
+                    if selected_prover_claim.is_none() {
+                        let fallback_reward_bundle =
+                            crate::shielded_coinbase::encrypt_block_reward_bundle(
+                                address,
+                                subsidy,
+                                None,
+                                &block_hash,
+                                block_number,
+                            )
+                            .map_err(|e| {
+                                format!("failed to encrypt fallback block reward bundle: {e}")
+                            })?;
+
+                        let fallback_coinbase = runtime::UncheckedExtrinsic::new_unsigned(
+                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                                reward_bundle: fallback_reward_bundle,
+                            }),
+                        );
+                        match block_builder.push(fallback_coinbase.clone()) {
+                            Ok(_) => {
+                                applied.push(fallback_coinbase.encode());
+                                tracing::warn!(
+                                    block_number,
+                                    subsidy,
+                                    "Added subsidy-only fallback shielded coinbase extrinsic"
+                                );
+                            }
+                            Err(fallback_error) => {
+                                tracing::warn!(
+                                    block_number,
+                                    error = ?fallback_error,
+                                    "Fallback shielded coinbase also failed; continuing without coinbase for this template"
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            block_number,
+                            "Skipping subsidy-only fallback because proven-batch claim is present"
+                        );
+                    }
                 }
             }
         }
