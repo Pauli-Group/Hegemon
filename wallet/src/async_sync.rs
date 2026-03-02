@@ -36,9 +36,11 @@ use futures::StreamExt;
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
+use crate::notes::NoteCiphertext;
 use crate::store::WalletStore;
 use crate::substrate_rpc::SubstrateRpcClient;
 use crate::sync::SyncOutcome;
+use crate::viewing::{FullViewingKey, IncomingViewingKey, RecoveredNote};
 
 /// Async wallet synchronization engine
 ///
@@ -263,6 +265,7 @@ impl AsyncWalletSyncEngine {
                 let mut expected = start_index;
                 let mut recovered = Vec::with_capacity(entries.len());
                 let ivk = self.store.incoming_key()?;
+                let full_viewing_key = self.store.full_viewing_key()?;
 
                 for entry in entries {
                     if entry.index != expected {
@@ -297,23 +300,29 @@ impl AsyncWalletSyncEngine {
                         );
                     }
 
-                    recovered.push(match ivk.decrypt_note(&entry.ciphertext) {
-                        Ok(note) => Some(note),
-                        Err(WalletError::NoteMismatch(reason)) => {
-                            // Note not for this wallet, skip
-                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                                eprintln!("  -> NoteMismatch: {}", reason);
+                    recovered.push(
+                        match decrypt_recovered_note(
+                            full_viewing_key.as_ref(),
+                            &ivk,
+                            &entry.ciphertext,
+                        ) {
+                            Ok(note) => Some(note),
+                            Err(WalletError::NoteMismatch(reason)) => {
+                                // Note not for this wallet, skip
+                                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                                    eprintln!("  -> NoteMismatch: {}", reason);
+                                }
+                                None
                             }
-                            None
-                        }
-                        Err(WalletError::DecryptionFailure) => {
-                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                                eprintln!("  -> DecryptionFailure (not for this wallet)");
+                            Err(WalletError::DecryptionFailure) => {
+                                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                                    eprintln!("  -> DecryptionFailure (not for this wallet)");
+                                }
+                                None
                             }
-                            None
-                        }
-                        Err(err) => return Err(err),
-                    });
+                            Err(err) => return Err(err),
+                        },
+                    );
 
                     expected = expected
                         .checked_add(1)
@@ -429,6 +438,16 @@ fn parse_hash_32(input: &str) -> Result<[u8; 32], WalletError> {
     Ok(out)
 }
 
+fn decrypt_recovered_note(
+    full_viewing_key: Option<&FullViewingKey>,
+    incoming_key: &IncomingViewingKey,
+    ciphertext: &NoteCiphertext,
+) -> Result<RecoveredNote, WalletError> {
+    full_viewing_key
+        .map(|fvk| fvk.decrypt_note(ciphertext))
+        .unwrap_or_else(|| incoming_key.decrypt_note(ciphertext))
+}
+
 /// Sync engine with shared state for concurrent access
 ///
 /// Wraps AsyncWalletSyncEngine with RwLock protection for use
@@ -455,6 +474,12 @@ impl SharedSyncEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::viewing::{FullViewingKey, IncomingViewingKey};
+    use crate::{
+        keys::RootSecret,
+        notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
+    };
+    use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn test_sync_outcome_default() {
@@ -463,5 +488,28 @@ mod tests {
         assert_eq!(outcome.ciphertexts, 0);
         assert_eq!(outcome.recovered, 0);
         assert_eq!(outcome.spent, 0);
+    }
+
+    #[test]
+    fn sync_prefers_full_viewing_key_for_commitment_consistency() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let material = keys.address(0).expect("derive address");
+        let address = material.shielded_address();
+
+        let note = NotePlaintext::random(123, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).expect("encrypt note");
+
+        let ivk = IncomingViewingKey::from_keys(&keys);
+        let fvk = FullViewingKey::from_keys(&keys);
+
+        let recovered_full =
+            decrypt_recovered_note(Some(&fvk), &ivk, &ciphertext).expect("full key decrypt");
+        assert_eq!(recovered_full.note_data.pk_auth, keys.spend.auth_key());
+
+        let recovered_incoming =
+            decrypt_recovered_note(None, &ivk, &ciphertext).expect("incoming key decrypt");
+        assert_eq!(recovered_incoming.note_data.pk_auth, [0u8; 32]);
     }
 }

@@ -203,6 +203,7 @@ fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     out[0] = decoded.version;
     out[1..5].copy_from_slice(&decoded.diversifier_index.to_le_bytes());
     out[5..37].copy_from_slice(&decoded.pk_recipient);
+    out[37..69].copy_from_slice(&decoded.pk_auth);
     Some(out)
 }
 
