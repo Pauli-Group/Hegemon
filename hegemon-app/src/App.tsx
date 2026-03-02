@@ -10,7 +10,8 @@ import type {
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
   WalletStatus,
-  WalletSyncResult
+  WalletSyncResult,
+  WalletUnlockSession
 } from './types';
 import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
@@ -496,7 +497,7 @@ export default function App() {
   const [createPassphrase, setCreatePassphrase] = useState('');
   const [createPassphraseConfirm, setCreatePassphraseConfirm] = useState('');
   const [openPassphrase, setOpenPassphrase] = useState('');
-  const [activePassphrase, setActivePassphrase] = useState<string | null>(null);
+  const [activeUnlockToken, setActiveUnlockToken] = useState<string | null>(null);
   const [wsUrl, setWsUrl] = useState('ws://127.0.0.1:9944');
   const [forceRescan, setForceRescan] = useState(false);
   const [autoLockEnabled, setAutoLockEnabled] = useState(true);
@@ -1134,22 +1135,22 @@ export default function App() {
     return trimmed;
   };
 
-  const requireActivePassphrase = () => {
-    if (!activePassphrase) {
+  const requireActiveUnlockToken = () => {
+    if (!activeUnlockToken) {
       throw new Error('Wallet is locked. Open or init the store first.');
     }
-    return activePassphrase;
+    return activeUnlockToken;
   };
 
-  const refreshWalletStatus = async (overridePassphrase?: string) => {
-    const passphrase = overridePassphrase ?? activePassphrase;
-    if (!passphrase) {
+  const refreshWalletStatus = async (overrideUnlockToken?: string) => {
+    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+    if (!unlockToken) {
       setWalletStatus(null);
       return;
     }
     try {
       const resolvedStorePath = resolveStorePath();
-      const status = await window.hegemon.wallet.status(resolvedStorePath, passphrase, true);
+      const status = await window.hegemon.wallet.status(resolvedStorePath, unlockToken, true);
       setWalletStatus(status);
       setWalletError(null);
     } catch (error) {
@@ -1157,16 +1158,16 @@ export default function App() {
     }
   };
 
-  const refreshDisclosureRecords = async (overridePassphrase?: string) => {
-    const passphrase = overridePassphrase ?? activePassphrase;
-    if (!passphrase) {
+  const refreshDisclosureRecords = async (overrideUnlockToken?: string) => {
+    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+    if (!unlockToken) {
       setDisclosureRecords([]);
       return;
     }
     setDisclosureListBusy(true);
     try {
       const resolvedStorePath = resolveStorePath();
-      const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, passphrase);
+      const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, unlockToken);
       setDisclosureRecords(records);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Disclosure list failed.';
@@ -1192,13 +1193,16 @@ export default function App() {
       if (createPassphrase !== createPassphraseConfirm) {
         throw new Error('Passphrases do not match.');
       }
-      const status = await window.hegemon.wallet.init(resolvedStorePath, createPassphrase);
-      setWalletStatus(status);
-      setActivePassphrase(createPassphrase);
+      const session: WalletUnlockSession = await window.hegemon.wallet.init(
+        resolvedStorePath,
+        createPassphrase
+      );
+      setWalletStatus(session.status);
+      setActiveUnlockToken(session.unlockToken);
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
       setOpenPassphrase('');
-      await refreshDisclosureRecords(createPassphrase);
+      await refreshDisclosureRecords(session.unlockToken);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet init failed.');
     } finally {
@@ -1214,13 +1218,16 @@ export default function App() {
       if (!openPassphrase.trim()) {
         throw new Error('Enter the wallet passphrase to open the store.');
       }
-      const status = await window.hegemon.wallet.restore(resolvedStorePath, openPassphrase);
-      setWalletStatus(status);
-      setActivePassphrase(openPassphrase);
+      const session: WalletUnlockSession = await window.hegemon.wallet.restore(
+        resolvedStorePath,
+        openPassphrase
+      );
+      setWalletStatus(session.status);
+      setActiveUnlockToken(session.unlockToken);
       setOpenPassphrase('');
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
-      await refreshDisclosureRecords(openPassphrase);
+      await refreshDisclosureRecords(session.unlockToken);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet open failed.');
     } finally {
@@ -1238,7 +1245,7 @@ export default function App() {
     } finally {
       setWalletBusy(false);
       setWalletStatus(null);
-      setActivePassphrase(null);
+      setActiveUnlockToken(null);
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
       setOpenPassphrase('');
@@ -1252,7 +1259,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!autoLockEnabled || !activePassphrase) {
+    if (!autoLockEnabled || !activeUnlockToken) {
       return;
     }
     const updateActivity = () => {
@@ -1277,7 +1284,7 @@ export default function App() {
       events.forEach((event) => window.removeEventListener(event, updateActivity));
       window.clearInterval(interval);
     };
-  }, [autoLockEnabled, activePassphrase, autoLockMinutes, handleWalletLock, walletBusy]);
+  }, [autoLockEnabled, activeUnlockToken, autoLockMinutes, handleWalletLock, walletBusy]);
 
   const handleCopyAddress = async () => {
     if (!walletStatus?.primaryAddress) {
@@ -1347,14 +1354,21 @@ export default function App() {
       if (forceOverride) {
         setForceRescan(true);
       }
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const resolvedStorePath = resolveStorePath();
-      const syncPromise = window.hegemon.wallet.sync(resolvedStorePath, passphrase, targetWs, rescan);
+      const syncPromise = window.hegemon.wallet.sync(
+        resolvedStorePath,
+        unlockToken,
+        targetWs,
+        rescan
+      );
       const timeoutMs = 90_000;
       const result = await new Promise<WalletSyncResult>((resolve, reject) => {
         const timeout = window.setTimeout(async () => {
           try {
             await window.hegemon.wallet.lock();
+            setActiveUnlockToken(null);
+            setWalletStatus(null);
           } catch {
             // Ignore lock failures; we'll surface a timeout error.
           }
@@ -1386,6 +1400,8 @@ export default function App() {
     } catch {
       // Ignore lock errors; we still want to clear the busy flag.
     } finally {
+      setActiveUnlockToken(null);
+      setWalletStatus(null);
       setWalletBusy(false);
       setWalletSyncQueued(false);
       setWalletError('Wallet sync canceled.');
@@ -1416,7 +1432,7 @@ export default function App() {
       }
 
       setWalletBusy(true);
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const resolvedStorePath = resolveStorePath();
       const recipients = [
         {
@@ -1429,7 +1445,7 @@ export default function App() {
 
       const plan = await window.hegemon.wallet.sendPlan({
         storePath: resolvedStorePath,
-        passphrase,
+        unlockToken,
         recipients,
         fee
       });
@@ -1503,7 +1519,7 @@ export default function App() {
 
       const request = {
         storePath: resolvedStorePath,
-        passphrase,
+        unlockToken,
         wsUrl,
         recipients,
         fee,
@@ -1599,14 +1615,14 @@ export default function App() {
       if (!disclosureTxId.trim()) {
         throw new Error('Transaction hash is required.');
       }
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const outputIndex = Number.parseInt(disclosureOutput, 10);
       if (Number.isNaN(outputIndex)) {
         throw new Error('Output index must be a number.');
       }
       const result: WalletDisclosureCreateResult = await window.hegemon.wallet.disclosureCreate(
         resolveStorePath(),
-        passphrase,
+        unlockToken,
         wsUrl,
         disclosureTxId,
         outputIndex
@@ -1625,11 +1641,11 @@ export default function App() {
     setWalletBusy(true);
     setWalletError(null);
     try {
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const parsed = parseDisclosureInput(disclosureInput);
       const result: WalletDisclosureVerifyResult = await window.hegemon.wallet.disclosureVerify(
         resolveStorePath(),
-        passphrase,
+        unlockToken,
         wsUrl,
         parsed
       );
@@ -1680,8 +1696,8 @@ export default function App() {
   const canOpenWallet = !walletBusy && Boolean(openPassphrase.trim());
 
   const walletSummary = walletConnection ? nodeSummaries[walletConnection.id] : null;
-  const walletReady = Boolean(walletStatus && activePassphrase);
-  const walletUnlocked = Boolean(activePassphrase);
+  const walletReady = Boolean(walletStatus && activeUnlockToken);
+  const walletUnlocked = Boolean(activeUnlockToken);
   const walletGenesis = walletStatus?.genesisHash ?? null;
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
@@ -2929,7 +2945,7 @@ export default function App() {
             <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
               Sync
             </button>
-            <button className="secondary" onClick={handleWalletLock} disabled={walletBusy || !activePassphrase}>
+            <button className="secondary" onClick={handleWalletLock} disabled={walletBusy || !activeUnlockToken}>
               Lock wallet
             </button>
             {walletBusy ? (
@@ -2964,9 +2980,7 @@ export default function App() {
               />
             </label>
           </div>
-          <p className="text-xs text-surfaceMuted">
-            Auto-lock stops walletd and clears the in-memory passphrase.
-          </p>
+          <p className="text-xs text-surfaceMuted">Auto-lock stops walletd and clears the unlock token.</p>
         </div>
       </div>
       {!walletReady && (

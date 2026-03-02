@@ -13,6 +13,8 @@ pub struct DisclosureClaim {
     pub recipient_address: String,
     #[serde(with = "serde_hex_32")]
     pub pk_recipient: [u8; 32],
+    #[serde(with = "serde_hex_32")]
+    pub pk_auth: [u8; 32],
     pub value: u64,
     pub asset_id: u64,
     #[serde(with = "serde_hex_48")]

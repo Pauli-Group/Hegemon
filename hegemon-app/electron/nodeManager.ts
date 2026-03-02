@@ -322,10 +322,16 @@ export class NodeManager extends EventEmitter {
   }
 
   async setMiningEnabled(enabled: boolean, threads: number | undefined, httpUrl?: string): Promise<void> {
+    const authToken = process.env.HEGEMON_MINING_RPC_TOKEN?.trim();
     if (enabled) {
-      await this.rpcCall('hegemon_startMining', [threads ? { threads } : {}], httpUrl);
+      const params: Record<string, unknown> = threads ? { threads } : {};
+      if (authToken) {
+        params.auth_token = authToken;
+      }
+      await this.rpcCall('hegemon_startMining', [params], httpUrl);
     } else {
-      await this.rpcCall('hegemon_stopMining', [], httpUrl);
+      const params = authToken ? [{ auth_token: authToken }] : [];
+      await this.rpcCall('hegemon_stopMining', params, httpUrl);
     }
   }
 

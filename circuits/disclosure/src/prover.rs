@@ -44,7 +44,7 @@ impl DisclosureProverP3 {
         witness: &PaymentDisclosureWitness,
     ) -> Result<RowMajorMatrix<Val>, DisclosureCircuitError> {
         let inputs = commitment_inputs(claim, witness);
-        let expected_len = 2 + 4 + 4 + 4;
+        let expected_len = 2 + 4 + 4 + 4 + 4;
         if inputs.len() != expected_len {
             return Err(DisclosureCircuitError::InvalidWitness(
                 "commitment input length mismatch",
@@ -151,6 +151,7 @@ impl DisclosureProverP3 {
             value: Val::from_u64(claim.value),
             asset_id: Val::from_u64(claim.asset_id),
             pk_recipient: bytes32_to_felts(&claim.pk_recipient),
+            pk_auth: bytes32_to_felts(&claim.pk_auth),
             commitment,
         })
     }
@@ -197,12 +198,13 @@ fn commitment_inputs(
     claim: &PaymentDisclosureClaim,
     witness: &PaymentDisclosureWitness,
 ) -> Vec<Val> {
-    let mut inputs = Vec::with_capacity(2 + 4 + 4 + 4);
+    let mut inputs = Vec::with_capacity(2 + 4 + 4 + 4 + 4);
     inputs.push(Val::from_u64(claim.value));
     inputs.push(Val::from_u64(claim.asset_id));
     inputs.extend(bytes32_to_felts(&claim.pk_recipient));
     inputs.extend(bytes32_to_felts(&witness.rho));
     inputs.extend(bytes32_to_felts(&witness.r));
+    inputs.extend(bytes32_to_felts(&claim.pk_auth));
     inputs
 }
 

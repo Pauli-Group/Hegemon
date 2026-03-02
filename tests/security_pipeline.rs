@@ -1,10 +1,14 @@
 use network::{establish_secure_channel, PeerIdentity};
+use transaction_circuit::hashing_pq::spend_auth_key_bytes;
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
 use wallet::address::ShieldedAddress;
 use wallet::RootSecret;
 
 fn sample_witness() -> TransactionWitness {
+    let sk_spend = [42u8; 32];
+    let pk_auth = spend_auth_key_bytes(&sk_spend);
+
     TransactionWitness {
         inputs: vec![
             InputNoteWitness {
@@ -12,6 +16,7 @@ fn sample_witness() -> TransactionWitness {
                     value: 8,
                     asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
                     pk_recipient: [2u8; 32],
+                    pk_auth,
                     rho: [3u8; 32],
                     r: [4u8; 32],
                 },
@@ -24,6 +29,7 @@ fn sample_witness() -> TransactionWitness {
                     value: 5,
                     asset_id: 1,
                     pk_recipient: [5u8; 32],
+                    pk_auth,
                     rho: [6u8; 32],
                     r: [7u8; 32],
                 },
@@ -38,6 +44,7 @@ fn sample_witness() -> TransactionWitness {
                     value: 3,
                     asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
                     pk_recipient: [11u8; 32],
+                    pk_auth: [12u8; 32],
                     rho: [12u8; 32],
                     r: [13u8; 32],
                 },
@@ -47,13 +54,14 @@ fn sample_witness() -> TransactionWitness {
                     value: 5,
                     asset_id: 1,
                     pk_recipient: [21u8; 32],
+                    pk_auth: [22u8; 32],
                     rho: [22u8; 32],
                     r: [23u8; 32],
                 },
             },
         ],
         ciphertext_hashes: vec![[0u8; 48]; 2],
-        sk_spend: [42u8; 32],
+        sk_spend,
         merkle_root: [0u8; 48],
         fee: 5,
         value_balance: 0,

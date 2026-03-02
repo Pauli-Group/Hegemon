@@ -60,8 +60,10 @@ fn coinbase_note_data(
     public_seed: [u8; 32],
 ) -> CoinbaseNoteData {
     let pk_recipient = pallet_shielded_pool::commitment::pk_recipient_from_address(&recipient);
+    let pk_auth = pallet_shielded_pool::commitment::pk_auth_from_address(&recipient);
     let commitment = pallet_shielded_pool::commitment::circuit_coinbase_commitment(
         &pk_recipient,
+        &pk_auth,
         amount,
         &public_seed,
         0,

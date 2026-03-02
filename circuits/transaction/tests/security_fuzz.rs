@@ -30,11 +30,13 @@ fn arb_note_data() -> impl Strategy<Value = NoteData> {
         arb_bytes32(),
         arb_bytes32(),
         arb_bytes32(),
+        arb_bytes32(),
     )
-        .prop_map(|(value, asset_id, pk, rho, r)| NoteData {
+        .prop_map(|(value, asset_id, pk, pk_auth, rho, r)| NoteData {
             value,
             asset_id,
             pk_recipient: pk,
+            pk_auth,
             rho,
             r,
         })
@@ -153,6 +155,7 @@ fn witness_rejects_oversized_inputs() {
                     value: 1,
                     asset_id: NATIVE_ASSET_ID,
                     pk_recipient: [1u8; 32],
+                    pk_auth: [11u8; 32],
                     rho: [2u8; 32],
                     r: [3u8; 32],
                 },
@@ -167,6 +170,7 @@ fn witness_rejects_oversized_inputs() {
                 value: 0,
                 asset_id: NATIVE_ASSET_ID,
                 pk_recipient: [5u8; 32],
+                pk_auth: [15u8; 32],
                 rho: [6u8; 32],
                 r: [7u8; 32],
             },
@@ -186,6 +190,7 @@ fn witness_rejects_oversized_inputs() {
                 value: 0,
                 asset_id: NATIVE_ASSET_ID,
                 pk_recipient: [8u8; 32],
+                pk_auth: [18u8; 32],
                 rho: [9u8; 32],
                 r: [10u8; 32],
             },

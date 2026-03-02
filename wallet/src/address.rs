@@ -10,7 +10,7 @@ use synthetic_crypto::{
 use crate::error::WalletError;
 
 const ADDRESS_HRP: &str = "shca";
-const SUPPORTED_ADDRESS_VERSION: u8 = 2;
+const SUPPORTED_ADDRESS_VERSION: u8 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShieldedAddress {
@@ -19,6 +19,8 @@ pub struct ShieldedAddress {
     pub diversifier_index: u32,
     #[serde(with = "serde_bytes32")]
     pub pk_recipient: [u8; 32],
+    #[serde(with = "serde_bytes32")]
+    pub pk_auth: [u8; 32],
     #[serde(with = "serde_mlkem_pk")]
     pub pk_enc: MlKemPublicKey,
 }
@@ -32,6 +34,7 @@ impl Default for ShieldedAddress {
             crypto_suite: CRYPTO_SUITE_GAMMA,
             diversifier_index: 0,
             pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
             pk_enc: keypair.public_key(),
         }
     }
@@ -61,17 +64,18 @@ impl ShieldedAddress {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + 2 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN);
+        let mut out = Vec::with_capacity(1 + 2 + 4 + 32 + 32 + ML_KEM_PUBLIC_KEY_LEN);
         out.push(self.version);
         out.extend_from_slice(&self.crypto_suite.to_le_bytes());
         out.extend_from_slice(&self.diversifier_index.to_le_bytes());
         out.extend_from_slice(&self.pk_recipient);
+        out.extend_from_slice(&self.pk_auth);
         out.extend_from_slice(self.pk_enc.as_bytes());
         out
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        let expected_len = 1 + 2 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN;
+        let expected_len = 1 + 2 + 4 + 32 + 32 + ML_KEM_PUBLIC_KEY_LEN;
         if bytes.len() != expected_len {
             return Err(WalletError::AddressEncoding(format!(
                 "invalid address length: expected {} bytes, got {}",
@@ -102,7 +106,9 @@ impl ShieldedAddress {
         let diversifier_index = u32::from_le_bytes(index_bytes);
         let mut pk_recipient = [0u8; 32];
         pk_recipient.copy_from_slice(&bytes[7..39]);
-        let pk_start = 39;
+        let mut pk_auth = [0u8; 32];
+        pk_auth.copy_from_slice(&bytes[39..71]);
+        let pk_start = 71;
         let pk_end = pk_start + ML_KEM_PUBLIC_KEY_LEN;
         let pk_enc = MlKemPublicKey::from_bytes(&bytes[pk_start..pk_end])
             .map_err(|err| WalletError::AddressEncoding(err.to_string()))?;
@@ -111,6 +117,7 @@ impl ShieldedAddress {
             crypto_suite,
             diversifier_index,
             pk_recipient,
+            pk_auth,
             pk_enc,
         })
     }

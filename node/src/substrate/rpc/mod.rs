@@ -80,7 +80,6 @@ pub use wallet::{WalletApiServer, WalletRpc, WalletService};
 use crate::substrate::prover_coordinator::ProverCoordinator;
 use crate::substrate::service::{
     CommitmentBlockProofStore, DaChunkStore, PendingCiphertextStore, PendingProofStore,
-    PendingWitnessStore,
 };
 use state_da::DaParams;
 
@@ -95,8 +94,8 @@ pub struct FullDeps<S, P> {
     pub pow_handle: P,
     /// Node configuration snapshot
     pub node_config: hegemon::NodeConfigSnapshot,
-    /// Whether to deny unsafe RPC calls
-    pub deny_unsafe: bool,
+    /// Unsafe RPC policy
+    pub deny_unsafe: sc_rpc::DenyUnsafe,
     /// In-memory commitment block proof store
     pub commitment_block_proof_store: Arc<parking_lot::Mutex<CommitmentBlockProofStore>>,
     /// DA chunk store (persistent + cache)
@@ -105,8 +104,6 @@ pub struct FullDeps<S, P> {
     pub pending_ciphertext_store: Arc<parking_lot::Mutex<PendingCiphertextStore>>,
     /// Pending transaction proof pool (rollup sidecar).
     pub pending_proof_store: Arc<parking_lot::Mutex<PendingProofStore>>,
-    /// Pending transaction witness pool for batch proving.
-    pub pending_witness_store: Arc<parking_lot::Mutex<PendingWitnessStore>>,
     /// DA parameters
     pub da_params: DaParams,
     /// Optional prover coordinator for prover-market RPC.
@@ -135,7 +132,12 @@ where
     let mut module = RpcModule::new(());
 
     // Add Hegemon RPC (mining, consensus, telemetry)
-    let hegemon_rpc = HegemonRpc::new(deps.service.clone(), deps.pow_handle, deps.node_config);
+    let hegemon_rpc = HegemonRpc::new(
+        deps.service.clone(),
+        deps.pow_handle,
+        deps.node_config,
+        deps.deny_unsafe,
+    );
     module.merge(hegemon_rpc.into_rpc())?;
 
     // Add Wallet RPC (notes, commitments, proofs)
@@ -155,7 +157,6 @@ where
         Arc::clone(&deps.da_chunk_store),
         Arc::clone(&deps.pending_ciphertext_store),
         Arc::clone(&deps.pending_proof_store),
-        Arc::clone(&deps.pending_witness_store),
         deps.da_params,
     );
     module.merge(da_rpc.into_rpc())?;

@@ -10,7 +10,9 @@ use consensus::{
 };
 use crypto::hashes::blake3_384;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
-use transaction_circuit::hashing_pq::{Felt, HashFelt, felts_to_bytes48, merkle_node};
+use transaction_circuit::hashing_pq::{
+    Felt, HashFelt, felts_to_bytes48, merkle_node, spend_auth_key_bytes,
+};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::prove;
@@ -64,10 +66,14 @@ fn build_two_leaf_merkle_tree(
 }
 
 fn sample_witness() -> TransactionWitness {
+    let sk_spend = [42u8; 32];
+    let pk_auth = spend_auth_key_bytes(&sk_spend);
+
     let input_note_native = NoteData {
         value: 8,
         asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
         pk_recipient: [2u8; 32],
+        pk_auth,
         rho: [3u8; 32],
         r: [4u8; 32],
     };
@@ -75,6 +81,7 @@ fn sample_witness() -> TransactionWitness {
         value: 5,
         asset_id: 1,
         pk_recipient: [5u8; 32],
+        pk_auth,
         rho: [6u8; 32],
         r: [7u8; 32],
     };
@@ -97,6 +104,7 @@ fn sample_witness() -> TransactionWitness {
             value: 3,
             asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
             pk_recipient: [11u8; 32],
+            pk_auth: [12u8; 32],
             rho: [12u8; 32],
             r: [13u8; 32],
         },
@@ -106,6 +114,7 @@ fn sample_witness() -> TransactionWitness {
             value: 5,
             asset_id: 1,
             pk_recipient: [21u8; 32],
+            pk_auth: [22u8; 32],
             rho: [22u8; 32],
             r: [23u8; 32],
         },
@@ -128,7 +137,7 @@ fn sample_witness() -> TransactionWitness {
         ],
         outputs: vec![output_native, output_asset],
         ciphertext_hashes: vec![[0u8; 48]; 2],
-        sk_spend: [42u8; 32],
+        sk_spend,
         merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,
         value_balance: 0,

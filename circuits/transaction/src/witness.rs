@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{HashFelt, felts_to_bytes48, nullifier, prf_key},
+    hashing_pq::{felts_to_bytes48, nullifier, prf_key, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
     public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
 use p3_field::PrimeCharacteristicRing;
-use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
+use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -19,7 +19,11 @@ pub struct TransactionWitness {
     pub outputs: Vec<OutputNoteWitness>,
     #[serde(default, with = "crate::public_inputs::serde_vec_bytes48")]
     pub ciphertext_hashes: Vec<[u8; 48]>,
-    #[serde(with = "crate::witness::serde_bytes32")]
+    #[serde(
+        default = "TransactionWitness::default_sk_spend",
+        deserialize_with = "crate::witness::serde_bytes32::deserialize",
+        skip_serializing
+    )]
     pub sk_spend: [u8; 32],
     #[serde(with = "crate::witness::serde_bytes48")]
     pub merkle_root: [u8; 48],
@@ -223,6 +227,10 @@ impl TransactionWitness {
     pub fn default_version_binding() -> VersionBinding {
         DEFAULT_VERSION_BINDING
     }
+
+    fn default_sk_spend() -> [u8; 32] {
+        [0u8; 32]
+    }
 }
 
 pub(crate) mod serde_vec_inputs {
@@ -264,14 +272,7 @@ pub(crate) mod serde_vec_outputs {
 }
 
 pub(crate) mod serde_bytes32 {
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_bytes(value)
-    }
+    use serde::Deserializer;
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
     where
