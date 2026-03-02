@@ -39,7 +39,10 @@ pub const BINDING_HASH_SIZE: usize = 64;
 pub const MEMO_SIZE: usize = 512;
 
 /// Note encryption version used in the ciphertext header.
-pub const NOTE_ENCRYPTION_VERSION: u8 = 2;
+///
+/// This must remain aligned with the wallet shielded address version accepted by
+/// `wallet::address::ShieldedAddress` (currently v3).
+pub const NOTE_ENCRYPTION_VERSION: u8 = 3;
 /// Crypto suite identifier for ML-KEM-1024 note encryption.
 pub const CRYPTO_SUITE_GAMMA: u16 = 3;
 
