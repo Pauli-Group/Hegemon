@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
+    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{felts_to_bytes48, nullifier, prf_key, HashFelt},
+    hashing_pq::{HashFelt, felts_to_bytes48, nullifier, prf_key},
     note::{InputNoteWitness, OutputNoteWitness},
     public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
 use p3_field::PrimeCharacteristicRing;
-use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,6 +52,10 @@ impl TransactionWitness {
             ));
         }
 
+        if self.fee as u128 > MAX_NOTE_VALUE {
+            return Err(TransactionCircuitError::FeeOutOfRange(self.fee as u128));
+        }
+
         // SECURITY: Validate that no nullifier is zero.
         // Zero nullifiers are used as padding and skipped during double-spend checks.
         // A malicious witness could attempt to produce a zero nullifier for a real note,
@@ -63,7 +67,7 @@ impl TransactionWitness {
             }
         }
 
-        if self.value_balance.unsigned_abs() > u64::MAX as u128 {
+        if self.value_balance.unsigned_abs() > MAX_NOTE_VALUE {
             return Err(TransactionCircuitError::ValueBalanceOutOfRange(
                 self.value_balance.unsigned_abs(),
             ));
@@ -82,7 +86,7 @@ impl TransactionWitness {
                 ));
             }
             let issuance_mag = self.stablecoin.issuance_delta.unsigned_abs();
-            if issuance_mag > u64::MAX as u128 {
+            if issuance_mag > MAX_NOTE_VALUE {
                 return Err(TransactionCircuitError::ValueBalanceOutOfRange(
                     issuance_mag,
                 ));
