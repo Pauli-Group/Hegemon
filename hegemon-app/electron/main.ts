@@ -390,7 +390,23 @@ ipcMain.handle('wallet:sync', async (
 
 ipcMain.handle('wallet:send', async (_event, request: WalletSendRequest) => {
   requireWalletUnlock(request.storePath, request.unlockToken);
-  return walletdClient.send(request) as Promise<WalletSendResult>;
+  try {
+    return (await walletdClient.send(request)) as WalletSendResult;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    const staleAnchor =
+      (normalized.includes('invalid transaction') && normalized.includes("custom error: '3'")) ||
+      normalized.includes('invalid anchor');
+    if (!staleAnchor) {
+      throw error;
+    }
+
+    // Recover from stale anchor state (e.g. after fork recovery/reorg) by forcing a
+    // wallet rescan against the current chain and retrying submission once.
+    await walletdClient.sync(request.wsUrl, true);
+    return (await walletdClient.send(request)) as WalletSendResult;
+  }
 });
 
 ipcMain.handle('wallet:sendPlan', async (_event, request: WalletSendPlanRequest) => {
