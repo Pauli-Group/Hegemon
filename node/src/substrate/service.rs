@@ -1539,66 +1539,6 @@ struct DaTxLayout {
     ciphertext_sizes: Vec<usize>,
 }
 
-#[derive(Default)]
-struct SidecarReadyFilterStats {
-    dropped_missing_ciphertexts: usize,
-}
-
-fn filter_sidecar_ready_candidates(
-    candidate_txs: Vec<Vec<u8>>,
-    pending_ciphertexts: &PendingCiphertextStore,
-) -> (Vec<Vec<u8>>, SidecarReadyFilterStats) {
-    let mut stats = SidecarReadyFilterStats::default();
-    let mut filtered = Vec::with_capacity(candidate_txs.len());
-
-    for tx_bytes in candidate_txs {
-        let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &tx_bytes[..]) else {
-            // Decode filtering is handled by the existing conflict filter path.
-            filtered.push(tx_bytes);
-            continue;
-        };
-
-        let mut drop_tx = false;
-        if let runtime::RuntimeCall::ShieldedPool(
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            },
-        ) = &extrinsic.function
-        {
-            let hashes = ciphertext_hashes.as_slice();
-            match pending_ciphertexts
-                .get_many(hashes)
-                .and_then(|ciphertexts| {
-                    validate_ciphertexts_against_hashes(
-                        &ciphertexts,
-                        ciphertext_sizes.as_slice(),
-                        hashes,
-                    )
-                }) {
-                Ok(()) => {}
-                Err(_) => {
-                    drop_tx = true;
-                    stats.dropped_missing_ciphertexts =
-                        stats.dropped_missing_ciphertexts.saturating_add(1);
-                }
-            }
-        }
-
-        if !drop_tx {
-            filtered.push(tx_bytes);
-        }
-    }
-
-    (filtered, stats)
-}
-
 fn has_sidecar_transfers(extrinsics: &[runtime::UncheckedExtrinsic]) -> bool {
     extrinsics.iter().any(|extrinsic| {
         let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
@@ -4273,6 +4213,18 @@ fn load_proofless_ready_wait() -> Duration {
     Duration::from_millis(wait_ms)
 }
 
+fn load_proofless_on_demand_fallback() -> bool {
+    std::env::var("HEGEMON_PROOFLESS_ON_DEMAND_FALLBACK")
+        .ok()
+        .map(|value| {
+            !matches!(
+                value.to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
 fn load_accept_legacy_proofless_blocks() -> bool {
     let requested = std::env::var("HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS")
         .ok()
@@ -4910,8 +4862,11 @@ fn verify_prover_claim_signature(
 pub fn wire_block_builder_api(
     chain_state: &Arc<ProductionChainStateProvider>,
     client: Arc<HegemonFullClient>,
+    pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     pending_proof_store: Arc<ParkingMutex<PendingProofStore>>,
     prover_coordinator: Arc<ProverCoordinator>,
+    da_params: DaParams,
+    commitment_block_fast: bool,
 ) {
     use sc_block_builder::BlockBuilderBuilder;
 
@@ -4923,6 +4878,7 @@ pub fn wire_block_builder_api(
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
     let min_ready_proven_batch_txs = load_min_ready_proven_batch_txs();
     let proofless_ready_wait = load_proofless_ready_wait();
+    let proofless_on_demand_fallback = load_proofless_on_demand_fallback();
 
     if disable_proofless_hydration {
         tracing::warn!(
@@ -4969,6 +4925,7 @@ pub fn wire_block_builder_api(
             }
         }
     });
+    let pending_ciphertext_store_for_exec = Arc::clone(&pending_ciphertext_store);
     let pending_proof_store_for_exec = Arc::clone(&pending_proof_store);
 
     chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
@@ -5170,13 +5127,23 @@ pub fn wire_block_builder_api(
                         proofless_ready_wait,
                     )?;
                     if ready_bindings.is_empty() {
-                        defer_proofless_until_ready_batch = true;
-                        tracing::warn!(
-                            block_number,
-                            missing_proof_bindings = missing_preview.len(),
-                            min_ready_proven_batch_txs,
-                            "Deferring proofless sidecar transfers until a proven batch is ready (no ready subset)"
-                        );
+                        if proofless_on_demand_fallback {
+                            defer_proofless_until_ready_batch = false;
+                            tracing::warn!(
+                                block_number,
+                                missing_proof_bindings = missing_preview.len(),
+                                min_ready_proven_batch_txs,
+                                "No ready proven batch yet; keeping proofless sidecars for on-demand batch proving fallback"
+                            );
+                        } else {
+                            defer_proofless_until_ready_batch = true;
+                            tracing::warn!(
+                                block_number,
+                                missing_proof_bindings = missing_preview.len(),
+                                min_ready_proven_batch_txs,
+                                "Deferring proofless sidecar transfers until a proven batch is ready (no ready subset)"
+                            );
+                        }
                     } else {
                         let deferred = missing_preview.len().saturating_sub(ready_bindings.len());
                         if deferred > 0 {
@@ -5426,12 +5393,52 @@ pub fn wire_block_builder_api(
                     tx_count = shielded_tx_count,
                     tx_statements_commitment = %hex::encode(tx_statements_commitment),
                     ?diagnostics,
-                    "Missing prepared proven batch for mandatory proofless sidecar set"
+                    "Missing prepared proven batch for mandatory proofless sidecar set; attempting on-demand preparation"
                 );
-                return Err(
-                    "shielded block with omitted proof bytes requires a ready proven batch"
-                        .to_string(),
+
+                let pending_ciphertexts_snapshot = { pending_ciphertext_store_for_exec.lock().clone() };
+                let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
+                let candidate_txs = decoded_applied
+                    .iter()
+                    .map(|extrinsic| extrinsic.encode())
+                    .collect::<Vec<_>>();
+                let on_demand = prepare_block_proof_bundle(
+                    client_for_exec.as_ref(),
+                    parent_substrate_hash,
+                    block_number,
+                    candidate_txs,
+                    da_params,
+                    &pending_ciphertexts_snapshot,
+                    &pending_proofs_snapshot,
+                    commitment_block_fast,
+                )
+                .map_err(|err| {
+                    format!(
+                        "shielded block with omitted proof bytes requires a ready proven batch; on-demand prepare failed: {err}"
+                    )
+                })?;
+                selected_prover_claim = on_demand.payload.prover_claim.clone();
+                let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                    runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
+                        payload: on_demand.payload,
+                    }),
                 );
+                match block_builder.push(proven_batch_extrinsic.clone()) {
+                    Ok(_) => {
+                        applied.push(proven_batch_extrinsic.encode());
+                        tracing::info!(
+                            block_number,
+                            tx_count = shielded_tx_count,
+                            on_demand_build_ms = on_demand.build_ms,
+                            "Attached on-demand proven batch extrinsic"
+                        );
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "failed to push on-demand mandatory proven batch extrinsic: {e:?}"
+                        ));
+                    }
+                }
             } else {
                 tracing::debug!(
                     block_number,
@@ -9542,7 +9549,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let pool = Arc::clone(&pool_bridge);
             let tx_pool = transaction_pool.clone();
             let overscan_factor = coordinator_candidate_overscan_factor;
-            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
             Arc::new(move |target_txs: usize| {
                 use sc_transaction_pool_api::{
                     InPoolTransaction, TransactionPool as ScTransactionPool,
@@ -9612,20 +9618,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         "Filtered conflicting shielded transfers from prover candidate set"
                     );
                 }
-                let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
-                let (mut sidecar_ready, sidecar_stats) =
-                    filter_sidecar_ready_candidates(filtered, &pending_ciphertexts_snapshot);
-                if sidecar_stats.dropped_missing_ciphertexts > 0 {
-                    tracing::debug!(
-                        target_txs,
-                        fetch_limit,
-                        dropped_missing_ciphertexts = sidecar_stats.dropped_missing_ciphertexts,
-                        kept_candidates = sidecar_ready.len(),
-                        "Dropped sidecar candidates missing local ciphertext bytes"
-                    );
-                }
-                sidecar_ready.truncate(target_txs);
-                sidecar_ready
+                let mut candidates = filtered;
+                candidates.truncate(target_txs);
+                candidates
             })
         };
         let build_for_coord = {
@@ -9708,8 +9703,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         wire_block_builder_api(
             &chain_state,
             client.clone(),
+            Arc::clone(&pending_ciphertext_store),
             Arc::clone(&pending_proof_store),
             Arc::clone(&prover_coordinator),
+            da_params,
+            commitment_block_fast,
         );
 
         tracing::info!("BlockBuilder API wired for real state execution");
