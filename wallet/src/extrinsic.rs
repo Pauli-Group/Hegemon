@@ -1043,6 +1043,24 @@ fn blake2_256_hash(data: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notes::{NoteCiphertext, PALLET_CIPHERTEXT_SIZE};
+    use codec::{Compact, Decode};
+
+    #[derive(Debug, Decode)]
+    struct DecodedStarkProof {
+        data: Vec<u8>,
+    }
+
+    #[derive(Debug, Decode)]
+    struct DecodedEncryptedNote {
+        ciphertext: [u8; PALLET_CIPHERTEXT_SIZE],
+        kem_ciphertext: Vec<u8>,
+    }
+
+    #[derive(Debug, Decode)]
+    struct DecodedBindingHash {
+        data: [u8; 64],
+    }
 
     #[test]
     fn test_era_immortal() {
@@ -1086,5 +1104,119 @@ mod tests {
 
         // Public key should be ML_DSA_PUBLIC_KEY_LEN bytes
         assert_eq!(builder.public_key_bytes().len(), ML_DSA_PUBLIC_KEY_LEN);
+    }
+
+    #[test]
+    fn test_unsigned_transfer_anchor_roundtrip_encoding() {
+        let note = NoteCiphertext::empty().to_pallet_bytes().expect("note bytes");
+        let anchor = [0xA5u8; 48];
+        let binding_hash = [0x5Au8; 64];
+        let call = ShieldedTransferCall {
+            proof: vec![1, 2, 3, 4, 5, 6],
+            nullifiers: vec![[0x11u8; 48]],
+            commitments: vec![[0x22u8; 48]],
+            encrypted_notes: vec![note],
+            anchor,
+            binding_hash,
+            stablecoin: None,
+            fee: 42,
+            value_balance: 0,
+        };
+        let index = RuntimeCallIndex {
+            pallet_index: 31,
+            call_index: 4,
+        };
+
+        let extrinsic = build_unsigned_shielded_transfer(&call, index).expect("unsigned extrinsic");
+        let mut encoded = &extrinsic[..];
+        let len = Compact::<u32>::decode(&mut encoded)
+            .expect("extrinsic compact length")
+            .0 as usize;
+        assert_eq!(len, encoded.len(), "compact length prefix mismatch");
+        assert_eq!(encoded[0], 0x04, "unsigned version byte mismatch");
+        assert_eq!(encoded[1], index.pallet_index);
+        assert_eq!(encoded[2], index.call_index);
+
+        let mut call_bytes = &encoded[3..];
+        let decoded: (
+            DecodedStarkProof,
+            Vec<[u8; 48]>,
+            Vec<[u8; 48]>,
+            Vec<DecodedEncryptedNote>,
+            [u8; 48],
+            DecodedBindingHash,
+            Option<()>,
+            u64,
+        ) = Decode::decode(&mut call_bytes).expect("decode unsigned call args");
+        assert!(
+            call_bytes.is_empty(),
+            "trailing bytes remained after unsigned call decode"
+        );
+        assert_eq!(decoded.0.data, call.proof);
+        assert_eq!(decoded.1, call.nullifiers);
+        assert_eq!(decoded.2, call.commitments);
+        assert_eq!(decoded.3.len(), 1);
+        assert_eq!(decoded.3[0].ciphertext.len(), PALLET_CIPHERTEXT_SIZE);
+        assert!(!decoded.3[0].kem_ciphertext.is_empty());
+        assert_eq!(decoded.4, anchor, "anchor mutated in unsigned encoding");
+        assert_eq!(decoded.5.data, binding_hash);
+        assert_eq!(decoded.7, call.fee);
+    }
+
+    #[test]
+    fn test_unsigned_sidecar_anchor_roundtrip_encoding() {
+        let anchor = [0xC3u8; 48];
+        let binding_hash = [0x3Cu8; 64];
+        let call = ShieldedTransferSidecarCall {
+            proof: vec![7, 8, 9, 10],
+            nullifiers: vec![[0x44u8; 48]],
+            commitments: vec![[0x55u8; 48]],
+            ciphertext_hashes: vec![[0x66u8; 48]],
+            ciphertext_sizes: vec![1234],
+            anchor,
+            binding_hash,
+            stablecoin: None,
+            fee: 77,
+        };
+        let index = RuntimeCallIndex {
+            pallet_index: 31,
+            call_index: 8,
+        };
+
+        let extrinsic =
+            build_unsigned_shielded_transfer_sidecar(&call, index).expect("sidecar extrinsic");
+        let mut encoded = &extrinsic[..];
+        let len = Compact::<u32>::decode(&mut encoded)
+            .expect("extrinsic compact length")
+            .0 as usize;
+        assert_eq!(len, encoded.len(), "compact length prefix mismatch");
+        assert_eq!(encoded[0], 0x04, "unsigned version byte mismatch");
+        assert_eq!(encoded[1], index.pallet_index);
+        assert_eq!(encoded[2], index.call_index);
+
+        let mut call_bytes = &encoded[3..];
+        let decoded: (
+            DecodedStarkProof,
+            Vec<[u8; 48]>,
+            Vec<[u8; 48]>,
+            Vec<[u8; 48]>,
+            Vec<u32>,
+            [u8; 48],
+            DecodedBindingHash,
+            Option<()>,
+            u64,
+        ) = Decode::decode(&mut call_bytes).expect("decode sidecar call args");
+        assert!(
+            call_bytes.is_empty(),
+            "trailing bytes remained after sidecar call decode"
+        );
+        assert_eq!(decoded.0.data, call.proof);
+        assert_eq!(decoded.1, call.nullifiers);
+        assert_eq!(decoded.2, call.commitments);
+        assert_eq!(decoded.3, call.ciphertext_hashes);
+        assert_eq!(decoded.4, call.ciphertext_sizes);
+        assert_eq!(decoded.5, anchor, "anchor mutated in sidecar encoding");
+        assert_eq!(decoded.6.data, binding_hash);
+        assert_eq!(decoded.8, call.fee);
     }
 }

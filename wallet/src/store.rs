@@ -174,6 +174,14 @@ impl WalletStore {
         self.with_state(|state| Ok(state.derived.clone()))
     }
 
+    /// Returns the deterministic 32-byte signing seed for account-based extrinsics.
+    ///
+    /// Full wallets derive this from the stored root secret. Watch-only wallets
+    /// cannot provide a signing seed.
+    pub fn signing_seed(&self) -> Result<[u8; 32], WalletError> {
+        self.with_state(|state| state.root_secret.ok_or(WalletError::WatchOnly))
+    }
+
     pub fn outgoing_key(&self) -> Result<Option<OutgoingViewingKey>, WalletError> {
         self.with_state(|state| Ok(state.outgoing.clone()))
     }
