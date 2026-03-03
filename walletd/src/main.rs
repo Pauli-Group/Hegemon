@@ -1077,9 +1077,9 @@ fn tx_send(
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        // v0.9.0 default: sidecar submission reduces extrinsic size and avoids oversized inline calls.
-        // Set HEGEMON_WALLET_DA_SIDECAR=0 to force legacy inline mode.
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
+        // Default to inline submission for reliability unless operators explicitly
+        // enable DA sidecar staging.
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
         // Default to inline proof bytes for sidecar transfers until proof-sidecar
         // hydration is explicitly enabled by operators.
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", false);
