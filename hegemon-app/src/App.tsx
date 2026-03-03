@@ -1362,7 +1362,8 @@ export default function App() {
         targetWs,
         rescan
       );
-      const timeoutMs = 90_000;
+      // Full rescans on long-running chains can take minutes; keep the shorter guardrail for normal syncs.
+      const timeoutMs = rescan ? 15 * 60_000 : 90_000;
       const result = await new Promise<WalletSyncResult>((resolve, reject) => {
         const timeout = window.setTimeout(async () => {
           try {
@@ -1372,7 +1373,12 @@ export default function App() {
           } catch {
             // Ignore lock failures; we'll surface a timeout error.
           }
-          reject(new Error('Wallet sync timed out. Check the WebSocket URL and try again.'));
+          const modeLabel = rescan ? 'force-rescan' : 'sync';
+          reject(
+            new Error(
+              `Wallet ${modeLabel} timed out after ${Math.round(timeoutMs / 1000)}s. Check the WebSocket URL and try again.`
+            )
+          );
         }, timeoutMs);
         syncPromise
           .then((value) => {
