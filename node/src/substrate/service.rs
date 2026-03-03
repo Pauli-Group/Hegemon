@@ -5805,12 +5805,7 @@ fn wire_pow_block_import(
 
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
-                finalize_imported_block(
-                    &block_import,
-                    block_hash,
-                    template.number,
-                    "local_mining",
-                );
+                finalize_imported_block(&block_import, block_hash, template.number, "local_mining");
                 if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
