@@ -1727,6 +1727,49 @@ fn flatten_ciphertexts(transactions: &[Vec<Vec<u8>>]) -> Vec<Vec<u8>> {
     out
 }
 
+fn transfer_ciphertexts_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+        match call {
+            ShieldedPoolCall::shielded_transfer { ciphertexts, .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => {
+                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+            }
+            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => {
+                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn coinbase_ciphertexts_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+        let ShieldedPoolCall::mint_coinbase { reward_bundle } = call else {
+            continue;
+        };
+        out.push(encrypted_note_bytes(
+            &reward_bundle.miner_note.encrypted_note,
+        ));
+        if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+            out.push(encrypted_note_bytes(&prover_note.encrypted_note));
+        }
+    }
+    out
+}
+
 fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
@@ -5806,31 +5849,11 @@ fn wire_pow_block_import(
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
                 finalize_imported_block(&block_import, block_hash, template.number, "local_mining");
-                if let Some(build) = da_build.take() {
+                let mut store = da_chunk_store.lock();
+                let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
-                    let mut ciphertexts = flatten_ciphertexts(&build.transactions);
-                    let coinbase_ciphertexts = block
-                        .extrinsics()
-                        .iter()
-                        .flat_map(|extrinsic| match &extrinsic.function {
-                            runtime::RuntimeCall::ShieldedPool(
-                                ShieldedPoolCall::mint_coinbase { reward_bundle },
-                            ) => {
-                                let mut out = vec![encrypted_note_bytes(
-                                    &reward_bundle.miner_note.encrypted_note,
-                                )];
-                                if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
-                                    out.push(encrypted_note_bytes(&prover_note.encrypted_note));
-                                }
-                                out
-                            }
-                            _ => Vec::new(),
-                        })
-                        .collect::<Vec<_>>();
-                    ciphertexts.extend(coinbase_ciphertexts);
-                    let ciphertext_count = ciphertexts.len();
-                    let mut store = da_chunk_store.lock();
+                    let ciphertexts = flatten_ciphertexts(&build.transactions);
                     if let Err(err) = store.insert(
                         DaRootKind::Ciphertexts,
                         template.number,
@@ -5851,21 +5874,6 @@ fn wire_pow_block_import(
                             "DA encoding stored for imported block"
                         );
                     }
-                    if let Err(err) =
-                        store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
-                    {
-                        tracing::warn!(
-                            block_number = template.number,
-                            error = %err,
-                            "Failed to persist ciphertexts for imported block"
-                        );
-                    } else if ciphertext_count > 0 {
-                        tracing::info!(
-                            block_number = template.number,
-                            ciphertext_count,
-                            "Ciphertexts stored for imported block"
-                        );
-                    }
                     if let Some(mut pending_ciphertexts) = pending_ciphertext_store.try_lock() {
                         pending_ciphertexts.remove_many(&build.used_ciphertext_hashes);
                     } else {
@@ -5875,6 +5883,26 @@ fn wire_pow_block_import(
                             "Pending ciphertext store busy after import; deferring cleanup"
                         );
                     }
+                    ciphertexts
+                } else {
+                    transfer_ciphertexts_from_extrinsics(block.extrinsics())
+                };
+                ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(block.extrinsics()));
+                let ciphertext_count = ciphertexts.len();
+                if let Err(err) =
+                    store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
+                {
+                    tracing::warn!(
+                        block_number = template.number,
+                        error = %err,
+                        "Failed to persist ciphertexts for imported block"
+                    );
+                } else if ciphertext_count > 0 {
+                    tracing::info!(
+                        block_number = template.number,
+                        ciphertext_count,
+                        "Ciphertexts stored for imported block"
+                    );
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
@@ -5918,31 +5946,11 @@ fn wire_pow_block_import(
                     template.number,
                     "local_already_in_chain",
                 );
-                if let Some(build) = da_build.take() {
+                let mut store = da_chunk_store.lock();
+                let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
-                    let mut ciphertexts = flatten_ciphertexts(&build.transactions);
-                    let coinbase_ciphertexts = block
-                        .extrinsics()
-                        .iter()
-                        .flat_map(|extrinsic| match &extrinsic.function {
-                            runtime::RuntimeCall::ShieldedPool(
-                                ShieldedPoolCall::mint_coinbase { reward_bundle },
-                            ) => {
-                                let mut out = vec![encrypted_note_bytes(
-                                    &reward_bundle.miner_note.encrypted_note,
-                                )];
-                                if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
-                                    out.push(encrypted_note_bytes(&prover_note.encrypted_note));
-                                }
-                                out
-                            }
-                            _ => Vec::new(),
-                        })
-                        .collect::<Vec<_>>();
-                    ciphertexts.extend(coinbase_ciphertexts);
-                    let ciphertext_count = ciphertexts.len();
-                    let mut store = da_chunk_store.lock();
+                    let ciphertexts = flatten_ciphertexts(&build.transactions);
                     if let Err(err) = store.insert(
                         DaRootKind::Ciphertexts,
                         template.number,
@@ -5963,21 +5971,6 @@ fn wire_pow_block_import(
                             "DA encoding stored for known block"
                         );
                     }
-                    if let Err(err) =
-                        store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
-                    {
-                        tracing::warn!(
-                            block_number = template.number,
-                            error = %err,
-                            "Failed to persist ciphertexts for known block"
-                        );
-                    } else if ciphertext_count > 0 {
-                        tracing::info!(
-                            block_number = template.number,
-                            ciphertext_count,
-                            "Ciphertexts stored for known block"
-                        );
-                    }
                     if let Some(mut pending_ciphertexts) = pending_ciphertext_store.try_lock() {
                         pending_ciphertexts.remove_many(&build.used_ciphertext_hashes);
                     } else {
@@ -5987,6 +5980,26 @@ fn wire_pow_block_import(
                             "Pending ciphertext store busy for known block; deferring cleanup"
                         );
                     }
+                    ciphertexts
+                } else {
+                    transfer_ciphertexts_from_extrinsics(block.extrinsics())
+                };
+                ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(block.extrinsics()));
+                let ciphertext_count = ciphertexts.len();
+                if let Err(err) =
+                    store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
+                {
+                    tracing::warn!(
+                        block_number = template.number,
+                        error = %err,
+                        "Failed to persist ciphertexts for known block"
+                    );
+                } else if ciphertext_count > 0 {
+                    tracing::info!(
+                        block_number = template.number,
+                        ciphertext_count,
+                        "Ciphertexts stored for known block"
+                    );
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
@@ -8625,6 +8638,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 );
 
                                 // Construct BlockImportParams with seal in post_digests
+                                let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkInitialSync, header);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
@@ -8653,14 +8667,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
-                                        if da_build.is_some() {
+                                        {
                                             let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
+                                            let mut ciphertexts = if let Some(build) = da_build.take() {
                                                 let da_root = build.encoding.root();
                                                 let da_chunks = build.encoding.chunks().len();
                                                 let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
                                                 if let Err(err) = store.insert(
                                                     DaRootKind::Ciphertexts,
                                                     block_number as u64,
@@ -8681,25 +8693,31 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         "DA encoding stored for synced block"
                                                     );
                                                 }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for synced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for synced block"
-                                                    );
-                                                }
+                                                ciphertexts
+                                            } else {
+                                                transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                            };
+                                            ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                                &extrinsics_for_ciphertexts,
+                                            ));
+                                            let ciphertext_count = ciphertexts.len();
+                                            if let Err(err) = store.append_ciphertexts(
+                                                block_number as u64,
+                                                block_hash,
+                                                &ciphertexts,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    error = %err,
+                                                    "Failed to persist ciphertexts for synced block"
+                                                );
+                                            } else if ciphertext_count > 0 {
+                                                tracing::info!(
+                                                    block_number,
+                                                    ciphertext_count,
+                                                    "Ciphertexts stored for synced block"
+                                                );
                                             }
-
                                         }
 
                                         // Notify sync service of successful import
@@ -8754,53 +8772,55 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             sync.on_block_imported(block_number as u64, block_hash);
                                         }
 
-                                        if da_build.is_some() {
-                                            let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
-                                                let da_root = build.encoding.root();
-                                                let da_chunks = build.encoding.chunks().len();
-                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Ciphertexts,
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    build.encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist DA encoding for known synced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "DA encoding stored for known synced block"
-                                                    );
-                                                }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for known synced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for known synced block"
-                                                    );
-                                                }
+                                        let mut store = da_chunk_store_for_import.lock();
+                                        let mut ciphertexts = if let Some(build) = da_build.take() {
+                                            let da_root = build.encoding.root();
+                                            let da_chunks = build.encoding.chunks().len();
+                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                            if let Err(err) = store.insert(
+                                                DaRootKind::Ciphertexts,
+                                                block_number as u64,
+                                                block_hash,
+                                                build.encoding,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    error = %err,
+                                                    "Failed to persist DA encoding for known synced block"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    da_chunks,
+                                                    "DA encoding stored for known synced block"
+                                                );
                                             }
-
+                                            ciphertexts
+                                        } else {
+                                            transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                        };
+                                        ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                            &extrinsics_for_ciphertexts,
+                                        ));
+                                        let ciphertext_count = ciphertexts.len();
+                                        if let Err(err) = store.append_ciphertexts(
+                                            block_number as u64,
+                                            block_hash,
+                                            &ciphertexts,
+                                        ) {
+                                            tracing::warn!(
+                                                block_number,
+                                                error = %err,
+                                                "Failed to persist ciphertexts for known synced block"
+                                            );
+                                        } else if ciphertext_count > 0 {
+                                            tracing::info!(
+                                                block_number,
+                                                ciphertext_count,
+                                                "Ciphertexts stored for known synced block"
+                                            );
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
@@ -9201,6 +9221,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 };
 
                                 // Construct BlockImportParams with seal in post_digests
+                                let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkBroadcast, header_mut);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
@@ -9226,53 +9247,55 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             "network_broadcast",
                                         );
                                         blocks_imported += 1;
-                                        if da_build.is_some() {
-                                            let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
-                                                let da_root = build.encoding.root();
-                                                let da_chunks = build.encoding.chunks().len();
-                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Ciphertexts,
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    build.encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist DA encoding for announced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "DA encoding stored for announced block"
-                                                    );
-                                                }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for announced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for announced block"
-                                                    );
-                                                }
+                                        let mut store = da_chunk_store_for_import.lock();
+                                        let mut ciphertexts = if let Some(build) = da_build.take() {
+                                            let da_root = build.encoding.root();
+                                            let da_chunks = build.encoding.chunks().len();
+                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                            if let Err(err) = store.insert(
+                                                DaRootKind::Ciphertexts,
+                                                block_number as u64,
+                                                block_hash_bytes,
+                                                build.encoding,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    error = %err,
+                                                    "Failed to persist DA encoding for announced block"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    da_chunks,
+                                                    "DA encoding stored for announced block"
+                                                );
                                             }
-
+                                            ciphertexts
+                                        } else {
+                                            transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                        };
+                                        ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                            &extrinsics_for_ciphertexts,
+                                        ));
+                                        let ciphertext_count = ciphertexts.len();
+                                        if let Err(err) = store.append_ciphertexts(
+                                            block_number as u64,
+                                            block_hash_bytes,
+                                            &ciphertexts,
+                                        ) {
+                                            tracing::warn!(
+                                                block_number,
+                                                error = %err,
+                                                "Failed to persist ciphertexts for announced block"
+                                            );
+                                        } else if ciphertext_count > 0 {
+                                            tracing::info!(
+                                                block_number,
+                                                ciphertext_count,
+                                                "Ciphertexts stored for announced block"
+                                            );
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
@@ -9304,53 +9327,55 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             block_number as u64,
                                             "network_broadcast_already_in_chain",
                                         );
-                                        if da_build.is_some() {
-                                            let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
-                                                let da_root = build.encoding.root();
-                                                let da_chunks = build.encoding.chunks().len();
-                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Ciphertexts,
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    build.encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist DA encoding for known announced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "DA encoding stored for known announced block"
-                                                    );
-                                                }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for known announced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for known announced block"
-                                                    );
-                                                }
+                                        let mut store = da_chunk_store_for_import.lock();
+                                        let mut ciphertexts = if let Some(build) = da_build.take() {
+                                            let da_root = build.encoding.root();
+                                            let da_chunks = build.encoding.chunks().len();
+                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                            if let Err(err) = store.insert(
+                                                DaRootKind::Ciphertexts,
+                                                block_number as u64,
+                                                block_hash_bytes,
+                                                build.encoding,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    error = %err,
+                                                    "Failed to persist DA encoding for known announced block"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    da_chunks,
+                                                    "DA encoding stored for known announced block"
+                                                );
                                             }
-
+                                            ciphertexts
+                                        } else {
+                                            transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                        };
+                                        ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                            &extrinsics_for_ciphertexts,
+                                        ));
+                                        let ciphertext_count = ciphertexts.len();
+                                        if let Err(err) = store.append_ciphertexts(
+                                            block_number as u64,
+                                            block_hash_bytes,
+                                            &ciphertexts,
+                                        ) {
+                                            tracing::warn!(
+                                                block_number,
+                                                error = %err,
+                                                "Failed to persist ciphertexts for known announced block"
+                                            );
+                                        } else if ciphertext_count > 0 {
+                                            tracing::info!(
+                                                block_number,
+                                                ciphertext_count,
+                                                "Ciphertexts stored for known announced block"
+                                            );
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
