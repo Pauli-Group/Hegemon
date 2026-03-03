@@ -395,8 +395,9 @@ ipcMain.handle('wallet:send', async (_event, request: WalletSendRequest) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.toLowerCase();
+    const hasCustomError3 = /custom error:\s*['"]?3['"]?/.test(normalized);
     const staleAnchor =
-      (normalized.includes('invalid transaction') && normalized.includes("custom error: '3'")) ||
+      (normalized.includes('invalid transaction') && hasCustomError3) ||
       normalized.includes('invalid anchor');
     if (!staleAnchor) {
       throw error;
