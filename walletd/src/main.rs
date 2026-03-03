@@ -862,18 +862,25 @@ async fn submit_bundle_with_fallback(
     client: &SubstrateRpcClient,
     bundle: &wallet::TransactionBundle,
     signing_seed: Option<[u8; 32]>,
+    try_signed_first: bool,
     use_da_sidecar: bool,
     mut use_proof_sidecar: bool,
 ) -> Result<[u8; 32], WalletError> {
-    if let Some(seed) = signing_seed {
-        match client.submit_shielded_transfer_signed(bundle, &seed).await {
-            Ok(hash) => return Ok(hash),
-            Err(error) => {
-                eprintln!(
-                    "[walletd] signed shielded_transfer submission failed, falling back to unsigned path: {error}"
-                );
+    if try_signed_first {
+        if let Some(seed) = signing_seed {
+            match client.submit_shielded_transfer_signed(bundle, &seed).await {
+                Ok(hash) => return Ok(hash),
+                Err(error) => {
+                    eprintln!(
+                        "[walletd] signed shielded_transfer submission failed, falling back to unsigned path: {error}"
+                    );
+                }
             }
         }
+    } else if signing_seed.is_some() {
+        eprintln!(
+            "[walletd] skipping legacy signed shielded_transfer path (HEGEMON_WALLET_TRY_SIGNED_SUBMIT=0)"
+        );
     }
 
     if !use_da_sidecar {
@@ -1070,10 +1077,11 @@ fn tx_send(
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        // Default to inline ciphertext submission for reliability across mixed miners.
-        // Sidecar mode remains available via HEGEMON_WALLET_DA_SIDECAR=1.
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
+        // v0.9.0 default: sidecar submission reduces extrinsic size and avoids oversized inline calls.
+        // Set HEGEMON_WALLET_DA_SIDECAR=0 to force legacy inline mode.
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
+        let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
         let mut invalid_anchor_retries: u8 = 0;
         let mut nullifier_conflict_retries: u8 = 0;
 
@@ -1082,6 +1090,7 @@ fn tx_send(
                 &client,
                 &built.bundle,
                 signing_seed,
+                try_signed_first,
                 use_da_sidecar,
                 use_proof_sidecar,
             )
