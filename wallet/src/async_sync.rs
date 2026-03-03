@@ -178,6 +178,35 @@ impl AsyncWalletSyncEngine {
                 outcome.commitments += entries.len();
             }
 
+            if commitment_cursor != note_status.leaf_count {
+                if attempt == 0 {
+                    eprintln!(
+                        "Commitment sync incomplete (wallet_cursor={}, chain_leaf_count={}); resetting wallet sync state...",
+                        commitment_cursor, note_status.leaf_count
+                    );
+                    self.store.reset_sync_state()?;
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    continue;
+                }
+                return Err(WalletError::InvalidState("commitment sync incomplete"));
+            }
+
+            let wallet_root = self.store.commitment_tree()?.root();
+            let chain_root = parse_hash_48(&note_status.root)?;
+            if wallet_root != chain_root {
+                if attempt == 0 {
+                    eprintln!(
+                        "Wallet commitment root mismatch (wallet={}, chain={}); resetting wallet sync state...",
+                        hex::encode(wallet_root),
+                        hex::encode(chain_root),
+                    );
+                    self.store.reset_sync_state()?;
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    continue;
+                }
+                return Err(WalletError::InvalidState("wallet commitment root mismatch"));
+            }
+
             if let Err(err) = self.store.validate_notes_against_commitments() {
                 if self.store.repair_note_positions().is_ok()
                     && self.store.validate_notes_against_commitments().is_ok()
@@ -434,6 +463,21 @@ fn parse_hash_32(input: &str) -> Result<[u8; 32], WalletError> {
         )));
     }
     let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn parse_hash_48(input: &str) -> Result<[u8; 48], WalletError> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex::decode(trimmed)
+        .map_err(|e| WalletError::Serialization(format!("Invalid 48-byte hex: {e}")))?;
+    if bytes.len() != 48 {
+        return Err(WalletError::Serialization(format!(
+            "invalid 48-byte hash length: expected 48 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut out = [0u8; 48];
     out.copy_from_slice(&bytes);
     Ok(out)
 }
