@@ -768,6 +768,14 @@ impl PendingCiphertextStore {
         Ok(out)
     }
 
+    pub fn contains(&self, hash: &[u8; 48]) -> bool {
+        self.entries.contains_key(hash)
+    }
+
+    pub fn contains_all(&self, hashes: &[[u8; 48]]) -> bool {
+        hashes.iter().all(|hash| self.contains(hash))
+    }
+
     pub fn remove_many(&mut self, hashes: &[[u8; 48]]) {
         for hash in hashes {
             self.entries.remove(hash);
@@ -4315,6 +4323,22 @@ fn proofless_binding_hash_from_call(call: &runtime::RuntimeCall) -> Option<[u8; 
     }
 }
 
+fn sidecar_ciphertext_hashes_from_call(call: &runtime::RuntimeCall) -> Option<&[[u8; 48]]> {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return None;
+    };
+
+    match call {
+        ShieldedPoolCall::shielded_transfer_sidecar {
+            ciphertext_hashes, ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            ciphertext_hashes, ..
+        } => Some(ciphertext_hashes.as_slice()),
+        _ => None,
+    }
+}
+
 fn ready_proofless_binding_hashes_for_preview(
     prover_coordinator: &ProverCoordinator,
     parent_hash: H256,
@@ -5018,9 +5042,11 @@ pub fn wire_block_builder_api(
         // Strict test harnesses can disable this fallback to force submit_proven_batch
         // validation through import.
         let pending_proofs_for_hydration = { pending_proof_store_for_exec.lock().clone() };
+        let pending_ciphertexts_for_filter = { pending_ciphertext_store_for_exec.lock().clone() };
         tracing::debug!(
             block_number,
             pending_proof_entries = pending_proofs_for_hydration.len(),
+            pending_ciphertext_entries = pending_ciphertexts_for_filter.entries.len(),
             "Captured pending proof snapshot for hydration"
         );
         let sidecar_ready_extrinsics = if disable_proofless_hydration {
@@ -5190,12 +5216,27 @@ pub fn wire_block_builder_api(
         }
 
         let mut deferred_proofless_sidecar_count = 0usize;
+        let mut deferred_missing_ciphertext_sidecar_count = 0usize;
         for ext_bytes in ordered_extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
                     let is_shielded = is_shielded_transfer_call(&extrinsic.function);
                     let is_proofless_sidecar =
                         is_proofless_shielded_transfer_call(&extrinsic.function);
+                    if let Some(ciphertext_hashes) =
+                        sidecar_ciphertext_hashes_from_call(&extrinsic.function)
+                    {
+                        if !pending_ciphertexts_for_filter.contains_all(ciphertext_hashes) {
+                            deferred_missing_ciphertext_sidecar_count =
+                                deferred_missing_ciphertext_sidecar_count.saturating_add(1);
+                            tracing::warn!(
+                                block_number,
+                                missing_ciphertext_hashes = ciphertext_hashes.len(),
+                                "Deferring sidecar shielded transfer: ciphertext bytes not available locally"
+                            );
+                            continue;
+                        }
+                    }
                     if !aggregation_proofs_enabled
                         && is_proofless_sidecar
                     {
@@ -5267,6 +5308,14 @@ pub fn wire_block_builder_api(
                 deferred_proofless_sidecar_count,
                 included_shielded_transfers = shielded_transfer_count,
                 "Deferred proofless sidecar transfers this block"
+            );
+        }
+        if deferred_missing_ciphertext_sidecar_count > 0 {
+            tracing::info!(
+                block_number,
+                deferred_missing_ciphertext_sidecar_count,
+                included_shielded_transfers = shielded_transfer_count,
+                "Deferred sidecar transfers without local ciphertext bytes"
             );
         }
 
