@@ -805,10 +805,16 @@ async fn ensure_wallet_root_consistency(
     client: &Arc<SubstrateRpcClient>,
 ) -> WalletdResult<[u8; 48]> {
     let status = client.note_status().await.map_err(|e| {
-        WalletdError::new(WalletdErrorCode::RpcConnectionFailed, format!("note status: {e}"))
+        WalletdError::new(
+            WalletdErrorCode::RpcConnectionFailed,
+            format!("note status: {e}"),
+        )
     })?;
     let chain_root = parse_hex_48(&status.root)?;
-    let wallet_root = store.commitment_tree().map_err(WalletdError::internal)?.root();
+    let wallet_root = store
+        .commitment_tree()
+        .map_err(WalletdError::internal)?
+        .root();
 
     if wallet_root == chain_root {
         return Ok(chain_root);
@@ -828,10 +834,16 @@ async fn ensure_wallet_root_consistency(
     })?;
 
     let refreshed = client.note_status().await.map_err(|e| {
-        WalletdError::new(WalletdErrorCode::RpcConnectionFailed, format!("note status: {e}"))
+        WalletdError::new(
+            WalletdErrorCode::RpcConnectionFailed,
+            format!("note status: {e}"),
+        )
     })?;
     let refreshed_chain_root = parse_hex_48(&refreshed.root)?;
-    let refreshed_wallet_root = store.commitment_tree().map_err(WalletdError::internal)?.root();
+    let refreshed_wallet_root = store
+        .commitment_tree()
+        .map_err(WalletdError::internal)?
+        .root();
     if refreshed_wallet_root != refreshed_chain_root {
         return Err(WalletdError::new(
             WalletdErrorCode::AnchorInvalid,
@@ -1114,8 +1126,7 @@ fn tx_send(
                     });
                 }
                 Err(WalletError::Rpc(msg))
-                    if is_nullifier_conflict_submission(&msg)
-                        && nullifier_conflict_retries < 2 =>
+                    if is_nullifier_conflict_submission(&msg) && nullifier_conflict_retries < 2 =>
                 {
                     store
                         .mark_notes_pending(&built.spent_note_indexes, false)
@@ -1139,12 +1150,16 @@ fn tx_send(
                         WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
                     })?;
 
-                    let anchor_valid = client
-                        .is_valid_anchor(&built.bundle.anchor)
-                        .await
-                        .map_err(|e| {
-                            WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
-                        })?;
+                    let anchor_valid =
+                        client
+                            .is_valid_anchor(&built.bundle.anchor)
+                            .await
+                            .map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
                     if !anchor_valid {
                         engine.sync_once().await.map_err(|e| {
                             WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())

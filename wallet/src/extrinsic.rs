@@ -1108,7 +1108,9 @@ mod tests {
 
     #[test]
     fn test_unsigned_transfer_anchor_roundtrip_encoding() {
-        let note = NoteCiphertext::empty().to_pallet_bytes().expect("note bytes");
+        let note = NoteCiphertext::empty()
+            .to_pallet_bytes()
+            .expect("note bytes");
         let anchor = [0xA5u8; 48];
         let binding_hash = [0x5Au8; 64];
         let call = ShieldedTransferCall {
