@@ -31,6 +31,25 @@ type WalletdResponse = {
 
 type WalletdMode = 'open' | 'create';
 
+const WALLETD_ENV_DEFAULTS: Record<string, string> = {
+  // Keep GUI wallet submission portable across miners unless operators
+  // explicitly opt into sidecar-only staging.
+  HEGEMON_WALLET_DA_SIDECAR: '0',
+  HEGEMON_WALLET_PROOF_SIDECAR: '0',
+  HEGEMON_WALLET_TRY_SIGNED_SUBMIT: '0'
+};
+
+function walletdSpawnEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, value] of Object.entries(WALLETD_ENV_DEFAULTS)) {
+    const current = env[key];
+    if (current === undefined || current.trim() === '') {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 export class WalletdClient {
   private process: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<number, PendingRequest>();
@@ -133,7 +152,9 @@ export class WalletdClient {
     await this.stop();
 
     const walletdPath = resolveBinaryPath('walletd');
-    const process = spawn(walletdPath, ['--store', resolvedPath, '--mode', mode]);
+    const process = spawn(walletdPath, ['--store', resolvedPath, '--mode', mode], {
+      env: walletdSpawnEnv()
+    });
     this.process = process;
     this.storePath = resolvedPath;
     this.mode = mode;
