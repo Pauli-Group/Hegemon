@@ -1759,8 +1759,10 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
 
         store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
 
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
-        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
+        // Match walletd/app defaults: DA sidecar on, proof sidecar off unless
+        // explicitly enabled.
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", false);
         if use_da_sidecar {
             println!("Submitting unsigned shielded-to-shielded transfer (DA sidecar)...");
             println!("  (Ciphertexts uploaded out-of-band via da_submitCiphertexts)");
