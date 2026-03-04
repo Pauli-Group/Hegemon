@@ -4579,7 +4579,6 @@ fn filter_conflicting_shielded_transfers(
         ..Default::default()
     };
     let mut seen_binding_hashes = std::collections::HashSet::<[u8; 64]>::new();
-    let mut seen_nullifiers = std::collections::HashSet::<[u8; 48]>::new();
 
     for ext_bytes in extrinsics {
         let decoded = match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
@@ -4600,15 +4599,11 @@ fn filter_conflicting_shielded_transfers(
                         conflict = true;
                     }
                 }
-                if !conflict && nullifiers.iter().any(|nf| seen_nullifiers.contains(nf)) {
-                    stats.dropped_nullifier_conflicts =
-                        stats.dropped_nullifier_conflicts.saturating_add(1);
-                    conflict = true;
-                }
-                if !conflict {
-                    for nullifier in nullifiers {
-                        seen_nullifiers.insert(nullifier);
-                    }
+                if !conflict && !nullifiers.is_empty() {
+                    tracing::debug!(
+                        nullifier_count = nullifiers.len(),
+                        "Retaining nullifier-conflicting shielded candidate for runtime selection"
+                    );
                 }
             }
         }
@@ -5165,6 +5160,11 @@ pub fn wire_block_builder_api(
                         );
                         continue;
                     }
+                    let shielded_key = if is_shielded {
+                        shielded_transfer_key_from_extrinsic(&extrinsic).map(hex::encode)
+                    } else {
+                        None
+                    };
                     match block_builder.push(extrinsic) {
                         Ok(_) => {
                             applied.push(ext_bytes.clone());
@@ -5174,7 +5174,15 @@ pub fn wire_block_builder_api(
                             }
                         }
                         Err(e) => {
-                            tracing::debug!(error = ?e, "Extrinsic push failed");
+                            tracing::warn!(
+                                block_number,
+                                is_shielded,
+                                is_sidecar_shielded,
+                                is_proofless_sidecar,
+                                shielded_key = shielded_key.as_deref().unwrap_or(""),
+                                error = ?e,
+                                "Extrinsic push failed during block assembly"
+                            );
                             failed += 1;
                         }
                     }
