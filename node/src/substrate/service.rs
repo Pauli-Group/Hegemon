@@ -5247,7 +5247,7 @@ pub fn wire_block_builder_api(
         let shielded_tx_count = statement_hashes.len() as u32;
         let requires_proven_batch = aggregation_mode_enabled && shielded_tx_count > 0;
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
-        if shielded_tx_count > 0 {
+        if requires_proven_batch {
             let tx_statements_commitment =
                 CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
                     .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
@@ -5258,12 +5258,10 @@ pub fn wire_block_builder_api(
             );
 
             if let Some(ready_batch) = ready_batch {
-                if requires_proven_batch {
-                    ensure_runtime_supports_block_proof_bundle_v2(
-                        client_for_exec.as_ref(),
-                        parent_substrate_hash,
-                    )?;
-                }
+                ensure_runtime_supports_block_proof_bundle_v2(
+                    client_for_exec.as_ref(),
+                    parent_substrate_hash,
+                )?;
                 let proof_size = ready_batch.payload.commitment_proof.data.len()
                     + block_proof_payload_aggregation_bytes(&ready_batch.payload);
                 let proof_size_uncompressed =
@@ -5297,19 +5295,12 @@ pub fn wire_block_builder_api(
                         );
                     }
                     Err(e) => {
-                        if requires_proven_batch {
-                            return Err(format!(
-                                "failed to push mandatory proven batch extrinsic: {e:?}"
-                            ));
-                        }
-                        tracing::warn!(
-                            block_number,
-                            error = ?e,
-                            "Proven batch extrinsic omitted (block resources exhausted)"
-                        );
+                        return Err(format!(
+                            "failed to push mandatory proven batch extrinsic: {e:?}"
+                        ));
                     }
                 }
-            } else if requires_proven_batch {
+            } else {
                 let diagnostics = prover_coordinator.prepared_lookup_diagnostics(
                     parent_substrate_hash,
                     tx_statements_commitment,
@@ -5326,17 +5317,6 @@ pub fn wire_block_builder_api(
                 return Err(
                     "shielded block with omitted proof bytes requires a ready proven batch (strict mode)"
                         .to_string(),
-                );
-            } else if aggregation_mode_enabled {
-                return Err(
-                    "strict mode requires a ready proven batch for shielded block candidates"
-                        .to_string(),
-                );
-            } else {
-                tracing::debug!(
-                    block_number,
-                    shielded_tx_count,
-                    "Proceeding without proven batch in non-aggregation mode"
                 );
             }
         }
