@@ -746,19 +746,6 @@ fn env_bool(name: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
-fn is_proof_sidecar_rejection(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
-    lower.contains("proofbytesrequired")
-        || lower.contains("missing proof bytes")
-        || lower.contains("proof bytes require")
-        || lower.contains("policy is not selfcontained")
-}
-
-fn is_sidecar_method_unavailable(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
-    lower.contains("method not found") || lower.contains("unknown method")
-}
-
 fn is_invalid_anchor_submission(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
     (lower.contains("invalid transaction")
@@ -858,24 +845,17 @@ async fn ensure_wallet_root_consistency(
     Ok(refreshed_chain_root)
 }
 
-async fn submit_bundle_with_fallback(
+async fn submit_bundle_strict(
     client: &SubstrateRpcClient,
     bundle: &wallet::TransactionBundle,
     signing_seed: Option<[u8; 32]>,
     try_signed_first: bool,
     use_da_sidecar: bool,
-    mut use_proof_sidecar: bool,
+    use_proof_sidecar: bool,
 ) -> Result<[u8; 32], WalletError> {
     if try_signed_first {
         if let Some(seed) = signing_seed {
-            match client.submit_shielded_transfer_signed(bundle, &seed).await {
-                Ok(hash) => return Ok(hash),
-                Err(error) => {
-                    eprintln!(
-                        "[walletd] signed shielded_transfer submission failed, falling back to unsigned path: {error}"
-                    );
-                }
-            }
+            return client.submit_shielded_transfer_signed(bundle, &seed).await;
         }
     } else if signing_seed.is_some() {
         eprintln!(
@@ -884,29 +864,14 @@ async fn submit_bundle_with_fallback(
     }
 
     if !use_da_sidecar {
-        return client.submit_shielded_transfer_unsigned(bundle).await;
+        return Err(WalletError::InvalidArgument(
+            "v0.9 strict mode requires DA sidecar submission; inline shielded submission is disabled",
+        ));
     }
 
-    match client
+    client
         .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, Some(use_proof_sidecar))
         .await
-    {
-        Ok(hash) => Ok(hash),
-        Err(WalletError::Rpc(msg)) if use_proof_sidecar && is_proof_sidecar_rejection(&msg) => {
-            use_proof_sidecar = false;
-            client
-                .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
-                    bundle,
-                    Some(use_proof_sidecar),
-                )
-                .await
-        }
-        Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => {
-            let _ = (use_da_sidecar, use_proof_sidecar);
-            client.submit_shielded_transfer_unsigned(bundle).await
-        }
-        Err(err) => Err(err),
-    }
 }
 
 fn tx_send(
@@ -1077,18 +1042,17 @@ fn tx_send(
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        // Default to inline submission for reliability unless operators explicitly
-        // enable DA sidecar staging.
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
-        // Default to inline proof bytes for sidecar transfers until proof-sidecar
-        // hydration is explicitly enabled by operators.
-        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", false);
+        // v0.9 strict path: sidecar submission is the canonical route so block
+        // authoring uses prepared proven batches instead of inline proof fallback.
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
+        // Only applies when DA sidecar mode is enabled.
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", true);
         let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
         let mut invalid_anchor_retries: u8 = 0;
         let mut nullifier_conflict_retries: u8 = 0;
 
         loop {
-            let result = submit_bundle_with_fallback(
+            let result = submit_bundle_strict(
                 &client,
                 &built.bundle,
                 signing_seed,

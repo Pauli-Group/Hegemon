@@ -3738,7 +3738,6 @@ fn verify_proof_carrying_block(
 ) -> Result<Option<CommitmentBlockProof>, String> {
     use consensus::ProofVerifier;
 
-    let accept_legacy_proofless_blocks = load_accept_legacy_proofless_blocks();
     let proven_batch_payload = extract_proven_batch_payload(extrinsics)?;
     ensure_shielded_transfer_ordering(extrinsics)?;
     ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
@@ -3798,14 +3797,6 @@ fn verify_proof_carrying_block(
             );
         }
         if proven_batch_payload.is_none() {
-            if accept_legacy_proofless_blocks {
-                tracing::warn!(
-                    block_number,
-                    missing_proof_bindings = missing_proof_bindings.len(),
-                    "Accepting legacy block without submit_proven_batch (proof verification skipped)"
-                );
-                return Ok(None);
-            }
             return Err(
                 "missing proof bytes require submit_proven_batch in the same block".to_string(),
             );
@@ -4196,18 +4187,6 @@ fn load_max_shielded_transfers_per_block() -> usize {
     configured
 }
 
-fn load_disable_proofless_hydration() -> bool {
-    std::env::var("HEGEMON_DISABLE_PROOFLESS_HYDRATION")
-        .ok()
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
 fn load_min_ready_proven_batch_txs() -> usize {
     env_usize("HEGEMON_MIN_READY_PROVEN_BATCH_TXS")
         .unwrap_or(1)
@@ -4219,47 +4198,6 @@ fn load_proofless_ready_wait() -> Duration {
         .unwrap_or(1_500)
         .min(30_000) as u64;
     Duration::from_millis(wait_ms)
-}
-
-fn load_proofless_on_demand_fallback() -> bool {
-    std::env::var("HEGEMON_PROOFLESS_ON_DEMAND_FALLBACK")
-        .ok()
-        .map(|value| {
-            !matches!(
-                value.to_ascii_lowercase().as_str(),
-                "0" | "false" | "no" | "off"
-            )
-        })
-        .unwrap_or(true)
-}
-
-fn load_accept_legacy_proofless_blocks() -> bool {
-    let requested = std::env::var("HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS")
-        .ok()
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false);
-    if !requested {
-        return false;
-    }
-
-    #[cfg(feature = "production")]
-    {
-        tracing::error!("Ignoring HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS in production build");
-        false
-    }
-
-    #[cfg(not(feature = "production"))]
-    {
-        tracing::warn!(
-            "HEGEMON_ACCEPT_LEGACY_PROOFLESS_BLOCKS enabled (development compatibility mode)"
-        );
-        true
-    }
 }
 
 fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
@@ -4291,6 +4229,18 @@ fn is_proofless_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_sidecar_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return false;
+    };
+
+    matches!(
+        call,
+        ShieldedPoolCall::shielded_transfer_sidecar { .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+    )
 }
 
 fn proofless_binding_hash_from_call(call: &runtime::RuntimeCall) -> Option<[u8; 64]> {
@@ -4672,56 +4622,6 @@ fn filter_conflicting_shielded_transfers(
     (out, stats)
 }
 
-fn hydrate_proofless_sidecar_call(
-    call: &mut ShieldedPoolCall,
-    pending_proofs: &PendingProofStore,
-) -> bool {
-    match call {
-        ShieldedPoolCall::shielded_transfer_sidecar {
-            proof,
-            binding_hash,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-            proof,
-            binding_hash,
-            ..
-        } if proof.data.is_empty() => {
-            if let Some(bytes) = pending_proofs.get(&binding_hash.data) {
-                proof.data = bytes.clone();
-                return true;
-            }
-            false
-        }
-        _ => false,
-    }
-}
-
-fn hydrate_proofless_sidecar_extrinsics(
-    extrinsics: &[Vec<u8>],
-    pending_proofs: &PendingProofStore,
-) -> Result<(Vec<Vec<u8>>, usize), String> {
-    let mut hydrated = Vec::with_capacity(extrinsics.len());
-    let mut hydrated_count = 0usize;
-
-    for ext_bytes in extrinsics {
-        let mut extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        let runtime::RuntimeCall::ShieldedPool(call) = &mut extrinsic.function else {
-            hydrated.push(ext_bytes.clone());
-            continue;
-        };
-        if hydrate_proofless_sidecar_call(call, pending_proofs) {
-            hydrated_count = hydrated_count.saturating_add(1);
-            hydrated.push(extrinsic.encode());
-        } else {
-            hydrated.push(ext_bytes.clone());
-        }
-    }
-
-    Ok((hydrated, hydrated_count))
-}
-
 fn split_shielded_fee_buckets(
     extrinsics: &[Vec<u8>],
     fee_params: FeeParameters,
@@ -4889,8 +4789,8 @@ pub fn wire_block_builder_api(
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     pending_proof_store: Arc<ParkingMutex<PendingProofStore>>,
     prover_coordinator: Arc<ProverCoordinator>,
-    da_params: DaParams,
-    commitment_block_fast: bool,
+    _da_params: DaParams,
+    _commitment_block_fast: bool,
 ) {
     use sc_block_builder::BlockBuilderBuilder;
 
@@ -4898,17 +4798,10 @@ pub fn wire_block_builder_api(
     let aggregation_proofs_enabled = std::env::var("HEGEMON_AGGREGATION_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let disable_proofless_hydration = load_disable_proofless_hydration();
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
     let min_ready_proven_batch_txs = load_min_ready_proven_batch_txs();
     let proofless_ready_wait = load_proofless_ready_wait();
-    let proofless_on_demand_fallback = load_proofless_on_demand_fallback();
 
-    if disable_proofless_hydration {
-        tracing::warn!(
-            "Proofless sidecar hydration disabled via HEGEMON_DISABLE_PROOFLESS_HYDRATION=1"
-        );
-    }
     if min_ready_proven_batch_txs > 1 {
         tracing::info!(
             min_ready_proven_batch_txs,
@@ -5036,34 +4929,13 @@ pub fn wire_block_builder_api(
 
         // Push user extrinsics
         let mut failed = 0usize;
-        // Proof-sidecar bytes are proposer-local; hydrate proofless sidecar
-        // transfers when bytes are available locally so inline verification can
-        // keep liveness even when aggregation proving is unavailable/disabled.
-        // Strict test harnesses can disable this fallback to force submit_proven_batch
-        // validation through import.
-        let pending_proofs_for_hydration = { pending_proof_store_for_exec.lock().clone() };
         let pending_ciphertexts_for_filter = { pending_ciphertext_store_for_exec.lock().clone() };
         tracing::debug!(
             block_number,
-            pending_proof_entries = pending_proofs_for_hydration.len(),
             pending_ciphertext_entries = pending_ciphertexts_for_filter.entries.len(),
-            "Captured pending proof snapshot for hydration"
+            "Captured pending sidecar stores for authoring"
         );
-        let sidecar_ready_extrinsics = if disable_proofless_hydration {
-            extrinsics.to_vec()
-        } else {
-            let (hydrated_extrinsics, hydrated_count) =
-                hydrate_proofless_sidecar_extrinsics(&extrinsics, &pending_proofs_for_hydration)?;
-            if hydrated_count > 0 {
-                tracing::info!(
-                    block_number,
-                    hydrated_count,
-                    "Hydrated proofless sidecar transfers with local pending proof bytes"
-                );
-            }
-            hydrated_extrinsics
-        };
-        let ordered_extrinsics = reorder_shielded_transfers(&sidecar_ready_extrinsics)?;
+        let ordered_extrinsics = reorder_shielded_transfers(&extrinsics)?;
         let (ordered_extrinsics, filter_stats) =
             filter_conflicting_shielded_transfers(&ordered_extrinsics);
         if filter_stats.dropped_total() > 0 {
@@ -5094,6 +4966,7 @@ pub fn wire_block_builder_api(
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
         let mut defer_proofless_until_ready_batch = false;
+        let mut aggregation_mode_required_for_block = false;
         let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
         if aggregation_proofs_enabled {
             let mut preview_extrinsics = Vec::new();
@@ -5107,22 +4980,31 @@ pub fn wire_block_builder_api(
             ));
 
             let mut preview_shielded_count = shielded_transfer_count;
+            let mut preview_has_sidecar_transfers = false;
             for ext_bytes in &ordered_extrinsics {
                 let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) else {
                     continue;
                 };
                 let is_shielded = is_shielded_transfer_call(&extrinsic.function);
+                let is_sidecar = is_sidecar_shielded_transfer_call(&extrinsic.function);
                 if is_shielded && preview_shielded_count >= max_shielded_transfers_per_block {
                     continue;
                 }
                 preview_extrinsics.push(extrinsic);
+                if is_sidecar {
+                    preview_has_sidecar_transfers = true;
+                }
                 if is_shielded {
                     preview_shielded_count = preview_shielded_count.saturating_add(1);
                 }
             }
 
+            if preview_has_sidecar_transfers {
+                aggregation_mode_required_for_block = true;
+            }
             let missing_preview = missing_proof_binding_hashes(&preview_extrinsics);
             if !missing_preview.is_empty() {
+                aggregation_mode_required_for_block = true;
                 let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
                 let pending_matches =
                     pending_proof_match_count(&missing_preview, &pending_proofs_snapshot);
@@ -5153,23 +5035,13 @@ pub fn wire_block_builder_api(
                         proofless_ready_wait,
                     )?;
                     if ready_bindings.is_empty() {
-                        if proofless_on_demand_fallback {
-                            defer_proofless_until_ready_batch = false;
-                            tracing::warn!(
-                                block_number,
-                                missing_proof_bindings = missing_preview.len(),
-                                min_ready_proven_batch_txs,
-                                "No ready proven batch yet; keeping proofless sidecars for on-demand batch proving fallback"
-                            );
-                        } else {
-                            defer_proofless_until_ready_batch = true;
-                            tracing::warn!(
-                                block_number,
-                                missing_proof_bindings = missing_preview.len(),
-                                min_ready_proven_batch_txs,
-                                "Deferring proofless sidecar transfers until a proven batch is ready (no ready subset)"
-                            );
-                        }
+                        defer_proofless_until_ready_batch = true;
+                        tracing::warn!(
+                            block_number,
+                            missing_proof_bindings = missing_preview.len(),
+                            min_ready_proven_batch_txs,
+                            "Deferring proofless sidecar transfers until a proven batch is ready (strict mode)"
+                        );
                     } else {
                         let deferred = missing_preview.len().saturating_sub(ready_bindings.len());
                         if deferred > 0 {
@@ -5195,7 +5067,7 @@ pub fn wire_block_builder_api(
             }
         }
 
-        if aggregation_proofs_enabled {
+        if aggregation_proofs_enabled && aggregation_mode_required_for_block {
             let enable_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
                 runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {}),
             );
@@ -5217,10 +5089,13 @@ pub fn wire_block_builder_api(
 
         let mut deferred_proofless_sidecar_count = 0usize;
         let mut deferred_missing_ciphertext_sidecar_count = 0usize;
+        let mut skipped_inline_shielded_count = 0usize;
         for ext_bytes in ordered_extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
                     let is_shielded = is_shielded_transfer_call(&extrinsic.function);
+                    let is_sidecar_shielded =
+                        is_sidecar_shielded_transfer_call(&extrinsic.function);
                     let is_proofless_sidecar =
                         is_proofless_shielded_transfer_call(&extrinsic.function);
                     if let Some(ciphertext_hashes) =
@@ -5243,6 +5118,15 @@ pub fn wire_block_builder_api(
                         tracing::warn!(
                             block_number,
                             "Skipping proofless shielded transfer: HEGEMON_AGGREGATION_PROOFS is disabled"
+                        );
+                        continue;
+                    }
+                    if aggregation_proofs_enabled && is_shielded && !is_sidecar_shielded {
+                        skipped_inline_shielded_count =
+                            skipped_inline_shielded_count.saturating_add(1);
+                        tracing::warn!(
+                            block_number,
+                            "Skipping inline shielded transfer: aggregation mode requires DA/proof sidecar submission"
                         );
                         continue;
                     }
@@ -5318,6 +5202,13 @@ pub fn wire_block_builder_api(
                 "Deferred sidecar transfers without local ciphertext bytes"
             );
         }
+        if skipped_inline_shielded_count > 0 {
+            tracing::warn!(
+                block_number,
+                skipped_inline_shielded_count,
+                "Skipped inline shielded transfers; wallet must submit sidecar transactions in strict mode"
+            );
+        }
 
         let mut decoded_applied = Vec::with_capacity(applied.len());
         for ext_bytes in &applied {
@@ -5366,7 +5257,7 @@ pub fn wire_block_builder_api(
             .map(|binding| binding.statement_hash)
             .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
-        let requires_proven_batch = !missing_proof_bindings.is_empty();
+        let requires_proven_batch = aggregation_mode_enabled && shielded_tx_count > 0;
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
         if shielded_tx_count > 0 {
             let tx_statements_commitment =
@@ -5442,57 +5333,22 @@ pub fn wire_block_builder_api(
                     tx_count = shielded_tx_count,
                     tx_statements_commitment = %hex::encode(tx_statements_commitment),
                     ?diagnostics,
-                    "Missing prepared proven batch for mandatory proofless sidecar set; attempting on-demand preparation"
+                    "Missing prepared proven batch for mandatory proofless sidecar set (strict mode)"
                 );
-
-                let pending_ciphertexts_snapshot = { pending_ciphertext_store_for_exec.lock().clone() };
-                let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
-                let candidate_txs = decoded_applied
-                    .iter()
-                    .map(|extrinsic| extrinsic.encode())
-                    .collect::<Vec<_>>();
-                let on_demand = prepare_block_proof_bundle(
-                    client_for_exec.as_ref(),
-                    parent_substrate_hash,
-                    block_number,
-                    candidate_txs,
-                    da_params,
-                    &pending_ciphertexts_snapshot,
-                    &pending_proofs_snapshot,
-                    commitment_block_fast,
-                )
-                .map_err(|err| {
-                    format!(
-                        "shielded block with omitted proof bytes requires a ready proven batch; on-demand prepare failed: {err}"
-                    )
-                })?;
-                selected_prover_claim = on_demand.payload.prover_claim.clone();
-                let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                    runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
-                        payload: on_demand.payload,
-                    }),
+                return Err(
+                    "shielded block with omitted proof bytes requires a ready proven batch (strict mode)"
+                        .to_string(),
                 );
-                match block_builder.push(proven_batch_extrinsic.clone()) {
-                    Ok(_) => {
-                        applied.push(proven_batch_extrinsic.encode());
-                        tracing::info!(
-                            block_number,
-                            tx_count = shielded_tx_count,
-                            on_demand_build_ms = on_demand.build_ms,
-                            "Attached on-demand proven batch extrinsic"
-                        );
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "failed to push on-demand mandatory proven batch extrinsic: {e:?}"
-                        ));
-                    }
-                }
+            } else if aggregation_mode_enabled {
+                return Err(
+                    "strict mode requires a ready proven batch for shielded block candidates"
+                        .to_string(),
+                );
             } else {
                 tracing::debug!(
                     block_number,
                     shielded_tx_count,
-                    "Proceeding without ready proven batch; inline verification fallback will apply"
+                    "Proceeding without proven batch in non-aggregation mode"
                 );
             }
         }
@@ -8428,20 +8284,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
-                                let accept_legacy_proofless_blocks =
-                                    load_accept_legacy_proofless_blocks();
                                 let mut da_build = if needs_self_contained_batch {
                                     let maybe_payload = match extract_proven_batch_payload(&extrinsics)
                                     {
                                         Ok(Some(payload)) => Some(payload.payload),
-                                        Ok(None) if accept_legacy_proofless_blocks => {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&downloaded.from_peer),
-                                                block_number,
-                                                "Accepting synced block without submit_proven_batch due compatibility override"
-                                            );
-                                            None
-                                        }
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
@@ -9040,20 +8886,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
-                                let accept_legacy_proofless_blocks =
-                                    load_accept_legacy_proofless_blocks();
                                 let mut da_build = if needs_self_contained_batch {
                                     let maybe_payload = match extract_proven_batch_payload(&extrinsics)
                                     {
                                         Ok(Some(payload)) => Some(payload.payload),
-                                        Ok(None) if accept_legacy_proofless_blocks => {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&peer_id),
-                                                block_number,
-                                                "Accepting announced block without submit_proven_batch due compatibility override"
-                                            );
-                                            None
-                                        }
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&peer_id),

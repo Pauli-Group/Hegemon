@@ -414,6 +414,183 @@ Max TPS (1 machine) & $<$0.2 & $\sim$15 & $\sim$100 (GPU) \\
 \end{tabular}
 \end{center}
 
+\section{Failure-Driven Solution Loop (No New Runs)}
+
+\subsection{Observed facts from field behavior}
+
+We treat repeated user-visible failures as primary evidence:
+\begin{enumerate}[leftmargin=2em]
+  \item Blocks continue to be mined while single transfers remain pending for many blocks.
+  \item The same user action (small transfer) sometimes confirms and sometimes does not.
+  \item The prover host is strong (32 cores, 256\,GB), yet low-load transfers still stall.
+  \item CLI and app views can disagree about wallet state and transfer progression.
+\end{enumerate}
+
+These facts imply the dominant problem is not ``insufficient raw compute'' for one
+transfer; it is inconsistent end-to-end state coupling.
+
+\subsection{Non-negotiable end result}
+
+For commerce-grade behavior, each transfer must satisfy:
+\begin{enumerate}[leftmargin=2em]
+  \item Quick admission response (accept/reject in seconds),
+  \item Confirmation in 1--2 blocks (60--120\,s),
+  \item Never-open-ended pending.
+\end{enumerate}
+
+This must hold on the real topology (laptop + \texttt{hegemon-ovh} + \texttt{hegemon-prover}),
+not only on synthetic local runs.
+
+\subsection{Design iteration: kill weak ideas}
+
+\paragraph{Design 0: ``accept now, prove whenever''.}
+Failure mode:
+\begin{enumerate}[leftmargin=2em]
+  \item Admission is decoupled from real proving capacity.
+  \item Queue delay is unbounded.
+  \item Pending can grow without limit.
+\end{enumerate}
+Decision: reject.
+
+\paragraph{Design 1: ``keep fallback paths for liveness''.}
+Failure mode:
+\begin{enumerate}[leftmargin=2em]
+  \item Multiple execution paths produce different behavior for the same transfer.
+  \item Identity/matching drift appears between submit, prove, and include steps.
+  \item System becomes non-deterministic under minor timing changes.
+\end{enumerate}
+Decision: reject.
+
+\paragraph{Design 2: ``prove during block assembly when needed''.}
+Failure mode:
+\begin{enumerate}[leftmargin=2em]
+  \item Block assembly latency becomes high and variable.
+  \item One heavy or stale proving job delays unrelated user transfers.
+  \item 60-second rhythm cannot be relied on for user confirmation.
+\end{enumerate}
+Decision: reject.
+
+\paragraph{Design 3: ``strict timeout only''.}
+Failure mode:
+\begin{enumerate}[leftmargin=2em]
+  \item Converts pending to fast failure but does not increase successful confirmations.
+  \item Under bad scheduling, many valid transfers fail despite available hardware.
+\end{enumerate}
+Decision: reject as standalone fix.
+
+\subsection{Final design (what should be built)}
+
+\subsubsection*{A. One immutable transfer identity}
+At submission, define one immutable transfer envelope and one canonical hash.
+That exact hash is reused by wallet, coordinator, prover output, miner inclusion,
+and runtime verification. No later mutation, no alternate identity path.
+
+\subsubsection*{B. Admission coupled to capacity}
+Admission succeeds only if the coordinator can reserve capacity in a rolling
+2-block window. Otherwise reject immediately. This prevents unbounded waiting.
+
+\subsubsection*{C. Continuous prove-ahead}
+Proving runs ahead of block assembly:
+\[
+\text{collect} \rightarrow \text{prepare} \rightarrow \text{prove}
+\rightarrow \text{package} \rightarrow \text{ready}.
+\]
+Block assembly only consumes ready packages.
+
+\subsubsection*{D. Ready-only inclusion}
+For shielded transfers, miner includes an ordered transfer set only with the
+exact matching ready package. If mismatch/no package: do not include.
+
+\subsubsection*{E. Lane separation by intent}
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{User lane} (small payments): guaranteed per-block share.
+  \item \textbf{Bulk lane} (consolidation/maintenance): uses remaining share.
+\end{enumerate}
+This protects user latency from maintenance traffic.
+
+\subsubsection*{F. Parent-churn resilience}
+Keep expensive proving artifacts parent-independent where possible, then bind to
+the current parent late (cheap step). This avoids discarding large work on every
+new block and reduces ready-bundle miss rate.
+
+\subsection{Quantitative feasibility with current measurements}
+
+Measured batch-16 proving:
+\[
+t_{16}=21.5\text{ s},\qquad
+\mu_1=\frac{16}{21.5}=0.744\text{ tx/s}
+\]
+for one strong prover host.
+
+For a 120\,s confirmation window:
+\[
+C_{120}(P)=120\cdot P\cdot 0.744
+          =89.3P\ \text{tx}
+\]
+where $P$ is number of equivalent prover workers.
+
+Examples:
+\begin{center}
+\begin{tabular}{@{}rrr@{}}
+\toprule
+$P$ & Capacity in 120\,s & Interpretation \\
+\midrule
+1 & 89 tx & one strong prover is enough for single-user low-load UX \\
+2 & 178 tx & two equivalent provers sustain higher burst safely \\
+4 & 357 tx & multi-prover lane becomes robust for public beta bursts \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Conclusion: for single transfer UX, failures are not explained by prover speed.
+They are explained by admission/scheduling/inclusion coupling defects.
+
+\subsection{Hard system law (design, not policy)}
+
+Let $\lambda_u$ be user-lane arrival rate and $\mu_u$ user-lane service rate.
+For bounded confirmation:
+\[
+\lambda_u < \mu_u,\qquad
+Q_u \le \mu_u\cdot 120.
+\]
+Then:
+\[
+D_u \le \frac{Q_u}{\mu_u}\le 120\text{ s}.
+\]
+
+If admission ignores this bound, infinite pending is possible by construction.
+
+\subsection{What this says about viability}
+
+\paragraph{Go (works):}
+If A--F above are implemented, then 1--2 block confirmation is a consequence of
+architecture shape, not of ad-hoc timeout rules.
+
+\paragraph{No-go (will keep failing):}
+If any of these remain true:
+\begin{enumerate}[leftmargin=2em]
+  \item multiple transfer paths,
+  \item proving inside block assembly,
+  \item admission not tied to real capacity,
+  \item transfer identity mutation between stages,
+\end{enumerate}
+then the system will continue to show random pending regardless of hardware.
+
+\subsection{Rewrite order implied by this design}
+
+\begin{enumerate}[leftmargin=2em]
+  \item \texttt{node/src/substrate/service.rs}: separate admission, proving,
+        and inclusion; remove mixed/fallback path logic.
+  \item \texttt{node/src/substrate/prover\_coordinator.rs}: reservation and
+        rolling-window capacity accounting with lane guarantees.
+  \item \texttt{pallets/shielded-pool/src/lib.rs}: enforce exact ordered-set
+        match between included transfers and package.
+  \item \texttt{walletd/src/main.rs}, \texttt{wallet/src/bin/wallet.rs}:
+        expose true admission result and deadline state; remove legacy submit path.
+  \item \texttt{hegemon-app/src/App.tsx}: show deterministic transfer states
+        (accepted/proving/ready/included/failed), not generic pending.
+\end{enumerate}
+
 \section{Roadmap}
 
 \begin{enumerate}[leftmargin=2em]

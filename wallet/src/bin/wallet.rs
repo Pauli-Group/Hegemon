@@ -1547,7 +1547,9 @@ async fn submit_bundle_with_fallback(
     mut use_proof_sidecar: bool,
 ) -> Result<[u8; 32], WalletError> {
     if !use_da_sidecar {
-        return client.submit_shielded_transfer_unsigned(bundle).await;
+        return Err(WalletError::InvalidArgument(
+            "v0.9 strict mode requires DA sidecar submission; inline shielded submission is disabled",
+        ));
     }
 
     match client
@@ -1564,9 +1566,9 @@ async fn submit_bundle_with_fallback(
                 )
                 .await
         }
-        Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => {
-            client.submit_shielded_transfer_unsigned(bundle).await
-        }
+        Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => Err(WalletError::Rpc(
+            format!("sidecar RPC unavailable in strict mode: {msg}"),
+        )),
         Err(err) => Err(err),
     }
 }
@@ -1754,7 +1756,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
 
         store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
 
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
         if use_da_sidecar {
             println!("Submitting unsigned shielded-to-shielded transfer (DA sidecar)...");
