@@ -58,7 +58,6 @@ use crate::substrate::service::StorageChangesHandle;
 use consensus::Blake3Seal;
 use sp_core::H256;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 /// Type alias for the full backend
 pub type FullBackend = sc_service::TFullBackend<runtime::Block>;
@@ -853,70 +852,16 @@ impl ChainStateProvider for ProductionChainStateProvider {
                     result.storage_changes,
                 )
             }
-            Err(mut e) => {
+            Err(e) => {
                 if !pending.is_empty() && Self::is_missing_ready_proven_batch_error(&e) {
-                    let wait_budget = Self::pending_proven_batch_wait_budget();
-                    let max_attempts = Self::pending_proven_batch_max_attempts();
-                    let mut retry_interval = Duration::from_millis(200);
-                    let max_retry_interval = Duration::from_millis(2_000);
-                    let deadline = Instant::now() + wait_budget;
-                    let mut attempts = 0usize;
-                    while attempts < max_attempts && Instant::now() < deadline {
-                        std::thread::sleep(retry_interval);
-                        attempts = attempts.saturating_add(1);
-                        match self.execute_extrinsics(&parent_hash, block_number, &pending) {
-                            Ok(result) => {
-                                tracing::info!(
-                                    block_number,
-                                    pending_txs = pending.len(),
-                                    wait_ms = wait_budget.as_millis() as u64,
-                                    attempts,
-                                    "Recovered pending tx template after waiting for proven batch"
-                                );
-                                if self.config.verbose {
-                                    let storage_changes_key =
-                                        result.storage_changes.as_ref().map(|handle| handle.key());
-                                    tracing::debug!(
-                                        block_number,
-                                        applied = result.applied_extrinsics.len(),
-                                        failed = result.failed_count,
-                                        state_root = %hex::encode(result.state_root.as_bytes()),
-                                        storage_changes_key = ?storage_changes_key,
-                                        "Block template built after waiting for ready proven batch"
-                                    );
-                                }
-                                return template.with_executed_state(
-                                    result.applied_extrinsics,
-                                    result.state_root,
-                                    result.extrinsics_root,
-                                    result.storage_changes,
-                                );
-                            }
-                            Err(retry_err)
-                                if Self::is_missing_ready_proven_batch_error(&retry_err) =>
-                            {
-                                e = retry_err;
-                                retry_interval = std::cmp::min(
-                                    retry_interval.saturating_mul(2),
-                                    max_retry_interval,
-                                );
-                            }
-                            Err(retry_err) => {
-                                e = retry_err;
-                                break;
-                            }
-                        }
-                    }
-                    if Self::is_missing_ready_proven_batch_error(&e) {
-                        tracing::warn!(
-                            block_number,
-                            pending_txs = pending.len(),
-                            wait_ms = wait_budget.as_millis() as u64,
-                            attempts,
-                            max_attempts,
-                            "Pending proven-batch retry budget exhausted; falling back to empty pending set"
-                        );
-                    }
+                    // Never block block-template assembly waiting for ready proven
+                    // batches. Proofless txs are deferred upstream; here we must keep
+                    // mining liveness deterministic and fast.
+                    tracing::warn!(
+                        block_number,
+                        pending_txs = pending.len(),
+                        "Missing ready proven batch for pending txs; immediately rebuilding template without pending set"
+                    );
                 }
 
                 if !pending.is_empty() {
@@ -980,27 +925,6 @@ impl ProductionChainStateProvider {
         error.contains("requires a ready proven batch")
     }
 
-    fn pending_proven_batch_wait_budget() -> Duration {
-        let wait_ms = std::env::var("HEGEMON_PENDING_PROVEN_BATCH_WAIT_MS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .or_else(|| {
-                std::env::var("HEGEMON_BATCH_JOB_TIMEOUT_MS")
-                    .ok()
-                    .and_then(|s| s.parse::<u64>().ok())
-            })
-            .unwrap_or(30_000)
-            .max(100);
-        Duration::from_millis(wait_ms)
-    }
-
-    fn pending_proven_batch_max_attempts() -> usize {
-        std::env::var("HEGEMON_PENDING_PROVEN_BATCH_MAX_ATTEMPTS")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(20)
-            .max(1)
-    }
 }
 
 /// Create a production chain state provider
