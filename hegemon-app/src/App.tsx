@@ -17,7 +17,15 @@ import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
-const approvedSeeds = 'hegemon.pauli.group:30333,75.155.93.185:30333';
+const approvedSeeds = 'hegemon.pauli.group:31333,158.69.222.121:31333';
+const legacyApprovedSeedLists = new Set([
+  'hegemon.pauli.group',
+  'hegemon.pauli.group:30333',
+  '75.155.93.185',
+  '75.155.93.185:30333',
+  'hegemon.pauli.group:30333,75.155.93.185:30333',
+  '75.155.93.185:30333,hegemon.pauli.group:30333'
+]);
 const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
@@ -39,6 +47,13 @@ const normalizeTxId = (value: string | null | undefined) => {
   }
   return trimmed.replace(/^0x/i, '').toLowerCase();
 };
+
+const normalizeSeedsValue = (value: string | null | undefined) =>
+  (value ?? '')
+    .split(',')
+    .map((seed) => seed.trim().toLowerCase())
+    .filter(Boolean)
+    .join(',');
 
 const makeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -601,11 +616,8 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
   }
 
-  if (
-    (isDefaultLocal || isDefaultTestnet) &&
-    (connection.seeds === 'hegemon.pauli.group' ||
-      connection.seeds === 'hegemon.pauli.group:30333')
-  ) {
+  const normalizedSeeds = normalizeSeedsValue(next.seeds);
+  if ((isDefaultLocal || isDefaultTestnet) && (normalizedSeeds === '' || legacyApprovedSeedLists.has(normalizedSeeds))) {
     next = { ...next, seeds: approvedSeeds };
   }
 

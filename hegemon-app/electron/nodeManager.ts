@@ -8,6 +8,16 @@ import type { NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/t
 import { resolveBinaryPath } from './binPaths';
 
 const DEFAULT_RPC_PORT = 9944;
+const DESKTOP_LIVENESS_ENV_DEFAULTS: Record<string, string> = {
+  // Desktop operators prioritize confirmation liveness over throughput.
+  HEGEMON_BATCH_TARGET_TXS: '1',
+  HEGEMON_BATCH_INCREMENTAL_UPSIZE: '1',
+  HEGEMON_PROVER_LIVENESS_LANE: '1',
+  // Keep proving jobs alive on commodity hardware instead of timing out.
+  HEGEMON_BATCH_JOB_TIMEOUT_MS: '900000',
+  HEGEMON_PENDING_PROVEN_BATCH_WAIT_MS: '900000',
+  HEGEMON_PROVER_WORK_PACKAGE_TTL_MS: '900000'
+};
 
 type RpcRequest = {
   jsonrpc: '2.0';
@@ -115,7 +125,7 @@ export class NodeManager extends EventEmitter {
     }
 
     const mineFlag = options.mineOnStart ? '1' : '0';
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       HEGEMON_MINER_ADDRESS: options.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
       HEGEMON_SEEDS: options.seeds ?? process.env.HEGEMON_SEEDS,
@@ -137,6 +147,12 @@ export class NodeManager extends EventEmitter {
         ? String(options.mineThreads)
         : process.env.HEGEMON_MINE_THREADS
     };
+    for (const [key, value] of Object.entries(DESKTOP_LIVENESS_ENV_DEFAULTS)) {
+      const current = env[key];
+      if (current === undefined || current.trim() === '') {
+        env[key] = value;
+      }
+    }
 
     this.process = spawn(nodePath, args, { env });
     this.managedConnectionId = options.connectionId ?? null;

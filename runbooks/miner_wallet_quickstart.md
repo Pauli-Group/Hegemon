@@ -62,10 +62,10 @@ HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
 To avoid forks caused by low peer counts, configure multiple reachable seeds. Use a comma-separated list in `HEGEMON_SEEDS`:
 
 ```bash
-export HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333"
+export HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333"
 ```
 
-Ensure TCP/30333 is open on each seed and that every miner shares the same seed list. Avoid single-point seeds.
+Ensure TCP/31333 is open on each seed and that every miner shares the same seed list. Avoid single-point seeds.
 
 ### 4b. Ensure time sync (recommended)
 
