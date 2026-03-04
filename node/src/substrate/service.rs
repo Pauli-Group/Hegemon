@@ -4975,26 +4975,23 @@ pub fn wire_block_builder_api(
             ));
 
             let mut preview_shielded_count = shielded_transfer_count;
-            let mut preview_has_sidecar_transfers = false;
+            let mut preview_has_shielded_transfers = false;
             for ext_bytes in &ordered_extrinsics {
                 let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) else {
                     continue;
                 };
                 let is_shielded = is_shielded_transfer_call(&extrinsic.function);
-                let is_sidecar = is_sidecar_shielded_transfer_call(&extrinsic.function);
                 if is_shielded && preview_shielded_count >= max_shielded_transfers_per_block {
                     continue;
                 }
                 preview_extrinsics.push(extrinsic);
-                if is_sidecar {
-                    preview_has_sidecar_transfers = true;
-                }
                 if is_shielded {
+                    preview_has_shielded_transfers = true;
                     preview_shielded_count = preview_shielded_count.saturating_add(1);
                 }
             }
 
-            if preview_has_sidecar_transfers {
+            if preview_has_shielded_transfers {
                 aggregation_mode_required_for_block = true;
             }
             let missing_preview = missing_proof_binding_hashes(&preview_extrinsics);
@@ -5084,7 +5081,6 @@ pub fn wire_block_builder_api(
 
         let mut deferred_proofless_sidecar_count = 0usize;
         let mut deferred_missing_ciphertext_sidecar_count = 0usize;
-        let mut skipped_inline_shielded_count = 0usize;
         for ext_bytes in ordered_extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
@@ -5113,15 +5109,6 @@ pub fn wire_block_builder_api(
                         tracing::warn!(
                             block_number,
                             "Skipping proofless shielded transfer: HEGEMON_AGGREGATION_PROOFS is disabled"
-                        );
-                        continue;
-                    }
-                    if aggregation_proofs_enabled && is_shielded && !is_sidecar_shielded {
-                        skipped_inline_shielded_count =
-                            skipped_inline_shielded_count.saturating_add(1);
-                        tracing::warn!(
-                            block_number,
-                            "Skipping inline shielded transfer: aggregation mode requires DA/proof sidecar submission"
                         );
                         continue;
                     }
@@ -5208,13 +5195,6 @@ pub fn wire_block_builder_api(
                 deferred_missing_ciphertext_sidecar_count,
                 included_shielded_transfers = shielded_transfer_count,
                 "Deferred sidecar transfers without local ciphertext bytes"
-            );
-        }
-        if skipped_inline_shielded_count > 0 {
-            tracing::warn!(
-                block_number,
-                skipped_inline_shielded_count,
-                "Skipped inline shielded transfers; wallet must submit sidecar transactions in strict mode"
             );
         }
 

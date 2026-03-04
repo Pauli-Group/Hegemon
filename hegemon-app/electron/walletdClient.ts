@@ -32,13 +32,9 @@ type WalletdResponse = {
 type WalletdMode = 'open' | 'create';
 
 const WALLETD_ENV_DEFAULTS: Record<string, string> = {
-  // 0.9 runtime authoring expects sidecar-form shielded transfers when
-  // aggregation mode is active. Default to DA sidecar on.
-  //
-  // Keep proof bytes inline by default (PROOF_SIDECAR=0) so single-transfer
-  // inclusion does not depend on prove-ahead bundle readiness unless operators
-  // explicitly enable proof sidecar mode.
-  HEGEMON_WALLET_DA_SIDECAR: '1',
+  // Default to inline ciphertext/proof transport for cross-miner portability.
+  // Operators can opt into sidecar transport explicitly.
+  HEGEMON_WALLET_DA_SIDECAR: '0',
   HEGEMON_WALLET_PROOF_SIDECAR: '0',
   HEGEMON_WALLET_TRY_SIGNED_SUBMIT: '0'
 };
