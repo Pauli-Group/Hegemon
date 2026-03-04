@@ -2510,15 +2510,12 @@ pub mod pallet {
 
         fn validate_encrypted_note(note: &EncryptedNote) -> Result<(), Error<T>> {
             let version = note.ciphertext[0];
-            if version != crate::types::NOTE_ENCRYPTION_VERSION
-                && version != crate::types::LEGACY_NOTE_ENCRYPTION_VERSION
-            {
+            if version != crate::types::NOTE_ENCRYPTION_VERSION {
                 log::info!(
                     target: "shielded-pool",
-                    "Rejected encrypted note version {}; expected {} or {}",
+                    "Rejected encrypted note version {}; expected {}",
                     version,
-                    crate::types::NOTE_ENCRYPTION_VERSION,
-                    crate::types::LEGACY_NOTE_ENCRYPTION_VERSION
+                    crate::types::NOTE_ENCRYPTION_VERSION
                 );
                 return Err(Error::<T>::UnsupportedNoteVersion);
             }

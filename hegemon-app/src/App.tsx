@@ -18,16 +18,6 @@ import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
 const approvedSeeds = 'hegemon.pauli.group:31333,158.69.222.121:31333';
-const approvedSeedEndpoints = new Set(approvedSeeds.split(',').map((seed) => seed.trim().toLowerCase()));
-const legacyApprovedSeedLists = new Set([
-  'hegemon.pauli.group',
-  'hegemon.pauli.group:30333',
-  '75.155.93.185',
-  '75.155.93.185:30333',
-  'hegemon.pauli.group:30333,75.155.93.185:30333',
-  '75.155.93.185:30333,hegemon.pauli.group:30333'
-]);
-const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
@@ -626,12 +616,7 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
   }
 
   const normalizedSeeds = normalizeSeedsValue(next.seeds);
-  if (
-    (isDefaultLocal || isDefaultTestnet) &&
-    (normalizedSeeds === '' ||
-      legacyApprovedSeedLists.has(normalizedSeeds) ||
-      approvedSeedEndpoints.has(normalizedSeeds))
-  ) {
+  if ((isDefaultLocal || isDefaultTestnet) && normalizedSeeds === '') {
     next = { ...next, seeds: approvedSeeds };
   }
 
@@ -811,22 +796,6 @@ export default function App() {
         if (stored !== null) {
           setContacts(stored);
           return;
-        }
-        const legacy = window.localStorage.getItem(contactsKey);
-        if (!legacy) {
-          return;
-        }
-        try {
-          const parsed = JSON.parse(legacy);
-          if (Array.isArray(parsed)) {
-            setContacts(parsed);
-            await window.hegemon.contacts.save(parsed);
-            window.localStorage.removeItem(contactsKey);
-          }
-        } catch {
-          if (!cancelled) {
-            setContactsError('Failed to migrate legacy contacts.');
-          }
         }
       } catch {
         if (!cancelled) {

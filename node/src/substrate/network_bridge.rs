@@ -142,8 +142,6 @@ impl TransactionMessage {
 /// Sync message wrapper - distinguishes request vs response unambiguously
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum SyncMessage {
-    /// A legacy sync request without an explicit request identifier.
-    Request(SyncRequest),
     /// A sync request with explicit correlation id.
     RequestV2(SyncRequestEnvelope),
     /// A sync response
@@ -537,32 +535,9 @@ impl NetworkBridge {
 
     /// Handle sync protocol message
     async fn handle_sync_message(&mut self, peer_id: &PeerId, data: &[u8]) {
-        // Prefer wrapped sync messages (Request/RequestV2/Response).
+        // Require wrapped sync messages with explicit request identifiers.
         if let Ok(msg) = SyncMessage::decode(&mut &data[..]) {
             match msg {
-                SyncMessage::Request(request) => {
-                    self.stats.sync_requests_received += 1;
-                    tracing::debug!(
-                        peer_id = %hex::encode(peer_id),
-                        request = ?request,
-                        "Received legacy sync request"
-                    );
-
-                    if let Some(ref tx) = self.message_tx {
-                        let msg = IncomingMessage::SyncRequest {
-                            peer_id: *peer_id,
-                            request_id: None,
-                            request,
-                        };
-                        if let Err(e) = tx.send(msg).await {
-                            tracing::warn!(
-                                error = %e,
-                                "Failed to send sync request to channel"
-                            );
-                        }
-                    }
-                    return;
-                }
                 SyncMessage::RequestV2(envelope) => {
                     self.stats.sync_requests_received += 1;
                     tracing::debug!(
@@ -609,54 +584,6 @@ impl NetworkBridge {
                     return;
                 }
             }
-        }
-
-        // Compatibility fallback: try bare request/response payloads.
-        if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
-            self.stats.sync_requests_received += 1;
-
-            tracing::debug!(
-                peer_id = %hex::encode(peer_id),
-                request = ?request,
-                "Received bare sync request"
-            );
-
-            if let Some(ref tx) = self.message_tx {
-                let msg = IncomingMessage::SyncRequest {
-                    peer_id: *peer_id,
-                    request_id: None,
-                    request,
-                };
-                if let Err(e) = tx.send(msg).await {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to send sync request to channel"
-                    );
-                }
-            }
-            return;
-        }
-
-        if let Ok(response) = SyncResponse::decode(&mut &data[..]) {
-            tracing::debug!(
-                peer_id = %hex::encode(peer_id),
-                response = ?response,
-                "Received bare sync response"
-            );
-
-            if let Some(ref tx) = self.message_tx {
-                let msg = IncomingMessage::SyncResponse {
-                    peer_id: *peer_id,
-                    response,
-                };
-                if let Err(e) = tx.send(msg).await {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to send sync response to channel"
-                    );
-                }
-            }
-            return;
         }
 
         // Neither request nor response - decode error
