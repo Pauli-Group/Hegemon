@@ -26,6 +26,8 @@ const walletAutoLockEnabledKey = 'hegemon.walletAutoLockEnabled';
 const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
 const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 const minWalletPassphraseLength = 12;
+const defaultRpcPort = 9944;
+const defaultP2pPort = 30333;
 
 const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -311,16 +313,159 @@ const activityStatusClasses: Record<ActivityStatus, string> = {
 };
 
 const deriveHttpUrl = (wsUrl: string, httpUrl?: string) => {
+  const trimmedWsUrl = wsUrl.trim();
+  const wsAsHttp =
+    trimmedWsUrl.startsWith('ws://')
+      ? `http://${trimmedWsUrl.slice('ws://'.length)}`
+      : trimmedWsUrl.startsWith('wss://')
+        ? `https://${trimmedWsUrl.slice('wss://'.length)}`
+        : trimmedWsUrl;
+
+  const parseEndpoint = (value: string) => {
+    try {
+      return new URL(value);
+    } catch {
+      return null;
+    }
+  };
+  const isLoopbackHost = (host: string) => host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  const wsEndpoint = parseEndpoint(trimmedWsUrl);
+
   if (httpUrl && httpUrl.trim()) {
-    return httpUrl.trim();
+    const trimmedHttpUrl = httpUrl.trim();
+    const httpEndpoint = parseEndpoint(trimmedHttpUrl);
+
+    // Local profiles frequently drift when only one endpoint is edited.
+    if (
+      wsEndpoint &&
+      httpEndpoint &&
+      isLoopbackHost(wsEndpoint.hostname) &&
+      isLoopbackHost(httpEndpoint.hostname) &&
+      wsEndpoint.port &&
+      httpEndpoint.port &&
+      wsEndpoint.port !== httpEndpoint.port
+    ) {
+      return wsAsHttp;
+    }
+
+    return trimmedHttpUrl;
   }
-  if (wsUrl.startsWith('ws://')) {
-    return `http://${wsUrl.slice('ws://'.length)}`;
+
+  return wsAsHttp;
+};
+
+const parsePortFromUrl = (value?: string | null): number | undefined => {
+  if (!value) {
+    return undefined;
   }
-  if (wsUrl.startsWith('wss://')) {
-    return `https://${wsUrl.slice('wss://'.length)}`;
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
   }
-  return wsUrl;
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.port) {
+      return undefined;
+    }
+    const port = Number.parseInt(parsed.port, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return undefined;
+    }
+    return port;
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeRpcPort = (value?: number): number | undefined => {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return undefined;
+  }
+  if (value < 1 || value > 65535) {
+    return undefined;
+  }
+  return value;
+};
+
+const isLoopbackWsEndpoint = (value: string): boolean =>
+  value.startsWith('ws://127.0.0.1:') || value.startsWith('ws://localhost:') || value.startsWith('ws://[::1]:');
+
+const isLoopbackHttpEndpoint = (value?: string): boolean =>
+  Boolean(
+    value &&
+      (value.startsWith('http://127.0.0.1:') ||
+        value.startsWith('http://localhost:') ||
+        value.startsWith('http://[::1]:') ||
+        value.startsWith('https://127.0.0.1:') ||
+        value.startsWith('https://localhost:') ||
+        value.startsWith('https://[::1]:'))
+  );
+
+const rewriteLoopbackWsEndpoint = (value: string, port: number): string => {
+  if (value.startsWith('ws://localhost:')) {
+    return `ws://localhost:${port}`;
+  }
+  if (value.startsWith('ws://[::1]:')) {
+    return `ws://[::1]:${port}`;
+  }
+  return `ws://127.0.0.1:${port}`;
+};
+
+const rewriteLoopbackHttpEndpoint = (value: string | undefined, port: number): string => {
+  if (!value) {
+    return `http://127.0.0.1:${port}`;
+  }
+  if (value.startsWith('http://localhost:')) {
+    return `http://localhost:${port}`;
+  }
+  if (value.startsWith('http://[::1]:')) {
+    return `http://[::1]:${port}`;
+  }
+  if (value.startsWith('https://localhost:')) {
+    return `https://localhost:${port}`;
+  }
+  if (value.startsWith('https://[::1]:')) {
+    return `https://[::1]:${port}`;
+  }
+  return `http://127.0.0.1:${port}`;
+};
+
+const inferRpcPort = (connection: NodeConnection): number =>
+  normalizeRpcPort(connection.rpcPort) ??
+  parsePortFromUrl(connection.wsUrl) ??
+  parsePortFromUrl(connection.httpUrl) ??
+  defaultRpcPort;
+
+const normalizeLocalConnectionEndpoints = (connection: NodeConnection): NodeConnection => {
+  if (connection.mode !== 'local') {
+    return connection;
+  }
+
+  const rpcPort = inferRpcPort(connection);
+  const updates: Partial<NodeConnection> = {};
+
+  if (normalizeRpcPort(connection.rpcPort) !== rpcPort) {
+    updates.rpcPort = rpcPort;
+  }
+
+  if (!connection.wsUrl?.trim()) {
+    updates.wsUrl = `ws://127.0.0.1:${rpcPort}`;
+  } else if (isLoopbackWsEndpoint(connection.wsUrl) && parsePortFromUrl(connection.wsUrl) !== rpcPort) {
+    updates.wsUrl = rewriteLoopbackWsEndpoint(connection.wsUrl, rpcPort);
+  }
+
+  const effectiveWsUrl = updates.wsUrl ?? connection.wsUrl;
+  const derivedHttpUrl = deriveHttpUrl(effectiveWsUrl, connection.httpUrl);
+  if (!connection.httpUrl?.trim()) {
+    updates.httpUrl = derivedHttpUrl;
+  } else if (isLoopbackHttpEndpoint(connection.httpUrl) && parsePortFromUrl(connection.httpUrl) !== rpcPort) {
+    updates.httpUrl = rewriteLoopbackHttpEndpoint(connection.httpUrl, rpcPort);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return connection;
+  }
+  return { ...connection, ...updates };
 };
 
 const classifyLogLevel = (line: string): LogLevel => {
@@ -393,14 +538,14 @@ const buildDefaultConnection = (): NodeConnection => ({
   id: makeId(),
   label: 'Local node',
   mode: 'local',
-  wsUrl: 'ws://127.0.0.1:9944',
-  httpUrl: 'http://127.0.0.1:9944',
+  wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
+  httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: true,
   chainSpecPath: 'config/dev-chainspec.json',
   tmp: false,
   basePath: '~/.hegemon-node',
-  rpcPort: 9944,
-  p2pPort: 30333,
+  rpcPort: defaultRpcPort,
+  p2pPort: defaultP2pPort,
   mineThreads: 1,
   miningIntent: false,
   ciphertextDaRetentionBlocks: 0,
@@ -416,13 +561,13 @@ const buildTestnetConnection = (): NodeConnection => ({
   id: makeId(),
   label: 'Testnet node',
   mode: 'local',
-  wsUrl: 'ws://127.0.0.1:9944',
-  httpUrl: 'http://127.0.0.1:9944',
+  wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
+  httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: false,
   tmp: false,
   basePath: '~/.hegemon-node-testnet',
-  rpcPort: 9944,
-  p2pPort: 30333,
+  rpcPort: defaultRpcPort,
+  p2pPort: defaultP2pPort,
   mineThreads: 1,
   miningIntent: false,
   ciphertextDaRetentionBlocks: 0,
@@ -447,7 +592,10 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     connection.label === 'Testnet node' &&
     (!connection.basePath || connection.basePath === '~/.hegemon-node-testnet');
 
-  let next = connection;
+  let next = normalizeLocalConnectionEndpoints(connection);
+  if (next.mode === 'remote' && !next.httpUrl?.trim()) {
+    next = { ...next, httpUrl: deriveHttpUrl(next.wsUrl) };
+  }
 
   if (isDefaultLocal && connection.dev && !connection.chainSpecPath) {
     next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
@@ -498,7 +646,7 @@ export default function App() {
   const [createPassphraseConfirm, setCreatePassphraseConfirm] = useState('');
   const [openPassphrase, setOpenPassphrase] = useState('');
   const [activeUnlockToken, setActiveUnlockToken] = useState<string | null>(null);
-  const [wsUrl, setWsUrl] = useState('ws://127.0.0.1:9944');
+  const [wsUrl, setWsUrl] = useState(`ws://127.0.0.1:${defaultRpcPort}`);
   const [forceRescan, setForceRescan] = useState(false);
   const [autoLockEnabled, setAutoLockEnabled] = useState(true);
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
@@ -1047,50 +1195,59 @@ export default function App() {
       setNodeError('Select a local connection to start a node.');
       return;
     }
-    if (activeConnection.miningIntent && !activeConnection.minerAddress) {
+    const normalizedConnection = normalizeLocalConnectionEndpoints(activeConnection);
+    const rpcPort = inferRpcPort(normalizedConnection);
+    if (normalizedConnection !== activeConnection) {
+      updateActiveConnection({
+        wsUrl: normalizedConnection.wsUrl,
+        httpUrl: normalizedConnection.httpUrl,
+        rpcPort: rpcPort
+      });
+    }
+    if (normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
       setNodeError('Set a miner address before enabling mining.');
       return;
     }
-    if (activeConnection.maxPeers !== undefined && activeConnection.maxPeers < 1) {
+    if (normalizedConnection.maxPeers !== undefined && normalizedConnection.maxPeers < 1) {
       setNodeError('Max peers must be at least 1.');
       return;
     }
-    if (activeConnection.tmp) {
+    if (normalizedConnection.tmp) {
       const confirmed = window.confirm('Temp storage deletes node data on shutdown. Continue?');
       if (!confirmed) {
         return;
       }
-    } else if (!activeConnection.basePath) {
+    } else if (!normalizedConnection.basePath) {
       const confirmed = window.confirm('No base path set. The node will use its default data directory. Continue?');
       if (!confirmed) {
         return;
       }
     }
-    setNodeTransition({ action: 'starting', connectionId: activeConnection.id, startedAt: Date.now() });
+    setNodeTransition({ action: 'starting', connectionId: normalizedConnection.id, startedAt: Date.now() });
     setNodeBusy(true);
     setNodeError(null);
     try {
       await window.hegemon.node.start({
-        connectionId: activeConnection.id,
-        chainSpecPath: activeConnection.chainSpecPath || undefined,
-        basePath: activeConnection.basePath || undefined,
-        dev: activeConnection.dev,
-        tmp: activeConnection.tmp,
-        rpcPort: activeConnection.rpcPort,
-        p2pPort: activeConnection.p2pPort,
-        listenAddr: activeConnection.listenAddr || undefined,
-        minerAddress: activeConnection.minerAddress || undefined,
-        mineThreads: activeConnection.mineThreads,
-        mineOnStart: activeConnection.miningIntent,
-        seeds: activeConnection.seeds || undefined,
-        maxPeers: activeConnection.maxPeers,
-        rpcExternal: activeConnection.rpcExternal,
-        rpcMethods: activeConnection.rpcMethods,
-        rpcCorsAll: activeConnection.rpcCorsAll,
-        nodeName: activeConnection.nodeName || undefined,
-        ciphertextDaRetentionBlocks: activeConnection.ciphertextDaRetentionBlocks,
-        proofDaRetentionBlocks: activeConnection.proofDaRetentionBlocks,
-        daStoreCapacity: activeConnection.daStoreCapacity
+        connectionId: normalizedConnection.id,
+        chainSpecPath: normalizedConnection.chainSpecPath || undefined,
+        basePath: normalizedConnection.basePath || undefined,
+        dev: normalizedConnection.dev,
+        tmp: normalizedConnection.tmp,
+        rpcPort,
+        p2pPort: normalizedConnection.p2pPort,
+        listenAddr: normalizedConnection.listenAddr || undefined,
+        minerAddress: normalizedConnection.minerAddress || undefined,
+        mineThreads: normalizedConnection.mineThreads,
+        mineOnStart: normalizedConnection.miningIntent,
+        seeds: normalizedConnection.seeds || undefined,
+        maxPeers: normalizedConnection.maxPeers,
+        rpcExternal: normalizedConnection.rpcExternal,
+        rpcMethods: normalizedConnection.rpcMethods,
+        rpcCorsAll: normalizedConnection.rpcCorsAll,
+        nodeName: normalizedConnection.nodeName || undefined,
+        ciphertextDaRetentionBlocks: normalizedConnection.ciphertextDaRetentionBlocks,
+        proofDaRetentionBlocks: normalizedConnection.proofDaRetentionBlocks,
+        daStoreCapacity: normalizedConnection.daStoreCapacity
       });
       await refreshNode();
     } catch (error) {
