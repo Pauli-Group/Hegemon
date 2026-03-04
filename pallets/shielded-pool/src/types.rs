@@ -43,6 +43,10 @@ pub const MEMO_SIZE: usize = 512;
 /// This must remain aligned with the wallet shielded address version accepted by
 /// `wallet::address::ShieldedAddress` (currently v3).
 pub const NOTE_ENCRYPTION_VERSION: u8 = 3;
+/// Legacy note encryption version accepted for compatibility with older wallets.
+///
+/// This should be removed once all operators have migrated legacy stores/clients.
+pub const LEGACY_NOTE_ENCRYPTION_VERSION: u8 = 2;
 /// Crypto suite identifier for ML-KEM-1024 note encryption.
 pub const CRYPTO_SUITE_GAMMA: u16 = 3;
 

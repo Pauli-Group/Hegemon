@@ -18,6 +18,7 @@ import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
 const approvedSeeds = 'hegemon.pauli.group:31333,158.69.222.121:31333';
+const approvedSeedEndpoints = new Set(approvedSeeds.split(',').map((seed) => seed.trim().toLowerCase()));
 const legacyApprovedSeedLists = new Set([
   'hegemon.pauli.group',
   'hegemon.pauli.group:30333',
@@ -36,6 +37,14 @@ const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 const minWalletPassphraseLength = 12;
 const defaultRpcPort = 9944;
 const defaultP2pPort = 30333;
+const defaultMineThreads = (() => {
+  const hardwareConcurrency =
+    typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency)
+      ? Number(navigator.hardwareConcurrency)
+      : 1;
+  const target = Math.floor(hardwareConcurrency / 2);
+  return Math.max(1, Math.min(16, target || hardwareConcurrency || 1));
+})();
 
 const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -561,7 +570,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   basePath: '~/.hegemon-node',
   rpcPort: defaultRpcPort,
   p2pPort: defaultP2pPort,
-  mineThreads: 1,
+  mineThreads: defaultMineThreads,
   miningIntent: false,
   ciphertextDaRetentionBlocks: 0,
   proofDaRetentionBlocks: 0,
@@ -583,7 +592,7 @@ const buildTestnetConnection = (): NodeConnection => ({
   basePath: '~/.hegemon-node-testnet',
   rpcPort: defaultRpcPort,
   p2pPort: defaultP2pPort,
-  mineThreads: 1,
+  mineThreads: defaultMineThreads,
   miningIntent: false,
   ciphertextDaRetentionBlocks: 0,
   proofDaRetentionBlocks: 0,
@@ -617,8 +626,17 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
   }
 
   const normalizedSeeds = normalizeSeedsValue(next.seeds);
-  if ((isDefaultLocal || isDefaultTestnet) && (normalizedSeeds === '' || legacyApprovedSeedLists.has(normalizedSeeds))) {
+  if (
+    (isDefaultLocal || isDefaultTestnet) &&
+    (normalizedSeeds === '' ||
+      legacyApprovedSeedLists.has(normalizedSeeds) ||
+      approvedSeedEndpoints.has(normalizedSeeds))
+  ) {
     next = { ...next, seeds: approvedSeeds };
+  }
+
+  if ((isDefaultLocal || isDefaultTestnet) && (!next.mineThreads || next.mineThreads === 1)) {
+    next = { ...next, mineThreads: defaultMineThreads };
   }
 
   return next;

@@ -453,6 +453,63 @@ mod tests {
     }
 
     #[test]
+    fn shielded_transfer_unsigned_accepts_legacy_note_version() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let mut legacy_note = valid_encrypted_note();
+            legacy_note.ciphertext[0] = crate::types::LEGACY_NOTE_ENCRYPTION_VERSION;
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![legacy_note].try_into().unwrap();
+
+            assert_ok!(Pallet::<Test>::shielded_transfer_unsigned(
+                RuntimeOrigin::none(),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                u64::MAX,
+            ));
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_unsigned_rejects_unknown_note_version() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let mut bad_note = valid_encrypted_note();
+            bad_note.ciphertext[0] = 1;
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![bad_note].try_into().unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer_unsigned(
+                    RuntimeOrigin::none(),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    None,
+                    u64::MAX,
+                ),
+                crate::Error::<Test>::UnsupportedNoteVersion
+            );
+        });
+    }
+
+    #[test]
     fn validate_unsigned_submit_proven_batch_is_in_block_only() {
         new_test_ext().execute_with(|| {
             let call = crate::Call::<Test>::submit_proven_batch {
