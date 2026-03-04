@@ -1052,11 +1052,9 @@ fn tx_send(
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        // Default to DA sidecar submissions so transactions remain includable
-        // when authoring enforces sidecar-mode shielded transfers. Keep proof
-        // bytes inline by default unless operators explicitly opt into
-        // proof-sidecar prove-ahead mode.
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
+        // Default to inline ciphertext/proof transport for cross-miner
+        // portability. Operators can opt into sidecar mode explicitly.
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", false);
         let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
         let mut invalid_anchor_retries: u8 = 0;
