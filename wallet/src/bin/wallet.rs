@@ -1546,30 +1546,33 @@ async fn submit_bundle_with_fallback(
     use_da_sidecar: bool,
     mut use_proof_sidecar: bool,
 ) -> Result<[u8; 32], WalletError> {
-    if !use_da_sidecar {
-        return Err(WalletError::InvalidArgument(
-            "v0.9 strict mode requires DA sidecar submission; inline shielded submission is disabled",
-        ));
-    }
-
-    match client
-        .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, Some(use_proof_sidecar))
-        .await
-    {
-        Ok(hash) => Ok(hash),
-        Err(WalletError::Rpc(msg)) if use_proof_sidecar && is_proof_sidecar_rejection(&msg) => {
-            use_proof_sidecar = false;
-            client
-                .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
-                    bundle,
-                    Some(use_proof_sidecar),
-                )
-                .await
+    if use_da_sidecar {
+        match client
+            .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+                bundle,
+                Some(use_proof_sidecar),
+            )
+            .await
+        {
+            Ok(hash) => Ok(hash),
+            Err(WalletError::Rpc(msg)) if use_proof_sidecar && is_proof_sidecar_rejection(&msg) => {
+                use_proof_sidecar = false;
+                client
+                    .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+                        bundle,
+                        Some(use_proof_sidecar),
+                    )
+                    .await
+            }
+            Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => {
+                Err(WalletError::Rpc(format!("sidecar RPC unavailable: {msg}")))
+            }
+            Err(err) => Err(err),
         }
-        Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => Err(WalletError::Rpc(
-            format!("sidecar RPC unavailable in strict mode: {msg}"),
-        )),
-        Err(err) => Err(err),
+    } else {
+        // Self-contained unsigned submission is portable across miners and does
+        // not depend on proposer-local sidecar stores.
+        client.submit_shielded_transfer_unsigned(bundle).await
     }
 }
 
@@ -1756,7 +1759,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
 
         store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
 
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
         if use_da_sidecar {
             println!("Submitting unsigned shielded-to-shielded transfer (DA sidecar)...");

@@ -863,15 +863,25 @@ async fn submit_bundle_strict(
         );
     }
 
-    if !use_da_sidecar {
-        return Err(WalletError::InvalidArgument(
-            "v0.9 strict mode requires DA sidecar submission; inline shielded submission is disabled",
-        ));
+    if use_da_sidecar {
+        eprintln!(
+            "[walletd] submitting unsigned shielded transfer via DA sidecar (proof_sidecar={})",
+            use_proof_sidecar
+        );
+        client
+            .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+                bundle,
+                Some(use_proof_sidecar),
+            )
+            .await
+    } else {
+        eprintln!(
+            "[walletd] submitting unsigned self-contained shielded transfer (inline proof bytes)"
+        );
+        // Default to self-contained unsigned submission so any miner can include
+        // the transfer without requiring proposer-local sidecar bytes.
+        client.submit_shielded_transfer_unsigned(bundle).await
     }
-
-    client
-        .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, Some(use_proof_sidecar))
-        .await
 }
 
 fn tx_send(
@@ -1042,11 +1052,10 @@ fn tx_send(
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        // v0.9 strict path: sidecar submission is the canonical route so block
-        // authoring uses prepared proven batches instead of inline proof fallback.
-        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", true);
-        // Only applies when DA sidecar mode is enabled.
-        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", true);
+        // Default to self-contained unsigned submission for cross-miner
+        // portability. Operators can opt into sidecar mode explicitly.
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", use_da_sidecar);
         let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
         let mut invalid_anchor_retries: u8 = 0;
         let mut nullifier_conflict_retries: u8 = 0;
