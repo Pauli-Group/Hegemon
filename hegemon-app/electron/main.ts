@@ -73,47 +73,6 @@ const configureAppMenu = () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 };
 
-const resolveLegacyContactsPaths = () => {
-  const appData = app.getPath('appData');
-  const stable = resolveContactsPath();
-  const candidates = [
-    join(app.getPath('userData'), contactsFileName),
-    join(appData, 'hegemon-app', contactsFileName),
-    join(appData, 'Hegemon Core', contactsFileName),
-    join(appData, 'Electron', contactsFileName)
-  ];
-  return candidates.filter((candidate) => candidate !== stable);
-};
-
-const migrateContactsIfNeeded = async (destinationPath: string) => {
-  if (existsSync(destinationPath)) {
-    return;
-  }
-  for (const legacyPath of resolveLegacyContactsPaths()) {
-    if (!existsSync(legacyPath)) {
-      continue;
-    }
-    try {
-      const raw = await readFile(legacyPath, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        continue;
-      }
-      await mkdir(dirname(destinationPath), { recursive: true });
-      try {
-        await rename(legacyPath, destinationPath);
-      } catch (error) {
-        console.warn('Failed to move legacy contacts file, falling back to copy.', error);
-        await writeFile(destinationPath, JSON.stringify(parsed, null, 2), 'utf-8');
-      }
-      console.info(`Migrated contacts from ${legacyPath} to ${destinationPath}.`);
-      return;
-    } catch (error) {
-      console.warn(`Failed to migrate contacts from ${legacyPath}.`, error);
-    }
-  }
-};
-
 const buildContentSecurityPolicy = (devUrl?: string) => {
   const defaultSrc = ["'self'"];
   const scriptSrc = ["'self'"];
@@ -179,7 +138,6 @@ const loadAppIcon = () => {
 
 const loadContacts = async (): Promise<Contact[] | null> => {
   const filePath = resolveContactsPath();
-  await migrateContactsIfNeeded(filePath);
   try {
     const raw = await readFile(filePath, 'utf-8');
     try {

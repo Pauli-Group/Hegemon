@@ -6038,7 +6038,6 @@ impl PqServiceConfig {
     /// - `HEGEMON_SEEDS`: Comma-separated list of seed peers (host[:port], defaults to 30333)
     /// - `HEGEMON_LISTEN_ADDR`: Listen address (overrides --port)
     /// - `HEGEMON_MAX_PEERS`: Maximum peers (default: 50)
-    /// - `HEGEMON_PQ_STRICT_COMPATIBILITY`: Require genesis-compatible peers for discovery traffic (default: true)
     pub fn from_config(config: &Configuration) -> Self {
         let verbose = std::env::var("HEGEMON_PQ_VERBOSE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
@@ -7074,42 +7073,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 if let Err(err) = peer_store.load() {
                     tracing::warn!(error = %err, "Failed to load PQ peer discovery store");
                 }
-                let strict_compatibility = std::env::var("HEGEMON_PQ_STRICT_COMPATIBILITY")
-                    .ok()
-                    .map(|value| {
-                        matches!(
-                            value.to_ascii_lowercase().as_str(),
-                            "1" | "true" | "yes" | "on"
-                        )
-                    })
-                    .unwrap_or(true);
-                // Opportunistically dial a small number of cached peers on startup. This helps
-                // nodes recover connectivity even if a seed is temporarily unreachable.
-                use crate::substrate::discovery::is_dialable_addr;
-                if !strict_compatibility {
-                    let cached_dials: Vec<_> = peer_store
-                        .addresses()
-                        .into_iter()
-                        .filter(|addr| is_dialable_addr(addr))
-                        .take(8)
-                        .collect();
-                    if !cached_dials.is_empty() {
-                        let pq_backend_for_cached = Arc::clone(&pq_backend);
-                        task_manager.spawn_handle().spawn(
-                            "pq-discovery-cached-dials",
-                            Some("network"),
-                            async move {
-                                for addr in cached_dials {
-                                    let _ = pq_backend_for_cached.connect(addr).await;
-                                }
-                            },
-                        );
-                    }
-                } else {
-                    tracing::info!(
-                        "Strict compatibility enabled; skipping cached discovery dials at startup"
-                    );
-                }
+                let strict_compatibility = true;
+                tracing::info!(
+                    "Strict compatibility enabled; skipping cached discovery dials at startup"
+                );
                 let discovery_listen_port = pq_service_config.listen_addr.port();
                 let discovery_max_peers = pq_service_config.max_peers;
 
@@ -7583,45 +7550,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,
                                         DA_CHUNKS_PROTOCOL, SYNC_PROTOCOL,
                                     };
-                                    use crate::substrate::network_bridge::{
-                                        SyncMessage, SyncRequest, SyncResponse,
-                                    };
+                                    use crate::substrate::network_bridge::SyncMessage;
                                     // Handle sync protocol messages
                                     if protocol == SYNC_PROTOCOL {
-                                        // Decode using SyncMessage wrapper for unambiguous request/response distinction
+                                        // Decode using wrapped sync messages with explicit request IDs.
                                         if let Ok(msg) = SyncMessage::decode(&mut &data[..]) {
                                             match msg {
-                                                SyncMessage::Request(request) => {
-                                                    tracing::info!(
-                                                        peer = %hex::encode(peer_id),
-                                                        request = ?request,
-                                                        "Received sync request from peer"
-                                                    );
-                                                    let mut sync = sync_service_clone.lock().await;
-                                                    if let Some(response) =
-                                                        sync.handle_sync_request(peer_id, None, request)
-                                                    {
-                                                        // Send response back to peer wrapped in SyncMessage
-                                                        let msg = SyncMessage::Response(response);
-                                                        let encoded = msg.encode();
-                                                        tracing::info!(
-                                                            peer = %hex::encode(peer_id),
-                                                            response_len = encoded.len(),
-                                                            "Sending sync response to peer"
-                                                        );
-                                                        if let Err(e) = pq_handle_for_sync.send_message(
-                                                            peer_id,
-                                                            SYNC_PROTOCOL.to_string(),
-                                                            encoded,
-                                                        ).await {
-                                                            tracing::warn!(
-                                                                peer = %hex::encode(peer_id),
-                                                                error = %e,
-                                                                "Failed to send sync response"
-                                                            );
-                                                        }
-                                                    }
-                                                }
                                                 SyncMessage::RequestV2(envelope) => {
                                                     tracing::info!(
                                                         peer = %hex::encode(peer_id),
@@ -7670,43 +7604,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     tracing::info!("🔄 SYNC: handle_sync_response completed");
                                                 }
                                             }
-                                        } else if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
-                                            tracing::info!(
-                                                peer = %hex::encode(peer_id),
-                                                request = ?request,
-                                                "Received bare sync request from peer"
-                                            );
-                                            let mut sync = sync_service_clone.lock().await;
-                                            if let Some(response) =
-                                                sync.handle_sync_request(peer_id, None, request)
-                                            {
-                                                let msg = SyncMessage::Response(response);
-                                                let encoded = msg.encode();
-                                                if let Err(e) = pq_handle_for_sync
-                                                    .send_message(
-                                                        peer_id,
-                                                        SYNC_PROTOCOL.to_string(),
-                                                        encoded,
-                                                    )
-                                                    .await
-                                                {
-                                                    tracing::warn!(
-                                                        peer = %hex::encode(peer_id),
-                                                        error = %e,
-                                                        "Failed to send sync response"
-                                                    );
-                                                }
-                                            }
-                                        } else if let Ok(response) =
-                                            SyncResponse::decode(&mut &data[..])
-                                        {
-                                            tracing::info!(
-                                                peer = %hex::encode(peer_id),
-                                                response = ?response,
-                                                "Received bare sync response from peer"
-                                            );
-                                            let mut sync = sync_service_clone.lock().await;
-                                            sync.handle_sync_response(peer_id, response);
                                         } else {
                                             tracing::debug!(
                                                 peer = %hex::encode(peer_id),

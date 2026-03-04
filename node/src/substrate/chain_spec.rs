@@ -75,17 +75,6 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
         .build())
 }
 
-// Keep old names as aliases for compatibility
-pub fn development_config() -> Result<ChainSpec, String> {
-    chain_spec()
-}
-pub fn local_testnet_config() -> Result<ChainSpec, String> {
-    chain_spec()
-}
-pub fn testnet_config() -> Result<ChainSpec, String> {
-    chain_spec()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
