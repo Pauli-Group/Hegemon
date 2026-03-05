@@ -175,7 +175,7 @@ Stablecoin issuance and burn are handled as a controlled exception to the per-as
 * `attestation_commitment`
 * `policy_version`
 
-Inside the AIR, the stablecoin slot selector must sum to 1 when the binding is enabled, the selected balance slot must match `stablecoin_asset_id`, and the selected slot delta must equal `issuance_delta`. All other non-native slots are still constrained to zero. The runtime then enforces that the binding matches the on-chain `StablecoinPolicy` hash and version, the oracle commitment is fresh, and the attestation is not disputed. This keeps issuance fully shielded while still tethering it to governance-approved policy inputs.
+Inside the AIR, the stablecoin slot selector must sum to 1 when the binding is enabled, the selected balance slot must match `stablecoin_asset_id`, and the selected slot delta must equal `issuance_delta`. All other non-native slots are still constrained to zero. The runtime then enforces that the binding matches the active `StablecoinPolicy` hash and version, the oracle commitment is fresh, and the attestation is not disputed. This keeps issuance fully shielded while still tethering it to protocol-approved policy inputs.
 
 Consensus stitches this MASP output into PoW validation by requiring a coinbase commitment on every block. The `ConsensusBlock`
 type now carries `CoinbaseData` that either references a concrete transaction (by index) or supplies an explicit `balance_tag`.
@@ -205,10 +205,6 @@ These parameters live in the shielded pool pallet, are seeded from the active pr
 quote and breakdown (`fee_quote`, `fee_quote_breakdown`) so clients can quote fees without auctions.
 
 The legacy forced-inclusion bond queue is removed in the proof-native cut. Censorship resistance for the private lane is now handled by the unsigned shielded submission path itself plus block-import validation, rather than by reserving public balances behind a transparent account.
-expired commitments are slashed during `on_initialize`. This keeps forced inclusion deterministic while bounding DoS risk.
-Forced inclusion commitments must be submitted before any shielded transfer in the same block; once transfers start (or coinbase
-is minted) the runtime rejects new forced inclusion submissions for that block. This avoids unsatisfiable commitments when a
-transfer appears before its forced inclusion entry.
 
 Within a block, shielded transfer extrinsics must appear in nondecreasing order of the hash of their SCALE-encoded call data.
 Nodes enforce this during block import and local block production so miners do not have discretionary ordering inside the private lane.

@@ -71,7 +71,7 @@ Ensure TCP/31333 is open on each seed and that every miner shares the same seed 
 
 PoW blocks reject timestamps more than 90 seconds in the future. Enable NTP/chrony on every miner to prevent timestamp rejection.
 
-The `--dev` flag pre-funds test accounts and enables fast block times. Block rewards (~4.98 HEG per block) are minted as shielded notes only your wallet can spend.
+The `--dev` flag enables local-development settings and fast iteration. Block rewards (~4.98 HEG per block) are minted as shielded notes only your wallet can spend.
 
 ## 5. Verify the node is running
 

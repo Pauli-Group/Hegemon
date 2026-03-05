@@ -1,41 +1,59 @@
 # Node service
 
-The node crate bundles the PoW chain state machine, mempool, gossip router, and
-authenticated control plane for the Hegemon network.
+The node crate builds the Substrate-hosted `hegemon-node` binary. Substrate is used here as the execution, storage, runtime, and chain/state RPC chassis. The live money and authorization model is Hegemon-native: shielded proofs, unsigned protocol calls, and shielded coinbase.
 
 ## Running the node
 
+Use the repo-standard build and run flow:
+
 ```bash
-cargo run -p node --bin node -- \
-  --db-path ./node.db \
-  --api-addr 127.0.0.1:8080 \
-  --api-token local-dev-token \
-  --miner-workers 2
+make setup
+make node
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 ```
 
-The process exposes:
+When joining a shared network, set the approved seed list before starting the node:
 
-* `/transactions` – submit transaction proofs (JSON body encoded
-  `transaction_circuit::TransactionProof`).
-* `/blocks/latest` – the latest consensus header and supply digest.
-* `/wallet/notes` – commitment tree depth/size for light client sync.
-* `/metrics` – live difficulty, hash rate, mempool depth and confirmation data.
-* `/ws` – WebSocket stream of `NodeEvent` records (transactions, blocks and
-  telemetry snapshots).
+```bash
+export HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333"
+```
 
-Every request must include the `x-auth-token` header matching the configured
-API token. The `/metrics` endpoint acts as a JSON exporter that can be scraped
-by Prometheus or other telemetry systems.
+Every miner should use the same `HEGEMON_SEEDS` list to avoid accidental forks. Also enable time sync (`ntpd`, `chronyd`, or the platform equivalent) because PoW timestamps are rejected if they exceed the future-skew bound.
 
-## Mining telemetry
+## RPC surface
 
-Miners watch the block template channel and iterate nonces until they find a
-header whose hash satisfies the configured target. The telemetry registry tracks
-hashes per second, stale share rate, the best height and current difficulty so
-operators can monitor performance.
+The live node exposes:
 
-## Integration tests
+- standard `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
+- Hegemon-specific RPC such as `hegemon_submitShieldedTransfer`, `hegemon_getEncryptedNotes`, and `hegemon_getMerkleWitness`
+- mining/prover RPC under the `hegemon_*` and `prover_*` namespaces
 
-`cargo test -p node` spins up two nodes connected via the shared `network`
-gossip router, submits a valid transaction proof, and asserts both nodes mine and
-apply the resulting block.
+The node no longer treats generic `author_*` transaction submission as a supported public interface. Clients should submit shielded transactions through the Hegemon RPC namespace.
+
+## Behavior
+
+- All value lives in the shielded pool.
+- There is no public balance pallet or transparent fee lane in the live runtime.
+- Shielded transfers are accepted as unsigned proof-native protocol calls.
+- Coinbase rewards are minted as shielded notes.
+- PQ networking remains the live peer transport.
+
+## Validation
+
+After starting the node:
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method":"system_health"}' \
+  http://127.0.0.1:9944
+```
+
+and:
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method":"chain_getHeader"}' \
+  http://127.0.0.1:9944
+```
+
+These should show a live chain and advancing headers. Wallets should use `hegemon_submitShieldedTransfer` rather than `author_submitExtrinsic`.
