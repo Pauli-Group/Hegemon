@@ -10148,26 +10148,27 @@ mod tests {
     }
 
     #[test]
-    fn filter_conflicting_shielded_transfers_drops_binding_and_nullifier_conflicts() {
+    fn filter_conflicting_shielded_transfers_drops_binding_conflicts_and_keeps_nullifier_overlaps()
+    {
         let keep = test_sidecar_transfer_extrinsic(1, [9u8; 48]);
-        let drop_nullifier = test_sidecar_transfer_extrinsic(2, [9u8; 48]);
+        let keep_nullifier_overlap = test_sidecar_transfer_extrinsic(2, [9u8; 48]);
         let drop_binding = test_sidecar_transfer_extrinsic(1, [8u8; 48]);
         let malformed = vec![1u8, 2, 3];
 
         let (filtered, stats) = filter_conflicting_shielded_transfers(&[
             keep.clone(),
-            drop_nullifier,
+            keep_nullifier_overlap.clone(),
             drop_binding,
             malformed,
         ]);
 
-        assert_eq!(filtered, vec![keep]);
+        assert_eq!(filtered, vec![keep, keep_nullifier_overlap]);
         assert_eq!(stats.total, 4);
-        assert_eq!(stats.kept, 1);
-        assert_eq!(stats.dropped_nullifier_conflicts, 1);
+        assert_eq!(stats.kept, 2);
+        assert_eq!(stats.dropped_nullifier_conflicts, 0);
         assert_eq!(stats.dropped_binding_conflicts, 1);
         assert_eq!(stats.dropped_decode_errors, 1);
-        assert_eq!(stats.dropped_total(), 3);
+        assert_eq!(stats.dropped_total(), 2);
     }
 
     #[test]
