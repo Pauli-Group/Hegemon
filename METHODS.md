@@ -201,13 +201,10 @@ Fee pricing is parameterized on-chain with deterministic split accounting:
 `prover_fee = proof_fee|batch_proof_fee`,
 `miner_fee = inclusion_fee|batch_inclusion_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
 `total_fee = prover_fee + miner_fee`.
-These parameters live in the shielded pool pallet, can be updated by governance, and are exposed via runtime API/RPC as both total
+These parameters live in the shielded pool pallet, are seeded from the active protocol manifest, and are exposed via runtime API/RPC as both total
 quote and breakdown (`fee_quote`, `fee_quote_breakdown`) so clients can quote fees without auctions.
 
-Forced inclusion commitments provide a censorship escape hatch for the private lane. A user can submit a commitment hash
-(`blake2_256` of the SCALE-encoded shielded transfer call), an expiry block, and a bonded amount. The commitment queue is bounded
-(`MaxForcedInclusions`) and the bond is reserved to discourage spam. On block import, nodes require that any pending commitment
-with `expiry <= current_block` appears in the block; the runtime removes satisfied commitments and unreserves the bond, while
+The legacy forced-inclusion bond queue is removed in the proof-native cut. Censorship resistance for the private lane is now handled by the unsigned shielded submission path itself plus block-import validation, rather than by reserving public balances behind a transparent account.
 expired commitments are slashed during `on_initialize`. This keeps forced inclusion deterministic while bounding DoS risk.
 Forced inclusion commitments must be submitted before any shielded transfer in the same block; once transfers start (or coinbase
 is minted) the runtime rejects new forced inclusion submissions for that block. This avoids unsatisfiable commitments when a

@@ -29,12 +29,8 @@
 
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
-use crate::AccountId;
-use pallet_archive_market::{ArchiveContract, ProviderInfo};
 use pallet_shielded_pool::merkle::CompactMerkleTree;
-use pallet_shielded_pool::types::{
-    FeeParameters, FeeProofKind, ForcedInclusionStatus, ShieldedFeeBreakdown,
-};
+use pallet_shielded_pool::types::{FeeParameters, FeeProofKind, ShieldedFeeBreakdown};
 use sp_api::decl_runtime_apis;
 use sp_core::U256;
 use sp_std::vec::Vec;
@@ -199,28 +195,5 @@ decl_runtime_apis! {
             proof_kind: FeeProofKind,
         ) -> Result<ShieldedFeeBreakdown, ()>;
 
-        /// Fetch pending forced inclusion commitments.
-        fn forced_inclusions() -> Vec<ForcedInclusionStatus>;
-    }
-
-    /// API for archive provider discovery.
-    ///
-    /// Exposes the on-chain provider registry so wallets can discover
-    /// bonded archive providers without scanning raw storage.
-    pub trait ArchiveMarketApi {
-        /// Get the number of registered providers.
-        fn archive_provider_count() -> u32;
-
-        /// Get a single provider by account id.
-        fn archive_provider(provider: AccountId) -> Option<ProviderInfo<crate::Runtime>>;
-
-        /// List all providers.
-        fn archive_providers() -> Vec<(AccountId, ProviderInfo<crate::Runtime>)>;
-
-        /// Fetch a single archive contract by id.
-        fn archive_contract(contract_id: u64) -> Option<ArchiveContract<crate::Runtime>>;
-
-        /// List all contracts for a provider.
-        fn archive_contracts(provider: AccountId) -> Vec<ArchiveContract<crate::Runtime>>;
     }
 }

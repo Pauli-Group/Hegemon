@@ -273,9 +273,10 @@ pub trait ShieldedApi {
 }
 
 /// Trait for shielded pool service operations
+#[jsonrpsee::core::async_trait]
 pub trait ShieldedPoolService: Send + Sync {
     /// Submit a shielded transfer
-    fn submit_shielded_transfer(
+    async fn submit_shielded_transfer(
         &self,
         proof: Vec<u8>,
         nullifiers: Vec<[u8; 48]>,
@@ -534,7 +535,7 @@ where
             stablecoin,
             request.fee,
             request.value_balance,
-        ) {
+        ).await {
             Ok(tx_hash) => Ok(ShieldedTransferResponse {
                 success: true,
                 tx_hash: Some(hex::encode(tx_hash)),
@@ -717,8 +718,9 @@ mod tests {
 
     struct MockShieldedService;
 
+    #[jsonrpsee::core::async_trait]
     impl ShieldedPoolService for MockShieldedService {
-        fn submit_shielded_transfer(
+        async fn submit_shielded_transfer(
             &self,
             _proof: Vec<u8>,
             _nullifiers: Vec<[u8; 48]>,

@@ -9,7 +9,7 @@
 //! |-------------------------|----------------------------|----------|
 //! | GET `/blocks/latest`    | `chain_getHeader`          | chain    |
 //! | GET `/blocks/:hash`     | `chain_getBlock`           | chain    |
-//! | POST `/transactions`    | `author_submitExtrinsic`   | author   |
+//! | POST `/transactions`    | `hegemon_submitShieldedTransfer` | shielded |
 //! | GET `/wallet/notes`     | `hegemon_walletNotes`      | custom   |
 //! | GET `/wallet/commitments`| `hegemon_walletCommitments`| custom  |
 //! | POST `/wallet/prove`    | `hegemon_generateProof`    | custom   |
@@ -42,9 +42,9 @@
 //! │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
 //! │  │  Standard RPCs  │  │  Hegemon RPCs   │  │   Wallet RPCs   │ │
 //! │  │  - chain_*      │  │  - mining_*     │  │  - walletNotes  │ │
-//! │  │  - author_*     │  │  - consensus_*  │  │  - commitments  │ │
-//! │  │  - state_*      │  │  - telemetry_*  │  │  - proof gen    │ │
-//! │  │  - system_*     │  │                 │  │                 │ │
+//! │  │  - state_*      │  │  - consensus_*  │  │  - commitments  │ │
+//! │  │  - system_*     │  │  - telemetry_*  │  │  - proof gen    │ │
+//! │  │                 │  │                 │  │                 │ │
 //! │  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
 //! │  ┌─────────────────────────────────────────────────────────────┐│
 //! │  │                    Shielded Pool RPCs                       ││
@@ -55,7 +55,6 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
-pub mod archive;
 pub mod block;
 pub mod da;
 pub mod hegemon;
@@ -179,4 +178,3 @@ pub fn create_minimal() -> Result<RpcModule<()>, Box<dyn std::error::Error + Sen
 
     Ok(module)
 }
-pub use archive::{ArchiveApiServer, ArchiveMarketService, ArchiveRpc};

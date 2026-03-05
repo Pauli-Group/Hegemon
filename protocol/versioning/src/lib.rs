@@ -1,6 +1,11 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+use alloc::collections::BTreeMap;
+use core::iter::IntoIterator;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
-use std::collections::BTreeMap;
 
 pub type CircuitVersion = u16;
 pub type CryptoSuiteId = u16;

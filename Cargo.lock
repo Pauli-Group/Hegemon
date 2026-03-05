@@ -8406,6 +8406,7 @@ dependencies = [
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "frame-benchmarking",
  "frame-executive",
  "frame-support",
@@ -8429,6 +8430,7 @@ dependencies = [
  "pallet-transaction-payment",
  "pallet-treasury",
  "parity-scale-codec",
+ "protocol-versioning",
  "scale-info",
  "serde",
  "serde_json",

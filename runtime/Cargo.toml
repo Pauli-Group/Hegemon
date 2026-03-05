@@ -28,6 +28,8 @@ sp-block-builder = { workspace = true }
 sp-transaction-pool = { workspace = true }
 sp-inherents = { workspace = true }
 sp-genesis-builder = { workspace = true }
+blake3 = { version = "1", default-features = false }
+protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning", default-features = false }
 
 crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
 # serde is required unconditionally because polkadot-sdk crates (sp-staking, bounded-collections)
@@ -82,6 +84,7 @@ std = [
     "sp-inherents/std",
     "sp-session/std",
     "sp-genesis-builder/std",
+    "blake3/std",
     "frame-support/std",
     "frame-system/std",
     "frame-executive/std",
@@ -106,6 +109,7 @@ std = [
     "serde/std",
     "dep:serde_json",
     "serde_json/std",
+    "protocol_versioning/std",
     "substrate-wasm-builder",
 ]
 runtime-tests = []

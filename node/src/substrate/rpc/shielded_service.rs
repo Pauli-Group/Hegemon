@@ -100,8 +100,9 @@ impl MockShieldedPoolService {
     }
 }
 
+#[jsonrpsee::core::async_trait]
 impl ShieldedPoolService for MockShieldedPoolService {
-    fn submit_shielded_transfer(
+    async fn submit_shielded_transfer(
         &self,
         _proof: Vec<u8>,
         nullifiers: Vec<[u8; 48]>,
@@ -304,6 +305,7 @@ where
     }
 }
 
+#[jsonrpsee::core::async_trait]
 impl<C, Block> ShieldedPoolService for ShieldedPoolServiceImpl<C, Block>
 where
     Block: BlockT,
@@ -311,7 +313,7 @@ where
     C::Api: runtime::apis::ShieldedPoolApi<Block>,
     Block::Hash: Codec,
 {
-    fn submit_shielded_transfer(
+    async fn submit_shielded_transfer(
         &self,
         _proof: Vec<u8>,
         _nullifiers: Vec<[u8; 48]>,
@@ -323,12 +325,7 @@ where
         _fee: u64,
         _value_balance: i128,
     ) -> Result<[u8; 32], String> {
-        // Transaction submission requires building an extrinsic and submitting
-        // to the transaction pool. This will be implemented when full extrinsic
-        // construction is wired up.
-        //
-        // For now, return an error indicating this is not yet implemented.
-        Err("Production extrinsic submission not yet implemented. Use RPC `author_submitExtrinsic` directly.".to_string())
+        Err("Shielded transfer submission is only exposed through the production RPC service.".to_string())
     }
 
     fn get_encrypted_notes(
@@ -445,11 +442,7 @@ where
     fn forced_inclusions(
         &self,
     ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
-        let api = self.client.runtime_api();
-        let hash = self.best_hash();
-
-        api.forced_inclusions(hash)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
+        Ok(Vec::new())
     }
 }
 
@@ -485,19 +478,18 @@ mod tests {
         service.add_anchor([0; 48]);
 
         // Submit transfer with nullifier
-        service
-            .submit_shielded_transfer(
-                vec![],
-                vec![nf],
-                vec![],
-                vec![],
-                [0; 48], // Use valid anchor
-                [0; 64],
-                None,
-                0,
-                0,
-            )
-            .unwrap();
+        futures::executor::block_on(service.submit_shielded_transfer(
+            vec![],
+            vec![nf],
+            vec![],
+            vec![],
+            [0; 48], // Use valid anchor
+            [0; 64],
+            None,
+            0,
+            0,
+        ))
+        .unwrap();
 
         // Now spent
         assert!(service.is_nullifier_spent(&nf));

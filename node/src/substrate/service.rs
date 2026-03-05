@@ -127,9 +127,9 @@ use crate::substrate::prover_coordinator::{
     BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
 };
 use crate::substrate::rpc::{
-    ArchiveApiServer, ArchiveRpc, BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer,
-    HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ProverApiServer, ProverRpc,
-    ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
+    BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc,
+    NodeConfigSnapshot, ProductionRpcService, ProverApiServer, ProverRpc, ShieldedApiServer,
+    ShieldedRpc, WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
@@ -4450,32 +4450,11 @@ fn ensure_shielded_transfer_ordering(
 }
 
 fn ensure_forced_inclusions(
-    client: &HegemonFullClient,
-    parent_hash: H256,
-    block_number: u64,
-    extrinsics: &[runtime::UncheckedExtrinsic],
+    _client: &HegemonFullClient,
+    _parent_hash: H256,
+    _block_number: u64,
+    _extrinsics: &[runtime::UncheckedExtrinsic],
 ) -> Result<(), String> {
-    let api = client.runtime_api();
-    let pending = api
-        .forced_inclusions(parent_hash)
-        .map_err(|err| format!("forced inclusion query failed: {err}"))?;
-    if pending.is_empty() {
-        return Ok(());
-    }
-
-    let mut included = std::collections::HashSet::new();
-    for extrinsic in extrinsics {
-        if let Some(key) = shielded_transfer_key_from_extrinsic(extrinsic) {
-            included.insert(key);
-        }
-    }
-
-    for entry in pending {
-        if entry.expiry <= block_number && !included.contains(&entry.commitment) {
-            return Err("forced inclusion missing in block".to_string());
-        }
-    }
-
     Ok(())
 }
 
@@ -9582,6 +9561,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let mined_history = Arc::new(parking_lot::Mutex::new(Default::default()));
     let rpc_service = Arc::new(ProductionRpcService::new(
         client.clone(),
+        transaction_pool.clone(),
         Arc::clone(&peer_count),
         Arc::clone(&sync_status),
         Arc::clone(&peer_details),
@@ -9650,14 +9630,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "system_peers",
                             "system_properties",
                             "system_version",
-                            "author_hasKey",
-                            "author_hasSessionKeys",
-                            "author_insertKey",
-                            "author_pendingExtrinsics",
-                            "author_rotateKeys",
-                            "author_submitAndWatchExtrinsic",
-                            "author_submitExtrinsic",
-                            "author_unwatchExtrinsic",
                             "block_getCommitmentProof",
                             "da_getChunk",
                             "da_getParams",
@@ -9665,11 +9637,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "prover_submitWorkResult",
                             "prover_getWorkStatus",
                             "prover_getMarketParams",
-                            "archive_listProviders",
-                            "archive_getProvider",
-                            "archive_providerCount",
-                            "archive_listContracts",
-                            "archive_getContract",
                             "rpc_methods",
                             "hegemon_peerList",
                             "hegemon_peerGraph"
@@ -9709,27 +9676,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         }
         if let Err(e) = module.merge(child_state_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Child State RPC");
-        }
-
-        // =====================================================================
-        // Author RPC (author_submitExtrinsic, author_pendingExtrinsics)
-        // =====================================================================
-
-        // Add Author RPC for transaction submission
-        use sc_rpc::author::{Author, AuthorApiServer};
-
-        let author_rpc = Author::new(
-            client.clone(),
-            transaction_pool.clone(),
-            keystore_container.keystore(),
-            executor.clone(),
-        );
-        if let Err(e) = module.merge(author_rpc.into_rpc()) {
-            tracing::warn!(error = %e, "Failed to merge Author RPC");
-        } else {
-            tracing::info!(
-                "Author RPC wired (author_submitExtrinsic, author_pendingExtrinsics, etc.)"
-            );
         }
 
         // Add System RPC (system_name, system_version, system_chain, system_health, etc.)
@@ -9932,14 +9878,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             }
         } else {
             tracing::info!("Prover RPC disabled (mining coordinator not active)");
-        }
-
-        // Add Archive RPC (provider registry)
-        let archive_rpc = ArchiveRpc::new(rpc_service);
-        if let Err(e) = module.merge(archive_rpc.into_rpc()) {
-            tracing::warn!(error = %e, "Failed to merge Archive RPC");
-        } else {
-            tracing::info!("Archive RPC wired (archive_listProviders, archive_getProvider)");
         }
 
         module

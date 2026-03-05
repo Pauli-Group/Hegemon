@@ -47,7 +47,7 @@ use verifier::{
 
 use frame_support::dispatch::{DispatchClass, DispatchResult, Pays};
 use frame_support::pallet_prelude::*;
-use frame_support::traits::{Currency, ReservableCurrency, StorageVersion};
+use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
@@ -201,44 +201,15 @@ pub mod pallet {
     #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
-    type BalanceOf<T> =
-        <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
-
-    #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
-    pub struct ForcedInclusionEntry<AccountId, Balance, BlockNumber> {
-        pub commitment: [u8; 32],
-        pub expiry: BlockNumber,
-        pub submitter: AccountId,
-        pub bond: Balance,
-    }
-
     #[pallet::config]
     pub trait Config: frame_system::Config {
         /// The overarching event type.
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
-        /// Origin that can update verifying keys.
-        type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
-
         /// Default fee schedule parameters for the shielded pool.
         #[pallet::constant]
         type DefaultFeeParameters: Get<types::FeeParameters>;
-
-        /// Currency for forced inclusion bonds.
-        type Currency: ReservableCurrency<Self::AccountId>;
-
-        /// Maximum forced inclusion commitments stored at once.
-        #[pallet::constant]
-        type MaxForcedInclusions: Get<u32>;
-
-        /// Maximum number of blocks a forced inclusion can remain pending.
-        #[pallet::constant]
-        type MaxForcedInclusionWindow: Get<BlockNumberFor<Self>>;
-
-        /// Minimum bond required for forced inclusion.
-        #[pallet::constant]
-        type MinForcedInclusionBond: Get<BalanceOf<Self>>;
 
         /// Proof verifier implementation.
         type ProofVerifier: ProofVerifier + Default;
@@ -373,18 +344,6 @@ pub mod pallet {
     #[pallet::getter(fn fee_parameters)]
     pub type FeeParametersStorage<T: Config> = StorageValue<_, types::FeeParameters, ValueQuery>;
 
-    /// Forced inclusion commitments pending satisfaction.
-    #[pallet::storage]
-    #[pallet::getter(fn forced_inclusion_queue)]
-    pub type ForcedInclusionQueue<T: Config> = StorageValue<
-        _,
-        BoundedVec<
-            ForcedInclusionEntry<T::AccountId, BalanceOf<T>, BlockNumberFor<T>>,
-            T::MaxForcedInclusions,
-        >,
-        ValueQuery,
-    >;
-
     /// Split shielded fee buckets accumulated in the current block.
     #[pallet::storage]
     #[pallet::getter(fn block_fee_buckets)]
@@ -486,12 +445,6 @@ pub mod pallet {
             root: [u8; 48],
         },
 
-        /// Verifying key was updated.
-        VerifyingKeyUpdated {
-            /// Key ID.
-            key_id: u32,
-        },
-
         /// Coinbase reward minted directly to shielded pool.
         CoinbaseMinted {
             /// Commitment index of the new note.
@@ -512,37 +465,6 @@ pub mod pallet {
             commitment_count: u32,
             /// Total fee across all transactions.
             total_fee: u128,
-        },
-        /// DA availability policy updated.
-        DaPolicyUpdated { policy: types::DaAvailabilityPolicy },
-        /// Ciphertext policy updated.
-        CiphertextPolicyUpdated { policy: types::CiphertextPolicy },
-        /// Proof availability policy updated.
-        ProofAvailabilityPolicyUpdated {
-            policy: types::ProofAvailabilityPolicy,
-        },
-        /// Fee parameters were updated.
-        FeeParametersUpdated {
-            /// New fee parameters.
-            params: types::FeeParameters,
-        },
-        /// A forced inclusion commitment was submitted.
-        ForcedInclusionSubmitted {
-            commitment: [u8; 32],
-            expiry: BlockNumberFor<T>,
-            submitter: T::AccountId,
-            bond: BalanceOf<T>,
-        },
-        /// A forced inclusion commitment was satisfied.
-        ForcedInclusionSatisfied {
-            commitment: [u8; 32],
-            submitter: T::AccountId,
-        },
-        /// A forced inclusion commitment expired and was slashed.
-        ForcedInclusionExpired {
-            commitment: [u8; 32],
-            submitter: T::AccountId,
-            bond: BalanceOf<T>,
         },
     }
 
@@ -586,8 +508,6 @@ pub mod pallet {
         InvalidKemCiphertextLength,
         /// Transparent pool operations are disabled (value_balance must be zero).
         TransparentPoolDisabled,
-        /// Stablecoin issuance is not allowed in unsigned transactions.
-        StablecoinIssuanceUnsigned,
         /// Stablecoin asset id cannot be mapped into runtime AssetId.
         StablecoinAssetIdInvalid,
         /// Stablecoin policy is missing for the requested asset.
@@ -642,18 +562,6 @@ pub mod pallet {
         TransfersAfterCoinbase,
         /// Provided fee is below the required minimum.
         FeeTooLow,
-        /// Forced inclusion queue is full.
-        ForcedInclusionQueueFull,
-        /// Forced inclusion commitment already exists.
-        ForcedInclusionDuplicate,
-        /// Forced inclusion expiry is invalid (past or too far in the future).
-        ForcedInclusionExpiryInvalid,
-        /// Forced inclusion bond is below the minimum.
-        ForcedInclusionBondTooLow,
-        /// Failed to reserve the forced inclusion bond.
-        ForcedInclusionBondReserveFailed,
-        /// Forced inclusion commitments must be submitted before any shielded transfer in a block.
-        ForcedInclusionAfterTransfers,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
         /// This error indicates a malicious attempt to bypass double-spend protection.
         ZeroNullifierSubmitted,
@@ -777,37 +685,13 @@ pub mod pallet {
             }
         }
 
-        fn on_initialize(n: BlockNumberFor<T>) -> Weight {
+        fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
             let pending_buckets = BlockFeeBucketsStorage::<T>::get();
             let pending_total = pending_buckets
                 .miner_fees
                 .saturating_add(pending_buckets.prover_fees);
             if pending_total > 0 && !CoinbaseProcessed::<T>::get() {
                 TotalFeesBurned::<T>::mutate(|total| *total = total.saturating_add(pending_total));
-            }
-
-            let mut queue = ForcedInclusionQueue::<T>::get();
-            if !queue.is_empty() {
-                let mut expired = Vec::new();
-                queue.retain(|entry| {
-                    if entry.expiry < n {
-                        expired.push((entry.commitment, entry.submitter.clone(), entry.bond));
-                        false
-                    } else {
-                        true
-                    }
-                });
-
-                for (commitment, submitter, bond) in expired {
-                    let _ = T::Currency::slash_reserved(&submitter, bond);
-                    Self::deposit_event(Event::ForcedInclusionExpired {
-                        commitment,
-                        submitter,
-                        bond,
-                    });
-                }
-
-                ForcedInclusionQueue::<T>::put(queue);
             }
 
             BlockFeeBucketsStorage::<T>::kill();
@@ -912,10 +796,10 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Execute a shielded transfer.
+        /// Compatibility wrapper for legacy metadata consumers.
         ///
-        /// This is the core privacy-preserving transfer function.
-        /// Only shielded-to-shielded transfers are supported (value_balance must be 0).
+        /// This no longer accepts a signed origin. It delegates to the
+        /// proof-native unsigned lane and rejects any non-zero value balance.
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,
@@ -933,195 +817,21 @@ pub mod pallet {
             fee: u64,
             value_balance: i128,
         ) -> DispatchResult {
-            ensure_signed(origin)?;
-            ensure!(
-                matches!(
-                    CiphertextPolicyStorage::<T>::get(),
-                    types::CiphertextPolicy::InlineAllowed
-                ),
-                Error::<T>::InlineCiphertextsDisabled
-            );
-            ensure!(
-                !CoinbaseProcessed::<T>::get(),
-                Error::<T>::TransfersAfterCoinbase
-            );
-
-            // SECURITY: Early size check to prevent DoS via oversized proofs.
-            // This is the cheapest possible rejection - no deserialization or crypto ops.
-            // Must happen before any other processing to minimize attack surface.
-            ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
-                Error::<T>::ProofTooLarge
-            );
-
-            // Validate counts
-            ensure!(
-                !nullifiers.is_empty() || !commitments.is_empty(),
-                Error::<T>::InvalidNullifierCount
-            );
-            ensure!(
-                ciphertexts.len() == commitments.len(),
-                Error::<T>::EncryptedNotesMismatch
-            );
-            for note in ciphertexts.iter() {
-                Self::validate_encrypted_note(note)?;
-            }
-            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_breakdown =
-                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
-
-            // Check anchor is a valid historical Merkle root
-            ensure!(
-                MerkleRoots::<T>::contains_key(anchor),
-                Error::<T>::InvalidAnchor
-            );
-
-            // No transparent pool: reject any non-zero value balance.
             ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
-
-            // Stablecoin issuance requires an active policy and fresh commitments.
-            Self::ensure_stablecoin_binding(&stablecoin)?;
-
-            // SECURITY: Count real (non-zero) nullifiers and validate transaction structure.
-            // The STARK proof commits to exact input/output counts, so we must verify
-            // that the number of real nullifiers is consistent with the claimed operation.
-            // This prevents attacks where a malicious prover attempts to:
-            // 1. Submit zero nullifiers for real notes (enabling double-spend)
-            // 2. Claim value balance without corresponding inputs
-            //
-            // IMPORTANT: We now REJECT zero nullifiers entirely (not skip them).
-            // Zero nullifiers indicate malicious or buggy proof construction.
-            for nf in nullifiers.iter() {
-                if is_zero_nullifier(nf) {
-                    return Err(Error::<T>::ZeroNullifierSubmitted.into());
-                }
-            }
-            for cm in commitments.iter() {
-                if is_zero_commitment(cm) {
-                    return Err(Error::<T>::ZeroCommitmentSubmitted.into());
-                }
-            }
-
-            // Outputs require at least one input nullifier to spend from.
-            if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
-                // Attempting to create outputs without any inputs
-                return Err(Error::<T>::InvalidNullifierCount.into());
-            }
-
-            // Check for duplicate nullifiers in transaction
-            let mut seen_nullifiers = Vec::new();
-            for nf in nullifiers.iter() {
-                if seen_nullifiers.contains(nf) {
-                    return Err(Error::<T>::DuplicateNullifierInTx.into());
-                }
-                seen_nullifiers.push(*nf);
-            }
-
-            // Check nullifiers not already spent
-            for nf in nullifiers.iter() {
-                ensure!(
-                    !Nullifiers::<T>::contains_key(nf),
-                    Error::<T>::NullifierAlreadyExists
-                );
-            }
-
-            // Build verification inputs
-            let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
-            let inputs = ShieldedTransferInputs {
+            Self::shielded_transfer_unsigned(
+                origin,
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
                 anchor,
-                nullifiers: nullifiers.clone().into_inner(),
-                commitments: commitments.clone().into_inner(),
-                ciphertext_hashes,
+                binding_hash,
+                stablecoin,
                 fee,
-                value_balance,
-                stablecoin: stablecoin.clone(),
-            };
-
-            // Get verifying key
-            let vk = VerifyingKeyStorage::<T>::get();
-            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
-
-            // Verify ZK proof (STARK-based, no trusted setup)
-            let verifier = T::ProofVerifier::default();
-            match verifier.verify_stark(&proof, &inputs, &vk) {
-                VerificationResult::Valid => {}
-                VerificationResult::InvalidProofFormat => {
-                    return Err(Error::<T>::InvalidProofFormat.into())
-                }
-                VerificationResult::InvalidPublicInputs => {
-                    return Err(Error::<T>::InvalidProofFormat.into())
-                }
-                VerificationResult::VerificationFailed => {
-                    return Err(Error::<T>::ProofVerificationFailed.into())
-                }
-                VerificationResult::KeyNotFound => {
-                    return Err(Error::<T>::VerifyingKeyNotFound.into())
-                }
-                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
-            }
-
-            // Verify value balance commitment (checked in-circuit for PQC)
-            ensure!(
-                verifier.verify_binding_hash(&binding_hash, &inputs),
-                Error::<T>::InvalidBindingHash
-            );
-            Self::record_fee_split(u128::from(fee), required_breakdown)?;
-
-            // Add nullifiers to spent set
-            // Note: Zero nullifiers were already rejected above, so no skip needed
-            for nf in nullifiers.iter() {
-                Nullifiers::<T>::insert(nf, ());
-                Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
-            }
-
-            // Add commitments to Merkle tree
-            let mut current_index = CommitmentIndex::<T>::get();
-            for (cm, enc) in commitments.iter().zip(ciphertexts.iter()) {
-                Commitments::<T>::insert(current_index, *cm);
-                EncryptedNotes::<T>::insert(current_index, enc.clone());
-                Self::deposit_event(Event::CommitmentAdded {
-                    index: current_index,
-                    commitment: *cm,
-                });
-                current_index += 1;
-            }
-            CommitmentIndex::<T>::put(current_index);
-
-            // Update Merkle tree root
-            Self::update_merkle_tree(&commitments)?;
-
-            Self::deposit_event(Event::ShieldedTransfer {
-                nullifier_count: nullifiers.len() as u32,
-                commitment_count: commitments.len() as u32,
-                value_balance,
-            });
-
-            ShieldedTransfersProcessed::<T>::put(true);
-
-            if !ForcedInclusionQueue::<T>::get().is_empty() {
-                let call = Call::<T>::shielded_transfer {
-                    proof,
-                    nullifiers,
-                    commitments,
-                    ciphertexts,
-                    anchor,
-                    binding_hash,
-                    stablecoin,
-                    fee,
-                    value_balance,
-                };
-                let commitment = sp_core::hashing::blake2_256(&call.encode());
-                Self::satisfy_forced_inclusion(commitment);
-            }
-
-            Ok(())
+            )
         }
 
-        /// Execute a shielded transfer where ciphertext bytes live in the DA sidecar.
-        ///
-        /// The extrinsic carries ciphertext hashes + sizes, while the ciphertext bytes
-        /// are stored and served out-of-band via the DA layer.
+        /// Compatibility wrapper for legacy metadata consumers using the DA sidecar path.
         #[pallet::call_index(7)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,
@@ -1140,320 +850,19 @@ pub mod pallet {
             fee: u64,
             value_balance: i128,
         ) -> DispatchResult {
-            ensure_signed(origin)?;
-            ensure!(
-                !CoinbaseProcessed::<T>::get(),
-                Error::<T>::TransfersAfterCoinbase
-            );
-
-            // SECURITY: Early size check to prevent DoS via oversized proofs.
-            ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
-                Error::<T>::ProofTooLarge
-            );
-
-            // Validate counts
-            ensure!(
-                !nullifiers.is_empty() || !commitments.is_empty(),
-                Error::<T>::InvalidNullifierCount
-            );
-            ensure!(
-                ciphertext_hashes.len() == commitments.len(),
-                Error::<T>::CiphertextHashCountMismatch
-            );
-            ensure!(
-                ciphertext_sizes.len() == commitments.len(),
-                Error::<T>::CiphertextSizeCountMismatch
-            );
-            Self::validate_ciphertext_sizes(ciphertext_sizes.as_slice())?;
-            for hash in ciphertext_hashes.iter() {
-                if *hash == [0u8; 48] {
-                    return Err(Error::<T>::ZeroCiphertextHash.into());
-                }
-            }
-            let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
-            let required_breakdown =
-                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
-
-            // Check anchor is a valid historical Merkle root
-            ensure!(
-                MerkleRoots::<T>::contains_key(anchor),
-                Error::<T>::InvalidAnchor
-            );
-
-            // No transparent pool: reject any non-zero value balance.
             ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
-
-            // Stablecoin issuance requires an active policy and fresh commitments.
-            Self::ensure_stablecoin_binding(&stablecoin)?;
-
-            for nf in nullifiers.iter() {
-                if is_zero_nullifier(nf) {
-                    return Err(Error::<T>::ZeroNullifierSubmitted.into());
-                }
-            }
-            for cm in commitments.iter() {
-                if is_zero_commitment(cm) {
-                    return Err(Error::<T>::ZeroCommitmentSubmitted.into());
-                }
-            }
-
-            // Outputs require at least one input nullifier to spend from.
-            if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
-                return Err(Error::<T>::InvalidNullifierCount.into());
-            }
-
-            // Check for duplicate nullifiers in transaction
-            let mut seen_nullifiers = Vec::new();
-            for nf in nullifiers.iter() {
-                if seen_nullifiers.contains(nf) {
-                    return Err(Error::<T>::DuplicateNullifierInTx.into());
-                }
-                seen_nullifiers.push(*nf);
-            }
-
-            // Check nullifiers not already spent
-            for nf in nullifiers.iter() {
-                ensure!(
-                    !Nullifiers::<T>::contains_key(nf),
-                    Error::<T>::NullifierAlreadyExists
-                );
-            }
-
-            // Build verification inputs
-            let inputs = ShieldedTransferInputs {
+            Self::shielded_transfer_unsigned_sidecar(
+                origin,
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
                 anchor,
-                nullifiers: nullifiers.clone().into_inner(),
-                commitments: commitments.clone().into_inner(),
-                ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
+                binding_hash,
+                stablecoin,
                 fee,
-                value_balance,
-                stablecoin: stablecoin.clone(),
-            };
-
-            // Get verifying key
-            let vk = VerifyingKeyStorage::<T>::get();
-            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
-
-            // Verify ZK proof
-            let verifier = T::ProofVerifier::default();
-            match verifier.verify_stark(&proof, &inputs, &vk) {
-                VerificationResult::Valid => {}
-                VerificationResult::InvalidProofFormat => {
-                    return Err(Error::<T>::InvalidProofFormat.into())
-                }
-                VerificationResult::InvalidPublicInputs => {
-                    return Err(Error::<T>::InvalidProofFormat.into())
-                }
-                VerificationResult::VerificationFailed => {
-                    return Err(Error::<T>::ProofVerificationFailed.into())
-                }
-                VerificationResult::KeyNotFound => {
-                    return Err(Error::<T>::VerifyingKeyNotFound.into())
-                }
-                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
-            }
-
-            // Verify value balance commitment
-            ensure!(
-                verifier.verify_binding_hash(&binding_hash, &inputs),
-                Error::<T>::InvalidBindingHash
-            );
-            Self::record_fee_split(u128::from(fee), required_breakdown)?;
-
-            // Add nullifiers to spent set
-            for nf in nullifiers.iter() {
-                Nullifiers::<T>::insert(nf, ());
-                Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
-            }
-
-            // Add commitments to Merkle tree (ciphertexts live in DA sidecar)
-            let mut current_index = CommitmentIndex::<T>::get();
-            for cm in commitments.iter() {
-                Commitments::<T>::insert(current_index, *cm);
-                Self::deposit_event(Event::CommitmentAdded {
-                    index: current_index,
-                    commitment: *cm,
-                });
-                current_index += 1;
-            }
-            CommitmentIndex::<T>::put(current_index);
-
-            // Update Merkle tree root
-            Self::update_merkle_tree(&commitments)?;
-
-            Self::deposit_event(Event::ShieldedTransfer {
-                nullifier_count: nullifiers.len() as u32,
-                commitment_count: commitments.len() as u32,
-                value_balance,
-            });
-
-            ShieldedTransfersProcessed::<T>::put(true);
-
-            if !ForcedInclusionQueue::<T>::get().is_empty() {
-                let call = Call::<T>::shielded_transfer_sidecar {
-                    proof,
-                    nullifiers,
-                    commitments,
-                    ciphertext_hashes,
-                    ciphertext_sizes,
-                    anchor,
-                    binding_hash,
-                    stablecoin,
-                    fee,
-                    value_balance,
-                };
-                let commitment = sp_core::hashing::blake2_256(&call.encode());
-                Self::satisfy_forced_inclusion(commitment);
-            }
-
-            Ok(())
-        }
-
-        /// Update the verifying key.
-        ///
-        /// Can only be called by AdminOrigin (governance).
-        #[pallet::call_index(2)]
-        #[pallet::weight(T::WeightInfo::update_verifying_key())]
-        pub fn update_verifying_key(origin: OriginFor<T>, new_key: VerifyingKey) -> DispatchResult {
-            T::AdminOrigin::ensure_origin(origin)?;
-
-            let block = <frame_system::Pallet<T>>::block_number();
-            let block_u64: u64 = block.try_into().unwrap_or(0);
-
-            VerifyingKeyStorage::<T>::put(new_key.clone());
-            VerifyingKeyParamsStorage::<T>::put(VerifyingKeyParams {
-                key_id: new_key.id,
-                active: new_key.enabled,
-                activated_at: block_u64,
-            });
-
-            Self::deposit_event(Event::VerifyingKeyUpdated { key_id: new_key.id });
-
-            Ok(())
-        }
-
-        /// Update the DA availability policy (full fetch vs sampling).
-        ///
-        /// Can only be called by AdminOrigin (governance).
-        #[pallet::call_index(11)]
-        #[pallet::weight(T::WeightInfo::set_da_policy())]
-        pub fn set_da_policy(
-            origin: OriginFor<T>,
-            policy: types::DaAvailabilityPolicy,
-        ) -> DispatchResult {
-            T::AdminOrigin::ensure_origin(origin)?;
-            DaPolicyStorage::<T>::put(policy);
-            Self::deposit_event(Event::DaPolicyUpdated { policy });
-            Ok(())
-        }
-
-        /// Update the ciphertext policy (inline vs sidecar-only).
-        ///
-        /// Can only be called by AdminOrigin (governance).
-        #[pallet::call_index(12)]
-        #[pallet::weight(T::WeightInfo::set_ciphertext_policy())]
-        pub fn set_ciphertext_policy(
-            origin: OriginFor<T>,
-            policy: types::CiphertextPolicy,
-        ) -> DispatchResult {
-            T::AdminOrigin::ensure_origin(origin)?;
-            CiphertextPolicyStorage::<T>::put(policy);
-            Self::deposit_event(Event::CiphertextPolicyUpdated { policy });
-            Ok(())
-        }
-
-        /// Update the proof availability policy (inline vs DA required in aggregation mode).
-        ///
-        /// Can only be called by AdminOrigin (governance).
-        #[pallet::call_index(14)]
-        #[pallet::weight(T::WeightInfo::set_proof_availability_policy())]
-        pub fn set_proof_availability_policy(
-            origin: OriginFor<T>,
-            policy: types::ProofAvailabilityPolicy,
-        ) -> DispatchResult {
-            T::AdminOrigin::ensure_origin(origin)?;
-            ProofAvailabilityPolicyStorage::<T>::put(policy);
-            Self::deposit_event(Event::ProofAvailabilityPolicyUpdated { policy });
-            Ok(())
-        }
-
-        /// Update the fee parameters for shielded transfers.
-        #[pallet::call_index(9)]
-        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Operational, Pays::No))]
-        pub fn set_fee_parameters(
-            origin: OriginFor<T>,
-            params: types::FeeParameters,
-        ) -> DispatchResult {
-            T::AdminOrigin::ensure_origin(origin)?;
-            FeeParametersStorage::<T>::put(params);
-            Self::deposit_event(Event::FeeParametersUpdated { params });
-            Ok(())
-        }
-
-        /// Submit a forced inclusion commitment with a bonded expiry window.
-        #[pallet::call_index(10)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
-        pub fn submit_forced_inclusion(
-            origin: OriginFor<T>,
-            commitment: [u8; 32],
-            expiry: BlockNumberFor<T>,
-            bond: BalanceOf<T>,
-        ) -> DispatchResult {
-            let submitter = ensure_signed(origin)?;
-
-            ensure!(
-                !ShieldedTransfersProcessed::<T>::get(),
-                Error::<T>::ForcedInclusionAfterTransfers
-            );
-
-            ensure!(
-                bond >= T::MinForcedInclusionBond::get(),
-                Error::<T>::ForcedInclusionBondTooLow
-            );
-
-            let now = <frame_system::Pallet<T>>::block_number();
-            let max_expiry = now.saturating_add(T::MaxForcedInclusionWindow::get());
-            ensure!(
-                expiry > now && expiry <= max_expiry,
-                Error::<T>::ForcedInclusionExpiryInvalid
-            );
-
-            let mut queue = ForcedInclusionQueue::<T>::get();
-            ensure!(
-                queue.len() < T::MaxForcedInclusions::get() as usize,
-                Error::<T>::ForcedInclusionQueueFull
-            );
-            ensure!(
-                !queue.iter().any(|entry| entry.commitment == commitment),
-                Error::<T>::ForcedInclusionDuplicate
-            );
-
-            T::Currency::reserve(&submitter, bond)
-                .map_err(|_| Error::<T>::ForcedInclusionBondReserveFailed)?;
-
-            if queue
-                .try_push(ForcedInclusionEntry {
-                    commitment,
-                    expiry,
-                    submitter: submitter.clone(),
-                    bond,
-                })
-                .is_err()
-            {
-                T::Currency::unreserve(&submitter, bond);
-                return Err(Error::<T>::ForcedInclusionQueueFull.into());
-            }
-
-            ForcedInclusionQueue::<T>::put(queue);
-            Self::deposit_event(Event::ForcedInclusionSubmitted {
-                commitment,
-                expiry,
-                submitter,
-                bond,
-            });
-            Ok(())
+            )
         }
 
         /// Mint coinbase reward directly to the shielded pool.
@@ -1660,7 +1069,7 @@ pub mod pallet {
             // Pure shielded transfers have value_balance = 0
             let value_balance: i128 = 0;
 
-            ensure!(stablecoin.is_none(), Error::<T>::StablecoinIssuanceUnsigned);
+            Self::ensure_stablecoin_binding(&stablecoin)?;
 
             // Validate counts
             ensure!(
@@ -1722,7 +1131,7 @@ pub mod pallet {
                 ciphertext_hashes,
                 fee,
                 value_balance,
-                stablecoin: None,
+                stablecoin: stablecoin.clone(),
             };
 
             // Get verifying key
@@ -1795,21 +1204,6 @@ pub mod pallet {
 
             ShieldedTransfersProcessed::<T>::put(true);
 
-            if !ForcedInclusionQueue::<T>::get().is_empty() {
-                let call = Call::<T>::shielded_transfer_unsigned {
-                    proof,
-                    nullifiers,
-                    commitments,
-                    ciphertexts,
-                    anchor,
-                    binding_hash,
-                    stablecoin,
-                    fee,
-                };
-                let commitment = sp_core::hashing::blake2_256(&call.encode());
-                Self::satisfy_forced_inclusion(commitment);
-            }
-
             Ok(())
         }
 
@@ -1846,7 +1240,7 @@ pub mod pallet {
             // Pure shielded transfers have value_balance = 0
             let value_balance: i128 = 0;
 
-            ensure!(stablecoin.is_none(), Error::<T>::StablecoinIssuanceUnsigned);
+            Self::ensure_stablecoin_binding(&stablecoin)?;
 
             let aggregation_mode = AggregationProofRequired::<T>::get();
             let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
@@ -1932,7 +1326,7 @@ pub mod pallet {
                 ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
                 fee,
                 value_balance,
-                stablecoin: None,
+                stablecoin: stablecoin.clone(),
             };
 
             let verifier = T::ProofVerifier::default();
@@ -1996,22 +1390,6 @@ pub mod pallet {
             });
 
             ShieldedTransfersProcessed::<T>::put(true);
-
-            if !ForcedInclusionQueue::<T>::get().is_empty() {
-                let call = Call::<T>::shielded_transfer_unsigned_sidecar {
-                    proof,
-                    nullifiers,
-                    commitments,
-                    ciphertext_hashes,
-                    ciphertext_sizes,
-                    anchor,
-                    binding_hash,
-                    stablecoin,
-                    fee,
-                };
-                let commitment = sp_core::hashing::blake2_256(&call.encode());
-                Self::satisfy_forced_inclusion(commitment);
-            }
 
             Ok(())
         }
@@ -2196,19 +1574,6 @@ pub mod pallet {
 
             ShieldedTransfersProcessed::<T>::put(true);
 
-            if !ForcedInclusionQueue::<T>::get().is_empty() {
-                let call = Call::<T>::batch_shielded_transfer {
-                    proof,
-                    nullifiers,
-                    commitments,
-                    ciphertexts,
-                    anchor,
-                    total_fee,
-                };
-                let commitment = sp_core::hashing::blake2_256(&call.encode());
-                Self::satisfy_forced_inclusion(commitment);
-            }
-
             Ok(())
         }
     }
@@ -2320,32 +1685,6 @@ pub mod pallet {
                 miner_fee,
                 total_fee,
             })
-        }
-
-        pub fn forced_inclusions() -> Vec<types::ForcedInclusionStatus> {
-            ForcedInclusionQueue::<T>::get()
-                .into_iter()
-                .map(|entry| types::ForcedInclusionStatus {
-                    commitment: entry.commitment,
-                    expiry: entry.expiry.try_into().unwrap_or(0u64),
-                })
-                .collect()
-        }
-
-        fn satisfy_forced_inclusion(commitment: [u8; 32]) {
-            let mut queue = ForcedInclusionQueue::<T>::get();
-            if let Some(position) = queue
-                .iter()
-                .position(|entry| entry.commitment == commitment)
-            {
-                let entry = queue.remove(position);
-                T::Currency::unreserve(&entry.submitter, entry.bond);
-                ForcedInclusionQueue::<T>::put(queue);
-                Self::deposit_event(Event::ForcedInclusionSatisfied {
-                    commitment,
-                    submitter: entry.submitter,
-                });
-            }
         }
 
         fn ciphertext_bytes_total(ciphertexts: &[EncryptedNote]) -> Result<u64, Error<T>> {
@@ -2811,10 +2150,10 @@ pub mod pallet {
                         fee
                     );
 
-                    if stablecoin.is_some() {
+                    if Self::ensure_stablecoin_binding(stablecoin).is_err() {
                         log::info!(
                             target: "shielded-pool",
-                            "  REJECTED: stablecoin issuance not allowed in unsigned transfer"
+                            "  REJECTED: stablecoin binding invalid"
                         );
                         return InvalidTransaction::Custom(7).into();
                     }
@@ -2904,7 +2243,7 @@ pub mod pallet {
                         ciphertext_hashes,
                         fee: *fee,
                         value_balance: 0, // Pure shielded transfer
-                        stablecoin: None,
+                        stablecoin: stablecoin.clone(),
                     };
 
                     // Verify the STARK proof (this is the main validation)
@@ -2977,10 +2316,10 @@ pub mod pallet {
                         fee
                     );
 
-                    if stablecoin.is_some() {
+                    if Self::ensure_stablecoin_binding(stablecoin).is_err() {
                         log::info!(
                             target: "shielded-pool",
-                            "  REJECTED: stablecoin issuance not allowed in unsigned transfer"
+                            "  REJECTED: stablecoin binding invalid"
                         );
                         return InvalidTransaction::Custom(7).into();
                     }
@@ -3077,7 +2416,7 @@ pub mod pallet {
                         ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
                         fee: *fee,
                         value_balance: 0,
-                        stablecoin: None,
+                        stablecoin: stablecoin.clone(),
                     };
 
                     let verifier = T::ProofVerifier::default();
@@ -3260,7 +2599,7 @@ pub mod pallet {
                 }
                 // All other calls are invalid as unsigned
                 _ => {
-                    log::info!(target: "shielded-pool", "ValidateUnsigned: Call did NOT match shielded_transfer_unsigned or mint_coinbase - returning InvalidTransaction::Call");
+                    log::info!(target: "shielded-pool", "ValidateUnsigned: call did not match a proof-native unsigned lane");
                     InvalidTransaction::Call.into()
                 }
             }
