@@ -24,6 +24,7 @@ The observable result is:
 - [x] (2026-03-05 23:36Z) Replaced public `author_*` submission with Hegemon-native shielded RPC end to end in node and wallet code.
 - [x] (2026-03-05 23:44Z) Introduced `runtime::manifest::ProtocolManifest` and used it for runtime defaults and chainspec generation.
 - [x] (2026-03-05 23:58Z) Verified `cargo check -p runtime`, `cargo check -p hegemon-node`, `cargo test -p wallet substrate_rpc -- --nocapture`, and `cargo test -p hegemon-node shielded -- --nocapture`.
+- [x] (2026-03-06 00:31Z) Removed the legacy `shielded_transfer` / `shielded_transfer_sidecar` call names from the pallet and updated node parsing/import logic to use only the unsigned call names.
 - [ ] Broader doc sweep beyond the key README/DESIGN/METHODS/wallet README touch points.
 
 ## Surprises & Discoveries
@@ -39,6 +40,9 @@ The observable result is:
 
 - Observation: keeping the old `shielded_transfer` call names as unsigned compatibility wrappers is the fastest way to preserve node-side block analysis code while still killing the signed-account model.
   Evidence: the runtime now rejects signed/account-style submission, but the node code still pattern-matched those call variants in many proof/DA extraction paths.
+
+- Observation: once the node-side block analysis helpers were switched to only match the unsigned call names, the old aliases could be deleted cleanly without changing the proof model or breaking the targeted shielded tests.
+  Evidence: after removing the aliases, `cargo check -p runtime`, `cargo check -p hegemon-node`, `cargo test -p wallet substrate_rpc -- --nocapture`, and `cargo test -p hegemon-node shielded -- --nocapture` still pass.
 
 ## Decision Log
 
@@ -58,9 +62,13 @@ The observable result is:
   Rationale: this preserves node-side call matching and older metadata consumers while the actual authorization model remains proof-native (`None` origin only, no signed submission path, no public account lane).
   Date/Author: 2026-03-05 / Codex
 
+- Decision: delete the legacy aliases once the node-side call matchers were rewritten to use only `shielded_transfer_unsigned` / `shielded_transfer_unsigned_sidecar`.
+  Rationale: after the parser/import path no longer depended on the old names, keeping the aliases added confusion without preserving any useful behavior.
+  Date/Author: 2026-03-06 / Codex
+
 ## Outcomes & Retrospective
 
-The core cut is implemented. The runtime now builds without balances/payment/treasury/governance pallets, shielded submission is routed through Hegemon RPC into unsigned extrinsics, and targeted wallet/node tests pass. The remaining gap is documentation breadth: the most important documents were updated, but the repo still contains older prose in less-central locations that should be swept in a follow-up pass.
+The core cut is implemented. The runtime now builds without balances/payment/treasury/governance pallets, shielded submission is routed through Hegemon RPC into unsigned extrinsics, and targeted wallet/node tests pass. The old shielded call aliases have also been removed, so the codebase now recognizes only the unsigned proof-native call names. The remaining gap is documentation breadth: the most important documents were updated, but the repo still contains older prose in less-central locations that should be swept in a follow-up pass.
 
 ## Context and Orientation
 

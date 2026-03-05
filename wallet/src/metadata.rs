@@ -12,7 +12,6 @@ pub struct RuntimeCallIndex {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShieldedPoolCallIndices {
-    pub shielded_transfer: RuntimeCallIndex,
     pub shielded_transfer_unsigned: RuntimeCallIndex,
     pub shielded_transfer_unsigned_sidecar: RuntimeCallIndex,
     pub batch_shielded_transfer: RuntimeCallIndex,
@@ -23,7 +22,6 @@ pub fn lookup_shielded_pool_call_indices(
 ) -> Result<ShieldedPoolCallIndices, WalletError> {
     let metadata = decode_metadata(metadata_bytes)?;
     Ok(ShieldedPoolCallIndices {
-        shielded_transfer: lookup_call_index(&metadata, "ShieldedPool", "shielded_transfer")?,
         shielded_transfer_unsigned: lookup_call_index(
             &metadata,
             "ShieldedPool",

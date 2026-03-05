@@ -680,10 +680,8 @@ impl SubstrateRpcClient {
 
     /// Submit a shielded transaction to the network
     ///
-    /// Submits a signed transaction bundle containing the STARK proof,
-    /// nullifiers, commitments, encrypted notes, anchor, and binding hash.
-    /// This calls the `hegemon_submitShieldedTransfer` RPC which verifies
-    /// the STARK proof and submits the transaction to the shielded pool.
+    /// This calls the `hegemon_submitShieldedTransfer` RPC, which verifies
+    /// the STARK proof and submits the transaction to the unsigned shielded lane.
     ///
     /// # Arguments
     ///
@@ -1113,14 +1111,13 @@ impl SubstrateRpcClient {
         Ok(result)
     }
 
-    /// Submit a signed extrinsic to the network
+    /// Submit a generic extrinsic to the network.
     ///
-    /// This is the proper Substrate way to submit transactions.
-    /// The extrinsic should be SCALE-encoded and signed.
+    /// Generic author submission is disabled in the proof-native build.
     ///
     /// # Arguments
     ///
-    /// * `extrinsic` - SCALE-encoded signed extrinsic bytes
+    /// * `extrinsic` - SCALE-encoded extrinsic bytes
     ///
     /// # Returns
     ///
@@ -1131,14 +1128,7 @@ impl SubstrateRpcClient {
         ))
     }
 
-    /// Submit a shielded transfer using proper Substrate extrinsic signing
-    ///
-    /// This is the full E2E path:
-    /// 1. Build the shielded_transfer call
-    /// 2. Fetch chain metadata (genesis, block hash, versions)
-    /// 3. Get account nonce
-    /// 4. Construct and sign extrinsic with ML-DSA
-    /// 5. Submit via author_submitExtrinsic
+    /// Submit a shielded transfer through the proof-native RPC path.
     ///
     /// # Arguments
     ///
@@ -1192,12 +1182,7 @@ impl SubstrateRpcClient {
             .await
     }
 
-    /// Submit an unsigned sidecar transfer with an optional proof-sidecar override.
-    ///
-    /// If `force_proof_sidecar` is `Some(true)`, proof bytes are uploaded via
-    /// `da_submitProofs` and omitted from the extrinsic. If `Some(false)`, proof bytes stay
-    /// inline in the extrinsic. If `None`, behavior is controlled by
-    /// `HEGEMON_WALLET_PROOF_SIDECAR`.
+    /// Submit a sidecar-flavored shielded transfer through the proof-native RPC path.
     pub async fn submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
         &self,
         bundle: &TransactionBundle,

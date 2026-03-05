@@ -73,7 +73,7 @@ use transaction_core::hashing_pq::ciphertext_hash_bytes;
 ///
 /// Our defense-in-depth strategy:
 /// 1. Circuit layer: TransactionWitness::validate() rejects zero nullifiers
-/// 2. Pallet layer: shielded_transfer() rejects any zero nullifier submission
+/// 2. Pallet layer: shielded transfer submission rejects any zero nullifier submission
 /// 3. Cryptographic: The nullifier PRF makes zero outputs computationally infeasible
 ///
 /// This constant exists only for detection - any occurrence is an error.
@@ -796,75 +796,6 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Compatibility wrapper for legacy metadata consumers.
-        ///
-        /// This no longer accepts a signed origin. It delegates to the
-        /// proof-native unsigned lane and rejects any non-zero value balance.
-        #[pallet::call_index(0)]
-        #[pallet::weight(T::WeightInfo::shielded_transfer(
-            nullifiers.len() as u32,
-            commitments.len() as u32
-        ))]
-        pub fn shielded_transfer(
-            origin: OriginFor<T>,
-            proof: StarkProof,
-            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
-            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
-            ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
-            anchor: [u8; 48],
-            binding_hash: BindingHash,
-            stablecoin: Option<StablecoinPolicyBinding>,
-            fee: u64,
-            value_balance: i128,
-        ) -> DispatchResult {
-            ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
-            Self::shielded_transfer_unsigned(
-                origin,
-                proof,
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-            )
-        }
-
-        /// Compatibility wrapper for legacy metadata consumers using the DA sidecar path.
-        #[pallet::call_index(7)]
-        #[pallet::weight(T::WeightInfo::shielded_transfer(
-            nullifiers.len() as u32,
-            commitments.len() as u32
-        ))]
-        pub fn shielded_transfer_sidecar(
-            origin: OriginFor<T>,
-            proof: StarkProof,
-            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
-            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
-            ciphertext_hashes: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
-            ciphertext_sizes: BoundedVec<u32, T::MaxCommitmentsPerTx>,
-            anchor: [u8; 48],
-            binding_hash: BindingHash,
-            stablecoin: Option<StablecoinPolicyBinding>,
-            fee: u64,
-            value_balance: i128,
-        ) -> DispatchResult {
-            ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
-            Self::shielded_transfer_unsigned_sidecar(
-                origin,
-                proof,
-                nullifiers,
-                commitments,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-            )
-        }
-
         /// Mint coinbase reward directly to the shielded pool.
         ///
         /// This is an inherent extrinsic that creates shielded reward notes.
@@ -1029,7 +960,6 @@ pub mod pallet {
         ///
         /// IMPORTANT: This call ONLY works for pure shielded transfers where
         /// value_balance = 0 (no value entering or leaving the shielded pool).
-        /// The signed `shielded_transfer` call also enforces value_balance = 0.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,

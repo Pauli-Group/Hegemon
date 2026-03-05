@@ -1385,12 +1385,6 @@ fn build_da_blob_from_extrinsics(
         };
 
         let ciphertexts = match call {
-            ShieldedPoolCall::shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
-                    .iter()
-                    .map(encrypted_note_bytes)
-                    .collect::<Vec<_>>(),
-            ),
             ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => Some(
                 ciphertexts
                     .iter()
@@ -1403,12 +1397,7 @@ fn build_da_blob_from_extrinsics(
                     .map(encrypted_note_bytes)
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
                 ciphertext_hashes,
                 ciphertext_sizes,
                 ..
@@ -1554,8 +1543,7 @@ fn has_sidecar_transfers(extrinsics: &[runtime::UncheckedExtrinsic]) -> bool {
         };
         matches!(
             call,
-            ShieldedPoolCall::shielded_transfer_sidecar { .. }
-                | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+            ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
         )
     })
 }
@@ -1570,12 +1558,6 @@ fn da_layout_from_extrinsics(
         };
 
         let sizes = match call {
-            ShieldedPoolCall::shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
-                    .iter()
-                    .map(|note| encrypted_note_bytes(note).len())
-                    .collect::<Vec<_>>(),
-            ),
             ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => Some(
                 ciphertexts
                     .iter()
@@ -1588,10 +1570,7 @@ fn da_layout_from_extrinsics(
                     .map(|note| encrypted_note_bytes(note).len())
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                ciphertext_sizes, ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
                 ciphertext_sizes, ..
             } => Some(
                 ciphertext_sizes
@@ -1684,8 +1663,7 @@ fn transfer_ciphertexts_from_extrinsics(
             continue;
         };
         match call {
-            ShieldedPoolCall::shielded_transfer { ciphertexts, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => {
+            ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => {
                 out.extend(ciphertexts.iter().map(encrypted_note_bytes));
             }
             ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => {
@@ -1725,9 +1703,7 @@ fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) ->
             continue;
         };
         match call {
-            ShieldedPoolCall::shielded_transfer { binding_hash, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { binding_hash, .. }
-            | ShieldedPoolCall::shielded_transfer_sidecar { binding_hash, .. }
+            ShieldedPoolCall::shielded_transfer_unsigned { binding_hash, .. }
             | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { binding_hash, .. } => {
                 out.push(binding_hash.data);
             }
@@ -1810,42 +1786,12 @@ fn statement_bindings_from_extrinsics(
 
         let version = DEFAULT_VERSION_BINDING;
         let binding = match call {
-            ShieldedPoolCall::shielded_transfer {
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                stablecoin,
-                fee,
-                value_balance,
-                ..
-            } => {
-                let ciphertext_hashes = ciphertexts
-                    .iter()
-                    .map(encrypted_note_bytes)
-                    .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
-                    .collect::<Vec<_>>();
-                consensus::types::TxStatementBinding {
-                    statement_hash: statement_hash_from_materialized_call(
-                        anchor,
-                        nullifiers.as_slice(),
-                        commitments.as_slice(),
-                        &ciphertext_hashes,
-                        *fee,
-                        *value_balance,
-                        version,
-                        stablecoin.as_ref(),
-                    ),
-                    anchor: *anchor,
-                    fee: *fee,
-                    circuit_version: u32::from(version.circuit),
-                }
-            }
             ShieldedPoolCall::shielded_transfer_unsigned {
                 nullifiers,
                 commitments,
                 ciphertexts,
                 anchor,
+                stablecoin,
                 fee,
                 ..
             } => {
@@ -1863,42 +1809,19 @@ fn statement_bindings_from_extrinsics(
                         *fee,
                         0,
                         version,
-                        None,
+                        stablecoin.as_ref(),
                     ),
                     anchor: *anchor,
                     fee: *fee,
                     circuit_version: u32::from(version.circuit),
                 }
             }
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                nullifiers,
-                commitments,
-                ciphertext_hashes,
-                anchor,
-                stablecoin,
-                fee,
-                value_balance,
-                ..
-            } => consensus::types::TxStatementBinding {
-                statement_hash: statement_hash_from_materialized_call(
-                    anchor,
-                    nullifiers.as_slice(),
-                    commitments.as_slice(),
-                    ciphertext_hashes.as_slice(),
-                    *fee,
-                    *value_balance,
-                    version,
-                    stablecoin.as_ref(),
-                ),
-                anchor: *anchor,
-                fee: *fee,
-                circuit_version: u32::from(version.circuit),
-            },
             ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
                 nullifiers,
                 commitments,
                 ciphertext_hashes,
                 anchor,
+                stablecoin,
                 fee,
                 ..
             } => consensus::types::TxStatementBinding {
@@ -1910,7 +1833,7 @@ fn statement_bindings_from_extrinsics(
                     *fee,
                     0,
                     version,
-                    None,
+                    stablecoin.as_ref(),
                 ),
                 anchor: *anchor,
                 fee: *fee,
@@ -1936,17 +1859,7 @@ fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> V
             continue;
         };
         match call {
-            ShieldedPoolCall::shielded_transfer {
-                proof,
-                binding_hash,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                binding_hash,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_sidecar {
+            ShieldedPoolCall::shielded_transfer_unsigned {
                 proof,
                 binding_hash,
                 ..
@@ -3230,7 +3143,7 @@ fn extract_shielded_transfers_for_parallel_verification(
             ShieldedPoolCall::mint_coinbase { .. } => {
                 // Coinbase ciphertexts are stored separately from the DA blob.
             }
-            ShieldedPoolCall::shielded_transfer {
+            ShieldedPoolCall::shielded_transfer_unsigned {
                 proof,
                 nullifiers,
                 commitments,
@@ -3238,7 +3151,6 @@ fn extract_shielded_transfers_for_parallel_verification(
                 binding_hash,
                 stablecoin,
                 fee,
-                value_balance,
                 ciphertexts,
                 ..
             } => {
@@ -3258,47 +3170,6 @@ fn extract_shielded_transfers_for_parallel_verification(
                     *anchor,
                     stablecoin.clone(),
                     *fee,
-                    *value_balance,
-                )?;
-                let tx = crate::transaction::proof_to_transaction(
-                    &tx_proof,
-                    DEFAULT_VERSION_BINDING,
-                    ciphertexts,
-                );
-                transactions.push(tx);
-                proofs.push(tx_proof);
-                proof_binding_hashes.push(binding_hash.data);
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ciphertexts,
-                ..
-            } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
-                let ciphertexts = match next_resolved_ciphertexts()? {
-                    Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
-                        .iter()
-                        .map(encrypted_note_bytes)
-                        .collect::<Vec<_>>(),
-                };
-                let proof_bytes = resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
-                let tx_proof = build_transaction_proof(
-                    proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
-                    &ciphertexts,
-                    *anchor,
-                    None,
-                    *fee,
                     0,
                 )?;
                 let tx = crate::transaction::proof_to_transaction(
@@ -3309,111 +3180,6 @@ fn extract_shielded_transfers_for_parallel_verification(
                 transactions.push(tx);
                 proofs.push(tx_proof);
                 proof_binding_hashes.push(binding_hash.data);
-            }
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                value_balance,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                let nullifiers_vec = nullifiers.iter().copied().collect::<Vec<_>>();
-                let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
-                let hash_vec = ciphertext_hashes.to_vec();
-                let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
-                    proof,
-                    binding_hash,
-                    pending_proofs,
-                ) {
-                    Ok(bytes) => Some(bytes),
-                    Err(err) if allow_missing_sidecar_proofs && proof.data.is_empty() => {
-                        tracing::debug!(
-                            binding_hash = %hex::encode(binding_hash.data),
-                            error = %err,
-                            "Missing sidecar proof bytes; continuing with statement-only transaction extraction"
-                        );
-                        None
-                    }
-                    Err(err) => return Err(err),
-                };
-                let tx_proof = match (maybe_proof_bytes, maybe_ciphertexts.as_ref()) {
-                    (Some(proof_bytes), Some(ciphertexts)) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
-                        )?;
-                        Some(build_transaction_proof(
-                            proof_bytes,
-                            nullifiers_vec.clone(),
-                            commitments_vec.clone(),
-                            ciphertexts,
-                            *anchor,
-                            stablecoin.clone(),
-                            *fee,
-                            *value_balance,
-                        )?)
-                    }
-                    (Some(proof_bytes), None) => Some(build_transaction_proof_with_hashes(
-                        proof_bytes,
-                        nullifiers_vec.clone(),
-                        commitments_vec.clone(),
-                        &hash_vec,
-                        *anchor,
-                        stablecoin.clone(),
-                        *fee,
-                        *value_balance,
-                    )?),
-                    (None, Some(ciphertexts)) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
-                        )?;
-                        None
-                    }
-                    (None, None) => None,
-                };
-                let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
-                    (Some(proof), Some(ciphertexts)) => crate::transaction::proof_to_transaction(
-                        proof,
-                        DEFAULT_VERSION_BINDING,
-                        ciphertexts,
-                    ),
-                    (Some(proof), None) => consensus::types::Transaction::new_with_hashes(
-                        nullifiers_vec,
-                        commitments_vec,
-                        proof.public_inputs.balance_tag,
-                        DEFAULT_VERSION_BINDING,
-                        hash_vec,
-                    ),
-                    (None, Some(ciphertexts)) => consensus::types::Transaction::new(
-                        nullifiers_vec,
-                        commitments_vec,
-                        [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
-                        ciphertexts,
-                    ),
-                    (None, None) => consensus::types::Transaction::new_with_hashes(
-                        nullifiers_vec,
-                        commitments_vec,
-                        [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
-                        hash_vec,
-                    ),
-                };
-                transactions.push(tx);
-                if let Some(tx_proof) = tx_proof {
-                    proofs.push(tx_proof);
-                    proof_binding_hashes.push(binding_hash.data);
-                }
             }
             ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
                 proof,
@@ -3427,9 +3193,6 @@ fn extract_shielded_transfers_for_parallel_verification(
                 ciphertext_sizes,
                 ..
             } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
                 let nullifiers_vec = nullifiers.iter().copied().collect::<Vec<_>>();
                 let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
                 let hash_vec = ciphertext_hashes.to_vec();
@@ -3463,7 +3226,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                             commitments_vec.clone(),
                             ciphertexts,
                             *anchor,
-                            None,
+                            stablecoin.clone(),
                             *fee,
                             0,
                         )?)
@@ -3474,7 +3237,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                         commitments_vec.clone(),
                         &hash_vec,
                         *anchor,
-                        None,
+                        stablecoin.clone(),
                         *fee,
                         0,
                     )?),
@@ -4207,9 +3970,7 @@ fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
 
     matches!(
         call,
-        ShieldedPoolCall::shielded_transfer { .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { .. }
-            | ShieldedPoolCall::shielded_transfer_sidecar { .. }
+        ShieldedPoolCall::shielded_transfer_unsigned { .. }
             | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
             | ShieldedPoolCall::batch_shielded_transfer { .. }
     )
@@ -4221,9 +3982,7 @@ fn is_proofless_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
     };
 
     match call {
-        ShieldedPoolCall::shielded_transfer { proof, .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned { proof, .. }
-        | ShieldedPoolCall::shielded_transfer_sidecar { proof, .. }
+        ShieldedPoolCall::shielded_transfer_unsigned { proof, .. }
         | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { proof, .. } => {
             proof.data.is_empty()
         }
@@ -4238,8 +3997,7 @@ fn is_sidecar_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
 
     matches!(
         call,
-        ShieldedPoolCall::shielded_transfer_sidecar { .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+        ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
     )
 }
 
@@ -4249,17 +4007,7 @@ fn proofless_binding_hash_from_call(call: &runtime::RuntimeCall) -> Option<[u8; 
     };
 
     match call {
-        ShieldedPoolCall::shielded_transfer {
-            proof,
-            binding_hash,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned {
-            proof,
-            binding_hash,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_sidecar {
+        ShieldedPoolCall::shielded_transfer_unsigned {
             proof,
             binding_hash,
             ..
@@ -4279,10 +4027,7 @@ fn sidecar_ciphertext_hashes_from_call(call: &runtime::RuntimeCall) -> Option<&[
     };
 
     match call {
-        ShieldedPoolCall::shielded_transfer_sidecar {
-            ciphertext_hashes, ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+        ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
             ciphertext_hashes, ..
         } => Some(ciphertext_hashes.as_slice()),
         _ => None,
@@ -4376,9 +4121,7 @@ fn shielded_transfer_key_from_extrinsic(
         return None;
     };
     match call {
-        ShieldedPoolCall::shielded_transfer { .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned { .. }
-        | ShieldedPoolCall::shielded_transfer_sidecar { .. }
+        ShieldedPoolCall::shielded_transfer_unsigned { .. }
         | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
         | ShieldedPoolCall::batch_shielded_transfer { .. } => {
             Some(shielded_transfer_order_key(call))
@@ -4510,17 +4253,7 @@ fn shielded_conflict_keys_from_call(
     call: &ShieldedPoolCall,
 ) -> Option<(Option<[u8; 64]>, Vec<[u8; 48]>)> {
     match call {
-        ShieldedPoolCall::shielded_transfer {
-            binding_hash,
-            nullifiers,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned {
-            binding_hash,
-            nullifiers,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_sidecar {
+        ShieldedPoolCall::shielded_transfer_unsigned {
             binding_hash,
             nullifiers,
             ..
@@ -4620,9 +4353,7 @@ fn split_shielded_fee_buckets_from_decoded(
         };
 
         let (provided, prover_component) = match call {
-            ShieldedPoolCall::shielded_transfer { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_sidecar { fee, .. }
+            ShieldedPoolCall::shielded_transfer_unsigned { fee, .. }
             | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => {
                 (u128::from(*fee), fee_params.proof_fee)
             }
