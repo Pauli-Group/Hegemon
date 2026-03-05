@@ -10,10 +10,10 @@ use crypto::note_encryption::{NoteCiphertext, NotePlaintext};
 
 use frame_support::BoundedVec;
 use pallet_shielded_pool::{
-    commitment::{circuit_coinbase_commitment, pk_recipient_from_address},
+    commitment::{circuit_coinbase_commitment, pk_auth_from_address, pk_recipient_from_address},
     types::{
-        CoinbaseNoteData, EncryptedNote, CRYPTO_SUITE_GAMMA, DIVERSIFIED_ADDRESS_SIZE,
-        ENCRYPTED_NOTE_SIZE, NOTE_ENCRYPTION_VERSION,
+        BlockRewardBundle, CoinbaseNoteData, EncryptedNote, CRYPTO_SUITE_GAMMA,
+        DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, NOTE_ENCRYPTION_VERSION,
     },
 };
 
@@ -81,6 +81,30 @@ pub fn encrypt_coinbase_note(
         recipient_address,
         amount,
         public_seed,
+    })
+}
+
+/// Encrypt the miner reward note and optional prover reward note for one block.
+pub fn encrypt_block_reward_bundle(
+    miner_address: &ShieldedAddress,
+    miner_amount: u64,
+    prover: Option<(&ShieldedAddress, u64)>,
+    block_hash: &[u8; 32],
+    block_number: u64,
+) -> Result<BlockRewardBundle, CoinbaseEncryptionError> {
+    let miner_note = encrypt_coinbase_note(miner_address, miner_amount, block_hash, block_number)?;
+    let prover_note = match prover {
+        Some((prover_address, prover_amount)) => Some(encrypt_coinbase_note(
+            prover_address,
+            prover_amount,
+            block_hash,
+            block_number,
+        )?),
+        None => None,
+    };
+    Ok(BlockRewardBundle {
+        miner_note,
+        prover_note,
     })
 }
 
@@ -191,16 +215,18 @@ fn convert_to_pallet_format(
 
 /// Extract the recipient address in the format the pallet expects
 ///
-/// This is a 37-byte diversified address format (version + diversifier_index + pk_recipient).
+/// This is a 69-byte diversified address format
+/// (version + diversifier_index + pk_recipient + pk_auth).
 fn extract_recipient_address(
     address: &ShieldedAddress,
 ) -> Result<[u8; DIVERSIFIED_ADDRESS_SIZE], CoinbaseEncryptionError> {
     let mut recipient = [0u8; DIVERSIFIED_ADDRESS_SIZE];
 
-    // Layout: version(1) + diversifier_index(4) + pk_recipient(32)
+    // Layout: version(1) + diversifier_index(4) + pk_recipient(32) + pk_auth(32)
     recipient[0] = address.version;
     recipient[1..5].copy_from_slice(&address.diversifier_index.to_le_bytes());
     recipient[5..37].copy_from_slice(&address.pk_recipient);
+    recipient[37..69].copy_from_slice(&address.pk_auth);
 
     Ok(recipient)
 }
@@ -212,7 +238,8 @@ fn compute_coinbase_commitment(
     public_seed: &[u8; 32],
 ) -> [u8; 48] {
     let pk_recipient = pk_recipient_from_address(recipient);
-    circuit_coinbase_commitment(&pk_recipient, amount, public_seed, 0)
+    let pk_auth = pk_auth_from_address(recipient);
+    circuit_coinbase_commitment(&pk_recipient, &pk_auth, amount, public_seed, 0)
 }
 
 /// Parse a shielded address from Bech32m string
@@ -254,6 +281,7 @@ mod tests {
             crypto_suite: CRYPTO_SUITE_GAMMA,
             diversifier_index: 0,
             pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
             pk_enc: keypair.public_key(),
         };
 

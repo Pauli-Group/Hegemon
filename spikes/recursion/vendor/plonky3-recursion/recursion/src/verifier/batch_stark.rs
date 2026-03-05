@@ -13,12 +13,14 @@ use p3_circuit::utils::ColumnsTargets;
 use p3_circuit_prover::air::{AddAir, ConstAir, MulAir, PublicAir, WitnessAir};
 use p3_circuit_prover::batch_stark_prover::{PrimitiveTable, RowCounts};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, PrimeField};
+use p3_field::{
+    BasedVectorSpace, ExtensionField, Field, PrimeCharacteristicRing, PrimeField, PrimeField64,
+};
 use p3_lookup::lookup_traits::{Kind, Lookup, LookupData, LookupGadget};
 use p3_uni_stark::{StarkGenericConfig, SymbolicExpression, Val};
 
 use super::{ObservableCommitment, VerificationError, recompose_quotient_from_chunks_circuit};
-use crate::challenger::CircuitChallenger;
+use crate::challenger::{ChallengerField, CircuitChallenger};
 use crate::traits::{
     LookupMetadata, Recursive, RecursiveAir, RecursiveChallenger, RecursiveLookupGadget,
     RecursivePcs,
@@ -130,8 +132,8 @@ where
             Comm,
             <SC::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Domain,
         >,
-    SC::Challenge: PrimeCharacteristicRing,
-    Val<SC>: PrimeField,
+    SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
+    Val<SC>: PrimeField + PrimeField64,
     <<SC as StarkGenericConfig>::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Domain: Clone,
     SymbolicExpression<SC::Challenge>: From<SymbolicExpression<Val<SC>>>,
 {
@@ -229,7 +231,8 @@ where
             Comm,
             <SC::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Domain,
         >,
-    SC::Challenge: PrimeCharacteristicRing,
+    SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
+    Val<SC>: PrimeField64,
     <<SC as StarkGenericConfig>::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Domain: Clone,
 {
     let BatchProofTargets {
@@ -335,11 +338,14 @@ where
 
         if quotient_chunks_targets
             .iter()
-            .any(|chunk| chunk.len() != SC::Challenge::DIMENSION)
+            .any(|chunk| {
+                chunk.len()
+                    != <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION
+            })
         {
             return Err(VerificationError::InvalidProofShape(format!(
                 "Invalid quotient chunk length: expected {}",
-                SC::Challenge::DIMENSION
+                <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION
             )));
         }
 
@@ -353,7 +359,7 @@ where
         SC::Challenge::from_usize(n_instances),
         "number of instances",
     );
-    challenger.observe(circuit, inst_count_target);
+    challenger.observe_algebra::<Val<SC>, SC::Challenge>(circuit, inst_count_target)?;
 
     for ((&ext_db, quotient_degree), air) in degree_bits
         .iter()
@@ -376,18 +382,18 @@ where
             "quotient chunk count",
         );
 
-        challenger.observe(circuit, ext_db_target);
-        challenger.observe(circuit, base_db_target);
-        challenger.observe(circuit, width_target);
-        challenger.observe(circuit, quotient_chunks_target);
+        challenger.observe_algebra::<Val<SC>, SC::Challenge>(circuit, ext_db_target)?;
+        challenger.observe_algebra::<Val<SC>, SC::Challenge>(circuit, base_db_target)?;
+        challenger.observe_algebra::<Val<SC>, SC::Challenge>(circuit, width_target)?;
+        challenger.observe_algebra::<Val<SC>, SC::Challenge>(circuit, quotient_chunks_target)?;
     }
 
-    challenger.observe_slice(
+    challenger.observe_base_slice::<Val<SC>, SC::Challenge>(
         circuit,
         &commitments_targets.trace_targets.to_observation_targets(),
-    );
+    )?;
     for pv in public_values {
-        challenger.observe_slice(circuit, pv);
+        challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, pv)?;
     }
 
     // Observe preprocessed widths for each instance. If a global
@@ -395,10 +401,13 @@ where
     for &pre_w in preprocessed_widths.iter() {
         let pre_w_target =
             circuit.alloc_const(SC::Challenge::from_usize(pre_w), "preprocessed width");
-        challenger.observe(circuit, pre_w_target);
+        challenger.observe_algebra::<Val<SC>, SC::Challenge>(circuit, pre_w_target)?;
     }
     if let Some(global) = &common.preprocessed {
-        challenger.observe_slice(circuit, &global.commitment.to_observation_targets());
+        challenger.observe_base_slice::<Val<SC>, SC::Challenge>(
+            circuit,
+            &global.commitment.to_observation_targets(),
+        )?;
     }
 
     // Validate shape of the lookup commitment.
@@ -418,24 +427,24 @@ where
 
     // Then, observe the permutation tables, if any.
     if is_lookup {
-        challenger.observe_slice(
+        challenger.observe_base_slice::<Val<SC>, SC::Challenge>(
             circuit,
             &commitments_targets
                 .permutation_targets
                 .clone()
                 .expect("We checked that the commitment exists")
                 .to_observation_targets(),
-        );
+        )?;
     }
 
     let alpha = challenger.sample(circuit);
 
-    challenger.observe_slice(
+    challenger.observe_base_slice::<Val<SC>, SC::Challenge>(
         circuit,
         &commitments_targets
             .quotient_chunks_targets
             .to_observation_targets(),
-    );
+    )?;
     let zeta = challenger.sample(circuit);
 
     // Build per-instance domains.
@@ -670,7 +679,7 @@ where
             if aux_width == 0 {
                 return vec![];
             }
-            let ext_degree = SC::Challenge::DIMENSION;
+            let ext_degree = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
             debug_assert!(
                 flat.len() == aux_width * ext_degree,
                 "flattened permutation opening length ({}) must equal aux_width ({}) * DIMENSION ({})",
@@ -686,7 +695,7 @@ where
                     // Dot product: sum(coeff_j * basis_j)
                     coeffs.iter().enumerate().for_each(|(j, &coeff)| {
                         let e_i = circuit.add_const(
-                            SC::Challenge::ith_basis_element(j)
+                            <SC::Challenge as BasedVectorSpace<Val<SC>>>::ith_basis_element(j)
                                 .expect("Basis element should exist"),
                         );
                         let m = circuit.mul(coeff, e_i);
@@ -771,7 +780,11 @@ pub(crate) fn get_perm_challenges<SC: StarkGenericConfig, const RATE: usize, LG:
     challenger: &mut CircuitChallenger<RATE>,
     all_lookups: &[Vec<Lookup<Val<SC>>>],
     lookup_gadget: &LG,
-) -> Vec<Vec<Target>> {
+) -> Vec<Vec<Target>>
+where
+    SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
+    Val<SC>: PrimeField64,
+{
     let num_challenges_per_lookup = lookup_gadget.num_challenges();
     let mut global_perm_challenges = HashMap::new();
 

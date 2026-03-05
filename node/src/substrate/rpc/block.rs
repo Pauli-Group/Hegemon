@@ -14,7 +14,7 @@ use transaction_circuit::hashing_pq::felts_to_bytes48;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommitmentBlockPublicInputsRpc {
-    pub tx_proofs_commitment: String,
+    pub tx_statements_commitment: String,
     pub starting_state_root: String,
     pub ending_state_root: String,
     pub nullifier_root: String,
@@ -27,9 +27,9 @@ pub struct CommitmentBlockPublicInputsRpc {
 impl From<&CommitmentBlockPublicInputs> for CommitmentBlockPublicInputsRpc {
     fn from(value: &CommitmentBlockPublicInputs) -> Self {
         Self {
-            tx_proofs_commitment: format!(
+            tx_statements_commitment: format!(
                 "0x{}",
-                hex::encode(felts_to_bytes48(&value.tx_proofs_commitment))
+                hex::encode(felts_to_bytes48(&value.tx_statements_commitment))
             ),
             starting_state_root: format!(
                 "0x{}",

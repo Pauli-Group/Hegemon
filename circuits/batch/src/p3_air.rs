@@ -17,11 +17,12 @@ use transaction_core::constants::{
     POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_STEPS, POSEIDON2_WIDTH,
 };
 use transaction_core::dimensions::{
-    commitment_output_row, merkle_root_output_row, nullifier_output_row,
+    commitment_output_row, merkle_root_output_row, nullifier_output_row, ROWS_PER_TX,
 };
 use transaction_core::p3_air::{
-    COL_DOMAIN, COL_IN0, COL_IN1, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_RESET, COL_S0, COL_S1,
-    COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, CYCLE_LENGTH,
+    COL_DOMAIN, COL_IN0, COL_IN1, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0,
+    COL_IN_ACTIVE1, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11,
+    COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, CYCLE_LENGTH,
 };
 use transaction_core::poseidon2_constants;
 
@@ -61,8 +62,10 @@ pub const PREP_NF_ROW_BASE: usize = PREP_RC11 + 1;
 pub const PREP_MR_ROW_BASE: usize = PREP_NF_ROW_BASE + (MAX_BATCH_SIZE * MAX_INPUTS);
 /// One-hot selectors for commitment output rows.
 pub const PREP_CM_ROW_BASE: usize = PREP_MR_ROW_BASE + (MAX_BATCH_SIZE * MAX_INPUTS);
+/// Slot-boundary flag (1 on the last row of each transaction slot).
+pub const PREP_SLOT_BOUNDARY: usize = PREP_CM_ROW_BASE + (MAX_BATCH_SIZE * MAX_OUTPUTS);
 /// Preprocessed trace width (columns).
-pub const PREPROCESSED_WIDTH: usize = PREP_CM_ROW_BASE + (MAX_BATCH_SIZE * MAX_OUTPUTS);
+pub const PREPROCESSED_WIDTH: usize = PREP_SLOT_BOUNDARY + 1;
 
 #[derive(Clone, Debug)]
 pub struct BatchPublicInputsP3 {
@@ -275,6 +278,9 @@ fn build_preprocessed_trace(trace_len: usize) -> RowMajorMatrix<Felt> {
                 row_slice[PREP_RC11] = Felt::from_u64(rc[11]);
             }
         }
+
+        row_slice[PREP_SLOT_BOUNDARY] =
+            Felt::from_bool((row + 1) % ROWS_PER_TX == 0 && row + 1 < trace_len);
     }
 
     for tx in 0..MAX_BATCH_SIZE {
@@ -354,6 +360,8 @@ where
         let rc9: AB::Expr = prep_row[PREP_RC9].clone().into();
         let rc10: AB::Expr = prep_row[PREP_RC10].clone().into();
         let rc11: AB::Expr = prep_row[PREP_RC11].clone().into();
+        let slot_boundary: AB::Expr = prep_row[PREP_SLOT_BOUNDARY].clone().into();
+        let transition_gate = one.clone() - slot_boundary;
 
         let sbox = |value: AB::Expr| -> AB::Expr {
             let v2 = value.clone() * value.clone();
@@ -557,7 +565,7 @@ where
 
         let is_last = builder.is_last_row();
         let mut when = builder.when_transition();
-        when.assert_zero(hash_flag.clone() - round_sum);
+        when.assert_zero(transition_gate.clone() * (hash_flag.clone() - round_sum));
         let state_cols = [
             COL_S0, COL_S1, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9,
             COL_S10, COL_S11,
@@ -566,7 +574,7 @@ where
             let expected = hash_flag.clone() * hash_state[idx].clone()
                 + copy_flag.clone() * current_state[idx].clone()
                 + absorb_flag.clone() * absorb_state[idx].clone();
-            when.assert_zero(next[state_cols[idx]].clone() - expected);
+            when.assert_zero(transition_gate.clone() * (next[state_cols[idx]].clone() - expected));
         }
         for flag in &tx_active {
             when.assert_bool(flag.clone());
@@ -576,9 +584,12 @@ where
             let active = tx_active[tx].clone();
             let nf_base = tx * MAX_INPUTS;
             let cm_base = tx * MAX_OUTPUTS;
+            let input_active_cols = [COL_IN_ACTIVE0, COL_IN_ACTIVE1];
+            let output_active_cols = [COL_OUT_ACTIVE0, COL_OUT_ACTIVE1];
             for nf_idx in 0..MAX_INPUTS {
                 let row_flag: AB::Expr = prep_row[prep_nf_row_col(tx, nf_idx)].clone().into();
-                let gate = row_flag * active.clone();
+                let input_gate: AB::Expr = current[input_active_cols[nf_idx]].clone().into();
+                let gate = row_flag * active.clone() * input_gate.clone();
                 let nf = &nullifiers[nf_base + nf_idx];
                 when.assert_zero(gate.clone() * (current[COL_S0].clone() - nf[0].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S1].clone() - nf[1].clone()));
@@ -588,7 +599,7 @@ where
                 when.assert_zero(gate.clone() * (current[COL_S5].clone() - nf[5].clone()));
 
                 let row_flag: AB::Expr = prep_row[prep_mr_row_col(tx, nf_idx)].clone().into();
-                let gate = row_flag * active.clone();
+                let gate = row_flag * active.clone() * input_gate;
                 when.assert_zero(gate.clone() * (current[COL_S0].clone() - anchor[0].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S1].clone() - anchor[1].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S2].clone() - anchor[2].clone()));
@@ -599,7 +610,8 @@ where
 
             for cm_idx in 0..MAX_OUTPUTS {
                 let row_flag: AB::Expr = prep_row[prep_cm_row_col(tx, cm_idx)].clone().into();
-                let gate = row_flag * active.clone();
+                let output_gate: AB::Expr = current[output_active_cols[cm_idx]].clone().into();
+                let gate = row_flag * active.clone() * output_gate;
                 let cm = &commitments[cm_base + cm_idx];
                 when.assert_zero(gate.clone() * (current[COL_S0].clone() - cm[0].clone()));
                 when.assert_zero(gate.clone() * (current[COL_S1].clone() - cm[1].clone()));

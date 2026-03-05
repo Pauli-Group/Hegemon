@@ -1,4 +1,5 @@
 mod aggregation;
+mod batch_proof;
 pub mod bft;
 pub mod commitment_tree;
 pub mod error;
@@ -17,6 +18,11 @@ pub mod version_policy;
 pub use aggregation::{
     AggregationCacheWarmup, aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes,
     verify_aggregation_proof, warm_aggregation_cache,
+};
+pub use batch_proof::{
+    FLAT_BATCH_PROOF_FORMAT_ID_V5, FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
+    FLAT_BATCH_PROOF_SCHEMA_V2, FlatBatchProofPayloadV2, decode_flat_batch_proof_bytes,
+    encode_flat_batch_proof_bytes,
 };
 pub use bft::{BftConsensus, ConsensusUpdate};
 pub use commitment_tree::{
@@ -41,9 +47,10 @@ pub use substrate_pow::{
     target_to_compact, verify_seal,
 };
 pub use types::{
-    BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof,
-    DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot, FeeCommitment,
-    Nullifier, StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob,
+    BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, BatchProofItem, CoinbaseData, CoinbaseSource, Commitment,
+    ConsensusBlock, DaChunk, DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding,
+    DaParams, DaRoot, FeeCommitment, MergeRootMetadata, MergeRootProofPayload, Nullifier,
+    ProvenBatchMode, StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob,
     da_root, encode_da_blob, encode_da_blob_multipage, verify_da_chunk, verify_da_multi_chunk,
 };
 pub use validator::{Validator, ValidatorSet};

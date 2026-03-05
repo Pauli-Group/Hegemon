@@ -162,8 +162,7 @@ pub mod pallet {
         type MaxVerificationKeySize: Get<u32> + Clone + TypeInfo;
         type MaxPendingEvents: Get<u32> + Clone + TypeInfo;
         type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
-        type CouncilOrigin: EnsureOrigin<Self::RuntimeOrigin>;
-        type ReferendaOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type GovernanceOrigin: EnsureOrigin<Self::RuntimeOrigin>;
         type SettlementBatchHook: SettlementBatchHook<
             Self::CommitmentId,
             Self::IssuerId,
@@ -506,13 +505,9 @@ pub mod pallet {
 
     impl<T: Config> Pallet<T> {
         fn ensure_governance_origin(origin: OriginFor<T>) -> DispatchResult {
-            if T::CouncilOrigin::try_origin(origin.clone()).is_ok()
-                || T::ReferendaOrigin::try_origin(origin).is_ok()
-            {
-                Ok(())
-            } else {
-                Err(DispatchError::BadOrigin)
-            }
+            T::GovernanceOrigin::try_origin(origin)
+                .map(|_| ())
+                .map_err(|_| DispatchError::BadOrigin)
         }
 
         fn enqueue_event(

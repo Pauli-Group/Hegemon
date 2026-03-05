@@ -131,6 +131,7 @@ impl BatchTransactionProverP3 {
                     output.note.value,
                     output.note.asset_id,
                     &output.note.pk_recipient,
+                    &output.note.pk_auth,
                     &output.note.rho,
                     &output.note.r,
                 ));

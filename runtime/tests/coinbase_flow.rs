@@ -26,7 +26,9 @@ use frame_support::assert_ok;
 use frame_support::sp_runtime::BuildStorage;
 use frame_support::traits::Hooks;
 use pallet_coinbase::{block_subsidy, BLOCKS_PER_EPOCH, INITIAL_REWARD};
-use pallet_shielded_pool::types::{CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE};
+use pallet_shielded_pool::types::{
+    BlockRewardBundle, CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE,
+};
 use runtime::{RuntimeOrigin, ShieldedPool, System, Timestamp};
 use sp_io::TestExternalities;
 
@@ -58,8 +60,10 @@ fn coinbase_note_data(
     public_seed: [u8; 32],
 ) -> CoinbaseNoteData {
     let pk_recipient = pallet_shielded_pool::commitment::pk_recipient_from_address(&recipient);
+    let pk_auth = pallet_shielded_pool::commitment::pk_auth_from_address(&recipient);
     let commitment = pallet_shielded_pool::commitment::circuit_coinbase_commitment(
         &pk_recipient,
+        &pk_auth,
         amount,
         &public_seed,
         0,
@@ -70,6 +74,17 @@ fn coinbase_note_data(
         recipient_address: recipient,
         amount,
         public_seed,
+    }
+}
+
+fn coinbase_reward_bundle(
+    amount: u64,
+    recipient: [u8; DIVERSIFIED_ADDRESS_SIZE],
+    public_seed: [u8; 32],
+) -> BlockRewardBundle {
+    BlockRewardBundle {
+        miner_note: coinbase_note_data(amount, recipient, public_seed),
+        prover_note: None,
     }
 }
 
@@ -99,11 +114,11 @@ fn mining_block_mints_shielded_coinbase_to_pool() {
         let subsidy = block_subsidy(block_number);
         let recipient = [7u8; DIVERSIFIED_ADDRESS_SIZE];
         let public_seed = public_seed_from_block(block_number);
-        let coinbase_data = coinbase_note_data(subsidy, recipient, public_seed);
+        let reward_bundle = coinbase_reward_bundle(subsidy, recipient, public_seed);
 
         assert_ok!(ShieldedPool::mint_coinbase(
             RuntimeOrigin::none(),
-            coinbase_data.clone(),
+            reward_bundle.clone(),
         ));
 
         let final_pool_balance = ShieldedPool::pool_balance();
@@ -118,8 +133,11 @@ fn mining_block_mints_shielded_coinbase_to_pool() {
         );
 
         let stored = ShieldedPool::coinbase_notes(0).expect("coinbase note stored");
-        assert_eq!(stored.amount, subsidy);
-        assert_eq!(stored.commitment, coinbase_data.commitment);
+        assert_eq!(stored.miner_note.amount, subsidy);
+        assert_eq!(
+            stored.miner_note.commitment,
+            reward_bundle.miner_note.commitment
+        );
     });
 }
 
@@ -170,11 +188,11 @@ fn rewards_accumulate_over_multiple_blocks() {
 
             let subsidy = block_subsidy(block_num);
             let public_seed = public_seed_from_block(block_num);
-            let coinbase_data = coinbase_note_data(subsidy, recipient, public_seed);
+            let reward_bundle = coinbase_reward_bundle(subsidy, recipient, public_seed);
 
             assert_ok!(ShieldedPool::mint_coinbase(
                 RuntimeOrigin::none(),
-                coinbase_data,
+                reward_bundle,
             ));
 
             total_expected = total_expected.saturating_add(subsidy as u128);

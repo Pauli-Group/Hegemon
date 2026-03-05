@@ -92,8 +92,20 @@ pub enum ProofError {
     MissingCommitmentProof,
     #[error("missing aggregation proof payload")]
     MissingAggregationProof,
+    #[error("self-contained aggregation mode requires a proven-batch payload")]
+    MissingProvenBatchForSelfContained,
+    #[error("proven-batch payload decode failed: {0}")]
+    ProvenBatchDecodeFailed(String),
+    #[error("proven-batch payload binding mismatch: {0}")]
+    ProvenBatchBindingMismatch(String),
+    #[error("legacy proof extrinsics are not allowed in this mode")]
+    LegacyProofExtrinsicNotAllowed,
+    #[error("self-contained aggregation mode requires an aggregation proof payload")]
+    MissingAggregationProofForSelfContainedMode,
     #[error("missing transaction proofs")]
     MissingTransactionProofs,
+    #[error("missing transaction statement bindings")]
+    MissingTransactionStatementBindings,
     #[error("transaction proof count mismatch: expected {expected}, got {observed}")]
     TransactionProofCountMismatch { expected: usize, observed: usize },
     #[error("transaction proof inputs mismatch at index {index}: {message}")]
@@ -106,6 +118,16 @@ pub enum ProofError {
     AggregationProofInputsMismatch(String),
     #[error("aggregation proof verification failed: {0}")]
     AggregationProofVerification(String),
+    #[error("aggregation proof V4 decode failed: {0}")]
+    AggregationProofV4Decode(String),
+    #[error("aggregation proof V4 binding failed: {0}")]
+    AggregationProofV4Binding(String),
+    #[error("flat batch proof encode failed: {0}")]
+    FlatBatchProofEncodeFailed(String),
+    #[error("flat batch proof decode failed: {0}")]
+    FlatBatchProofDecodeFailed(String),
+    #[error("flat batch coverage invalid: {0}")]
+    FlatBatchCoverage(String),
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]

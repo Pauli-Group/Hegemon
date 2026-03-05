@@ -122,9 +122,13 @@ impl BlockImportConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
-        let verify = std::env::var("HEGEMON_VERIFY_POW")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(true);
+        if let Ok(value) = std::env::var("HEGEMON_VERIFY_POW") {
+            if value == "0" || value.eq_ignore_ascii_case("false") {
+                tracing::warn!(
+                    "HEGEMON_VERIFY_POW is ignored; PoW verification remains enabled in mock import config"
+                );
+            }
+        }
 
         let timeout = std::env::var("HEGEMON_VERIFICATION_TIMEOUT_MS")
             .ok()
@@ -133,7 +137,7 @@ impl BlockImportConfig {
 
         Self {
             check_inherents_after: check_after,
-            verify_pow: verify,
+            verify_pow: true,
             verification_timeout_ms: timeout,
         }
     }

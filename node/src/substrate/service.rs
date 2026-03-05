@@ -63,7 +63,7 @@
 //! │  ┌─────────────────────────────────────────────────────────────────────┐│
 //! │  │                   PQ Handshake Protocol                             ││
 //! │  │  ┌─────────────────────────────────────────────────────────────────┐││
-//! │  │  │        ML-KEM-768 Key Encapsulation (post-quantum)              │││
+//! │  │  │        ML-KEM-1024 Key Encapsulation (post-quantum)              │││
 //! │  │  └─────────────────────────────────────────────────────────────────┘││
 //! │  │                                    │                                ││
 //! │  │                                    ▼                                ││
@@ -123,37 +123,46 @@ use crate::substrate::mining_worker::{
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
+use crate::substrate::prover_coordinator::{
+    BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
+};
 use crate::substrate::rpc::{
     ArchiveApiServer, ArchiveRpc, BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer,
-    HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ShieldedApiServer, ShieldedRpc,
-    WalletApiServer, WalletRpc,
+    HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ProverApiServer, ProverRpc,
+    ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use aggregation_circuit::prove_aggregation;
+use batch_circuit::{
+    prewarm_batch_verifier_cache, verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs,
+    BatchTransactionProver,
+};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes, Blake3Algorithm,
-    Blake3Seal, ParallelProofVerifier,
+    aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
+    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal,
+    ParallelProofVerifier,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
 use hyper::http::{header, Method};
 use network::{
-    PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
-    PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
+    PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
+    PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
+use p3_field::PrimeField64;
+use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
-use sc_client_api::BlockchainEvents;
+use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
-use sp_api::{ProvideRuntimeApi, StorageChanges};
+use sp_api::{Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
@@ -176,11 +185,16 @@ use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
-use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
+use transaction_circuit::dimensions::ROWS_PER_TX;
+use transaction_circuit::hashing_pq::{
+    bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
+};
+use transaction_circuit::p3_prover::TransactionProverP3;
+use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+use transaction_circuit::witness::TransactionWitness;
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
@@ -189,6 +203,7 @@ fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     out[0] = decoded.version;
     out[1..5].copy_from_slice(&decoded.diversifier_index.to_le_bytes());
     out[5..37].copy_from_slice(&decoded.pk_recipient);
+    out[37..69].copy_from_slice(&decoded.pk_auth);
     Some(out)
 }
 
@@ -356,7 +371,6 @@ const CIPHERTEXT_COUNT_KEY: &[u8] = b"ciphertext_count";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DaRootKind {
     Ciphertexts = 0,
-    Proofs = 1,
 }
 
 impl DaRootKind {
@@ -705,7 +719,7 @@ impl CommitmentBlockProofStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingCiphertextStore {
     capacity: usize,
     order: VecDeque<[u8; 48]>,
@@ -754,6 +768,14 @@ impl PendingCiphertextStore {
         Ok(out)
     }
 
+    pub fn contains(&self, hash: &[u8; 48]) -> bool {
+        self.entries.contains_key(hash)
+    }
+
+    pub fn contains_all(&self, hashes: &[[u8; 48]]) -> bool {
+        hashes.iter().all(|hash| self.contains(hash))
+    }
+
     pub fn remove_many(&mut self, hashes: &[[u8; 48]]) {
         for hash in hashes {
             self.entries.remove(hash);
@@ -762,7 +784,7 @@ impl PendingCiphertextStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingProofStore {
     capacity: usize,
     order: VecDeque<[u8; 64]>,
@@ -802,6 +824,18 @@ impl PendingProofStore {
 
     pub fn get(&self, binding_hash: &[u8; 64]) -> Option<&Vec<u8>> {
         self.entries.get(binding_hash)
+    }
+
+    pub fn contains(&self, binding_hash: &[u8; 64]) -> bool {
+        self.entries.contains_key(binding_hash)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn get_many(&self, binding_hashes: &[[u8; 64]]) -> Result<Vec<Vec<u8>>, String> {
@@ -1289,220 +1323,6 @@ fn resolve_sidecar_proof_bytes(
     })
 }
 
-fn extract_transaction_proofs_from_extrinsics(
-    extrinsics: &[Vec<u8>],
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
-    pending_proofs: Option<&PendingProofStore>,
-) -> Result<Vec<TransactionProof>, String> {
-    let mut proofs = Vec::new();
-    let mut ciphertext_cursor = 0usize;
-
-    for ext_bytes in extrinsics {
-        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        let runtime::RuntimeCall::ShieldedPool(call) = extrinsic.function else {
-            continue;
-        };
-
-        let mut next_resolved_ciphertexts = || -> Result<Option<Vec<Vec<u8>>>, String> {
-            let resolved = match resolved_ciphertexts {
-                Some(resolved) => resolved,
-                None => return Ok(None),
-            };
-            if ciphertext_cursor >= resolved.len() {
-                return Err("resolved ciphertexts exhausted".to_string());
-            }
-            let ciphertexts = resolved[ciphertext_cursor].clone();
-            ciphertext_cursor += 1;
-            Ok(Some(ciphertexts))
-        };
-
-        match call {
-            ShieldedPoolCall::mint_coinbase { .. } => {
-                // Coinbase ciphertexts are stored separately from the DA blob.
-            }
-            ShieldedPoolCall::shielded_transfer {
-                proof,
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                value_balance,
-                ..
-            } => {
-                let ciphertexts = match next_resolved_ciphertexts()? {
-                    Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
-                        .iter()
-                        .map(encrypted_note_bytes)
-                        .collect::<Vec<_>>(),
-                };
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = build_transaction_proof(
-                    proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
-                    &ciphertexts,
-                    anchor,
-                    stablecoin.clone(),
-                    fee,
-                    value_balance,
-                )?;
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ..
-            } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
-                let ciphertexts = match next_resolved_ciphertexts()? {
-                    Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
-                        .iter()
-                        .map(encrypted_note_bytes)
-                        .collect::<Vec<_>>(),
-                };
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = build_transaction_proof(
-                    proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
-                    &ciphertexts,
-                    anchor,
-                    None,
-                    fee,
-                    0,
-                )?;
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                value_balance,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = match maybe_ciphertexts.as_ref() {
-                    Some(ciphertexts) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            &ciphertext_sizes,
-                            &ciphertext_hashes,
-                        )?;
-                        build_transaction_proof(
-                            proof_bytes,
-                            nullifiers.iter().copied().collect(),
-                            commitments.iter().copied().collect(),
-                            ciphertexts,
-                            anchor,
-                            stablecoin.clone(),
-                            fee,
-                            value_balance,
-                        )?
-                    }
-                    None => build_transaction_proof_with_hashes(
-                        proof_bytes,
-                        nullifiers.iter().copied().collect(),
-                        commitments.iter().copied().collect(),
-                        &ciphertext_hashes,
-                        anchor,
-                        stablecoin.clone(),
-                        fee,
-                        value_balance,
-                    )?,
-                };
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
-                let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let proof = match maybe_ciphertexts.as_ref() {
-                    Some(ciphertexts) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            &ciphertext_sizes,
-                            &ciphertext_hashes,
-                        )?;
-                        build_transaction_proof(
-                            proof_bytes,
-                            nullifiers.iter().copied().collect(),
-                            commitments.iter().copied().collect(),
-                            ciphertexts,
-                            anchor,
-                            None,
-                            fee,
-                            0,
-                        )?
-                    }
-                    None => build_transaction_proof_with_hashes(
-                        proof_bytes,
-                        nullifiers.iter().copied().collect(),
-                        commitments.iter().copied().collect(),
-                        &ciphertext_hashes,
-                        anchor,
-                        None,
-                        fee,
-                        0,
-                    )?,
-                };
-                proofs.push(proof);
-            }
-            ShieldedPoolCall::batch_shielded_transfer { .. } => {
-                return Err(
-                    "batch shielded transfers are not supported in recursive block proofs".into(),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(resolved) = resolved_ciphertexts {
-        if ciphertext_cursor != resolved.len() {
-            return Err("resolved ciphertexts count mismatch".to_string());
-        }
-    }
-
-    Ok(proofs)
-}
-
 fn encrypted_note_bytes(note: &pallet_shielded_pool::types::EncryptedNote) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
     bytes.extend_from_slice(&note.ciphertext);
@@ -1641,86 +1461,23 @@ fn build_da_encoding_from_extrinsics(
     })
 }
 
-struct ProofDaBlobBuild {
-    blob: Vec<u8>,
-    manifest: Vec<pallet_shielded_pool::types::ProofDaManifestEntry>,
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct LegacyProofDaManifestEntry {
+    _binding_hash: [u8; 64],
+    proof_len: u32,
+    proof_offset: u32,
 }
 
-fn build_proof_da_blob_from_extrinsics(
-    extrinsics: &[runtime::UncheckedExtrinsic],
-    pending_proofs: Option<&PendingProofStore>,
-) -> Result<ProofDaBlobBuild, String> {
-    let mut blob = Vec::new();
-    blob.extend_from_slice(&0u32.to_le_bytes());
-    let mut manifest = Vec::new();
-    let mut count: u32 = 0;
-
-    for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-            continue;
-        };
-
-        match call {
-            ShieldedPoolCall::shielded_transfer {
-                proof,
-                binding_hash,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                binding_hash,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_sidecar {
-                proof,
-                binding_hash,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof,
-                binding_hash,
-                ..
-            } => {
-                if proof.data.is_empty() {
-                    let proof_bytes =
-                        resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
-                    count = count
-                        .checked_add(1)
-                        .ok_or_else(|| "proof DA entry count overflow".to_string())?;
-
-                    blob.extend_from_slice(&binding_hash.data);
-                    let proof_len = u32::try_from(proof_bytes.len())
-                        .map_err(|_| "proof DA proof too large".to_string())?;
-                    blob.extend_from_slice(&proof_len.to_le_bytes());
-                    let proof_offset = u32::try_from(blob.len())
-                        .map_err(|_| "proof DA blob offset overflow".to_string())?;
-                    blob.extend_from_slice(&proof_bytes);
-
-                    manifest.push(pallet_shielded_pool::types::ProofDaManifestEntry {
-                        binding_hash: binding_hash.clone(),
-                        proof_hash: blake3_384(&proof_bytes),
-                        proof_len,
-                        proof_offset,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    blob[..4].copy_from_slice(&count.to_le_bytes());
-    Ok(ProofDaBlobBuild { blob, manifest })
-}
-
+#[cfg(test)]
 fn proof_da_blob_len_from_manifest(
-    manifest: &[pallet_shielded_pool::types::ProofDaManifestEntry],
+    manifest: &[LegacyProofDaManifestEntry],
 ) -> Result<usize, String> {
     if manifest.is_empty() {
         return Err("proof DA manifest is empty".to_string());
     }
 
-    let mut entries: Vec<&pallet_shielded_pool::types::ProofDaManifestEntry> =
-        manifest.iter().collect();
+    let mut entries: Vec<&LegacyProofDaManifestEntry> = manifest.iter().collect();
     entries.sort_by_key(|entry| entry.proof_offset);
 
     const HEADER_BYTES: u64 = 4; // u32 entry count
@@ -1918,6 +1675,49 @@ fn flatten_ciphertexts(transactions: &[Vec<Vec<u8>>]) -> Vec<Vec<u8>> {
     out
 }
 
+fn transfer_ciphertexts_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+        match call {
+            ShieldedPoolCall::shielded_transfer { ciphertexts, .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => {
+                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+            }
+            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => {
+                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn coinbase_ciphertexts_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+        let ShieldedPoolCall::mint_coinbase { reward_bundle } = call else {
+            continue;
+        };
+        out.push(encrypted_note_bytes(
+            &reward_bundle.miner_note.encrypted_note,
+        ));
+        if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+            out.push(encrypted_note_bytes(&prover_note.encrypted_note));
+        }
+    }
+    out
+}
+
 fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
@@ -1935,6 +1735,198 @@ fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) ->
         }
     }
     out
+}
+
+fn statement_hash_from_materialized_call(
+    anchor: &[u8; 48],
+    nullifiers: &[[u8; 48]],
+    commitments: &[[u8; 48]],
+    ciphertext_hashes: &[[u8; 48]],
+    fee: u64,
+    value_balance: i128,
+    version: protocol_versioning::VersionBinding,
+    stablecoin: Option<&pallet_shielded_pool::types::StablecoinPolicyBinding>,
+) -> [u8; 48] {
+    let mut message = Vec::new();
+    message.extend_from_slice(b"tx-statement-v2");
+    message.extend_from_slice(anchor);
+
+    for nf in nullifiers.iter().take(MAX_INPUTS) {
+        message.extend_from_slice(nf);
+    }
+    for _ in nullifiers.len()..MAX_INPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+
+    for cm in commitments.iter().take(MAX_OUTPUTS) {
+        message.extend_from_slice(cm);
+    }
+    for _ in commitments.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+
+    for ct in ciphertext_hashes.iter().take(MAX_OUTPUTS) {
+        message.extend_from_slice(ct);
+    }
+    for _ in ciphertext_hashes.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+
+    message.extend_from_slice(&fee.to_le_bytes());
+    message.extend_from_slice(&value_balance.to_le_bytes());
+    message.extend_from_slice(&version.circuit.to_le_bytes());
+    message.extend_from_slice(&version.crypto.to_le_bytes());
+
+    if let Some(stablecoin) = stablecoin {
+        message.push(1);
+        message.extend_from_slice(&stablecoin.asset_id.to_le_bytes());
+        message.extend_from_slice(&stablecoin.policy_hash);
+        message.extend_from_slice(&stablecoin.oracle_commitment);
+        message.extend_from_slice(&stablecoin.attestation_commitment);
+        message.extend_from_slice(&stablecoin.issuance_delta.to_le_bytes());
+        message.extend_from_slice(&stablecoin.policy_version.to_le_bytes());
+    } else {
+        message.push(0);
+        message.extend_from_slice(&0u64.to_le_bytes());
+        message.extend_from_slice(&[0u8; 48]);
+        message.extend_from_slice(&[0u8; 48]);
+        message.extend_from_slice(&[0u8; 48]);
+        message.extend_from_slice(&0i128.to_le_bytes());
+        message.extend_from_slice(&0u32.to_le_bytes());
+    }
+
+    blake3_384(&message)
+}
+
+fn statement_bindings_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<Vec<consensus::types::TxStatementBinding>, String> {
+    let mut bindings = Vec::new();
+
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+
+        let version = DEFAULT_VERSION_BINDING;
+        let binding = match call {
+            ShieldedPoolCall::shielded_transfer {
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                stablecoin,
+                fee,
+                value_balance,
+                ..
+            } => {
+                let ciphertext_hashes = ciphertexts
+                    .iter()
+                    .map(encrypted_note_bytes)
+                    .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
+                    .collect::<Vec<_>>();
+                consensus::types::TxStatementBinding {
+                    statement_hash: statement_hash_from_materialized_call(
+                        anchor,
+                        nullifiers.as_slice(),
+                        commitments.as_slice(),
+                        &ciphertext_hashes,
+                        *fee,
+                        *value_balance,
+                        version,
+                        stablecoin.as_ref(),
+                    ),
+                    anchor: *anchor,
+                    fee: *fee,
+                    circuit_version: u32::from(version.circuit),
+                }
+            }
+            ShieldedPoolCall::shielded_transfer_unsigned {
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                fee,
+                ..
+            } => {
+                let ciphertext_hashes = ciphertexts
+                    .iter()
+                    .map(encrypted_note_bytes)
+                    .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
+                    .collect::<Vec<_>>();
+                consensus::types::TxStatementBinding {
+                    statement_hash: statement_hash_from_materialized_call(
+                        anchor,
+                        nullifiers.as_slice(),
+                        commitments.as_slice(),
+                        &ciphertext_hashes,
+                        *fee,
+                        0,
+                        version,
+                        None,
+                    ),
+                    anchor: *anchor,
+                    fee: *fee,
+                    circuit_version: u32::from(version.circuit),
+                }
+            }
+            ShieldedPoolCall::shielded_transfer_sidecar {
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                anchor,
+                stablecoin,
+                fee,
+                value_balance,
+                ..
+            } => consensus::types::TxStatementBinding {
+                statement_hash: statement_hash_from_materialized_call(
+                    anchor,
+                    nullifiers.as_slice(),
+                    commitments.as_slice(),
+                    ciphertext_hashes.as_slice(),
+                    *fee,
+                    *value_balance,
+                    version,
+                    stablecoin.as_ref(),
+                ),
+                anchor: *anchor,
+                fee: *fee,
+                circuit_version: u32::from(version.circuit),
+            },
+            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                anchor,
+                fee,
+                ..
+            } => consensus::types::TxStatementBinding {
+                statement_hash: statement_hash_from_materialized_call(
+                    anchor,
+                    nullifiers.as_slice(),
+                    commitments.as_slice(),
+                    ciphertext_hashes.as_slice(),
+                    *fee,
+                    0,
+                    version,
+                    None,
+                ),
+                anchor: *anchor,
+                fee: *fee,
+                circuit_version: u32::from(version.circuit),
+            },
+            ShieldedPoolCall::batch_shielded_transfer { .. } => {
+                return Err(
+                    "batch shielded transfers are not supported in block proof generation".into(),
+                );
+            }
+            _ => continue,
+        };
+        bindings.push(binding);
+    }
+
+    Ok(bindings)
 }
 
 fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
@@ -1974,6 +1966,16 @@ fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> V
     out
 }
 
+fn pending_proof_match_count(
+    binding_hashes: &[[u8; 64]],
+    pending_proofs: &PendingProofStore,
+) -> usize {
+    binding_hashes
+        .iter()
+        .filter(|binding_hash| pending_proofs.contains(binding_hash))
+        .count()
+}
+
 const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
@@ -2002,29 +2004,6 @@ fn da_shard_counts_for_len(len: usize, params: DaParams) -> Result<(usize, usize
         ));
     }
     Ok((data_shards, total_shards))
-}
-
-fn da_data_shards_for_total_shards(total_shards: usize) -> Result<usize, String> {
-    if total_shards == 0 {
-        return Err("DA shard count is zero".to_string());
-    }
-    if total_shards > DA_MAX_SHARDS {
-        return Err(format!(
-            "DA shard count {} exceeds max {}",
-            total_shards, DA_MAX_SHARDS
-        ));
-    }
-
-    for data_shards in 1..=total_shards {
-        if data_shards + da_parity_shards_for_data(data_shards) == total_shards {
-            return Ok(data_shards);
-        }
-    }
-
-    Err(format!(
-        "invalid DA shard count {} (no matching data/parity split)",
-        total_shards
-    ))
 }
 
 async fn request_da_samples(
@@ -2168,144 +2147,6 @@ async fn fetch_da_for_block(
     })
 }
 
-async fn fetch_da_range_with_cache(
-    peer_id: network::PeerId,
-    da_root: DaRoot,
-    chunk_count: u32,
-    params: DaParams,
-    handle: &PqNetworkHandle,
-    tracker: &Arc<ParkingMutex<DaRequestTracker>>,
-    timeout: Duration,
-    offset: u32,
-    len: u32,
-    cache: &mut HashMap<u32, DaChunkProof>,
-) -> Result<Vec<u8>, String> {
-    if len == 0 {
-        return Err("DA range length is zero".to_string());
-    }
-    if chunk_count == 0 {
-        return Err("DA chunk count is zero".to_string());
-    }
-
-    let total_shards = chunk_count as usize;
-    let data_shards = da_data_shards_for_total_shards(total_shards)?;
-    let chunk_size = params.chunk_size as u64;
-
-    let start_offset = offset as u64;
-    let end_offset = start_offset
-        .checked_add(len as u64)
-        .ok_or_else(|| "DA range end offset overflow".to_string())?;
-
-    let start_shard = start_offset / chunk_size;
-    let end_shard = end_offset.saturating_sub(1) / chunk_size;
-
-    if end_shard >= data_shards as u64 {
-        return Err("DA range exceeds data shard length".to_string());
-    }
-
-    let indices: Vec<u32> = (start_shard..=end_shard)
-        .map(|idx| u32::try_from(idx).expect("shard index fits u32"))
-        .collect();
-
-    let mut missing = Vec::new();
-    for idx in &indices {
-        if !cache.contains_key(idx) {
-            missing.push(*idx);
-        }
-    }
-
-    if !missing.is_empty() {
-        let proofs =
-            request_da_samples(peer_id, da_root, &missing, handle, tracker, timeout).await?;
-        if proofs.len() != missing.len() {
-            return Err("missing DA chunk proofs".to_string());
-        }
-        for (expected_index, proof) in missing.into_iter().zip(proofs.into_iter()) {
-            if proof.chunk.index != expected_index {
-                return Err("DA chunk response index mismatch".to_string());
-            }
-            state_da::verify_da_chunk(da_root, &proof)
-                .map_err(|err| format!("invalid DA chunk proof: {err}"))?;
-            cache.insert(expected_index, proof);
-        }
-    }
-
-    let mut out = vec![0u8; len as usize];
-    let mut out_cursor = 0usize;
-    let start_in_shard = (start_offset % chunk_size) as usize;
-    let mut shard_cursor = start_shard;
-
-    for index in indices {
-        let expected_index = u32::try_from(shard_cursor).expect("shard index fits u32");
-        if index != expected_index {
-            return Err("DA chunk response index mismatch".to_string());
-        }
-        let proof = cache
-            .get(&index)
-            .ok_or_else(|| "missing DA chunk proof".to_string())?;
-
-        let mut take_from = 0usize;
-        if shard_cursor == start_shard {
-            take_from = start_in_shard;
-        }
-
-        let take_to = if shard_cursor == end_shard {
-            (end_offset - shard_cursor * chunk_size) as usize
-        } else {
-            params.chunk_size as usize
-        };
-
-        if take_to > proof.chunk.data.len() || take_from > take_to {
-            return Err("DA chunk range invalid".to_string());
-        }
-
-        let slice = &proof.chunk.data[take_from..take_to];
-        let dest_end = out_cursor.saturating_add(slice.len());
-        if dest_end > out.len() {
-            return Err("DA range reconstruction overflow".to_string());
-        }
-        out[out_cursor..dest_end].copy_from_slice(slice);
-        out_cursor = dest_end;
-        shard_cursor = shard_cursor.saturating_add(1);
-    }
-
-    if out_cursor != out.len() {
-        return Err("DA range reconstruction truncated".to_string());
-    }
-
-    Ok(out)
-}
-
-async fn fetch_proof_da_entry_with_cache(
-    peer_id: network::PeerId,
-    da_root: DaRoot,
-    chunk_count: u32,
-    params: DaParams,
-    handle: &PqNetworkHandle,
-    tracker: &Arc<ParkingMutex<DaRequestTracker>>,
-    timeout: Duration,
-    entry: &pallet_shielded_pool::types::ProofDaManifestEntry,
-    cache: &mut HashMap<u32, DaChunkProof>,
-) -> Result<Vec<u8>, String> {
-    let proof_bytes = fetch_da_range_with_cache(
-        peer_id,
-        da_root,
-        chunk_count,
-        params,
-        handle,
-        tracker,
-        timeout,
-        entry.proof_offset,
-        entry.proof_len,
-        cache,
-    )
-    .await?;
-    if blake3_384(&proof_bytes) != entry.proof_hash {
-        return Err("proof DA entry hash mismatch".to_string());
-    }
-    Ok(proof_bytes)
-}
-
 async fn sample_da_for_root(
     peer_id: network::PeerId,
     da_root: DaRoot,
@@ -2373,162 +2214,923 @@ async fn sample_da_for_block(
     Ok(build)
 }
 
-fn build_commitment_tree_from_chain(
-    client: &HegemonFullClient,
-    parent_hash: H256,
-) -> Result<CommitmentTree, String> {
-    let api = client.runtime_api();
-    let total = api
-        .encrypted_note_count(parent_hash)
-        .map_err(|e| format!("runtime api error (encrypted_note_count): {e:?}"))?;
-    let expected_root = api
-        .merkle_root(parent_hash)
-        .map_err(|e| format!("runtime api error (merkle_root): {e:?}"))?;
-
-    let depth = pallet_shielded_pool::types::MERKLE_TREE_DEPTH as usize;
-    let mut tree =
-        CommitmentTree::new(depth).map_err(|e| format!("commitment tree init failed: {e}"))?;
-
-    if total == 0 {
-        if tree.root() != expected_root {
-            return Err("commitment tree root mismatch for empty tree".into());
-        }
-        return Ok(tree);
-    }
-
-    let mut expected_index = 0u64;
-    while expected_index < total {
-        let batch = api
-            .get_commitments(parent_hash, expected_index, 256)
-            .map_err(|e| format!("runtime api error (get_commitments): {e:?}"))?;
-        if batch.is_empty() {
-            return Err("commitments batch returned empty before expected count".into());
-        }
-        for (index, commitment) in batch {
-            if index != expected_index {
-                return Err(format!(
-                    "commitment index mismatch: expected {}, got {}",
-                    expected_index, index
-                ));
-            }
-            tree.append(commitment)
-                .map_err(|e| format!("commitment tree append failed: {e}"))?;
-            expected_index += 1;
-        }
-    }
-
-    if tree.root() != expected_root {
-        return Err(format!(
-            "commitment tree root mismatch: expected {}, got {}",
-            hex::encode(expected_root),
-            hex::encode(tree.root())
-        ));
-    }
-
-    Ok(tree)
+#[derive(Clone, Debug)]
+struct CandidateBlockContext {
+    decoded_extrinsics: Vec<runtime::UncheckedExtrinsic>,
+    extracted_transactions: Vec<consensus::types::Transaction>,
+    tx_proofs: Arc<Vec<TransactionProof>>,
+    statement_bindings: Vec<consensus::types::TxStatementBinding>,
+    tx_statements_commitment: [u8; 48],
+    da_root: DaRoot,
+    da_chunk_count: u32,
+    da_blob_bytes: usize,
+    resolved_ciphertexts: Vec<Vec<Vec<u8>>>,
 }
 
-fn build_commitment_block_proof(
+fn build_candidate_context(
+    candidate_txs: &[Vec<u8>],
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<CandidateBlockContext, String> {
+    let mut decoded = Vec::with_capacity(candidate_txs.len());
+    for ext_bytes in candidate_txs {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
+        decoded.push(extrinsic);
+    }
+
+    let da_blob = build_da_blob_from_extrinsics(&decoded, Some(pending_ciphertexts))
+        .map_err(|err| format!("failed to build DA blob for proven batch: {err}"))?;
+    let da_blob_bytes = da_blob.blob.len();
+    let encoding = state_da::encode_da_blob(&da_blob.blob, da_params)
+        .map_err(|err| format!("failed to encode DA blob for proven batch: {err}"))?;
+    let da_root = encoding.root();
+    let da_chunk_count = encoding.chunks().len() as u32;
+    let resolved_ciphertexts = da_blob.transactions;
+
+    let (transactions, proofs, proof_binding_hashes) =
+        extract_shielded_transfers_for_parallel_verification(
+            &decoded,
+            Some(resolved_ciphertexts.as_slice()),
+            Some(pending_proofs),
+            false,
+        )?;
+    if proof_binding_hashes.len() != proofs.len() {
+        return Err(format!(
+            "proof binding hash count mismatch (expected {}, got {})",
+            proofs.len(),
+            proof_binding_hashes.len()
+        ));
+    }
+    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    if statement_bindings.len() != proofs.len() {
+        return Err(format!(
+            "tx statement binding count mismatch (expected {}, got {})",
+            proofs.len(),
+            statement_bindings.len()
+        ));
+    }
+    let statement_hashes = statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+
+    Ok(CandidateBlockContext {
+        decoded_extrinsics: decoded,
+        extracted_transactions: transactions,
+        tx_proofs: Arc::new(proofs),
+        statement_bindings,
+        tx_statements_commitment,
+        da_root,
+        da_chunk_count,
+        da_blob_bytes,
+        resolved_ciphertexts,
+    })
+}
+
+fn build_commitment_block_proof_from_materials(
     client: &HegemonFullClient,
     parent_hash: H256,
-    extrinsics: &[Vec<u8>],
-    da_params: DaParams,
-    da_root_override: Option<DaRoot>,
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
-    pending_proofs: Option<&PendingProofStore>,
-    _fast: bool,
+    statement_hashes: &[[u8; 48]],
+    proofs: &[TransactionProof],
+    da_root: DaRoot,
 ) -> Result<Option<CommitmentBlockProof>, String> {
-    let proofs = extract_transaction_proofs_from_extrinsics(
-        extrinsics,
-        resolved_ciphertexts,
-        pending_proofs,
-    )?;
     if proofs.is_empty() {
         return Ok(None);
     }
 
-    let mut tree = build_commitment_tree_from_chain(client, parent_hash)?;
-    let mut decoded = Vec::with_capacity(extrinsics.len());
-    for ext_bytes in extrinsics {
-        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        decoded.push(extrinsic);
+    // Use compact runtime snapshots (root/frontier/history) instead of replaying the entire
+    // on-chain commitment set for every proving job. This keeps per-job setup bounded as chain
+    // height grows.
+    let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
+    let starting_root = tree.root();
+    for (index, proof) in proofs.iter().enumerate() {
+        let anchor = proof.public_inputs.merkle_root;
+        if !tree.contains_root(&anchor) {
+            return Err(format!(
+                "transaction {index} anchor not found in commitment tree history"
+            ));
+        }
+        for &commitment in proof.commitments.iter().filter(|c| **c != [0u8; 48]) {
+            tree.append(commitment)
+                .map_err(|err| format!("commitment tree append failed: {err}"))?;
+        }
     }
-    let da_root = if let Some(root) = da_root_override {
-        root
-    } else {
-        let DaEncodingBuild { encoding, .. } =
-            build_da_encoding_from_extrinsics(&decoded, da_params, None)?;
-        encoding.root()
-    };
+    let ending_root = tree.root();
+
+    let mut nullifiers = Vec::new();
+    for proof in proofs {
+        nullifiers.extend_from_slice(&proof.nullifiers);
+    }
+    let mut sorted_nullifiers = nullifiers.clone();
+    sorted_nullifiers.sort_unstable();
+    let nullifier_root = nullifier_root_from_list(&nullifiers)?;
 
     let prover = CommitmentBlockProver::new();
-
     let proof = prover
-        .prove_block_commitment_with_tree(&mut tree, &proofs, da_root)
+        .prove_from_statement_hashes_with_inputs(
+            statement_hashes,
+            starting_root,
+            ending_root,
+            nullifier_root,
+            da_root,
+            nullifiers,
+            sorted_nullifiers,
+        )
         .map_err(|e| format!("commitment block proof failed: {e}"))?;
 
     Ok(Some(proof))
 }
 
-#[derive(Clone, Debug, Default)]
-struct AggregationProofOutcome {
-    proof_bytes: Option<Vec<u8>>,
-    attach_extrinsic: bool,
+fn batch_slot_txs() -> usize {
+    std::env::var("HEGEMON_BATCH_SLOT_TXS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(16)
+        .clamp(1, u16::MAX as usize)
 }
 
-fn build_aggregation_proof(
-    extrinsics: &[Vec<u8>],
-    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
-    pending_proofs: Option<&PendingProofStore>,
-) -> Result<AggregationProofOutcome, String> {
-    let mut decoded = Vec::with_capacity(extrinsics.len());
-    for ext_bytes in extrinsics {
-        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        decoded.push(extrinsic);
-    }
-
-    let existing = extract_aggregation_proof_bytes(&decoded)?;
-    let (_transactions, proofs) = extract_shielded_transfers_for_parallel_verification(
-        &decoded,
-        resolved_ciphertexts,
-        pending_proofs,
-    )?;
-    if proofs.is_empty() {
-        if existing.is_some() {
-            return Err("aggregation proof present for block with no shielded transfers".into());
+fn batch_verifier_prewarm_sizes() -> Vec<usize> {
+    if let Ok(raw) = std::env::var("HEGEMON_BATCH_VERIFY_PREWARM_TXS") {
+        let mut parsed = raw
+            .split(',')
+            .filter_map(|part| part.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .map(largest_power_of_two_at_most)
+            .collect::<Vec<_>>();
+        parsed.sort_unstable();
+        parsed.dedup();
+        if !parsed.is_empty() {
+            return parsed;
         }
-        return Ok(AggregationProofOutcome::default());
     }
 
-    if let Some(proof_bytes) = existing {
-        return Ok(AggregationProofOutcome {
-            proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
-            attach_extrinsic: false,
+    vec![largest_power_of_two_at_most(batch_slot_txs())]
+}
+
+fn prewarm_batch_verifier_cache_on_startup() {
+    let mut sizes = batch_verifier_prewarm_sizes();
+    let max_batch = batch_circuit::MAX_BATCH_SIZE;
+    sizes.retain(|size| *size <= max_batch);
+    if sizes.is_empty() {
+        return;
+    }
+
+    match prewarm_batch_verifier_cache(&sizes) {
+        Ok(warmed) => {
+            tracing::info!(
+                ?sizes,
+                warmed,
+                "batch verifier preprocessed cache warmup complete"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                ?sizes,
+                ?error,
+                "batch verifier preprocessed cache warmup failed"
+            );
+        }
+    }
+}
+
+fn largest_power_of_two_at_most(value: usize) -> usize {
+    debug_assert!(value >= 1);
+    let shift = usize::BITS - 1 - value.leading_zeros();
+    1usize << shift
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PreparedProofMode {
+    FlatBatches,
+    MergeRoot,
+}
+
+fn prepared_proof_mode_from_env() -> PreparedProofMode {
+    let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
+    if raw.eq_ignore_ascii_case("flat")
+        || raw.eq_ignore_ascii_case("flat_batches")
+        || raw.eq_ignore_ascii_case("flatbatches")
+    {
+        PreparedProofMode::FlatBatches
+    } else {
+        PreparedProofMode::MergeRoot
+    }
+}
+
+fn merge_root_arity_from_env() -> u16 {
+    std::env::var("HEGEMON_MERGE_ARITY")
+        .ok()
+        .and_then(|raw| raw.parse::<u16>().ok())
+        .unwrap_or(8)
+        .max(2)
+}
+
+#[allow(dead_code)]
+fn build_flat_batch_proofs_from_materials(
+    proofs: Arc<Vec<TransactionProof>>,
+    witnesses: Arc<Vec<TransactionWitness>>,
+    slot_txs: usize,
+) -> Result<Vec<pallet_shielded_pool::types::BatchProofItem>, String> {
+    if proofs.is_empty() {
+        return Ok(Vec::new());
+    }
+    if witnesses.len() != proofs.len() {
+        return Err(format!(
+            "flat batch witness/proof count mismatch (witnesses {}, proofs {})",
+            witnesses.len(),
+            proofs.len()
+        ));
+    }
+    let max_batch = batch_circuit::MAX_BATCH_SIZE;
+    let capped_slot_txs = slot_txs.clamp(1, max_batch);
+    let mut out = Vec::new();
+    let mut start_tx_index: u32 = 0;
+    let mut offset = 0usize;
+    while offset < proofs.len() {
+        let remaining = proofs.len() - offset;
+        let batch_len = largest_power_of_two_at_most(remaining.min(capped_slot_txs));
+        let witness_chunk = witnesses[offset..offset + batch_len].to_vec();
+        let proof_chunk = proofs[offset..offset + batch_len].to_vec();
+        let chunk_started = Instant::now();
+        tracing::info!(
+            start_tx_index,
+            batch_len,
+            remaining,
+            "build_flat_batch_proofs_from_materials: proving chunk"
+        );
+        let encoded = run_aggregation_prepare_job(move || {
+            if std::env::var("HEGEMON_BATCH_DEBUG_WITNESS")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                for (witness_index, witness) in witness_chunk.iter().enumerate() {
+                    let anchor_prefix = hex::encode(&witness.merkle_root[..8]);
+                    let input_positions = witness
+                        .inputs
+                        .iter()
+                        .map(|input| input.position)
+                        .collect::<Vec<_>>();
+                    tracing::info!(
+                        witness_index,
+                        inputs = witness.inputs.len(),
+                        outputs = witness.outputs.len(),
+                        fee = witness.fee,
+                        anchor_prefix = %anchor_prefix,
+                        input_positions = ?input_positions,
+                        "build_flat_batch_proofs_from_materials: witness diagnostics"
+                    );
+                }
+            }
+
+            if std::env::var("HEGEMON_BATCH_VALIDATE_SINGLE_TX")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                let single_prover = TransactionProverP3::new();
+                for (witness_index, witness) in witness_chunk.iter().enumerate() {
+                    let trace = single_prover.build_trace(witness).map_err(|err| {
+                        format!("single-tx trace build failed for witness {witness_index}: {err}")
+                    })?;
+                    let trace_height = trace.values.len() / trace.width;
+                    let pub_inputs = single_prover.public_inputs(witness).map_err(|err| {
+                        format!(
+                            "single-tx public input build failed for witness {witness_index}: {err}"
+                        )
+                    })?;
+                    let proof = single_prover.prove(trace, &pub_inputs);
+                    verify_transaction_proof_p3(&proof, &pub_inputs).map_err(|err| {
+                        format!(
+                            "single-tx proof verification failed for witness {witness_index}: {err}"
+                        )
+                    })?;
+                    tracing::info!(
+                        witness_index,
+                        trace_height,
+                        batch_slot_rows = ROWS_PER_TX,
+                        "build_flat_batch_proofs_from_materials: single-tx witness verified"
+                    );
+                }
+            }
+
+            let prover = BatchTransactionProver::new();
+            let (batch_proof, batch_public_inputs) = prover
+                .prove_batch(&witness_chunk)
+                .map_err(|err| format!("batch proof generation failed: {err}"))?;
+
+            if std::env::var("HEGEMON_BATCH_SELF_VERIFY")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                verify_batch_proof(&batch_proof, &batch_public_inputs).map_err(|err| {
+                    format!("batch proof self verification failed before payload encoding: {err}")
+                })?;
+            }
+
+            if batch_public_inputs.batch_size as usize != proof_chunk.len() {
+                return Err(format!(
+                    "batch public input size mismatch (proofs {}, public {})",
+                    proof_chunk.len(),
+                    batch_public_inputs.batch_size
+                ));
+            }
+
+            let mut expected_anchor: Option<[u8; 48]> = None;
+            let mut expected_fee: u128 = 0;
+            let mut expected_nullifiers =
+                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_INPUTS);
+            let mut expected_commitments =
+                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_OUTPUTS);
+            for proof in &proof_chunk {
+                let anchor = proof.public_inputs.merkle_root;
+                if let Some(expected_anchor_value) = expected_anchor {
+                    if anchor != expected_anchor_value {
+                        return Err("batch proof chunk contains mixed anchors".to_string());
+                    }
+                } else {
+                    expected_anchor = Some(anchor);
+                }
+                expected_fee = expected_fee.saturating_add(proof.public_inputs.native_fee as u128);
+                expected_nullifiers.extend_from_slice(&proof.public_inputs.nullifiers);
+                expected_commitments.extend_from_slice(&proof.public_inputs.commitments);
+            }
+            for _ in proof_chunk.len()..batch_circuit::MAX_BATCH_SIZE {
+                expected_nullifiers.extend(std::iter::repeat_n([0u8; 48], MAX_INPUTS));
+                expected_commitments.extend(std::iter::repeat_n([0u8; 48], MAX_OUTPUTS));
+            }
+
+            let observed_anchor = felts_to_bytes48(&batch_public_inputs.anchor);
+            if expected_anchor.is_some() && Some(observed_anchor) != expected_anchor {
+                return Err("batch proof anchor mismatch with transaction proofs".to_string());
+            }
+            if batch_public_inputs.total_fee.as_canonical_u64() as u128 != expected_fee {
+                return Err("batch proof fee sum mismatch with transaction proofs".to_string());
+            }
+
+            let observed_nullifiers: Vec<[u8; 48]> = batch_public_inputs
+                .nullifiers
+                .iter()
+                .map(felts_to_bytes48)
+                .collect();
+            if observed_nullifiers != expected_nullifiers {
+                return Err("batch proof nullifier list mismatch".to_string());
+            }
+            let observed_commitments: Vec<[u8; 48]> = batch_public_inputs
+                .commitments
+                .iter()
+                .map(felts_to_bytes48)
+                .collect();
+            if observed_commitments != expected_commitments {
+                return Err("batch proof commitment list mismatch".to_string());
+            }
+
+            let batch_proof_bytes = bincode::serialize(&batch_proof)
+                .map_err(|err| format!("batch proof serialization failed: {err}"))?;
+            let batch_public_values = batch_public_inputs
+                .to_vec()
+                .iter()
+                .map(|value| value.as_canonical_u64())
+                .collect::<Vec<_>>();
+            let encoded = encode_flat_batch_proof_bytes(&batch_proof_bytes, &batch_public_values)
+                .map_err(|err| format!("flat batch proof encoding failed: {err}"))?;
+
+            if std::env::var("HEGEMON_BATCH_ROUNDTRIP_VERIFY")
+                .map(|value| value == "1")
+                .unwrap_or(false)
+            {
+                let payload = decode_flat_batch_proof_bytes(&encoded)
+                    .map_err(|err| format!("flat batch proof roundtrip decode failed: {err}"))?;
+                let roundtrip_public_values: Vec<Felt> = payload
+                    .batch_public_values
+                    .iter()
+                    .map(|value| Felt::new(*value))
+                    .collect();
+                let roundtrip_public_inputs =
+                    BatchPublicInputs::try_from_slice(&roundtrip_public_values).map_err(|err| {
+                        format!("flat batch public input roundtrip decode failed: {err}")
+                    })?;
+                verify_batch_proof_bytes(&payload.batch_proof, &roundtrip_public_inputs).map_err(
+                    |err| format!("flat batch proof roundtrip verification failed: {err}"),
+                )?;
+            }
+            Ok(encoded)
+        })?;
+        tracing::info!(
+            start_tx_index,
+            batch_len,
+            encoded_bytes = encoded.len(),
+            stage_ms = chunk_started.elapsed().as_millis(),
+            "build_flat_batch_proofs_from_materials: chunk proved"
+        );
+        let tx_count_u16 =
+            u16::try_from(batch_len).map_err(|_| "flat batch size exceeds u16".to_string())?;
+        out.push(pallet_shielded_pool::types::BatchProofItem {
+            start_tx_index,
+            tx_count: tx_count_u16,
+            proof_format: pallet_shielded_pool::types::BLOCK_PROOF_FORMAT_ID_V5,
+            proof: pallet_shielded_pool::types::StarkProof::from_bytes(encoded),
         });
+        start_tx_index = start_tx_index
+            .checked_add(batch_len as u32)
+            .ok_or_else(|| "flat batch start index overflow".to_string())?;
+        offset += batch_len;
     }
+    Ok(out)
+}
 
-    let proof_bytes = prove_aggregation(&proofs)
-        .map_err(|err| format!("aggregation proof generation failed: {err}"))?;
-    Ok(AggregationProofOutcome {
-        proof_bytes: Some(maybe_corrupt_aggregation_proof(proof_bytes)),
-        attach_extrinsic: true,
+fn build_merge_root_proof_from_materials(
+    proofs: Arc<Vec<TransactionProof>>,
+    tx_statements_commitment: [u8; 48],
+) -> Result<pallet_shielded_pool::types::MergeRootProofPayload, String> {
+    if proofs.is_empty() {
+        return Err("candidate tx set has no merge-root proof material".to_string());
+    }
+    let proof_bytes = run_aggregation_prepare_job(move || {
+        prove_aggregation(proofs.as_ref(), tx_statements_commitment)
+    })
+    .map_err(|err| format!("merge root proof generation failed: {err}"))?;
+    let root_proof = encode_aggregation_proof_bytes(proof_bytes);
+
+    let mut manifest_material = Vec::with_capacity(48 + 2 + 8);
+    manifest_material.extend_from_slice(&tx_statements_commitment);
+    manifest_material.extend_from_slice(&merge_root_arity_from_env().to_le_bytes());
+    manifest_material.extend_from_slice(&(1u32).to_le_bytes());
+    let leaf_manifest_commitment = blake3_384(&manifest_material);
+
+    Ok(pallet_shielded_pool::types::MergeRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(root_proof),
+        metadata: pallet_shielded_pool::types::MergeRootMetadata {
+            tree_arity: merge_root_arity_from_env(),
+            tree_levels: 1,
+            leaf_count: 1,
+            leaf_manifest_commitment,
+        },
+        diagnostics_leaf_proofs: Vec::new(),
     })
 }
 
-fn maybe_corrupt_aggregation_proof(mut proof_bytes: Vec<u8>) -> Vec<u8> {
-    let corrupt = std::env::var("HEGEMON_AGGREGATION_PROOF_CORRUPT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if !corrupt {
-        return proof_bytes;
+#[derive(Clone, Debug)]
+enum PreparedAggregationArtifacts {
+    #[allow(dead_code)]
+    Flat(Vec<pallet_shielded_pool::types::BatchProofItem>),
+    Merge(pallet_shielded_pool::types::MergeRootProofPayload),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ProveAheadAggregationCacheKey {
+    proof_mode: PreparedProofMode,
+    tx_statements_commitment: [u8; 48],
+    tx_count: u32,
+    flat_slot_txs: u16,
+    merge_arity: u16,
+}
+
+struct ProveAheadAggregationCache {
+    capacity: usize,
+    order: VecDeque<ProveAheadAggregationCacheKey>,
+    entries: HashMap<ProveAheadAggregationCacheKey, Arc<PreparedAggregationArtifacts>>,
+}
+
+impl ProveAheadAggregationCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
     }
-    if let Some(first) = proof_bytes.first_mut() {
-        *first ^= 0x01;
-        tracing::warn!("Corrupting aggregation proof bytes for test");
+
+    fn touch_key(&mut self, key: ProveAheadAggregationCacheKey) {
+        if let Some(position) = self.order.iter().position(|existing| *existing == key) {
+            self.order.remove(position);
+        }
+        self.order.push_back(key);
     }
-    proof_bytes
+
+    fn get(
+        &mut self,
+        key: ProveAheadAggregationCacheKey,
+    ) -> Option<Arc<PreparedAggregationArtifacts>> {
+        let entry = self.entries.get(&key).cloned();
+        if entry.is_some() {
+            self.touch_key(key);
+        }
+        entry
+    }
+
+    fn insert(
+        &mut self,
+        key: ProveAheadAggregationCacheKey,
+        artifacts: Arc<PreparedAggregationArtifacts>,
+    ) {
+        self.entries.insert(key, artifacts);
+        self.touch_key(key);
+        while self.order.len() > self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+    }
+}
+
+fn load_prove_ahead_aggregation_cache_capacity() -> usize {
+    std::env::var("HEGEMON_PROVE_AHEAD_CACHE_CAPACITY")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .clamp(1, 256)
+}
+
+static PROVE_AHEAD_AGGREGATION_CACHE: once_cell::sync::Lazy<
+    ParkingMutex<ProveAheadAggregationCache>,
+> = once_cell::sync::Lazy::new(|| {
+    ParkingMutex::new(ProveAheadAggregationCache::new(
+        load_prove_ahead_aggregation_cache_capacity(),
+    ))
+});
+
+fn make_prove_ahead_aggregation_cache_key(
+    proof_mode: PreparedProofMode,
+    tx_statements_commitment: [u8; 48],
+    tx_count: u32,
+    flat_slot_txs: usize,
+    merge_arity: u16,
+) -> ProveAheadAggregationCacheKey {
+    ProveAheadAggregationCacheKey {
+        proof_mode,
+        tx_statements_commitment,
+        tx_count,
+        flat_slot_txs: u16::try_from(flat_slot_txs).unwrap_or(u16::MAX),
+        merge_arity,
+    }
+}
+
+fn lookup_prove_ahead_aggregation_artifacts(
+    key: ProveAheadAggregationCacheKey,
+) -> Option<PreparedAggregationArtifacts> {
+    let mut guard = PROVE_AHEAD_AGGREGATION_CACHE.lock();
+    guard.get(key).map(|value| value.as_ref().clone())
+}
+
+fn store_prove_ahead_aggregation_artifacts(
+    key: ProveAheadAggregationCacheKey,
+    artifacts: PreparedAggregationArtifacts,
+) {
+    let mut guard = PROVE_AHEAD_AGGREGATION_CACHE.lock();
+    guard.insert(key, Arc::new(artifacts));
+}
+
+fn aggregation_prepare_threads() -> usize {
+    if let Some(explicit) = std::env::var("HEGEMON_AGG_PREPARE_THREADS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+    {
+        return explicit.max(1);
+    }
+
+    std::env::var("HEGEMON_RAYON_THREADS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
+static AGGREGATION_PREPARE_POOL: once_cell::sync::Lazy<Option<rayon::ThreadPool>> =
+    once_cell::sync::Lazy::new(|| {
+        let threads = aggregation_prepare_threads();
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|idx| format!("hegemon-agg-prepare-{idx}"))
+            .build()
+        {
+            Ok(pool) => Some(pool),
+            Err(error) => {
+                tracing::warn!(
+                    threads,
+                    error = %error,
+                    "Failed to initialize aggregation prepare thread pool; falling back to caller thread"
+                );
+                None
+            }
+        }
+    });
+
+fn run_aggregation_prepare_job<F, T>(job: F) -> T
+where
+    F: FnOnce() -> T + Send,
+    T: Send,
+{
+    if let Some(pool) = AGGREGATION_PREPARE_POOL.as_ref() {
+        pool.install(job)
+    } else {
+        job()
+    }
+}
+
+fn block_proof_payload_aggregation_bytes(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> usize {
+    match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
+            .flat_batches
+            .iter()
+            .map(|item| item.proof.data.len())
+            .sum(),
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => payload
+            .merge_root
+            .as_ref()
+            .map(|merge| merge.root_proof.data.len())
+            .unwrap_or(0),
+    }
+}
+
+fn block_proof_payload_aggregation_uncompressed_bytes(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> usize {
+    match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
+            .flat_batches
+            .iter()
+            .map(|item| item.proof.data.len())
+            .sum(),
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => payload
+            .merge_root
+            .as_ref()
+            .map(|merge| aggregation_proof_uncompressed_len(merge.root_proof.data.as_slice()))
+            .unwrap_or(0),
+    }
+}
+
+const MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION: u32 = 4;
+const MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION: u32 = 2;
+
+fn ensure_runtime_supports_block_proof_bundle_v2(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+) -> Result<(), String> {
+    let runtime_version = client.runtime_api().version(parent_hash).map_err(|error| {
+        format!("failed to query runtime version for parent {parent_hash:?}: {error:?}")
+    })?;
+
+    if runtime_version.spec_version < MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION
+        || runtime_version.transaction_version < MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION
+    {
+        return Err(format!(
+            "runtime at parent does not support BlockProofBundleV2 (have specVersion={} transactionVersion={}, need specVersion>={} transactionVersion>={}); restart on a fresh V2 runtime chain",
+            runtime_version.spec_version,
+            runtime_version.transaction_version,
+            MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION,
+            MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION
+        ));
+    }
+
+    Ok(())
+}
+
+fn prepare_block_proof_bundle(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    block_number: u64,
+    candidate_txs: Vec<Vec<u8>>,
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+    commitment_block_fast: bool,
+) -> Result<PreparedBundle, String> {
+    let started = Instant::now();
+    tracing::info!(
+        block_number,
+        tx_count = candidate_txs.len(),
+        candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>(),
+        "prepare_block_proof_bundle: start"
+    );
+    let context_started = Instant::now();
+    let context = build_candidate_context(
+        &candidate_txs,
+        da_params,
+        pending_ciphertexts,
+        pending_proofs,
+    )?;
+    tracing::info!(
+        block_number,
+        tx_count = context.statement_bindings.len(),
+        decoded_extrinsics = context.decoded_extrinsics.len(),
+        extracted_transactions = context.extracted_transactions.len(),
+        resolved_ciphertext_txs = context.resolved_ciphertexts.len(),
+        da_blob_bytes = context.da_blob_bytes,
+        da_chunk_count = context.da_chunk_count,
+        stage_ms = context_started.elapsed().as_millis(),
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: built shared candidate context"
+    );
+
+    let statement_hashes = context
+        .statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let tx_statements_commitment = context.tx_statements_commitment;
+    let tx_count = statement_hashes.len() as u32;
+    if tx_count == 0 {
+        return Err("candidate tx set has no shielded transfers".to_string());
+    }
+
+    let proofs_for_commitment = Arc::clone(&context.tx_proofs);
+    let proofs_for_batching = Arc::clone(&context.tx_proofs);
+    let batch_slot_txs = batch_slot_txs();
+    let selected_mode = prepared_proof_mode_from_env();
+    let merge_arity = merge_root_arity_from_env();
+    let aggregation_cache_key = make_prove_ahead_aggregation_cache_key(
+        selected_mode,
+        tx_statements_commitment,
+        tx_count,
+        batch_slot_txs,
+        merge_arity,
+    );
+    let da_root = context.da_root;
+    // commitment and aggregation proving operate on independent materials;
+    // run both in parallel and keep stage-level attribution explicit.
+    let _ = commitment_block_fast;
+    let (commitment_join, aggregation_join) = std::thread::scope(|scope| {
+        let commitment_statement_hashes = statement_hashes.clone();
+        let commitment_proofs = Arc::clone(&proofs_for_commitment);
+        let commitment_handle = scope.spawn(move || {
+            tracing::info!(
+                block_number,
+                tx_count,
+                "prepare_block_proof_bundle: starting commitment stage"
+            );
+            let stage_started = Instant::now();
+            let stage_result = build_commitment_block_proof_from_materials(
+                client,
+                parent_hash,
+                &commitment_statement_hashes,
+                commitment_proofs.as_ref(),
+                da_root,
+            );
+            (stage_result, stage_started.elapsed().as_millis())
+        });
+
+        let aggregation_proofs = Arc::clone(&proofs_for_batching);
+        let aggregation_handle = scope.spawn(move || {
+            tracing::info!(
+                block_number,
+                tx_count,
+                mode = ?selected_mode,
+                "prepare_block_proof_bundle: starting aggregation stage"
+            );
+            let stage_started = Instant::now();
+            let mut cache_hit = false;
+            let stage_result = if let Some(cached) =
+                lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
+            {
+                cache_hit = true;
+                Ok(cached)
+            } else {
+                let built = match selected_mode {
+                    PreparedProofMode::FlatBatches => Err(
+                        "flat batch proof mode is disabled: witness sidecar uploads are blocked; use merge-root aggregation proofs"
+                            .to_string(),
+                    ),
+                    PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
+                        aggregation_proofs,
+                        tx_statements_commitment,
+                    )
+                    .map(PreparedAggregationArtifacts::Merge),
+                };
+                if let Ok(ref artifacts) = built {
+                    store_prove_ahead_aggregation_artifacts(
+                        aggregation_cache_key,
+                        artifacts.clone(),
+                    );
+                }
+                built
+            };
+            (stage_result, stage_started.elapsed().as_millis(), cache_hit)
+        });
+
+        (commitment_handle.join(), aggregation_handle.join())
+    });
+
+    let (commitment_result, commitment_stage_ms) = match commitment_join {
+        Ok(result) => result,
+        Err(_) => {
+            return Err("prepare_block_proof_bundle: commitment stage panicked".to_string());
+        }
+    };
+    let (aggregation_result, aggregation_stage_ms, aggregation_cache_hit) = match aggregation_join {
+        Ok(result) => result,
+        Err(_) => {
+            return Err("prepare_block_proof_bundle: aggregation stage panicked".to_string());
+        }
+    };
+    match &commitment_result {
+        Ok(Some(_)) => tracing::info!(
+            block_number,
+            tx_count,
+            commitment_stage_ms,
+            "prepare_block_proof_bundle: commitment stage complete"
+        ),
+        Ok(None) => tracing::warn!(
+            block_number,
+            tx_count,
+            commitment_stage_ms,
+            "prepare_block_proof_bundle: commitment stage returned no proof material"
+        ),
+        Err(error) => tracing::warn!(
+            block_number,
+            tx_count,
+            commitment_stage_ms,
+            error = %error,
+            "prepare_block_proof_bundle: commitment stage failed"
+        ),
+    }
+    match &aggregation_result {
+        Ok(_) => tracing::info!(
+            block_number,
+            tx_count,
+            aggregation_stage_ms,
+            aggregation_cache_hit,
+            "prepare_block_proof_bundle: aggregation stage complete"
+        ),
+        Err(error) => tracing::warn!(
+            block_number,
+            tx_count,
+            aggregation_stage_ms,
+            aggregation_cache_hit,
+            error = %error,
+            "prepare_block_proof_bundle: aggregation stage failed"
+        ),
+    }
+    let commitment_proof = commitment_result?
+        .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
+    let aggregation_artifacts = aggregation_result?;
+
+    let mut payload = pallet_shielded_pool::types::BlockProofBundle {
+        version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+        tx_count,
+        tx_statements_commitment,
+        da_root: context.da_root,
+        da_chunk_count: context.da_chunk_count,
+        commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
+            commitment_proof.proof_bytes.clone(),
+        ),
+        proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+        flat_batches: Vec::new(),
+        merge_root: None,
+        prover_claim: None,
+    };
+    match aggregation_artifacts {
+        PreparedAggregationArtifacts::Flat(flat_batches) => {
+            if flat_batches.is_empty() {
+                return Err("candidate tx set has no flat batch proof material".to_string());
+            }
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::FlatBatches;
+            payload.flat_batches = flat_batches;
+            payload.merge_root = None;
+        }
+        PreparedAggregationArtifacts::Merge(merge_root) => {
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::MergeRoot;
+            payload.flat_batches.clear();
+            payload.merge_root = Some(merge_root);
+        }
+    }
+
+    tracing::info!(
+        block_number,
+        commitment_bytes = commitment_proof.proof_bytes.len(),
+        aggregation_bytes = block_proof_payload_aggregation_bytes(&payload),
+        batch_count = payload.flat_batches.len(),
+        batch_slot_txs,
+        proof_mode = ?payload.proof_mode,
+        aggregation_cache_hit,
+        commitment_stage_ms,
+        aggregation_stage_ms,
+        total_ms = started.elapsed().as_millis(),
+        "prepare_block_proof_bundle: built commitment and bundle proof artifacts"
+    );
+
+    let out = PreparedBundle {
+        key: BundleMatchKey {
+            parent_hash,
+            tx_statements_commitment,
+            tx_count,
+        },
+        payload,
+        candidate_txs,
+        build_ms: started.elapsed().as_millis(),
+    };
+    tracing::info!(
+        block_number,
+        tx_count,
+        build_ms = out.build_ms,
+        "prepare_block_proof_bundle: done"
+    );
+    Ok(out)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2562,189 +3164,27 @@ impl HeaderProofExt for SubstrateProofHeader {
     }
 }
 
-struct CommitmentProofPayload {
-    da_root: DaRoot,
-    da_chunk_count: u32,
-    proof_bytes: Vec<u8>,
+#[derive(Clone, Debug)]
+struct ProvenBatchPayload {
+    payload: pallet_shielded_pool::types::BlockProofBundle,
 }
 
-#[derive(Debug)]
-struct ProofDaCommitmentPayload {
-    da_root: DaRoot,
-    da_chunk_count: u32,
-}
-
-#[derive(Debug)]
-struct ProofDaManifestPayload {
-    manifest: Vec<pallet_shielded_pool::types::ProofDaManifestEntry>,
-}
-
-#[derive(Debug)]
-struct ValidatedProofDaPayload {
-    payload: ProofDaCommitmentPayload,
-    manifest_map: HashMap<[u8; 64], pallet_shielded_pool::types::ProofDaManifestEntry>,
-    missing_bindings: Vec<[u8; 64]>,
-}
-
-fn extract_commitment_proof_payload(
+fn extract_proven_batch_payload(
     extrinsics: &[runtime::UncheckedExtrinsic],
-) -> Result<Option<CommitmentProofPayload>, String> {
-    let mut found: Option<CommitmentProofPayload> = None;
+) -> Result<Option<ProvenBatchPayload>, String> {
+    let mut found: Option<ProvenBatchPayload> = None;
     for extrinsic in extrinsics {
         let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
             continue;
         };
 
-        if let ShieldedPoolCall::submit_commitment_proof {
-            da_root,
-            chunk_count,
-            proof,
-        } = call
-        {
+        if let ShieldedPoolCall::submit_proven_batch { payload } = call {
             if found.is_some() {
-                return Err("multiple submit_commitment_proof extrinsics in block".into());
+                return Err("multiple submit_proven_batch extrinsics in block".into());
             }
-            found = Some(CommitmentProofPayload {
-                da_root: *da_root,
-                da_chunk_count: *chunk_count,
-                proof_bytes: proof.data.clone(),
+            found = Some(ProvenBatchPayload {
+                payload: payload.clone(),
             });
-        }
-    }
-    Ok(found)
-}
-
-fn validate_proof_da_payloads(
-    extrinsics: &[runtime::UncheckedExtrinsic],
-    da_params: DaParams,
-) -> Result<Option<ValidatedProofDaPayload>, String> {
-    let missing_bindings = missing_proof_binding_hashes(extrinsics);
-    let proof_da_payload = extract_proof_da_commitment_payload(extrinsics)?;
-    let proof_da_manifest_payload = extract_proof_da_manifest_payload(extrinsics)?;
-
-    if missing_bindings.is_empty() {
-        if proof_da_payload.is_some() {
-            return Err(
-                "submit_proof_da_commitment present but no missing proof bytes".to_string(),
-            );
-        }
-        if proof_da_manifest_payload.is_some() {
-            return Err("submit_proof_da_manifest present but no missing proof bytes".to_string());
-        }
-        return Ok(None);
-    }
-
-    let proof_da_payload = proof_da_payload
-        .ok_or_else(|| "missing submit_proof_da_commitment extrinsic".to_string())?;
-    let manifest = proof_da_manifest_payload
-        .ok_or_else(|| "missing submit_proof_da_manifest extrinsic".to_string())?
-        .manifest;
-
-    let blob_len = proof_da_blob_len_from_manifest(&manifest)?;
-    let (_data_shards, expected_chunk_count) = da_shard_counts_for_len(blob_len, da_params)?;
-    let expected_chunk_count = u32::try_from(expected_chunk_count)
-        .map_err(|_| "proof DA chunk_count overflow".to_string())?;
-    if expected_chunk_count != proof_da_payload.da_chunk_count {
-        return Err("proof DA da_chunk_count mismatch".to_string());
-    }
-
-    let mut manifest_map = HashMap::new();
-    for entry in manifest {
-        let pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash,
-            proof_hash,
-            proof_len,
-            proof_offset,
-        } = entry;
-        let key = binding_hash.data;
-        let entry = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash,
-            proof_hash,
-            proof_len,
-            proof_offset,
-        };
-        if manifest_map.insert(key, entry).is_some() {
-            return Err("duplicate binding hash in proof DA manifest".to_string());
-        }
-    }
-
-    if manifest_map.len() != missing_bindings.len() {
-        return Err("proof DA manifest entry count mismatch".to_string());
-    }
-    for binding_hash in &missing_bindings {
-        if !manifest_map.contains_key(binding_hash) {
-            return Err("proof DA manifest missing binding hash entry".to_string());
-        }
-    }
-
-    Ok(Some(ValidatedProofDaPayload {
-        payload: proof_da_payload,
-        manifest_map,
-        missing_bindings,
-    }))
-}
-
-fn extract_proof_da_commitment_payload(
-    extrinsics: &[runtime::UncheckedExtrinsic],
-) -> Result<Option<ProofDaCommitmentPayload>, String> {
-    let mut found: Option<ProofDaCommitmentPayload> = None;
-    for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-            continue;
-        };
-
-        if let ShieldedPoolCall::submit_proof_da_commitment {
-            da_root,
-            chunk_count,
-        } = call
-        {
-            if found.is_some() {
-                return Err("multiple submit_proof_da_commitment extrinsics in block".into());
-            }
-            found = Some(ProofDaCommitmentPayload {
-                da_root: *da_root,
-                da_chunk_count: *chunk_count,
-            });
-        }
-    }
-    Ok(found)
-}
-
-fn extract_proof_da_manifest_payload(
-    extrinsics: &[runtime::UncheckedExtrinsic],
-) -> Result<Option<ProofDaManifestPayload>, String> {
-    let mut found: Option<ProofDaManifestPayload> = None;
-    for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-            continue;
-        };
-
-        if let ShieldedPoolCall::submit_proof_da_manifest { manifest } = call {
-            if found.is_some() {
-                return Err("multiple submit_proof_da_manifest extrinsics in block".into());
-            }
-            found = Some(ProofDaManifestPayload {
-                manifest: manifest.to_vec(),
-            });
-        }
-    }
-    Ok(found)
-}
-
-fn extract_aggregation_proof_bytes(
-    extrinsics: &[runtime::UncheckedExtrinsic],
-) -> Result<Option<Vec<u8>>, String> {
-    let mut found: Option<Vec<u8>> = None;
-    for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-            continue;
-        };
-
-        if let ShieldedPoolCall::submit_aggregation_proof { proof } = call {
-            if found.is_some() {
-                return Err("multiple submit_aggregation_proof extrinsics in block".into());
-            }
-            found = Some(proof.data.clone());
         }
     }
     Ok(found)
@@ -2754,9 +3194,18 @@ fn extract_shielded_transfers_for_parallel_verification(
     extrinsics: &[runtime::UncheckedExtrinsic],
     resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
     pending_proofs: Option<&PendingProofStore>,
-) -> Result<(Vec<consensus::types::Transaction>, Vec<TransactionProof>), String> {
+    allow_missing_sidecar_proofs: bool,
+) -> Result<
+    (
+        Vec<consensus::types::Transaction>,
+        Vec<TransactionProof>,
+        Vec<[u8; 64]>,
+    ),
+    String,
+> {
     let mut transactions = Vec::new();
     let mut proofs = Vec::new();
+    let mut proof_binding_hashes = Vec::new();
     let mut ciphertext_cursor = 0usize;
 
     for extrinsic in extrinsics {
@@ -2818,6 +3267,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                 );
                 transactions.push(tx);
                 proofs.push(tx_proof);
+                proof_binding_hashes.push(binding_hash.data);
             }
             ShieldedPoolCall::shielded_transfer_unsigned {
                 proof,
@@ -2858,6 +3308,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                 );
                 transactions.push(tx);
                 proofs.push(tx_proof);
+                proof_binding_hashes.push(binding_hash.data);
             }
             ShieldedPoolCall::shielded_transfer_sidecar {
                 proof,
@@ -2876,15 +3327,30 @@ fn extract_shielded_transfers_for_parallel_verification(
                 let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
                 let hash_vec = ciphertext_hashes.to_vec();
                 let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let proof_bytes = resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
-                let tx_proof = match maybe_ciphertexts.as_ref() {
-                    Some(ciphertexts) => {
+                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
+                    proof,
+                    binding_hash,
+                    pending_proofs,
+                ) {
+                    Ok(bytes) => Some(bytes),
+                    Err(err) if allow_missing_sidecar_proofs && proof.data.is_empty() => {
+                        tracing::debug!(
+                            binding_hash = %hex::encode(binding_hash.data),
+                            error = %err,
+                            "Missing sidecar proof bytes; continuing with statement-only transaction extraction"
+                        );
+                        None
+                    }
+                    Err(err) => return Err(err),
+                };
+                let tx_proof = match (maybe_proof_bytes, maybe_ciphertexts.as_ref()) {
+                    (Some(proof_bytes), Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
                             ciphertext_sizes,
                             ciphertext_hashes,
                         )?;
-                        build_transaction_proof(
+                        Some(build_transaction_proof(
                             proof_bytes,
                             nullifiers_vec.clone(),
                             commitments_vec.clone(),
@@ -2893,9 +3359,9 @@ fn extract_shielded_transfers_for_parallel_verification(
                             stablecoin.clone(),
                             *fee,
                             *value_balance,
-                        )?
+                        )?)
                     }
-                    None => build_transaction_proof_with_hashes(
+                    (Some(proof_bytes), None) => Some(build_transaction_proof_with_hashes(
                         proof_bytes,
                         nullifiers_vec.clone(),
                         commitments_vec.clone(),
@@ -2904,24 +3370,50 @@ fn extract_shielded_transfers_for_parallel_verification(
                         stablecoin.clone(),
                         *fee,
                         *value_balance,
-                    )?,
+                    )?),
+                    (None, Some(ciphertexts)) => {
+                        validate_ciphertexts_against_hashes(
+                            ciphertexts,
+                            ciphertext_sizes,
+                            ciphertext_hashes,
+                        )?;
+                        None
+                    }
+                    (None, None) => None,
                 };
-                let tx = match maybe_ciphertexts {
-                    Some(ciphertexts) => crate::transaction::proof_to_transaction(
-                        &tx_proof,
+                let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
+                    (Some(proof), Some(ciphertexts)) => crate::transaction::proof_to_transaction(
+                        proof,
                         DEFAULT_VERSION_BINDING,
                         ciphertexts,
                     ),
-                    None => consensus::types::Transaction::new_with_hashes(
+                    (Some(proof), None) => consensus::types::Transaction::new_with_hashes(
                         nullifiers_vec,
                         commitments_vec,
-                        tx_proof.public_inputs.balance_tag,
+                        proof.public_inputs.balance_tag,
+                        DEFAULT_VERSION_BINDING,
+                        hash_vec,
+                    ),
+                    (None, Some(ciphertexts)) => consensus::types::Transaction::new(
+                        nullifiers_vec,
+                        commitments_vec,
+                        [0u8; 48],
+                        DEFAULT_VERSION_BINDING,
+                        ciphertexts,
+                    ),
+                    (None, None) => consensus::types::Transaction::new_with_hashes(
+                        nullifiers_vec,
+                        commitments_vec,
+                        [0u8; 48],
                         DEFAULT_VERSION_BINDING,
                         hash_vec,
                     ),
                 };
                 transactions.push(tx);
-                proofs.push(tx_proof);
+                if let Some(tx_proof) = tx_proof {
+                    proofs.push(tx_proof);
+                    proof_binding_hashes.push(binding_hash.data);
+                }
             }
             ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
                 proof,
@@ -2942,15 +3434,30 @@ fn extract_shielded_transfers_for_parallel_verification(
                 let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
                 let hash_vec = ciphertext_hashes.to_vec();
                 let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let proof_bytes = resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
-                let tx_proof = match maybe_ciphertexts.as_ref() {
-                    Some(ciphertexts) => {
+                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
+                    proof,
+                    binding_hash,
+                    pending_proofs,
+                ) {
+                    Ok(bytes) => Some(bytes),
+                    Err(err) if allow_missing_sidecar_proofs && proof.data.is_empty() => {
+                        tracing::debug!(
+                            binding_hash = %hex::encode(binding_hash.data),
+                            error = %err,
+                            "Missing unsigned sidecar proof bytes; continuing with statement-only transaction extraction"
+                        );
+                        None
+                    }
+                    Err(err) => return Err(err),
+                };
+                let tx_proof = match (maybe_proof_bytes, maybe_ciphertexts.as_ref()) {
+                    (Some(proof_bytes), Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
                             ciphertext_sizes,
                             ciphertext_hashes,
                         )?;
-                        build_transaction_proof(
+                        Some(build_transaction_proof(
                             proof_bytes,
                             nullifiers_vec.clone(),
                             commitments_vec.clone(),
@@ -2959,9 +3466,9 @@ fn extract_shielded_transfers_for_parallel_verification(
                             None,
                             *fee,
                             0,
-                        )?
+                        )?)
                     }
-                    None => build_transaction_proof_with_hashes(
+                    (Some(proof_bytes), None) => Some(build_transaction_proof_with_hashes(
                         proof_bytes,
                         nullifiers_vec.clone(),
                         commitments_vec.clone(),
@@ -2970,24 +3477,50 @@ fn extract_shielded_transfers_for_parallel_verification(
                         None,
                         *fee,
                         0,
-                    )?,
+                    )?),
+                    (None, Some(ciphertexts)) => {
+                        validate_ciphertexts_against_hashes(
+                            ciphertexts,
+                            ciphertext_sizes,
+                            ciphertext_hashes,
+                        )?;
+                        None
+                    }
+                    (None, None) => None,
                 };
-                let tx = match maybe_ciphertexts {
-                    Some(ciphertexts) => crate::transaction::proof_to_transaction(
-                        &tx_proof,
+                let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
+                    (Some(proof), Some(ciphertexts)) => crate::transaction::proof_to_transaction(
+                        proof,
                         DEFAULT_VERSION_BINDING,
                         ciphertexts,
                     ),
-                    None => consensus::types::Transaction::new_with_hashes(
+                    (Some(proof), None) => consensus::types::Transaction::new_with_hashes(
                         nullifiers_vec,
                         commitments_vec,
-                        tx_proof.public_inputs.balance_tag,
+                        proof.public_inputs.balance_tag,
+                        DEFAULT_VERSION_BINDING,
+                        hash_vec,
+                    ),
+                    (None, Some(ciphertexts)) => consensus::types::Transaction::new(
+                        nullifiers_vec,
+                        commitments_vec,
+                        [0u8; 48],
+                        DEFAULT_VERSION_BINDING,
+                        ciphertexts,
+                    ),
+                    (None, None) => consensus::types::Transaction::new_with_hashes(
+                        nullifiers_vec,
+                        commitments_vec,
+                        [0u8; 48],
                         DEFAULT_VERSION_BINDING,
                         hash_vec,
                     ),
                 };
                 transactions.push(tx);
-                proofs.push(tx_proof);
+                if let Some(tx_proof) = tx_proof {
+                    proofs.push(tx_proof);
+                    proof_binding_hashes.push(binding_hash.data);
+                }
             }
             ShieldedPoolCall::batch_shielded_transfer { .. } => {
                 return Err(
@@ -3004,7 +3537,15 @@ fn extract_shielded_transfers_for_parallel_verification(
         }
     }
 
-    Ok((transactions, proofs))
+    if proof_binding_hashes.len() != proofs.len() {
+        return Err(format!(
+            "proof binding hash count mismatch after extraction (expected {}, got {})",
+            proofs.len(),
+            proof_binding_hashes.len()
+        ));
+    }
+
+    Ok((transactions, proofs, proof_binding_hashes))
 }
 
 fn load_parent_commitment_tree_state(
@@ -3115,7 +3656,7 @@ fn derive_nullifier_challenges(
 fn derive_commitment_block_proof_from_bytes(
     proof_bytes: Vec<u8>,
     transactions: &[consensus::types::Transaction],
-    proof_hashes: &[[u8; 48]],
+    statement_hashes: &[[u8; 48]],
     parent_tree: &consensus::CommitmentTreeState,
     da_params: DaParams,
     da_root_override: Option<DaRoot>,
@@ -3129,15 +3670,16 @@ fn derive_commitment_block_proof_from_bytes(
     };
     let nullifier_root = nullifier_root_from_list(&lists.nullifiers)?;
 
-    if proof_hashes.len() != transactions.len() {
+    if statement_hashes.len() != transactions.len() {
         return Err(format!(
-            "tx proof hash count mismatch (expected {}, got {})",
+            "tx statement hash count mismatch (expected {}, got {})",
             transactions.len(),
-            proof_hashes.len()
+            statement_hashes.len()
         ));
     }
-    let tx_proofs_commitment = CommitmentBlockProver::commitment_from_proof_hashes(proof_hashes)
-        .map_err(|err| format!("tx_proofs_commitment failed: {err}"))?;
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
 
     let mut tree = parent_tree.clone();
     for tx in transactions {
@@ -3161,9 +3703,9 @@ fn derive_commitment_block_proof_from_bytes(
     );
 
     let public_inputs = CommitmentBlockPublicInputs {
-        tx_proofs_commitment: bytes48_to_felts_checked(
-            "tx_proofs_commitment",
-            &tx_proofs_commitment,
+        tx_statements_commitment: bytes48_to_felts_checked(
+            "tx_statements_commitment",
+            &tx_statements_commitment,
         )?,
         starting_state_root: bytes48_to_felts_checked("starting_state_root", &starting_state_root)?,
         ending_state_root: bytes48_to_felts_checked("ending_state_root", &ending_state_root)?,
@@ -3196,196 +3738,351 @@ fn verify_proof_carrying_block(
 ) -> Result<Option<CommitmentBlockProof>, String> {
     use consensus::ProofVerifier;
 
-    let commitment_payload = extract_commitment_proof_payload(extrinsics)?;
-    let aggregation_proof_bytes = extract_aggregation_proof_bytes(extrinsics)?;
+    let proven_batch_payload = extract_proven_batch_payload(extrinsics)?;
     ensure_shielded_transfer_ordering(extrinsics)?;
     ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
-    let (transactions, tx_proofs) = extract_shielded_transfers_for_parallel_verification(
-        extrinsics,
-        resolved_ciphertexts,
-        pending_proofs,
-    )?;
-    let mut proof_da_payload: Option<ProofDaCommitmentPayload> = None;
-    let mut proof_da_manifest_map: HashMap<
-        [u8; 64],
-        pallet_shielded_pool::types::ProofDaManifestEntry,
-    > = HashMap::new();
-    let missing_proof_bindings = match validate_proof_da_payloads(extrinsics, da_params)? {
-        Some(validated) => {
-            proof_da_payload = Some(validated.payload);
-            proof_da_manifest_map = validated.manifest_map;
-            validated.missing_bindings
-        }
-        None => Vec::new(),
+    let (transactions, tx_proofs, _proof_binding_hashes) =
+        extract_shielded_transfers_for_parallel_verification(
+            extrinsics,
+            resolved_ciphertexts,
+            pending_proofs,
+            true,
+        )?;
+    let tx_statement_bindings = statement_bindings_from_extrinsics(extrinsics)?;
+    if tx_statement_bindings.len() != transactions.len() {
+        return Err(format!(
+            "tx statement binding count mismatch (expected {}, got {})",
+            transactions.len(),
+            tx_statement_bindings.len()
+        ));
+    }
+    let missing_proof_bindings = missing_proof_binding_hashes(extrinsics);
+    let proof_policy = fetch_proof_availability_policy(client, parent_hash)?;
+    let aggregation_mode_enabled = extrinsics.iter().any(|extrinsic| {
+        matches!(
+            &extrinsic.function,
+            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+        )
+    });
+    let verification_mode = if aggregation_mode_enabled
+        && matches!(
+            proof_policy,
+            pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+        )
+        && proven_batch_payload.is_some()
+    {
+        consensus::types::ProofVerificationMode::SelfContainedAggregation
+    } else {
+        consensus::types::ProofVerificationMode::InlineRequired
     };
 
     if transactions.is_empty() {
-        if commitment_payload.is_some() {
-            return Err("commitment proof present for block with no shielded transfers".into());
-        }
-        if aggregation_proof_bytes.is_some() {
-            return Err("aggregation proof present for block with no shielded transfers".into());
+        if proven_batch_payload.is_some() {
+            return Err("proven batch present for block with no shielded transfers".into());
         }
         return Ok(None);
     }
 
-    let payload = commitment_payload
-        .ok_or_else(|| "missing submit_commitment_proof extrinsic".to_string())?;
+    if !missing_proof_bindings.is_empty() {
+        if !aggregation_mode_enabled {
+            return Err("missing proof bytes are invalid outside aggregation mode".to_string());
+        }
+        if !matches!(
+            proof_policy,
+            pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+        ) {
+            return Err(
+                "missing proof bytes require ProofAvailabilityPolicy::SelfContained with aggregation mode"
+                    .to_string(),
+            );
+        }
+        if proven_batch_payload.is_none() {
+            return Err(
+                "missing proof bytes require submit_proven_batch in the same block".to_string(),
+            );
+        }
+    }
 
-    {
-        let extrinsics_bytes_total: usize = extrinsics.iter().map(|ext| ext.encode().len()).sum();
-        let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
-            .map(|layouts| da_blob_len_from_layouts(&layouts))
-            .unwrap_or(0);
-        let proof_da_blob_bytes_estimate = if missing_proof_bindings.is_empty() {
-            0usize
-        } else {
-            let pending = pending_proofs.ok_or_else(|| {
-                "proof bytes missing but pending proof store not provided".to_string()
-            })?;
-            let mut total = 4usize; // entry count
-            for binding_hash in &missing_proof_bindings {
-                let proof_bytes = pending.get(binding_hash).ok_or_else(|| {
-                    format!(
-                        "missing proof bytes for binding hash {}",
-                        hex::encode(binding_hash)
-                    )
-                })?;
-                total = total
-                    .saturating_add(64) // binding hash bytes
-                    .saturating_add(4) // proof len
-                    .saturating_add(proof_bytes.len());
+    let fee_params = client
+        .runtime_api()
+        .fee_parameters(parent_hash)
+        .map_err(|e| format!("failed to fetch fee parameters: {e:?}"))?;
+    let fee_buckets = split_shielded_fee_buckets_from_decoded(extrinsics, fee_params)?;
+    let expected_prover_fees = u64::try_from(fee_buckets.prover_fees)
+        .map_err(|_| "prover fee bucket exceeds u64".to_string())?;
+    let reward_bundle = extract_block_reward_bundle(extrinsics)?;
+    let tx_proof_bytes_total: usize = tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
+    let transaction_proofs = if tx_proofs.len() == transactions.len() {
+        Some(tx_proofs)
+    } else {
+        None
+    };
+    let extrinsics_bytes_total: usize = extrinsics.iter().map(|ext| ext.encode().len()).sum();
+    let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
+        .map(|layouts| da_blob_len_from_layouts(&layouts))
+        .unwrap_or(0);
+    let parent_tree = load_parent_commitment_tree_state(client, parent_hash)?;
+
+    if let Some(proven_batch_payload) = proven_batch_payload {
+        let payload = proven_batch_payload.payload;
+        if payload.version != pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA {
+            return Err(format!(
+                "unsupported proven batch version {}",
+                payload.version
+            ));
+        }
+        if payload.tx_count != transactions.len() as u32 {
+            return Err("proven batch tx_count mismatch".to_string());
+        }
+        if let Some(claim) = payload.prover_claim.as_ref() {
+            if !verify_prover_claim_signature(claim, &payload) {
+                return Err("invalid prover claim signature".to_string());
             }
-            total
+        }
+
+        match payload.prover_claim.as_ref() {
+            Some(claim) => {
+                let reward_bundle = reward_bundle.ok_or_else(|| {
+                    "missing mint_coinbase extrinsic for prover claim".to_string()
+                })?;
+                let prover_note = reward_bundle
+                    .prover_note
+                    .as_ref()
+                    .ok_or_else(|| "missing prover reward note for prover claim".to_string())?;
+                if claim.prover_amount != expected_prover_fees {
+                    return Err("prover claim amount does not match prover fee bucket".to_string());
+                }
+                if prover_note.amount != claim.prover_amount {
+                    return Err("prover reward amount does not match prover claim".to_string());
+                }
+                if prover_note.recipient_address != claim.prover_recipient_address {
+                    return Err("prover reward recipient does not match prover claim".to_string());
+                }
+            }
+            None => {
+                if reward_bundle
+                    .as_ref()
+                    .and_then(|bundle| bundle.prover_note.as_ref())
+                    .is_some()
+                {
+                    return Err("prover reward note present without prover claim".to_string());
+                }
+            }
+        }
+        let aggregation_payload_bytes = block_proof_payload_aggregation_bytes(&payload);
+        if matches!(
+            verification_mode,
+            consensus::types::ProofVerificationMode::SelfContainedAggregation
+        ) && aggregation_payload_bytes == 0
+        {
+            return Err(
+                "self-contained aggregation block is missing aggregation proof".to_string(),
+            );
+        }
+
+        let requires_full_fetch = matches!(
+            da_policy,
+            pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch
+        );
+        if requires_full_fetch {
+            if transactions
+                .iter()
+                .any(|tx| tx.ciphertexts.is_empty() && !tx.ciphertext_hashes.is_empty())
+            {
+                return Err("full DA policy requires resolved ciphertext bytes".to_string());
+            }
+            let expected_encoding = consensus::encode_da_blob(&transactions, da_params)
+                .map_err(|err| format!("commitment proof da_root encoding failed: {err}"))?;
+            let expected_da_root = expected_encoding.root();
+            let expected_chunk_count = expected_encoding.chunks().len() as u32;
+            if expected_da_root != payload.da_root {
+                return Err("commitment proof da_root mismatch".to_string());
+            }
+            if expected_chunk_count != payload.da_chunk_count {
+                return Err("commitment proof da_chunk_count mismatch".to_string());
+            }
+        } else if payload.da_chunk_count == 0 {
+            return Err("commitment proof da_chunk_count missing".to_string());
+        }
+
+        let statement_hashes = tx_statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+        if payload.tx_statements_commitment != tx_statements_commitment {
+            return Err("proven batch tx_statements_commitment mismatch".to_string());
+        }
+        let commitment_proof = derive_commitment_block_proof_from_bytes(
+            payload.commitment_proof.data.clone(),
+            &transactions,
+            &statement_hashes,
+            &parent_tree,
+            da_params,
+            Some(payload.da_root),
+        )?;
+        let transaction_proofs = if matches!(
+            verification_mode,
+            consensus::types::ProofVerificationMode::SelfContainedAggregation
+        ) {
+            None
+        } else {
+            transaction_proofs
         };
-        let tx_proof_bytes_total: usize =
-            tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
-        let aggregation_proof_bytes_len = aggregation_proof_bytes
-            .as_ref()
-            .map(|bytes| bytes.len())
-            .unwrap_or(0);
+
+        let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
         tracing::info!(
             target: "node::metrics",
             block_number,
             tx_count = transactions.len(),
             extrinsics_bytes_total,
             da_blob_bytes_estimate,
-            proof_da_blob_bytes_estimate,
-            proof_da_entry_count = missing_proof_bindings.len(),
             tx_proof_bytes_total,
-            commitment_proof_bytes = payload.proof_bytes.len(),
-            aggregation_proof_bytes = aggregation_proof_bytes_len,
+            proven_batch_present = true,
+            proven_batch_bytes,
+            proven_batch_build_ms = 0u128,
+            proven_batch_stale_count = 0u64,
+            commitment_proof_bytes = payload.commitment_proof.data.len(),
+            aggregation_proof_bytes = aggregation_payload_bytes,
             da_chunk_count = payload.da_chunk_count,
             da_root = %hex::encode(payload.da_root),
-            proof_da_chunk_count = proof_da_payload.as_ref().map(|payload| payload.da_chunk_count).unwrap_or(0),
-            proof_da_root = %proof_da_payload.as_ref().map(|payload| hex::encode(payload.da_root)).unwrap_or_default(),
             da_policy = ?da_policy,
+            proof_policy = ?proof_policy,
+            aggregation_mode_enabled,
+            verification_mode = ?verification_mode,
             "block_payload_size_metrics"
         );
-    }
 
-    let requires_full_fetch = matches!(
-        da_policy,
-        pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch
-    );
-    if requires_full_fetch {
-        if transactions
-            .iter()
-            .any(|tx| tx.ciphertexts.is_empty() && !tx.ciphertext_hashes.is_empty())
-        {
-            return Err("full DA policy requires resolved ciphertext bytes".to_string());
-        }
-        let expected_encoding = consensus::encode_da_blob(&transactions, da_params)
-            .map_err(|err| format!("commitment proof da_root encoding failed: {err}"))?;
-        let expected_da_root = expected_encoding.root();
-        let expected_chunk_count = expected_encoding.chunks().len() as u32;
-        if expected_da_root != payload.da_root {
-            return Err("commitment proof da_root mismatch".to_string());
-        }
-        if expected_chunk_count != payload.da_chunk_count {
-            return Err("commitment proof da_chunk_count mismatch".to_string());
-        }
-    } else if payload.da_chunk_count == 0 {
-        return Err("commitment proof da_chunk_count missing".to_string());
-    }
-
-    let parent_tree = load_parent_commitment_tree_state(client, parent_hash)?;
-    let proof_hashes = {
-        let mut hashes = Vec::with_capacity(transactions.len());
-        for extrinsic in extrinsics {
-            let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-                continue;
-            };
-            match call {
-                ShieldedPoolCall::shielded_transfer {
-                    proof,
-                    binding_hash,
-                    ..
-                }
-                | ShieldedPoolCall::shielded_transfer_unsigned {
-                    proof,
-                    binding_hash,
-                    ..
-                }
-                | ShieldedPoolCall::shielded_transfer_sidecar {
-                    proof,
-                    binding_hash,
-                    ..
-                }
-                | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                    proof,
-                    binding_hash,
-                    ..
-                } => {
-                    if proof.data.is_empty() {
-                        let entry =
-                            proof_da_manifest_map
-                                .get(&binding_hash.data)
-                                .ok_or_else(|| {
-                                    "missing proof hash entry in proof DA manifest".to_string()
-                                })?;
-                        hashes.push(entry.proof_hash);
-                    } else {
-                        hashes.push(blake3_384(&proof.data));
+        let block = consensus::types::Block {
+            header: SubstrateProofHeader { da_params },
+            transactions,
+            coinbase: None,
+            proven_batch: Some(consensus::types::ProvenBatch {
+                version: payload.version,
+                tx_count: payload.tx_count,
+                tx_statements_commitment: payload.tx_statements_commitment,
+                da_root: payload.da_root,
+                da_chunk_count: payload.da_chunk_count,
+                commitment_proof: commitment_proof.clone(),
+                mode: match payload.proof_mode {
+                    pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
+                        consensus::types::ProvenBatchMode::FlatBatches
                     }
-                }
-                _ => {}
-            }
-        }
-        hashes
-    };
-    let commitment_proof = derive_commitment_block_proof_from_bytes(
-        payload.proof_bytes,
-        &transactions,
-        &proof_hashes,
-        &parent_tree,
-        da_params,
-        Some(payload.da_root),
-    )?;
+                    pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
+                        consensus::types::ProvenBatchMode::MergeRoot
+                    }
+                },
+                flat_batches: payload
+                    .flat_batches
+                    .iter()
+                    .map(|item| consensus::types::BatchProofItem {
+                        start_tx_index: item.start_tx_index,
+                        tx_count: item.tx_count,
+                        proof_format: item.proof_format,
+                        proof: item.proof.data.clone(),
+                    })
+                    .collect(),
+                merge_root: payload.merge_root.as_ref().map(|merge| {
+                    consensus::types::MergeRootProofPayload {
+                        root_proof: merge.root_proof.data.clone(),
+                        metadata: consensus::types::MergeRootMetadata {
+                            tree_arity: merge.metadata.tree_arity,
+                            tree_levels: merge.metadata.tree_levels,
+                            leaf_count: merge.metadata.leaf_count,
+                            leaf_manifest_commitment: merge.metadata.leaf_manifest_commitment,
+                        },
+                        diagnostics_leaf_proofs: merge
+                            .diagnostics_leaf_proofs
+                            .iter()
+                            .map(|item| consensus::types::BatchProofItem {
+                                start_tx_index: item.start_tx_index,
+                                tx_count: item.tx_count,
+                                proof_format: item.proof_format,
+                                proof: item.proof.data.clone(),
+                            })
+                            .collect(),
+                    }
+                }),
+            }),
+            tx_statement_bindings: Some(tx_statement_bindings.clone()),
+            tx_statements_commitment: Some(tx_statements_commitment),
+            transaction_proofs,
+            proof_verification_mode: verification_mode,
+        };
+
+        let start_verify = Instant::now();
+        verifier
+            .verify_block(&block, &parent_tree)
+            .map_err(|err| format!("proof verification failed ({err:?}): {err}"))?;
+        let verify_ms = start_verify.elapsed().as_millis();
+        tracing::info!(
+            target: "node::metrics",
+            block_number,
+            verify_ms,
+            proven_batch_present = block.proven_batch.is_some(),
+            "block_import_verify_time_ms"
+        );
+
+        return Ok(Some(commitment_proof));
+    }
+
+    if reward_bundle
+        .as_ref()
+        .and_then(|bundle| bundle.prover_note.as_ref())
+        .is_some()
+    {
+        return Err("prover reward note present without prover claim".to_string());
+    }
+
+    tracing::info!(
+        target: "node::metrics",
+        block_number,
+        tx_count = transactions.len(),
+        extrinsics_bytes_total,
+        da_blob_bytes_estimate,
+        tx_proof_bytes_total,
+        proven_batch_present = false,
+        proven_batch_bytes = 0usize,
+        proven_batch_build_ms = 0u128,
+        proven_batch_stale_count = 0u64,
+        commitment_proof_bytes = 0usize,
+        aggregation_proof_bytes = 0usize,
+        da_chunk_count = 0u32,
+        da_root = %hex::encode([0u8; 48]),
+        da_policy = ?da_policy,
+        proof_policy = ?proof_policy,
+        aggregation_mode_enabled,
+        verification_mode = ?verification_mode,
+        "block_payload_size_metrics"
+    );
 
     let block = consensus::types::Block {
         header: SubstrateProofHeader { da_params },
         transactions,
         coinbase: None,
-        commitment_proof: Some(commitment_proof.clone()),
-        aggregation_proof: aggregation_proof_bytes,
-        transaction_proofs: Some(tx_proofs),
+        proven_batch: None,
+        tx_statement_bindings: Some(tx_statement_bindings),
+        tx_statements_commitment: None,
+        transaction_proofs,
+        proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
     };
 
     let start_verify = Instant::now();
     verifier
         .verify_block(&block, &parent_tree)
-        .map_err(|err| format!("proof verification failed: {err}"))?;
+        .map_err(|err| format!("proof verification failed ({err:?}): {err}"))?;
     let verify_ms = start_verify.elapsed().as_millis();
     tracing::info!(
         target: "node::metrics",
         block_number,
         verify_ms,
-        aggregation_proof_present = block.aggregation_proof.is_some(),
+        proven_batch_present = false,
         "block_import_verify_time_ms"
     );
 
-    Ok(Some(commitment_proof))
+    Ok(None)
 }
 
 // =============================================================================
@@ -3490,6 +4187,19 @@ fn load_max_shielded_transfers_per_block() -> usize {
     configured
 }
 
+fn load_min_ready_proven_batch_txs() -> usize {
+    env_usize("HEGEMON_MIN_READY_PROVEN_BATCH_TXS")
+        .unwrap_or(1)
+        .max(1)
+}
+
+fn load_proofless_ready_wait() -> Duration {
+    let wait_ms = env_usize("HEGEMON_PROOFLESS_READY_WAIT_MS")
+        .unwrap_or(1_500)
+        .min(30_000) as u64;
+    Duration::from_millis(wait_ms)
+}
+
 fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
     let runtime::RuntimeCall::ShieldedPool(call) = call else {
         return false;
@@ -3503,6 +4213,156 @@ fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
             | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
             | ShieldedPoolCall::batch_shielded_transfer { .. }
     )
+}
+
+fn is_proofless_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return false;
+    };
+
+    match call {
+        ShieldedPoolCall::shielded_transfer { proof, .. }
+        | ShieldedPoolCall::shielded_transfer_unsigned { proof, .. }
+        | ShieldedPoolCall::shielded_transfer_sidecar { proof, .. }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { proof, .. } => {
+            proof.data.is_empty()
+        }
+        _ => false,
+    }
+}
+
+fn is_sidecar_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return false;
+    };
+
+    matches!(
+        call,
+        ShieldedPoolCall::shielded_transfer_sidecar { .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+    )
+}
+
+fn proofless_binding_hash_from_call(call: &runtime::RuntimeCall) -> Option<[u8; 64]> {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return None;
+    };
+
+    match call {
+        ShieldedPoolCall::shielded_transfer {
+            proof,
+            binding_hash,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned {
+            proof,
+            binding_hash,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_sidecar {
+            proof,
+            binding_hash,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            proof,
+            binding_hash,
+            ..
+        } => proof.data.is_empty().then_some(binding_hash.data),
+        _ => None,
+    }
+}
+
+fn sidecar_ciphertext_hashes_from_call(call: &runtime::RuntimeCall) -> Option<&[[u8; 48]]> {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return None;
+    };
+
+    match call {
+        ShieldedPoolCall::shielded_transfer_sidecar {
+            ciphertext_hashes, ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            ciphertext_hashes, ..
+        } => Some(ciphertext_hashes.as_slice()),
+        _ => None,
+    }
+}
+
+fn ready_proofless_binding_hashes_for_preview(
+    prover_coordinator: &ProverCoordinator,
+    parent_hash: H256,
+    preview_extrinsics: &[runtime::UncheckedExtrinsic],
+    min_ready_batch_txs: usize,
+    lookup_wait: Duration,
+) -> Result<BTreeSet<[u8; 64]>, String> {
+    let mut candidate = preview_extrinsics.to_vec();
+
+    loop {
+        let missing = missing_proof_binding_hashes(&candidate);
+        if missing.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+
+        let statement_bindings = statement_bindings_from_extrinsics(&candidate)?;
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let shielded_tx_count = statement_hashes.len() as u32;
+        if shielded_tx_count == 0 {
+            return Ok(BTreeSet::new());
+        }
+        if shielded_tx_count < min_ready_batch_txs as u32 {
+            return Ok(BTreeSet::new());
+        }
+
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
+
+        let mut ready = prover_coordinator.lookup_prepared_bundle(
+            parent_hash,
+            tx_statements_commitment,
+            shielded_tx_count,
+        );
+        if ready.is_none() && !lookup_wait.is_zero() {
+            let deadline = Instant::now() + lookup_wait;
+            while ready.is_none() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(25));
+                ready = prover_coordinator.lookup_prepared_bundle(
+                    parent_hash,
+                    tx_statements_commitment,
+                    shielded_tx_count,
+                );
+            }
+        }
+        if ready.is_some() {
+            return Ok(missing.into_iter().collect());
+        }
+        let diagnostics = prover_coordinator.prepared_lookup_diagnostics(
+            parent_hash,
+            tx_statements_commitment,
+            shielded_tx_count,
+        );
+        tracing::debug!(
+            target: "prover::lookup",
+            parent_hash = ?parent_hash,
+            tx_count = shielded_tx_count,
+            tx_statements_commitment = %hex::encode(tx_statements_commitment),
+            missing_proof_bindings = missing.len(),
+            ?diagnostics,
+            "No prepared bundle match for proofless preview candidate"
+        );
+
+        let Some(drop_idx) = candidate
+            .iter()
+            .rposition(|extrinsic| is_proofless_shielded_transfer_call(&extrinsic.function))
+        else {
+            return Ok(BTreeSet::new());
+        };
+        candidate.remove(drop_idx);
+    }
 }
 
 fn shielded_transfer_order_key(call: &ShieldedPoolCall) -> [u8; 32] {
@@ -3525,6 +4385,50 @@ fn shielded_transfer_key_from_extrinsic(
         }
         _ => None,
     }
+}
+
+fn parent_shielded_transfer_keys(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+) -> Result<std::collections::HashSet<[u8; 32]>, String> {
+    let parent_body = client
+        .block_body(parent_hash)
+        .map_err(|err| format!("failed to load parent block body: {err}"))?;
+
+    let mut keys = std::collections::HashSet::new();
+    if let Some(extrinsics) = parent_body {
+        for extrinsic in extrinsics {
+            if let Some(key) = shielded_transfer_key_from_extrinsic(&extrinsic) {
+                keys.insert(key);
+            }
+        }
+    }
+    Ok(keys)
+}
+
+fn filter_parent_included_shielded_transfers(
+    extrinsics: &[Vec<u8>],
+    parent_keys: &std::collections::HashSet<[u8; 32]>,
+) -> Result<(Vec<Vec<u8>>, usize), String> {
+    if parent_keys.is_empty() {
+        return Ok((extrinsics.to_vec(), 0));
+    }
+
+    let mut filtered = Vec::with_capacity(extrinsics.len());
+    let mut dropped = 0usize;
+    for ext_bytes in extrinsics {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+        let is_parent_duplicate = shielded_transfer_key_from_extrinsic(&extrinsic)
+            .map(|key| parent_keys.contains(&key))
+            .unwrap_or(false);
+        if is_parent_duplicate {
+            dropped = dropped.saturating_add(1);
+        } else {
+            filtered.push(ext_bytes.clone());
+        }
+    }
+    Ok((filtered, dropped))
 }
 
 fn ensure_shielded_transfer_ordering(
@@ -3606,29 +4510,228 @@ fn reorder_shielded_transfers(extrinsics: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, St
     Ok(out)
 }
 
-fn total_shielded_fees(extrinsics: &[Vec<u8>]) -> Result<u128, String> {
-    let mut total: u128 = 0;
+#[derive(Clone, Copy, Debug, Default)]
+struct ShieldedConflictFilterStats {
+    total: usize,
+    kept: usize,
+    dropped_decode_errors: usize,
+    dropped_binding_conflicts: usize,
+    dropped_nullifier_conflicts: usize,
+}
+
+impl ShieldedConflictFilterStats {
+    fn dropped_total(&self) -> usize {
+        self.dropped_decode_errors
+            .saturating_add(self.dropped_binding_conflicts)
+            .saturating_add(self.dropped_nullifier_conflicts)
+    }
+}
+
+fn shielded_conflict_keys_from_call(
+    call: &ShieldedPoolCall,
+) -> Option<(Option<[u8; 64]>, Vec<[u8; 48]>)> {
+    match call {
+        ShieldedPoolCall::shielded_transfer {
+            binding_hash,
+            nullifiers,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned {
+            binding_hash,
+            nullifiers,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_sidecar {
+            binding_hash,
+            nullifiers,
+            ..
+        }
+        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+            binding_hash,
+            nullifiers,
+            ..
+        } => Some((
+            Some(binding_hash.data),
+            nullifiers
+                .iter()
+                .copied()
+                .filter(|nf| *nf != [0u8; 48])
+                .collect(),
+        )),
+        ShieldedPoolCall::batch_shielded_transfer { nullifiers, .. } => Some((
+            None,
+            nullifiers
+                .iter()
+                .copied()
+                .filter(|nf| *nf != [0u8; 48])
+                .collect(),
+        )),
+        _ => None,
+    }
+}
+
+fn filter_conflicting_shielded_transfers(
+    extrinsics: &[Vec<u8>],
+) -> (Vec<Vec<u8>>, ShieldedConflictFilterStats) {
+    let mut out = Vec::with_capacity(extrinsics.len());
+    let mut stats = ShieldedConflictFilterStats {
+        total: extrinsics.len(),
+        ..Default::default()
+    };
+    let mut seen_binding_hashes = std::collections::HashSet::<[u8; 64]>::new();
+
+    for ext_bytes in extrinsics {
+        let decoded = match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
+            Ok(extrinsic) => extrinsic,
+            Err(_) => {
+                stats.dropped_decode_errors = stats.dropped_decode_errors.saturating_add(1);
+                continue;
+            }
+        };
+
+        let mut conflict = false;
+        if let runtime::RuntimeCall::ShieldedPool(call) = &decoded.function {
+            if let Some((binding_hash, nullifiers)) = shielded_conflict_keys_from_call(call) {
+                if let Some(binding_hash) = binding_hash {
+                    if !seen_binding_hashes.insert(binding_hash) {
+                        stats.dropped_binding_conflicts =
+                            stats.dropped_binding_conflicts.saturating_add(1);
+                        conflict = true;
+                    }
+                }
+                if !conflict && !nullifiers.is_empty() {
+                    tracing::debug!(
+                        nullifier_count = nullifiers.len(),
+                        "Retaining nullifier-conflicting shielded candidate for runtime selection"
+                    );
+                }
+            }
+        }
+
+        if !conflict {
+            out.push(ext_bytes.clone());
+        }
+    }
+
+    stats.kept = out.len();
+    (out, stats)
+}
+
+fn split_shielded_fee_buckets(
+    extrinsics: &[Vec<u8>],
+    fee_params: FeeParameters,
+) -> Result<BlockFeeBuckets, String> {
+    let mut decoded = Vec::with_capacity(extrinsics.len());
     for ext_bytes in extrinsics {
         let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
             .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-        let runtime::RuntimeCall::ShieldedPool(call) = extrinsic.function else {
+        decoded.push(extrinsic);
+    }
+    split_shielded_fee_buckets_from_decoded(&decoded, fee_params)
+}
+
+fn split_shielded_fee_buckets_from_decoded(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+    fee_params: FeeParameters,
+) -> Result<BlockFeeBuckets, String> {
+    let mut buckets = BlockFeeBuckets::default();
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
             continue;
         };
 
-        let fee = match call {
+        let (provided, prover_component) = match call {
             ShieldedPoolCall::shielded_transfer { fee, .. }
             | ShieldedPoolCall::shielded_transfer_unsigned { fee, .. }
             | ShieldedPoolCall::shielded_transfer_sidecar { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => u128::from(fee),
-            ShieldedPoolCall::batch_shielded_transfer { total_fee, .. } => total_fee,
+            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => {
+                (u128::from(*fee), fee_params.proof_fee)
+            }
+            ShieldedPoolCall::batch_shielded_transfer { total_fee, .. } => {
+                (*total_fee, fee_params.batch_proof_fee)
+            }
             _ => continue,
         };
 
-        total = total
-            .checked_add(fee)
+        let miner_component = provided
+            .checked_sub(prover_component)
+            .ok_or_else(|| "shielded fee lower than prover component".to_string())?;
+        buckets.miner_fees = buckets
+            .miner_fees
+            .checked_add(miner_component)
+            .ok_or_else(|| "shielded miner fee total overflowed".to_string())?;
+        buckets.prover_fees = buckets
+            .prover_fees
+            .checked_add(prover_component)
             .ok_or_else(|| "shielded fee total overflowed".to_string())?;
     }
-    Ok(total)
+    Ok(buckets)
+}
+
+fn extract_block_reward_bundle(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<Option<pallet_shielded_pool::types::BlockRewardBundle>, String> {
+    let mut found: Option<pallet_shielded_pool::types::BlockRewardBundle> = None;
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+        if let ShieldedPoolCall::mint_coinbase { reward_bundle } = call {
+            if found.is_some() {
+                return Err("multiple mint_coinbase extrinsics in block".to_string());
+            }
+            found = Some(reward_bundle.clone());
+        }
+    }
+    Ok(found)
+}
+
+fn prover_claim_signing_payload(
+    claim: &pallet_shielded_pool::types::ProverCompensationClaim,
+    bundle: &pallet_shielded_pool::types::BlockProofBundle,
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(
+        20 + 48
+            + 4
+            + 48
+            + 4
+            + 32
+            + claim.prover_recipient.len()
+            + pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE
+            + 8,
+    );
+    payload.extend_from_slice(b"hegemon-prover-claim");
+    payload.extend_from_slice(&bundle.tx_statements_commitment);
+    payload.extend_from_slice(&bundle.tx_count.to_le_bytes());
+    payload.extend_from_slice(&bundle.da_root);
+    payload.extend_from_slice(&bundle.da_chunk_count.to_le_bytes());
+    payload.extend_from_slice(&claim.prover_account);
+    payload.extend_from_slice(&claim.prover_recipient);
+    payload.extend_from_slice(&claim.prover_recipient_address);
+    payload.extend_from_slice(&claim.prover_amount.to_le_bytes());
+    payload
+}
+
+fn verify_prover_claim_signature(
+    claim: &pallet_shielded_pool::types::ProverCompensationClaim,
+    bundle: &pallet_shielded_pool::types::BlockProofBundle,
+) -> bool {
+    if claim.claim_signature.len() != 64 {
+        return false;
+    }
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(&claim.claim_signature);
+    let payload = prover_claim_signing_payload(claim, bundle);
+
+    let sr_pub = sp_core::sr25519::Public::from_raw(claim.prover_account);
+    let sr_sig = sp_core::sr25519::Signature::from_raw(sig_bytes);
+    if sp_io::crypto::sr25519_verify(&sr_sig, &payload, &sr_pub) {
+        return true;
+    }
+
+    let ed_pub = sp_core::ed25519::Public::from_raw(claim.prover_account);
+    let ed_sig = sp_core::ed25519::Signature::from_raw(sig_bytes);
+    sp_io::crypto::ed25519_verify(&ed_sig, &payload, &ed_pub)
 }
 
 // =============================================================================
@@ -3678,33 +4781,34 @@ fn total_shielded_fees(extrinsics: &[Vec<u8>]) -> Result<u128, String> {
 pub fn wire_block_builder_api(
     chain_state: &Arc<ProductionChainStateProvider>,
     client: Arc<HegemonFullClient>,
-    da_params: DaParams,
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     pending_proof_store: Arc<ParkingMutex<PendingProofStore>>,
+    prover_coordinator: Arc<ProverCoordinator>,
+    _da_params: DaParams,
+    _commitment_block_fast: bool,
 ) {
     use sc_block_builder::BlockBuilderBuilder;
 
     let client_for_exec = client;
-    let commitment_block_proofs_enabled = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
     let aggregation_proofs_enabled = std::env::var("HEGEMON_AGGREGATION_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let requested_commitment_block_fast = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let commitment_block_fast = if cfg!(feature = "fast-proofs") {
-        requested_commitment_block_fast
-    } else {
-        if requested_commitment_block_fast {
-            tracing::warn!(
-                "HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
-            );
-        }
-        false
-    };
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
+    let min_ready_proven_batch_txs = load_min_ready_proven_batch_txs();
+    let proofless_ready_wait = load_proofless_ready_wait();
+
+    if min_ready_proven_batch_txs > 1 {
+        tracing::info!(
+            min_ready_proven_batch_txs,
+            "Proofless transfers require a ready proven batch of at least this size before inclusion"
+        );
+    }
+    if !proofless_ready_wait.is_zero() {
+        tracing::info!(
+            proofless_ready_wait_ms = proofless_ready_wait.as_millis() as u64,
+            "Proofless inclusion waits briefly for newly prepared bundles before deferring"
+        );
+    }
 
     // Capture the miner's shielded address
     let miner_shielded_address = chain_state.miner_shielded_address();
@@ -3733,6 +4837,8 @@ pub fn wire_block_builder_api(
             }
         }
     });
+    let pending_ciphertext_store_for_exec = Arc::clone(&pending_ciphertext_store);
+    let pending_proof_store_for_exec = Arc::clone(&pending_proof_store);
 
     chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
         // Convert our H256 to the runtime's Hash type
@@ -3818,9 +4924,142 @@ pub fn wire_block_builder_api(
 
         // Push user extrinsics
         let mut failed = 0usize;
+        let pending_ciphertexts_for_filter = { pending_ciphertext_store_for_exec.lock().clone() };
+        tracing::debug!(
+            block_number,
+            pending_ciphertext_entries = pending_ciphertexts_for_filter.entries.len(),
+            "Captured pending sidecar stores for authoring"
+        );
         let ordered_extrinsics = reorder_shielded_transfers(&extrinsics)?;
-
+        let (ordered_extrinsics, filter_stats) =
+            filter_conflicting_shielded_transfers(&ordered_extrinsics);
+        if filter_stats.dropped_total() > 0 {
+            tracing::warn!(
+                block_number,
+                total_candidates = filter_stats.total,
+                kept_candidates = filter_stats.kept,
+                dropped_decode_errors = filter_stats.dropped_decode_errors,
+                dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                "Filtered conflicting shielded transfers before block assembly"
+            );
+        }
+        let parent_keys = parent_shielded_transfer_keys(
+            client_for_exec.as_ref(),
+            parent_substrate_hash,
+        )?;
+        let (ordered_extrinsics, dropped_parent_duplicates) =
+            filter_parent_included_shielded_transfers(&ordered_extrinsics, &parent_keys)?;
+        if dropped_parent_duplicates > 0 {
+            tracing::info!(
+                block_number,
+                dropped_parent_duplicates,
+                parent_shielded_transfer_count = parent_keys.len(),
+                "Dropped shielded transfers already included in parent block"
+            );
+        }
+        let proof_policy =
+            fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
+        let mut defer_proofless_until_ready_batch = false;
+        let mut aggregation_mode_required_for_block = false;
+        let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
         if aggregation_proofs_enabled {
+            let mut preview_extrinsics = Vec::new();
+            for ext_bytes in &applied {
+                if let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
+                    preview_extrinsics.push(extrinsic);
+                }
+            }
+            preview_extrinsics.push(runtime::UncheckedExtrinsic::new_unsigned(
+                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {}),
+            ));
+
+            let mut preview_shielded_count = shielded_transfer_count;
+            let mut preview_has_shielded_transfers = false;
+            for ext_bytes in &ordered_extrinsics {
+                let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) else {
+                    continue;
+                };
+                let is_shielded = is_shielded_transfer_call(&extrinsic.function);
+                if is_shielded && preview_shielded_count >= max_shielded_transfers_per_block {
+                    continue;
+                }
+                preview_extrinsics.push(extrinsic);
+                if is_shielded {
+                    preview_has_shielded_transfers = true;
+                    preview_shielded_count = preview_shielded_count.saturating_add(1);
+                }
+            }
+
+            if preview_has_shielded_transfers {
+                aggregation_mode_required_for_block = true;
+            }
+            let missing_preview = missing_proof_binding_hashes(&preview_extrinsics);
+            if !missing_preview.is_empty() {
+                aggregation_mode_required_for_block = true;
+                let pending_proofs_snapshot = { pending_proof_store_for_exec.lock().clone() };
+                let pending_matches =
+                    pending_proof_match_count(&missing_preview, &pending_proofs_snapshot);
+                tracing::debug!(
+                    block_number,
+                    missing_proof_bindings = missing_preview.len(),
+                    pending_proof_entries = pending_proofs_snapshot.len(),
+                    pending_proof_matches = pending_matches,
+                    "Proofless preview coverage against pending proof snapshot"
+                );
+                if !matches!(
+                    proof_policy,
+                    pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+                ) {
+                    defer_proofless_until_ready_batch = true;
+                    tracing::warn!(
+                        block_number,
+                        missing_proof_bindings = missing_preview.len(),
+                        ?proof_policy,
+                        "Deferring proofless sidecar transfers: ProofAvailabilityPolicy is not SelfContained"
+                    );
+                } else {
+                    let ready_bindings = ready_proofless_binding_hashes_for_preview(
+                        prover_coordinator.as_ref(),
+                        parent_substrate_hash,
+                        &preview_extrinsics,
+                        min_ready_proven_batch_txs,
+                        proofless_ready_wait,
+                    )?;
+                    if ready_bindings.is_empty() {
+                        defer_proofless_until_ready_batch = true;
+                        tracing::warn!(
+                            block_number,
+                            missing_proof_bindings = missing_preview.len(),
+                            min_ready_proven_batch_txs,
+                            "Deferring proofless sidecar transfers until a proven batch is ready (strict mode)"
+                        );
+                    } else {
+                        let deferred = missing_preview.len().saturating_sub(ready_bindings.len());
+                        if deferred > 0 {
+                            defer_proofless_until_ready_batch = true;
+                            tracing::warn!(
+                                block_number,
+                                ready_proofless_sidecar = ready_bindings.len(),
+                                deferred_proofless_sidecar = deferred,
+                                min_ready_proven_batch_txs,
+                                "Using ready proofless subset while larger proven batch is still building"
+                            );
+                        } else {
+                            tracing::debug!(
+                                block_number,
+                                ready_proofless_sidecar = ready_bindings.len(),
+                                min_ready_proven_batch_txs,
+                                "Ready proven batch found for full proofless candidate set"
+                            );
+                        }
+                        ready_proofless_bindings = Some(ready_bindings);
+                    }
+                }
+            }
+        }
+
+        if aggregation_proofs_enabled && aggregation_mode_required_for_block {
             let enable_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
                 runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {}),
             );
@@ -3840,10 +5079,65 @@ pub fn wire_block_builder_api(
             }
         }
 
+        let mut deferred_proofless_sidecar_count = 0usize;
+        let mut deferred_missing_ciphertext_sidecar_count = 0usize;
         for ext_bytes in ordered_extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
                     let is_shielded = is_shielded_transfer_call(&extrinsic.function);
+                    let is_sidecar_shielded =
+                        is_sidecar_shielded_transfer_call(&extrinsic.function);
+                    let is_proofless_sidecar =
+                        is_proofless_shielded_transfer_call(&extrinsic.function);
+                    if let Some(ciphertext_hashes) =
+                        sidecar_ciphertext_hashes_from_call(&extrinsic.function)
+                    {
+                        if !pending_ciphertexts_for_filter.contains_all(ciphertext_hashes) {
+                            deferred_missing_ciphertext_sidecar_count =
+                                deferred_missing_ciphertext_sidecar_count.saturating_add(1);
+                            tracing::warn!(
+                                block_number,
+                                missing_ciphertext_hashes = ciphertext_hashes.len(),
+                                "Deferring sidecar shielded transfer: ciphertext bytes not available locally"
+                            );
+                            continue;
+                        }
+                    }
+                    if !aggregation_proofs_enabled
+                        && is_proofless_sidecar
+                    {
+                        tracing::warn!(
+                            block_number,
+                            "Skipping proofless shielded transfer: HEGEMON_AGGREGATION_PROOFS is disabled"
+                        );
+                        continue;
+                    }
+                    if aggregation_proofs_enabled
+                        && defer_proofless_until_ready_batch
+                        && is_proofless_sidecar
+                    {
+                        let allow_ready_subset = ready_proofless_bindings
+                            .as_ref()
+                            .and_then(|bindings| {
+                                proofless_binding_hash_from_call(&extrinsic.function)
+                                    .map(|binding_hash| bindings.contains(&binding_hash))
+                            })
+                            .unwrap_or(false);
+                        if allow_ready_subset {
+                            tracing::debug!(
+                                block_number,
+                                "Including proofless shielded transfer from ready subset"
+                            );
+                        } else {
+                        deferred_proofless_sidecar_count =
+                            deferred_proofless_sidecar_count.saturating_add(1);
+                        tracing::warn!(
+                            block_number,
+                            "Deferring proofless shielded transfer until proven batch is ready"
+                        );
+                        continue;
+                    }
+                    }
                     if is_shielded && shielded_transfer_count >= max_shielded_transfers_per_block {
                         tracing::warn!(
                             block_number,
@@ -3853,6 +5147,11 @@ pub fn wire_block_builder_api(
                         );
                         continue;
                     }
+                    let shielded_key = if is_shielded {
+                        shielded_transfer_key_from_extrinsic(&extrinsic).map(hex::encode)
+                    } else {
+                        None
+                    };
                     match block_builder.push(extrinsic) {
                         Ok(_) => {
                             applied.push(ext_bytes.clone());
@@ -3862,7 +5161,15 @@ pub fn wire_block_builder_api(
                             }
                         }
                         Err(e) => {
-                            tracing::debug!(error = ?e, "Extrinsic push failed");
+                            tracing::warn!(
+                                block_number,
+                                is_shielded,
+                                is_sidecar_shielded,
+                                is_proofless_sidecar,
+                                shielded_key = shielded_key.as_deref().unwrap_or(""),
+                                error = ?e,
+                                "Extrinsic push failed during block assembly"
+                            );
                             failed += 1;
                         }
                     }
@@ -3874,307 +5181,280 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let total_fees = if parsed_shielded_address.is_some() {
-            total_shielded_fees(&applied)?
-        } else {
-            0
-        };
+        if aggregation_proofs_enabled && deferred_proofless_sidecar_count > 0 {
+            tracing::info!(
+                block_number,
+                deferred_proofless_sidecar_count,
+                included_shielded_transfers = shielded_transfer_count,
+                "Deferred proofless sidecar transfers this block"
+            );
+        }
+        if deferred_missing_ciphertext_sidecar_count > 0 {
+            tracing::info!(
+                block_number,
+                deferred_missing_ciphertext_sidecar_count,
+                included_shielded_transfers = shielded_transfer_count,
+                "Deferred sidecar transfers without local ciphertext bytes"
+            );
+        }
+
+        let mut decoded_applied = Vec::with_capacity(applied.len());
+        for ext_bytes in &applied {
+            let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+                .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+            decoded_applied.push(extrinsic);
+        }
+        let missing_proof_bindings = missing_proof_binding_hashes(&decoded_applied);
+        if !missing_proof_bindings.is_empty() {
+            let pending_proofs_snapshot_final = { pending_proof_store_for_exec.lock().clone() };
+            let pending_matches =
+                pending_proof_match_count(&missing_proof_bindings, &pending_proofs_snapshot_final);
+            tracing::debug!(
+                block_number,
+                missing_proof_bindings = missing_proof_bindings.len(),
+                pending_proof_entries = pending_proofs_snapshot_final.len(),
+                pending_proof_matches = pending_matches,
+                "Final applied block coverage against pending proof snapshot"
+            );
+        }
+        let aggregation_mode_enabled = decoded_applied.iter().any(|extrinsic| {
+            matches!(
+                &extrinsic.function,
+                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+            )
+        });
+        if !missing_proof_bindings.is_empty() {
+            if !aggregation_mode_enabled {
+                return Err(
+                    "missing proof bytes are invalid outside aggregation mode".to_string(),
+                );
+            }
+            if !matches!(
+                proof_policy,
+                pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+            ) {
+                return Err(
+                    "missing proof bytes require ProofAvailabilityPolicy::SelfContained".to_string(),
+                );
+            }
+        }
+
+        let statement_bindings = statement_bindings_from_extrinsics(&decoded_applied)?;
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let shielded_tx_count = statement_hashes.len() as u32;
+        let requires_proven_batch = aggregation_mode_enabled && shielded_tx_count > 0;
+        let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
+        if requires_proven_batch {
+            let tx_statements_commitment =
+                CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                    .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+            let ready_batch = prover_coordinator.lookup_prepared_bundle(
+                parent_substrate_hash,
+                tx_statements_commitment,
+                shielded_tx_count,
+            );
+
+            if let Some(ready_batch) = ready_batch {
+                ensure_runtime_supports_block_proof_bundle_v2(
+                    client_for_exec.as_ref(),
+                    parent_substrate_hash,
+                )?;
+                let proof_size = ready_batch.payload.commitment_proof.data.len()
+                    + block_proof_payload_aggregation_bytes(&ready_batch.payload);
+                let proof_size_uncompressed =
+                    block_proof_payload_aggregation_uncompressed_bytes(&ready_batch.payload);
+                selected_prover_claim = ready_batch.payload.prover_claim.clone();
+                let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                    runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
+                        payload: ready_batch.payload,
+                    }),
+                );
+                tracing::debug!(
+                    block_number,
+                    tx_count = shielded_tx_count,
+                    proof_size,
+                    proof_size_uncompressed,
+                    encoded_len = proven_batch_extrinsic.encoded_size(),
+                    "Attempting to attach proven batch extrinsic"
+                );
+                match block_builder.push(proven_batch_extrinsic.clone()) {
+                    Ok(_) => {
+                        applied.push(proven_batch_extrinsic.encode());
+                        tracing::info!(
+                            block_number,
+                            proof_size,
+                            proof_size_uncompressed,
+                            proven_batch_build_ms = ready_batch.build_ms,
+                            proven_batch_stale_count = prover_coordinator.stale_count(),
+                            prepared_parent = ?ready_batch.key.parent_hash,
+                            current_parent = ?parent_substrate_hash,
+                            "Proven batch extrinsic attached"
+                        );
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "failed to push mandatory proven batch extrinsic: {e:?}"
+                        ));
+                    }
+                }
+            } else {
+                let diagnostics = prover_coordinator.prepared_lookup_diagnostics(
+                    parent_substrate_hash,
+                    tx_statements_commitment,
+                    shielded_tx_count,
+                );
+                tracing::warn!(
+                    block_number,
+                    parent_hash = ?parent_substrate_hash,
+                    tx_count = shielded_tx_count,
+                    tx_statements_commitment = %hex::encode(tx_statements_commitment),
+                    ?diagnostics,
+                    "Missing prepared proven batch for mandatory proofless sidecar set (strict mode)"
+                );
+                return Err(
+                    "shielded block with omitted proof bytes requires a ready proven batch (strict mode)"
+                        .to_string(),
+                );
+            }
+        }
+
+        let fee_params = client_for_exec
+            .runtime_api()
+            .fee_parameters(parent_substrate_hash)
+            .map_err(|e| format!("failed to fetch fee parameters: {e:?}"))?;
+        let fee_buckets = split_shielded_fee_buckets(&applied, fee_params)?;
 
         if let Some(ref address) = parsed_shielded_address {
             let subsidy = pallet_coinbase::block_subsidy(block_number);
-            let fee_u64 = u64::try_from(total_fees)
-                .map_err(|_| "block fee total exceeds u64".to_string())?;
-            let amount = subsidy
-                .checked_add(fee_u64)
+            let miner_fees = u64::try_from(fee_buckets.miner_fees)
+                .map_err(|_| "miner fee total exceeds u64".to_string())?;
+            let miner_amount = subsidy
+                .checked_add(miner_fees)
                 .ok_or_else(|| "coinbase amount overflowed".to_string())?;
+            let prover_amount = u64::try_from(fee_buckets.prover_fees)
+                .map_err(|_| "prover fee total exceeds u64".to_string())?;
 
             let mut block_hash_input = [0u8; 40];
             block_hash_input[..32].copy_from_slice(parent_hash.as_bytes());
             block_hash_input[32..40].copy_from_slice(&block_number.to_le_bytes());
             let block_hash: [u8; 32] = blake3::hash(&block_hash_input).into();
 
-            match crate::shielded_coinbase::encrypt_coinbase_note(
+            let prover_address = if let Some(claim) = selected_prover_claim.as_ref() {
+                let recipient = std::str::from_utf8(claim.prover_recipient.as_slice())
+                    .map_err(|_| "prover claim recipient is not valid UTF-8".to_string())?;
+                let prover_address = crate::shielded_coinbase::parse_shielded_address(recipient)
+                    .map_err(|e| format!("failed to parse prover recipient address: {e}"))?;
+                Some(prover_address)
+            } else {
+                None
+            };
+
+            let reward_bundle = crate::shielded_coinbase::encrypt_block_reward_bundle(
                 address,
-                amount,
+                miner_amount,
+                prover_address.as_ref().map(|addr| (addr, prover_amount)),
                 &block_hash,
                 block_number,
-            ) {
-                Ok(coinbase_data) => {
+            )
+            .map_err(|e| format!("failed to encrypt block reward bundle: {e}"))?;
+
+            if let Some(claim) = selected_prover_claim.as_ref() {
+                let Some(prover_note) = reward_bundle.prover_note.as_ref() else {
+                    return Err("prover claim present but reward bundle missing prover note".to_string());
+                };
+                if prover_note.recipient_address != claim.prover_recipient_address {
+                    return Err("prover reward recipient mismatch".to_string());
+                }
+            }
+
+            tracing::info!(
+                block_number,
+                subsidy,
+                miner_fees = fee_buckets.miner_fees,
+                prover_fees = fee_buckets.prover_fees,
+                miner_amount,
+                has_prover_claim = selected_prover_claim.is_some(),
+                "Encrypting shielded block rewards"
+            );
+            let coinbase_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
+                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                    reward_bundle,
+                }),
+            );
+            match block_builder.push(coinbase_extrinsic.clone()) {
+                Ok(_) => {
+                    applied.push(coinbase_extrinsic.encode());
                     tracing::info!(
                         block_number,
                         subsidy,
-                        fees = total_fees,
-                        amount,
-                        commitment = %hex::encode(&coinbase_data.commitment),
-                        "Encrypting shielded coinbase note"
-                    );
-                    let coinbase_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                        runtime::RuntimeCall::ShieldedPool(
-                            ShieldedPoolCall::mint_coinbase { coinbase_data },
-                        ),
-                    );
-                    match block_builder.push(coinbase_extrinsic.clone()) {
-                        Ok(_) => {
-                            applied.push(coinbase_extrinsic.encode());
-                            tracing::info!(
-                                block_number,
-                                subsidy,
-                                fees = total_fees,
-                                amount,
-                                "Added shielded coinbase extrinsic for block reward"
-                            );
-                        }
-                        Err(e) => {
-                            return Err(format!(
-                                "failed to push shielded coinbase extrinsic: {e:?}"
-                            ));
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        error = ?e,
-                        block_number,
-                        "Failed to encrypt coinbase note - no reward for this block"
+                        miner_fees = fee_buckets.miner_fees,
+                        prover_fees = fee_buckets.prover_fees,
+                        "Added shielded coinbase extrinsic for block reward"
                     );
                 }
-            }
-        }
-
-        let mut da_blob_build = None;
-        if commitment_block_proofs_enabled || aggregation_proofs_enabled {
-            let mut decoded = Vec::with_capacity(applied.len());
-            for ext_bytes in &applied {
-                let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-                    .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-                decoded.push(extrinsic);
-            }
-            let build = {
-                let pending_guard = pending_ciphertext_store.lock();
-                build_da_blob_from_extrinsics(&decoded, Some(&*pending_guard))
-            }
-            .map_err(|err| format!("failed to build DA blob for block: {err}"))?;
-            da_blob_build = Some(build);
-        }
-
-        let resolved_ciphertexts =
-            da_blob_build.as_ref().map(|build| build.transactions.as_slice());
-        let mut da_chunk_count_override = None;
-        let da_root_override = if commitment_block_proofs_enabled {
-            if let Some(build) = da_blob_build.as_ref() {
-                let encoding = state_da::encode_da_blob(&build.blob, da_params)
-                    .map_err(|err| format!("da_root encoding failed: {err}"))?;
-                let root = encoding.root();
-                da_chunk_count_override = Some(encoding.chunks().len() as u32);
-                Some(root)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let commitment_proof = if commitment_block_proofs_enabled {
-            let da_root_for_commitment = da_root_override
-                .ok_or_else(|| "missing da_root for commitment proof".to_string())?;
-            let pending_proofs_guard = pending_proof_store.lock();
-            match build_commitment_block_proof(
-                client_for_exec.as_ref(),
-                parent_substrate_hash,
-                &applied,
-                da_params,
-                Some(da_root_for_commitment),
-                resolved_ciphertexts,
-                Some(&*pending_proofs_guard),
-                commitment_block_fast,
-            ) {
-                Ok(Some(proof)) => {
-                    let chunk_count_for_commitment = da_chunk_count_override
-                        .ok_or_else(|| "missing da_chunk_count for commitment proof".to_string())?;
-                    let commitment_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                        runtime::RuntimeCall::ShieldedPool(
-                            ShieldedPoolCall::submit_commitment_proof {
-                                da_root: da_root_for_commitment,
-                                chunk_count: chunk_count_for_commitment,
-                                proof: pallet_shielded_pool::types::StarkProof::from_bytes(
-                                    proof.proof_bytes.clone(),
-                                ),
-                            },
-                        ),
-                    );
-
-                    match block_builder.push(commitment_extrinsic.clone()) {
-                        Ok(_) => {
-                            applied.push(commitment_extrinsic.encode());
-                            tracing::info!(
-                                block_number,
-                                tx_count = proof.public_inputs.tx_count,
-                                proof_size = proof.proof_bytes.len(),
-                                proof_hash = %hex::encode(proof.proof_hash),
-                                "Commitment proof extrinsic attached"
-                            );
-                        }
-                        Err(e) => {
-                            return Err(format!(
-                                "failed to push commitment proof extrinsic: {e:?}"
-                            ));
-                        }
-                    }
-
-                    Some(proof)
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    return Err(format!("commitment block proof generation failed: {e}"));
-                }
-            }
-        } else {
-            None
-        };
-
-        let mut aggregation_outcome = if aggregation_proofs_enabled {
-            let pending_proofs_guard = pending_proof_store.lock();
-            match build_aggregation_proof(
-                &applied,
-                resolved_ciphertexts,
-                Some(&*pending_proofs_guard),
-            ) {
-                Ok(outcome) => outcome,
-                Err(err) => {
-                    return Err(format!("aggregation proof generation failed: {err}"));
-                }
-            }
-        } else {
-            let mut decoded = Vec::with_capacity(applied.len());
-            for ext_bytes in &applied {
-                let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-                    .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-                decoded.push(extrinsic);
-            }
-            let existing = extract_aggregation_proof_bytes(&decoded)?;
-            AggregationProofOutcome {
-                proof_bytes: existing,
-                attach_extrinsic: false,
-            }
-        };
-
-        if aggregation_outcome.attach_extrinsic {
-            let proof_bytes = aggregation_outcome
-                .proof_bytes
-                .clone()
-                .ok_or_else(|| "aggregation proof bytes missing".to_string())?;
-            let encoded_proof_bytes = encode_aggregation_proof_bytes(proof_bytes);
-            let proof_size = encoded_proof_bytes.len();
-            let proof_size_uncompressed =
-                aggregation_proof_uncompressed_len(&encoded_proof_bytes);
-            let aggregation_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_aggregation_proof {
-                    proof: pallet_shielded_pool::types::StarkProof::from_bytes(
-                        encoded_proof_bytes.clone(),
-                    ),
-                }),
-            );
-            match block_builder.push(aggregation_extrinsic.clone()) {
-                Ok(_) => {
-                    applied.push(aggregation_extrinsic.encode());
-                    aggregation_outcome.proof_bytes = Some(encoded_proof_bytes);
-                    tracing::info!(
-                        block_number,
-                        proof_size,
-                        proof_size_uncompressed,
-                        "Aggregation proof extrinsic attached"
-                    );
-                }
-                Err(e) => {
+                Err(primary_error) => {
                     tracing::warn!(
                         block_number,
-                        proof_size,
-                        error = ?e,
-                        "Aggregation proof extrinsic omitted (block resources exhausted)"
+                        subsidy,
+                        miner_fees = fee_buckets.miner_fees,
+                        prover_fees = fee_buckets.prover_fees,
+                        has_prover_claim = selected_prover_claim.is_some(),
+                        error = ?primary_error,
+                        "Primary shielded coinbase build failed; attempting subsidy-only fallback"
                     );
-                    aggregation_outcome.proof_bytes = None;
-                    aggregation_outcome.attach_extrinsic = false;
+
+                    // Keep transaction inclusion live even if fee-derived reward construction
+                    // diverges. Try subsidy-only reward first, then continue without coinbase.
+                    if selected_prover_claim.is_none() {
+                        let fallback_reward_bundle =
+                            crate::shielded_coinbase::encrypt_block_reward_bundle(
+                                address,
+                                subsidy,
+                                None,
+                                &block_hash,
+                                block_number,
+                            )
+                            .map_err(|e| {
+                                format!("failed to encrypt fallback block reward bundle: {e}")
+                            })?;
+
+                        let fallback_coinbase = runtime::UncheckedExtrinsic::new_unsigned(
+                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                                reward_bundle: fallback_reward_bundle,
+                            }),
+                        );
+                        match block_builder.push(fallback_coinbase.clone()) {
+                            Ok(_) => {
+                                applied.push(fallback_coinbase.encode());
+                                tracing::warn!(
+                                    block_number,
+                                    subsidy,
+                                    "Added subsidy-only fallback shielded coinbase extrinsic"
+                                );
+                            }
+                            Err(fallback_error) => {
+                                tracing::warn!(
+                                    block_number,
+                                    error = ?fallback_error,
+                                    "Fallback shielded coinbase also failed; continuing without coinbase for this template"
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            block_number,
+                            "Skipping subsidy-only fallback because proven-batch claim is present"
+                        );
+                    }
                 }
             }
         }
 
-        // If any shielded transfers omitted proof bytes, publish those bytes via a DA commitment.
-        let mut decoded_for_proof_da = Vec::with_capacity(applied.len());
-        for ext_bytes in &applied {
-            let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
-                .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
-            decoded_for_proof_da.push(extrinsic);
-        }
-        let missing_proof_hashes = missing_proof_binding_hashes(&decoded_for_proof_da);
-        if !missing_proof_hashes.is_empty() {
-            let build = {
-                let pending_guard = pending_proof_store.lock();
-                build_proof_da_blob_from_extrinsics(&decoded_for_proof_da, Some(&*pending_guard))
-            }
-            .map_err(|err| format!("failed to build proof DA blob for block: {err}"))?;
-
-            let encoding = state_da::encode_da_blob(&build.blob, da_params)
-                .map_err(|err| format!("proof DA encoding failed: {err}"))?;
-            let proof_da_root = encoding.root();
-            let proof_da_chunk_count = encoding.chunks().len() as u32;
-
-            let proof_da_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(
-                    ShieldedPoolCall::submit_proof_da_commitment {
-                        da_root: proof_da_root,
-                        chunk_count: proof_da_chunk_count,
-                    },
-                ),
-            );
-
-            match block_builder.push(proof_da_extrinsic.clone()) {
-                Ok(_) => {
-                    applied.push(proof_da_extrinsic.encode());
-                    tracing::info!(
-                        block_number,
-                        missing_proof_count = missing_proof_hashes.len(),
-                        proof_da_chunk_count,
-                        proof_da_root = %hex::encode(proof_da_root),
-                        "Proof DA commitment extrinsic attached"
-                    );
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "failed to push proof DA commitment extrinsic: {e:?}"
-                    ));
-                }
-            }
-
-            let manifest: sp_runtime::BoundedVec<
-                pallet_shielded_pool::types::ProofDaManifestEntry,
-                runtime::MaxProofDaManifestEntries,
-            > = build
-                .manifest
-                .try_into()
-                .map_err(|_| "proof DA manifest exceeds MaxProofDaManifestEntries".to_string())?;
-
-            let manifest_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proof_da_manifest {
-                    manifest,
-                }),
-            );
-
-            match block_builder.push(manifest_extrinsic.clone()) {
-                Ok(_) => {
-                    applied.push(manifest_extrinsic.encode());
-                    tracing::info!(
-                        block_number,
-                        entry_count = missing_proof_hashes.len(),
-                        "Proof DA manifest extrinsic attached"
-                    );
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "failed to push proof DA manifest extrinsic: {e:?}"
-                    ));
-                }
-            }
-        }
+        // In self-contained aggregation mode, proof sidecar bytes are proposer-local artifacts.
+        // They are not published as consensus proof-DA commitments.
 
         // Build the block - this returns BuiltBlock with StorageChanges!
         let built_block = match block_builder.build() {
@@ -4212,8 +5492,6 @@ pub fn wire_block_builder_api(
             extrinsics_root,
             failed_count: failed,
             storage_changes: Some(storage_changes),
-            commitment_proof,
-            aggregation_proof: aggregation_outcome.proof_bytes,
         })
     });
 
@@ -4237,6 +5515,30 @@ use sp_consensus::BlockOrigin;
 use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
 
+fn finalize_imported_block(
+    client: &Arc<HegemonFullClient>,
+    block_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
+    block_number: u64,
+    source: &'static str,
+) {
+    if let Err(err) = client.finalize_block(block_hash, None, true) {
+        tracing::warn!(
+            block_number,
+            block_hash = %hex::encode(block_hash.as_bytes()),
+            source,
+            error = ?err,
+            "Failed to finalize imported block"
+        );
+    } else {
+        tracing::debug!(
+            block_number,
+            block_hash = %hex::encode(block_hash.as_bytes()),
+            source,
+            "Finalized imported block"
+        );
+    }
+}
+
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
 /// This sets the `import_fn` callback on the chain state provider to use
@@ -4258,6 +5560,7 @@ use sp_runtime::DigestItem;
 /// * `client` - The full Substrate client for header construction
 /// * `da_chunk_store` - Persistent DA chunk store (with in-memory cache) for serving proofs
 /// * `pending_ciphertext_store` - Pending sidecar ciphertext pool for block assembly
+/// * `pending_proof_store` - Pending sidecar transaction proof pool
 /// * `commitment_block_proof_store` - In-memory store for commitment block proofs
 /// * `da_params` - DA parameters for encoding chunk data
 ///
@@ -4359,48 +5662,12 @@ fn wire_pow_block_import(
             )
         };
 
-        let missing_proof_hashes = missing_proof_binding_hashes(&encoded_extrinsics);
-        let mut proof_da_build: Option<DaEncoding> = None;
-        if !missing_proof_hashes.is_empty() {
-            let payload = extract_proof_da_commitment_payload(&encoded_extrinsics)?
-                .ok_or_else(|| "missing submit_proof_da_commitment extrinsic".to_string())?;
-            let manifest_payload = extract_proof_da_manifest_payload(&encoded_extrinsics)?
-                .ok_or_else(|| "missing submit_proof_da_manifest extrinsic".to_string())?;
-            let pending_proofs_guard = pending_proof_store.lock();
-            let build = build_proof_da_blob_from_extrinsics(
-                &encoded_extrinsics,
-                Some(&*pending_proofs_guard),
-            )
-            .map_err(|err| format!("failed to build proof DA blob for mined block: {err}"))?;
-
-            let built_binding_hashes: Vec<[u8; 64]> = build
-                .manifest
-                .iter()
-                .map(|entry| entry.binding_hash.data)
-                .collect();
-            if built_binding_hashes != missing_proof_hashes {
-                return Err("proof DA blob missing expected binding hashes".to_string());
-            }
-            if manifest_payload.manifest != build.manifest {
-                return Err("proof DA manifest mismatch for mined block".to_string());
-            }
-
-            let encoding = state_da::encode_da_blob(&build.blob, da_params)
-                .map_err(|err| format!("proof DA encoding failed: {err}"))?;
-            if encoding.root() != payload.da_root {
-                return Err("proof DA root mismatch for mined block".to_string());
-            }
-            if encoding.chunks().len() as u32 != payload.da_chunk_count {
-                return Err("proof DA chunk_count mismatch for mined block".to_string());
-            }
-            proof_da_build = Some(encoding);
-        }
-
+        let mut commitment_block_proof: Option<CommitmentBlockProof> = None;
         if proof_verification_enabled {
             let da_policy = fetch_da_policy(block_import.as_ref(), template.parent_hash);
             let resolved_ciphertexts = da_build.as_ref().map(|build| build.transactions.as_slice());
-            let pending_proofs_guard = pending_proof_store.lock();
-            verify_proof_carrying_block(
+            let pending_proofs_snapshot = { pending_proof_store.lock().clone() };
+            commitment_block_proof = verify_proof_carrying_block(
                 &parallel_verifier,
                 block_import.as_ref(),
                 template.parent_hash,
@@ -4409,7 +5676,7 @@ fn wire_pow_block_import(
                 da_params,
                 da_policy,
                 resolved_ciphertexts,
-                Some(&*pending_proofs_guard),
+                Some(&pending_proofs_snapshot),
             )
             .map_err(|err| format!("mined block proof verification failed: {err}"))?;
         }
@@ -4461,23 +5728,12 @@ fn wire_pow_block_import(
 
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
-                if let Some(build) = da_build.take() {
+                finalize_imported_block(&block_import, block_hash, template.number, "local_mining");
+                let mut store = da_chunk_store.lock();
+                let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
-                    let mut ciphertexts = flatten_ciphertexts(&build.transactions);
-                    let coinbase_ciphertexts = block
-                        .extrinsics()
-                        .iter()
-                        .filter_map(|extrinsic| match &extrinsic.function {
-                            runtime::RuntimeCall::ShieldedPool(
-                                ShieldedPoolCall::mint_coinbase { coinbase_data },
-                            ) => Some(encrypted_note_bytes(&coinbase_data.encrypted_note)),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    ciphertexts.extend(coinbase_ciphertexts);
-                    let ciphertext_count = ciphertexts.len();
-                    let mut store = da_chunk_store.lock();
+                    let ciphertexts = flatten_ciphertexts(&build.transactions);
                     if let Err(err) = store.insert(
                         DaRootKind::Ciphertexts,
                         template.number,
@@ -4498,57 +5754,51 @@ fn wire_pow_block_import(
                             "DA encoding stored for imported block"
                         );
                     }
-                    if let Err(err) =
-                        store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
-                    {
-                        tracing::warn!(
-                            block_number = template.number,
-                            error = %err,
-                            "Failed to persist ciphertexts for imported block"
-                        );
-                    } else if ciphertext_count > 0 {
-                        tracing::info!(
-                            block_number = template.number,
-                            ciphertext_count,
-                            "Ciphertexts stored for imported block"
-                        );
-                    }
-                    pending_ciphertext_store
-                        .lock()
-                        .remove_many(&build.used_ciphertext_hashes);
-                }
-                if let Some(encoding) = proof_da_build.take() {
-                    let proof_da_root = encoding.root();
-                    let proof_da_chunks = encoding.chunks().len();
-                    let mut store = da_chunk_store.lock();
-                    if let Err(err) = store.insert(
-                        DaRootKind::Proofs,
-                        template.number,
-                        block_hash_bytes,
-                        encoding,
-                    ) {
-                        tracing::warn!(
-                            block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            error = %err,
-                            "Failed to persist proof DA encoding for imported block"
-                        );
+                    if let Some(mut pending_ciphertexts) = pending_ciphertext_store.try_lock() {
+                        pending_ciphertexts.remove_many(&build.used_ciphertext_hashes);
                     } else {
-                        tracing::info!(
+                        tracing::warn!(
                             block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            da_chunks = proof_da_chunks,
-                            "Proof DA encoding stored for imported block"
+                            pending_hashes = build.used_ciphertext_hashes.len(),
+                            "Pending ciphertext store busy after import; deferring cleanup"
                         );
                     }
+                    ciphertexts
+                } else {
+                    transfer_ciphertexts_from_extrinsics(block.extrinsics())
+                };
+                ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(block.extrinsics()));
+                let ciphertext_count = ciphertexts.len();
+                if let Err(err) =
+                    store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
+                {
+                    tracing::warn!(
+                        block_number = template.number,
+                        error = %err,
+                        "Failed to persist ciphertexts for imported block"
+                    );
+                } else if ciphertext_count > 0 {
+                    tracing::info!(
+                        block_number = template.number,
+                        ciphertext_count,
+                        "Ciphertexts stored for imported block"
+                    );
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
                     if !binding_hashes.is_empty() {
-                        pending_proof_store.lock().remove_many(&binding_hashes);
+                        if let Some(mut pending_proofs) = pending_proof_store.try_lock() {
+                            pending_proofs.remove_many(&binding_hashes);
+                        } else {
+                            tracing::warn!(
+                                block_number = template.number,
+                                pending_bindings = binding_hashes.len(),
+                                "Pending proof store busy after import; deferring cleanup"
+                            );
+                        }
                     }
                 }
-                if let Some(proof) = template.commitment_proof.clone() {
+                if let Some(proof) = commitment_block_proof.clone() {
                     let proof_size = proof.proof_bytes.len();
                     let proof_hash = proof.proof_hash;
                     commitment_block_proof_store
@@ -4570,23 +5820,17 @@ fn wire_pow_block_import(
                 Ok(block_hash)
             }
             Ok(ImportResult::AlreadyInChain) => {
-                if let Some(build) = da_build.take() {
+                finalize_imported_block(
+                    &block_import,
+                    block_hash,
+                    template.number,
+                    "local_already_in_chain",
+                );
+                let mut store = da_chunk_store.lock();
+                let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
-                    let mut ciphertexts = flatten_ciphertexts(&build.transactions);
-                    let coinbase_ciphertexts = block
-                        .extrinsics()
-                        .iter()
-                        .filter_map(|extrinsic| match &extrinsic.function {
-                            runtime::RuntimeCall::ShieldedPool(
-                                ShieldedPoolCall::mint_coinbase { coinbase_data },
-                            ) => Some(encrypted_note_bytes(&coinbase_data.encrypted_note)),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    ciphertexts.extend(coinbase_ciphertexts);
-                    let ciphertext_count = ciphertexts.len();
-                    let mut store = da_chunk_store.lock();
+                    let ciphertexts = flatten_ciphertexts(&build.transactions);
                     if let Err(err) = store.insert(
                         DaRootKind::Ciphertexts,
                         template.number,
@@ -4607,57 +5851,51 @@ fn wire_pow_block_import(
                             "DA encoding stored for known block"
                         );
                     }
-                    if let Err(err) =
-                        store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
-                    {
-                        tracing::warn!(
-                            block_number = template.number,
-                            error = %err,
-                            "Failed to persist ciphertexts for known block"
-                        );
-                    } else if ciphertext_count > 0 {
-                        tracing::info!(
-                            block_number = template.number,
-                            ciphertext_count,
-                            "Ciphertexts stored for known block"
-                        );
-                    }
-                    pending_ciphertext_store
-                        .lock()
-                        .remove_many(&build.used_ciphertext_hashes);
-                }
-                if let Some(encoding) = proof_da_build.take() {
-                    let proof_da_root = encoding.root();
-                    let proof_da_chunks = encoding.chunks().len();
-                    let mut store = da_chunk_store.lock();
-                    if let Err(err) = store.insert(
-                        DaRootKind::Proofs,
-                        template.number,
-                        block_hash_bytes,
-                        encoding,
-                    ) {
-                        tracing::warn!(
-                            block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            error = %err,
-                            "Failed to persist proof DA encoding for known block"
-                        );
+                    if let Some(mut pending_ciphertexts) = pending_ciphertext_store.try_lock() {
+                        pending_ciphertexts.remove_many(&build.used_ciphertext_hashes);
                     } else {
-                        tracing::info!(
+                        tracing::warn!(
                             block_number = template.number,
-                            da_root = %hex::encode(proof_da_root),
-                            da_chunks = proof_da_chunks,
-                            "Proof DA encoding stored for known block"
+                            pending_hashes = build.used_ciphertext_hashes.len(),
+                            "Pending ciphertext store busy for known block; deferring cleanup"
                         );
                     }
+                    ciphertexts
+                } else {
+                    transfer_ciphertexts_from_extrinsics(block.extrinsics())
+                };
+                ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(block.extrinsics()));
+                let ciphertext_count = ciphertexts.len();
+                if let Err(err) =
+                    store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
+                {
+                    tracing::warn!(
+                        block_number = template.number,
+                        error = %err,
+                        "Failed to persist ciphertexts for known block"
+                    );
+                } else if ciphertext_count > 0 {
+                    tracing::info!(
+                        block_number = template.number,
+                        ciphertext_count,
+                        "Ciphertexts stored for known block"
+                    );
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
                     if !binding_hashes.is_empty() {
-                        pending_proof_store.lock().remove_many(&binding_hashes);
+                        if let Some(mut pending_proofs) = pending_proof_store.try_lock() {
+                            pending_proofs.remove_many(&binding_hashes);
+                        } else {
+                            tracing::warn!(
+                                block_number = template.number,
+                                pending_bindings = binding_hashes.len(),
+                                "Pending proof store busy for known block; deferring cleanup"
+                            );
+                        }
                     }
                 }
-                if let Some(proof) = template.commitment_proof.clone() {
+                if let Some(proof) = commitment_block_proof.clone() {
                     let proof_size = proof.proof_bytes.len();
                     let proof_hash = proof.proof_hash;
                     commitment_block_proof_store
@@ -4727,12 +5965,33 @@ pub struct PeerConnectionSnapshot {
     pub best_hash: [u8; 32],
     /// Last time we heard from this peer.
     pub last_seen: std::time::Instant,
+    /// Total bytes sent on this connection snapshot.
+    pub bytes_sent: u64,
+    /// Total bytes received on this connection snapshot.
+    pub bytes_received: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct PeerGraphReport {
     pub reported_at: std::time::Instant,
     pub peers: Vec<crate::substrate::discovery::PeerGraphEntry>,
+}
+
+async fn refresh_peer_connection_counters(
+    pq_backend: &Arc<PqNetworkBackend>,
+    peer_details: &Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
+) {
+    let infos = pq_backend.peer_info().await;
+    if infos.is_empty() {
+        return;
+    }
+    let mut details = peer_details.write();
+    for info in infos {
+        if let Some(entry) = details.get_mut(&info.peer_id) {
+            entry.bytes_sent = info.bytes_sent;
+            entry.bytes_received = info.bytes_received;
+        }
+    }
 }
 
 impl Default for PqServiceConfig {
@@ -4769,86 +6028,95 @@ impl PqServiceConfig {
         const DEFAULT_P2P_PORT: u16 = 30333;
         let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
             .map(|s| {
-                s.split(',')
-                    .filter_map(|addr| {
-                        let addr = addr.trim();
-                        if addr.is_empty() {
-                            return None;
-                        }
-                        // First try direct parse (for IP:port)
-                        if let Ok(sock_addr) = addr.parse() {
-                            return Some(sock_addr);
-                        }
-                        if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
-                            return Some(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
-                        }
-                        // If that fails, try DNS resolution (for hostname[:port])
-                        let resolve_host = |target: &str| -> Result<
-                            Option<std::net::SocketAddr>,
-                            std::io::Error,
-                        > {
+                let mut nodes = Vec::new();
+                for addr in s.split(',') {
+                    let addr = addr.trim();
+                    if addr.is_empty() {
+                        continue;
+                    }
+                    // First try direct parse (for IP:port)
+                    if let Ok(sock_addr) = addr.parse() {
+                        nodes.push(sock_addr);
+                        continue;
+                    }
+                    if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
+                        nodes.push(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
+                        continue;
+                    }
+                    // If that fails, try DNS resolution (for hostname[:port]). Keep all
+                    // resolved addresses so we can fail over between IPv6/IPv4 routes.
+                    let resolve_host =
+                        |target: &str| -> Result<Vec<std::net::SocketAddr>, std::io::Error> {
                             std::net::ToSocketAddrs::to_socket_addrs(target)
-                                .map(|mut addrs| addrs.next())
+                                .map(|addrs| addrs.collect())
                         };
 
-                        match resolve_host(addr) {
-                            Ok(Some(resolved)) => {
-                                tracing::info!(
-                                    addr = %addr,
-                                    resolved = %resolved,
-                                    "Resolved seed hostname"
-                                );
-                                Some(resolved)
-                            }
-                            Ok(None) => {
-                                tracing::warn!(
-                                    addr = %addr,
-                                    "DNS resolved but no addresses returned"
-                                );
-                                None
-                            }
-                            Err(err) => {
-                                if !addr.contains(':') {
-                                    let with_port = format!("{addr}:{DEFAULT_P2P_PORT}");
-                                    return match resolve_host(&with_port) {
-                                        Ok(Some(resolved)) => {
-                                            tracing::info!(
-                                                addr = %addr,
-                                                resolved = %resolved,
-                                                default_port = DEFAULT_P2P_PORT,
-                                                "Resolved seed hostname with default port"
-                                            );
-                                            Some(resolved)
-                                        }
-                                        Ok(None) => {
-                                            tracing::warn!(
-                                                addr = %addr,
-                                                default_port = DEFAULT_P2P_PORT,
-                                                "DNS resolved but no addresses returned"
-                                            );
-                                            None
-                                        }
-                                        Err(err) => {
-                                            tracing::warn!(
-                                                addr = %addr,
-                                                default_port = DEFAULT_P2P_PORT,
-                                                error = %err,
-                                                "Failed to resolve seed address"
-                                            );
-                                            None
-                                        }
-                                    };
+                    let mut resolved = match resolve_host(addr) {
+                        Ok(resolved) if !resolved.is_empty() => resolved,
+                        Ok(_) => {
+                            tracing::warn!(
+                                addr = %addr,
+                                "DNS resolved but no addresses returned"
+                            );
+                            Vec::new()
+                        }
+                        Err(err) => {
+                            if !addr.contains(':') {
+                                let with_port = format!("{addr}:{DEFAULT_P2P_PORT}");
+                                match resolve_host(&with_port) {
+                                    Ok(resolved) if !resolved.is_empty() => {
+                                        tracing::info!(
+                                            addr = %addr,
+                                            resolved_count = resolved.len(),
+                                            default_port = DEFAULT_P2P_PORT,
+                                            "Resolved seed hostname with default port"
+                                        );
+                                        resolved
+                                    }
+                                    Ok(_) => {
+                                        tracing::warn!(
+                                            addr = %addr,
+                                            default_port = DEFAULT_P2P_PORT,
+                                            "DNS resolved but no addresses returned"
+                                        );
+                                        Vec::new()
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            addr = %addr,
+                                            default_port = DEFAULT_P2P_PORT,
+                                            error = %err,
+                                            "Failed to resolve seed address"
+                                        );
+                                        Vec::new()
+                                    }
                                 }
+                            } else {
                                 tracing::warn!(
                                     addr = %addr,
                                     error = %err,
                                     "Failed to resolve seed address"
                                 );
-                                None
+                                Vec::new()
                             }
                         }
-                    })
-                    .collect()
+                    };
+
+                    if resolved.is_empty() {
+                        continue;
+                    }
+                    // Prefer IPv4 routes first for environments where IPv6 egress is absent.
+                    resolved.sort_by_key(|socket| !socket.ip().is_ipv4());
+                    tracing::info!(
+                        addr = %addr,
+                        resolved = ?resolved,
+                        "Resolved seed hostname"
+                    );
+                    nodes.extend(resolved);
+                }
+                nodes.sort();
+                nodes.dedup();
+                nodes
             })
             .unwrap_or_default();
 
@@ -5573,6 +6841,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         "Hegemon node started with FULL SUBSTRATE CLIENT"
     );
 
+    prewarm_batch_verifier_cache_on_startup();
+
     // Log PQ network configuration
     if let Some(ref keypair) = network_keypair {
         tracing::info!(
@@ -5592,6 +6862,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
     // Auto-start mining if HEGEMON_MINE=1 is set
     let mined_block_store = Arc::new(parking_lot::Mutex::new(Vec::<MinedBlockRecord>::new()));
+    let mut prover_coordinator_for_rpc: Option<Arc<ProverCoordinator>> = None;
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         pow_handle.start_mining();
@@ -5782,27 +7053,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 if let Err(err) = peer_store.load() {
                     tracing::warn!(error = %err, "Failed to load PQ peer discovery store");
                 }
-                // Opportunistically dial a small number of cached peers on startup. This helps
-                // nodes recover connectivity even if a seed is temporarily unreachable.
-                use crate::substrate::discovery::is_dialable_addr;
-                let cached_dials: Vec<_> = peer_store
-                    .addresses()
-                    .into_iter()
-                    .filter(|addr| is_dialable_addr(addr))
-                    .take(8)
-                    .collect();
-                if !cached_dials.is_empty() {
-                    let pq_backend_for_cached = Arc::clone(&pq_backend);
-                    task_manager.spawn_handle().spawn(
-                        "pq-discovery-cached-dials",
-                        Some("network"),
-                        async move {
-                            for addr in cached_dials {
-                                let _ = pq_backend_for_cached.connect(addr).await;
-                            }
-                        },
-                    );
-                }
+                let strict_compatibility = true;
+                tracing::info!(
+                    "Strict compatibility enabled; skipping cached discovery dials at startup"
+                );
                 let discovery_listen_port = pq_service_config.listen_addr.port();
                 let discovery_max_peers = pq_service_config.max_peers;
 
@@ -5854,6 +7108,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                            is_dialable_addr, DiscoveryMessage, DEFAULT_ADDR_LIMIT,
 	                            DEFAULT_DIAL_BATCH, DEFAULT_PEER_GRAPH_LIMIT, DISCOVERY_PROTOCOL,
 	                        };
+	                        use crate::substrate::sync::PeerCompatibility;
 	                        use rand::seq::SliceRandom;
 	                        use std::collections::HashMap;
 	                        use std::collections::HashSet;
@@ -5903,6 +7158,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                        tracing::info!(
 	                            min_peers = discovery_min_peers,
 	                            tick_secs = discovery_tick_secs,
+	                            strict_compatibility,
 	                            "PQ discovery enabled (address exchange)"
 	                        );
 
@@ -5962,21 +7218,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             best_height: 0,
                                             best_hash: [0u8; 32],
                                             last_seen: Instant::now(),
+                                            bytes_sent: 0,
+                                            bytes_received: 0,
                                         },
                                     );
-                                    let msg = DiscoveryMessage::GetPeerGraph {
-                                        limit: DEFAULT_PEER_GRAPH_LIMIT,
-                                    };
-                                    if let Ok(encoded) = bincode::serialize(&msg) {
-                                        let _ = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                DISCOVERY_PROTOCOL.to_string(),
-                                                encoded,
-                                            )
-                                            .await;
-                                    }
-
                                     // Record dialed addresses so we can share them with others.
                                     if is_outbound && is_dialable_addr(&addr) {
                                         if let Err(err) = peer_store.record_connected(addr) {
@@ -5989,29 +7234,49 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
 
-                                    // Send discovery hello + request addresses.
-                                    let hello = DiscoveryMessage::Hello { listen_port };
-                                    if let Ok(encoded) = bincode::serialize(&hello) {
-                                        let _ = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                DISCOVERY_PROTOCOL.to_string(),
-                                                encoded,
-                                            )
-                                            .await;
-                                    }
+                                    if !strict_compatibility {
+                                        let msg = DiscoveryMessage::GetPeerGraph {
+                                            limit: DEFAULT_PEER_GRAPH_LIMIT,
+                                        };
+                                        if let Ok(encoded) = bincode::serialize(&msg) {
+                                            let _ = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    DISCOVERY_PROTOCOL.to_string(),
+                                                    encoded,
+                                                )
+                                                .await;
+                                        }
 
-                                    let get_addrs = DiscoveryMessage::GetAddrs {
-                                        limit: DEFAULT_ADDR_LIMIT,
-                                    };
-                                    if let Ok(encoded) = bincode::serialize(&get_addrs) {
-                                        let _ = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                DISCOVERY_PROTOCOL.to_string(),
-                                                encoded,
-                                            )
-                                            .await;
+                                        // Send discovery hello + request addresses.
+                                        let hello = DiscoveryMessage::Hello { listen_port };
+                                        if let Ok(encoded) = bincode::serialize(&hello) {
+                                            let _ = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    DISCOVERY_PROTOCOL.to_string(),
+                                                    encoded,
+                                                )
+                                                .await;
+                                        }
+
+                                        let get_addrs = DiscoveryMessage::GetAddrs {
+                                            limit: DEFAULT_ADDR_LIMIT,
+                                        };
+                                        if let Ok(encoded) = bincode::serialize(&get_addrs) {
+                                            let _ = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    DISCOVERY_PROTOCOL.to_string(),
+                                                    encoded,
+                                                )
+                                                .await;
+                                        }
+                                    } else {
+                                        tracing::debug!(
+                                            peer = %hex::encode(peer_id),
+                                            "Strict compatibility enabled; delaying discovery exchange until peer is verified"
+                                        );
                                     }
 
                                     // Send our best block to the new peer so they know our chain tip
@@ -6112,6 +7377,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
 	                                    // Handle discovery protocol messages
 	                                    if protocol == DISCOVERY_PROTOCOL {
+	                                        if strict_compatibility {
+	                                            let compatibility = {
+	                                                let sync = sync_service_clone.lock().await;
+	                                                sync.peer_compatibility(&peer_id)
+	                                            };
+	                                            if !matches!(compatibility, PeerCompatibility::Compatible) {
+	                                                tracing::debug!(
+	                                                    peer = %hex::encode(peer_id),
+	                                                    compatibility = ?compatibility,
+	                                                    "Ignoring discovery message from non-compatible peer"
+	                                                );
+	                                                continue;
+	                                            }
+	                                        }
 	                                        let decoded =
 	                                            bincode::deserialize::<DiscoveryMessage>(&data);
 	                                        match decoded {
@@ -6254,30 +7533,38 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     use crate::substrate::network_bridge::SyncMessage;
                                     // Handle sync protocol messages
                                     if protocol == SYNC_PROTOCOL {
-                                        // Decode using SyncMessage wrapper for unambiguous request/response distinction
+                                        // Decode using wrapped sync messages with explicit request IDs.
                                         if let Ok(msg) = SyncMessage::decode(&mut &data[..]) {
                                             match msg {
-                                                SyncMessage::Request(request) => {
+                                                SyncMessage::RequestV2(envelope) => {
                                                     tracing::info!(
                                                         peer = %hex::encode(peer_id),
-                                                        request = ?request,
-                                                        "Received sync request from peer"
+                                                        request_id = envelope.request_id,
+                                                        request = ?envelope.request,
+                                                        "Received sync request v2 from peer"
                                                     );
                                                     let mut sync = sync_service_clone.lock().await;
-                                                    if let Some(response) = sync.handle_sync_request(peer_id, request) {
-                                                        // Send response back to peer wrapped in SyncMessage
+                                                    if let Some(response) = sync.handle_sync_request(
+                                                        peer_id,
+                                                        Some(envelope.request_id),
+                                                        envelope.request,
+                                                    ) {
                                                         let msg = SyncMessage::Response(response);
                                                         let encoded = msg.encode();
                                                         tracing::info!(
                                                             peer = %hex::encode(peer_id),
+                                                            request_id = envelope.request_id,
                                                             response_len = encoded.len(),
                                                             "Sending sync response to peer"
                                                         );
-                                                        if let Err(e) = pq_handle_for_sync.send_message(
-                                                            peer_id,
-                                                            SYNC_PROTOCOL.to_string(),
-                                                            encoded,
-                                                        ).await {
+                                                        if let Err(e) = pq_handle_for_sync
+                                                            .send_message(
+                                                                peer_id,
+                                                                SYNC_PROTOCOL.to_string(),
+                                                                encoded,
+                                                            )
+                                                            .await
+                                                        {
                                                             tracing::warn!(
                                                                 peer = %hex::encode(peer_id),
                                                                 error = %e,
@@ -6424,15 +7711,49 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                }
 	                                _ => {}
 	                            }
+
+                                refresh_peer_connection_counters(
+                                    &pq_backend,
+                                    &peer_details_for_events,
+                                )
+                                .await;
 	                                }
 	                                _ = discovery_tick.tick() => {
-	                                    let current_peers = pq_backend.peer_count().await;
+                                        refresh_peer_connection_counters(
+                                            &pq_backend,
+                                            &peer_details_for_events,
+                                        )
+                                        .await;
+
+	                                    let current_peers = if strict_compatibility {
+	                                        let sync = sync_service_clone.lock().await;
+	                                        connected_peers
+	                                            .keys()
+	                                            .filter(|peer_id| {
+	                                                matches!(
+	                                                    sync.peer_compatibility(peer_id),
+	                                                    PeerCompatibility::Compatible
+	                                                )
+	                                            })
+	                                            .count()
+	                                    } else {
+	                                        pq_backend.peer_count().await
+	                                    };
 	                                    if current_peers >= discovery_min_peers {
 	                                        continue;
 	                                    }
 
 	                                    // Ask a random connected peer for addresses.
 	                                    let mut peers: Vec<_> = connected_peers.keys().copied().collect();
+	                                    if strict_compatibility {
+	                                        let sync = sync_service_clone.lock().await;
+	                                        peers.retain(|peer_id| {
+	                                            matches!(
+	                                                sync.peer_compatibility(peer_id),
+	                                                PeerCompatibility::Compatible
+	                                            )
+	                                        });
+	                                    }
 	                                    peers.shuffle(&mut rand::thread_rng());
 	                                    if let Some(peer_id) = peers.first().copied() {
 	                                        let get_addrs = DiscoveryMessage::GetAddrs {
@@ -6447,6 +7768,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                                )
 	                                                .await;
 	                                        }
+	                                    }
+
+	                                    if strict_compatibility {
+	                                        continue;
 	                                    }
 
 	                                    // Dial a small batch of recent peers from the store.
@@ -6490,7 +7815,22 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    }
 	                                }
 	                                _ = peer_graph_tick.tick() => {
-	                                    let peers: Vec<_> = connected_peers.keys().copied().collect();
+                                        refresh_peer_connection_counters(
+                                            &pq_backend,
+                                            &peer_details_for_events,
+                                        )
+                                        .await;
+
+	                                    let mut peers: Vec<_> = connected_peers.keys().copied().collect();
+	                                    if strict_compatibility {
+	                                        let sync = sync_service_clone.lock().await;
+	                                        peers.retain(|peer_id| {
+	                                            matches!(
+	                                                sync.peer_compatibility(peer_id),
+	                                                PeerCompatibility::Compatible
+	                                            )
+	                                        });
+	                                    }
 	                                    if peers.is_empty() {
 	                                        continue;
 	                                    }
@@ -6523,7 +7863,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 task_manager
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
-                        use crate::substrate::network_bridge::{SyncMessage, SYNC_PROTOCOL};
+                        use crate::substrate::network_bridge::{
+                            SyncMessage, SyncRequestEnvelope, SYNC_PROTOCOL,
+                        };
 
                         let mut interval =
                             tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -6533,23 +7875,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             interval.tick().await;
 
                             let mut sync = sync_service_for_tick.lock().await;
+                            let disconnect_incompatible = sync.drain_incompatible_peers();
 
                             // Tick the sync state machine
-                            if let Some((peer_id, request)) = sync.tick() {
-                                // Wrap request in SyncMessage for unambiguous encoding
-                                let msg = SyncMessage::Request(request);
-                                let encoded = msg.encode();
-                                if let Err(e) = sync_handle_for_tick
-                                    .send_message(peer_id, SYNC_PROTOCOL.to_string(), encoded)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        peer = %hex::encode(peer_id),
-                                        error = %e,
-                                        "Failed to send sync request"
-                                    );
-                                }
-                            }
+                            let next_request = sync.tick();
 
                             sync_status_for_tick.store(sync.is_syncing(), Ordering::Relaxed);
 
@@ -6561,6 +7890,32 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     peers = sync.peer_count(),
                                     "Sync in progress"
                                 );
+                            }
+                            drop(sync);
+
+                            for peer_id in disconnect_incompatible {
+                                sync_handle_for_tick
+                                    .disconnect(peer_id, "incompatible chain/protocol")
+                                    .await;
+                            }
+
+                            if let Some((peer_id, request_id, request)) = next_request {
+                                // Send request with explicit correlation id.
+                                let msg = SyncMessage::RequestV2(SyncRequestEnvelope {
+                                    request_id,
+                                    request,
+                                });
+                                let encoded = msg.encode();
+                                if let Err(e) = sync_handle_for_tick
+                                    .send_message(peer_id, SYNC_PROTOCOL.to_string(), encoded)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        peer = %hex::encode(peer_id),
+                                        error = %e,
+                                        "Failed to send sync request"
+                                    );
+                                }
                             }
                         }
                     });
@@ -6736,7 +8091,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                             let mut downloaded_blocks = downloaded_blocks;
                             downloaded_blocks.sort_by_key(|block| block.number);
-                            let mut deferred_blocks = Vec::new();
 
                             for downloaded in downloaded_blocks {
                                 // Decode the header
@@ -6772,9 +8126,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             peer = %hex::encode(&downloaded.from_peer),
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
-                                            "Deferring synced block until parent is available"
+                                            "Dropping synced block with unknown parent; sync service will re-request canonical range"
                                         );
-                                        deferred_blocks.push(downloaded);
                                         continue;
                                     }
                                     Err(err) => {
@@ -6783,24 +8136,28 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
                                             error = %err,
-                                            "Failed to query parent header; deferring block"
+                                            "Failed to query parent header; dropping synced block"
                                         );
-                                        deferred_blocks.push(downloaded);
                                         continue;
                                     }
                                 }
 
                                 let requires_sidecar = has_sidecar_transfers(&extrinsics);
+                                let missing_statement_hashes =
+                                    missing_proof_binding_hashes(&extrinsics);
+                                let needs_self_contained_batch =
+                                    requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
-                                let mut da_build = if requires_sidecar {
-                                    let payload = match extract_commitment_proof_payload(&extrinsics) {
-                                        Ok(Some(payload)) => payload,
+                                let mut da_build = if needs_self_contained_batch {
+                                    let maybe_payload = match extract_proven_batch_payload(&extrinsics)
+                                    {
+                                        Ok(Some(payload)) => Some(payload.payload),
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
-                                                "Rejecting synced block (missing commitment proof)"
+                                                "Rejecting synced block (missing proven batch for proofless sidecar transfers)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -6810,64 +8167,72 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
                                                 error = %err,
-                                                "Rejecting synced block (failed to parse commitment proof payload)"
+                                                "Rejecting synced block (failed to parse proven batch payload)"
                                             );
                                             blocks_failed += 1;
                                             continue;
                                         }
                                     };
-                                    match da_policy {
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
-                                            match fetch_da_for_block(
-                                                downloaded.from_peer,
-                                                payload.da_root,
-                                                &extrinsics,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                Ok(build) => Some(build),
-                                                Err(err) => {
+                                    if let Some(payload) = maybe_payload {
+                                        match da_policy {
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
+                                                match fetch_da_for_block(
+                                                    downloaded.from_peer,
+                                                    payload.da_root,
+                                                    &extrinsics,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(build) => Some(build),
+                                                    Err(err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&downloaded.from_peer),
+                                                            block_number,
+                                                            error = %err,
+                                                            "Rejecting synced block (DA fetch failed)"
+                                                        );
+                                                        blocks_failed += 1;
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
+                                                if let Err(err) = sample_da_for_root(
+                                                    downloaded.from_peer,
+                                                    payload.da_root,
+                                                    payload.da_chunk_count,
+                                                    downloaded.hash,
+                                                    da_sampling_secret_for_import,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
                                                     tracing::warn!(
                                                         peer = %hex::encode(&downloaded.from_peer),
                                                         block_number,
                                                         error = %err,
-                                                        "Rejecting synced block (DA fetch failed)"
+                                                        "Rejecting synced block (DA sampling failed)"
                                                     );
                                                     blocks_failed += 1;
                                                     continue;
                                                 }
+                                                None
                                             }
                                         }
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
-                                            if let Err(err) = sample_da_for_root(
-                                                downloaded.from_peer,
-                                                payload.da_root,
-                                                payload.da_chunk_count,
-                                                downloaded.hash,
-                                                da_sampling_secret_for_import,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting synced block (DA sampling failed)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            None
-                                        }
+                                    } else {
+                                        None
                                     }
+                                } else if requires_sidecar {
+                                    // Sidecar extrinsics with inline proofs can be verified from
+                                    // statement hashes without a same-block submit_proven_batch.
+                                    None
                                 } else {
                                     match da_policy {
                                         pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
@@ -6918,13 +8283,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 };
 
-                                let missing_proof_hashes = missing_proof_binding_hashes(&extrinsics);
-                                let mut proof_da_build: Option<DaEncoding> = None;
-                                let mut proof_store: Option<PendingProofStore> = None;
-
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
-                                    if !missing_proof_hashes.is_empty() {
+                                    if !missing_statement_hashes.is_empty() {
                                         let policy = match fetch_proof_availability_policy(
                                             block_import_client.as_ref(),
                                             parent_hash,
@@ -6937,9 +8298,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         block_number,
                                                         parent = %hex::encode(parent_hash.as_bytes()),
                                                         error = %err,
-                                                        "Deferring synced block (parent state not ready for proof availability policy)"
+                                                        "Dropping synced block (parent state not ready for proof availability policy)"
                                                     );
-                                                    deferred_blocks.push(downloaded);
                                                     continue;
                                                 }
                                                 tracing::warn!(
@@ -6955,152 +8315,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                         if !matches!(
                                             policy,
-                                            pallet_shielded_pool::types::ProofAvailabilityPolicy::DaRequired
+                                            pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
                                         ) {
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
                                                 policy = ?policy,
-                                                "Rejecting synced block (missing proof bytes but proofs not allowed in DA)"
+                                                "Rejecting synced block (missing proof bytes but policy is not SelfContained)"
                                             );
                                             blocks_failed += 1;
                                             continue;
                                         }
-
-                                        let payload = match extract_proof_da_commitment_payload(
-                                            &extrinsics,
-                                        ) {
-                                            Ok(Some(payload)) => payload,
-                                            Ok(None) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
-                                                    block_number,
-                                                    "Rejecting synced block (missing submit_proof_da_commitment)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            Err(err) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting synced block (failed to parse submit_proof_da_commitment payload)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                        };
-
-                                        let manifest_payload = match extract_proof_da_manifest_payload(&extrinsics) {
-                                            Ok(Some(payload)) => payload,
-                                            Ok(None) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
-                                                    block_number,
-                                                    "Rejecting synced block (missing submit_proof_da_manifest)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            Err(err) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting synced block (failed to parse submit_proof_da_manifest payload)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                        };
-
-                                        let mut manifest_map: HashMap<
-                                            [u8; 64],
-                                            pallet_shielded_pool::types::ProofDaManifestEntry,
-                                        > = HashMap::new();
-                                        let mut duplicate = None;
-                                        for entry in manifest_payload.manifest {
-                                            let binding_hash = entry.binding_hash.data;
-                                            if manifest_map
-                                                .insert(binding_hash, entry)
-                                                .is_some()
-                                            {
-                                                duplicate = Some(binding_hash);
-                                                break;
-                                            }
-                                        }
-                                        if let Some(binding_hash) = duplicate {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&downloaded.from_peer),
-                                                block_number,
-                                                binding_hash = %hex::encode(binding_hash),
-                                                "Rejecting synced block (duplicate binding hash in proof DA manifest)"
-                                            );
-                                            blocks_failed += 1;
-                                            continue;
-                                        }
-
-                                        let mut store =
-                                            PendingProofStore::new(missing_proof_hashes.len());
-                                        let mut chunk_cache: HashMap<u32, DaChunkProof> =
-                                            HashMap::new();
-                                        let mut missing = None;
-                                        let mut fetch_failed: Option<([u8; 64], String)> = None;
-                                        for binding_hash in &missing_proof_hashes {
-                                            let entry = match manifest_map.get(binding_hash) {
-                                                Some(entry) => entry,
-                                                None => {
-                                                    missing = Some(*binding_hash);
-                                                    break;
-                                                }
-                                            };
-
-                                            match fetch_proof_da_entry_with_cache(
-                                                downloaded.from_peer,
-                                                payload.da_root,
-                                                payload.da_chunk_count,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                                entry,
-                                                &mut chunk_cache,
-                                            )
-                                            .await
-                                            {
-                                                Ok(bytes) => store.insert(*binding_hash, bytes),
-                                                Err(err) => {
-                                                    fetch_failed = Some((*binding_hash, err));
-                                                    break;
-                                                }
-                                            }
-                                        }
-
-                                        if let Some(binding_hash) = missing {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&downloaded.from_peer),
-                                                block_number,
-                                                binding_hash = %hex::encode(binding_hash),
-                                                "Rejecting synced block (proof DA manifest missing binding hash entry)"
-                                            );
-                                            blocks_failed += 1;
-                                            continue;
-                                        }
-
-                                        if let Some((binding_hash, err)) = fetch_failed {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&downloaded.from_peer),
-                                                block_number,
-                                                binding_hash = %hex::encode(binding_hash),
-                                                error = %err,
-                                                "Rejecting synced block (proof DA fetch failed)"
-                                            );
-                                            blocks_failed += 1;
-                                            continue;
-                                        }
-
-                                        proof_store = Some(store);
                                     }
 
                                     let resolved_ciphertexts =
@@ -7114,7 +8339,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
-                                        proof_store.as_ref(),
+                                        None,
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
@@ -7124,9 +8349,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     block_number,
                                                     parent = %hex::encode(parent_hash.as_bytes()),
                                                     error = %err,
-                                                    "Deferring synced block (parent state not ready)"
+                                                    "Dropping synced block (parent state not ready)"
                                                 );
-                                                deferred_blocks.push(downloaded);
                                                 continue;
                                             }
                                             tracing::warn!(
@@ -7181,6 +8405,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 );
 
                                 // Construct BlockImportParams with seal in post_digests
+                                let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkInitialSync, header);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
@@ -7201,16 +8426,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_initial_sync",
+                                        );
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
-                                        if da_build.is_some() || proof_da_build.is_some() {
+                                        {
                                             let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
+                                            let mut ciphertexts = if let Some(build) = da_build.take() {
                                                 let da_root = build.encoding.root();
                                                 let da_chunks = build.encoding.chunks().len();
                                                 let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
                                                 if let Err(err) = store.insert(
                                                     DaRootKind::Ciphertexts,
                                                     block_number as u64,
@@ -7231,48 +8460,30 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         "DA encoding stored for synced block"
                                                     );
                                                 }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for synced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for synced block"
-                                                    );
-                                                }
-                                            }
-
-                                            if let Some(encoding) = proof_da_build.take() {
-                                                let da_root = encoding.root();
-                                                let da_chunks = encoding.chunks().len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Proofs,
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist proof DA encoding for synced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "Proof DA encoding stored for synced block"
-                                                    );
-                                                }
+                                                ciphertexts
+                                            } else {
+                                                transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                            };
+                                            ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                                &extrinsics_for_ciphertexts,
+                                            ));
+                                            let ciphertext_count = ciphertexts.len();
+                                            if let Err(err) = store.append_ciphertexts(
+                                                block_number as u64,
+                                                block_hash,
+                                                &ciphertexts,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    error = %err,
+                                                    "Failed to persist ciphertexts for synced block"
+                                                );
+                                            } else if ciphertext_count > 0 {
+                                                tracing::info!(
+                                                    block_number,
+                                                    ciphertext_count,
+                                                    "Ciphertexts stored for synced block"
+                                                );
                                             }
                                         }
 
@@ -7315,6 +8526,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_initial_sync_already_in_chain",
+                                        );
                                         // Treat AlreadyInChain as progress for the sync cursor, so a node that
                                         // reconnects after mining on a fork can still advance without stalling.
                                         {
@@ -7322,77 +8539,55 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             sync.on_block_imported(block_number as u64, block_hash);
                                         }
 
-                                        if da_build.is_some() || proof_da_build.is_some() {
-                                            let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
-                                                let da_root = build.encoding.root();
-                                                let da_chunks = build.encoding.chunks().len();
-                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Ciphertexts,
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    build.encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist DA encoding for known synced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "DA encoding stored for known synced block"
-                                                    );
-                                                }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for known synced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for known synced block"
-                                                    );
-                                                }
+                                        let mut store = da_chunk_store_for_import.lock();
+                                        let mut ciphertexts = if let Some(build) = da_build.take() {
+                                            let da_root = build.encoding.root();
+                                            let da_chunks = build.encoding.chunks().len();
+                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                            if let Err(err) = store.insert(
+                                                DaRootKind::Ciphertexts,
+                                                block_number as u64,
+                                                block_hash,
+                                                build.encoding,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    error = %err,
+                                                    "Failed to persist DA encoding for known synced block"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    da_chunks,
+                                                    "DA encoding stored for known synced block"
+                                                );
                                             }
-
-                                            if let Some(encoding) = proof_da_build.take() {
-                                                let da_root = encoding.root();
-                                                let da_chunks = encoding.chunks().len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Proofs,
-                                                    block_number as u64,
-                                                    block_hash,
-                                                    encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist proof DA encoding for known synced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "Proof DA encoding stored for known synced block"
-                                                    );
-                                                }
-                                            }
+                                            ciphertexts
+                                        } else {
+                                            transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                        };
+                                        ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                            &extrinsics_for_ciphertexts,
+                                        ));
+                                        let ciphertext_count = ciphertexts.len();
+                                        if let Err(err) = store.append_ciphertexts(
+                                            block_number as u64,
+                                            block_hash,
+                                            &ciphertexts,
+                                        ) {
+                                            tracing::warn!(
+                                                block_number,
+                                                error = %err,
+                                                "Failed to persist ciphertexts for known synced block"
+                                            );
+                                        } else if ciphertext_count > 0 {
+                                            tracing::info!(
+                                                block_number,
+                                                ciphertext_count,
+                                                "Ciphertexts stored for known synced block"
+                                            );
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
@@ -7448,11 +8643,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 }
                             }
 
-                            if !deferred_blocks.is_empty() {
-                                let mut sync = sync_service_for_import.lock().await;
-                                sync.requeue_downloaded(deferred_blocks);
-                            }
-
                             // ============================================================
                             // Part 2: Process block announcements (new blocks from mining)
                             // ============================================================
@@ -7461,10 +8651,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                let mut bridge = block_import_bridge.lock().await;
 	                                bridge.drain_announces()
 	                            };
-	                            let mut deferred_announced_blocks: Vec<
-	                                crate::substrate::sync::DownloadedBlock,
-	                            > = Vec::new();
-
 	                            for (peer_id, announce) in pending_announces {
                                 // Update sync service with block announcement to track peer's best height
                                 // This is critical for triggering historical sync when we're behind
@@ -7484,7 +8670,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    header: announce_header,
 	                                    state: _,
 	                                    number: announce_number,
-	                                    hash: announce_hash,
+	                                    hash: _,
 	                                    body,
 	                                } = announce;
 
@@ -7528,16 +8714,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                            peer = %hex::encode(&peer_id),
 	                                            block_number,
 	                                            parent = %hex::encode(parent_hash.as_bytes()),
-	                                            "Deferring announced block until parent is available"
-	                                        );
-	                                        deferred_announced_blocks.push(
-	                                            crate::substrate::sync::DownloadedBlock {
-	                                                number: block_number,
-	                                                hash: announce_hash,
-	                                                header: announce_header,
-	                                                body,
-	                                                from_peer: peer_id,
-	                                            },
+	                                            "Dropping announced full block with unknown parent; sync service will fetch canonical range"
 	                                        );
 	                                        continue;
 	                                    }
@@ -7547,16 +8724,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                            block_number,
 	                                            parent = %hex::encode(parent_hash.as_bytes()),
 	                                            error = %err,
-	                                            "Failed to query parent header; deferring announced block"
-	                                        );
-	                                        deferred_announced_blocks.push(
-	                                            crate::substrate::sync::DownloadedBlock {
-	                                                number: block_number,
-	                                                hash: announce_hash,
-	                                                header: announce_header,
-	                                                body,
-	                                                from_peer: peer_id,
-	                                            },
+	                                            "Failed to query parent header; dropping announced full block"
 	                                        );
 	                                        continue;
 	                                    }
@@ -7577,16 +8745,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                block_hash_bytes.copy_from_slice(block_hash.as_bytes());
 
                                 let requires_sidecar = has_sidecar_transfers(&extrinsics);
+                                let missing_statement_hashes =
+                                    missing_proof_binding_hashes(&extrinsics);
+                                let needs_self_contained_batch =
+                                    requires_sidecar && !missing_statement_hashes.is_empty();
                                 let da_policy =
                                     fetch_da_policy(block_import_client.as_ref(), parent_hash);
-                                let mut da_build = if requires_sidecar {
-                                    let payload = match extract_commitment_proof_payload(&extrinsics) {
-                                        Ok(Some(payload)) => payload,
+                                let mut da_build = if needs_self_contained_batch {
+                                    let maybe_payload = match extract_proven_batch_payload(&extrinsics)
+                                    {
+                                        Ok(Some(payload)) => Some(payload.payload),
                                         Ok(None) => {
                                             tracing::warn!(
                                                 peer = %hex::encode(&peer_id),
                                                 block_number,
-                                                "Rejecting announced block (missing commitment proof)"
+                                                "Rejecting announced block (missing proven batch for proofless sidecar transfers)"
                                             );
                                             blocks_failed += 1;
                                             continue;
@@ -7596,64 +8769,72 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 peer = %hex::encode(&peer_id),
                                                 block_number,
                                                 error = %err,
-                                                "Rejecting announced block (failed to parse commitment proof payload)"
+                                                "Rejecting announced block (failed to parse proven batch payload)"
                                             );
                                             blocks_failed += 1;
                                             continue;
                                         }
                                     };
-                                    match da_policy {
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
-                                            match fetch_da_for_block(
-                                                peer_id,
-                                                payload.da_root,
-                                                &extrinsics,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                Ok(build) => Some(build),
-                                                Err(err) => {
+                                    if let Some(payload) = maybe_payload {
+                                        match da_policy {
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
+                                                match fetch_da_for_block(
+                                                    peer_id,
+                                                    payload.da_root,
+                                                    &extrinsics,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(build) => Some(build),
+                                                    Err(err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&peer_id),
+                                                            block_number,
+                                                            error = %err,
+                                                            "Rejecting announced block (DA fetch failed)"
+                                                        );
+                                                        blocks_failed += 1;
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                            pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
+                                                if let Err(err) = sample_da_for_root(
+                                                    peer_id,
+                                                    payload.da_root,
+                                                    payload.da_chunk_count,
+                                                    block_hash_bytes,
+                                                    da_sampling_secret_for_import,
+                                                    da_params_for_import,
+                                                    &pq_handle_for_da_import,
+                                                    &da_request_tracker_for_import,
+                                                    da_sample_timeout_for_import,
+                                                )
+                                                .await
+                                                {
                                                     tracing::warn!(
                                                         peer = %hex::encode(&peer_id),
                                                         block_number,
                                                         error = %err,
-                                                        "Rejecting announced block (DA fetch failed)"
+                                                        "Rejecting announced block (DA sampling failed)"
                                                     );
                                                     blocks_failed += 1;
                                                     continue;
                                                 }
+                                                None
                                             }
                                         }
-                                        pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
-                                            if let Err(err) = sample_da_for_root(
-                                                peer_id,
-                                                payload.da_root,
-                                                payload.da_chunk_count,
-                                                block_hash_bytes,
-                                                da_sampling_secret_for_import,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                            )
-                                            .await
-                                            {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&peer_id),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting announced block (DA sampling failed)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            None
-                                        }
+                                    } else {
+                                        None
                                     }
+                                } else if requires_sidecar {
+                                    // Sidecar extrinsics with inline proofs can be verified from
+                                    // statement hashes without a same-block submit_proven_batch.
+                                    None
                                 } else {
                                     match da_policy {
                                         pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch => {
@@ -7704,13 +8885,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 };
 
-                                let missing_proof_hashes = missing_proof_binding_hashes(&extrinsics);
-                                let mut proof_da_build: Option<DaEncoding> = None;
-                                let mut proof_store: Option<PendingProofStore> = None;
-
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
-                                    if !missing_proof_hashes.is_empty() {
+                                    if !missing_statement_hashes.is_empty() {
                                         let policy =
                                             match fetch_proof_availability_policy(
                                                 block_import_client.as_ref(),
@@ -7731,149 +8908,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                         if !matches!(
                                             policy,
-                                            pallet_shielded_pool::types::ProofAvailabilityPolicy::DaRequired
+                                            pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
                                         ) {
                                             tracing::warn!(
                                                 peer = %hex::encode(&peer_id),
                                                 block_number,
                                                 policy = ?policy,
-                                                "Rejecting announced block (missing proof bytes but proofs not allowed in DA)"
+                                                "Rejecting announced block (missing proof bytes but policy is not SelfContained)"
                                             );
                                             blocks_failed += 1;
                                             continue;
                                         }
-
-                                        let payload = match extract_proof_da_commitment_payload(
-                                            &extrinsics,
-                                        ) {
-                                            Ok(Some(payload)) => payload,
-                                            Ok(None) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&peer_id),
-                                                    block_number,
-                                                    "Rejecting announced block (missing submit_proof_da_commitment)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            Err(err) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&peer_id),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting announced block (failed to parse submit_proof_da_commitment payload)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                        };
-
-                                        let manifest_payload = match extract_proof_da_manifest_payload(&extrinsics) {
-                                            Ok(Some(payload)) => payload,
-                                            Ok(None) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&peer_id),
-                                                    block_number,
-                                                    "Rejecting announced block (missing submit_proof_da_manifest)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                            Err(err) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(&peer_id),
-                                                    block_number,
-                                                    error = %err,
-                                                    "Rejecting announced block (failed to parse submit_proof_da_manifest payload)"
-                                                );
-                                                blocks_failed += 1;
-                                                continue;
-                                            }
-                                        };
-
-                                        let mut manifest_map: HashMap<
-                                            [u8; 64],
-                                            pallet_shielded_pool::types::ProofDaManifestEntry,
-                                        > = HashMap::new();
-                                        let mut duplicate = None;
-                                        for entry in manifest_payload.manifest {
-                                            let binding_hash = entry.binding_hash.data;
-                                            if manifest_map.insert(binding_hash, entry).is_some() {
-                                                duplicate = Some(binding_hash);
-                                                break;
-                                            }
-                                        }
-                                        if let Some(binding_hash) = duplicate {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&peer_id),
-                                                block_number,
-                                                binding_hash = %hex::encode(binding_hash),
-                                                "Rejecting announced block (duplicate binding hash in proof DA manifest)"
-                                            );
-                                            blocks_failed += 1;
-                                            continue;
-                                        }
-
-                                        let mut store =
-                                            PendingProofStore::new(missing_proof_hashes.len());
-                                        let mut chunk_cache: HashMap<u32, DaChunkProof> =
-                                            HashMap::new();
-                                        let mut missing = None;
-                                        let mut fetch_failed: Option<([u8; 64], String)> = None;
-                                        for binding_hash in &missing_proof_hashes {
-                                            let entry = match manifest_map.get(binding_hash) {
-                                                Some(entry) => entry,
-                                                None => {
-                                                    missing = Some(*binding_hash);
-                                                    break;
-                                                }
-                                            };
-
-                                            match fetch_proof_da_entry_with_cache(
-                                                peer_id,
-                                                payload.da_root,
-                                                payload.da_chunk_count,
-                                                da_params_for_import,
-                                                &pq_handle_for_da_import,
-                                                &da_request_tracker_for_import,
-                                                da_sample_timeout_for_import,
-                                                entry,
-                                                &mut chunk_cache,
-                                            )
-                                            .await
-                                            {
-                                                Ok(bytes) => store.insert(*binding_hash, bytes),
-                                                Err(err) => {
-                                                    fetch_failed = Some((*binding_hash, err));
-                                                    break;
-                                                }
-                                            }
-                                        }
-
-                                        if let Some(binding_hash) = missing {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&peer_id),
-                                                block_number,
-                                                binding_hash = %hex::encode(binding_hash),
-                                                "Rejecting announced block (proof DA manifest missing binding hash entry)"
-                                            );
-                                            blocks_failed += 1;
-                                            continue;
-                                        }
-
-                                        if let Some((binding_hash, err)) = fetch_failed {
-                                            tracing::warn!(
-                                                peer = %hex::encode(&peer_id),
-                                                block_number,
-                                                binding_hash = %hex::encode(binding_hash),
-                                                error = %err,
-                                                "Rejecting announced block (proof DA fetch failed)"
-                                            );
-                                            blocks_failed += 1;
-                                            continue;
-                                        }
-
-                                        proof_store = Some(store);
                                     }
 
                                     let resolved_ciphertexts =
@@ -7887,7 +8932,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         da_params_for_import,
                                         da_policy,
                                         resolved_ciphertexts,
-                                        proof_store.as_ref(),
+                                        None,
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
@@ -7933,6 +8978,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 };
 
                                 // Construct BlockImportParams with seal in post_digests
+                                let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkBroadcast, header_mut);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
@@ -7951,78 +8997,62 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_broadcast",
+                                        );
                                         blocks_imported += 1;
-                                        if da_build.is_some() || proof_da_build.is_some() {
-                                            let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
-                                                let da_root = build.encoding.root();
-                                                let da_chunks = build.encoding.chunks().len();
-                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Ciphertexts,
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    build.encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist DA encoding for announced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "DA encoding stored for announced block"
-                                                    );
-                                                }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for announced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for announced block"
-                                                    );
-                                                }
+                                        let mut store = da_chunk_store_for_import.lock();
+                                        let mut ciphertexts = if let Some(build) = da_build.take() {
+                                            let da_root = build.encoding.root();
+                                            let da_chunks = build.encoding.chunks().len();
+                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                            if let Err(err) = store.insert(
+                                                DaRootKind::Ciphertexts,
+                                                block_number as u64,
+                                                block_hash_bytes,
+                                                build.encoding,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    error = %err,
+                                                    "Failed to persist DA encoding for announced block"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    da_chunks,
+                                                    "DA encoding stored for announced block"
+                                                );
                                             }
-
-                                            if let Some(encoding) = proof_da_build.take() {
-                                                let da_root = encoding.root();
-                                                let da_chunks = encoding.chunks().len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Proofs,
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist proof DA encoding for announced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "Proof DA encoding stored for announced block"
-                                                    );
-                                                }
-                                            }
+                                            ciphertexts
+                                        } else {
+                                            transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                        };
+                                        ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                            &extrinsics_for_ciphertexts,
+                                        ));
+                                        let ciphertext_count = ciphertexts.len();
+                                        if let Err(err) = store.append_ciphertexts(
+                                            block_number as u64,
+                                            block_hash_bytes,
+                                            &ciphertexts,
+                                        ) {
+                                            tracing::warn!(
+                                                block_number,
+                                                error = %err,
+                                                "Failed to persist ciphertexts for announced block"
+                                            );
+                                        } else if ciphertext_count > 0 {
+                                            tracing::info!(
+                                                block_number,
+                                                ciphertext_count,
+                                                "Ciphertexts stored for announced block"
+                                            );
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
@@ -8048,77 +9078,61 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
-                                        if da_build.is_some() || proof_da_build.is_some() {
-                                            let mut store = da_chunk_store_for_import.lock();
-
-                                            if let Some(build) = da_build.take() {
-                                                let da_root = build.encoding.root();
-                                                let da_chunks = build.encoding.chunks().len();
-                                                let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                                let ciphertext_count = ciphertexts.len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Ciphertexts,
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    build.encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist DA encoding for known announced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "DA encoding stored for known announced block"
-                                                    );
-                                                }
-                                                if let Err(err) = store.append_ciphertexts(
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    &ciphertexts,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        error = %err,
-                                                        "Failed to persist ciphertexts for known announced block"
-                                                    );
-                                                } else if ciphertext_count > 0 {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        ciphertext_count,
-                                                        "Ciphertexts stored for known announced block"
-                                                    );
-                                                }
+                                        finalize_imported_block(
+                                            &block_import_client,
+                                            post_hash,
+                                            block_number as u64,
+                                            "network_broadcast_already_in_chain",
+                                        );
+                                        let mut store = da_chunk_store_for_import.lock();
+                                        let mut ciphertexts = if let Some(build) = da_build.take() {
+                                            let da_root = build.encoding.root();
+                                            let da_chunks = build.encoding.chunks().len();
+                                            let ciphertexts = flatten_ciphertexts(&build.transactions);
+                                            if let Err(err) = store.insert(
+                                                DaRootKind::Ciphertexts,
+                                                block_number as u64,
+                                                block_hash_bytes,
+                                                build.encoding,
+                                            ) {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    error = %err,
+                                                    "Failed to persist DA encoding for known announced block"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    block_number,
+                                                    da_root = %hex::encode(da_root),
+                                                    da_chunks,
+                                                    "DA encoding stored for known announced block"
+                                                );
                                             }
-
-                                            if let Some(encoding) = proof_da_build.take() {
-                                                let da_root = encoding.root();
-                                                let da_chunks = encoding.chunks().len();
-                                                if let Err(err) = store.insert(
-                                                    DaRootKind::Proofs,
-                                                    block_number as u64,
-                                                    block_hash_bytes,
-                                                    encoding,
-                                                ) {
-                                                    tracing::warn!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        error = %err,
-                                                        "Failed to persist proof DA encoding for known announced block"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        block_number,
-                                                        da_root = %hex::encode(da_root),
-                                                        da_chunks,
-                                                        "Proof DA encoding stored for known announced block"
-                                                    );
-                                                }
-                                            }
+                                            ciphertexts
+                                        } else {
+                                            transfer_ciphertexts_from_extrinsics(&extrinsics_for_ciphertexts)
+                                        };
+                                        ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(
+                                            &extrinsics_for_ciphertexts,
+                                        ));
+                                        let ciphertext_count = ciphertexts.len();
+                                        if let Err(err) = store.append_ciphertexts(
+                                            block_number as u64,
+                                            block_hash_bytes,
+                                            &ciphertexts,
+                                        ) {
+                                            tracing::warn!(
+                                                block_number,
+                                                error = %err,
+                                                "Failed to persist ciphertexts for known announced block"
+                                            );
+                                        } else if ciphertext_count > 0 {
+                                            tracing::info!(
+                                                block_number,
+                                                ciphertext_count,
+                                                "Ciphertexts stored for known announced block"
+                                            );
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
@@ -8173,11 +9187,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                 }
-                            }
-
-                            if !deferred_announced_blocks.is_empty() {
-                                let mut sync = sync_service_for_import.lock().await;
-                                sync.requeue_downloaded(deferred_announced_blocks);
                             }
                         }
                     },
@@ -8244,22 +9253,197 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         tracing::info!("difficulty_fn wired to runtime ConsensusApi::difficulty_bits()");
 
         // =======================================================================
-        // Wire pending_txs_fn to transaction pool
+        // Build async proven-batch coordinator
         // =======================================================================
-        // For now, use the pool bridge which collects from network
-        // Full integration would use transaction_pool.ready() directly
-        let pool_for_mining = Arc::clone(&pool_bridge);
         let max_block_txs = production_config.max_block_transactions;
-        chain_state.set_pending_txs_fn(move || pool_for_mining.ready_for_block(max_block_txs));
+        let coordinator_candidate_overscan_factor =
+            env_usize("HEGEMON_BATCH_CANDIDATE_OVERSCAN_FACTOR")
+                .unwrap_or(4)
+                .max(1);
+        let requested_commitment_block_fast = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let commitment_block_fast = if cfg!(feature = "fast-proofs") {
+            requested_commitment_block_fast
+        } else {
+            if requested_commitment_block_fast {
+                tracing::warn!(
+                    "HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
+                );
+            }
+            false
+        };
+
+        let default_batch_target_txs = env_usize("HEGEMON_BATCH_DEFAULT_TARGET_TXS")
+            .unwrap_or(32)
+            .max(1);
+        let coordinator_default_target_txs = max_block_txs.min(default_batch_target_txs).max(1);
+        if std::env::var("HEGEMON_BATCH_TARGET_TXS").is_err()
+            && max_block_txs > coordinator_default_target_txs
+        {
+            tracing::info!(
+                max_block_transactions = max_block_txs,
+                default_batch_target_txs = coordinator_default_target_txs,
+                "No HEGEMON_BATCH_TARGET_TXS override set; capping default proven-batch target to keep preparation latency bounded"
+            );
+        }
+        let coordinator_cfg = ProverCoordinatorConfig::from_env(coordinator_default_target_txs);
+        let best_for_coord = {
+            let client = client.clone();
+            Arc::new(move || {
+                let info = client.chain_info();
+                (info.best_hash, info.best_number)
+            })
+        };
+        let pending_for_coord = {
+            let pool = Arc::clone(&pool_bridge);
+            let tx_pool = transaction_pool.clone();
+            let overscan_factor = coordinator_candidate_overscan_factor;
+            Arc::new(move |target_txs: usize| {
+                use sc_transaction_pool_api::{
+                    InPoolTransaction, TransactionPool as ScTransactionPool,
+                };
+
+                let fetch_limit = target_txs
+                    .saturating_mul(overscan_factor)
+                    .max(target_txs)
+                    .max(1);
+                let mut txs = pool.ready_for_block(fetch_limit);
+
+                // Mining must include locally submitted RPC transactions too; they live in the
+                // substrate transaction pool and may not round-trip through the bridge network.
+                let mut seen = std::collections::HashSet::with_capacity(txs.len());
+                for tx in &txs {
+                    seen.insert(sp_core::hashing::blake2_256(tx));
+                }
+
+                for tx in tx_pool.ready() {
+                    let bytes = InPoolTransaction::data(&*tx).encode();
+                    let digest = sp_core::hashing::blake2_256(&bytes);
+                    if seen.insert(digest) {
+                        txs.push(bytes);
+                        if txs.len() >= fetch_limit {
+                            break;
+                        }
+                    }
+                }
+
+                if txs.len() < fetch_limit {
+                    // Proofless sidecar transfers can sit in the pool's "future" queue until a
+                    // matching proven batch is available. The coordinator must consider those
+                    // candidates, otherwise it can never prepare the proven batch needed to move
+                    // them into ready inclusion.
+                    for tx in tx_pool.futures() {
+                        let bytes = InPoolTransaction::data(&tx).encode();
+                        let digest = sp_core::hashing::blake2_256(&bytes);
+                        if seen.insert(digest) {
+                            txs.push(bytes);
+                            if txs.len() >= fetch_limit {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let ordered = match reorder_shielded_transfers(&txs) {
+                    Ok(ordered) => ordered,
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            candidate_count = txs.len(),
+                            "Falling back to unsorted tx candidate set for prover coordinator"
+                        );
+                        txs
+                    }
+                };
+                let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                if filter_stats.dropped_total() > 0 {
+                    tracing::info!(
+                        target_txs,
+                        fetch_limit,
+                        total_candidates = filter_stats.total,
+                        kept_candidates = filter_stats.kept,
+                        dropped_decode_errors = filter_stats.dropped_decode_errors,
+                        dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                        dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                        "Filtered conflicting shielded transfers from prover candidate set"
+                    );
+                }
+                let mut candidates = filtered;
+                candidates.truncate(target_txs);
+                candidates
+            })
+        };
+        let build_for_coord = {
+            let client = client.clone();
+            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
+            let pending_proofs = Arc::clone(&pending_proof_store);
+            Arc::new(
+                move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
+                    let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                    let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                    if filter_stats.dropped_total() > 0 {
+                        tracing::warn!(
+                            block_number,
+                            total_candidates = filter_stats.total,
+                            kept_candidates = filter_stats.kept,
+                            dropped_decode_errors = filter_stats.dropped_decode_errors,
+                            dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                            dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                            "Filtered conflicting shielded transfers before proven-batch preparation"
+                        );
+                    }
+                    // Clone pending sidecar stores up front so we never hold these locks while
+                    // generating commitment/aggregation proofs (which can take seconds).
+                    let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
+                    let pending_proofs_snapshot = { pending_proofs.lock().clone() };
+                    prepare_block_proof_bundle(
+                        client.as_ref(),
+                        parent_hash,
+                        block_number,
+                        filtered,
+                        da_params,
+                        &pending_ciphertexts_snapshot,
+                        &pending_proofs_snapshot,
+                        commitment_block_fast,
+                    )
+                },
+            )
+        };
+        let prover_coordinator = ProverCoordinator::new(
+            coordinator_cfg,
+            best_for_coord,
+            pending_for_coord,
+            build_for_coord,
+        );
+        prover_coordinator.start();
+        prover_coordinator_for_rpc = Some(Arc::clone(&prover_coordinator));
+
+        // =======================================================================
+        // Wire pending_txs_fn to coordinator-selected transaction set
+        // =======================================================================
+        let coordinator_for_pending = Arc::clone(&prover_coordinator);
+        chain_state.set_pending_txs_fn(move || {
+            coordinator_for_pending.pending_transactions(max_block_txs)
+        });
 
         // Wire post-import callback to clear mined transactions
         let pool_for_import = Arc::clone(&pool_bridge);
+        let coordinator_for_import = Arc::clone(&prover_coordinator);
         chain_state.set_on_import_success_fn(move |included_txs: &[Vec<u8>]| {
             pool_for_import.clear_included(included_txs);
+            coordinator_for_import.clear_on_import_success(included_txs);
         });
 
         tracing::info!(
             max_block_transactions = max_block_txs,
+            prover_candidate_overscan_factor = coordinator_candidate_overscan_factor,
+            prover_workers = coordinator_cfg.workers,
+            prover_batch_target_txs = coordinator_cfg.target_txs,
+            prover_batch_queue_capacity = coordinator_cfg.queue_capacity,
+            prover_liveness_lane = coordinator_cfg.liveness_lane,
+            prover_adaptive_liveness_timeout_ms =
+                coordinator_cfg.adaptive_liveness_timeout.as_millis() as u64,
+            prover_batch_job_timeout_ms = coordinator_cfg.job_timeout.as_millis() as u64,
             "Transaction pool wired to chain state provider"
         );
 
@@ -8269,9 +9453,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         wire_block_builder_api(
             &chain_state,
             client.clone(),
-            da_params,
             Arc::clone(&pending_ciphertext_store),
             Arc::clone(&pending_proof_store),
+            Arc::clone(&prover_coordinator),
+            da_params,
+            commitment_block_fast,
         );
 
         tracing::info!("BlockBuilder API wired for real state execution");
@@ -8407,7 +9593,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         mined_history,
         miner_recipient,
     ));
-
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
@@ -8476,6 +9661,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "block_getCommitmentProof",
                             "da_getChunk",
                             "da_getParams",
+                            "prover_getWorkPackage",
+                            "prover_submitWorkResult",
+                            "prover_getWorkStatus",
+                            "prover_getMarketParams",
                             "archive_listProviders",
                             "archive_getProvider",
                             "archive_providerCount",
@@ -8584,8 +9773,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     // But libp2p uses protobuf encoding for keys in PeerId
                     // Simpler: use identity multihash with raw 32 bytes
                     // 0x00 = identity hash, 0x20 = 32 bytes length
-                    let mut multihash = vec![0x00, 0x24]; // identity + 36 bytes
-                                                          // Add ed25519 public key protobuf prefix (type=1, length=32)
+                    let mut multihash = vec![0x00, 0x24];
+                    // identity + 36 bytes
+                    // Add ed25519 public key protobuf prefix (type=1, length=32)
                     multihash.extend_from_slice(&[0x08, 0x01, 0x12, 0x20]);
                     multihash.extend_from_slice(id);
                     bs58::encode(&multihash).into_string()
@@ -8680,7 +9870,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         };
 
         // Add Hegemon RPC (mining, consensus, telemetry)
-        let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone(), config_snapshot);
+        let hegemon_rpc = HegemonRpc::new(
+            rpc_service.clone(),
+            pow_handle.clone(),
+            config_snapshot,
+            rpc_deny_unsafe,
+        );
         if let Err(e) = module.merge(hegemon_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Hegemon RPC");
         } else {
@@ -8724,6 +9919,19 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::warn!(error = %e, "Failed to merge DA RPC");
         } else {
             tracing::info!("DA RPC wired (da_getChunk, da_getParams)");
+        }
+
+        if let Some(coordinator) = prover_coordinator_for_rpc.as_ref() {
+            let prover_rpc = ProverRpc::new(Arc::clone(coordinator));
+            if let Err(e) = module.merge(prover_rpc.into_rpc()) {
+                tracing::warn!(error = %e, "Failed to merge Prover RPC");
+            } else {
+                tracing::info!(
+                    "Prover RPC wired (prover_getWorkPackage, prover_submitWorkResult, prover_getWorkStatus, prover_getMarketParams)"
+                );
+            }
+        } else {
+            tracing::info!("Prover RPC disabled (mining coordinator not active)");
         }
 
         // Add Archive RPC (provider registry)
@@ -8911,40 +10119,94 @@ impl MiningConfig {
 mod tests {
     use super::*;
 
-    fn unsigned_extrinsic(call: ShieldedPoolCall) -> runtime::UncheckedExtrinsic {
-        runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::ShieldedPool(call))
+    fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
+        let nullifiers =
+            frame_support::BoundedVec::try_from(vec![nullifier]).expect("bounded nullifiers");
+        let commitments = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
+            .expect("bounded commitments");
+        let ciphertext_hashes = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
+            .expect("bounded ciphertext hashes");
+        let ciphertext_sizes =
+            frame_support::BoundedVec::try_from(vec![32u32]).expect("bounded ciphertext sizes");
+
+        runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::ShieldedPool(
+            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
+                proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor: [7u8; 48],
+                binding_hash: pallet_shielded_pool::types::BindingHash {
+                    data: [binding_byte; 64],
+                },
+                stablecoin: None,
+                fee: 0,
+            },
+        ))
+        .encode()
     }
 
-    fn missing_proof_transfer(binding_hash: [u8; 64]) -> runtime::UncheckedExtrinsic {
-        unsigned_extrinsic(ShieldedPoolCall::shielded_transfer_sidecar {
-            proof: pallet_shielded_pool::types::StarkProof { data: Vec::new() },
-            nullifiers: Default::default(),
-            commitments: Default::default(),
-            ciphertext_hashes: Default::default(),
-            ciphertext_sizes: Default::default(),
-            anchor: [0u8; 48],
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: binding_hash },
-            stablecoin: None,
-            fee: 0,
-            value_balance: 0,
-        })
+    #[test]
+    fn filter_conflicting_shielded_transfers_drops_binding_conflicts_and_keeps_nullifier_overlaps()
+    {
+        let keep = test_sidecar_transfer_extrinsic(1, [9u8; 48]);
+        let keep_nullifier_overlap = test_sidecar_transfer_extrinsic(2, [9u8; 48]);
+        let drop_binding = test_sidecar_transfer_extrinsic(1, [8u8; 48]);
+        let malformed = vec![1u8, 2, 3];
+
+        let (filtered, stats) = filter_conflicting_shielded_transfers(&[
+            keep.clone(),
+            keep_nullifier_overlap.clone(),
+            drop_binding,
+            malformed,
+        ]);
+
+        assert_eq!(filtered, vec![keep, keep_nullifier_overlap]);
+        assert_eq!(stats.total, 4);
+        assert_eq!(stats.kept, 2);
+        assert_eq!(stats.dropped_nullifier_conflicts, 0);
+        assert_eq!(stats.dropped_binding_conflicts, 1);
+        assert_eq!(stats.dropped_decode_errors, 1);
+        assert_eq!(stats.dropped_total(), 2);
     }
 
-    fn proof_da_commitment(chunk_count: u32) -> runtime::UncheckedExtrinsic {
-        unsigned_extrinsic(ShieldedPoolCall::submit_proof_da_commitment {
-            da_root: [9u8; 48],
-            chunk_count,
-        })
+    #[test]
+    fn filter_conflicting_shielded_transfers_ignores_zero_nullifier_padding() {
+        let zero = [0u8; 48];
+        let first = test_sidecar_transfer_extrinsic(3, zero);
+        let second = test_sidecar_transfer_extrinsic(4, zero);
+
+        let (filtered, stats) =
+            filter_conflicting_shielded_transfers(&[first.clone(), second.clone()]);
+
+        assert_eq!(filtered, vec![first, second]);
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.kept, 2);
+        assert_eq!(stats.dropped_total(), 0);
     }
 
-    fn proof_da_manifest(
-        entries: Vec<pallet_shielded_pool::types::ProofDaManifestEntry>,
-    ) -> runtime::UncheckedExtrinsic {
-        let manifest: sp_runtime::BoundedVec<
-            pallet_shielded_pool::types::ProofDaManifestEntry,
-            runtime::MaxProofDaManifestEntries,
-        > = sp_runtime::BoundedVec::truncate_from(entries);
-        unsigned_extrinsic(ShieldedPoolCall::submit_proof_da_manifest { manifest })
+    #[test]
+    fn filter_parent_included_shielded_transfers_drops_duplicates() {
+        let first = test_sidecar_transfer_extrinsic(7, [7u8; 48]);
+        let second = test_sidecar_transfer_extrinsic(8, [8u8; 48]);
+
+        let first_decoded =
+            runtime::UncheckedExtrinsic::decode(&mut &first[..]).expect("decode first");
+        let first_key =
+            shielded_transfer_key_from_extrinsic(&first_decoded).expect("first shielded key");
+
+        let mut parent_keys = std::collections::HashSet::new();
+        parent_keys.insert(first_key);
+
+        let (filtered, dropped) = filter_parent_included_shielded_transfers(
+            &[first.clone(), second.clone()],
+            &parent_keys,
+        )
+        .expect("filter succeeds");
+
+        assert_eq!(dropped, 1);
+        assert_eq!(filtered, vec![second]);
     }
 
     #[test]
@@ -9014,185 +10276,18 @@ mod tests {
 
     #[test]
     fn proof_da_blob_len_from_manifest_matches_layout() {
-        let a = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: [1u8; 64] },
-            proof_hash: [0u8; 48],
+        let a = LegacyProofDaManifestEntry {
+            _binding_hash: [1u8; 64],
             proof_len: 10,
             proof_offset: 72,
         };
-        let b = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: [2u8; 64] },
-            proof_hash: [0u8; 48],
+        let b = LegacyProofDaManifestEntry {
+            _binding_hash: [2u8; 64],
             proof_len: 5,
             proof_offset: 150,
         };
         let len = proof_da_blob_len_from_manifest(&[a, b]).expect("len");
         assert_eq!(len, 155);
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_commitment_without_missing_proofs() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let err =
-            validate_proof_da_payloads(&[proof_da_commitment(2)], da_params).expect_err("reject");
-        assert!(err.contains("no missing proof bytes"), "{err}");
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_missing_commitment() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let binding_hash = [7u8; 64];
-        let entry = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: binding_hash },
-            proof_hash: [0u8; 48],
-            proof_len: 10,
-            proof_offset: 72,
-        };
-        let extrinsics = vec![
-            missing_proof_transfer(binding_hash),
-            proof_da_manifest(vec![entry]),
-        ];
-        let err = validate_proof_da_payloads(&extrinsics, da_params).expect_err("reject");
-        assert!(err.contains("missing submit_proof_da_commitment"), "{err}");
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_missing_manifest() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let binding_hash = [7u8; 64];
-        let extrinsics = vec![missing_proof_transfer(binding_hash), proof_da_commitment(2)];
-        let err = validate_proof_da_payloads(&extrinsics, da_params).expect_err("reject");
-        assert!(err.contains("missing submit_proof_da_manifest"), "{err}");
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_chunk_count_mismatch() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let binding_hash = [7u8; 64];
-        let entry = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: binding_hash },
-            proof_hash: [0u8; 48],
-            proof_len: 10,
-            proof_offset: 72,
-        };
-        let extrinsics = vec![
-            missing_proof_transfer(binding_hash),
-            proof_da_commitment(3),
-            proof_da_manifest(vec![entry]),
-        ];
-        let err = validate_proof_da_payloads(&extrinsics, da_params).expect_err("reject");
-        assert!(err.contains("da_chunk_count mismatch"), "{err}");
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_manifest_missing_binding_hash() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let binding_hash = [7u8; 64];
-        let manifest_hash = [8u8; 64];
-        let entry = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash {
-                data: manifest_hash,
-            },
-            proof_hash: [0u8; 48],
-            proof_len: 10,
-            proof_offset: 72,
-        };
-        let extrinsics = vec![
-            missing_proof_transfer(binding_hash),
-            proof_da_commitment(2),
-            proof_da_manifest(vec![entry]),
-        ];
-        let err = validate_proof_da_payloads(&extrinsics, da_params).expect_err("reject");
-        assert!(err.contains("manifest missing binding hash entry"), "{err}");
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_duplicate_manifest_binding_hash() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let binding_hash = [7u8; 64];
-        let entry_a = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: binding_hash },
-            proof_hash: [0u8; 48],
-            proof_len: 10,
-            proof_offset: 72,
-        };
-        let entry_b = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: binding_hash },
-            proof_hash: [0u8; 48],
-            proof_len: 5,
-            proof_offset: 150,
-        };
-        let extrinsics = vec![
-            missing_proof_transfer(binding_hash),
-            proof_da_commitment(2),
-            proof_da_manifest(vec![entry_a, entry_b]),
-        ];
-        let err = validate_proof_da_payloads(&extrinsics, da_params).expect_err("reject");
-        assert!(err.contains("duplicate binding hash"), "{err}");
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_duplicate_commitment_extrinsic() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let binding_hash = [7u8; 64];
-        let entry = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: binding_hash },
-            proof_hash: [0u8; 48],
-            proof_len: 10,
-            proof_offset: 72,
-        };
-        let extrinsics = vec![
-            missing_proof_transfer(binding_hash),
-            proof_da_commitment(2),
-            proof_da_commitment(2),
-            proof_da_manifest(vec![entry]),
-        ];
-        let err = validate_proof_da_payloads(&extrinsics, da_params).expect_err("reject");
-        assert!(err.contains("multiple submit_proof_da_commitment"), "{err}");
-    }
-
-    #[test]
-    fn validate_proof_da_rejects_duplicate_manifest_extrinsic() {
-        let da_params = DaParams {
-            chunk_size: 1024,
-            sample_count: 1,
-        };
-        let binding_hash = [7u8; 64];
-        let entry = pallet_shielded_pool::types::ProofDaManifestEntry {
-            binding_hash: pallet_shielded_pool::types::BindingHash { data: binding_hash },
-            proof_hash: [0u8; 48],
-            proof_len: 10,
-            proof_offset: 72,
-        };
-        let extrinsics = vec![
-            missing_proof_transfer(binding_hash),
-            proof_da_commitment(2),
-            proof_da_manifest(vec![entry.clone()]),
-            proof_da_manifest(vec![entry]),
-        ];
-        let err = validate_proof_da_payloads(&extrinsics, da_params).expect_err("reject");
-        assert!(err.contains("multiple submit_proof_da_manifest"), "{err}");
     }
 }
 
@@ -9244,9 +10339,13 @@ impl FullBlockImportConfig {
             .map(|v| v != "0" && v.to_lowercase() != "false")
             .unwrap_or(true);
 
-        let verify_pow = std::env::var("HEGEMON_VERIFY_POW")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(true);
+        if let Ok(value) = std::env::var("HEGEMON_VERIFY_POW") {
+            if value == "0" || value.eq_ignore_ascii_case("false") {
+                tracing::warn!(
+                    "HEGEMON_VERIFY_POW is ignored; full import tracker always verifies PoW"
+                );
+            }
+        }
 
         let verbose = std::env::var("HEGEMON_IMPORT_VERBOSE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
@@ -9254,7 +10353,7 @@ impl FullBlockImportConfig {
 
         Self {
             enabled,
-            verify_pow,
+            verify_pow: true,
             verbose,
         }
     }

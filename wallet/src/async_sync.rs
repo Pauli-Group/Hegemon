@@ -36,9 +36,11 @@ use futures::StreamExt;
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
+use crate::notes::NoteCiphertext;
 use crate::store::WalletStore;
 use crate::substrate_rpc::SubstrateRpcClient;
 use crate::sync::SyncOutcome;
+use crate::viewing::{FullViewingKey, IncomingViewingKey, RecoveredNote};
 
 /// Async wallet synchronization engine
 ///
@@ -114,6 +116,30 @@ impl AsyncWalletSyncEngine {
                 }
             }
 
+            // Detect deep rewrites when genesis stays the same but historical blocks changed.
+            // Without this check, a wallet can keep stale commitments and build invalid anchors.
+            let stored_height = self.store.last_synced_height()?;
+            if stored_height > 0 {
+                if let Some(stored_hash) = self.store.last_synced_block_hash()? {
+                    if let Some(observed_hash) = self.client.block_hash(stored_height).await? {
+                        if observed_hash != stored_hash {
+                            if attempt == 0 {
+                                eprintln!(
+                                    "Detected chain rewrite at height {} (wallet={}, node={}); resetting wallet sync state...",
+                                    stored_height,
+                                    hex::encode(stored_hash),
+                                    hex::encode(observed_hash),
+                                );
+                                self.store.reset_sync_state()?;
+                                self.store.set_genesis_hash(metadata.genesis_hash)?;
+                                continue;
+                            }
+                            return Err(WalletError::InvalidState("chain rewrite detected"));
+                        }
+                    }
+                }
+            }
+
             // Get current note status from node
             let note_status = self.client.note_status().await?;
             self.store.set_tree_depth(note_status.depth as u32)?;
@@ -150,6 +176,35 @@ impl AsyncWalletSyncEngine {
                 self.store.append_commitments(&pairs)?;
                 commitment_cursor = self.store.next_commitment_index()?;
                 outcome.commitments += entries.len();
+            }
+
+            if commitment_cursor != note_status.leaf_count {
+                if attempt == 0 {
+                    eprintln!(
+                        "Commitment sync incomplete (wallet_cursor={}, chain_leaf_count={}); resetting wallet sync state...",
+                        commitment_cursor, note_status.leaf_count
+                    );
+                    self.store.reset_sync_state()?;
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    continue;
+                }
+                return Err(WalletError::InvalidState("commitment sync incomplete"));
+            }
+
+            let wallet_root = self.store.commitment_tree()?.root();
+            let chain_root = parse_hash_48(&note_status.root)?;
+            if wallet_root != chain_root {
+                if attempt == 0 {
+                    eprintln!(
+                        "Wallet commitment root mismatch (wallet={}, chain={}); resetting wallet sync state...",
+                        hex::encode(wallet_root),
+                        hex::encode(chain_root),
+                    );
+                    self.store.reset_sync_state()?;
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    continue;
+                }
+                return Err(WalletError::InvalidState("wallet commitment root mismatch"));
             }
 
             if let Err(err) = self.store.validate_notes_against_commitments() {
@@ -239,6 +294,7 @@ impl AsyncWalletSyncEngine {
                 let mut expected = start_index;
                 let mut recovered = Vec::with_capacity(entries.len());
                 let ivk = self.store.incoming_key()?;
+                let full_viewing_key = self.store.full_viewing_key()?;
 
                 for entry in entries {
                     if entry.index != expected {
@@ -273,23 +329,29 @@ impl AsyncWalletSyncEngine {
                         );
                     }
 
-                    recovered.push(match ivk.decrypt_note(&entry.ciphertext) {
-                        Ok(note) => Some(note),
-                        Err(WalletError::NoteMismatch(reason)) => {
-                            // Note not for this wallet, skip
-                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                                eprintln!("  -> NoteMismatch: {}", reason);
+                    recovered.push(
+                        match decrypt_recovered_note(
+                            full_viewing_key.as_ref(),
+                            &ivk,
+                            &entry.ciphertext,
+                        ) {
+                            Ok(note) => Some(note),
+                            Err(WalletError::NoteMismatch(reason)) => {
+                                // Note not for this wallet, skip
+                                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                                    eprintln!("  -> NoteMismatch: {}", reason);
+                                }
+                                None
                             }
-                            None
-                        }
-                        Err(WalletError::DecryptionFailure) => {
-                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                                eprintln!("  -> DecryptionFailure (not for this wallet)");
+                            Err(WalletError::DecryptionFailure) => {
+                                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                                    eprintln!("  -> DecryptionFailure (not for this wallet)");
+                                }
+                                None
                             }
-                            None
-                        }
-                        Err(err) => return Err(err),
-                    });
+                            Err(err) => return Err(err),
+                        },
+                    );
 
                     expected = expected
                         .checked_add(1)
@@ -308,6 +370,8 @@ impl AsyncWalletSyncEngine {
             // Update pending transactions
             let latest = self.client.latest_block().await?;
             self.store.refresh_pending(latest.height, &nullifier_set)?;
+            let latest_hash = parse_hash_32(&latest.hash)?;
+            self.store.set_last_synced_block_hash(latest_hash)?;
             self.store.set_last_synced_height(latest.height)?;
 
             return Ok(outcome);
@@ -388,6 +452,46 @@ impl AsyncWalletSyncEngine {
     }
 }
 
+fn parse_hash_32(input: &str) -> Result<[u8; 32], WalletError> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex::decode(trimmed)
+        .map_err(|e| WalletError::Serialization(format!("Invalid hash hex: {e}")))?;
+    if bytes.len() != 32 {
+        return Err(WalletError::Serialization(format!(
+            "invalid hash length: expected 32 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn parse_hash_48(input: &str) -> Result<[u8; 48], WalletError> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex::decode(trimmed)
+        .map_err(|e| WalletError::Serialization(format!("Invalid 48-byte hex: {e}")))?;
+    if bytes.len() != 48 {
+        return Err(WalletError::Serialization(format!(
+            "invalid 48-byte hash length: expected 48 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn decrypt_recovered_note(
+    full_viewing_key: Option<&FullViewingKey>,
+    incoming_key: &IncomingViewingKey,
+    ciphertext: &NoteCiphertext,
+) -> Result<RecoveredNote, WalletError> {
+    full_viewing_key
+        .map(|fvk| fvk.decrypt_note(ciphertext))
+        .unwrap_or_else(|| incoming_key.decrypt_note(ciphertext))
+}
+
 /// Sync engine with shared state for concurrent access
 ///
 /// Wraps AsyncWalletSyncEngine with RwLock protection for use
@@ -414,6 +518,12 @@ impl SharedSyncEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::viewing::{FullViewingKey, IncomingViewingKey};
+    use crate::{
+        keys::RootSecret,
+        notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
+    };
+    use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn test_sync_outcome_default() {
@@ -422,5 +532,28 @@ mod tests {
         assert_eq!(outcome.ciphertexts, 0);
         assert_eq!(outcome.recovered, 0);
         assert_eq!(outcome.spent, 0);
+    }
+
+    #[test]
+    fn sync_prefers_full_viewing_key_for_commitment_consistency() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let material = keys.address(0).expect("derive address");
+        let address = material.shielded_address();
+
+        let note = NotePlaintext::random(123, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).expect("encrypt note");
+
+        let ivk = IncomingViewingKey::from_keys(&keys);
+        let fvk = FullViewingKey::from_keys(&keys);
+
+        let recovered_full =
+            decrypt_recovered_note(Some(&fvk), &ivk, &ciphertext).expect("full key decrypt");
+        assert_eq!(recovered_full.note_data.pk_auth, keys.spend.auth_key());
+
+        let recovered_incoming =
+            decrypt_recovered_note(None, &ivk, &ciphertext).expect("incoming key decrypt");
+        assert_eq!(recovered_incoming.note_data.pk_auth, [0u8; 32]);
     }
 }

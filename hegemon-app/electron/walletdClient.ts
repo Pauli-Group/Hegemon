@@ -31,111 +31,94 @@ type WalletdResponse = {
 
 type WalletdMode = 'open' | 'create';
 
+const WALLETD_ENV_DEFAULTS: Record<string, string> = {
+  // Default to inline ciphertext/proof transport for cross-miner portability.
+  // Operators can opt into sidecar transport explicitly.
+  HEGEMON_WALLET_DA_SIDECAR: '0',
+  HEGEMON_WALLET_PROOF_SIDECAR: '0',
+  HEGEMON_WALLET_TRY_SIGNED_SUBMIT: '0'
+};
+
+function walletdSpawnEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, value] of Object.entries(WALLETD_ENV_DEFAULTS)) {
+    const current = env[key];
+    if (current === undefined || current.trim() === '') {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 export class WalletdClient {
   private process: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<number, PendingRequest>();
   private requestId = 0;
   private storePath: string | null = null;
-  private passphrase: string | null = null;
   private mode: WalletdMode | null = null;
   private stderrBuffer: string[] = [];
 
-  async status(storePath: string, passphrase: string): Promise<WalletStatus> {
-    return this.request('status.get', {}, storePath, passphrase, 'open');
+  async status(): Promise<WalletStatus> {
+    return this.request('status.get', {});
   }
 
   async init(storePath: string, passphrase: string): Promise<WalletStatus> {
-    return this.request('status.get', {}, storePath, passphrase, 'create');
+    return this.request('status.get', {}, { storePath, passphrase, mode: 'create' });
   }
 
   async restore(storePath: string, passphrase: string): Promise<WalletStatus> {
-    return this.request('status.get', {}, storePath, passphrase, 'open');
+    return this.request('status.get', {}, { storePath, passphrase, mode: 'open' });
   }
 
-  async sync(
-    storePath: string,
-    passphrase: string,
-    wsUrl: string,
-    forceRescan: boolean
-  ): Promise<WalletSyncResult> {
-    return this.request(
-      'sync.once',
-      { ws_url: wsUrl, force_rescan: forceRescan },
-      storePath,
-      passphrase,
-      'open'
-    );
+  async sync(wsUrl: string, forceRescan: boolean): Promise<WalletSyncResult> {
+    return this.request('sync.once', { ws_url: wsUrl, force_rescan: forceRescan });
   }
 
   async send(request: WalletSendRequest): Promise<WalletSendResult> {
-    return this.request(
-      'tx.send',
-      {
-        ws_url: request.wsUrl,
-        recipients: request.recipients,
-        fee: request.fee,
-        auto_consolidate: request.autoConsolidate
-      },
-      request.storePath,
-      request.passphrase,
-      'open'
-    );
+    return this.request('tx.send', {
+      ws_url: request.wsUrl,
+      recipients: request.recipients,
+      fee: request.fee,
+      auto_consolidate: request.autoConsolidate
+    });
   }
 
   async sendPlan(request: WalletSendPlanRequest): Promise<WalletSendPlanResult> {
-    return this.request(
-      'tx.plan',
-      { recipients: request.recipients, fee: request.fee },
-      request.storePath,
-      request.passphrase,
-      'open'
-    );
+    return this.request('tx.plan', { recipients: request.recipients, fee: request.fee });
   }
 
   async disclosureCreate(
-    storePath: string,
-    passphrase: string,
     wsUrl: string,
     txId: string,
     output: number
   ): Promise<WalletDisclosureCreateResult> {
-    return this.request(
-      'disclosure.create',
-      { ws_url: wsUrl, tx_id: txId, output },
-      storePath,
-      passphrase,
-      'open'
-    );
+    return this.request('disclosure.create', { ws_url: wsUrl, tx_id: txId, output });
   }
 
   async disclosureVerify(
-    storePath: string,
-    passphrase: string,
     wsUrl: string,
     packageJson: object
   ): Promise<WalletDisclosureVerifyResult> {
-    return this.request(
-      'disclosure.verify',
-      { ws_url: wsUrl, package: packageJson },
-      storePath,
-      passphrase,
-      'open'
-    );
+    return this.request('disclosure.verify', { ws_url: wsUrl, package: packageJson });
   }
 
-  async disclosureList(storePath: string, passphrase: string): Promise<WalletDisclosureRecord[]> {
-    return this.request('disclosure.list', {}, storePath, passphrase, 'open');
+  async disclosureList(): Promise<WalletDisclosureRecord[]> {
+    return this.request('disclosure.list', {});
   }
 
   private async request(
     method: string,
     params: object,
-    storePath: string | null,
-    passphrase: string | null,
-    mode: WalletdMode
+    unlock:
+      | {
+          storePath: string;
+          passphrase: string;
+          mode: WalletdMode;
+        }
+      | undefined = undefined
   ): Promise<any> {
-    if (storePath && passphrase) {
-      await this.ensureProcess(storePath, passphrase, mode);
+    if (unlock) {
+      await this.ensureProcess(unlock.storePath, unlock.passphrase, unlock.mode);
     } else if (!this.process) {
       throw new Error('walletd process not running');
     }
@@ -155,12 +138,7 @@ export class WalletdClient {
 
   private async ensureProcess(storePath: string, passphrase: string, mode: WalletdMode): Promise<void> {
     const resolvedPath = expandHomePath(storePath);
-    if (
-      this.process &&
-      this.storePath === resolvedPath &&
-      this.passphrase === passphrase &&
-      this.mode === mode
-    ) {
+    if (this.process && this.storePath === resolvedPath && this.mode === mode) {
       return;
     }
 
@@ -174,10 +152,11 @@ export class WalletdClient {
     await this.stop();
 
     const walletdPath = resolveBinaryPath('walletd');
-    const process = spawn(walletdPath, ['--store', resolvedPath, '--mode', mode]);
+    const process = spawn(walletdPath, ['--store', resolvedPath, '--mode', mode], {
+      env: walletdSpawnEnv()
+    });
     this.process = process;
     this.storePath = resolvedPath;
-    this.passphrase = passphrase;
     this.mode = mode;
     this.stderrBuffer = [];
 
@@ -291,7 +270,6 @@ export class WalletdClient {
   private clearProcessState() {
     this.process = null;
     this.storePath = null;
-    this.passphrase = null;
     this.mode = null;
     this.stderrBuffer = [];
   }

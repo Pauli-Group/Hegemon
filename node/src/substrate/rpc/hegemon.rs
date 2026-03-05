@@ -19,6 +19,7 @@
 
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
+use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -46,10 +47,21 @@ pub struct StartMiningParams {
     /// Number of threads to use for mining (defaults to 1)
     #[serde(default = "default_threads")]
     pub threads: u32,
+    /// Optional shared secret for mining-control RPCs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 fn default_threads() -> u32 {
     1
+}
+
+/// Optional authentication parameters for mining-control RPCs.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MiningControlAuthParams {
+    /// Optional shared secret for mining-control RPCs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 /// Mining control response
@@ -223,7 +235,10 @@ pub trait HegemonApi {
     ///
     /// Deactivates the mining worker and stops all mining threads.
     #[method(name = "stopMining")]
-    async fn stop_mining(&self) -> RpcResult<MiningControlResponse>;
+    async fn stop_mining(
+        &self,
+        params: Option<MiningControlAuthParams>,
+    ) -> RpcResult<MiningControlResponse>;
 
     /// Get consensus status
     ///
@@ -322,6 +337,8 @@ pub struct HegemonRpc<S, P> {
     service: Arc<S>,
     pow_handle: P,
     config_snapshot: NodeConfigSnapshot,
+    deny_unsafe: sc_rpc::DenyUnsafe,
+    mining_control_auth_token: Option<String>,
 }
 
 impl<S, P> HegemonRpc<S, P>
@@ -330,12 +347,46 @@ where
     P: MiningHandle + Clone + Send + Sync + 'static,
 {
     /// Create a new Hegemon RPC handler
-    pub fn new(service: Arc<S>, pow_handle: P, config_snapshot: NodeConfigSnapshot) -> Self {
+    pub fn new(
+        service: Arc<S>,
+        pow_handle: P,
+        config_snapshot: NodeConfigSnapshot,
+        deny_unsafe: sc_rpc::DenyUnsafe,
+    ) -> Self {
+        let mining_control_auth_token = std::env::var("HEGEMON_MINING_RPC_TOKEN")
+            .ok()
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty());
         Self {
             service,
             pow_handle,
             config_snapshot,
+            deny_unsafe,
+            mining_control_auth_token,
         }
+    }
+
+    fn ensure_mining_control_allowed(&self, provided_token: Option<&str>) -> RpcResult<()> {
+        if matches!(self.deny_unsafe, sc_rpc::DenyUnsafe::Yes) {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                "mining control RPC is unsafe; run node with --rpc-methods=unsafe to enable",
+                None::<()>,
+            ));
+        }
+
+        if let Some(expected) = self.mining_control_auth_token.as_deref() {
+            let provided = provided_token.unwrap_or_default().trim();
+            if provided.is_empty() || provided != expected {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    "invalid or missing mining control auth token",
+                    None::<()>,
+                ));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -360,7 +411,10 @@ where
         &self,
         params: Option<StartMiningParams>,
     ) -> RpcResult<MiningControlResponse> {
-        let threads = params.map(|p| p.threads).unwrap_or(1);
+        let (threads, auth_token) = params
+            .map(|p| (p.threads, p.auth_token))
+            .unwrap_or((1, None));
+        self.ensure_mining_control_allowed(auth_token.as_deref())?;
 
         self.pow_handle.start_mining(threads);
 
@@ -380,7 +434,15 @@ where
         })
     }
 
-    async fn stop_mining(&self) -> RpcResult<MiningControlResponse> {
+    async fn stop_mining(
+        &self,
+        params: Option<MiningControlAuthParams>,
+    ) -> RpcResult<MiningControlResponse> {
+        self.ensure_mining_control_allowed(
+            params
+                .as_ref()
+                .and_then(|value| value.auth_token.as_deref()),
+        )?;
         self.pow_handle.stop_mining();
 
         let status = MiningStatus {
@@ -601,7 +663,7 @@ mod tests {
     async fn test_mining_status() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         let status = rpc.mining_status().await.unwrap();
         assert!(!status.is_mining);
@@ -612,18 +674,21 @@ mod tests {
     async fn test_start_stop_mining() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         // Start mining
         let result = rpc
-            .start_mining(Some(StartMiningParams { threads: 2 }))
+            .start_mining(Some(StartMiningParams {
+                threads: 2,
+                auth_token: None,
+            }))
             .await
             .unwrap();
         assert!(result.success);
         assert!(result.status.is_mining);
 
         // Stop mining
-        let result = rpc.stop_mining().await.unwrap();
+        let result = rpc.stop_mining(None).await.unwrap();
         assert!(result.success);
         assert!(!result.status.is_mining);
     }
@@ -632,7 +697,7 @@ mod tests {
     async fn test_consensus_status() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         let status = rpc.consensus_status().await.unwrap();
         assert_eq!(status.height, 100);
@@ -644,7 +709,7 @@ mod tests {
     async fn test_telemetry() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         let snapshot = rpc.telemetry().await.unwrap();
         assert_eq!(snapshot.uptime_secs, 3600);
@@ -655,7 +720,7 @@ mod tests {
     async fn test_node_config_snapshot() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         let config = rpc.node_config().await.unwrap();
         assert_eq!(config.node_name, "MockNode");
@@ -673,7 +738,7 @@ mod tests {
     async fn test_storage_footprint() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         let footprint = rpc.storage_footprint().await.unwrap();
         assert_eq!(footprint.total_bytes, 1024 * 1024 * 100);
@@ -687,7 +752,7 @@ mod tests {
     async fn test_mining_lifecycle() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         // Initial state: not mining
         let status = rpc.mining_status().await.unwrap();
@@ -696,7 +761,10 @@ mod tests {
 
         // Start mining
         let start_result = rpc
-            .start_mining(Some(StartMiningParams { threads: 4 }))
+            .start_mining(Some(StartMiningParams {
+                threads: 4,
+                auth_token: None,
+            }))
             .await
             .unwrap();
         assert!(start_result.success);
@@ -708,7 +776,7 @@ mod tests {
         assert!(status.hash_rate > 0.0);
 
         // Stop mining
-        let stop_result = rpc.stop_mining().await.unwrap();
+        let stop_result = rpc.stop_mining(None).await.unwrap();
         assert!(stop_result.success);
         assert!(!stop_result.status.is_mining);
 
@@ -721,7 +789,7 @@ mod tests {
     async fn test_consensus_status_fields() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         let status = rpc.consensus_status().await.unwrap();
 
@@ -739,7 +807,7 @@ mod tests {
     async fn test_telemetry_fields() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         let snapshot = rpc.telemetry().await.unwrap();
 
@@ -757,11 +825,27 @@ mod tests {
     async fn test_start_mining_with_default_threads() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle, mock_config());
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
 
         // Start mining with no params (should use default threads)
         let result = rpc.start_mining(None).await.unwrap();
         assert!(result.success);
         assert!(result.status.is_mining);
+    }
+
+    #[tokio::test]
+    async fn test_start_mining_rejected_when_unsafe_rpc_disabled() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::Yes);
+
+        let err = rpc
+            .start_mining(None)
+            .await
+            .expect_err("unsafe mining control should be denied");
+        assert!(
+            err.message().contains("--rpc-methods=unsafe"),
+            "unexpected error: {err}"
+        );
     }
 }

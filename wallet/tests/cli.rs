@@ -90,6 +90,12 @@ fn tx_craft_and_scan_flow() {
         .assert()
         .success();
 
+    let witness_json: Value = serde_json::from_slice(&fs::read(&witness_out).unwrap()).unwrap();
+    assert!(
+        witness_json.get("sk_spend").is_none(),
+        "tx-craft witness output must not serialize sk_spend"
+    );
+
     let report_out = temp.path().join("report.json");
     cargo_bin_cmd!("wallet")
         .args([

@@ -300,7 +300,6 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.fee,
             proof_result.value_balance,
         );
-
         // Build transaction bundle
         let bundle = TransactionBundle::new(
             proof_result.proof_bytes.clone(),
@@ -419,7 +418,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             let ciphertext = NoteCiphertext::encrypt(&output.address, &note, rng)?;
 
             witnesses.push(OutputNoteWitness {
-                note: note.to_note_data(output.address.pk_recipient),
+                note: note.to_note_data(output.address.pk_recipient, output.address.pk_auth),
             });
             ciphertexts.push(ciphertext);
         }
@@ -447,7 +446,8 @@ impl<'a> ShieldedTxBuilder<'a> {
                     NoteCiphertext::encrypt(&change_address, &change_note, rng)?;
 
                 witnesses.push(OutputNoteWitness {
-                    note: change_note.to_note_data(change_address.pk_recipient),
+                    note: change_note
+                        .to_note_data(change_address.pk_recipient, change_address.pk_auth),
                 });
                 ciphertexts.push(change_ciphertext);
             }
@@ -502,7 +502,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             inputs,
             outputs,
             ciphertext_hashes,
-            sk_spend: derived.view.nullifier_key(),
+            sk_spend: derived.spend.to_bytes(),
             merkle_root: tree.root(),
             fee,
             value_balance: 0,

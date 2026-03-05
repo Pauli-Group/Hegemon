@@ -34,7 +34,7 @@ pub enum HandshakeMessage {
 pub struct InitHelloMessage {
     /// Protocol version
     pub version: u8,
-    /// Initiator's ML-KEM-768 public key (1184 bytes)
+    /// Initiator's ML-KEM-1024 public key (1568 bytes)
     pub mlkem_public_key: Vec<u8>,
     /// Initiator's identity public key (ML-DSA-65)
     pub identity_key: Vec<u8>,
@@ -49,9 +49,9 @@ pub struct InitHelloMessage {
 pub struct RespHelloMessage {
     /// Protocol version
     pub version: u8,
-    /// Responder's ML-KEM-768 public key (1184 bytes)
+    /// Responder's ML-KEM-1024 public key (1568 bytes)
     pub mlkem_public_key: Vec<u8>,
-    /// ML-KEM ciphertext encapsulated to initiator's public key (1088 bytes)
+    /// ML-KEM ciphertext encapsulated to initiator's public key (1568 bytes)
     pub mlkem_ciphertext: Vec<u8>,
     /// Responder's identity public key (ML-DSA-65)
     pub identity_key: Vec<u8>,
@@ -64,7 +64,7 @@ pub struct RespHelloMessage {
 /// Initiator's finish message
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FinishMessage {
-    /// ML-KEM ciphertext encapsulated to responder's public key (1088 bytes)
+    /// ML-KEM ciphertext encapsulated to responder's public key (1568 bytes)
     pub mlkem_ciphertext: Vec<u8>,
     /// Nonce for replay protection
     pub nonce: u64,
@@ -134,7 +134,7 @@ pub struct LocalIdentity {
     pub signing_key: MlDsaSecretKey,
     /// ML-DSA-65 verification key
     pub verify_key: MlDsaPublicKey,
-    /// ML-KEM-768 key pair for encapsulation
+    /// ML-KEM-1024 key pair for encapsulation
     pub kem_keypair: MlKemKeyPair,
 }
 

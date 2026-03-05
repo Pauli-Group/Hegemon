@@ -39,7 +39,10 @@ pub const BINDING_HASH_SIZE: usize = 64;
 pub const MEMO_SIZE: usize = 512;
 
 /// Note encryption version used in the ciphertext header.
-pub const NOTE_ENCRYPTION_VERSION: u8 = 2;
+///
+/// This must remain aligned with the wallet shielded address version accepted by
+/// `wallet::address::ShieldedAddress` (currently v3).
+pub const NOTE_ENCRYPTION_VERSION: u8 = 3;
 /// Crypto suite identifier for ML-KEM-1024 note encryption.
 pub const CRYPTO_SUITE_GAMMA: u16 = 3;
 
@@ -53,8 +56,9 @@ pub const MAX_KEM_CIPHERTEXT_LEN: u32 = 1568;
 /// Maximum total ciphertext bytes (container + KEM ciphertext).
 pub const MAX_CIPHERTEXT_BYTES: usize = ENCRYPTED_NOTE_SIZE + MAX_KEM_CIPHERTEXT_LEN as usize;
 
-/// Diversified address size used inside commitments: version(1) + diversifier_index(4) + pk_recipient(32).
-pub const DIVERSIFIED_ADDRESS_SIZE: usize = 37;
+/// Diversified address size used inside commitments:
+/// version(1) + diversifier_index(4) + pk_recipient(32) + pk_auth(32).
+pub const DIVERSIFIED_ADDRESS_SIZE: usize = 69;
 
 /// Commitment bytes (48-byte PQ sponge output).
 pub type Commitment = [u8; 48];
@@ -155,6 +159,127 @@ impl StarkProof {
         self.data.is_empty()
     }
 }
+
+/// Version tag for the block proof bundle payload format.
+pub const BLOCK_PROOF_BUNDLE_SCHEMA: u8 = 2;
+/// Proof format id used for flat batch proof items in this branch.
+pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
+/// Maximum number of flat proof batches allowed in a single block payload.
+pub const MAX_FLAT_BATCHES_PER_BLOCK: usize = 1024;
+/// Maximum cumulative proof bytes accepted in a single block payload.
+pub const BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum encoded bytes for a prover recipient address (bech32m payload).
+pub const MAX_PROVER_RECIPIENT_LEN: u32 = 2048;
+/// Maximum encoded bytes for a prover claim signature.
+pub const MAX_PROVER_CLAIM_SIGNATURE_LEN: u32 = 4096;
+
+/// Signed prover claim used to bind an external prover payout to a submitted bundle.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
+)]
+pub struct ProverCompensationClaim {
+    /// Claimed prover account bytes (AccountId32 encoding).
+    pub prover_account: [u8; 32],
+    /// Full shielded address bytes (bech32 string bytes) used for note encryption.
+    pub prover_recipient: BoundedVec<u8, ConstU32<MAX_PROVER_RECIPIENT_LEN>>,
+    /// Shielded recipient address for prover payout.
+    pub prover_recipient_address: [u8; DIVERSIFIED_ADDRESS_SIZE],
+    /// Claimed payout amount for this bundle.
+    pub prover_amount: u64,
+    /// Signature over claim fields.
+    pub claim_signature: BoundedVec<u8, ConstU32<MAX_PROVER_CLAIM_SIGNATURE_LEN>>,
+}
+
+/// Per-block payload that carries all consensus-required proof material for
+/// self-contained aggregation blocks.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+)]
+pub enum BlockProofMode {
+    /// Verify a deterministic set of flat proof batches.
+    FlatBatches,
+    /// Verify a recursion root proof over leaf batches.
+    MergeRoot,
+}
+
+/// Flat batch proof item.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct BatchProofItem {
+    /// Start index of the first transaction (inclusive) covered by this item.
+    pub start_tx_index: u32,
+    /// Number of transactions covered by this item.
+    pub tx_count: u16,
+    /// Proof format id (must be BLOCK_PROOF_FORMAT_ID_V5 in this branch).
+    pub proof_format: u8,
+    /// Opaque proof bytes for this batch item.
+    pub proof: StarkProof,
+}
+
+/// Recursion root metadata.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
+)]
+pub struct MergeRootMetadata {
+    /// Tree arity used to build recursion levels.
+    pub tree_arity: u16,
+    /// Total recursion levels from leaves to root.
+    pub tree_levels: u16,
+    /// Number of active leaf proofs.
+    pub leaf_count: u32,
+    /// Commitment to the ordered leaf manifest.
+    pub leaf_manifest_commitment: [u8; 48],
+}
+
+/// Merge-root proof payload.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct MergeRootProofPayload {
+    /// Root proof bytes.
+    pub root_proof: StarkProof,
+    /// Tree metadata bound by the root proof.
+    pub metadata: MergeRootMetadata,
+    /// Optional leaf diagnostics; not consensus-required when root is valid.
+    pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
+}
+
+/// Per-block proof bundle payload.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct BlockProofBundle {
+    /// Payload format version.
+    pub version: u8,
+    /// Number of shielded transfers covered by this payload.
+    pub tx_count: u32,
+    /// Commitment over canonical transaction statements in canonical tx order.
+    pub tx_statements_commitment: [u8; 48],
+    /// DA root bound by the commitment proof.
+    pub da_root: [u8; 48],
+    /// DA chunk count bound by the commitment proof.
+    pub da_chunk_count: u32,
+    /// Commitment proof bytes.
+    pub commitment_proof: StarkProof,
+    /// Proof mode for this bundle.
+    pub proof_mode: BlockProofMode,
+    /// Flat proof batches (required in FlatBatches mode).
+    pub flat_batches: Vec<BatchProofItem>,
+    /// Optional merge-root proof payload (required in MergeRoot mode).
+    pub merge_root: Option<MergeRootProofPayload>,
+    /// Optional external prover payout claim.
+    pub prover_claim: Option<ProverCompensationClaim>,
+}
+
+#[deprecated(note = "Use BLOCK_PROOF_BUNDLE_SCHEMA instead.")]
+pub const PROVEN_BATCH_V1_VERSION: u8 = BLOCK_PROOF_BUNDLE_SCHEMA;
+
+#[deprecated(note = "Use BlockProofBundle instead.")]
+pub type ProvenBatchV1 = BlockProofBundle;
 
 /// Balance commitment for value balance verification.
 ///
@@ -259,9 +384,8 @@ impl Default for CiphertextPolicy {
 /// This matters only in "aggregation mode", where the runtime may skip per-transaction proof
 /// verification and instead rely on an aggregation proof verified during block import.
 ///
-/// In Phase A ("proof availability by DA"), we allow transfers to omit proof bytes from the
-/// extrinsic, but we require the block to commit to the proof bytes via a DA root so other
-/// validators can retrieve them and verify the aggregation proof deterministically.
+/// In Phase C ("self-contained aggregation"), transfers may omit proof bytes from the extrinsic,
+/// and block validity is established by the aggregation proof plus statement commitments.
 #[derive(
     Clone,
     Copy,
@@ -279,9 +403,9 @@ impl Default for CiphertextPolicy {
 pub enum ProofAvailabilityPolicy {
     /// Each transfer extrinsic must carry its STARK proof bytes (legacy path).
     InlineRequired,
-    /// Transfer extrinsics may omit proof bytes in aggregation mode, but proof bytes must be made
-    /// available via a DA commitment during block import.
-    DaRequired,
+    /// Transfer extrinsics may omit proof bytes in aggregation mode, and validators verify the
+    /// block from the aggregation proof and statement commitments without proof-DA fetch.
+    SelfContained,
 }
 
 impl Default for ProofAvailabilityPolicy {
@@ -290,14 +414,11 @@ impl Default for ProofAvailabilityPolicy {
     }
 }
 
-/// On-chain manifest entry for locating per-transaction proof bytes in proof-DA.
+/// Legacy proof-DA manifest entry retained for test helpers only.
 ///
-/// The `binding_hash` identifies the transfer this proof belongs to. The `(proof_len, proof_offset)`
-/// pair describes where the proof bytes live inside the proof-DA blob committed by
-/// `submit_proof_da_commitment`.
-///
-/// The `proof_hash` (BLAKE3-384) is committed on-chain so verifiers can bind commitment proofs and
-/// other block-level commitments without downloading the proof bytes.
+/// Phase C consensus no longer uses proof-DA manifests. This struct remains under `#[cfg(test)]`
+/// to support unit tests that exercise historical parser/layout helpers.
+#[cfg(test)]
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
 )]
@@ -350,6 +471,17 @@ pub struct CoinbaseNoteData {
     /// Public seed for deterministic rho/r derivation
     /// seed = H("coinbase_seed" || block_hash || block_height)
     pub public_seed: [u8; 32],
+}
+
+/// Per-block shielded reward bundle.
+///
+/// Miner note is required, prover note is optional.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+)]
+pub struct BlockRewardBundle {
+    pub miner_note: CoinbaseNoteData,
+    pub prover_note: Option<CoinbaseNoteData>,
 }
 
 impl MerklePath {
@@ -425,6 +557,10 @@ pub struct FeeParameters {
     pub proof_fee: u128,
     /// Base fee charged per batch proof.
     pub batch_proof_fee: u128,
+    /// Miner inclusion fee for a single-proof transaction.
+    pub inclusion_fee: u128,
+    /// Miner inclusion fee for a batch-proof transaction.
+    pub batch_inclusion_fee: u128,
     /// Fee per ciphertext byte for DA publication.
     pub da_byte_fee: u128,
     /// Fee per ciphertext byte per block of hot retention.
@@ -438,11 +574,55 @@ impl Default for FeeParameters {
         Self {
             proof_fee: 0,
             batch_proof_fee: 0,
+            inclusion_fee: 0,
+            batch_inclusion_fee: 0,
             da_byte_fee: 0,
             retention_byte_fee: 0,
             hot_retention_blocks: 0,
         }
     }
+}
+
+/// Deterministic shielded fee split returned by runtime quote APIs.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct ShieldedFeeBreakdown {
+    pub prover_fee: u128,
+    pub miner_fee: u128,
+    pub total_fee: u128,
+}
+
+/// Per-block fee accumulators split by beneficiary role.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    serde::Serialize,
+    serde::Deserialize,
+    Default,
+)]
+pub struct BlockFeeBuckets {
+    pub miner_fees: u128,
+    pub prover_fees: u128,
 }
 
 /// Public view of a forced inclusion commitment.
@@ -489,7 +669,7 @@ impl DecodeWithMemTracking for VerifyingKeyParams {}
 // ================================================================================================
 
 /// Maximum batch size for batch proofs.
-pub const MAX_BATCH_SIZE: u32 = 16;
+pub const MAX_BATCH_SIZE: u32 = 32;
 
 /// STARK batch proof for proving multiple transactions together.
 ///
@@ -500,7 +680,7 @@ pub struct BatchStarkProof {
     /// Variable-length proof data.
     /// Contains the combined proof for all transactions in the batch.
     pub data: Vec<u8>,
-    /// Number of transactions in this batch (2, 4, 8, or 16).
+    /// Number of transactions in this batch (2, 4, 8, 16, or 32).
     pub batch_size: u32,
 }
 

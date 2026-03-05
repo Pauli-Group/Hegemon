@@ -10,13 +10,14 @@ import type {
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
   WalletStatus,
-  WalletSyncResult
+  WalletSyncResult,
+  WalletUnlockSession
 } from './types';
 import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
-const contactsKey = 'hegemon.contacts';
+const approvedSeeds = 'hegemon.pauli.group:31333,158.69.222.121:31333';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
@@ -24,6 +25,16 @@ const walletAutoLockEnabledKey = 'hegemon.walletAutoLockEnabled';
 const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
 const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 const minWalletPassphraseLength = 12;
+const defaultRpcPort = 9944;
+const defaultP2pPort = 30333;
+const defaultMineThreads = (() => {
+  const hardwareConcurrency =
+    typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency)
+      ? Number(navigator.hardwareConcurrency)
+      : 1;
+  const target = Math.floor(hardwareConcurrency / 2);
+  return Math.max(1, Math.min(16, target || hardwareConcurrency || 1));
+})();
 
 const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -35,6 +46,13 @@ const normalizeTxId = (value: string | null | undefined) => {
   }
   return trimmed.replace(/^0x/i, '').toLowerCase();
 };
+
+const normalizeSeedsValue = (value: string | null | undefined) =>
+  (value ?? '')
+    .split(',')
+    .map((seed) => seed.trim().toLowerCase())
+    .filter(Boolean)
+    .join(',');
 
 const makeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -309,16 +327,159 @@ const activityStatusClasses: Record<ActivityStatus, string> = {
 };
 
 const deriveHttpUrl = (wsUrl: string, httpUrl?: string) => {
+  const trimmedWsUrl = wsUrl.trim();
+  const wsAsHttp =
+    trimmedWsUrl.startsWith('ws://')
+      ? `http://${trimmedWsUrl.slice('ws://'.length)}`
+      : trimmedWsUrl.startsWith('wss://')
+        ? `https://${trimmedWsUrl.slice('wss://'.length)}`
+        : trimmedWsUrl;
+
+  const parseEndpoint = (value: string) => {
+    try {
+      return new URL(value);
+    } catch {
+      return null;
+    }
+  };
+  const isLoopbackHost = (host: string) => host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  const wsEndpoint = parseEndpoint(trimmedWsUrl);
+
   if (httpUrl && httpUrl.trim()) {
-    return httpUrl.trim();
+    const trimmedHttpUrl = httpUrl.trim();
+    const httpEndpoint = parseEndpoint(trimmedHttpUrl);
+
+    // Local profiles frequently drift when only one endpoint is edited.
+    if (
+      wsEndpoint &&
+      httpEndpoint &&
+      isLoopbackHost(wsEndpoint.hostname) &&
+      isLoopbackHost(httpEndpoint.hostname) &&
+      wsEndpoint.port &&
+      httpEndpoint.port &&
+      wsEndpoint.port !== httpEndpoint.port
+    ) {
+      return wsAsHttp;
+    }
+
+    return trimmedHttpUrl;
   }
-  if (wsUrl.startsWith('ws://')) {
-    return `http://${wsUrl.slice('ws://'.length)}`;
+
+  return wsAsHttp;
+};
+
+const parsePortFromUrl = (value?: string | null): number | undefined => {
+  if (!value) {
+    return undefined;
   }
-  if (wsUrl.startsWith('wss://')) {
-    return `https://${wsUrl.slice('wss://'.length)}`;
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
   }
-  return wsUrl;
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.port) {
+      return undefined;
+    }
+    const port = Number.parseInt(parsed.port, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return undefined;
+    }
+    return port;
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeRpcPort = (value?: number): number | undefined => {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return undefined;
+  }
+  if (value < 1 || value > 65535) {
+    return undefined;
+  }
+  return value;
+};
+
+const isLoopbackWsEndpoint = (value: string): boolean =>
+  value.startsWith('ws://127.0.0.1:') || value.startsWith('ws://localhost:') || value.startsWith('ws://[::1]:');
+
+const isLoopbackHttpEndpoint = (value?: string): boolean =>
+  Boolean(
+    value &&
+      (value.startsWith('http://127.0.0.1:') ||
+        value.startsWith('http://localhost:') ||
+        value.startsWith('http://[::1]:') ||
+        value.startsWith('https://127.0.0.1:') ||
+        value.startsWith('https://localhost:') ||
+        value.startsWith('https://[::1]:'))
+  );
+
+const rewriteLoopbackWsEndpoint = (value: string, port: number): string => {
+  if (value.startsWith('ws://localhost:')) {
+    return `ws://localhost:${port}`;
+  }
+  if (value.startsWith('ws://[::1]:')) {
+    return `ws://[::1]:${port}`;
+  }
+  return `ws://127.0.0.1:${port}`;
+};
+
+const rewriteLoopbackHttpEndpoint = (value: string | undefined, port: number): string => {
+  if (!value) {
+    return `http://127.0.0.1:${port}`;
+  }
+  if (value.startsWith('http://localhost:')) {
+    return `http://localhost:${port}`;
+  }
+  if (value.startsWith('http://[::1]:')) {
+    return `http://[::1]:${port}`;
+  }
+  if (value.startsWith('https://localhost:')) {
+    return `https://localhost:${port}`;
+  }
+  if (value.startsWith('https://[::1]:')) {
+    return `https://[::1]:${port}`;
+  }
+  return `http://127.0.0.1:${port}`;
+};
+
+const inferRpcPort = (connection: NodeConnection): number =>
+  normalizeRpcPort(connection.rpcPort) ??
+  parsePortFromUrl(connection.wsUrl) ??
+  parsePortFromUrl(connection.httpUrl) ??
+  defaultRpcPort;
+
+const normalizeLocalConnectionEndpoints = (connection: NodeConnection): NodeConnection => {
+  if (connection.mode !== 'local') {
+    return connection;
+  }
+
+  const rpcPort = inferRpcPort(connection);
+  const updates: Partial<NodeConnection> = {};
+
+  if (normalizeRpcPort(connection.rpcPort) !== rpcPort) {
+    updates.rpcPort = rpcPort;
+  }
+
+  if (!connection.wsUrl?.trim()) {
+    updates.wsUrl = `ws://127.0.0.1:${rpcPort}`;
+  } else if (isLoopbackWsEndpoint(connection.wsUrl) && parsePortFromUrl(connection.wsUrl) !== rpcPort) {
+    updates.wsUrl = rewriteLoopbackWsEndpoint(connection.wsUrl, rpcPort);
+  }
+
+  const effectiveWsUrl = updates.wsUrl ?? connection.wsUrl;
+  const derivedHttpUrl = deriveHttpUrl(effectiveWsUrl, connection.httpUrl);
+  if (!connection.httpUrl?.trim()) {
+    updates.httpUrl = derivedHttpUrl;
+  } else if (isLoopbackHttpEndpoint(connection.httpUrl) && parsePortFromUrl(connection.httpUrl) !== rpcPort) {
+    updates.httpUrl = rewriteLoopbackHttpEndpoint(connection.httpUrl, rpcPort);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return connection;
+  }
+  return { ...connection, ...updates };
 };
 
 const classifyLogLevel = (line: string): LogLevel => {
@@ -391,22 +552,22 @@ const buildDefaultConnection = (): NodeConnection => ({
   id: makeId(),
   label: 'Local node',
   mode: 'local',
-  wsUrl: 'ws://127.0.0.1:9944',
-  httpUrl: 'http://127.0.0.1:9944',
+  wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
+  httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: true,
   chainSpecPath: 'config/dev-chainspec.json',
   tmp: false,
   basePath: '~/.hegemon-node',
-  rpcPort: 9944,
-  p2pPort: 30333,
-  mineThreads: 1,
+  rpcPort: defaultRpcPort,
+  p2pPort: defaultP2pPort,
+  mineThreads: defaultMineThreads,
   miningIntent: false,
   ciphertextDaRetentionBlocks: 0,
   proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
   rpcCorsAll: false,
-  seeds: 'hegemon.pauli.group',
+  seeds: approvedSeeds,
   maxPeers: 50
 });
 
@@ -414,14 +575,14 @@ const buildTestnetConnection = (): NodeConnection => ({
   id: makeId(),
   label: 'Testnet node',
   mode: 'local',
-  wsUrl: 'ws://127.0.0.1:9944',
-  httpUrl: 'http://127.0.0.1:9944',
+  wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
+  httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: false,
   tmp: false,
   basePath: '~/.hegemon-node-testnet',
-  rpcPort: 9944,
-  p2pPort: 30333,
-  mineThreads: 1,
+  rpcPort: defaultRpcPort,
+  p2pPort: defaultP2pPort,
+  mineThreads: defaultMineThreads,
   miningIntent: false,
   ciphertextDaRetentionBlocks: 0,
   proofDaRetentionBlocks: 0,
@@ -429,7 +590,7 @@ const buildTestnetConnection = (): NodeConnection => ({
   rpcMethods: 'safe',
   rpcCorsAll: false,
   chainSpecPath: 'testnet',
-  seeds: 'hegemon.pauli.group',
+  seeds: approvedSeeds,
   maxPeers: 50
 });
 
@@ -445,14 +606,22 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     connection.label === 'Testnet node' &&
     (!connection.basePath || connection.basePath === '~/.hegemon-node-testnet');
 
-  let next = connection;
+  let next = normalizeLocalConnectionEndpoints(connection);
+  if (next.mode === 'remote' && !next.httpUrl?.trim()) {
+    next = { ...next, httpUrl: deriveHttpUrl(next.wsUrl) };
+  }
 
   if (isDefaultLocal && connection.dev && !connection.chainSpecPath) {
     next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
   }
 
-  if ((isDefaultLocal || isDefaultTestnet) && connection.seeds === 'hegemon.pauli.group:30333') {
-    next = { ...next, seeds: 'hegemon.pauli.group' };
+  const normalizedSeeds = normalizeSeedsValue(next.seeds);
+  if ((isDefaultLocal || isDefaultTestnet) && normalizedSeeds === '') {
+    next = { ...next, seeds: approvedSeeds };
+  }
+
+  if ((isDefaultLocal || isDefaultTestnet) && (!next.mineThreads || next.mineThreads === 1)) {
+    next = { ...next, mineThreads: defaultMineThreads };
   }
 
   return next;
@@ -491,8 +660,8 @@ export default function App() {
   const [createPassphrase, setCreatePassphrase] = useState('');
   const [createPassphraseConfirm, setCreatePassphraseConfirm] = useState('');
   const [openPassphrase, setOpenPassphrase] = useState('');
-  const [activePassphrase, setActivePassphrase] = useState<string | null>(null);
-  const [wsUrl, setWsUrl] = useState('ws://127.0.0.1:9944');
+  const [activeUnlockToken, setActiveUnlockToken] = useState<string | null>(null);
+  const [wsUrl, setWsUrl] = useState(`ws://127.0.0.1:${defaultRpcPort}`);
   const [forceRescan, setForceRescan] = useState(false);
   const [autoLockEnabled, setAutoLockEnabled] = useState(true);
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
@@ -627,22 +796,6 @@ export default function App() {
         if (stored !== null) {
           setContacts(stored);
           return;
-        }
-        const legacy = window.localStorage.getItem(contactsKey);
-        if (!legacy) {
-          return;
-        }
-        try {
-          const parsed = JSON.parse(legacy);
-          if (Array.isArray(parsed)) {
-            setContacts(parsed);
-            await window.hegemon.contacts.save(parsed);
-            window.localStorage.removeItem(contactsKey);
-          }
-        } catch {
-          if (!cancelled) {
-            setContactsError('Failed to migrate legacy contacts.');
-          }
         }
       } catch {
         if (!cancelled) {
@@ -912,6 +1065,11 @@ export default function App() {
             hashRate: null,
             blocksFound: null,
             difficulty: null,
+            aggregationProofFormat: null,
+            proverStageType: null,
+            proverStageLevel: null,
+            proverStageArity: null,
+            proverReadyBundleAgeMs: null,
             blockHeight: null,
             supplyDigest: null,
             storage: null,
@@ -1036,50 +1194,59 @@ export default function App() {
       setNodeError('Select a local connection to start a node.');
       return;
     }
-    if (activeConnection.miningIntent && !activeConnection.minerAddress) {
+    const normalizedConnection = normalizeLocalConnectionEndpoints(activeConnection);
+    const rpcPort = inferRpcPort(normalizedConnection);
+    if (normalizedConnection !== activeConnection) {
+      updateActiveConnection({
+        wsUrl: normalizedConnection.wsUrl,
+        httpUrl: normalizedConnection.httpUrl,
+        rpcPort: rpcPort
+      });
+    }
+    if (normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
       setNodeError('Set a miner address before enabling mining.');
       return;
     }
-    if (activeConnection.maxPeers !== undefined && activeConnection.maxPeers < 1) {
+    if (normalizedConnection.maxPeers !== undefined && normalizedConnection.maxPeers < 1) {
       setNodeError('Max peers must be at least 1.');
       return;
     }
-    if (activeConnection.tmp) {
+    if (normalizedConnection.tmp) {
       const confirmed = window.confirm('Temp storage deletes node data on shutdown. Continue?');
       if (!confirmed) {
         return;
       }
-    } else if (!activeConnection.basePath) {
+    } else if (!normalizedConnection.basePath) {
       const confirmed = window.confirm('No base path set. The node will use its default data directory. Continue?');
       if (!confirmed) {
         return;
       }
     }
-    setNodeTransition({ action: 'starting', connectionId: activeConnection.id, startedAt: Date.now() });
+    setNodeTransition({ action: 'starting', connectionId: normalizedConnection.id, startedAt: Date.now() });
     setNodeBusy(true);
     setNodeError(null);
     try {
       await window.hegemon.node.start({
-        connectionId: activeConnection.id,
-        chainSpecPath: activeConnection.chainSpecPath || undefined,
-        basePath: activeConnection.basePath || undefined,
-        dev: activeConnection.dev,
-        tmp: activeConnection.tmp,
-        rpcPort: activeConnection.rpcPort,
-        p2pPort: activeConnection.p2pPort,
-        listenAddr: activeConnection.listenAddr || undefined,
-        minerAddress: activeConnection.minerAddress || undefined,
-        mineThreads: activeConnection.mineThreads,
-        mineOnStart: activeConnection.miningIntent,
-        seeds: activeConnection.seeds || undefined,
-        maxPeers: activeConnection.maxPeers,
-        rpcExternal: activeConnection.rpcExternal,
-        rpcMethods: activeConnection.rpcMethods,
-        rpcCorsAll: activeConnection.rpcCorsAll,
-        nodeName: activeConnection.nodeName || undefined,
-        ciphertextDaRetentionBlocks: activeConnection.ciphertextDaRetentionBlocks,
-        proofDaRetentionBlocks: activeConnection.proofDaRetentionBlocks,
-        daStoreCapacity: activeConnection.daStoreCapacity
+        connectionId: normalizedConnection.id,
+        chainSpecPath: normalizedConnection.chainSpecPath || undefined,
+        basePath: normalizedConnection.basePath || undefined,
+        dev: normalizedConnection.dev,
+        tmp: normalizedConnection.tmp,
+        rpcPort,
+        p2pPort: normalizedConnection.p2pPort,
+        listenAddr: normalizedConnection.listenAddr || undefined,
+        minerAddress: normalizedConnection.minerAddress || undefined,
+        mineThreads: normalizedConnection.mineThreads,
+        mineOnStart: normalizedConnection.miningIntent,
+        seeds: normalizedConnection.seeds || undefined,
+        maxPeers: normalizedConnection.maxPeers,
+        rpcExternal: normalizedConnection.rpcExternal,
+        rpcMethods: normalizedConnection.rpcMethods,
+        rpcCorsAll: normalizedConnection.rpcCorsAll,
+        nodeName: normalizedConnection.nodeName || undefined,
+        ciphertextDaRetentionBlocks: normalizedConnection.ciphertextDaRetentionBlocks,
+        proofDaRetentionBlocks: normalizedConnection.proofDaRetentionBlocks,
+        daStoreCapacity: normalizedConnection.daStoreCapacity
       });
       await refreshNode();
     } catch (error) {
@@ -1124,22 +1291,22 @@ export default function App() {
     return trimmed;
   };
 
-  const requireActivePassphrase = () => {
-    if (!activePassphrase) {
+  const requireActiveUnlockToken = () => {
+    if (!activeUnlockToken) {
       throw new Error('Wallet is locked. Open or init the store first.');
     }
-    return activePassphrase;
+    return activeUnlockToken;
   };
 
-  const refreshWalletStatus = async (overridePassphrase?: string) => {
-    const passphrase = overridePassphrase ?? activePassphrase;
-    if (!passphrase) {
+  const refreshWalletStatus = async (overrideUnlockToken?: string) => {
+    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+    if (!unlockToken) {
       setWalletStatus(null);
       return;
     }
     try {
       const resolvedStorePath = resolveStorePath();
-      const status = await window.hegemon.wallet.status(resolvedStorePath, passphrase, true);
+      const status = await window.hegemon.wallet.status(resolvedStorePath, unlockToken, true);
       setWalletStatus(status);
       setWalletError(null);
     } catch (error) {
@@ -1147,16 +1314,16 @@ export default function App() {
     }
   };
 
-  const refreshDisclosureRecords = async (overridePassphrase?: string) => {
-    const passphrase = overridePassphrase ?? activePassphrase;
-    if (!passphrase) {
+  const refreshDisclosureRecords = async (overrideUnlockToken?: string) => {
+    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+    if (!unlockToken) {
       setDisclosureRecords([]);
       return;
     }
     setDisclosureListBusy(true);
     try {
       const resolvedStorePath = resolveStorePath();
-      const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, passphrase);
+      const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, unlockToken);
       setDisclosureRecords(records);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Disclosure list failed.';
@@ -1182,13 +1349,16 @@ export default function App() {
       if (createPassphrase !== createPassphraseConfirm) {
         throw new Error('Passphrases do not match.');
       }
-      const status = await window.hegemon.wallet.init(resolvedStorePath, createPassphrase);
-      setWalletStatus(status);
-      setActivePassphrase(createPassphrase);
+      const session: WalletUnlockSession = await window.hegemon.wallet.init(
+        resolvedStorePath,
+        createPassphrase
+      );
+      setWalletStatus(session.status);
+      setActiveUnlockToken(session.unlockToken);
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
       setOpenPassphrase('');
-      await refreshDisclosureRecords(createPassphrase);
+      await refreshDisclosureRecords(session.unlockToken);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet init failed.');
     } finally {
@@ -1204,13 +1374,16 @@ export default function App() {
       if (!openPassphrase.trim()) {
         throw new Error('Enter the wallet passphrase to open the store.');
       }
-      const status = await window.hegemon.wallet.restore(resolvedStorePath, openPassphrase);
-      setWalletStatus(status);
-      setActivePassphrase(openPassphrase);
+      const session: WalletUnlockSession = await window.hegemon.wallet.restore(
+        resolvedStorePath,
+        openPassphrase
+      );
+      setWalletStatus(session.status);
+      setActiveUnlockToken(session.unlockToken);
       setOpenPassphrase('');
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
-      await refreshDisclosureRecords(openPassphrase);
+      await refreshDisclosureRecords(session.unlockToken);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet open failed.');
     } finally {
@@ -1228,7 +1401,7 @@ export default function App() {
     } finally {
       setWalletBusy(false);
       setWalletStatus(null);
-      setActivePassphrase(null);
+      setActiveUnlockToken(null);
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
       setOpenPassphrase('');
@@ -1242,7 +1415,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!autoLockEnabled || !activePassphrase) {
+    if (!autoLockEnabled || !activeUnlockToken) {
       return;
     }
     const updateActivity = () => {
@@ -1267,7 +1440,7 @@ export default function App() {
       events.forEach((event) => window.removeEventListener(event, updateActivity));
       window.clearInterval(interval);
     };
-  }, [autoLockEnabled, activePassphrase, autoLockMinutes, handleWalletLock, walletBusy]);
+  }, [autoLockEnabled, activeUnlockToken, autoLockMinutes, handleWalletLock, walletBusy]);
 
   const handleCopyAddress = async () => {
     if (!walletStatus?.primaryAddress) {
@@ -1337,18 +1510,31 @@ export default function App() {
       if (forceOverride) {
         setForceRescan(true);
       }
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const resolvedStorePath = resolveStorePath();
-      const syncPromise = window.hegemon.wallet.sync(resolvedStorePath, passphrase, targetWs, rescan);
-      const timeoutMs = 90_000;
+      const syncPromise = window.hegemon.wallet.sync(
+        resolvedStorePath,
+        unlockToken,
+        targetWs,
+        rescan
+      );
+      // Full rescans on long-running chains can take minutes; keep the shorter guardrail for normal syncs.
+      const timeoutMs = rescan ? 15 * 60_000 : 90_000;
       const result = await new Promise<WalletSyncResult>((resolve, reject) => {
         const timeout = window.setTimeout(async () => {
           try {
             await window.hegemon.wallet.lock();
+            setActiveUnlockToken(null);
+            setWalletStatus(null);
           } catch {
             // Ignore lock failures; we'll surface a timeout error.
           }
-          reject(new Error('Wallet sync timed out. Check the WebSocket URL and try again.'));
+          const modeLabel = rescan ? 'force-rescan' : 'sync';
+          reject(
+            new Error(
+              `Wallet ${modeLabel} timed out after ${Math.round(timeoutMs / 1000)}s. Check the WebSocket URL and try again.`
+            )
+          );
         }, timeoutMs);
         syncPromise
           .then((value) => {
@@ -1376,6 +1562,8 @@ export default function App() {
     } catch {
       // Ignore lock errors; we still want to clear the busy flag.
     } finally {
+      setActiveUnlockToken(null);
+      setWalletStatus(null);
       setWalletBusy(false);
       setWalletSyncQueued(false);
       setWalletError('Wallet sync canceled.');
@@ -1406,7 +1594,7 @@ export default function App() {
       }
 
       setWalletBusy(true);
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const resolvedStorePath = resolveStorePath();
       const recipients = [
         {
@@ -1419,7 +1607,7 @@ export default function App() {
 
       const plan = await window.hegemon.wallet.sendPlan({
         storePath: resolvedStorePath,
-        passphrase,
+        unlockToken,
         recipients,
         fee
       });
@@ -1493,7 +1681,7 @@ export default function App() {
 
       const request = {
         storePath: resolvedStorePath,
-        passphrase,
+        unlockToken,
         wsUrl,
         recipients,
         fee,
@@ -1589,14 +1777,14 @@ export default function App() {
       if (!disclosureTxId.trim()) {
         throw new Error('Transaction hash is required.');
       }
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const outputIndex = Number.parseInt(disclosureOutput, 10);
       if (Number.isNaN(outputIndex)) {
         throw new Error('Output index must be a number.');
       }
       const result: WalletDisclosureCreateResult = await window.hegemon.wallet.disclosureCreate(
         resolveStorePath(),
-        passphrase,
+        unlockToken,
         wsUrl,
         disclosureTxId,
         outputIndex
@@ -1615,11 +1803,11 @@ export default function App() {
     setWalletBusy(true);
     setWalletError(null);
     try {
-      const passphrase = requireActivePassphrase();
+      const unlockToken = requireActiveUnlockToken();
       const parsed = parseDisclosureInput(disclosureInput);
       const result: WalletDisclosureVerifyResult = await window.hegemon.wallet.disclosureVerify(
         resolveStorePath(),
-        passphrase,
+        unlockToken,
         wsUrl,
         parsed
       );
@@ -1670,8 +1858,8 @@ export default function App() {
   const canOpenWallet = !walletBusy && Boolean(openPassphrase.trim());
 
   const walletSummary = walletConnection ? nodeSummaries[walletConnection.id] : null;
-  const walletReady = Boolean(walletStatus && activePassphrase);
-  const walletUnlocked = Boolean(activePassphrase);
+  const walletReady = Boolean(walletStatus && activeUnlockToken);
+  const walletUnlocked = Boolean(activeUnlockToken);
   const walletGenesis = walletStatus?.genesisHash ?? null;
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
@@ -1922,6 +2110,15 @@ export default function App() {
             Version {activeSummary?.nodeVersion ?? 'N/A'}
             {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? ' · External RPC (not managed by app)' : ''}
           </p>
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">
+            Proof format {activeSummary?.aggregationProofFormat ?? 'N/A'}
+            {activeSummary?.proverStageType
+              ? ` · Stage ${activeSummary.proverStageType} (L${activeSummary.proverStageLevel ?? 0}, k${activeSummary.proverStageArity ?? 0})`
+              : ''}
+            {typeof activeSummary?.proverReadyBundleAgeMs === 'number'
+              ? ` · Bundle age ${formatNumber(activeSummary.proverReadyBundleAgeMs)} ms`
+              : ''}
+          </p>
         </div>
         <div className="status-group">
           <p className="label">Wallet</p>
@@ -2067,7 +2264,7 @@ export default function App() {
           {sendBlockedReason ? <p className="text-xs text-amber">{sendBlockedReason}</p> : null}
           {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? (
             <p className="text-xs text-amber">
-              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.8.2 node on a different RPC
+              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.9.0 node on a different RPC
               port (e.g. 9955) and update this connection’s URLs to regain start/stop control.
             </p>
           ) : null}
@@ -2910,7 +3107,7 @@ export default function App() {
             <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
               Sync
             </button>
-            <button className="secondary" onClick={handleWalletLock} disabled={walletBusy || !activePassphrase}>
+            <button className="secondary" onClick={handleWalletLock} disabled={walletBusy || !activeUnlockToken}>
               Lock wallet
             </button>
             {walletBusy ? (
@@ -2945,9 +3142,7 @@ export default function App() {
               />
             </label>
           </div>
-          <p className="text-xs text-surfaceMuted">
-            Auto-lock stops walletd and clears the in-memory passphrase.
-          </p>
+          <p className="text-xs text-surfaceMuted">Auto-lock stops walletd and clears the unlock token.</p>
         </div>
       </div>
       {!walletReady && (

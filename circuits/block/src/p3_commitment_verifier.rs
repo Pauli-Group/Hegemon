@@ -2,16 +2,13 @@
 
 use blake3::Hasher as Blake3Hasher;
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
-use p3_uni_stark::{get_log_num_quotient_chunks, setup_preprocessed, verify_with_preprocessed};
+use p3_uni_stark::{setup_preprocessed, verify_with_preprocessed};
 use transaction_circuit::constants::MAX_INPUTS;
-use transaction_circuit::p3_config::{
-    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
-};
+use transaction_circuit::p3_config::{config_with_fri, TransactionProofP3};
+use transaction_circuit::p3_verifier::infer_transaction_fri_profile_p3;
 
 use crate::error::BlockError;
-use crate::p3_commitment_air::{
-    CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, Felt, PREPROCESSED_WIDTH,
-};
+use crate::p3_commitment_air::{CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, Felt};
 use crate::p3_commitment_prover::CommitmentBlockProofP3;
 
 pub fn verify_block_commitment_p3(proof: &CommitmentBlockProofP3) -> Result<(), BlockError> {
@@ -40,10 +37,12 @@ pub fn verify_block_commitment_proof_p3(
     let degree_bits = trace_len.ilog2() as usize;
     let air = CommitmentBlockAirP3::new(tx_count);
     let pub_inputs_vec = pub_inputs.to_vec();
-    let log_chunks =
-        get_log_num_quotient_chunks::<Felt, _>(&air, PREPROCESSED_WIDTH, pub_inputs_vec.len(), 0);
-    let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-    let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+    let fri_profile = infer_transaction_fri_profile_p3(&proof).map_err(|err| {
+        BlockError::CommitmentProofVerification(format!(
+            "failed to infer commitment proof FRI profile: {err}"
+        ))
+    })?;
+    let config = config_with_fri(fri_profile.log_blowup, fri_profile.num_queries);
     let (_, prep_vk) = setup_preprocessed(&config.config, &air, degree_bits)
         .expect("CommitmentBlockAirP3 preprocessed trace missing");
     verify_with_preprocessed(

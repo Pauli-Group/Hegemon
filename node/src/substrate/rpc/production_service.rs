@@ -96,6 +96,7 @@ use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 
 /// Default difficulty bits when runtime API query fails
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
+const MAX_RPC_MERKLE_WITNESS_NOTES: u64 = 65_536;
 
 /// Production implementation of all RPC service traits.
 ///
@@ -257,15 +258,31 @@ where
     fn telemetry_snapshot(&self) -> TelemetrySnapshot {
         let uptime = self.start_time.elapsed();
         let blocks_mined = self.mined_blocks.lock().len() as u64;
+        let tx_count = self
+            .client
+            .block(self.best_hash())
+            .ok()
+            .flatten()
+            .map(|signed| signed.block.extrinsics().len() as u64)
+            .unwrap_or(0);
+        let (network_rx_bytes, network_tx_bytes) = {
+            let peers = self.peer_details.read();
+            peers.values().fold((0u64, 0u64), |(rx, tx), peer| {
+                (
+                    rx.saturating_add(peer.bytes_received),
+                    tx.saturating_add(peer.bytes_sent),
+                )
+            })
+        };
 
         TelemetrySnapshot {
             uptime_secs: uptime.as_secs(),
-            tx_count: 0, // TODO: Wire to transaction metrics
+            tx_count,
             blocks_imported: self.best_number(),
             blocks_mined,
-            memory_bytes: 0,     // TODO: Wire to memory metrics
-            network_rx_bytes: 0, // TODO: Wire to network metrics
-            network_tx_bytes: 0, // TODO: Wire to network metrics
+            memory_bytes: 0,
+            network_rx_bytes,
+            network_tx_bytes,
         }
     }
 
@@ -474,8 +491,8 @@ fn try_decode_coinbase_recipient<Block: BlockT>(
     let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
     match decoded.function {
         runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::mint_coinbase {
-            coinbase_data,
-        }) => Some(coinbase_data.recipient_address),
+            reward_bundle,
+        }) => Some(reward_bundle.miner_note.recipient_address),
         _ => None,
     }
 }
@@ -804,6 +821,15 @@ where
     ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
+        let note_count = api
+            .encrypted_note_count(best_hash)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?;
+        if note_count > MAX_RPC_MERKLE_WITNESS_NOTES {
+            return Err(format!(
+                "merkle witness RPC disabled above {} notes; use indexed witness service",
+                MAX_RPC_MERKLE_WITNESS_NOTES
+            ));
+        }
 
         api.get_merkle_witness(best_hash, position)
             .map_err(|e| format!("Runtime API error: {:?}", e))?
@@ -862,6 +888,18 @@ where
         api.fee_quote(best_hash, ciphertext_bytes, proof_kind)
             .map_err(|e| format!("Runtime API error: {:?}", e))?
             .map_err(|_| "Fee quote failed".to_string())
+    }
+
+    fn fee_quote_breakdown(
+        &self,
+        ciphertext_bytes: u64,
+        proof_kind: FeeProofKind,
+    ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String> {
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        api.fee_quote_breakdown(best_hash, ciphertext_bytes, proof_kind)
+            .map_err(|e| format!("Runtime API error: {:?}", e))?
+            .map_err(|_| "Fee quote breakdown failed".to_string())
     }
 
     fn forced_inclusions(

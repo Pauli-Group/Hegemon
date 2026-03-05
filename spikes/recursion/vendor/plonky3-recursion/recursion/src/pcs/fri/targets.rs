@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use alloc::{format, vec};
+use alloc::format;
 use core::marker::PhantomData;
 
 use p3_challenger::{CanObserve, GrindingChallenger};
@@ -11,14 +11,16 @@ use p3_field::{
     ExtensionField, Field, PackedValue, PrimeCharacteristicRing, PrimeField64, TwoAdicField,
 };
 use p3_fri::{CommitPhaseProofStep, FriProof, QueryProof, TwoAdicFriPcs};
+use p3_matrix::Dimensions;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{CryptographicHasher, Hash, PseudoCompressionFunction};
 use p3_uni_stark::{StarkGenericConfig, Val};
 use serde::{Deserialize, Serialize};
 
+use super::verifier::{flatten_extension_rows_to_base_targets, verify_merkle_batch_circuit};
 use super::{FriVerifierParams, MAX_QUERY_INDEX_BITS, verify_fri_circuit};
 use crate::Target;
-use crate::challenger::CircuitChallenger;
+use crate::challenger::{ChallengerField, CircuitChallenger};
 use crate::traits::{
     ComsWithOpeningsTargets, Recursive, RecursiveChallenger, RecursiveExtensionMmcs, RecursiveMmcs,
     RecursivePcs,
@@ -71,7 +73,7 @@ impl<
             .collect();
 
         let final_poly = circuit
-            .alloc_public_inputs(input.final_poly.len(), "FRI final polynomial coefficients");
+            .alloc_witness_inputs(input.final_poly.len(), "FRI final polynomial coefficients");
 
         Self {
             commit_phase_commits,
@@ -83,30 +85,9 @@ impl<
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        let FriProof {
-            commit_phase_commits,
-            commit_pow_witnesses,
-            query_proofs,
-            final_poly,
-            query_pow_witness,
-        } = input;
-
-        commit_phase_commits
-            .iter()
-            .flat_map(|c| RecMmcs::Commitment::get_values(c))
-            .chain(
-                commit_pow_witnesses
-                    .iter()
-                    .flat_map(|w| Witness::get_values(w)),
-            )
-            .chain(
-                query_proofs
-                    .iter()
-                    .flat_map(|c| QueryProofTargets::<F, EF, InputProof, RecMmcs>::get_values(c)),
-            )
-            .chain(final_poly.iter().copied())
-            .chain(Witness::get_values(query_pow_witness))
-            .collect()
+        // FRI proof payloads are witness-only in recursion circuits.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -249,13 +230,15 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
 
     fn new(circuit: &mut CircuitBuilder<EF>, _input: &Self::Input) -> Self {
         Self {
-            hash_targets: circuit.alloc_public_input_array("MMCS commitment digest"),
+            hash_targets: circuit.alloc_witness_input_array("MMCS commitment digest"),
             _phantom: PhantomData,
         }
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        input.into_iter().map(|v| EF::from(v)).collect()
+        // Commitment digests are witness-only.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -303,13 +286,15 @@ impl<F: Field, EF: ExtensionField<F>> Recursive<EF> for Witness<F> {
 
     fn new(circuit: &mut CircuitBuilder<EF>, _input: &Self::Input) -> Self {
         Self {
-            witness: circuit.alloc_public_input("FRI proof-of-work witness"),
+            witness: circuit.alloc_witness_input("FRI proof-of-work witness"),
             _phantom: PhantomData,
         }
     }
 
     fn get_values(input: &Self::Input) -> Vec<EF> {
-        vec![EF::from(*input)]
+        // PoW witnesses are witness-only.
+        let _ = input;
+        Vec::new()
     }
 }
 
@@ -325,7 +310,8 @@ where
     _phantom: PhantomData<F>,
 }
 
-impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize, H, C> RecursiveMmcs<F, EF>
+impl<F: PrimeField64 + TwoAdicField, EF: ExtensionField<F>, const DIGEST_ELEMS: usize, H, C>
+    RecursiveMmcs<F, EF>
     for RecValMmcs<F, DIGEST_ELEMS, H, C>
 where
     H: CryptographicHasher<F, [F; DIGEST_ELEMS]>
@@ -341,6 +327,24 @@ where
     type Commitment = HashTargets<F, DIGEST_ELEMS>;
 
     type Proof = HashProofTargets<F, DIGEST_ELEMS>;
+
+    fn verify_batch_circuit(
+        circuit: &mut CircuitBuilder<EF>,
+        commitment_observation: &[Target],
+        dimensions: &[Dimensions],
+        index_bits: &[Target],
+        opened_values: &[Vec<Target>],
+        opening_proof: &Self::Proof,
+    ) -> Result<(), CircuitBuilderError> {
+        verify_merkle_batch_circuit::<F, EF, DIGEST_ELEMS>(
+            circuit,
+            commitment_observation,
+            dimensions,
+            index_bits,
+            opened_values,
+            &opening_proof.hash_proof_targets,
+        )
+    }
 }
 
 /// `Recursive` version of an `ExtensionFieldMmcs` where the inner `Mmcs` is a `MerkleTreeMmcs`.
@@ -355,14 +359,44 @@ pub struct RecExtensionValMmcs<
     _phantom_val: PhantomData<ValMmcs>,
 }
 
-impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize, RecValMmcs: RecursiveMmcs<F, EF>>
-    RecursiveExtensionMmcs<F, EF> for RecExtensionValMmcs<F, EF, DIGEST_ELEMS, RecValMmcs>
+impl<
+    F: PrimeField64 + TwoAdicField,
+    EF: ExtensionField<F>,
+    const DIGEST_ELEMS: usize,
+    RecValMmcs: RecursiveMmcs<F, EF>,
+> RecursiveExtensionMmcs<F, EF> for RecExtensionValMmcs<F, EF, DIGEST_ELEMS, RecValMmcs>
 {
     type Input = ExtensionMmcs<F, EF, RecValMmcs::Input>;
 
     type Commitment = RecValMmcs::Commitment;
 
     type Proof = RecValMmcs::Proof;
+
+    fn verify_batch_circuit(
+        circuit: &mut CircuitBuilder<EF>,
+        commitment_observation: &[Target],
+        dimensions: &[Dimensions],
+        index_bits: &[Target],
+        opened_values: &[Vec<Target>],
+        opening_proof: &Self::Proof,
+    ) -> Result<(), CircuitBuilderError> {
+        let flattened_openings = flatten_extension_rows_to_base_targets::<F, EF>(circuit, opened_values)?;
+        let flattened_dimensions = dimensions
+            .iter()
+            .map(|dim| Dimensions {
+                width: dim.width.saturating_mul(EF::DIMENSION),
+                height: dim.height,
+            })
+            .collect::<Vec<_>>();
+        RecValMmcs::verify_batch_circuit(
+            circuit,
+            commitment_observation,
+            &flattened_dimensions,
+            index_bits,
+            &flattened_openings,
+            opening_proof,
+        )
+    }
 }
 
 pub type InputProofTargets<F, EF, Inner> = Vec<BatchOpeningTargets<F, EF, Inner>>;
@@ -417,9 +451,10 @@ impl<SC, Dft, Comm, InputMmcs, RecursiveInputMmcs, RecursiveFriMmcs, FriMmcs>
 where
     SC: StarkGenericConfig,
     Val<SC>: TwoAdicField + PrimeField64,
+    SC::Challenge: ChallengerField + ExtensionField<Val<SC>> + PrimeCharacteristicRing,
     InputMmcs: Mmcs<Val<SC>>,
     FriMmcs: Mmcs<SC::Challenge>,
-    Comm: Recursive<SC::Challenge>,
+    Comm: Recursive<SC::Challenge> + ObservableCommitment,
     RecursiveInputMmcs: RecursiveMmcs<Val<SC>, SC::Challenge, Input = InputMmcs>,
     RecursiveFriMmcs: RecursiveExtensionMmcs<Val<SC>, SC::Challenge, Input = FriMmcs>,
     RecursiveFriMmcs::Commitment: ObservableCommitment,
@@ -444,7 +479,7 @@ where
         opened_values: &OpenedValuesTargetsWithLookups<SC>,
         params: &Self::VerifierParams,
     ) -> Result<Vec<Target>, CircuitBuilderError> {
-        opened_values.observe(circuit, challenger);
+        opened_values.observe(circuit, challenger)?;
 
         // Sample FRI alpha (for batch opening reduction)
         let fri_alpha = challenger.sample(circuit);
@@ -458,14 +493,13 @@ where
             .zip(fri_proof.commit_pow_witnesses.iter())
         {
             let commit_targets = commit.to_observation_targets();
-            challenger.observe_slice(circuit, &commit_targets);
+            challenger.observe_base_slice::<Val<SC>, SC::Challenge>(circuit, &commit_targets)?;
             // Check commit-phase PoW witness when enabled.
             if params.commit_pow_bits > 0 {
-                challenger.check_witness(
+                challenger.check_witness_base::<Val<SC>, SC::Challenge>(
                     circuit,
                     params.commit_pow_bits,
                     pow.witness,
-                    Val::<SC>::bits(),
                 )?;
             }
             let beta = challenger.sample(circuit);
@@ -473,23 +507,25 @@ where
         }
 
         // Observe final polynomial coefficients
-        challenger.observe_slice(circuit, &fri_proof.final_poly);
+        challenger.observe_algebra_slice::<Val<SC>, SC::Challenge>(circuit, &fri_proof.final_poly)?;
 
         // Check query PoW witness when enabled.
         if params.query_pow_bits > 0 {
-            challenger.check_witness(
+            challenger.check_witness_base::<Val<SC>, SC::Challenge>(
                 circuit,
                 params.query_pow_bits,
                 fri_proof.pow_witness.witness,
-                Val::<SC>::bits(),
             )?;
         }
 
         // Sample query indices
+        let log_global_max_height =
+            fri_proof.commit_phase_commits.len() + params.log_blowup + params.log_final_poly_len;
         let num_queries = fri_proof.query_proofs.len();
         let mut query_indices = Vec::with_capacity(num_queries);
         for _ in 0..num_queries {
-            let index = challenger.sample(circuit);
+            let index = challenger
+                .sample_bits_public::<Val<SC>, SC::Challenge>(circuit, log_global_max_height)?;
             query_indices.push(index);
         }
 

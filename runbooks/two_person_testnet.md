@@ -12,8 +12,8 @@ Both participants need:
 
 ## Network Info
 
-- **Boot Node (Alice):** `hegemon.pauli.group:30333`
-- **Approved seed list (`HEGEMON_SEEDS`):** `hegemon.pauli.group:30333,75.155.93.185:30333`
+- **Boot Node (Alice):** `hegemon.pauli.group:31333`
+- **Approved seed list (`HEGEMON_SEEDS`):** `hegemon.pauli.group:31333,158.69.222.121:31333`
 - **Chain:** Shared chainspec file (see below)
 - **Block time:** ~60 seconds (1 minute)
 - **Coinbase reward:** ~4.98 HEG per block (halves every ~4 years / 2.1M blocks)
@@ -101,13 +101,13 @@ The script will:
 To connect to the boot node, set `BOOTNODE` before running:
 
 ```bash
-BOOTNODE="hegemon.pauli.group:30333" ./scripts/start-mining.sh
+BOOTNODE="hegemon.pauli.group:31333" ./scripts/start-mining.sh
 ```
 
 For real testnet mining, use the approved seed list so all miners share the same bootstrap peers:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333" ./scripts/start-mining.sh
+HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" ./scripts/start-mining.sh
 ```
 
 ### ⚠️ Ciphertext Retention (Required on Testnet)
@@ -180,7 +180,7 @@ Look for `primaryAddress` (`shca1...`) and your balances.
 
 Bob just needs your public IP and port. No peer ID is required (the network uses PQ-Noise, not libp2p).
 
-Your bootnode address: `hegemon.pauli.group:30333`
+Your bootnode address: `hegemon.pauli.group:31333`
 
 ### 5. Monitor Mining
 
@@ -218,7 +218,7 @@ printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333" \
+HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" \
 HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
   | jq -r '.result.primaryAddress') \
@@ -339,7 +339,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 ### Bob can't connect
 - Verify port 30333 is forwarded on Alice's router
 - Check firewall allows inbound TCP 30333 (macOS: add hegemon-node to allowed apps)
-- Ensure `HEGEMON_SEEDS` uses the approved seed list: `hegemon.pauli.group:30333,75.155.93.185:30333`
+- Ensure `HEGEMON_SEEDS` uses the approved seed list: `hegemon.pauli.group:31333,158.69.222.121:31333`
 - Ensure all miners share the same seed list to avoid partitions/forks
 
 ### Blocks not syncing
@@ -358,7 +358,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 ### Invalid Transaction: `Custom error: 6`
 - The shielded verifying key is disabled in genesis, so unsigned transfers are rejected.
 - Fix: rebuild the node, regenerate the chainspec, and restart with the new spec (or wipe `node.db` when using `--dev`).
-- If you need to keep chain state, use sudo to call `ShieldedPool.update_verifying_key` with `StarkVerifier::create_verifying_key(0)` via Polkadot.js Apps.
+- There is no `sudo` or council override path in the current runtime; for dev/test recovery, restart from a fresh chainspec and database.
 
 ### Balance shows 0
 - Mining rewards require `HEGEMON_MINER_ADDRESS` to be set (shielded address)

@@ -25,12 +25,13 @@ fn build_package() -> DisclosurePackage {
     let mut rng = StdRng::seed_from_u64(1234);
     let memo = MemoPlaintext::new(b"deposit".to_vec());
     let note = NotePlaintext::random(100_000_000, 0, memo, &mut rng);
-    let note_data = note.to_note_data(address.pk_recipient);
+    let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
 
     let commitment = note_commitment_bytes(
         note_data.value,
         note_data.asset_id,
         &note_data.pk_recipient,
+        &note_data.pk_auth,
         &note_data.rho,
         &note_data.r,
     );
@@ -39,6 +40,7 @@ fn build_package() -> DisclosurePackage {
         value: note_data.value,
         asset_id: note_data.asset_id,
         pk_recipient: note_data.pk_recipient,
+        pk_auth: note_data.pk_auth,
         commitment,
     };
     let witness = PaymentDisclosureWitness {
@@ -61,6 +63,7 @@ fn build_package() -> DisclosurePackage {
         claim: DisclosureClaim {
             recipient_address,
             pk_recipient: address.pk_recipient,
+            pk_auth: address.pk_auth,
             value: note_data.value,
             asset_id: note_data.asset_id,
             commitment,
@@ -91,6 +94,9 @@ fn verify_package(
         ShieldedAddress::decode(&package.claim.recipient_address).map_err(|e| e.to_string())?;
     if recipient.pk_recipient != package.claim.pk_recipient {
         return Err("recipient address does not match pk_recipient".to_string());
+    }
+    if recipient.pk_auth != package.claim.pk_auth {
+        return Err("recipient address does not match pk_auth".to_string());
     }
 
     if !is_canonical_bytes48(&package.claim.commitment) {
@@ -143,6 +149,7 @@ fn verify_package(
             value: package.claim.value,
             asset_id: package.claim.asset_id,
             pk_recipient: package.claim.pk_recipient,
+            pk_auth: package.claim.pk_auth,
             commitment: package.claim.commitment,
         },
         proof_bytes,

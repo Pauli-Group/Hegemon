@@ -373,6 +373,18 @@ impl PqNetworkBackend {
                                                         recv_result = conn.recv() => {
                                                             match recv_result {
                                                                 Ok(Some(data)) => {
+                                                                    if let Some(peer) = peers_for_task
+                                                                        .write()
+                                                                        .await
+                                                                        .get_mut(&peer_id)
+                                                                    {
+                                                                        peer.info.bytes_received = peer
+                                                                            .info
+                                                                            .bytes_received
+                                                                            .saturating_add(
+                                                                                data.len() as u64,
+                                                                            );
+                                                                    }
                                                                     // Decode framed message
                                                                     #[derive(serde::Deserialize)]
                                                                     struct FramedMessage {
@@ -420,6 +432,18 @@ impl PqNetworkBackend {
                                                                     "Failed to send to peer"
                                                                 );
                                                                 break;
+                                                            }
+                                                            if let Some(peer) = peers_for_task
+                                                                .write()
+                                                                .await
+                                                                .get_mut(&peer_id)
+                                                            {
+                                                                peer.info.bytes_sent = peer
+                                                                    .info
+                                                                    .bytes_sent
+                                                                    .saturating_add(
+                                                                        data.len() as u64,
+                                                                    );
                                                             }
                                                         }
                                                     }
@@ -645,6 +669,14 @@ impl PqNetworkBackend {
                     recv_result = conn.recv() => {
                         match recv_result {
                             Ok(Some(data)) => {
+                                if let Some(peer) =
+                                    peers_for_task.write().await.get_mut(&peer_id)
+                                {
+                                    peer.info.bytes_received = peer
+                                        .info
+                                        .bytes_received
+                                        .saturating_add(data.len() as u64);
+                                }
                                 // Decode framed message
                                 #[derive(serde::Deserialize)]
                                 struct FramedMessage {
@@ -692,6 +724,12 @@ impl PqNetworkBackend {
                                 "Failed to send to peer"
                             );
                             break;
+                        }
+                        if let Some(peer) = peers_for_task.write().await.get_mut(&peer_id) {
+                            peer.info.bytes_sent = peer
+                                .info
+                                .bytes_sent
+                                .saturating_add(data.len() as u64);
                         }
                     }
                 }
@@ -843,6 +881,25 @@ impl PqNetworkHandle {
     /// Get connected peer IDs
     pub async fn connected_peers(&self) -> Vec<[u8; 32]> {
         self.peers.read().await.keys().copied().collect()
+    }
+
+    /// Disconnect a peer and emit a disconnection event.
+    pub async fn disconnect(&self, peer_id: [u8; 32], reason: &str) {
+        if self.peers.write().await.remove(&peer_id).is_some() {
+            let _ = self
+                .event_tx
+                .send(PqNetworkEvent::PeerDisconnected {
+                    peer_id,
+                    reason: reason.to_string(),
+                })
+                .await;
+
+            tracing::info!(
+                peer_id = %hex::encode(peer_id),
+                reason = reason,
+                "Peer disconnected via handle"
+            );
+        }
     }
 
     /// Broadcast data to all connected peers via channels

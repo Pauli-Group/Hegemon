@@ -22,28 +22,28 @@ contextBridge.exposeInMainWorld('hegemon', {
   wallet: {
     init: (storePath: string, passphrase: string) => ipcRenderer.invoke('wallet:init', storePath, passphrase),
     restore: (storePath: string, passphrase: string) => ipcRenderer.invoke('wallet:restore', storePath, passphrase),
-    status: (storePath: string, passphrase: string, noSync?: boolean) =>
-      ipcRenderer.invoke('wallet:status', storePath, passphrase, noSync),
-    sync: (storePath: string, passphrase: string, wsUrl: string, forceRescan?: boolean) =>
-      ipcRenderer.invoke('wallet:sync', storePath, passphrase, wsUrl, forceRescan),
+    status: (storePath: string, unlockToken: string, noSync?: boolean) =>
+      ipcRenderer.invoke('wallet:status', storePath, unlockToken, noSync),
+    sync: (storePath: string, unlockToken: string, wsUrl: string, forceRescan?: boolean) =>
+      ipcRenderer.invoke('wallet:sync', storePath, unlockToken, wsUrl, forceRescan),
     send: (request: WalletSendRequest) => ipcRenderer.invoke('wallet:send', request),
     sendPlan: (request: WalletSendPlanRequest) => ipcRenderer.invoke('wallet:sendPlan', request),
     lock: () => ipcRenderer.invoke('wallet:lock'),
     disclosureCreate: (
       storePath: string,
-      passphrase: string,
+      unlockToken: string,
       wsUrl: string,
       txId: string,
       output: number
-    ) => ipcRenderer.invoke('wallet:disclosureCreate', storePath, passphrase, wsUrl, txId, output),
+    ) => ipcRenderer.invoke('wallet:disclosureCreate', storePath, unlockToken, wsUrl, txId, output),
     disclosureVerify: (
       storePath: string,
-      passphrase: string,
+      unlockToken: string,
       wsUrl: string,
       packageJson: object
-    ) => ipcRenderer.invoke('wallet:disclosureVerify', storePath, passphrase, wsUrl, packageJson),
-    disclosureList: (storePath: string, passphrase: string) =>
-      ipcRenderer.invoke('wallet:disclosureList', storePath, passphrase)
+    ) => ipcRenderer.invoke('wallet:disclosureVerify', storePath, unlockToken, wsUrl, packageJson),
+    disclosureList: (storePath: string, unlockToken: string) =>
+      ipcRenderer.invoke('wallet:disclosureList', storePath, unlockToken)
   },
   contacts: {
     list: () => ipcRenderer.invoke('contacts:list'),

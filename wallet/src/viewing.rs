@@ -27,7 +27,7 @@ impl IncomingViewingKey {
     }
 
     pub fn address_material(&self, index: u32) -> Result<AddressKeyMaterial, WalletError> {
-        AddressKeyMaterial::derive_with_components(
+        AddressKeyMaterial::derive_view_only(
             index,
             &self.view_key,
             &self.encryption_seed,
@@ -42,7 +42,7 @@ impl IncomingViewingKey {
     pub fn decrypt_note(&self, ciphertext: &NoteCiphertext) -> Result<RecoveredNote, WalletError> {
         let material = self.address_material(ciphertext.diversifier_index)?;
         let plaintext = ciphertext.decrypt(&material)?;
-        let note_data = plaintext.to_note_data(material.pk_recipient);
+        let note_data = plaintext.to_note_data(material.pk_recipient, material.pk_auth);
         let address = material.shielded_address();
         Ok(RecoveredNote {
             diversifier_index: ciphertext.diversifier_index,
@@ -58,6 +58,8 @@ pub struct FullViewingKey {
     pub incoming: IncomingViewingKey,
     #[serde(with = "serde_bytes32")]
     nullifier_key: [u8; 32],
+    #[serde(default, with = "serde_bytes32")]
+    pk_auth: [u8; 32],
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -82,15 +84,15 @@ impl OutgoingViewingKey {
 
 impl FullViewingKey {
     pub fn from_keys(keys: &DerivedKeys) -> Self {
-        Self::from_incoming(IncomingViewingKey::from_keys(keys))
-    }
-
-    pub(crate) fn from_incoming(incoming: IncomingViewingKey) -> Self {
-        let nullifier_key = incoming.view_key.nullifier_key();
+        let incoming = IncomingViewingKey::from_keys(keys);
+        let mut nullifier_key = [0u8; 32];
+        let prf = compute_prf_key(&keys.spend.to_bytes());
+        let encoded = transaction_circuit::hashing_pq::felts_to_bytes48(&[prf; 6]);
+        nullifier_key[..8].copy_from_slice(&encoded[..8]);
         Self {
             incoming,
-            // View-only nullifier key derived from sk_view (domain "view_nf").
             nullifier_key,
+            pk_auth: keys.spend.auth_key(),
         }
     }
 
@@ -99,12 +101,18 @@ impl FullViewingKey {
     }
 
     pub fn decrypt_note(&self, ciphertext: &NoteCiphertext) -> Result<RecoveredNote, WalletError> {
-        self.incoming.decrypt_note(ciphertext)
+        let mut recovered = self.incoming.decrypt_note(ciphertext)?;
+        recovered.note_data.pk_auth = self.pk_auth;
+        recovered.address.pk_auth = self.pk_auth;
+        Ok(recovered)
     }
 
     pub fn compute_nullifier(&self, rho: &[u8; 32], position: u64) -> [u8; 48] {
-        // Use Poseidon-based nullifier matching the circuit, with view-derived nullifier key.
-        let prf = compute_prf_key(&self.nullifier_key);
+        let mut encoded = [0u8; 48];
+        encoded[..8].copy_from_slice(&self.nullifier_key[..8]);
+        let prf = transaction_circuit::hashing_pq::bytes48_to_felts(&encoded)
+            .map(|limbs| limbs[0])
+            .unwrap_or_else(|| compute_prf_key(&self.nullifier_key));
         nullifier_bytes(prf, rho, position)
     }
 }

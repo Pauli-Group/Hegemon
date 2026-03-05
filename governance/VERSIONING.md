@@ -44,7 +44,7 @@ If a miner produces a block referencing a binding whose verifying key hash does 
 
 ## Upgrade circuits and note migration
 
-When a primitive needs to be replaced (e.g., moving from ML-KEM-768 to a post-attack variant), proposals should include an `UpgradeDirective`:
+When a primitive needs to be replaced (e.g., moving from ML-KEM-1024 to a post-attack variant), proposals should include an `UpgradeDirective`:
 
 - `from` – the binding being deprecated.
 - `to` – the new binding the ecosystem should move toward.

@@ -86,6 +86,26 @@ pub struct SubmitProofsEntry {
     pub size: u32,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitWitnessesRequest {
+    pub witnesses: Vec<SubmitWitnessesItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitWitnessesItem {
+    /// Binding hash bytes (0x-prefixed hex).
+    pub binding_hash: String,
+    /// Witness bytes (base64, or 0x-prefixed hex).
+    pub witness: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitWitnessesEntry {
+    pub binding_hash: String,
+    pub witness_hash: String,
+    pub size: u32,
+}
+
 #[rpc(server, client, namespace = "da")]
 pub trait DaApi {
     /// Get a DA chunk proof by root and chunk index.
@@ -112,11 +132,24 @@ pub trait DaApi {
     /// In rollup/aggregation mode, shielded transfer extrinsics may omit the per-tx proof bytes
     /// from the block body; the block author assembles an aggregation proof using these staged
     /// proofs.
+    ///
+    /// Phase C note: this is an off-chain proposer/mempool staging API, not a consensus
+    /// proof-availability requirement.
     #[method(name = "submitProofs")]
     async fn submit_proofs(
         &self,
         request: SubmitProofsRequest,
     ) -> RpcResult<Vec<SubmitProofsEntry>>;
+
+    /// Witness sidecar upload is disabled.
+    ///
+    /// CRIT-1 hardening: spend witnesses may contain secret material and must not be uploaded
+    /// to third-party nodes over RPC.
+    #[method(name = "submitWitnesses")]
+    async fn submit_witnesses(
+        &self,
+        request: SubmitWitnessesRequest,
+    ) -> RpcResult<Vec<SubmitWitnessesEntry>>;
 }
 
 pub struct DaRpc {
@@ -278,6 +311,12 @@ impl DaApiServer for DaRpc {
             let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
             let proof_hash = blake3_384(&bytes);
             pending.insert(binding_hash, bytes);
+            tracing::debug!(
+                binding_hash = %hex::encode(binding_hash),
+                proof_size = size,
+                pending_proof_entries = pending.len(),
+                "Staged proof bytes in pending proof store"
+            );
             entries.push(SubmitProofsEntry {
                 binding_hash: format!("0x{}", hex::encode(binding_hash)),
                 proof_hash: format!("0x{}", hex::encode(proof_hash)),
@@ -285,7 +324,26 @@ impl DaApiServer for DaRpc {
             });
         }
 
+        tracing::debug!(
+            proofs_staged = entries.len(),
+            total_bytes,
+            pending_proof_entries = pending.len(),
+            "Completed da_submitProofs request"
+        );
+
         Ok(entries)
+    }
+
+    async fn submit_witnesses(
+        &self,
+        request: SubmitWitnessesRequest,
+    ) -> RpcResult<Vec<SubmitWitnessesEntry>> {
+        let _ = request;
+        Err(ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            "da_submitWitnesses is disabled; upload tx proof bytes via da_submitProofs instead",
+            None::<()>,
+        ))
     }
 }
 

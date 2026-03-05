@@ -45,7 +45,7 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
         },
         "shieldedPool": {
             "verifyingKey": verifying_key_value,
-            "proofAvailabilityPolicy": "DaRequired"
+            "proofAvailabilityPolicy": "SelfContained"
         },
         "stablecoinPolicy": {
             "policies": [
@@ -73,17 +73,6 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
         .with_properties(properties)
         .with_genesis_config(genesis_config)
         .build())
-}
-
-// Keep old names as aliases for compatibility
-pub fn development_config() -> Result<ChainSpec, String> {
-    chain_spec()
-}
-pub fn local_testnet_config() -> Result<ChainSpec, String> {
-    chain_spec()
-}
-pub fn testnet_config() -> Result<ChainSpec, String> {
-    chain_spec()
 }
 
 #[cfg(test)]

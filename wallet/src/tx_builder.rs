@@ -170,7 +170,7 @@ pub fn build_transaction_with_binding(
             &mut rng,
         );
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient);
+        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
         let output_index = outputs.len() as u32;
         let recipient_address = address.encode()?;
         let memo = if note.memo.as_bytes().is_empty() {
@@ -204,7 +204,7 @@ pub fn build_transaction_with_binding(
             &mut rng,
         );
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient);
+        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
         let output_index = outputs.len() as u32;
         let recipient_address = address.encode()?;
         let memo = if note.memo.as_bytes().is_empty() {
@@ -319,7 +319,7 @@ pub fn build_transaction_with_binding(
         inputs,
         outputs,
         ciphertext_hashes: ciphertext_hashes.clone(),
-        sk_spend: derived.view.nullifier_key(),
+        sk_spend: derived.spend.to_bytes(),
         merkle_root: tree.root(),
         fee,
         value_balance: 0,
@@ -361,7 +361,6 @@ pub fn build_transaction_with_binding(
         proof_result.fee,
         proof_result.value_balance,
     );
-
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
         proof_result.nullifiers.to_vec(),
@@ -460,7 +459,7 @@ pub fn build_stablecoin_burn(
         let note =
             NotePlaintext::random(asset_change, asset_id, MemoPlaintext::default(), &mut rng);
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient);
+        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
         let output_index = outputs.len() as u32;
         let recipient_address = address.encode()?;
         let memo = if note.memo.as_bytes().is_empty() {
@@ -489,7 +488,7 @@ pub fn build_stablecoin_burn(
             &mut rng,
         );
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient);
+        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
         let output_index = outputs.len() as u32;
         let recipient_address = address.encode()?;
         let memo = if note.memo.as_bytes().is_empty() {
@@ -548,7 +547,7 @@ pub fn build_stablecoin_burn(
         inputs,
         outputs,
         ciphertext_hashes: ciphertext_hashes.clone(),
-        sk_spend: derived.view.nullifier_key(),
+        sk_spend: derived.spend.to_bytes(),
         merkle_root: tree.root(),
         fee,
         value_balance: 0,
@@ -567,7 +566,6 @@ pub fn build_stablecoin_burn(
         proof_result.fee,
         proof_result.value_balance,
     );
-
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
         proof_result.nullifiers.to_vec(),
@@ -724,7 +722,7 @@ pub fn build_consolidation_transaction(
         inputs,
         outputs: vec![output],
         ciphertext_hashes: ciphertext_hashes.clone(),
-        sk_spend: derived.view.nullifier_key(),
+        sk_spend: derived.spend.to_bytes(),
         merkle_root: tree.root(),
         fee,
         value_balance: 0,
@@ -743,7 +741,6 @@ pub fn build_consolidation_transaction(
         proof_result.fee,
         proof_result.value_balance,
     );
-
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
         proof_result.nullifiers.to_vec(),
@@ -1072,7 +1069,7 @@ fn build_output(
     let ciphertext = NoteCiphertext::encrypt(&recipient.address, &note, rng)?;
     Ok((
         OutputNoteWitness {
-            note: note.to_note_data(recipient.address.pk_recipient),
+            note: note.to_note_data(recipient.address.pk_recipient, recipient.address.pk_auth),
         },
         ciphertext,
         note,

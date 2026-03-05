@@ -66,9 +66,9 @@ pub mod pallet {
     /// Target block time in milliseconds (60 seconds / 1 minute)
     pub const TARGET_BLOCK_TIME_MS: u64 = 60_000;
 
-    /// Number of blocks between difficulty adjustments
-    /// At 60s blocks, 10 blocks = 10 minutes between adjustments.
-    pub const RETARGET_INTERVAL: u32 = 10;
+    /// Number of blocks between difficulty adjustments.
+    /// At 60s blocks, 120 blocks = 2 hours between adjustments.
+    pub const RETARGET_INTERVAL: u32 = 120;
 
     /// Maximum adjustment factor per retarget period (4x up or down)
     pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
@@ -204,7 +204,7 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        /// Force a difficulty adjustment (sudo only, for emergencies)
+        /// Force a difficulty adjustment (root only, for emergencies)
         ///
         /// This bypasses the normal retarget schedule and sets difficulty directly.
         /// Only callable by root origin.

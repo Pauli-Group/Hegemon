@@ -27,6 +27,17 @@ After this work, a developer can run a local devnet and observe all of the follo
 
 ## Progress
 
+- [x] (2026-02-19T00:00Z) Locked Phase C endpoint for `0.9.0` as deep-recursion-only (`ProofAvailabilityPolicy::SelfContained` / `InlineRequired`, no production `DaRequired` lane) with fresh-genesis assumptions.
+- [x] (2026-02-19T00:00Z) Migrated commitment/aggregation binding from `tx_proofs_commitment` to `tx_statements_commitment` and added aggregation payload V3 decode/binding checks in consensus.
+- [x] (2026-02-19T00:00Z) Removed proof-DA consensus extrinsics from runtime/pallet call surface and made `da_submitProofs` an off-chain proposer staging path only.
+- [x] (2026-02-20T00:00Z) Landed fail-closed import/producer semantics for Phase C (`ProofVerificationMode::{InlineRequired, SelfContainedAggregation}`), including strict SelfContained aggregation-proof requirement and no tx-proof fallback in SelfContained mode.
+- [x] (2026-02-20T00:00Z) Moved remaining recursive opened-value payloads to witness targets and extended aggregation witness wiring; `aggregation_proof_roundtrip` (ignored test) passes.
+- [x] (2026-02-20T00:00Z) Added strict throughput harness guard (`HEGEMON_TP_STRICT_AGGREGATION=1`) and consensus regression tests for mode behavior (`consensus/tests/self_contained_mode.rs`).
+- [x] (2026-02-20T01:00Z) Deep recursion challenger placeholder removed: recursive Fiat-Shamir sampling is now constrained in-circuit and sampled challenge public inputs are connected to derived transcript values.
+- [x] (2026-02-20T02:30Z) Phase D cutover landed: runtime call surface now uses single `submit_proven_batch`, consensus `Block` uses `proven_batch`, node authoring path attaches only ready proven batches, and synchronous in-closure proof generation was removed from `wire_block_builder_api`.
+- [x] (2026-02-20T03:20Z) Upgraded the in-node prover coordinator to a bounded multi-job scheduler: `HEGEMON_PROVER_WORKERS` and `HEGEMON_BATCH_QUEUE_CAPACITY` now actively control concurrent proving jobs, stale-parent results are discarded fail-closed, and new coordinator unit tests cover ready lookup, stale cancellation, and failure slot release.
+- [x] (2026-02-27T00:00Z) Added aggregation-verifier cache singleflight in consensus so concurrent import workers do not duplicate recursion cache builds for the same `(tx_count, pub_inputs_len, proof_shape)` key under first-seen load.
+- [ ] (2026-02-19T00:00Z) Phase C closure checklist (completed: core codepath migration + compile/test target checks; remaining: full throughput/e2e reruns and final metrics capture under `SelfContained` mode).
 - [x] (2026-01-21T00:00Z) Draft world-commerce scalability ExecPlan (this file).
 - [x] (2026-01-22T18:47Z) Baseline the current system’s throughput bottlenecks with reproducible local measurements (proof sizes, verify times, ciphertext sizes, block size limits).
 - [x] (2026-01-22T18:54Z) Execute `.agent/PROOF_AGGREGATION_P3_EXECPLAN.md` through “end-to-end batch proof on devnet” milestone.
@@ -97,6 +108,10 @@ After this work, a developer can run a local devnet and observe all of the follo
 - Observation: Aggregation verification work included avoidable per-block setup (recursion circuit/air build), which can cause large RAM spikes on laptops; caching moves that cost to a one-time warmup per batch shape, and the remaining steady-state verification cost is tens of ms.
   Evidence: `consensus/src/aggregation.rs` caches verifier artifacts keyed by (tx_count, public_inputs_len, proof shape), and `aggregation_verify_breakdown_metrics` shows `verify_batch_ms≈31–33ms` once the cache is built.
 
+- Observation: Under concurrent import/proving load, first-seen aggregation shapes can still trigger duplicate cold cache builds if multiple workers race for the same key.
+  Evidence: live logs on `hegemon-prover` showed first-seen `tx_count=2` runs with very large one-time costs (`aggregation_cache_prewarm_build_ms` and multi-minute `prepare_block_proof_bundle` spans) even though steady-state verify/prove stages are fast once warm.
+  Consequence: cache build paths need singleflight semantics (one builder per key) and explicit warmup discipline for production rollouts.
+
 - Observation: Transaction STARK proofs are currently failing verification in Plonky3 e2e mode (`OodEvaluationMismatch`), blocking the end-to-end commerce demo and wallet sends.
   Evidence: `cargo test -p transaction-circuit proving_and_verification_succeeds --features plonky3-e2e --release` fails with `STARK verification failed: OodEvaluationMismatch`.
 - Observation: The OOD mismatch was caused by the AIR parsing public inputs without the new ciphertext-hash limbs, shifting the merkle-root inputs and failing the merkle-root constraint at row 2175.
@@ -157,12 +172,29 @@ After this work, a developer can run a local devnet and observe all of the follo
   Rationale: Wallet UX requires ciphertext availability; proof bytes are only needed for Phase A verification and can drop to “archive-grade” quickly.
   Date/Author: 2026-01-25 / Codex
 
+- Decision: Ship Phase C as a direct deep-recursion endpoint for `0.9.0` and remove the production `DaRequired` path.
+  Rationale: Interim bridge modes preserve complexity without improving the final security/throughput target. Fresh genesis allows a clean cut to `SelfContained` aggregation semantics.
+  Date/Author: 2026-02-19 / Codex
+
+- Decision: Bind commitment proofs and aggregation verification to canonical transaction statements (`tx_statements_commitment`) rather than per-proof hashes.
+  Rationale: Phase C consensus validity should depend on transaction statements and recursive validity, not on consensus-visible proof-DA availability artifacts.
+  Date/Author: 2026-02-19 / Codex
+
 ## Outcomes & Retrospective
 
 Phase A (0.8.0) is demonstrable locally:
 
 - Single-node throughput + aggregation: `scripts/throughput_sidecar_aggregation_tmux.sh`
 - Two-node DA fetch (miner ↔ verifier): `scripts/two_node_sidecar_da_e2e_tmux.sh`
+
+Phase C (0.9.0 endpoint) is now code-complete at the architecture level in this tree:
+
+- `SelfContained` aggregation is wired through runtime + consensus import paths.
+- Commitment/aggregation binding uses statement commitments (`tx_statements_commitment`).
+- Proof-DA commitment/manifest consensus calls are removed.
+- Recursive witness migration is integrated for inner proof payloads used by aggregation.
+
+Remaining work: operational validation (fresh-genesis devnet and updated throughput/e2e metrics capture under the strict SelfContained lane).
 
 ## Context and Orientation
 
@@ -188,16 +220,18 @@ We use three classes of “switch,” each with a distinct purpose:
    - Already present:
      - `DaAvailabilityPolicy`: `FullFetch` vs `Sampling` (DA acceptance rules).
      - `CiphertextPolicy`: `InlineAllowed` vs `SidecarOnly` (block payload rules).
-     - `ProofAvailabilityPolicy`: `InlineRequired` vs `DaRequired` (where per-tx proof bytes live when aggregation mode is used).
+     - `ProofAvailabilityPolicy`: `InlineRequired` vs `SelfContained` (whether aggregation mode may omit per-tx proof bytes in consensus path).
 
 2. Per-block markers (mandatory unsigned extrinsics). These are for “what validation mode is this block using?” and are used so block authors can explicitly opt into a mode while verifiers can reject blocks that use the mode incorrectly.
 
    - Already present:
-     - `ShieldedPool::submit_commitment_proof`: binds ciphertext-DA root + `chunk_count` plus the `CommitmentBlockProof` bytes.
-     - `ShieldedPool::submit_proof_da_commitment`: binds proof-DA root + `chunk_count` for per-tx proof bytes in Phase A.
-     - `ShieldedPool::submit_proof_da_manifest`: binds `binding_hash -> (proof_hash, len, offset)` so commitments can be computed without fetching proof bytes.
-     - `ShieldedPool::submit_aggregation_proof`: supplies the block’s aggregation proof bytes (verified during import).
+     - `ShieldedPool::submit_proven_batch`: carries commitment proof + aggregation proof + statement commitment + DA binding in a single payload.
      - `ShieldedPool::enable_aggregation_mode`: indicates per-tx verification may be skipped in the runtime for this block (the node must verify aggregated validity during import).
+
+   - Historical (0.8.0 / Phase A only):
+     - `ShieldedPool::submit_proof_da_commitment`
+     - `ShieldedPool::submit_proof_da_manifest`
+     - These were removed from the `0.9.0` Phase C production lane.
 
 3. Protocol versioning (code-level change gates). These are for “the format changed” or “verification logic changed” and must be activated by a version schedule, not by a mutable runtime toggle.
 
@@ -295,3 +329,5 @@ The concrete ExecPlans will introduce or harden the following interfaces:
 - A DA sidecar interface keyed by `DaRoot` with chunk proofs (`state/da` + `node/src/substrate/network_bridge.rs`).
 - A wallet-facing RPC that can fetch ciphertext ranges from DA data, not from block bodies.
 - A fee model that prices bytes *and* retention time, without relying on public priority bidding.
+
+Plan update note (2026-02-19): updated progress/decisions/outcomes and activation switchboard to lock the Phase C endpoint (`SelfContained` + deep recursion refactor, no production `DaRequired` path), and linked this top-level plan to the dedicated `.agent/PHASE_C_DEEP_RECURSION_EXECPLAN.md` workstream.

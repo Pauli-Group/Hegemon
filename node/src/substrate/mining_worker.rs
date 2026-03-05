@@ -62,7 +62,6 @@
 use crate::pow::PowHandle;
 use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
 use crate::substrate::service::StorageChangesHandle;
-use block_circuit::CommitmentBlockProof;
 use codec::Encode;
 use consensus::{Blake3Seal, MiningWork};
 use sp_core::H256;
@@ -173,10 +172,6 @@ pub struct BlockTemplate {
     /// Task 11.5.5: Handle for cached StorageChanges for block import.
     /// This is set during block building when using sc_block_builder::BlockBuilder.
     pub storage_changes: Option<StorageChangesHandle>,
-    /// Optional commitment block proof built from shielded transfer extrinsics.
-    pub commitment_proof: Option<CommitmentBlockProof>,
-    /// Optional aggregation proof bytes built from transaction proofs.
-    pub aggregation_proof: Option<Vec<u8>>,
 }
 
 impl BlockTemplate {
@@ -201,8 +196,6 @@ impl BlockTemplate {
             difficulty_bits,
             extrinsics: Vec::new(),
             storage_changes: None, // Task 11.5.5: Set during block building
-            commitment_proof: None,
-            aggregation_proof: None,
         }
     }
 
@@ -255,16 +248,6 @@ impl BlockTemplate {
             &self.extrinsics_root,
             &self.state_root,
         );
-        self
-    }
-
-    pub fn with_commitment_proof(mut self, commitment_proof: Option<CommitmentBlockProof>) -> Self {
-        self.commitment_proof = commitment_proof;
-        self
-    }
-
-    pub fn with_aggregation_proof(mut self, aggregation_proof: Option<Vec<u8>>) -> Self {
-        self.aggregation_proof = aggregation_proof;
         self
     }
 
@@ -760,6 +743,7 @@ where
         let check_interval = Duration::from_millis(self.config.work_check_interval_ms);
         let mut current_template: Option<BlockTemplate> = None;
         let mut last_best_hash = H256::zero();
+        let mut last_pending_root = H256::zero();
         let mut was_syncing = false;
         let mut was_mining = false;
 
@@ -769,6 +753,7 @@ where
                 if was_mining {
                     self.pow_handle.clear_work();
                     current_template = None;
+                    last_pending_root = H256::zero();
                     was_mining = false;
                 }
                 tokio::time::sleep(check_interval).await;
@@ -788,6 +773,7 @@ where
                 was_syncing = true;
                 self.pow_handle.clear_work();
                 current_template = None;
+                last_pending_root = H256::zero();
                 tokio::time::sleep(check_interval).await;
                 continue;
             }
@@ -798,8 +784,11 @@ where
 
             // Check for new work (best block changed)
             let best_hash = self.chain_state.best_hash();
+            let pending_root = compute_extrinsics_root(&self.chain_state.pending_transactions());
+            let parent_changed = best_hash != last_best_hash;
+            let pending_changed = pending_root != last_pending_root;
 
-            if best_hash != last_best_hash || current_template.is_none() {
+            if parent_changed || pending_changed || current_template.is_none() {
                 // Build block template with state execution (Task 11.4)
                 // This handles:
                 // - Getting pending transactions
@@ -830,6 +819,8 @@ where
 
                 if self.config.verbose {
                     tracing::debug!(
+                        parent_changed,
+                        pending_changed,
                         height = template.number,
                         parent_hash = %hex::encode(template.parent_hash.as_bytes()),
                         difficulty = format!("{:08x}", template.difficulty_bits),
@@ -837,18 +828,11 @@ where
                         state_root = %hex::encode(template.state_root.as_bytes()),
                         "New mining work (Task 11.4: state execution enabled)"
                     );
-                    if let Some(proof) = template.commitment_proof.as_ref() {
-                        tracing::debug!(
-                            height = template.number,
-                            tx_count = proof.public_inputs.tx_count,
-                            proof_size = proof.proof_bytes.len(),
-                            "Commitment block proof attached to template"
-                        );
-                    }
                 }
 
                 current_template = Some(template);
                 last_best_hash = best_hash;
+                last_pending_root = pending_root;
             }
 
             // Check for solutions
@@ -919,6 +903,7 @@ where
 
                         // Clear template to force new work
                         current_template = None;
+                        last_pending_root = H256::zero();
                     }
                     Err(e) => {
                         tracing::error!(
@@ -931,6 +916,12 @@ where
                             let mut stats = self.stats.write();
                             stats.import_failures += 1;
                         }
+
+                        // Drop the current template after an import failure.
+                        // Retrying the same sealed template can loop indefinitely when
+                        // the underlying proof bundle is stale or invalid for the live parent.
+                        current_template = None;
+                        last_pending_root = H256::zero();
                     }
                 }
             }

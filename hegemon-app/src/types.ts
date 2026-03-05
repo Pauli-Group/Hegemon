@@ -92,6 +92,11 @@ export type NodeSummary = {
   hashRate: number | null;
   blocksFound: number | null;
   difficulty: number | null;
+  aggregationProofFormat: string | null;
+  proverStageType: string | null;
+  proverStageLevel: number | null;
+  proverStageArity: number | null;
+  proverReadyBundleAgeMs: number | null;
   blockHeight: number | null;
   supplyDigest: string | null;
   storage: NodeStorageFootprint | null;
@@ -167,6 +172,12 @@ export type WalletStatus = {
   notes?: WalletNotes | null;
   noteDetails?: WalletNoteDetail[] | null;
   genesisHash?: string | null;
+};
+
+export type WalletUnlockSession = {
+  status: WalletStatus;
+  unlockToken: string;
+  expiresAt: number;
 };
 
 export type WalletSyncResult = {
@@ -259,7 +270,7 @@ export type NodeMiningRequest = {
 
 export type WalletSendRequest = {
   storePath: string;
-  passphrase: string;
+  unlockToken: string;
   wsUrl: string;
   recipients: Array<{ address: string; value: number; asset_id: number; memo?: string | null }>;
   fee: number;
@@ -268,7 +279,7 @@ export type WalletSendRequest = {
 
 export type WalletSendPlanRequest = {
   storePath: string;
-  passphrase: string;
+  unlockToken: string;
   recipients: Array<{ address: string; value: number; asset_id: number; memo?: string | null }>;
   fee: number;
 };
