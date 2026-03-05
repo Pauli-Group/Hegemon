@@ -936,8 +936,9 @@ impl WalletStore {
 }
 
 fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
-    bincode::deserialize::<WalletState>(bytes)
-        .map_err(|err| WalletError::Serialization(format!("failed to deserialize wallet state: {err}")))
+    bincode::deserialize::<WalletState>(bytes).map_err(|err| {
+        WalletError::Serialization(format!("failed to deserialize wallet state: {err}"))
+    })
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
