@@ -22,7 +22,7 @@
 //! │  │                   PQ Transport Layer                       │  │
 //! │  │  ┌──────────────────────────────────────────────────────┐ │  │
 //! │  │  │              PQ Handshake                             │ │  │
-//! │  │  │  ML-KEM-768 Key Encapsulation                        │ │  │
+//! │  │  │  ML-KEM-1024 Key Encapsulation                        │ │  │
 //! │  │  │  ML-DSA-65 Signature Authentication                  │ │  │
 //! │  │  └──────────────────────────────────────────────────────┘ │  │
 //! │  │  ┌──────────────────────────────────────────────────────┐ │  │
@@ -162,11 +162,11 @@ impl PqNetworkConfig {
 /// PQ-secure network keypair
 ///
 /// Contains the cryptographic material for PQ-secure peer communication:
-/// - ML-KEM-768 keypair for post-quantum key encapsulation
+/// - ML-KEM-1024 keypair for post-quantum key encapsulation
 /// - ML-DSA-65 keypair for post-quantum signatures
 /// - Derived peer ID for node identification
 pub struct PqNetworkKeypair {
-    /// ML-KEM-768 keypair
+    /// ML-KEM-1024 keypair
     kem_keypair: MlKemKeyPair,
     /// ML-DSA-65 signing key
     dsa_signing_key: MlDsaSecretKey,
@@ -201,7 +201,7 @@ impl PqNetworkKeypair {
         dsa_seed_hasher.update(seed);
         let dsa_seed: [u8; 32] = dsa_seed_hasher.finalize().into();
 
-        // Generate ML-KEM-768 keypair from seed
+        // Generate ML-KEM-1024 keypair from seed
         let kem_keypair = MlKemKeyPair::generate_deterministic(&kem_seed);
 
         // Generate ML-DSA-65 signing key from seed

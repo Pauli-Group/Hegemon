@@ -68,11 +68,12 @@ impl NotePlaintext {
         }
     }
 
-    pub fn to_note_data(&self, pk_recipient: [u8; 32]) -> NoteData {
+    pub fn to_note_data(&self, pk_recipient: [u8; 32], pk_auth: [u8; 32]) -> NoteData {
         NoteData {
             value: self.value,
             asset_id: self.asset_id,
             pk_recipient,
+            pk_auth,
             rho: self.rho,
             r: self.r,
         }
@@ -101,6 +102,7 @@ impl NotePlaintext {
 
 /// Size of the ciphertext portion in pallet format
 pub const PALLET_CIPHERTEXT_SIZE: usize = 579;
+const NOTE_ENCRYPTION_VERSION: u8 = 3;
 
 pub(crate) fn expected_kem_ciphertext_len(crypto_suite: u16) -> Result<usize, WalletError> {
     match crypto_suite {
@@ -132,7 +134,7 @@ impl NoteCiphertext {
     /// Used when the proof has more output slots than actual recipients.
     pub fn empty() -> Self {
         Self {
-            version: 2,
+            version: NOTE_ENCRYPTION_VERSION,
             crypto_suite: protocol_versioning::CRYPTO_SUITE_GAMMA,
             diversifier_index: 0,
             kem_ciphertext: vec![0u8; synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN],
@@ -580,5 +582,11 @@ mod tests {
         let note = NotePlaintext::random(1, 0, MemoPlaintext::new(memo), &mut rng);
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
         assert!(ciphertext.to_pallet_bytes().is_err());
+    }
+
+    #[test]
+    fn empty_ciphertext_uses_current_version() {
+        let empty = NoteCiphertext::empty();
+        assert_eq!(empty.version, NOTE_ENCRYPTION_VERSION);
     }
 }

@@ -6,6 +6,7 @@
 use crate::async_sync::AsyncWalletSyncEngine;
 use crate::error::WalletError;
 use crate::store::{TransferRecipient, WalletStore};
+use crate::submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
 use crate::substrate_rpc::SubstrateRpcClient;
 use crate::tx_builder::build_consolidation_transaction;
 use std::sync::Arc;
@@ -19,9 +20,74 @@ pub const MAX_INPUTS: usize = 2;
 const CONFIRMATION_POLL_SECS: u64 = 3;
 const CONFIRMATION_TIMEOUT_SECS: u64 = 600;
 
-const DEFAULT_BUNDLE_BYTES_ESTIMATE: usize = 220_000;
-const CONSOLIDATION_MAX_TXS_PER_BATCH: usize = 16;
-const CONSOLIDATION_MAX_BATCH_BYTES: usize = 1_500_000;
+const DEFAULT_INLINE_BUNDLE_BYTES_ESTIMATE: usize = 220_000;
+const DEFAULT_SIDECAR_BUNDLE_BYTES_ESTIMATE: usize = 80_000;
+const DEFAULT_SIDECAR_PROOFLESS_BUNDLE_BYTES_ESTIMATE: usize = 12_000;
+const CONSOLIDATION_MAX_TXS_PER_BATCH_DEFAULT: usize = 256;
+const CONSOLIDATION_MAX_BATCH_BYTES_DEFAULT: usize = 3_000_000;
+const MIN_SUBMISSION_BYTES_ESTIMATE: usize = 2 * 1024;
+
+#[derive(Clone, Copy, Debug)]
+struct ConsolidationBatchConfig {
+    use_da_sidecar: bool,
+    use_proof_sidecar: bool,
+    max_txs_per_batch: usize,
+    max_batch_bytes: usize,
+}
+
+fn env_bool(name: &str) -> Option<bool> {
+    std::env::var(name).ok().map(|value| {
+        matches!(
+            value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn env_usize(name: &str) -> Option<usize> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+}
+
+impl ConsolidationBatchConfig {
+    fn from_env() -> Self {
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_CONSOLIDATION_DA_SIDECAR")
+            .or_else(|| env_bool("HEGEMON_WALLET_DA_SIDECAR"))
+            .unwrap_or(false);
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_CONSOLIDATION_PROOF_SIDECAR")
+            .or_else(|| env_bool("HEGEMON_WALLET_PROOF_SIDECAR"))
+            .unwrap_or(use_da_sidecar);
+
+        let max_txs_per_batch = env_usize("HEGEMON_WALLET_CONSOLIDATION_MAX_TXS_PER_BATCH")
+            .or_else(|| env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK"))
+            .or_else(|| env_usize("HEGEMON_MAX_BLOCK_TXS"))
+            .unwrap_or(CONSOLIDATION_MAX_TXS_PER_BATCH_DEFAULT)
+            .max(1);
+        let max_batch_bytes = env_usize("HEGEMON_WALLET_CONSOLIDATION_MAX_BATCH_BYTES")
+            .unwrap_or(CONSOLIDATION_MAX_BATCH_BYTES_DEFAULT)
+            .max(1);
+
+        Self {
+            use_da_sidecar,
+            use_proof_sidecar,
+            max_txs_per_batch,
+            max_batch_bytes,
+        }
+    }
+
+    fn default_bundle_estimate_bytes(self) -> usize {
+        if self.use_da_sidecar {
+            if self.use_proof_sidecar {
+                DEFAULT_SIDECAR_PROOFLESS_BUNDLE_BYTES_ESTIMATE
+            } else {
+                DEFAULT_SIDECAR_BUNDLE_BYTES_ESTIMATE
+            }
+        } else {
+            DEFAULT_INLINE_BUNDLE_BYTES_ESTIMATE
+        }
+    }
+}
 
 fn estimate_bundle_bytes(bundle: &crate::rpc::TransactionBundle) -> usize {
     let ciphertext_bytes: usize = bundle.ciphertexts.iter().map(|ct| ct.len()).sum();
@@ -33,6 +99,80 @@ fn estimate_bundle_bytes(bundle: &crate::rpc::TransactionBundle) -> usize {
         + 64
         + 8
         + 16
+}
+
+fn estimate_submission_bytes(
+    bundle: &crate::rpc::TransactionBundle,
+    config: ConsolidationBatchConfig,
+) -> usize {
+    let mut bytes = estimate_bundle_bytes(bundle);
+
+    if config.use_da_sidecar {
+        let ciphertext_bytes: usize = bundle.ciphertexts.iter().map(|ct| ct.len()).sum();
+        bytes = bytes.saturating_sub(ciphertext_bytes);
+    }
+    if config.use_proof_sidecar {
+        bytes = bytes.saturating_sub(bundle.proof_bytes.len());
+    }
+
+    bytes
+        .saturating_add(1024) // SCALE framing + call index + compact vec prefixes
+        .max(MIN_SUBMISSION_BYTES_ESTIMATE)
+}
+
+fn is_proof_sidecar_rejection(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("proofbytesrequired")
+        || lower.contains("missing proof bytes")
+        || lower.contains("proof bytes require")
+        || lower.contains("policy is not selfcontained")
+}
+
+fn is_sidecar_method_unavailable(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("method not found") || lower.contains("unknown method")
+}
+
+async fn submit_consolidation_bundle(
+    rpc: &Arc<SubstrateRpcClient>,
+    bundle: &crate::rpc::TransactionBundle,
+    config: &mut ConsolidationBatchConfig,
+    verbose: bool,
+) -> Result<[u8; 32], WalletError> {
+    if !config.use_da_sidecar {
+        return rpc.submit_shielded_transfer_unsigned(bundle).await;
+    }
+
+    match rpc
+        .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+            bundle,
+            Some(config.use_proof_sidecar),
+        )
+        .await
+    {
+        Ok(hash) => Ok(hash),
+        Err(WalletError::Rpc(msg))
+            if config.use_proof_sidecar && is_proof_sidecar_rejection(&msg) =>
+        {
+            if verbose {
+                println!(
+                    "    Proof-sidecar omitted bytes were rejected; retrying sidecar with inline proof bytes."
+                );
+            }
+            config.use_proof_sidecar = false;
+            rpc.submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, Some(false))
+                .await
+        }
+        Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => {
+            if verbose {
+                println!("    DA sidecar RPC unavailable; retrying with inline submission.");
+            }
+            config.use_da_sidecar = false;
+            config.use_proof_sidecar = false;
+            rpc.submit_shielded_transfer_unsigned(bundle).await
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn select_notes_for_target(
@@ -112,6 +252,7 @@ impl ConsolidationPlan {
         }
 
         let txs_needed = note_count - MAX_INPUTS;
+        let config = ConsolidationBatchConfig::from_env();
         // We cannot spend newly-created notes in the same block because the transaction
         // membership proof anchors to a prior commitment tree root. That means consolidation
         // happens in rounds: submit a batch of disjoint 2->1 merges, wait for confirmation,
@@ -122,8 +263,8 @@ impl ConsolidationPlan {
         let txs_per_round_cap = std::cmp::max(
             1,
             std::cmp::min(
-                CONSOLIDATION_MAX_TXS_PER_BATCH,
-                CONSOLIDATION_MAX_BATCH_BYTES / DEFAULT_BUNDLE_BYTES_ESTIMATE,
+                config.max_txs_per_batch,
+                config.max_batch_bytes / config.default_bundle_estimate_bytes(),
             ),
         );
         let mut remaining_notes = note_count;
@@ -168,7 +309,8 @@ pub async fn execute_consolidation(
 ) -> Result<(), WalletError> {
     let engine = AsyncWalletSyncEngine::new(rpc.clone(), store.clone());
     let mut iteration: u64 = 0;
-    let mut bundle_bytes_estimate = DEFAULT_BUNDLE_BYTES_ESTIMATE;
+    let mut batch_config = ConsolidationBatchConfig::from_env();
+    let mut bundle_bytes_estimate = batch_config.default_bundle_estimate_bytes();
 
     loop {
         // Step 1: Fresh sync each iteration
@@ -212,21 +354,21 @@ pub async fn execute_consolidation(
         }
 
         let pairs_available = selected.len() / 2;
-        let mut max_txs = pairs_available.min(CONSOLIDATION_MAX_TXS_PER_BATCH);
+        let mut max_txs = pairs_available.min(batch_config.max_txs_per_batch);
         if max_txs == 0 {
             return Err(WalletError::InvalidState(
                 "insufficient notes available for consolidation pairing",
             ));
         }
 
-        let max_by_bytes = std::cmp::max(1, CONSOLIDATION_MAX_BATCH_BYTES / bundle_bytes_estimate);
+        let max_by_bytes = std::cmp::max(1, batch_config.max_batch_bytes / bundle_bytes_estimate);
         max_txs = max_txs.min(max_by_bytes);
 
         if verbose && max_txs > 1 {
             println!(
                 "  Submitting up to {} consolidation txs this round (block budget ~{} KiB)",
                 max_txs,
-                CONSOLIDATION_MAX_BATCH_BYTES / 1024
+                batch_config.max_batch_bytes / 1024
             );
         }
 
@@ -236,7 +378,7 @@ pub async fn execute_consolidation(
         let mut pair_index = 0usize;
         while pair_index < max_txs {
             if pair_index > 0
-                && batch_bytes.saturating_add(bundle_bytes_estimate) > CONSOLIDATION_MAX_BATCH_BYTES
+                && batch_bytes.saturating_add(bundle_bytes_estimate) > batch_config.max_batch_bytes
             {
                 if verbose {
                     println!("  Stopping batch early to stay under block size budget.");
@@ -266,17 +408,16 @@ pub async fn execute_consolidation(
             }
 
             let built = build_consolidation_transaction(&*store, note_0, note_1, fee_per_tx)?;
-            let tx_bytes = estimate_bundle_bytes(&built.bundle).max(64 * 1024);
+            let mut tx_bytes = estimate_submission_bytes(&built.bundle, batch_config);
 
             if pair_index == 0 {
                 bundle_bytes_estimate = tx_bytes;
                 let adjusted_by_bytes =
-                    std::cmp::max(1, CONSOLIDATION_MAX_BATCH_BYTES / bundle_bytes_estimate);
+                    std::cmp::max(1, batch_config.max_batch_bytes / bundle_bytes_estimate);
                 max_txs = max_txs.min(adjusted_by_bytes);
             }
 
-            if pair_index > 0
-                && batch_bytes.saturating_add(tx_bytes) > CONSOLIDATION_MAX_BATCH_BYTES
+            if pair_index > 0 && batch_bytes.saturating_add(tx_bytes) > batch_config.max_batch_bytes
             {
                 if verbose {
                     println!("  Stopping batch early to stay under block size budget.");
@@ -284,13 +425,14 @@ pub async fn execute_consolidation(
                 break;
             }
 
-            batch_bytes = batch_bytes.saturating_add(tx_bytes);
-            bundle_bytes_estimate = tx_bytes;
-
             store.mark_notes_pending(&built.spent_note_indexes, true)?;
 
             let outgoing_disclosures = built.outgoing_disclosures.clone();
-            let submit_result = rpc.submit_shielded_transfer_unsigned(&built.bundle).await;
+            let submit_result =
+                submit_consolidation_bundle(rpc, &built.bundle, &mut batch_config, verbose).await;
+            tx_bytes = estimate_submission_bytes(&built.bundle, batch_config);
+            batch_bytes = batch_bytes.saturating_add(tx_bytes);
+            bundle_bytes_estimate = tx_bytes;
 
             let hash = match submit_result {
                 Ok(hash) => Some(hash),
@@ -306,6 +448,30 @@ pub async fn execute_consolidation(
                     None
                 }
                 Err(err) => {
+                    if is_ambiguous_submission_error(&err) {
+                        let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                        let recipient_address = store.primary_address()?.encode()?;
+                        store.record_pending_submission(
+                            provisional_tx_id,
+                            built.nullifiers.clone(),
+                            built.spent_note_indexes.clone(),
+                            vec![TransferRecipient {
+                                address: recipient_address,
+                                value: total.saturating_sub(fee_per_tx),
+                                asset_id: NATIVE_ASSET_ID,
+                                memo: Some("consolidation".to_string()),
+                            }],
+                            fee_per_tx,
+                        )?;
+                        if verbose {
+                            println!(
+                                "    Submission status unknown; keeping notes pending until reconciliation."
+                            );
+                        }
+                        batch_nullifiers.extend_from_slice(&built.nullifiers);
+                        pair_index = pair_index.saturating_add(1);
+                        continue;
+                    }
                     store.mark_notes_pending(&built.spent_note_indexes, false)?;
                     if !batch_nullifiers.is_empty() {
                         let _ = wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers)

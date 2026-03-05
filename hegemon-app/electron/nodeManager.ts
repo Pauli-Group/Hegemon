@@ -8,6 +8,16 @@ import type { NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/t
 import { resolveBinaryPath } from './binPaths';
 
 const DEFAULT_RPC_PORT = 9944;
+const DESKTOP_LIVENESS_ENV_DEFAULTS: Record<string, string> = {
+  // Desktop operators prioritize confirmation liveness over throughput.
+  HEGEMON_BATCH_TARGET_TXS: '1',
+  HEGEMON_BATCH_INCREMENTAL_UPSIZE: '1',
+  HEGEMON_PROVER_LIVENESS_LANE: '1',
+  // Keep proving jobs alive on commodity hardware instead of timing out.
+  HEGEMON_BATCH_JOB_TIMEOUT_MS: '900000',
+  HEGEMON_PENDING_PROVEN_BATCH_WAIT_MS: '900000',
+  HEGEMON_PROVER_WORK_PACKAGE_TTL_MS: '900000'
+};
 
 type RpcRequest = {
   jsonrpc: '2.0';
@@ -115,7 +125,7 @@ export class NodeManager extends EventEmitter {
     }
 
     const mineFlag = options.mineOnStart ? '1' : '0';
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       HEGEMON_MINER_ADDRESS: options.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
       HEGEMON_SEEDS: options.seeds ?? process.env.HEGEMON_SEEDS,
@@ -137,6 +147,12 @@ export class NodeManager extends EventEmitter {
         ? String(options.mineThreads)
         : process.env.HEGEMON_MINE_THREADS
     };
+    for (const [key, value] of Object.entries(DESKTOP_LIVENESS_ENV_DEFAULTS)) {
+      const current = env[key];
+      if (current === undefined || current.trim() === '') {
+        env[key] = value;
+      }
+    }
 
     this.process = spawn(nodePath, args, { env });
     this.managedConnectionId = options.connectionId ?? null;
@@ -226,6 +242,11 @@ export class NodeManager extends EventEmitter {
         hashRate: null,
         blocksFound: null,
         difficulty: null,
+        aggregationProofFormat: null,
+        proverStageType: null,
+        proverStageLevel: null,
+        proverStageArity: null,
+        proverReadyBundleAgeMs: null,
         blockHeight: null,
         supplyDigest: null,
         storage: null,
@@ -244,6 +265,12 @@ export class NodeManager extends EventEmitter {
     const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
     const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
     const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
+    const workPackage = await this.safeRpcCall('prover_getWorkPackage', [], request.httpUrl);
+    const nowMs = Date.now();
+    const proverReadyBundleAgeMs =
+      workPackage && typeof workPackage.created_at_ms === 'number'
+        ? Math.max(0, nowMs - Number(workPackage.created_at_ms))
+        : null;
 
     return {
       connectionId: request.connectionId,
@@ -261,6 +288,13 @@ export class NodeManager extends EventEmitter {
       hashRate: mining?.hash_rate ?? null,
       blocksFound: mining?.blocks_found ?? null,
       difficulty: mining?.difficulty ?? null,
+      aggregationProofFormat: 'V4',
+      proverStageType: workPackage?.stage_type ? String(workPackage.stage_type) : null,
+      proverStageLevel:
+        workPackage && typeof workPackage.level === 'number' ? Number(workPackage.level) : null,
+      proverStageArity:
+        workPackage && typeof workPackage.arity === 'number' ? Number(workPackage.arity) : null,
+      proverReadyBundleAgeMs,
       blockHeight: mining?.block_height ?? null,
       supplyDigest: consensus?.supply_digest ? String(consensus.supply_digest) : null,
       storage: storage
@@ -304,10 +338,16 @@ export class NodeManager extends EventEmitter {
   }
 
   async setMiningEnabled(enabled: boolean, threads: number | undefined, httpUrl?: string): Promise<void> {
+    const authToken = process.env.HEGEMON_MINING_RPC_TOKEN?.trim();
     if (enabled) {
-      await this.rpcCall('hegemon_startMining', [threads ? { threads } : {}], httpUrl);
+      const params: Record<string, unknown> = threads ? { threads } : {};
+      if (authToken) {
+        params.auth_token = authToken;
+      }
+      await this.rpcCall('hegemon_startMining', [params], httpUrl);
     } else {
-      await this.rpcCall('hegemon_stopMining', [], httpUrl);
+      const params = authToken ? [{ auth_token: authToken }] : [];
+      await this.rpcCall('hegemon_stopMining', params, httpUrl);
     }
   }
 

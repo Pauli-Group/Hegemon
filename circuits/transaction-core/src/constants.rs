@@ -12,8 +12,14 @@ pub const BALANCE_SLOTS: usize = MAX_INPUTS + MAX_OUTPUTS;
 /// Goldilocks field modulus: 2^64 - 2^32 + 1.
 pub const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
 
-/// Maximum note value enforced by the witness layer (must fit in the base field).
-pub const MAX_NOTE_VALUE: u128 = FIELD_MODULUS - 1;
+/// Monetary range bound enforced in-circuit.
+///
+/// This 61-bit cap keeps all balance equations strictly below the Goldilocks modulus
+/// under the current (2-in, 2-out) join-split shape, preventing modular wraparound.
+pub const MAX_IN_CIRCUIT_VALUE: u128 = (1u128 << 61) - 1;
+
+/// Maximum note value enforced by witness validation.
+pub const MAX_NOTE_VALUE: u128 = MAX_IN_CIRCUIT_VALUE;
 
 /// Poseidon permutation width used by the STARK-friendly hash.
 pub const POSEIDON_WIDTH: usize = 3;
@@ -64,10 +70,10 @@ pub const CIRCUIT_MERKLE_DEPTH: usize = 32;
 // ================================================================================================
 
 /// Current circuit version. Increment when constraint logic changes.
-pub const CIRCUIT_VERSION: u32 = 2;
+pub const CIRCUIT_VERSION: u32 = 5;
 
 /// AIR constraint domain separator for hashing.
-pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V2";
+pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V5";
 
 /// Compute the AIR hash that uniquely identifies this circuit's constraints.
 /// This hash commits to:
@@ -109,7 +115,7 @@ pub fn compute_air_hash() -> [u8; 32] {
 
     // Constraint structure: max degree and transition constraint count.
     hasher.update(&(POSEIDON2_SBOX_DEGREE as u32).to_le_bytes()); // Max constraint degree
-    hasher.update(&103u32.to_le_bytes()); // Transition constraint count (update if constraints change)
+    hasher.update(&185u32.to_le_bytes()); // Transition constraint count (update if constraints change)
 
     let hash = hasher.finalize();
     let mut result = [0u8; 32];

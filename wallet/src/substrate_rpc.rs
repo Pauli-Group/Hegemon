@@ -78,6 +78,34 @@ impl SubstrateRpcConfig {
             ..Default::default()
         }
     }
+
+    /// Apply optional timeout/reconnect overrides from env.
+    ///
+    /// Supported variables:
+    /// - HEGEMON_WALLET_RPC_CONNECT_TIMEOUT_SECS
+    /// - HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS
+    /// - HEGEMON_WALLET_RPC_RECONNECT_ATTEMPTS
+    /// - HEGEMON_WALLET_RPC_RECONNECT_DELAY_SECS
+    pub fn apply_env_overrides(&mut self) {
+        if let Some(secs) = env_u64("HEGEMON_WALLET_RPC_CONNECT_TIMEOUT_SECS") {
+            self.connection_timeout = Duration::from_secs(secs.max(1));
+        }
+        if let Some(secs) = env_u64("HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS") {
+            self.request_timeout = Duration::from_secs(secs.max(1));
+        }
+        if let Some(attempts) = env_u64("HEGEMON_WALLET_RPC_RECONNECT_ATTEMPTS") {
+            self.max_reconnect_attempts = attempts.max(1) as u32;
+        }
+        if let Some(secs) = env_u64("HEGEMON_WALLET_RPC_RECONNECT_DELAY_SECS") {
+            self.reconnect_delay = Duration::from_secs(secs.max(1));
+        }
+    }
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
 }
 
 /// Note status response from the node
@@ -369,6 +397,7 @@ impl SubstrateRpcClient {
         if config.archive_endpoint.is_none() {
             config.archive_endpoint = std::env::var("HEGEMON_WALLET_ARCHIVE_WS_URL").ok();
         }
+        config.apply_env_overrides();
         Self::connect_with_config(config).await
     }
 
@@ -377,6 +406,7 @@ impl SubstrateRpcClient {
         if config.archive_endpoint.is_none() {
             config.archive_endpoint = std::env::var("HEGEMON_WALLET_ARCHIVE_WS_URL").ok();
         }
+        config.apply_env_overrides();
         let client = Self::build_client(&config).await?;
         Ok(Self {
             client: Arc::new(RwLock::new(client)),
@@ -636,6 +666,21 @@ impl SubstrateRpcClient {
             .request("hegemon_latestBlock", rpc_params![])
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_latestBlock failed: {}", e)))
+    }
+
+    /// Get the block hash at a specific height.
+    ///
+    /// Returns `Ok(None)` when the node does not have a hash for that height.
+    pub async fn block_hash(&self, height: u64) -> Result<Option<[u8; 32]>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+
+        let response: Option<String> = client
+            .request("chain_getBlockHash", rpc_params![height])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("chain_getBlockHash({height}) failed: {e}")))?;
+
+        response.map(|hash| hex_to_array(&hash)).transpose()
     }
 
     /// Submit a shielded transaction to the network
@@ -1231,6 +1276,21 @@ impl SubstrateRpcClient {
         &self,
         bundle: &TransactionBundle,
     ) -> Result<[u8; 32], WalletError> {
+        self.submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, None)
+            .await
+    }
+
+    /// Submit an unsigned sidecar transfer with an optional proof-sidecar override.
+    ///
+    /// If `force_proof_sidecar` is `Some(true)`, proof bytes are uploaded via
+    /// `da_submitProofs` and omitted from the extrinsic. If `Some(false)`, proof bytes stay
+    /// inline in the extrinsic. If `None`, behavior is controlled by
+    /// `HEGEMON_WALLET_PROOF_SIDECAR`.
+    pub async fn submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+        &self,
+        bundle: &TransactionBundle,
+        force_proof_sidecar: Option<bool>,
+    ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{
             build_unsigned_shielded_transfer_sidecar, ShieldedTransferSidecarCall,
         };
@@ -1299,15 +1359,22 @@ impl SubstrateRpcClient {
             }
         }
 
-        let use_proof_sidecar = std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        // Phase C behavior note:
+        // `HEGEMON_WALLET_PROOF_SIDECAR` is proposer staging only. It uploads proof bytes to
+        // `da_submitProofs` so local/block-author aggregation builders can fetch them by
+        // binding hash, but consensus validity in `ProofAvailabilityPolicy::SelfContained`
+        // does not depend on proof-DA fetch/manifest paths.
+        let use_proof_sidecar = force_proof_sidecar.unwrap_or_else(|| {
+            std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
+                .ok()
+                .map(|value| {
+                    matches!(
+                        value.to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
+                .unwrap_or(false)
+        });
 
         let mut proof_bytes = bundle.proof_bytes.clone();
         if use_proof_sidecar {
@@ -1378,7 +1445,7 @@ impl SubstrateRpcClient {
     ///
     /// # Arguments
     ///
-    /// * `batch_size` - Number of transactions in batch (2, 4, 8, or 16)
+    /// * `batch_size` - Number of transactions in batch (2, 4, 8, 16, or 32)
     /// * `nullifiers` - All nullifiers from all transactions
     /// * `commitments` - All commitments from all transactions
     /// * `ciphertexts` - All encrypted notes from all transactions
@@ -1400,9 +1467,9 @@ impl SubstrateRpcClient {
         use crate::extrinsic::{build_unsigned_batch_shielded_transfer, BatchShieldedTransferCall};
 
         // Validate batch size
-        if !batch_size.is_power_of_two() || !(2..=16).contains(&batch_size) {
+        if !batch_size.is_power_of_two() || !(2..=32).contains(&batch_size) {
             return Err(WalletError::InvalidArgument(
-                "Batch size must be 2, 4, 8, or 16",
+                "Batch size must be 2, 4, 8, 16, or 32",
             ));
         }
 
@@ -1835,6 +1902,11 @@ impl BlockingSubstrateRpcClient {
     /// Get latest block information
     pub fn latest_block(&self) -> Result<LatestBlock, WalletError> {
         self.runtime.block_on(self.inner.latest_block())
+    }
+
+    /// Get block hash at a specific height.
+    pub fn block_hash(&self, height: u64) -> Result<Option<[u8; 32]>, WalletError> {
+        self.runtime.block_on(self.inner.block_hash(height))
     }
 
     /// Get note status

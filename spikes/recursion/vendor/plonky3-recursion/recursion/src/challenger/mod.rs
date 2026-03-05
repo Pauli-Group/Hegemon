@@ -2,4 +2,4 @@
 
 mod circuit;
 
-pub use circuit::CircuitChallenger;
+pub use circuit::{ChallengerField, CircuitChallenger};

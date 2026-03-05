@@ -19,7 +19,7 @@ The wallet crate exposes a `wallet` binary with the following common flows:
 | --- | --- |
 | `cargo run -p wallet --bin wallet -- generate --count 3 --out export.json` | Derives a fresh root secret, viewing keys, and the first three addresses, then saves them as JSON. |
 | `cargo run -p wallet --bin wallet -- address --root <HEX> --index 0` | Re-derives a single address from a root secret without touching disk. |
-| `cargo run -p wallet --bin wallet -- tx-craft --root <HEX> --inputs inputs.json --recipients recipients.json --ciphertext-out ledger.json --witness-out witness.json` | Crafts a transaction witness plus encrypted note ciphertexts for the provided recipients. |
+| `cargo run -p wallet --bin wallet -- tx-craft --root <HEX> --inputs inputs.json --recipients recipients.json --ciphertext-out ledger.json --witness-out witness.json` | Crafts a transaction witness plus encrypted note ciphertexts for the provided recipients. `witness.json` is intentionally redacted and does not include `sk_spend`. |
 | `cargo run -p wallet --bin wallet -- scan --ivk ivk.json --ledger ledger.json --out balances.json` | Decrypts ciphertexts with an incoming viewing key and emits the balances it recovers. |
 | `cargo run -p wallet --bin wallet -- init --store ~/.synthetic/wallet.db --passphrase hunter2` | Creates an encrypted wallet store from a random root secret. Use `--root-hex` to import an existing secret or `--viewing-key <PATH>` for watch-only mode. |
 | `cargo run -p wallet --bin wallet -- status --store ~/.synthetic/wallet.db --passphrase hunter2` | Prints the latest cached balances plus any pending transactions (including mined/confirmation status). |

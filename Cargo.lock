@@ -75,15 +75,24 @@ dependencies = [
 name = "aggregation-circuit"
 version = "0.1.0"
 dependencies = [
+ "block-circuit",
  "consensus",
+ "p3-air",
  "p3-batch-stark",
  "p3-circuit",
  "p3-circuit-prover",
+ "p3-commit",
  "p3-field",
+ "p3-matrix",
  "p3-recursion",
  "p3-uni-stark",
  "postcard",
+ "rayon",
+ "serde",
+ "sp-core",
+ "synthetic-crypto",
  "thiserror 1.0.69",
+ "tracing",
  "transaction-circuit",
 ]
 
@@ -1456,6 +1465,7 @@ name = "circuits-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "batch-circuit",
  "block-circuit",
  "clap",
  "p3-goldilocks",
@@ -1585,6 +1595,7 @@ name = "consensus"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "batch-circuit",
  "bincode",
  "blake3",
  "block-circuit",
@@ -3596,7 +3607,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hegemon-node"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "aggregation-circuit",
  "anyhow",
@@ -3605,6 +3616,7 @@ dependencies = [
  "axum",
  "axum-server",
  "base64",
+ "batch-circuit",
  "bincode",
  "blake3",
  "block-circuit",
@@ -3621,6 +3633,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "once_cell",
+ "p3-field",
  "pallet-archive-market",
  "pallet-coinbase",
  "pallet-shielded-pool",
@@ -3630,6 +3643,7 @@ dependencies = [
  "pq-noise",
  "protocol-versioning",
  "rand 0.8.5",
+ "rayon",
  "rcgen 0.13.2",
  "reqwest",
  "rpassword",
@@ -6596,6 +6610,9 @@ dependencies = [
 name = "p3-maybe-rayon"
 version = "0.4.2"
 source = "git+https://github.com/Plonky3/Plonky3?rev=7895d23#7895d23259fae4218040e427d38ba50c369d451b"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "p3-mds"
@@ -6712,6 +6729,7 @@ dependencies = [
  "p3-field",
  "p3-fri",
  "p3-lookup",
+ "p3-matrix",
  "p3-merkle-tree",
  "p3-symmetric",
  "p3-uni-stark",
@@ -6840,23 +6858,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pallet-collective"
-version = "28.0.0"
-source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1#ec0d4a3fdd9a05496f1b078aa33a7d5658767ddb"
-dependencies = [
- "docify",
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "log",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-io",
- "sp-runtime",
-]
-
-[[package]]
 name = "pallet-difficulty"
 version = "0.1.0"
 dependencies = [
@@ -6916,22 +6917,6 @@ dependencies = [
  "scale-info",
  "sp-runtime",
  "sp-std",
-]
-
-[[package]]
-name = "pallet-membership"
-version = "28.0.0"
-source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1#ec0d4a3fdd9a05496f1b078aa33a7d5658767ddb"
-dependencies = [
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "log",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-io",
- "sp-runtime",
 ]
 
 [[package]]
@@ -8431,12 +8416,10 @@ dependencies = [
  "pallet-attestations",
  "pallet-balances",
  "pallet-coinbase",
- "pallet-collective",
  "pallet-difficulty",
  "pallet-feature-flags",
  "pallet-fee-model",
  "pallet-identity",
- "pallet-membership",
  "pallet-observability",
  "pallet-oracles",
  "pallet-settlement",
@@ -12171,7 +12154,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -12228,7 +12211,7 @@ dependencies = [
 
 [[package]]
 name = "walletd"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",

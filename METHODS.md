@@ -16,14 +16,15 @@ A **note** is conceptually:
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
 * `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 48-byte outputs with six 64-bit limbs for 384-bit capacity, and application-level types use 48-byte digests end-to-end. `0` = native coin (ZEC-like).
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
+* `pk_auth` – a spend-authorization public key derived from the owner’s spend secret
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
 
 We define the note commitment:
 
 ```text
-cm = Com_note(value, asset_id, pk_recipient, rho, r)
-   = Hc("note" || enc(value) || asset_id || pk_recipient || rho || r)
+cm = Com_note(value, asset_id, pk_recipient, pk_auth, rho, r)
+   = Hc("note" || enc(value) || asset_id || pk_recipient || rho || r || pk_auth)
 ```
 
 * `Hc` is a commitment‑strength hash (could be domain‑separated Poseidon or Blake3; binding+hiding rely on hash + randomness).
@@ -58,11 +59,11 @@ The core statement the STARK proves:
 >
 > * for each input `i` in `[0..M-1]`:
 >
->   * `(value_i, asset_i, pk_i, rho_i, r_i, pos_i)`
->   * `sk_nf` (nullifier secret derived from `sk_view`)
+>   * `(value_i, asset_i, pk_recipient_i, pk_auth_i, rho_i, r_i, pos_i)`
+>   * `sk_spend`
 > * for each output `j` in `[0..N-1]`:
 >
->   * `(value'_j, asset'_j, pk'_j, rho'_j, r'_j)`
+>   * `(value'_j, asset'_j, pk'_j, pk'_auth_j, rho'_j, r'_j)`
 >
 > such that:
 >
@@ -71,8 +72,8 @@ The core statement the STARK proves:
 >    * For all inputs/outputs:
 >
 >      ```text
->      cm_i  = Com_note(value_i,  asset_i,  pk_i,  rho_i,  r_i)
->      cm'_j = Com_note(value'_j, asset'_j, pk'_j, rho'_j, r'_j)
+>      cm_i  = Com_note(value_i,  asset_i,  pk_recipient_i,  pk_auth_i,  rho_i,  r_i)
+>      cm'_j = Com_note(value'_j, asset'_j, pk'_j, pk'_auth_j, rho'_j, r'_j)
 >      ```
 >    * And the published `cm'_j` equal these.
 > 2. **Inputs are in the tree (membership)**
@@ -89,7 +90,7 @@ The core statement the STARK proves:
 >    * Derive a nullifier key:
 >
 >      ```text
->      nk = H("nk" || sk_nf)
+>      nk = H("nk" || sk_spend)
 >      ```
 >    * For each input note:
 >
@@ -190,15 +191,18 @@ commitment, version commitment, and fork-choice result. Node services call this 
 version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
 receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
 
-On the Substrate runtime side, shielded transfers now accumulate a per-block fee total, and the shielded coinbase extrinsic must
-appear after shielded transfers and mint exactly `subsidy + block_fees`. If a block omits coinbase entirely, the fees are treated
-as burned and tracked on-chain. Because Substrate requires inherents to appear first in the block, `mint_coinbase` is treated as a
-mandatory unsigned extrinsic (not an inherent) and is appended by the node block builder at the end of the block so the runtime can
-enforce this rule deterministically.
+On the Substrate runtime side, shielded transfers now accumulate split per-block fee buckets:
+`BlockFeeBuckets { miner_fees, prover_fees }`. The shielded reward mint path (`mint_coinbase` external call name; `mint_block_rewards`
+internal path) validates a `BlockRewardBundle` with a required miner note and optional prover note. Miner reward must equal
+`subsidy + miner_fees`; prover reward, when claimed, must equal `prover_fees` and match the submitted prover claim metadata. If a
+block omits reward minting, both fee buckets are treated as burned and tracked on-chain.
 
-Fee pricing is parameterized on-chain: `fee = proof_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
-with separate `proof_fee` values for single and batch proofs. These parameters live in the shielded pool pallet, can be updated by
-governance, and are exposed via the runtime API and wallet RPC so clients can quote fees without participating in public auctions.
+Fee pricing is parameterized on-chain with deterministic split accounting:
+`prover_fee = proof_fee|batch_proof_fee`,
+`miner_fee = inclusion_fee|batch_inclusion_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
+`total_fee = prover_fee + miner_fee`.
+These parameters live in the shielded pool pallet, can be updated by governance, and are exposed via runtime API/RPC as both total
+quote and breakdown (`fee_quote`, `fee_quote_breakdown`) so clients can quote fees without auctions.
 
 Forced inclusion commitments provide a censorship escape hatch for the private lane. A user can submit a commitment hash
 (`blake2_256` of the SCALE-encoded shielded transfer call), an expiry block, and a bonded amount. The commitment queue is bounded
@@ -217,13 +221,12 @@ Nodes enforce this during block import and local block production so miners do n
 For scalability, the system supports a per-block “aggregation mode” that allows shielded transfer extrinsics to omit the per-transaction STARK proof bytes and rely on a single aggregation proof checked during block import:
 
 * Block authors include `ShieldedPool::enable_aggregation_mode` early in the block.
-* A chain-level `ProofAvailabilityPolicy` gates whether per-tx proofs must be inline (`InlineRequired`) or may be in DA (`DaRequired`).
-* In aggregation mode + `DaRequired`, `shielded_transfer_unsigned_sidecar` may omit proof bytes; the runtime skips `verify_stark` and only enforces binding hashes + non-ZK checks (nullifiers, anchors, fee floor).
-* Proof bytes are staged off-chain via `da_submitProofs` keyed by the transaction `binding_hash`; block authors then include:
-
-  * `submit_proof_da_commitment(da_root, chunk_count)` to bind the proof-DA blob, and
-  * `submit_proof_da_manifest(manifest)` to bind `binding_hash -> (proof_hash, proof_len, proof_offset)` so verifiers can compute commitment-proof inputs without downloading proof bytes and can fetch individual proofs by range.
-* The node verifies the commitment proof + aggregation proof during import and rejects any block whose aggregated transactions are invalid.
+* A chain-level `ProofAvailabilityPolicy` gates whether per-tx proofs must be inline (`InlineRequired`) or may be omitted in aggregation mode (`SelfContained`).
+* In aggregation mode + `SelfContained`, `shielded_transfer_unsigned_sidecar` may omit proof bytes; the runtime skips `verify_stark` and only enforces binding hashes + non-ZK checks (nullifiers, anchors, fee floor).
+* In aggregation mode + `SelfContained`, proofless transfers require a valid `submit_proven_batch` in the same block. Proof-carrying transfers can still be verified through the inline path when no ready bundle is attached.
+* Block template assembly keeps a liveness-first posture under proofless load: it includes the largest proofless subset with a ready proven batch and defers the rest, allowing empty/non-shielded blocks to continue instead of stalling template construction. Operators can raise `HEGEMON_MIN_READY_PROVEN_BATCH_TXS` to require larger ready batches before proofless inclusion (throughput-first mode), while the default remains `1` for liveness-first behavior. A bounded retry loop still exists for true “ready batch required” failures (`HEGEMON_PENDING_PROVEN_BATCH_WAIT_MS`, `HEGEMON_PENDING_PROVEN_BATCH_MAX_ATTEMPTS`), but routine deferred proofless traffic no longer blocks sealing.
+* Proof bytes may still be staged off-chain via `da_submitProofs` keyed by `binding_hash`, but this is proposer/mempool coordination only and is not part of consensus validity.
+* The node verifies the commitment proof + aggregation proof during import and rejects any block whose aggregated transactions are invalid, without fetching proof-DA manifests/entries.
 
 ---
 
@@ -306,10 +309,10 @@ We define:
   * `sk_spend` used for wallet authorization and extrinsic signing; it is not embedded in viewing keys.
 * **Nullifier key material**:
 
-  * `sk_nf = H("view_nf" || sk_view)` used inside the STARK to derive nullifiers.
+  * `prf_nf = Hf("nk" || sk_spend)` for nullifier computation in viewing flows.
 * **Viewing key material**:
 
-  * `vk_full = (sk_view, sk_enc, sk_nf, public_params…)`
+  * `vk_full = (sk_view, sk_enc, prf_nf, public_params…)`
 * **Incoming‑only viewing key**:
 
   * `vk_incoming = (sk_view, sk_enc, diversifier params)`
@@ -317,18 +320,17 @@ We define:
 
 ### 4.2 Nullifier key
 
-Inside proofs we don’t want to expose `sk_nf` or `nk`, but we need a deterministic nullifier.
+Inside proofs we don’t want to expose `sk_spend`, but we need a deterministic nullifier.
 
 Define:
 
 ```text
-sk_nf = H("view_nf" || sk_view)
-nk = Hf("nk" || sk_nf)
+nk = Hf("nk" || sk_spend)
 nf = Hf("nf" || nk || rho || pos)
 ```
 
-Only someone knowing `sk_nf` can compute `nf` for a given `(rho, pos)`; the STARK proves consistency while the wallet keeps
-`sk_spend` separate for authorization/signing.
+Only someone knowing `sk_spend` can satisfy the ownership constraints for a note. The wallet can still track spentness using
+`prf_nf`, which is the derived nullifier PRF output rather than the spend secret itself.
 
 ### 4.3 Addresses and encryption keys (ML‑KEM)
 
@@ -357,7 +359,7 @@ To derive per‑address KEM keys *deterministically*:
 Then an **address** is:
 
 ```text
-addr_d = EncAddr(version || d || pk_recipient(d) || pk_enc(d))
+addr_d = EncAddr(version || d || pk_recipient(d) || pk_auth || pk_enc(d))
 ```
 where `pk_recipient(d)` is derived from the viewing key and the diversifier.
 
@@ -412,26 +414,26 @@ Given that ML‑KEM decapsulation is not *that* expensive and users don’t have
   * enough info to recompute nullifiers (`nk` or a view‑equivalent),
   * so it can see which of “its” notes have been spent.
 
-Hegemon chooses the watch‑only path: full viewing keys include `sk_nf = H("view_nf" || sk_view)` so wallets can compute
+Hegemon chooses the watch‑only path: full viewing keys include the spend-derived nullifier PRF output (`prf_nf`) so wallets can compute
 nullifiers for spentness tracking without embedding `sk_spend`.
 
 ### 4.5 Implementation details
 
-*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier. `wallet/src/address.rs` serializes `(version, crypto_suite, index, pk_recipient, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
+*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier while `pk_auth` is derived from the spend key via the Poseidon2 key schedule used by the circuit. `wallet/src/address.rs` serializes `(version, crypto_suite, index, pk_recipient, pk_auth, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
 
-*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label || crypto_suite, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the version, crypto suite, diversifier index, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption. The AEAD AAD binds `(version, crypto_suite, diversifier_index)` so header tampering fails authentication.
+*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label || crypto_suite, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the version, crypto suite, diversifier index, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption. The AEAD AAD binds `(version, crypto_suite, diversifier_index)` so header tampering fails authentication. Runtime admission hard-cuts to current header version `v3`; any other version is rejected.
 
-*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive `pk_recipient` for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
+*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive `pk_recipient` for audit), and `FullViewingKey` (incoming + spend-authority metadata). Full viewing keys now store the spend-derived nullifier PRF output (not the spend secret), so wallets can compute chain nullifiers while the transaction witness still proves knowledge of `sk_spend` in-circuit. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
 
 *CLI, daemon, and fixtures.* `wallet/src/bin/wallet.rs` now ships three families of commands:
 
-  * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md.
+  * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md. `tx-craft` emits redacted witness JSON (no serialized `sk_spend`) so exported artifacts are safe to share.
 * Wallet management over Substrate RPC (`wallet init`, `wallet substrate-sync`, `wallet substrate-daemon`, `wallet substrate-send`, `wallet status`, `wallet export-viewing-key`). `wallet init` writes an encrypted store (Argon2 + ChaCha20-Poly1305) containing the root secret or an imported viewing key. `wallet substrate-sync` and `wallet substrate-daemon` use WebSocket RPC to fetch commitments/ciphertexts/nullifiers and maintain a local Merkle tree/nullifier set, while `wallet substrate-send` crafts witnesses, proves them locally, and submits a shielded transfer before tracking pending nullifiers.
   * Ciphertext sync is robust to DA/sidecar quirks: ciphertext indices can have gaps (retention) and may include non-canonical ciphertexts during forks. The wallet maps decrypted notes back to commitment positions via the commitment list and skips any decrypted note whose commitment cannot be found locally.
-* Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
+* Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later. In v0.9 strict mode, `walletd` defaults to self-contained unsigned submission (`HEGEMON_WALLET_DA_SIDECAR=0`) so proof/ciphertext bytes propagate with the transaction across miners; sidecar staging remains opt-in for controlled topologies.
   * Compliance tooling (`payment-proof create`, `payment-proof verify`, `payment-proof purge`) that emits disclosure packages and verifies them against Merkle inclusion plus `hegemon_isValidAnchor` and the chain genesis hash.
 
-JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
+JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation used by the witness builder, with spend secrets intentionally excluded from serialized witness files. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
 
 ---
 
@@ -557,6 +559,11 @@ Nodes persist learned addresses under the Substrate `--base-path` (cache file: `
 To ensure early-joining nodes continue to learn about peers that connect later, nodes periodically re-request addresses from a random connected peer and attempt a bounded batch of dials from the discovery cache while below the peer target (defaults: `HEGEMON_PQ_DISCOVERY_MIN_PEERS=4`, `HEGEMON_PQ_DISCOVERY_TICK_SECS=30`).
 Nodes also request peer graphs on a periodic tick (default: `HEGEMON_PQ_PEER_GRAPH_TICK_SECS=30`) so monitoring tools can render the network topology.
 
+Sync source selection is gated by an explicit compatibility probe instead of a "peer is not too far ahead" heuristic. For unknown peers, the node first issues `CompatibilityProbe { local_genesis_hash, sync_protocol_version, aggregation_proof_format }` and only marks the peer sync-compatible if the response confirms all three values match local expectations. Peers that mismatch on chain identity, sync protocol compatibility version, or aggregation proof format ID are marked incompatible and excluded from sync candidate selection. This keeps bootstrap for brand-new nodes unbounded by height while still filtering legacy/wrong-chain noise deterministically.
+Sync request/response correlation uses explicit request identifiers in `SyncMessage::RequestV2 { request_id, request }`; responders echo that ID in `SyncResponse`, and clients accept responses only when `(peer_id, request_id, request_type)` matches a tracked pending request.
+Sync scheduling prioritizes already-compatible peers before probing unknown peers, so legacy/high-noise peers cannot stall catch-up when a valid peer is available. Peers newly marked incompatible are disconnected automatically. Discovery address/graph traffic and cached discovery dials are restricted to compatibility-verified peers (chain + protocol + aggregation format) to prevent wrong-chain/legacy nodes from polluting the active peer set.
+When no compatible peer currently advertises a higher tip, nodes run a lightweight tip-poll state (`GetBlocks` from `best+1`) that does not mark the node as "actively syncing", so mining continues without pause/resume churn while still recovering from missed announces.
+
 ### 2. Object definitions (bits, fields, encodings)
 
 #### 2.1 Value and asset ID
@@ -592,8 +599,8 @@ requires each limb to be strictly less than the field modulus.
 
 #### 2.4 Nullifier
 
-* Nullifier secret: \(sk_{\text{nf}}\) is a 256-bit integer (derived from `sk_view` with a `view_nf` domain tag in the wallet) and never placed on chain.
-* Nullifier key: first map \(sk_{\text{nf}}\) to field elements \(ssk_0, \ldots, ssk_3 \in \mathbb{F}_p\) (four 64-bit chunks), then
+* Nullifier secret: \(sk_{\text{spend}}\) is a 256-bit integer and never placed on chain.
+* Nullifier key: first map \(sk_{\text{spend}}\) to field elements \(ssk_0, \ldots, ssk_3 \in \mathbb{F}_p\) (four 64-bit chunks), then
 
 \[
 nk = H_f(\text{domain}_{nk}, ssk_0, ssk_1, ssk_2, ssk_3).
@@ -641,29 +648,30 @@ To get multiple addresses from one wallet, for diversifier index \(i \in \{0, \l
 ```
 div_i      = SHA256("div" || sk_view || i)   // 256 bits
 pk_recipient_i = H(sk_view || div_i)         // 256 bits
+pk_auth    = Poseidon2("auth" || sk_spend)   // 256 bits (4 field limbs encoded as 32 bytes)
 (pk_enc_i, sk_enc_i) = MLKEM.KeyGen(seed = sk_enc || encode(i))
 ```
 
 The address \(\text{Addr}_i\) is then
 
 ```
-Addr_i = Encode(version || crypto_suite || i || pk_recipient_i || pk_enc_i)
+Addr_i = Encode(version || crypto_suite || i || pk_recipient_i || pk_auth || pk_enc_i)
 ```
 
-Today, `version = 2` and `crypto_suite = CRYPTO_SUITE_GAMMA` (ML-KEM-1024).
+Today, `version = 3` and `crypto_suite = CRYPTO_SUITE_GAMMA` (ML-KEM-1024).
 
 The wallet stores `sk_spend`, `sk_view`, and either `sk_enc` or all `sk_enc_i` derived on demand.
 
 #### 3.3 Viewing keys
 
 * Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `pk_recipient_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
-* Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, vk_nf)` where `vk_nf = BLAKE3("view_nf" || sk_view)`.
+* Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, prf_nf)` where `prf_nf = H_f(domain_nk, sk_spend)` is the circuit-compatible nullifier PRF output (not `sk_spend` itself).
 
-In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)` from the view-derived nullifier secret, and for viewing we derive `vk_nf` with the `view_nf` domain tag so watch-only wallets can detect spent notes without embedding `sk_spend`.
+In-circuit, nullifiers are derived from `sk_spend` and each input note is additionally bound to `pk_auth = Poseidon2("auth" || sk_spend)` via commitment preimage constraints, closing the ownership gap that previously allowed alternate nullifier secrets.
 
 ### 4. Note encryption details
 
-Given recipient \(\text{Addr}_i\) with `(version, crypto_suite, diversifier_index, pk_enc_i, pk_recipient_i)`:
+Given recipient \(\text{Addr}_i\) with `(version, crypto_suite, diversifier_index, pk_enc_i, pk_recipient_i, pk_auth)`:
 
 #### 4.1 Plaintext
 
@@ -724,10 +732,10 @@ Important constraint: the transaction membership proof anchors to a prior commit
 The wallet therefore uses a round-based workflow:
 
 1. Pick just enough notes to cover the target value (including a fee budget for the consolidation transactions themselves).
-2. Submit a batch of disjoint 2→1 consolidation transactions in one round, capped by (a) a maximum transactions-per-round and (b) a conservative on-chain block-size budget.
+2. Submit a batch of disjoint 2→1 consolidation transactions in one round, capped by (a) a maximum transactions-per-round and (b) a block-size budget. Consolidation now defaults to DA sidecar submission (ciphertexts staged via `da_submitCiphertexts`) and, by default, proof sidecar staging (`da_submitProofs`) so rounds can include substantially more merges than inline-proof mode.
 3. Wait for confirmation, sync, and repeat until the selected notes fit within `MAX_INPUTS`.
 
-This does not change the total number of required consolidation transactions in the worst case (with 2→1 merges it is still `note_count - MAX_INPUTS`), but it reduces wall-clock time by letting miners include multiple independent merges in the same block when space permits. The batch-size budget must stay below the runtime block length (see `runtime/src/lib.rs`).
+This does not change the total number of required consolidation transactions in the worst case (with 2→1 merges it is still `note_count - MAX_INPUTS`), but it reduces wall-clock time by letting miners include multiple independent merges in the same block when space permits. The batch-size budget must stay below the runtime block length (see `runtime/src/lib.rs`). Operators can tune consolidation throughput with `HEGEMON_WALLET_CONSOLIDATION_MAX_TXS_PER_BATCH` and `HEGEMON_WALLET_CONSOLIDATION_MAX_BATCH_BYTES`; sidecar/proof-sidecar behavior is controlled by `HEGEMON_WALLET_CONSOLIDATION_DA_SIDECAR` and `HEGEMON_WALLET_CONSOLIDATION_PROOF_SIDECAR`.
 
 #### 5.1 Public inputs
 
@@ -736,8 +744,11 @@ The circuit's public inputs (fed into its transcript) are:
 * `root_before` - Merkle root anchor encoded as six field elements.
 * For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 6-limb nullifier, with inactive inputs using all-zero limbs.
 * For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 6-limb commitment, with inactive outputs using all-zero limbs.
-* `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 64-bit magnitude so all values fit in one field element.
+* For each output `j`: `ct_hash[j]` as a 6-limb ciphertext hash (padded with zeros for inactive outputs).
+* `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 61-bit magnitude.
   In production, `value_balance` is required to be zero because there is no transparent pool.
+
+The AIR now binds `ct_hash[j]` at the final-row gate (the hash value itself is still computed outside the circuit from ciphertext bytes).
 
 The transaction envelope also carries `balance_slots` and a `balance_tag`, which are validated outside the STARK for now.
 `root_after` and any `txid` binding are handled at the block circuit layer (or a future transaction-circuit revision).
@@ -745,7 +756,7 @@ The transaction envelope also carries `balance_slots` and a `balance_tag`, which
 As an additional integrity check outside the STARK, the runtime and wallet compute a 64-byte binding hash over the public inputs:
 
 ```
-message = anchor || nullifiers || commitments || fee || value_balance
+message = anchor || nullifiers || commitments || ciphertext_hashes || fee || value_balance
 binding_hash = Blake2_256("binding-hash-v1" || 0 || message)
              || Blake2_256("binding-hash-v1" || 1 || message)
 ```
@@ -756,20 +767,22 @@ Verifiers must compare all 64 bytes; this is a defense-in-depth commitment, not 
 
 For each input `i`:
 
-* `v_in[i] ∈ [0, 2^64)`
+* `v_in[i] ∈ [0, 2^61)`
 * `a_in[i]` (asset id) as a single 64-bit field element
 * `pk_recipient_in[i]` as 4 field elements (32 bytes split into 4 x 64-bit limbs)
+* `pk_auth_in[i]` as 4 field elements
 * `rho_in[i]` as 4 field elements
 * `r_in[i]` as 4 field elements
 * Merkle auth path: `sibling_in[i][d]` is a 6-limb node for `d = 0 .. D-1`
 * `pos_in[i]` as a 64-bit field element used by the prover to order left/right siblings
-* The nullifier secret `sk_nf` (view-derived)
+* The spend secret `sk_spend`
 
 For each output `j`:
 
-* `v_out[j]`
+* `v_out[j] ∈ [0, 2^61)`
 * `a_out[j]` as a single 64-bit field element
 * `pk_recipient_out[j]` as 4 field elements
+* `pk_auth_out[j]` as 4 field elements
 * `rho_out[j]` as 4 field elements
 * `r_out[j]` as 4 field elements
 * `pos_out[j]` (if the transaction is responsible for tree updates; otherwise position is implicit or handled at block level)
@@ -783,15 +796,16 @@ For each input `i`:
    * Compute
 
    \[
-   cm_{\text{in}}[i] = H_f(\text{domain}_{cm}, v_{\text{in}}[i], a_{\text{in}}[i], \text{pk\_recipient}_{\text{in}}[i][0..3], \rho_{\text{in}}[i][0..3], r_{\text{in}}[i][0..3]).
+   cm_{\text{in}}[i] = H_f(\text{domain}_{cm}, v_{\text{in}}[i], a_{\text{in}}[i], \text{pk\_recipient}_{\text{in}}[i][0..3], \rho_{\text{in}}[i][0..3], r_{\text{in}}[i][0..3], \text{pk\_auth}_{\text{in}}[i][0..3]).
    \]
 
    * Compute the root via the Merkle path by iterating the sponge with `domain_merkle` using the left/right ordering derived from `pos_in[i]`.
    * Constrain the resulting root to equal `root_before`. (The position bits are not separately constrained in the current AIR.)
 
-2. **Nullifier**
+2. **Nullifier + ownership binding**
 
-   * Derive the nullifier key once: split `sk_nf` into four field words `ssk_0 .. ssk_3` and compute `nk = H_f(domain_nk, ssk_0, ssk_1, ssk_2, ssk_3)`.
+   * Derive the nullifier key once: split `sk_spend` into four field words `ssk_0 .. ssk_3` and compute `nk = H_f(domain_nk, ssk_0, ssk_1, ssk_2, ssk_3)`.
+   * Derive the authorization key in-circuit from the same secret and constrain it to match `pk_auth_in[i]` absorbed by the note-commitment phase.
    * For each input note, compute
 
    \[
@@ -799,18 +813,28 @@ For each input `i`:
    \]
 
    and constrain `nf_calc[i] == nf_in[i]`.
+   * The AIR now binds `rho_in[i]` across phases: the four rho limbs absorbed in the commitment cycle are copied into dedicated trace columns and must match the rho limbs absorbed in the nullifier cycle.
+   * The AIR also derives `nk` in-circuit from `sk_spend` (first cycle) and constrains each nullifier absorb row to use that derived key.
+   * The AIR derives `pk_auth` from the same `sk_spend` derivation state and constrains each active input commitment to absorb that exact `pk_auth`.
 
 #### 5.4 Constraints: output commitments
 
 For each output `j`, enforce
 
 \[
-cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[j], \text{pk\_recipient}_{\text{out}}[j][0..3], \rho_{\text{out}}[j][0..3], r_{\text{out}}[j][0..3]) = cm_{\text{out}}[j].
+cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[j], \text{pk\_recipient}_{\text{out}}[j][0..3], \rho_{\text{out}}[j][0..3], r_{\text{out}}[j][0..3], \text{pk\_auth}_{\text{out}}[j][0..3]) = cm_{\text{out}}[j].
 \]
 
 #### 5.5 Value range checks
 
-The current transaction circuit enforces value bounds in witness validation: note values are `u64` and must be `<= MAX_NOTE_VALUE`. In-circuit range checks (bit decomposition or lookup gates) are planned for a future circuit version.
+The transaction AIR enforces monetary range bounds in-circuit using bit decomposition columns:
+
+* note values (`v_in`, `v_out`) are decomposed into 61 boolean bits at note-start rows,
+* `fee_native`, `|value_balance|`, and `|stablecoin_issuance_delta|` are decomposed into 61 boolean bits at the final row.
+
+This 61-bit cap (`MAX_IN_CIRCUIT_VALUE = 2^61 - 1`) prevents modular-wrap balance equalities under the current 2-input/2-output shape while keeping amounts large enough for practical usage.
+
+Witness validation mirrors the same bound so invalid amounts are rejected before proving.
 
 #### 5.6 MASP: per-asset balance with a small number of slots
 
@@ -852,32 +876,37 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 #### 6.3 Block circuit and proof
 
-The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside per-transaction input checks. When a block carries an aggregation proof (via `submit_aggregation_proof`), nodes verify the aggregated recursion proof with explicit public-value binding and skip per-transaction STARK verification; otherwise they fall back to parallel verification of every transaction proof. Recursive epoch proofs remain removed; aggregation proofs are the only recursion path in the live system today.
+The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds. On top of that, the `circuits/block` crate treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction statement hashes via a Poseidon sponge (`tx_statements_commitment`), and consensus verifies the commitment proof alongside per-transaction input checks. In `InlineRequired`, blocks without an aggregation proof use parallel per-transaction verification. In `SelfContained` aggregation mode, proofless transfers remain fail-closed (missing proven-batch payload is invalid), and strict authoring requires a ready `submit_proven_batch` payload for shielded block candidates (no on-demand proving fallback during block assembly). Legacy proofless block compatibility overrides are disabled in strict v0.9 mode. Recursive epoch proofs remain removed; aggregation proofs are the only recursion path in the live system today.
 
-Aggregation proofs are produced from transaction proof bytes alone, never from spend witnesses. Block producers can either attach a proof generated locally (the node can build one when `HEGEMON_AGGREGATION_PROOFS` is enabled) or include a proof generated by an external prover market. The reference aggregation prover lives in `circuits/aggregation` and emits postcard-encoded `BatchProof` bytes suitable for `submit_aggregation_proof`.
+Aggregation payloads are produced from transaction proof bytes alone, never from spend witnesses. Block producers include proof material via a single `submit_proven_batch` payload (internal type: `BlockProofBundle`, external call name unchanged). The active hard-cut payload is schema `2` with proof format id `5` and explicit proof modes: `FlatBatches` and `MergeRoot`. In `FlatBatches`, authoring partitions proofs deterministically in canonical tx order (`HEGEMON_BATCH_SLOT_TXS`, default `16`) and emits contiguous batch artifacts. In `MergeRoot`, authoring emits a root proof payload bound to tree metadata + leaf manifest commitment (`HEGEMON_MERGE_ARITY`, default `8`). Node authoring uses an asynchronous prover coordinator (`node/src/substrate/prover_coordinator.rs`) that runs a bounded worker queue and exposes open prover-market work packages through additive RPC methods (`prover_getWorkPackage`, `prover_submitWorkResult`, `prover_getWorkStatus`, `prover_getMarketParams`, `prover_getStageWorkPackage`, `prover_submitStageWorkResult`, `prover_getStagePlanStatus`). Work packages are bounded by payload-size caps, per-source limits, per-package submission limits, and expiry windows. For external proving, the coordinator now publishes a deterministic fan-out set of chunk packages for the largest candidate (`candidate_set_id` + `chunk_start_tx_index` + `chunk_tx_count` + `expected_chunks`), and `prover_getWorkPackage` rotates across this queue rather than returning one singleton id forever. Each accepted chunk submission contributes one batch proof, and once all expected chunk results are present with matching commitment/statement metadata, the coordinator assembles a full `FlatBatches` payload with contiguous `[0, tx_count)` coverage and inserts it into the prepared-bundle map. Candidate scheduling remains deterministic and geometric, with checkpointed upsizing by default: when liveness is enabled and queue capacity is at least 2, the coordinator climbs a planned ladder derived from `HEGEMON_BATCH_TARGET_TXS` (for example `1/2/4/8/.../target`) instead of scheduling every `+1` mempool increment. This avoids repeatedly building new heavy recursion shapes for adjacent tx counts while preserving a singleton liveness lane. Operators can restore legacy per-step behavior with `HEGEMON_BATCH_INCREMENTAL_UPSIZE=1`, or disable liveness entirely with `HEGEMON_PROVER_LIVENESS_LANE=0` to force strict large-batch proving. In strict throughput mode (`HEGEMON_PROVER_LIVENESS_LANE=0`), the coordinator defers scheduling until a full `HEGEMON_BATCH_TARGET_TXS` candidate is available. `HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS` is opt-in (default disabled), so singleton fallback is enabled only when explicitly requested. When liveness mode is enabled and a full target batch arrives while a smaller batch is still proving, the coordinator rolls generation and republishes the larger work package so stale in-flight candidates do not pin scheduling on undersized batches. `HEGEMON_AGG_STAGE_LOCAL_PARALLELISM` (`HEGEMON_PROVER_WORKERS` fallback) accepts `0` to disable in-node proving while still publishing prover-market work packages (external prover-only deployment, recommended when a dedicated prover host is available). Queue depth/inflight controls are configurable via `HEGEMON_AGG_STAGE_QUEUE_DEPTH` (`HEGEMON_BATCH_QUEUE_CAPACITY` fallback) and `HEGEMON_PROVER_STAGE_MAX_INFLIGHT_PER_LEVEL`. Before proving or block assembly, shielded candidate sets are sanitized to remove binding-hash duplicates and nullifier-conflicting transfers. The coordinator can overscan and trim to target size using `HEGEMON_BATCH_CANDIDATE_OVERSCAN_FACTOR` (default `4`) so conflict filtering still leaves a dense candidate set. If `HEGEMON_BATCH_TARGET_TXS` is unset, startup caps the default to `min(HEGEMON_MAX_BLOCK_TXS, HEGEMON_BATCH_DEFAULT_TARGET_TXS)` with `HEGEMON_BATCH_DEFAULT_TARGET_TXS=32`. During block assembly, proofless transfers are filtered against ready proven batches and only the ready subset is included; non-ready proofless transfers are deferred without halting block sealing. Bundle preparation performs a single shared preprocessing pass per candidate (`decode + transfer extraction + statement hash derivation + DA encoding`) and then runs commitment-proof and proof-payload generation in parallel against shared context. Prove-ahead remains active across block transitions: import success immediately re-runs candidate scheduling for the new parent so proving for block `N+1` starts while `N` is already sealed/propagating. The node logs explicit attribution metrics (`context_stage_ms`, `commitment_stage_ms`, `aggregation_stage_ms`) so throughput runs isolate bottlenecks instead of only end-to-end timings.
+Aggregation candidate selection now also drops proof-sidecar transfers whose ciphertext bytes are not available in the local pending sidecar store, preventing endless reproving loops on nodes that did not receive the sidecar payloads directly. Mining workers also discard the current template after an import failure, forcing a fresh template/proof bundle instead of repeatedly hashing an invalid block candidate.
 
-The commitment proof binds `tx_proofs_commitment` (derived from the ordered list of transaction proof hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness. On Substrate, the `submit_commitment_proof` extrinsic carries the computed `da_root` plus `chunk_count` explicitly so importers can fetch DA chunks before reconstructing ciphertexts and archive audits can select valid chunk indices.
+Block-proof payload compatibility is now hard-cut to schema `2` + proof format id `5` in active import logic. Nodes reject malformed or legacy payload versions fail-closed. `FlatBatches` import validation enforces deterministic sorted contiguous coverage of `[0, tx_count)` with no gaps/overlaps and verifies every batch artifact against its covered transaction subset; statement commitment binding is re-derived from the decoded batch proofs and must match the commitment proof binding. `MergeRoot` validation verifies the root proof plus manifest/tree metadata bindings. Operators tune rollout profiles primarily through `HEGEMON_BATCH_SLOT_TXS` (default `16`, then `32`, then `64`) and mode selection via `HEGEMON_BLOCK_PROOF_MODE` (`flat` or `merge_root`), while prover-market stage controls remain available (`HEGEMON_AGG_STAGE_QUEUE_DEPTH`, `HEGEMON_AGG_STAGE_LOCAL_PARALLELISM`, `HEGEMON_PROVER_STAGE_MAX_INFLIGHT_PER_LEVEL`, `HEGEMON_PROVER_STAGE_MEM_BUDGET_MB`).
+Batch STARK verification now caches `setup_preprocessed()` verifier keys by proof shape (`degree_bits`, inferred FRI blowup) so preprocessed trace commitments are built once and reused across block imports; node startup prewarms the configured shape set via `HEGEMON_BATCH_VERIFY_PREWARM_TXS` (defaults to the current `HEGEMON_BATCH_SLOT_TXS` power-of-two profile).
+Prove-ahead block proof preparation now caches parent-independent aggregation artifacts (`FlatBatches` chunk proofs or `MergeRoot` payloads) keyed by `(proof mode, tx statements commitment, tx count, shape profile)` via `HEGEMON_PROVE_AHEAD_CACHE_CAPACITY`, so parent transitions only pay the commitment-proof step when the candidate set is unchanged. Coordinator scheduling now gates readiness on the current parent/generation only: stale-parent prepared bundles are retained for cache amortization, but they no longer suppress new-parent work-package scheduling. Block assembly and preview readiness checks require exact-parent prepared bundles (no cross-parent fallback), preserving fail-closed correctness while the aggregation cache amortizes heavy proving work.
+
+The commitment proof binds `tx_statements_commitment` (derived from the ordered list of canonical transaction statement hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness. On Substrate, the `submit_proven_batch` extrinsic carries the computed `da_root` plus `chunk_count` explicitly so importers can fetch DA chunks before reconstructing ciphertexts and archive audits can select valid chunk indices.
 
 Data availability uses a dedicated encoder in `state/da`. The block’s ciphertext blob is serialized as a length-prefixed stream of ciphertexts (ordered by transaction order, then ciphertext order) and erasure-encoded into `k` data shards of size `da_params.chunk_size` plus `p = ceil(k/2)` parity shards. The Merkle root `da_root` commits to all `n = k + p` shards using BLAKE3 with domain tags `da-leaf` and `da-node`. Consensus recomputes `da_root` from the transaction list and rejects any mismatch before verifying proofs. Sampling is per-node randomized: each validator chooses `da_params.sample_count` shard indices, fetches the chunk and Merkle path over P2P, and rejects the block if any sampled proof fails.
 
 Two on-chain policies gate these checks: `DaAvailabilityPolicy` selects between `FullFetch` (reconstruct and verify `da_root`) and `Sampling` (verify randomized chunks against the commitment payload’s `da_root`/`chunk_count` without full reconstruction), and `CiphertextPolicy` toggles whether inline ciphertext bytes are accepted or sidecar-only submissions are enforced. The node consults the runtime API for the active policy on import, so the network can start with full storage and migrate to sampling + sidecar enforcement as the prover/DA markets mature.
 
-Operationally, the node persists DA encodings and ciphertext bytes for a bounded “hot” retention window and prunes old entries by block number. Ciphertext and proof retention are separate knobs: ciphertexts default to `HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS` (falling back to legacy `HEGEMON_DA_RETENTION_BLOCKS`), while proofs default to `HEGEMON_PROOF_DA_RETENTION_BLOCKS` (short by design so proof bytes become “archive-grade” quickly in Phase A).
+Operationally, the node persists DA encodings and ciphertext bytes for a bounded “hot” retention window and prunes old entries by block number. Ciphertexts use `HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS` (falling back to legacy `HEGEMON_DA_RETENTION_BLOCKS`). Proof sidecars are no longer consensus-critical in Phase C; retention for proposer staging is operational, not validity-critical.
 
-`verify_block` expects miners to supply the current tree state. It verifies the commitment proof once via `circuits/block::commitment_verifier::verify_block_commitment`, recomputes the transaction-ordered nullifier list (padding each transaction to `MAX_INPUTS`) to ensure the proof’s public inputs match the block’s transactions, checks the `tx_proofs_commitment` against the transaction list, verifies the aggregation proof if present (or verifies all transaction proofs in parallel when it is not), and updates the tree to the expected ending root. Solo miners follow a simple operational loop: sync the tree, run the block verifier on any candidate they plan to extend, update their local `VersionSchedule`, and only then start hashing on top of the verified root. Mining pauses while the node is catching up to peers so local hashing never races against historical imports. Pools do the same before paying shares or relaying templates so that all PoW-only participants agree on state transitions without any staking-committee style coordination. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check without per-transaction recursion.
+`verify_block` expects miners to supply the current tree state. It verifies the commitment proof once via `circuits/block::commitment_verifier::verify_block_commitment`, recomputes the transaction-ordered nullifier list (padding each transaction to `MAX_INPUTS`) to ensure the proof’s public inputs match the block’s transactions, checks `tx_statements_commitment` against the canonical transaction statement hash list, and then enforces mode guarantees: `InlineRequired` validates inline tx proofs (with or without an aggregation proof), while `SelfContained` fail-closes proofless transfers by requiring a valid aggregation/proven-batch payload. It then updates the tree to the expected ending root. In `SelfContained` aggregation mode, this path does not require per-transaction proof bytes to be present in the block. Solo miners follow a simple operational loop: sync the tree, run the block verifier on any candidate they plan to extend, update their local `VersionSchedule`, and only then start hashing on top of the verified root. Mining pauses while the node is catching up to peers so local hashing never races against historical imports. Pools do the same before paying shares or relaying templates so that all PoW-only participants agree on state transitions without any staking-committee style coordination. Operators must configure the same `HEGEMON_SEEDS` list across miners to avoid forked peer partitions, and must keep NTP/chrony time sync enabled because PoW headers with timestamps beyond the future-skew bound are rejected. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check without per-transaction recursion.
 
 Define a block commitment circuit `C_commitment` with
 
-* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_root`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`). For Plonky3, the permutation challenges `(alpha, beta)` are included as public inputs derived from a Blake3 hash of the same inputs, and verifiers recompute them off-circuit to avoid embedding Blake3 inside the AIR.
-* Witness: the `tx_proof_hashes` and the nullifier columns (unsorted + sorted lists).
+* Public inputs: `tx_statements_commitment`, `root_prev`, `root_new`, `nullifier_root`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`). For Plonky3, the permutation challenges `(alpha, beta)` are included as public inputs derived from a Blake3 hash of the same inputs, and verifiers recompute them off-circuit to avoid embedding Blake3 inside the AIR.
+* Witness: the `tx_statement_hashes` and the nullifier columns (unsorted + sorted lists).
 
 Constraints in `C_commitment`:
 
-1. **Commit to proof hashes** – absorb proof-hash limbs into a Poseidon sponge and enforce the 6-limb commitment equals `tx_proofs_commitment`.
+1. **Commit to statement hashes** – absorb statement-hash limbs into a Poseidon sponge and enforce the 6-limb commitment equals `tx_statements_commitment`.
 2. **Check nullifier uniqueness** – enforce a permutation check between the transaction-ordered nullifier list and its sorted copy, then require no adjacent equals in the sorted list (skipping zero padding).
 3. **Expose roots and DA** – carry `root_prev`, `root_new`, `nullifier_root`, and `da_root` as public inputs so consensus can recompute them from the block’s transactions and parent state and reject mismatches.
 
-This yields a per-block proof `π_block` showing that the miner committed to the exact list of transaction proof hashes and that the padded nullifier multiset is unique, while leaving deterministic state transitions (commitment tree updates and DA root reconstruction) to consensus checks outside the circuit.
+This yields a per-block proof `π_block` showing that the miner committed to the exact list of transaction statement hashes and that the padded nullifier multiset is unique, while leaving deterministic state transitions (commitment tree updates and DA root reconstruction) to consensus checks outside the circuit.
 
 #### 6.4 Circuit versioning
 
@@ -889,7 +918,7 @@ Recursive epoch proofs were removed alongside the previous recursion stack. Rein
 
 #### 6.6 Settlement batch proofs
 
-Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon2-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon2 sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running the full-round permutation per absorb cycle, and repeating for the full padded input list. Nullifiers are Poseidon2-derived from `(instruction_id, index)` under a distinct domain tag, then encoded as 48 bytes with six big-endian limbs; canonical encodings reject any limb \(\ge p\). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Poseidon2-384, 43 FRI queries, 16x blowup) to select acceptable proof options.
+Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon2-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon2 sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running the full-round permutation per absorb cycle, and repeating for the full padded input list. Nullifiers are Poseidon2-derived from `(instruction_id, index)` under a distinct domain tag, then encoded as 48 bytes with six big-endian limbs; canonical encodings reject any limb \(\ge p\). Settlement verification rejects non-canonical encodings and currently verifies with compile-time Plonky3 production parameters (`log_blowup = 4`, `num_queries = 32`).
 
 
 ---
@@ -905,7 +934,7 @@ Module layout:
 * `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
 * `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, `blake3_384`, a Poseidon-style permutation over the Goldilocks prime (width 3, 63 full rounds, NUMS constants), and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to 48-byte BLAKE3-384 with SHA3-384 fallbacks via `commit_note_with`) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address hashes remain BLAKE3-256 by default while commitments/nullifiers normalize on 48-byte digests.
 * `pallet_identity` – stores optional PQ session keys as `SessionKey::PostQuantum` (Dilithium/Falcon). New registrations supply PQ bundles through the `register_did` call without a one-off rotate extrinsic.
-* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds attestations with Poseidon2-384 hashing, 43 FRI queries, a 16x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget. With 384-bit digests, PQ collision resistance reaches ~128 bits. Governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
+* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization. The live Plonky3 transaction/settlement verifier path currently uses compile-time production parameters from `transaction-core` (`log_blowup = 4`, `num_queries = 32`), while runtime defaults continue to seed parameter storage for governance policy workflows. With 384-bit digests, PQ collision resistance reaches ~128 bits.
 
 The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to assert byte-for-byte deterministic vectors covering:
 
@@ -963,7 +992,7 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 2. Connect the desktop app or Polkadot.js Apps to the node RPC endpoint to view live telemetry. When using the desktop app, prefer a persistent base path (avoid `--tmp`), and set `--listen-addr /ip4/0.0.0.0/tcp/30333` only when you intend to accept IPv4 peer traffic. Expose RPC externally only on trusted networks.
    The desktop app is organized into Overview, Node, Wallet, Send, Disclosure, and Console workspaces. Its global status bar always shows the active node, wallet store, and genesis hash so operators can detect mismatches before sending or mining.
    Use `hegemon_peerGraph` to retrieve connected peer details plus reported peers (address, direction, best height/hash); `system_peers` remains empty on the PQ transport.
-3. For multi-node setups, start additional nodes with `--bootnodes /ip4/127.0.0.1/tcp/30333` pointing to the first node.
+3. For multi-node setups, start additional nodes with the same `HEGEMON_SEEDS` list (for local testing, `HEGEMON_SEEDS=127.0.0.1:30333` for the first node endpoint).
 
 ### Security assurance workflow
 
@@ -983,3 +1012,14 @@ Whenever you touch an API, threat mitigation, or performance assumption:
 5. Mention the change in `docs/CONTRIBUTING.md` so future contributors know which CI jobs/benchmarks cover it.
 
 PRs missing any of these sync points should be blocked during review; CI surfaces the changed docs alongside code so reviewers can verify everything moved together.
+
+### Aggregation runtime update (February 27, 2026)
+
+- Local prover execution in `node/src/substrate/prover_coordinator.rs` now uses a dedicated long-lived worker pool instead of per-job `spawn_blocking` tasks. This keeps thread-local recursion artifacts on stable worker threads and reduces repeated cold cache rebuilds caused by thread churn.
+- Aggregation cache warmup is now explicit and checkpointed by default:
+  - `HEGEMON_AGG_PREWARM_MAX_TXS` controls whether breadth warmup is attempted at all (unset defaults to no automatic max-target expansion on the hot path).
+  - `HEGEMON_AGG_PREWARM_MODE=checkpoint` (default) expands warmup shapes geometrically (`1,2,4,8,...`) when a max tx cap is provided.
+  - `HEGEMON_AGG_PREWARM_MODE=linear` restores legacy linear warmup.
+  - `HEGEMON_AGG_WARMUP_TARGET_SHAPES` continues to support explicit shape lists.
+
+Operationally, this change removes hidden O(target) warmup churn from live proving and makes warmup policy explicit in runbooks and benchmark configs.

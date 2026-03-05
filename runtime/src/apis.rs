@@ -32,7 +32,9 @@
 use crate::AccountId;
 use pallet_archive_market::{ArchiveContract, ProviderInfo};
 use pallet_shielded_pool::merkle::CompactMerkleTree;
-use pallet_shielded_pool::types::{FeeParameters, FeeProofKind, ForcedInclusionStatus};
+use pallet_shielded_pool::types::{
+    FeeParameters, FeeProofKind, ForcedInclusionStatus, ShieldedFeeBreakdown,
+};
 use sp_api::decl_runtime_apis;
 use sp_core::U256;
 use sp_std::vec::Vec;
@@ -165,7 +167,10 @@ decl_runtime_apis! {
         /// Get the ciphertext policy (inline vs sidecar-only).
         fn ciphertext_policy() -> pallet_shielded_pool::types::CiphertextPolicy;
 
-        /// Get the proof availability policy (inline vs DA required in aggregation mode).
+        /// Get the proof availability policy (inline vs self-contained aggregation mode).
+        ///
+        /// In `SelfContained`, aggregation-mode blocks carry a single
+        /// `ShieldedPool::submit_proven_batch` payload instead of per-proof calls.
         fn proof_availability_policy() -> pallet_shielded_pool::types::ProofAvailabilityPolicy;
 
         /// Fetch the compact Merkle tree state used for commitment-root computation.
@@ -186,6 +191,13 @@ decl_runtime_apis! {
         /// Quote a fee for the given ciphertext byte count and proof kind.
         #[allow(clippy::result_unit_err)]
         fn fee_quote(ciphertext_bytes: u64, proof_kind: FeeProofKind) -> Result<u128, ()>;
+
+        /// Quote a deterministic fee breakdown for prover/miner accounting.
+        #[allow(clippy::result_unit_err)]
+        fn fee_quote_breakdown(
+            ciphertext_bytes: u64,
+            proof_kind: FeeProofKind,
+        ) -> Result<ShieldedFeeBreakdown, ()>;
 
         /// Fetch pending forced inclusion commitments.
         fn forced_inclusions() -> Vec<ForcedInclusionStatus>;

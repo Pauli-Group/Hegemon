@@ -21,6 +21,7 @@ pub type StateRoot = [u8; 48];
 pub type NullifierRoot = [u8; 48];
 pub type SupplyDigest = u128;
 pub type Amount = u64;
+pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transaction {
@@ -199,14 +200,82 @@ fn compute_transaction_id(
     out
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProofVerificationMode {
+    InlineRequired,
+    SelfContainedAggregation,
+}
+
+impl Default for ProofVerificationMode {
+    fn default() -> Self {
+        Self::InlineRequired
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProvenBatchMode {
+    FlatBatches,
+    MergeRoot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchProofItem {
+    pub start_tx_index: u32,
+    pub tx_count: u16,
+    pub proof_format: u8,
+    pub proof: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MergeRootMetadata {
+    pub tree_arity: u16,
+    pub tree_levels: u16,
+    pub leaf_count: u32,
+    pub leaf_manifest_commitment: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MergeRootProofPayload {
+    pub root_proof: Vec<u8>,
+    pub metadata: MergeRootMetadata,
+    pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvenBatch {
+    pub version: u8,
+    pub tx_count: u32,
+    pub tx_statements_commitment: [u8; 48],
+    pub da_root: DaRoot,
+    pub da_chunk_count: u32,
+    pub commitment_proof: CommitmentBlockProof,
+    pub mode: ProvenBatchMode,
+    pub flat_batches: Vec<BatchProofItem>,
+    pub merge_root: Option<MergeRootProofPayload>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxStatementBinding {
+    pub statement_hash: [u8; 48],
+    pub anchor: [u8; 48],
+    pub fee: u64,
+    pub circuit_version: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block<BH> {
     pub header: BH,
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
-    pub commitment_proof: Option<CommitmentBlockProof>,
-    pub aggregation_proof: Option<Vec<u8>>,
+    pub proven_batch: Option<ProvenBatch>,
+    /// Canonical per-transaction statement bindings in transaction order.
+    /// Each binding carries the transaction statement hash and the flat-batch public context.
+    pub tx_statement_bindings: Option<Vec<TxStatementBinding>>,
+    /// Optional commitment to transaction statement hashes, derived by the caller in canonical
+    /// transaction order (for example from binding-hash statements on Substrate imports).
+    pub tx_statements_commitment: Option<[u8; 48]>,
     pub transaction_proofs: Option<Vec<TransactionProof>>,
+    pub proof_verification_mode: ProofVerificationMode,
 }
 
 impl<BH> Block<BH> {
@@ -215,9 +284,11 @@ impl<BH> Block<BH> {
             header,
             transactions: self.transactions,
             coinbase: self.coinbase,
-            commitment_proof: self.commitment_proof,
-            aggregation_proof: self.aggregation_proof,
+            proven_batch: self.proven_batch,
+            tx_statement_bindings: self.tx_statement_bindings,
+            tx_statements_commitment: self.tx_statements_commitment,
             transaction_proofs: self.transaction_proofs,
+            proof_verification_mode: self.proof_verification_mode,
         }
     }
 }

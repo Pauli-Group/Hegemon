@@ -55,10 +55,10 @@
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
-use block_circuit::CommitmentBlockProof;
 use consensus::Blake3Seal;
 use sp_core::H256;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Type alias for the full backend
 pub type FullBackend = sc_service::TFullBackend<runtime::Block>;
@@ -510,10 +510,6 @@ pub struct StateExecutionResult {
     /// If Some, storage changes were captured and can be applied during import.
     /// If None, block import will use StateAction::Skip (scaffold mode).
     pub storage_changes: Option<StorageChangesHandle>,
-    /// Optional commitment proof built from shielded transfer extrinsics.
-    pub commitment_proof: Option<CommitmentBlockProof>,
-    /// Optional aggregation proof bytes built from transaction proofs.
-    pub aggregation_proof: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -645,8 +641,6 @@ impl ProductionChainStateProvider {
     ///         extrinsics_root: result.extrinsics_root,
     ///         failed_count: result.failed,
     ///         storage_changes: None,
-    ///         commitment_proof: None,
-    ///         aggregation_proof: None,
     ///     })
     /// });
     /// ```
@@ -711,8 +705,6 @@ impl ProductionChainStateProvider {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None, // No storage changes in mock mode
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -854,25 +846,170 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         "Block template built with state execution (Task 11.4 + 11.5.5)"
                     );
                 }
-                template
-                    .with_executed_state(
-                        result.applied_extrinsics,
-                        result.state_root,
-                        result.extrinsics_root,
-                        result.storage_changes,
-                    )
-                    .with_commitment_proof(result.commitment_proof)
-                    .with_aggregation_proof(result.aggregation_proof)
+                template.with_executed_state(
+                    result.applied_extrinsics,
+                    result.state_root,
+                    result.extrinsics_root,
+                    result.storage_changes,
+                )
             }
-            Err(e) => {
-                tracing::error!(
-                    block_number,
-                    error = %e,
-                    "State execution failed; refusing to build block template"
-                );
-                panic!("state execution failed: {e}");
+            Err(mut e) => {
+                if !pending.is_empty() && Self::is_missing_ready_proven_batch_error(&e) {
+                    let wait_budget = Self::pending_proven_batch_wait_budget();
+                    let max_attempts = Self::pending_proven_batch_max_attempts();
+                    let mut retry_interval = Self::pending_proven_batch_poll_interval();
+                    let max_retry_interval = Duration::from_millis(2_000);
+                    let deadline = Instant::now() + wait_budget;
+                    let mut attempts = 0usize;
+
+                    while attempts < max_attempts && Instant::now() < deadline {
+                        std::thread::sleep(retry_interval);
+                        attempts = attempts.saturating_add(1);
+                        match self.execute_extrinsics(&parent_hash, block_number, &pending) {
+                            Ok(result) => {
+                                tracing::info!(
+                                    block_number,
+                                    pending_txs = pending.len(),
+                                    wait_ms = wait_budget.as_millis() as u64,
+                                    attempts,
+                                    "Recovered pending tx template after waiting for ready proven batch"
+                                );
+                                if self.config.verbose {
+                                    let storage_changes_key =
+                                        result.storage_changes.as_ref().map(|handle| handle.key());
+                                    tracing::debug!(
+                                        block_number,
+                                        applied = result.applied_extrinsics.len(),
+                                        failed = result.failed_count,
+                                        state_root = %hex::encode(result.state_root.as_bytes()),
+                                        storage_changes_key = ?storage_changes_key,
+                                        "Block template built after waiting for ready proven batch"
+                                    );
+                                }
+                                return template.with_executed_state(
+                                    result.applied_extrinsics,
+                                    result.state_root,
+                                    result.extrinsics_root,
+                                    result.storage_changes,
+                                );
+                            }
+                            Err(retry_err)
+                                if Self::is_missing_ready_proven_batch_error(&retry_err) =>
+                            {
+                                e = retry_err;
+                                retry_interval = std::cmp::min(
+                                    retry_interval.saturating_mul(2),
+                                    max_retry_interval,
+                                );
+                            }
+                            Err(retry_err) => {
+                                e = retry_err;
+                                break;
+                            }
+                        }
+                    }
+                    if Self::is_missing_ready_proven_batch_error(&e) {
+                        tracing::warn!(
+                            block_number,
+                            pending_txs = pending.len(),
+                            wait_ms = wait_budget.as_millis() as u64,
+                            attempts,
+                            max_attempts,
+                            "Pending proven-batch wait budget exhausted; rebuilding template without pending txs"
+                        );
+                    }
+                }
+
+                if !pending.is_empty() {
+                    tracing::warn!(
+                        block_number,
+                        error = %e,
+                        pending_txs = pending.len(),
+                        "State execution failed with pending txs; retrying template build without pending txs"
+                    );
+                    let no_pending: &[Vec<u8>] = &[];
+                    match self.execute_extrinsics(&parent_hash, block_number, no_pending) {
+                        Ok(result) => {
+                            tracing::warn!(
+                                block_number,
+                                dropped_pending_txs = pending.len(),
+                                "Built block template without pending txs after transient execution failure"
+                            );
+                            if self.config.verbose {
+                                let storage_changes_key =
+                                    result.storage_changes.as_ref().map(|handle| handle.key());
+                                tracing::debug!(
+                                    block_number,
+                                    applied = result.applied_extrinsics.len(),
+                                    failed = result.failed_count,
+                                    state_root = %hex::encode(result.state_root.as_bytes()),
+                                    storage_changes_key = ?storage_changes_key,
+                                    "Block template built with fallback state execution (empty pending set)"
+                                );
+                            }
+                            template.with_executed_state(
+                                result.applied_extrinsics,
+                                result.state_root,
+                                result.extrinsics_root,
+                                result.storage_changes,
+                            )
+                        }
+                        Err(retry_err) => {
+                            tracing::error!(
+                                block_number,
+                                error = %retry_err,
+                                "State execution failed after retry without pending txs; refusing to build block template"
+                            );
+                            panic!("state execution failed after empty-pool retry: {retry_err}");
+                        }
+                    }
+                } else {
+                    tracing::error!(
+                        block_number,
+                        error = %e,
+                        "State execution failed; refusing to build block template"
+                    );
+                    panic!("state execution failed: {e}");
+                }
             }
         }
+    }
+}
+
+impl ProductionChainStateProvider {
+    fn is_missing_ready_proven_batch_error(error: &str) -> bool {
+        error.contains("requires a ready proven batch")
+    }
+
+    fn pending_proven_batch_wait_budget() -> Duration {
+        let wait_ms = std::env::var("HEGEMON_PENDING_PROVEN_BATCH_WAIT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .or_else(|| {
+                std::env::var("HEGEMON_BATCH_JOB_TIMEOUT_MS")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+            })
+            .unwrap_or(120_000)
+            .max(100);
+        Duration::from_millis(wait_ms)
+    }
+
+    fn pending_proven_batch_max_attempts() -> usize {
+        std::env::var("HEGEMON_PENDING_PROVEN_BATCH_MAX_ATTEMPTS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(240)
+            .max(1)
+    }
+
+    fn pending_proven_batch_poll_interval() -> Duration {
+        let interval_ms = std::env::var("HEGEMON_PENDING_PROVEN_BATCH_POLL_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(200)
+            .clamp(10, 5_000);
+        Duration::from_millis(interval_ms)
     }
 }
 
@@ -1215,8 +1352,6 @@ mod tests {
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         });
 
@@ -1248,8 +1383,6 @@ mod tests {
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
                 storage_changes: None,
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         });
 
@@ -1261,6 +1394,57 @@ mod tests {
         assert_eq!(template.difficulty_bits, 0x1f_00_ff_ff);
         assert_eq!(template.extrinsics.len(), 2);
         assert_eq!(template.state_root, custom_state_root);
+    }
+
+    #[test]
+    fn test_build_block_template_retries_without_pending_on_state_error() {
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+
+        let parent = H256::repeat_byte(0x44);
+        provider.set_best_block_fn(move || (parent, 9));
+        provider.set_difficulty_fn(|| 0x1f_00_ff_ff);
+        provider.set_pending_txs_fn(|| vec![vec![0xde, 0xad, 0xbe, 0xef]]);
+
+        let callback_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let callback_calls_clone = callback_calls.clone();
+        let pending_attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let pending_attempts_clone = pending_attempts.clone();
+        provider.set_execute_extrinsics_fn(move |_parent, _number, extrinsics| {
+            callback_calls_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if extrinsics.is_empty() {
+                Ok(StateExecutionResult {
+                    applied_extrinsics: vec![],
+                    state_root: H256::repeat_byte(0x7a),
+                    extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
+                    failed_count: 0,
+                    storage_changes: None,
+                })
+            } else {
+                // First failure should trigger pending proven-batch retry path; second failure
+                // exits that retry loop and falls back to empty pending execution.
+                let attempt =
+                    pending_attempts_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if attempt == 0 {
+                    Err(
+                        "shielded block with omitted proof bytes requires a ready proven batch"
+                            .into(),
+                    )
+                } else {
+                    Err("non-retryable execution error".into())
+                }
+            }
+        });
+
+        let template = provider.build_block_template();
+
+        assert_eq!(template.number, 10);
+        assert_eq!(template.extrinsics.len(), 0);
+        assert_eq!(template.state_root, H256::repeat_byte(0x7a));
+        assert_eq!(
+            callback_calls.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "state execution should retry pending once, then fallback to empty pending tx set"
+        );
     }
 
     #[test]
@@ -1278,8 +1462,6 @@ mod tests {
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
                 storage_changes: None,
-                commitment_proof: None,
-                aggregation_proof: None,
             })
         });
 

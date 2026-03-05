@@ -105,9 +105,7 @@ mod cli {
 
         fn load_spec(&self, id: &str) -> Result<Box<dyn ChainSpec>, String> {
             Ok(match id {
-                "dev" | "" => Box::new(chain_spec::development_config()?),
-                "local" => Box::new(chain_spec::local_testnet_config()?),
-                "testnet" => Box::new(chain_spec::testnet_config()?),
+                "dev" | "" | "local" | "testnet" => Box::new(chain_spec::chain_spec()?),
                 path => Box::new(chain_spec::ChainSpec::from_json_file(
                     std::path::PathBuf::from(path),
                 )?),

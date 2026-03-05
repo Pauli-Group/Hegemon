@@ -5,7 +5,7 @@ use alloc::string::String;
 /// Errors that can occur during batch proof generation or verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BatchCircuitError {
-    /// Batch size is invalid (must be power of 2, max 16).
+    /// Batch size is invalid (must be power of 2, max 32).
     InvalidBatchSize(usize),
 
     /// Batch size is zero.
@@ -38,7 +38,7 @@ impl core::fmt::Display for BatchCircuitError {
         match self {
             Self::InvalidBatchSize(size) => write!(
                 f,
-                "Invalid batch size: {}. Must be power of 2, max 16",
+                "Invalid batch size: {}. Must be power of 2, max 32",
                 size
             ),
             Self::EmptyBatch => write!(f, "Batch cannot be empty"),

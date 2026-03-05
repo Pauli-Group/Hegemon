@@ -734,6 +734,156 @@ fn sync_once(
     })
 }
 
+fn env_bool(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
+}
+
+fn is_invalid_anchor_submission(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("invalid transaction")
+        || lower.contains("invalidtransaction")
+        || lower.contains("invalidtransaction::custom"))
+        && (lower.contains("custom error: 3")
+            || lower.contains("custom error 3")
+            || lower.contains("invalid anchor"))
+}
+
+fn is_nullifier_conflict_submission(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("invalid transaction")
+        || lower.contains("invalidtransaction")
+        || lower.contains("invalidtransaction::custom"))
+        && (lower.contains("custom error: 5")
+            || lower.contains("custom error 5")
+            || lower.contains("nullifieralreadyexists")
+            || lower.contains("nullifier already exists"))
+}
+
+fn parse_hex_48(input: &str) -> WalletdResult<[u8; 48]> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex::decode(trimmed).map_err(|e| {
+        WalletdError::new(
+            WalletdErrorCode::RpcConnectionFailed,
+            format!("invalid 48-byte hex value from node: {e}"),
+        )
+    })?;
+    if bytes.len() != 48 {
+        return Err(WalletdError::new(
+            WalletdErrorCode::RpcConnectionFailed,
+            format!("invalid 48-byte hex length from node root: {}", bytes.len()),
+        ));
+    }
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+async fn ensure_wallet_root_consistency(
+    engine: &AsyncWalletSyncEngine,
+    store: &Arc<WalletStore>,
+    client: &Arc<SubstrateRpcClient>,
+) -> WalletdResult<[u8; 48]> {
+    let status = client.note_status().await.map_err(|e| {
+        WalletdError::new(
+            WalletdErrorCode::RpcConnectionFailed,
+            format!("note status: {e}"),
+        )
+    })?;
+    let chain_root = parse_hex_48(&status.root)?;
+    let wallet_root = store
+        .commitment_tree()
+        .map_err(WalletdError::internal)?
+        .root();
+
+    if wallet_root == chain_root {
+        return Ok(chain_root);
+    }
+
+    eprintln!(
+        "[walletd] wallet root mismatch; resetting sync state (wallet={}, chain={})",
+        hex::encode(wallet_root),
+        hex::encode(chain_root)
+    );
+    store.reset_sync_state().map_err(WalletdError::internal)?;
+    engine.sync_once().await.map_err(|e| {
+        WalletdError::new(
+            WalletdErrorCode::SyncFailed,
+            format!("sync failed after root mismatch reset: {e}"),
+        )
+    })?;
+
+    let refreshed = client.note_status().await.map_err(|e| {
+        WalletdError::new(
+            WalletdErrorCode::RpcConnectionFailed,
+            format!("note status: {e}"),
+        )
+    })?;
+    let refreshed_chain_root = parse_hex_48(&refreshed.root)?;
+    let refreshed_wallet_root = store
+        .commitment_tree()
+        .map_err(WalletdError::internal)?
+        .root();
+    if refreshed_wallet_root != refreshed_chain_root {
+        return Err(WalletdError::new(
+            WalletdErrorCode::AnchorInvalid,
+            format!(
+                "wallet root still mismatched after resync (wallet={}, chain={})",
+                hex::encode(refreshed_wallet_root),
+                hex::encode(refreshed_chain_root)
+            ),
+        ));
+    }
+
+    Ok(refreshed_chain_root)
+}
+
+async fn submit_bundle_strict(
+    client: &SubstrateRpcClient,
+    bundle: &wallet::TransactionBundle,
+    signing_seed: Option<[u8; 32]>,
+    try_signed_first: bool,
+    use_da_sidecar: bool,
+    use_proof_sidecar: bool,
+) -> Result<[u8; 32], WalletError> {
+    if try_signed_first {
+        if let Some(seed) = signing_seed {
+            return client.submit_shielded_transfer_signed(bundle, &seed).await;
+        }
+    } else if signing_seed.is_some() {
+        eprintln!(
+            "[walletd] skipping legacy signed shielded_transfer path (HEGEMON_WALLET_TRY_SIGNED_SUBMIT=0)"
+        );
+    }
+
+    if use_da_sidecar {
+        eprintln!(
+            "[walletd] submitting unsigned shielded transfer via DA sidecar (proof_sidecar={})",
+            use_proof_sidecar
+        );
+        client
+            .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
+                bundle,
+                Some(use_proof_sidecar),
+            )
+            .await
+    } else {
+        eprintln!(
+            "[walletd] submitting unsigned self-contained shielded transfer (inline proof bytes)"
+        );
+        // Default to self-contained unsigned submission so any miner can include
+        // the transfer without requiring proposer-local sidecar bytes.
+        client.submit_shielded_transfer_unsigned(bundle).await
+    }
+}
+
 fn tx_send(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
@@ -762,6 +912,7 @@ fn tx_send(
             .sync_once()
             .await
             .map_err(|e| WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string()))?;
+        ensure_wallet_root_consistency(&engine, &store, &client).await?;
 
         let recipients = parse_recipients(&params.recipients)
             .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
@@ -840,6 +991,7 @@ fn tx_send(
                         format!("Consolidation failed: {e}"),
                     )
                 })?;
+                ensure_wallet_root_consistency(&engine, &store, &client).await?;
             }
         }
 
@@ -847,74 +999,266 @@ fn tx_send(
             .await
             .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
 
-        let built = build_transaction(&store, &recipients, params.fee)
+        let mut built = build_transaction(&store, &recipients, params.fee)
             .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
+        let signing_seed = store
+            .derived_keys()
+            .map_err(WalletdError::internal)?
+            .map(|keys| keys.spend.to_bytes());
+
+        let mut anchor_attempt = 0u8;
+        loop {
+            let anchor_valid = client
+                .is_valid_anchor(&built.bundle.anchor)
+                .await
+                .map_err(|e| {
+                    WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                })?;
+            if anchor_valid {
+                break;
+            }
+
+            if anchor_attempt >= 2 {
+                return Err(WalletdError::new(
+                    WalletdErrorCode::TransactionFailed,
+                    format!(
+                        "wallet built an invalid anchor ({}) even after resync + full rescan",
+                        hex::encode(built.bundle.anchor)
+                    ),
+                ));
+            }
+
+            if anchor_attempt == 1 {
+                store.reset_sync_state().map_err(WalletdError::internal)?;
+            }
+            anchor_attempt = anchor_attempt.saturating_add(1);
+
+            engine
+                .sync_once()
+                .await
+                .map_err(|e| WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string()))?;
+            ensure_wallet_root_consistency(&engine, &store, &client).await?;
+            precheck_nullifiers(&store, &client, &recipients, params.fee)
+                .await
+                .map_err(|e| {
+                    WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                })?;
+            built = build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+            })?;
+        }
+
         store
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        let use_da_sidecar = std::env::var("HEGEMON_WALLET_DA_SIDECAR")
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
-        let result = if use_da_sidecar {
-            client
-                .submit_shielded_transfer_unsigned_sidecar(&built.bundle)
-                .await
-        } else {
-            client
-                .submit_shielded_transfer_unsigned(&built.bundle)
-                .await
-        };
+        // Default to inline ciphertext/proof transport for cross-miner
+        // portability. Operators can opt into sidecar mode explicitly.
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", false);
+        let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
+        let mut invalid_anchor_retries: u8 = 0;
+        let mut nullifier_conflict_retries: u8 = 0;
 
-        match result {
-            Ok(tx_hash) => {
-                let genesis_hash = match store.genesis_hash().map_err(WalletdError::internal)? {
-                    Some(hash) => hash,
-                    None => {
-                        let metadata = client.get_chain_metadata().await.map_err(|e| {
-                            WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string())
+        loop {
+            let result = submit_bundle_strict(
+                &client,
+                &built.bundle,
+                signing_seed,
+                try_signed_first,
+                use_da_sidecar,
+                use_proof_sidecar,
+            )
+            .await;
+
+            match result {
+                Ok(tx_hash) => {
+                    let genesis_hash = match store.genesis_hash().map_err(WalletdError::internal)? {
+                        Some(hash) => hash,
+                        None => {
+                            let metadata = client.get_chain_metadata().await.map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::RpcConnectionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                            store
+                                .set_genesis_hash(metadata.genesis_hash)
+                                .map_err(WalletdError::internal)?;
+                            metadata.genesis_hash
+                        }
+                    };
+                    store
+                        .record_outgoing_disclosures(
+                            tx_hash,
+                            genesis_hash,
+                            built.outgoing_disclosures.clone(),
+                        )
+                        .map_err(WalletdError::internal)?;
+                    store
+                        .record_pending_submission(
+                            tx_hash,
+                            built.nullifiers.clone(),
+                            built.spent_note_indexes.clone(),
+                            metadata.clone(),
+                            params.fee,
+                        )
+                        .map_err(WalletdError::internal)?;
+                    return Ok(SendResponse {
+                        tx_hash: format!("0x{}", hex::encode(tx_hash)),
+                        recipients: metadata,
+                    });
+                }
+                Err(WalletError::Rpc(msg))
+                    if is_nullifier_conflict_submission(&msg) && nullifier_conflict_retries < 2 =>
+                {
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, false)
+                        .map_err(WalletdError::internal)?;
+                    nullifier_conflict_retries = nullifier_conflict_retries.saturating_add(1);
+
+                    engine.sync_once().await.map_err(|e| {
+                        WalletdError::new(
+                            WalletdErrorCode::SyncFailed,
+                            format!("sync failed after nullifier conflict submission: {e}"),
+                        )
+                    })?;
+                    ensure_wallet_root_consistency(&engine, &store, &client).await?;
+
+                    precheck_nullifiers(&store, &client, &recipients, params.fee)
+                        .await
+                        .map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
                         })?;
-                        store
-                            .set_genesis_hash(metadata.genesis_hash)
-                            .map_err(WalletdError::internal)?;
-                        metadata.genesis_hash
+                    built = build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                        WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                    })?;
+
+                    let anchor_valid =
+                        client
+                            .is_valid_anchor(&built.bundle.anchor)
+                            .await
+                            .map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                    if !anchor_valid {
+                        engine.sync_once().await.map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())
+                        })?;
+                        ensure_wallet_root_consistency(&engine, &store, &client).await?;
+                        precheck_nullifiers(&store, &client, &recipients, params.fee)
+                            .await
+                            .map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                        built =
+                            build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
                     }
-                };
-                store
-                    .record_outgoing_disclosures(
-                        tx_hash,
-                        genesis_hash,
-                        built.outgoing_disclosures.clone(),
-                    )
-                    .map_err(WalletdError::internal)?;
-                store
-                    .record_pending_submission(
-                        tx_hash,
-                        built.nullifiers.clone(),
-                        built.spent_note_indexes.clone(),
-                        metadata.clone(),
-                        params.fee,
-                    )
-                    .map_err(WalletdError::internal)?;
-                Ok(SendResponse {
-                    tx_hash: format!("0x{}", hex::encode(tx_hash)),
-                    recipients: metadata,
-                })
-            }
-            Err(err) => {
-                store
-                    .mark_notes_pending(&built.spent_note_indexes, false)
-                    .map_err(WalletdError::internal)?;
-                Err(WalletdError::new(
-                    WalletdErrorCode::TransactionFailed,
-                    format!("Transaction submission failed: {err}"),
-                ))
+
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, true)
+                        .map_err(WalletdError::internal)?;
+                    continue;
+                }
+                Err(WalletError::Rpc(msg))
+                    if is_invalid_anchor_submission(&msg) && invalid_anchor_retries < 3 =>
+                {
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, false)
+                        .map_err(WalletdError::internal)?;
+                    invalid_anchor_retries = invalid_anchor_retries.saturating_add(1);
+
+                    if invalid_anchor_retries >= 2 {
+                        store.reset_sync_state().map_err(WalletdError::internal)?;
+                    }
+
+                    engine.sync_once().await.map_err(|e| {
+                        WalletdError::new(
+                            WalletdErrorCode::SyncFailed,
+                            format!("sync failed after invalid anchor submission: {e}"),
+                        )
+                    })?;
+                    ensure_wallet_root_consistency(&engine, &store, &client).await?;
+
+                    precheck_nullifiers(&store, &client, &recipients, params.fee)
+                        .await
+                        .map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                        })?;
+                    built = build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                        WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                    })?;
+
+                    let mut anchor_retry = 0u8;
+                    loop {
+                        let anchor_valid = client
+                            .is_valid_anchor(&built.bundle.anchor)
+                            .await
+                            .map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                        if anchor_valid {
+                            break;
+                        }
+                        if anchor_retry >= 1 {
+                            return Err(WalletdError::new(
+                                WalletdErrorCode::TransactionFailed,
+                                format!(
+                                    "wallet rebuilt an invalid anchor after submission retry ({})",
+                                    hex::encode(built.bundle.anchor)
+                                ),
+                            ));
+                        }
+                        anchor_retry = anchor_retry.saturating_add(1);
+                        engine.sync_once().await.map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())
+                        })?;
+                        ensure_wallet_root_consistency(&engine, &store, &client).await?;
+                        precheck_nullifiers(&store, &client, &recipients, params.fee)
+                            .await
+                            .map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                        built =
+                            build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                                WalletdError::new(
+                                    WalletdErrorCode::TransactionFailed,
+                                    e.to_string(),
+                                )
+                            })?;
+                    }
+
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, true)
+                        .map_err(WalletdError::internal)?;
+                    continue;
+                }
+                Err(err) => {
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, false)
+                        .map_err(WalletdError::internal)?;
+                    return Err(WalletdError::new(
+                        WalletdErrorCode::TransactionFailed,
+                        format!("Transaction submission failed: {err}"),
+                    ));
+                }
             }
         }
     })
@@ -1090,6 +1434,7 @@ fn disclosure_create(
             record.note.value,
             record.note.asset_id,
             &record.note.pk_recipient,
+            &record.note.pk_auth,
             &record.note.rho,
             &record.note.r,
         );
@@ -1104,6 +1449,7 @@ fn disclosure_create(
             value: record.note.value,
             asset_id: record.note.asset_id,
             pk_recipient: record.note.pk_recipient,
+            pk_auth: record.note.pk_auth,
             commitment: record.commitment,
         };
         let witness = PaymentDisclosureWitness {
@@ -1144,6 +1490,7 @@ fn disclosure_create(
             claim: DisclosureClaim {
                 recipient_address: record.recipient_address.clone(),
                 pk_recipient: record.note.pk_recipient,
+                pk_auth: record.note.pk_auth,
                 value: record.note.value,
                 asset_id: record.note.asset_id,
                 commitment: record.commitment,
@@ -1247,6 +1594,7 @@ fn disclosure_verify(
             value: package.claim.value,
             asset_id: package.claim.asset_id,
             pk_recipient: package.claim.pk_recipient,
+            pk_auth: package.claim.pk_auth,
             commitment: package.claim.commitment,
         },
         proof_bytes,

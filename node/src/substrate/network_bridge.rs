@@ -40,6 +40,8 @@ use tokio::sync::mpsc;
 pub const BLOCK_ANNOUNCE_PROTOCOL: &str = BLOCK_ANNOUNCES_PQ;
 pub const TRANSACTIONS_PROTOCOL: &str = TRANSACTIONS_PQ;
 pub const SYNC_PROTOCOL: &str = SYNC_PQ;
+/// Sync protocol compatibility version.
+pub const SYNC_PROTOCOL_VERSION: u32 = 1;
 /// Data-availability chunk request/response protocol (PQ version).
 pub const DA_CHUNKS_PROTOCOL: &str = "/hegemon/da/chunks/pq/1";
 
@@ -140,15 +142,33 @@ impl TransactionMessage {
 /// Sync message wrapper - distinguishes request vs response unambiguously
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum SyncMessage {
-    /// A sync request
-    Request(SyncRequest),
+    /// A sync request with explicit correlation id.
+    RequestV2(SyncRequestEnvelope),
     /// A sync response
     Response(SyncResponse),
+}
+
+/// Sync request envelope with explicit correlation identifier.
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct SyncRequestEnvelope {
+    /// Request ID for response correlation.
+    pub request_id: u64,
+    /// Request payload.
+    pub request: SyncRequest,
 }
 
 /// Sync request message
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum SyncRequest {
+    /// Request compatibility metadata before considering the peer as a sync source.
+    CompatibilityProbe {
+        /// Local chain genesis hash for strict chain identity checks.
+        local_genesis_hash: [u8; 32],
+        /// Local sync protocol compatibility version.
+        sync_protocol_version: u32,
+        /// Active aggregation proof payload format id.
+        aggregation_proof_format: u8,
+    },
     /// Request block headers starting from a hash
     BlockHeaders {
         /// Starting block hash
@@ -182,6 +202,19 @@ pub enum SyncRequest {
 /// Sync response message
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum SyncResponse {
+    /// Compatibility response for sync admission checks.
+    Compatibility {
+        /// Request ID for correlation.
+        request_id: u64,
+        /// Whether the responding peer considers the requester compatible.
+        accepted: bool,
+        /// Responding peer chain genesis hash.
+        local_genesis_hash: [u8; 32],
+        /// Responding peer sync protocol compatibility version.
+        sync_protocol_version: u32,
+        /// Responding peer active aggregation proof payload format id.
+        aggregation_proof_format: u8,
+    },
     /// Block headers response
     BlockHeaders {
         /// Request ID for correlation
@@ -241,6 +274,7 @@ pub enum IncomingMessage {
     /// Sync request from a peer
     SyncRequest {
         peer_id: PeerId,
+        request_id: Option<u64>,
         request: SyncRequest,
     },
     /// Sync response from a peer
@@ -501,52 +535,55 @@ impl NetworkBridge {
 
     /// Handle sync protocol message
     async fn handle_sync_message(&mut self, peer_id: &PeerId, data: &[u8]) {
-        // Try to decode as request first
-        if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
-            self.stats.sync_requests_received += 1;
-
-            tracing::debug!(
-                peer_id = %hex::encode(peer_id),
-                request = ?request,
-                "Received sync request"
-            );
-
-            if let Some(ref tx) = self.message_tx {
-                let msg = IncomingMessage::SyncRequest {
-                    peer_id: *peer_id,
-                    request,
-                };
-                if let Err(e) = tx.send(msg).await {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to send sync request to channel"
+        // Require wrapped sync messages with explicit request identifiers.
+        if let Ok(msg) = SyncMessage::decode(&mut &data[..]) {
+            match msg {
+                SyncMessage::RequestV2(envelope) => {
+                    self.stats.sync_requests_received += 1;
+                    tracing::debug!(
+                        peer_id = %hex::encode(peer_id),
+                        request_id = envelope.request_id,
+                        request = ?envelope.request,
+                        "Received sync request v2"
                     );
+
+                    if let Some(ref tx) = self.message_tx {
+                        let msg = IncomingMessage::SyncRequest {
+                            peer_id: *peer_id,
+                            request_id: Some(envelope.request_id),
+                            request: envelope.request,
+                        };
+                        if let Err(e) = tx.send(msg).await {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to send sync request to channel"
+                            );
+                        }
+                    }
+                    return;
+                }
+                SyncMessage::Response(response) => {
+                    tracing::debug!(
+                        peer_id = %hex::encode(peer_id),
+                        response = ?response,
+                        "Received sync response"
+                    );
+
+                    if let Some(ref tx) = self.message_tx {
+                        let msg = IncomingMessage::SyncResponse {
+                            peer_id: *peer_id,
+                            response,
+                        };
+                        if let Err(e) = tx.send(msg).await {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to send sync response to channel"
+                            );
+                        }
+                    }
+                    return;
                 }
             }
-            return;
-        }
-
-        // Try to decode as response
-        if let Ok(response) = SyncResponse::decode(&mut &data[..]) {
-            tracing::debug!(
-                peer_id = %hex::encode(peer_id),
-                response = ?response,
-                "Received sync response"
-            );
-
-            if let Some(ref tx) = self.message_tx {
-                let msg = IncomingMessage::SyncResponse {
-                    peer_id: *peer_id,
-                    response,
-                };
-                if let Err(e) = tx.send(msg).await {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to send sync response to channel"
-                    );
-                }
-            }
-            return;
         }
 
         // Neither request nor response - decode error
@@ -775,6 +812,95 @@ mod tests {
                 assert!(ascending);
             }
             _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_sync_message_request_v2_encoding() {
+        let msg = SyncMessage::RequestV2(SyncRequestEnvelope {
+            request_id: 42,
+            request: SyncRequest::GetBlocks {
+                start_height: 10,
+                max_blocks: 16,
+            },
+        });
+
+        let encoded = msg.encode();
+        let decoded = SyncMessage::decode(&mut &encoded[..]).unwrap();
+
+        match decoded {
+            SyncMessage::RequestV2(envelope) => {
+                assert_eq!(envelope.request_id, 42);
+                match envelope.request {
+                    SyncRequest::GetBlocks {
+                        start_height,
+                        max_blocks,
+                    } => {
+                        assert_eq!(start_height, 10);
+                        assert_eq!(max_blocks, 16);
+                    }
+                    _ => panic!("Wrong request variant"),
+                }
+            }
+            _ => panic!("Wrong sync message variant"),
+        }
+    }
+
+    #[test]
+    fn test_sync_compatibility_probe_encoding() {
+        let request = SyncRequest::CompatibilityProbe {
+            local_genesis_hash: [9u8; 32],
+            sync_protocol_version: SYNC_PROTOCOL_VERSION,
+            aggregation_proof_format: consensus::BLOCK_PROOF_FORMAT_ID_V5,
+        };
+        let encoded = request.encode();
+        let decoded = SyncRequest::decode(&mut &encoded[..]).unwrap();
+        match decoded {
+            SyncRequest::CompatibilityProbe {
+                local_genesis_hash,
+                sync_protocol_version,
+                aggregation_proof_format,
+            } => {
+                assert_eq!(local_genesis_hash, [9u8; 32]);
+                assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
+                assert_eq!(
+                    aggregation_proof_format,
+                    consensus::BLOCK_PROOF_FORMAT_ID_V5
+                );
+            }
+            _ => panic!("Wrong request variant"),
+        }
+    }
+
+    #[test]
+    fn test_sync_compatibility_response_encoding() {
+        let response = SyncResponse::Compatibility {
+            request_id: 7,
+            accepted: true,
+            local_genesis_hash: [5u8; 32],
+            sync_protocol_version: SYNC_PROTOCOL_VERSION,
+            aggregation_proof_format: consensus::BLOCK_PROOF_FORMAT_ID_V5,
+        };
+        let encoded = response.encode();
+        let decoded = SyncResponse::decode(&mut &encoded[..]).unwrap();
+        match decoded {
+            SyncResponse::Compatibility {
+                request_id,
+                accepted,
+                local_genesis_hash,
+                sync_protocol_version,
+                aggregation_proof_format,
+            } => {
+                assert_eq!(request_id, 7);
+                assert!(accepted);
+                assert_eq!(local_genesis_hash, [5u8; 32]);
+                assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
+                assert_eq!(
+                    aggregation_proof_format,
+                    consensus::BLOCK_PROOF_FORMAT_ID_V5
+                );
+            }
+            _ => panic!("Wrong response variant"),
         }
     }
 

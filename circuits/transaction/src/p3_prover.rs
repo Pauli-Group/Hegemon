@@ -7,11 +7,11 @@ use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove};
 
 use crate::constants::{
-    CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
-    NULLIFIER_DOMAIN_TAG,
+    CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, MERKLE_DOMAIN_TAG,
+    NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
 };
 use crate::hashing_pq::{
-    bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, HashFelt,
+    bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use crate::p3_config::{config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
@@ -22,29 +22,34 @@ use transaction_core::p3_air::{
     build_schedule_trace, commitment_output_row, cycle_is_merkle_left, cycle_is_merkle_right,
     cycle_is_output, cycle_reset_domain, merkle_root_output_row, note_start_row_input,
     note_start_row_output, nullifier_output_row, TransactionAirP3, TransactionPublicInputsP3,
-    COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET,
-    COL_IN1_VALUE, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1,
-    COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1,
-    COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0,
-    COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5,
-    COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1,
-    COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2,
-    COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2,
-    COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2,
-    COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET,
-    COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET,
-    COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0,
-    COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ATTEST4,
-    COL_STABLECOIN_ATTEST5, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
-    COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
-    COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_ORACLE4, COL_STABLECOIN_ORACLE5,
-    COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2,
-    COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_HASH4, COL_STABLECOIN_POLICY_HASH5,
-    COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1,
-    COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG,
-    COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
-    MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, PREPROCESSED_WIDTH,
-    TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
+    COL_AUTH_DERIVED0, COL_AUTH_DERIVED1, COL_AUTH_DERIVED2, COL_AUTH_DERIVED3, COL_CT0_0,
+    COL_CT0_1, COL_CT0_2, COL_CT0_3, COL_CT0_4, COL_CT0_5, COL_CT1_0, COL_CT1_1, COL_CT1_2,
+    COL_CT1_3, COL_CT1_4, COL_CT1_5, COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET,
+    COL_IN0_RHO0, COL_IN0_RHO1, COL_IN0_RHO2, COL_IN0_RHO3, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET,
+    COL_IN1_RHO0, COL_IN1_RHO1, COL_IN1_RHO2, COL_IN1_RHO3, COL_IN1_VALUE, COL_IN2, COL_IN3,
+    COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0,
+    COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3,
+    COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED,
+    COL_RANGE_FEE_BITS_START, COL_RANGE_ISSUANCE_BITS_START, COL_RANGE_NOTE_BITS_START,
+    COL_RANGE_VB_BITS_START, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4,
+    COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0,
+    COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1,
+    COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1,
+    COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1,
+    COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SK0, COL_SK1, COL_SK2, COL_SK3, COL_SLOT0_ASSET,
+    COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET,
+    COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT,
+    COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
+    COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ATTEST4, COL_STABLECOIN_ATTEST5, COL_STABLECOIN_ENABLED,
+    COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0,
+    COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_ORACLE4,
+    COL_STABLECOIN_ORACLE5, COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1,
+    COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_HASH4,
+    COL_STABLECOIN_POLICY_HASH5, COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0,
+    COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3,
+    COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH,
+    DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES,
+    PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH, VALUE_RANGE_BITS,
 };
 use transaction_core::poseidon2::poseidon2_step;
 
@@ -102,6 +107,28 @@ impl TransactionProverP3 {
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
         let fee = Val::from_u64(witness.fee);
         let stablecoin_inputs = stablecoin_binding_inputs(witness, &slot_assets)?;
+        let sk_words = bytes32_to_vals(&witness.sk_spend);
+        let derived_prf = prf_key(&witness.sk_spend);
+        let derived_auth = spend_auth_key(&witness.sk_spend);
+        let in0_rho_words = bytes32_to_vals(&input_notes[0].note.rho);
+        let in1_rho_words = bytes32_to_vals(&input_notes[1].note.rho);
+        let vb_mag_u64 = u64::try_from(witness.value_balance.unsigned_abs()).map_err(|_| {
+            TransactionCircuitError::ValueBalanceOutOfRange(witness.value_balance.unsigned_abs())
+        })?;
+        let issuance_mag_u64 = u64::try_from(witness.stablecoin.issuance_delta.unsigned_abs())
+            .map_err(|_| {
+                TransactionCircuitError::ValueBalanceOutOfRange(
+                    witness.stablecoin.issuance_delta.unsigned_abs(),
+                )
+            })?;
+        let mut ciphertext_hashes: Vec<[Val; 6]> = witness
+            .ciphertext_hashes
+            .iter()
+            .map(bytes48_to_vals)
+            .collect::<Result<_, _>>()?;
+        while ciphertext_hashes.len() < MAX_OUTPUTS {
+            ciphertext_hashes.push([Val::ZERO; 6]);
+        }
 
         let sentinel_row = 0;
         let slot_asset_cols = [
@@ -110,6 +137,10 @@ impl TransactionProverP3 {
             COL_SLOT2_ASSET,
             COL_SLOT3_ASSET,
         ];
+        let mut slot_asset_vals = [Val::ZERO; 4];
+        for (idx, asset_id) in slot_assets.iter().take(slot_asset_vals.len()).enumerate() {
+            slot_asset_vals[idx] = Val::from_u64(*asset_id);
+        }
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
         let selector_cols = [
@@ -166,10 +197,41 @@ impl TransactionProverP3 {
                     row_slice[col] = Val::ONE;
                 }
             }
-            for &col in slot_asset_cols.iter() {
-                row_slice[col] = Val::ONE;
-            }
         }
+
+        for row in 0..trace_len {
+            let row_slice = trace.row_mut(row);
+            for (idx, &col) in slot_asset_cols.iter().enumerate() {
+                row_slice[col] = slot_asset_vals[idx];
+            }
+            row_slice[COL_SK0] = sk_words[0];
+            row_slice[COL_SK1] = sk_words[1];
+            row_slice[COL_SK2] = sk_words[2];
+            row_slice[COL_SK3] = sk_words[3];
+            row_slice[COL_PRF_DERIVED] = derived_prf;
+            row_slice[COL_AUTH_DERIVED0] = derived_auth[0];
+            row_slice[COL_AUTH_DERIVED1] = derived_auth[1];
+            row_slice[COL_AUTH_DERIVED2] = derived_auth[2];
+            row_slice[COL_AUTH_DERIVED3] = derived_auth[3];
+            row_slice[COL_IN0_RHO0] = in0_rho_words[0];
+            row_slice[COL_IN0_RHO1] = in0_rho_words[1];
+            row_slice[COL_IN0_RHO2] = in0_rho_words[2];
+            row_slice[COL_IN0_RHO3] = in0_rho_words[3];
+            row_slice[COL_IN1_RHO0] = in1_rho_words[0];
+            row_slice[COL_IN1_RHO1] = in1_rho_words[1];
+            row_slice[COL_IN1_RHO2] = in1_rho_words[2];
+            row_slice[COL_IN1_RHO3] = in1_rho_words[3];
+        }
+
+        let set_range_bits = |row_slice: &mut [Val], bits_start: usize, value: u64| {
+            for bit in 0..VALUE_RANGE_BITS {
+                row_slice[bits_start + bit] = if (value >> bit) & 1 == 1 {
+                    Val::ONE
+                } else {
+                    Val::ZERO
+                };
+            }
+        };
 
         let start_row_in0 = note_start_row_input(0);
         let start_row_in1 = note_start_row_input(1);
@@ -180,11 +242,16 @@ impl TransactionProverP3 {
             row_slice[COL_IN_ACTIVE0] = flag_to_felt(input_flags[0]);
             row_slice[COL_IN0_VALUE] = Val::from_u64(input_notes[0].note.value);
             row_slice[COL_IN0_ASSET] = Val::from_u64(input_notes[0].note.asset_id);
+            set_range_bits(
+                row_slice,
+                COL_RANGE_NOTE_BITS_START,
+                input_notes[0].note.value,
+            );
             for slot in 0..4 {
                 row_slice[selector_cols[0][slot]] = selectors[0][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
         if start_row_in1 < trace_len {
@@ -192,11 +259,16 @@ impl TransactionProverP3 {
             row_slice[COL_IN_ACTIVE1] = flag_to_felt(input_flags[1]);
             row_slice[COL_IN1_VALUE] = Val::from_u64(input_notes[1].note.value);
             row_slice[COL_IN1_ASSET] = Val::from_u64(input_notes[1].note.asset_id);
+            set_range_bits(
+                row_slice,
+                COL_RANGE_NOTE_BITS_START,
+                input_notes[1].note.value,
+            );
             for slot in 0..4 {
                 row_slice[selector_cols[1][slot]] = selectors[1][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
         if start_row_out0 < trace_len {
@@ -204,11 +276,16 @@ impl TransactionProverP3 {
             row_slice[COL_OUT_ACTIVE0] = flag_to_felt(output_flags[0]);
             row_slice[COL_OUT0_VALUE] = Val::from_u64(output_notes[0].note.value);
             row_slice[COL_OUT0_ASSET] = Val::from_u64(output_notes[0].note.asset_id);
+            set_range_bits(
+                row_slice,
+                COL_RANGE_NOTE_BITS_START,
+                output_notes[0].note.value,
+            );
             for slot in 0..4 {
                 row_slice[selector_cols[2][slot]] = selectors[2][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
         if start_row_out1 < trace_len {
@@ -216,11 +293,16 @@ impl TransactionProverP3 {
             row_slice[COL_OUT_ACTIVE1] = flag_to_felt(output_flags[1]);
             row_slice[COL_OUT1_VALUE] = Val::from_u64(output_notes[1].note.value);
             row_slice[COL_OUT1_ASSET] = Val::from_u64(output_notes[1].note.asset_id);
+            set_range_bits(
+                row_slice,
+                COL_RANGE_NOTE_BITS_START,
+                output_notes[1].note.value,
+            );
             for slot in 0..4 {
                 row_slice[selector_cols[3][slot]] = selectors[3][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
         }
 
@@ -230,9 +312,24 @@ impl TransactionProverP3 {
             row_slice[COL_FEE] = fee;
             row_slice[COL_VALUE_BALANCE_SIGN] = vb_sign;
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
+            set_range_bits(row_slice, COL_RANGE_FEE_BITS_START, witness.fee);
+            set_range_bits(row_slice, COL_RANGE_VB_BITS_START, vb_mag_u64);
+            set_range_bits(row_slice, COL_RANGE_ISSUANCE_BITS_START, issuance_mag_u64);
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_u64(slot_assets[idx]);
+                row_slice[col] = slot_asset_vals[idx];
             }
+            row_slice[COL_CT0_0] = ciphertext_hashes[0][0];
+            row_slice[COL_CT0_1] = ciphertext_hashes[0][1];
+            row_slice[COL_CT0_2] = ciphertext_hashes[0][2];
+            row_slice[COL_CT0_3] = ciphertext_hashes[0][3];
+            row_slice[COL_CT0_4] = ciphertext_hashes[0][4];
+            row_slice[COL_CT0_5] = ciphertext_hashes[0][5];
+            row_slice[COL_CT1_0] = ciphertext_hashes[1][0];
+            row_slice[COL_CT1_1] = ciphertext_hashes[1][1];
+            row_slice[COL_CT1_2] = ciphertext_hashes[1][2];
+            row_slice[COL_CT1_3] = ciphertext_hashes[1][3];
+            row_slice[COL_CT1_4] = ciphertext_hashes[1][4];
+            row_slice[COL_CT1_5] = ciphertext_hashes[1][5];
             row_slice[COL_STABLECOIN_ENABLED] = stablecoin_inputs.enabled;
             row_slice[COL_STABLECOIN_ASSET] = stablecoin_inputs.asset;
             row_slice[COL_STABLECOIN_POLICY_VERSION] = stablecoin_inputs.policy_version;
@@ -366,6 +463,10 @@ impl TransactionProverP3 {
 
         let cycle_specs = build_cycle_specs(&input_notes, &output_notes, witness, &input_flags)?;
         let mut prev_state = [Val::ZERO; 12];
+        prev_state[0] = Val::from_u64(NULLIFIER_DOMAIN_TAG) + sk_words[0];
+        prev_state[1] = sk_words[1];
+        prev_state[2] = sk_words[2];
+        prev_state[3] = sk_words[3];
         prev_state[11] = Val::ONE;
         let mut output = [Val::ZERO; 6];
 
@@ -517,6 +618,7 @@ impl TransactionProverP3 {
                     note.note.value,
                     note.note.asset_id,
                     &note.note.pk_recipient,
+                    &note.note.pk_auth,
                     &note.note.rho,
                     &note.note.r,
                 )
@@ -627,8 +729,6 @@ impl TransactionProverP3 {
             commitments.push(cm);
         }
 
-        let ciphertext_hashes = vec![[Val::ZERO; 6]; MAX_OUTPUTS];
-
         let merkle_root = if trace_len > 0 {
             let row = merkle_root_output_row(0);
             if row < trace_len {
@@ -641,6 +741,28 @@ impl TransactionProverP3 {
         };
 
         let final_row = trace_len.saturating_sub(2);
+        let ciphertext_hashes = if final_row < trace_len {
+            vec![
+                [
+                    get_trace(trace, COL_CT0_0, final_row),
+                    get_trace(trace, COL_CT0_1, final_row),
+                    get_trace(trace, COL_CT0_2, final_row),
+                    get_trace(trace, COL_CT0_3, final_row),
+                    get_trace(trace, COL_CT0_4, final_row),
+                    get_trace(trace, COL_CT0_5, final_row),
+                ],
+                [
+                    get_trace(trace, COL_CT1_0, final_row),
+                    get_trace(trace, COL_CT1_1, final_row),
+                    get_trace(trace, COL_CT1_2, final_row),
+                    get_trace(trace, COL_CT1_3, final_row),
+                    get_trace(trace, COL_CT1_4, final_row),
+                    get_trace(trace, COL_CT1_5, final_row),
+                ],
+            ]
+        } else {
+            vec![[Val::ZERO; 6]; MAX_OUTPUTS]
+        };
         TransactionPublicInputsP3 {
             input_flags,
             output_flags,
@@ -751,6 +873,12 @@ fn bytes_to_vals(bytes: &[u8]) -> Vec<Val> {
         .collect()
 }
 
+fn bytes32_to_vals(bytes: &[u8; 32]) -> [Val; 4] {
+    let vals = bytes_to_vals(bytes);
+    debug_assert_eq!(vals.len(), 4);
+    [vals[0], vals[1], vals[2], vals[3]]
+}
+
 fn bytes48_to_vals(bytes: &[u8; 48]) -> Result<[Val; 6], TransactionCircuitError> {
     bytes48_to_felts(bytes).ok_or(TransactionCircuitError::ConstraintViolation(
         "invalid 48-byte hash encoding",
@@ -764,6 +892,7 @@ fn commitment_inputs(note: &NoteData) -> Vec<Val> {
     inputs.extend(bytes_to_vals(&note.pk_recipient));
     inputs.extend(bytes_to_vals(&note.rho));
     inputs.extend(bytes_to_vals(&note.r));
+    inputs.extend(bytes_to_vals(&note.pk_auth));
     inputs
 }
 
@@ -811,6 +940,7 @@ fn dummy_input() -> InputNoteWitness {
             value: 0,
             asset_id: 0,
             pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
             rho: [0u8; 32],
             r: [0u8; 32],
         },
@@ -826,6 +956,7 @@ fn dummy_output() -> OutputNoteWitness {
             value: 0,
             asset_id: 0,
             pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
             rho: [0u8; 32],
             r: [0u8; 32],
         },
@@ -862,6 +993,9 @@ fn build_selectors(
 
 fn value_balance_parts(value_balance: i128) -> Result<(Val, Val), TransactionCircuitError> {
     let magnitude = value_balance.unsigned_abs();
+    if magnitude > MAX_NOTE_VALUE {
+        return Err(TransactionCircuitError::ValueBalanceOutOfRange(magnitude));
+    }
     let mag_u64 = u64::try_from(magnitude)
         .map_err(|_| TransactionCircuitError::ValueBalanceOutOfRange(magnitude))?;
     let sign = if value_balance < 0 {
@@ -966,6 +1100,7 @@ fn build_cycle_specs(
             input.note.value,
             input.note.asset_id,
             &input.note.pk_recipient,
+            &input.note.pk_auth,
             &input.note.rho,
             &input.note.r,
         );
@@ -1071,10 +1206,13 @@ mod tests {
     }
 
     fn sample_witness() -> TransactionWitness {
+        let sk_spend = [8u8; 32];
+        let pk_auth = crate::hashing_pq::spend_auth_key_bytes(&sk_spend);
         let input_note = NoteData {
             value: 100,
             asset_id: 0,
             pk_recipient: [1u8; 32],
+            pk_auth,
             rho: [2u8; 32],
             r: [3u8; 32],
         };
@@ -1082,6 +1220,7 @@ mod tests {
             value: 80,
             asset_id: 0,
             pk_recipient: [4u8; 32],
+            pk_auth: [14u8; 32],
             rho: [5u8; 32],
             r: [6u8; 32],
         };
@@ -1090,6 +1229,7 @@ mod tests {
             input_note.value,
             input_note.asset_id,
             &input_note.pk_recipient,
+            &input_note.pk_auth,
             &input_note.rho,
             &input_note.r,
         );
@@ -1103,8 +1243,8 @@ mod tests {
                 merkle_path,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
-            ciphertext_hashes: vec![[0u8; 48]; 1],
-            sk_spend: [8u8; 32],
+            ciphertext_hashes: vec![[9u8; 48]; 1],
+            sk_spend,
             merkle_root,
             fee: 0,
             value_balance: -20,
@@ -1202,6 +1342,128 @@ mod tests {
             assert!(
                 verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
                 "verification should fail for tampered counters"
+            );
+        }
+    }
+
+    #[test]
+    fn slot_asset_relabel_between_rows_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let mut trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+
+        // Tamper a non-note row so only slot-asset continuity constraints catch it.
+        let row = 2;
+        let col = COL_SLOT1_ASSET;
+        let idx = row * trace.width + col;
+        trace.values[idx] += Val::ONE;
+
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        if let Ok(proof) = result {
+            assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail for slot asset relabeling across rows"
+            );
+        }
+    }
+
+    #[test]
+    fn ciphertext_hash_public_input_binding_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+        let proof = prover.prove(trace, &pub_inputs);
+
+        let mut tampered = pub_inputs.clone();
+        tampered.ciphertext_hashes[0][0] += Val::ONE;
+        assert!(
+            verify_transaction_proof_p3(&proof, &tampered).is_err(),
+            "verification should fail when ciphertext hashes are modified"
+        );
+    }
+
+    #[test]
+    fn rho_binding_between_commitment_and_nullifier_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let mut trace = prover.build_trace(&witness).expect("trace build");
+
+        let row = transaction_core::p3_air::nullifier_input_row(0);
+        let idx = row * trace.width + COL_IN2;
+        trace.values[idx] += Val::ONE;
+
+        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        if let Ok(proof) = result {
+            assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail for commitment/nullifier rho mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn prf_derivation_binding_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let mut trace = prover.build_trace(&witness).expect("trace build");
+
+        let row = transaction_core::p3_air::nullifier_input_row(0);
+        let idx = row * trace.width + COL_IN0;
+        trace.values[idx] += Val::ONE;
+
+        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        if let Ok(proof) = result {
+            assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail for unconstrained PRF tampering"
+            );
+        }
+    }
+
+    #[test]
+    fn ownership_binding_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let mut trace = prover.build_trace(&witness).expect("trace build");
+
+        let row = transaction_core::p3_air::commitment_auth_row(0);
+        let idx = row * trace.width + COL_IN2;
+        trace.values[idx] += Val::ONE;
+
+        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        if let Ok(proof) = result {
+            assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail for spend-key ownership tampering"
+            );
+        }
+    }
+
+    #[test]
+    fn value_range_overflow_rejected_p3() {
+        let mut witness = sample_witness();
+        witness.inputs[0].note.value = 1u64 << 62;
+        witness.outputs[0].note.value = (1u64 << 62) - 20;
+
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+
+        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        if let Ok(proof) = result {
+            assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail when note values exceed in-circuit range"
             );
         }
     }

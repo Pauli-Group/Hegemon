@@ -62,10 +62,10 @@ HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
 To avoid forks caused by low peer counts, configure multiple reachable seeds. Use a comma-separated list in `HEGEMON_SEEDS`:
 
 ```bash
-export HEGEMON_SEEDS="hegemon.pauli.group:30333,75.155.93.185:30333"
+export HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333"
 ```
 
-Ensure TCP/30333 is open on each seed and that every miner shares the same seed list. Avoid single-point seeds.
+Ensure TCP/31333 is open on each seed and that every miner shares the same seed list. Avoid single-point seeds.
 
 ### 4b. Ensure time sync (recommended)
 
@@ -93,11 +93,11 @@ curl -s -H "Content-Type: application/json" \
 In another terminal, start a second node that peers with the first:
 
 ```bash
+HEGEMON_SEEDS="127.0.0.1:30333" \
 ./target/release/hegemon-node --dev \
   --base-path /tmp/node-b \
   --port 30334 \
-  --rpc-port 9945 \
-  --bootnodes /ip4/127.0.0.1/tcp/30333
+  --rpc-port 9945
 ```
 
 Note: This node doesn't mine (no `HEGEMON_MINE=1`), but syncs blocks from Node A.
@@ -106,13 +106,19 @@ Note: This node doesn't mine (no `HEGEMON_MINE=1`), but syncs blocks from Node A
 
 ```bash
 curl -s -H "Content-Type: application/json" \
-  -d '{"id":1, "jsonrpc":"2.0", "method": "system_peers"}' \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
   http://127.0.0.1:9944
 ```
 
-If the node runs with `--rpc-methods safe`, `system_peers` is blocked. In that case, use `system_health` or check TCP connections on port 30333.
+Optional topology check (PQ transport aware):
 
-Both nodes should see each other as peers and sync blocks.
+```bash
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_peerGraph"}' \
+  http://127.0.0.1:9944
+```
+
+Both nodes should report peers via `system_health` and sync blocks.
 
 ## 8. Check your shielded balance
 

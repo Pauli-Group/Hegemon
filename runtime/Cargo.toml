@@ -42,8 +42,6 @@ frame-benchmarking = { workspace = true, optional = true }
 pallet-timestamp = { workspace = true }
 pallet-balances = { workspace = true }
 pallet-transaction-payment = { workspace = true }
-pallet-collective = { workspace = true }
-pallet-membership = { workspace = true }
 pallet-treasury = { workspace = true }
 
 pallet-identity = { path = "../pallets/identity", default-features = false }
@@ -91,8 +89,6 @@ std = [
     "pallet-timestamp/std",
     "pallet-balances/std",
     "pallet-transaction-payment/std",
-    "pallet-collective/std",
-    "pallet-membership/std",
     "pallet-treasury/std",
     "pallet-identity/std",
     "pallet-attestations/std",
@@ -120,7 +116,6 @@ production = [
 
 runtime-benchmarks = [
     "frame-benchmarking",
-    "pallet-collective/runtime-benchmarks",
     "pallet-attestations/runtime-benchmarks",
     "pallet-settlement/runtime-benchmarks",
     "pallet-oracles/runtime-benchmarks",

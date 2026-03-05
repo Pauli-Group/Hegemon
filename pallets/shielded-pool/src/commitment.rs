@@ -11,10 +11,18 @@ pub fn circuit_note_commitment(
     value: u64,
     asset_id: u64,
     pk_recipient: &[u8; 32],
+    pk_auth: &[u8; 32],
     rho: &[u8; 32],
     r: &[u8; 32],
 ) -> [u8; 48] {
-    transaction_core::hashing_pq::note_commitment_bytes(value, asset_id, pk_recipient, rho, r)
+    transaction_core::hashing_pq::note_commitment_bytes(
+        value,
+        asset_id,
+        pk_recipient,
+        pk_auth,
+        rho,
+        r,
+    )
 }
 
 /// Compute nullifier exactly as the ZK circuit does.
@@ -102,11 +110,20 @@ pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
 
 /// Extract recipient public key from a diversified address.
 ///
-/// Layout: version(1) + diversifier_index(4) + pk_recipient(32)
+/// Layout: version(1) + diversifier_index(4) + pk_recipient(32) + pk_auth(32)
 pub fn pk_recipient_from_address(recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE]) -> [u8; 32] {
     let mut pk_recipient = [0u8; 32];
     pk_recipient.copy_from_slice(&recipient[5..37]);
     pk_recipient
+}
+
+/// Extract spend-auth public key from a diversified address.
+///
+/// Layout: version(1) + diversifier_index(4) + pk_recipient(32) + pk_auth(32)
+pub fn pk_auth_from_address(recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE]) -> [u8; 32] {
+    let mut pk_auth = [0u8; 32];
+    pk_auth.copy_from_slice(&recipient[37..69]);
+    pk_auth
 }
 
 /// Compute coinbase note commitment (CIRCUIT-COMPATIBLE).
@@ -123,6 +140,7 @@ pub fn pk_recipient_from_address(recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE]) -> 
 /// Returns: 48-byte commitment encoding (6 x 64-bit limbs)
 pub fn circuit_coinbase_commitment(
     pk_recipient: &[u8; 32],
+    pk_auth: &[u8; 32],
     value: u64,
     public_seed: &[u8; 32],
     asset_id: u64,
@@ -131,7 +149,7 @@ pub fn circuit_coinbase_commitment(
     let rho = derive_coinbase_rho(public_seed);
     let r = derive_coinbase_r(public_seed);
 
-    circuit_note_commitment(value, asset_id, pk_recipient, &rho, &r)
+    circuit_note_commitment(value, asset_id, pk_recipient, pk_auth, &rho, &r)
 }
 
 #[cfg(test)]
@@ -141,27 +159,29 @@ mod tests {
     #[test]
     fn note_commitment_is_deterministic() {
         let pk_recipient = [1u8; 32];
+        let pk_auth = [9u8; 32];
         let rho = [2u8; 32];
         let r = [3u8; 32];
         let value = 1000u64;
         let asset_id = 0u64;
 
-        let cm1 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r);
-        let cm2 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r);
+        let cm1 = circuit_note_commitment(value, asset_id, &pk_recipient, &pk_auth, &rho, &r);
+        let cm2 = circuit_note_commitment(value, asset_id, &pk_recipient, &pk_auth, &rho, &r);
         assert_eq!(cm1, cm2);
     }
 
     #[test]
     fn note_commitment_is_binding() {
         let pk_recipient = [1u8; 32];
+        let pk_auth = [9u8; 32];
         let rho = [2u8; 32];
         let value = 1000u64;
         let asset_id = 0u64;
         let r1 = [3u8; 32];
         let r2 = [4u8; 32];
 
-        let cm1 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r1);
-        let cm2 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r2);
+        let cm1 = circuit_note_commitment(value, asset_id, &pk_recipient, &pk_auth, &rho, &r1);
+        let cm2 = circuit_note_commitment(value, asset_id, &pk_recipient, &pk_auth, &rho, &r2);
         assert_ne!(cm1, cm2);
     }
 
@@ -217,13 +237,14 @@ mod tests {
     #[test]
     fn coinbase_commitment_matches_circuit_form() {
         let pk_recipient = [9u8; 32];
+        let pk_auth = [19u8; 32];
         let value = 500u64;
         let seed = [7u8; 32];
 
         let rho = derive_coinbase_rho(&seed);
         let r = derive_coinbase_r(&seed);
-        let direct = circuit_note_commitment(value, 0, &pk_recipient, &rho, &r);
-        let via_coinbase = circuit_coinbase_commitment(&pk_recipient, value, &seed, 0);
+        let direct = circuit_note_commitment(value, 0, &pk_recipient, &pk_auth, &rho, &r);
+        let via_coinbase = circuit_coinbase_commitment(&pk_recipient, &pk_auth, value, &seed, 0);
 
         assert_eq!(direct, via_coinbase);
     }

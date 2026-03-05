@@ -21,7 +21,7 @@ pub mod chain_spec;
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
-use frame_support::traits::{ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, VariantCount};
+use frame_support::traits::{ConstU32, ConstU8, Currency as CurrencyTrait, VariantCount};
 use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, IdentityFee, Weight};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
@@ -532,41 +532,6 @@ impl pallet_treasury::SpendFunds<Runtime> for RuntimeTreasurySpendFunds {
     }
 }
 
-#[derive(Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
-pub struct NoConsideration;
-
-impl<A, F> frame_support::traits::Consideration<A, F> for NoConsideration {
-    fn new(_: &A, _: F) -> Result<Self, DispatchError> {
-        Ok(NoConsideration)
-    }
-
-    fn update(self, _: &A, _: F) -> Result<Self, DispatchError> {
-        Ok(self)
-    }
-
-    fn drop(self, _: &A) -> Result<(), DispatchError> {
-        Ok(())
-    }
-
-    #[cfg(feature = "runtime-benchmarks")]
-    fn ensure_successful(_: &A, _: F) {}
-}
-
-impl<A, F> frame_support::traits::MaybeConsideration<A, F> for NoConsideration {
-    fn is_none(&self) -> bool {
-        true
-    }
-}
-
-impl DecodeWithMemTracking for NoConsideration {}
-
-pub struct MaxCollectiveProposalWeight;
-impl frame_support::traits::Get<frame_support::weights::Weight> for MaxCollectiveProposalWeight {
-    fn get() -> frame_support::weights::Weight {
-        frame_support::weights::Weight::MAX
-    }
-}
-
 #[frame_support::pallet]
 #[allow(deprecated)]
 pub mod pow {
@@ -766,10 +731,12 @@ pub const VERSION: sp_version::RuntimeVersion = sp_version::RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
     impl_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
     authoring_version: 1,
-    spec_version: 3,
+    // BlockProofBundle V2 hard-cut: call payload encoding changed for
+    // `ShieldedPool::submit_proven_batch`.
+    spec_version: 4,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    transaction_version: 2,
     system_version: 0,
 };
 
@@ -940,40 +907,6 @@ impl pallet_transaction_payment::Config for Runtime {
     type WeightToFee = IdentityFee<Balance>;
     type LengthToFee = IdentityFee<Balance>;
     type FeeMultiplierUpdate = ();
-    type WeightInfo = ();
-}
-
-impl pallet_collective::Config<pallet_collective::Instance1> for Runtime {
-    type RuntimeOrigin = RuntimeOrigin;
-    type Proposal = RuntimeCall;
-    type RuntimeEvent = RuntimeEvent;
-    type MotionDuration = ConstU64<5>;
-    type MaxProposals = ConstU32<10>;
-    type MaxMembers = ConstU32<10>;
-    type DefaultVote = pallet_collective::PrimeDefaultVote;
-    type WeightInfo = ();
-    type SetMembersOrigin = frame_system::EnsureRoot<AccountId>;
-    type MaxProposalWeight = MaxCollectiveProposalWeight;
-    type DisapproveOrigin = frame_system::EnsureRoot<AccountId>;
-    type KillOrigin = frame_system::EnsureRoot<AccountId>;
-    type Consideration = NoConsideration;
-}
-
-type CouncilCollective = pallet_collective::Instance1;
-type CouncilApprovalOrigin =
-    pallet_collective::EnsureProportionAtLeast<AccountId, CouncilCollective, 1, 2>;
-type ReferendaOrigin = frame_system::EnsureRoot<AccountId>;
-
-impl pallet_membership::Config<pallet_membership::Instance1> for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type AddOrigin = frame_system::EnsureRoot<AccountId>;
-    type RemoveOrigin = frame_system::EnsureRoot<AccountId>;
-    type SwapOrigin = frame_system::EnsureRoot<AccountId>;
-    type ResetOrigin = frame_system::EnsureRoot<AccountId>;
-    type PrimeOrigin = frame_system::EnsureRoot<AccountId>;
-    type MembershipInitialized = Council;
-    type MembershipChanged = Council;
-    type MaxMembers = ConstU32<10>;
     type WeightInfo = ();
 }
 
@@ -1203,8 +1136,7 @@ impl pallet_attestations::Config for Runtime {
     type MaxPendingEvents = MaxPendingEvents;
     type MaxVerificationKeySize = MaxVerificationKeySize;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
-    type CouncilOrigin = CouncilApprovalOrigin;
-    type ReferendaOrigin = ReferendaOrigin;
+    type GovernanceOrigin = GovernanceOrigin;
     type SettlementBatchHook = RuntimeSettlementHook;
     type DefaultVerifierParams = DefaultAttestationVerifierParams;
     type WeightInfo = pallet_attestations::DefaultWeightInfo;
@@ -1252,8 +1184,7 @@ impl pallet_settlement::Config for Runtime {
     type AssetId = u32;
     type Balance = Balance;
     type VerificationKeyId = u32;
-    type CouncilOrigin = CouncilApprovalOrigin;
-    type ReferendaOrigin = ReferendaOrigin;
+    type GovernanceOrigin = GovernanceOrigin;
     type Currency = Balances;
     type AuthorityId = PqAppCrypto;
     type ProofVerifier = pallet_settlement::StarkVerifier;
@@ -1334,14 +1265,13 @@ parameter_types! {
     pub const MaxCommitmentsPerTx: u32 = 2;
     /// Maximum encrypted notes per transaction.
     pub const MaxEncryptedNotesPerTx: u32 = 2;
-    /// Maximum nullifiers per batch (16 txs * 2 nullifiers each).
-    pub const MaxNullifiersPerBatch: u32 = 32;
-    /// Maximum commitments per batch (16 txs * 2 commitments each).
-    pub const MaxCommitmentsPerBatch: u32 = 32;
-    /// Maximum proof-DA manifest entries per block (bounds on-chain manifest size).
-    pub const MaxProofDaManifestEntries: u32 = 4096;
+    /// Maximum nullifiers per batch (32 txs * 2 nullifiers each).
+    pub const MaxNullifiersPerBatch: u32 = 64;
+    /// Maximum commitments per batch (32 txs * 2 commitments each).
+    pub const MaxCommitmentsPerBatch: u32 = 64;
     /// Number of historical Merkle roots to keep for anchor validation.
-    pub const MerkleRootHistorySize: u32 = 100;
+    /// Must comfortably exceed the largest expected same-anchor transfer batch.
+    pub const MerkleRootHistorySize: u32 = 4096;
     /// Maximum forced inclusion commitments stored at once.
     pub const MaxForcedInclusions: u32 = 16;
     /// Maximum number of blocks a forced inclusion can remain pending.
@@ -1476,7 +1406,6 @@ impl pallet_shielded_pool::Config for Runtime {
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
-    type MaxProofDaManifestEntries = MaxProofDaManifestEntries;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxSubsidy;
     type StablecoinAssetId = u32;
@@ -1514,8 +1443,6 @@ construct_runtime!(
         Difficulty: pallet_difficulty::{Pallet, Call, Storage, Event<T>, Config<T>},
         Balances: pallet_balances::{Pallet, Storage, Config<T>, Event<T>},
         TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>},
-        Council: pallet_collective::<Instance1>::{Pallet, Call, Storage, Origin<T>, Event<T>},
-        CouncilMembership: pallet_membership::<Instance1>::{Pallet, Call, Storage, Event<T>},
         Treasury: pallet_treasury::{Pallet, Call, Storage, Event<T>},
         Oracles: pallet_oracles::{Pallet, Call, Storage, Event<T>},
         StablecoinPolicy: pallet_stablecoin_policy::{Pallet, Call, Storage, Event<T>, Config<T>},
@@ -1827,6 +1754,17 @@ sp_api::impl_runtime_apis! {
         ) -> Result<u128, ()> {
             pallet_shielded_pool::Pallet::<Runtime>::quote_fee(ciphertext_bytes, proof_kind)
                 .map_err(|_| ())
+        }
+
+        fn fee_quote_breakdown(
+            ciphertext_bytes: u64,
+            proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, ()> {
+            pallet_shielded_pool::Pallet::<Runtime>::quote_fee_breakdown(
+                ciphertext_bytes,
+                proof_kind,
+            )
+            .map_err(|_| ())
         }
 
         fn forced_inclusions() -> sp_std::vec::Vec<pallet_shielded_pool::types::ForcedInclusionStatus> {

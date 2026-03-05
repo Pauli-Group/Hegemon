@@ -173,9 +173,8 @@ parameter_types! {
     pub const MaxNullifiersPerTx: u32 = 2;
     pub const MaxCommitmentsPerTx: u32 = 2;
     pub const MaxEncryptedNotesPerTx: u32 = 2;
-    pub const MaxNullifiersPerBatch: u32 = 32;  // 16 txs * 2 nullifiers
-    pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
-    pub const MaxProofDaManifestEntries: u32 = 1024;
+    pub const MaxNullifiersPerBatch: u32 = 64;  // 32 txs * 2 nullifiers
+    pub const MaxCommitmentsPerBatch: u32 = 64; // 32 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
     pub const MaxForcedInclusions: u32 = 8;
@@ -199,7 +198,6 @@ impl pallet_shielded_pool::Config for Test {
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
-    type MaxProofDaManifestEntries = MaxProofDaManifestEntries;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxCoinbaseSubsidy;
     type StablecoinAssetId = u32;
@@ -247,12 +245,15 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{
-        BindingHash, EncryptedNote, FeeParameters, FeeProofKind, ProofAvailabilityPolicy,
-        StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA, NOTE_ENCRYPTION_VERSION,
+        BatchProofItem, BindingHash, BlockProofMode, EncryptedNote, FeeParameters, FeeProofKind,
+        ProofAvailabilityPolicy, ProverCompensationClaim, StablecoinPolicyBinding, StarkProof,
+        BLOCK_PROOF_BUNDLE_SCHEMA, BLOCK_PROOF_FORMAT_ID_V5, CRYPTO_SUITE_GAMMA,
+        NOTE_ENCRYPTION_VERSION,
     };
     use codec::Encode;
     use frame_support::traits::Hooks;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
+    use sp_core::Pair;
     use sp_runtime::traits::ValidateUnsigned;
     use sp_runtime::transaction_validity::{
         InvalidTransaction, TransactionSource, TransactionValidityError,
@@ -266,6 +267,26 @@ mod tests {
         [9u8; 48]
     }
 
+    fn valid_proven_batch() -> crate::types::BlockProofBundle {
+        crate::types::BlockProofBundle {
+            version: BLOCK_PROOF_BUNDLE_SCHEMA,
+            tx_count: 1,
+            tx_statements_commitment: [3u8; 48],
+            da_root: valid_da_root(),
+            da_chunk_count: 1,
+            commitment_proof: valid_proof(),
+            proof_mode: BlockProofMode::FlatBatches,
+            flat_batches: vec![BatchProofItem {
+                start_tx_index: 0,
+                tx_count: 1,
+                proof_format: BLOCK_PROOF_FORMAT_ID_V5,
+                proof: valid_proof(),
+            }],
+            merge_root: None,
+            prover_claim: None,
+        }
+    }
+
     fn valid_binding_hash() -> BindingHash {
         BindingHash { data: [1u8; 64] }
     }
@@ -277,12 +298,28 @@ mod tests {
         note
     }
 
-    fn valid_coinbase_data(amount: u64) -> crate::types::CoinbaseNoteData {
-        let recipient_address = [7u8; crate::types::DIVERSIFIED_ADDRESS_SIZE];
-        let public_seed = [9u8; 32];
+    fn valid_coinbase_note(amount: u64) -> crate::types::CoinbaseNoteData {
+        valid_coinbase_note_for(
+            amount,
+            [7u8; crate::types::DIVERSIFIED_ADDRESS_SIZE],
+            [9u8; 32],
+        )
+    }
+
+    fn valid_coinbase_note_for(
+        amount: u64,
+        recipient_address: [u8; crate::types::DIVERSIFIED_ADDRESS_SIZE],
+        public_seed: [u8; 32],
+    ) -> crate::types::CoinbaseNoteData {
         let pk_recipient = crate::commitment::pk_recipient_from_address(&recipient_address);
-        let commitment =
-            crate::commitment::circuit_coinbase_commitment(&pk_recipient, amount, &public_seed, 0);
+        let pk_auth = crate::commitment::pk_auth_from_address(&recipient_address);
+        let commitment = crate::commitment::circuit_coinbase_commitment(
+            &pk_recipient,
+            &pk_auth,
+            amount,
+            &public_seed,
+            0,
+        );
 
         crate::types::CoinbaseNoteData {
             commitment,
@@ -291,6 +328,62 @@ mod tests {
             amount,
             public_seed,
         }
+    }
+
+    fn valid_coinbase_data(amount: u64) -> crate::types::BlockRewardBundle {
+        crate::types::BlockRewardBundle {
+            miner_note: valid_coinbase_note(amount),
+            prover_note: None,
+        }
+    }
+
+    fn prover_claim_signing_payload(
+        claim: &ProverCompensationClaim,
+        bundle: &crate::types::BlockProofBundle,
+    ) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(
+            20 + 48
+                + 4
+                + 48
+                + 4
+                + 32
+                + claim.prover_recipient.len()
+                + crate::types::DIVERSIFIED_ADDRESS_SIZE
+                + 8,
+        );
+        payload.extend_from_slice(b"hegemon-prover-claim");
+        payload.extend_from_slice(&bundle.tx_statements_commitment);
+        payload.extend_from_slice(&bundle.tx_count.to_le_bytes());
+        payload.extend_from_slice(&bundle.da_root);
+        payload.extend_from_slice(&bundle.da_chunk_count.to_le_bytes());
+        payload.extend_from_slice(&claim.prover_account);
+        payload.extend_from_slice(&claim.prover_recipient);
+        payload.extend_from_slice(&claim.prover_recipient_address);
+        payload.extend_from_slice(&claim.prover_amount.to_le_bytes());
+        payload
+    }
+
+    fn signed_prover_claim(
+        bundle: &crate::types::BlockProofBundle,
+        prover_amount: u64,
+    ) -> ProverCompensationClaim {
+        let pair = sp_core::sr25519::Pair::from_seed(&[11u8; 32]);
+        let mut claim = ProverCompensationClaim {
+            prover_account: pair.public().0,
+            prover_recipient: b"shca1provertestrecipient"
+                .to_vec()
+                .try_into()
+                .expect("bounded recipient"),
+            prover_recipient_address: [8u8; crate::types::DIVERSIFIED_ADDRESS_SIZE],
+            prover_amount,
+            claim_signature: Vec::<u8>::new()
+                .try_into()
+                .expect("bounded empty signature"),
+        };
+        let payload = prover_claim_signing_payload(&claim, bundle);
+        let signature = pair.sign(&payload);
+        claim.claim_signature = signature.0.to_vec().try_into().expect("bounded signature");
+        claim
     }
 
     fn stablecoin_policy_snapshot() -> StablecoinPolicySnapshot<u32, u32, u64, u64> {
@@ -360,12 +453,40 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_submit_commitment_proof_is_in_block_only() {
+    fn shielded_transfer_unsigned_rejects_unknown_note_version() {
         new_test_ext().execute_with(|| {
-            let call = crate::Call::<Test>::submit_commitment_proof {
-                da_root: valid_da_root(),
-                chunk_count: 1,
-                proof: valid_proof(),
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let mut bad_note = valid_encrypted_note();
+            bad_note.ciphertext[0] = 1;
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![bad_note].try_into().unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer_unsigned(
+                    RuntimeOrigin::none(),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    None,
+                    u64::MAX,
+                ),
+                crate::Error::<Test>::UnsupportedNoteVersion
+            );
+        });
+    }
+
+    #[test]
+    fn validate_unsigned_submit_proven_batch_is_in_block_only() {
+        new_test_ext().execute_with(|| {
+            let call = crate::Call::<Test>::submit_proven_batch {
+                payload: valid_proven_batch(),
             };
 
             let validity_external =
@@ -382,15 +503,13 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_submit_commitment_proof_rejects_oversized() {
+    fn validate_unsigned_submit_proven_batch_rejects_oversized() {
         new_test_ext().execute_with(|| {
-            let call = crate::Call::<Test>::submit_commitment_proof {
-                da_root: valid_da_root(),
-                chunk_count: 1,
-                proof: StarkProof {
-                    data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
-                },
+            let mut payload = valid_proven_batch();
+            payload.commitment_proof = StarkProof {
+                data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
             };
+            let call = crate::Call::<Test>::submit_proven_batch { payload };
 
             let validity_in_block =
                 Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
@@ -404,19 +523,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_submit_commitment_proof_rejects_duplicate_in_block() {
+    fn validate_unsigned_submit_proven_batch_rejects_duplicate_in_block() {
         new_test_ext().execute_with(|| {
-            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
-                valid_da_root(),
-                1,
-                valid_proof(),
+                valid_proven_batch(),
             ));
 
-            let call = crate::Call::<Test>::submit_commitment_proof {
-                da_root: valid_da_root(),
-                chunk_count: 1,
-                proof: valid_proof(),
+            let call = crate::Call::<Test>::submit_proven_batch {
+                payload: valid_proven_batch(),
             };
             let validity_in_block =
                 Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
@@ -476,7 +591,9 @@ mod tests {
                 0,
             ));
 
-            assert_eq!(Pallet::<Test>::block_fees(), fee as u128);
+            let buckets = Pallet::<Test>::block_fee_buckets();
+            assert_eq!(buckets.miner_fees, fee as u128);
+            assert_eq!(buckets.prover_fees, 0);
 
             let height: u64 = frame_system::Pallet::<Test>::block_number();
             let subsidy = pallet_coinbase::block_subsidy(height);
@@ -504,6 +621,8 @@ mod tests {
             let params = FeeParameters {
                 proof_fee: 10,
                 batch_proof_fee: 5,
+                inclusion_fee: 0,
+                batch_inclusion_fee: 0,
                 da_byte_fee: 1,
                 retention_byte_fee: 0,
                 hot_retention_blocks: 0,
@@ -543,6 +662,43 @@ mod tests {
                     0,
                 ),
                 crate::Error::<Test>::FeeTooLow
+            );
+        });
+    }
+
+    #[test]
+    fn fee_quote_breakdown_splits_prover_and_miner_components() {
+        new_test_ext().execute_with(|| {
+            let params = FeeParameters {
+                proof_fee: 7,
+                batch_proof_fee: 11,
+                inclusion_fee: 3,
+                batch_inclusion_fee: 5,
+                da_byte_fee: 2,
+                retention_byte_fee: 1,
+                hot_retention_blocks: 4,
+            };
+            assert_ok!(Pallet::<Test>::set_fee_parameters(
+                RuntimeOrigin::root(),
+                params
+            ));
+
+            let single = Pallet::<Test>::quote_fee_breakdown(10, FeeProofKind::Single).unwrap();
+            assert_eq!(single.prover_fee, 7);
+            assert_eq!(single.miner_fee, 63); // inclusion + da + retention
+            assert_eq!(single.total_fee, 70);
+            assert_eq!(
+                Pallet::<Test>::quote_fee(10, FeeProofKind::Single).unwrap(),
+                single.total_fee
+            );
+
+            let batch = Pallet::<Test>::quote_fee_breakdown(10, FeeProofKind::Batch).unwrap();
+            assert_eq!(batch.prover_fee, 11);
+            assert_eq!(batch.miner_fee, 65); // batch inclusion + da + retention
+            assert_eq!(batch.total_fee, 76);
+            assert_eq!(
+                Pallet::<Test>::quote_fee(10, FeeProofKind::Batch).unwrap(),
+                batch.total_fee
             );
         });
     }
@@ -725,74 +881,194 @@ mod tests {
                 0,
             ));
 
-            assert_eq!(Pallet::<Test>::block_fees(), fee as u128);
+            let buckets = Pallet::<Test>::block_fee_buckets();
+            assert_eq!(buckets.miner_fees, fee as u128);
+            assert_eq!(buckets.prover_fees, 0);
             assert_eq!(Pallet::<Test>::total_fees_burned(), 0);
 
             frame_system::Pallet::<Test>::set_block_number(2);
             Pallet::<Test>::on_initialize(2);
 
-            assert_eq!(Pallet::<Test>::block_fees(), 0);
+            let buckets = Pallet::<Test>::block_fee_buckets();
+            assert_eq!(buckets.miner_fees, 0);
+            assert_eq!(buckets.prover_fees, 0);
             assert_eq!(Pallet::<Test>::total_fees_burned(), fee as u128);
         });
     }
 
     #[test]
-    fn submit_commitment_proof_requires_none_origin_and_is_singleton() {
+    fn submit_proven_batch_requires_none_origin_and_is_singleton() {
         new_test_ext().execute_with(|| {
             // Signed origin rejected.
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(
-                    RuntimeOrigin::signed(1),
-                    valid_da_root(),
-                    1,
-                    valid_proof(),
-                ),
+                Pallet::<Test>::submit_proven_batch(RuntimeOrigin::signed(1), valid_proven_batch(),),
                 sp_runtime::DispatchError::BadOrigin
             );
 
             // None origin accepted once per block.
-            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
-                valid_da_root(),
-                1,
-                valid_proof(),
+                valid_proven_batch(),
             ));
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(
+                Pallet::<Test>::submit_proven_batch(
                     RuntimeOrigin::none(),
-                    valid_da_root(),
-                    1,
-                    valid_proof(),
+                    valid_proven_batch(),
                 ),
-                crate::Error::<Test>::CommitmentProofAlreadyProcessed
+                crate::Error::<Test>::ProvenBatchAlreadyProcessed
             );
 
             // Reset on new block.
             Pallet::<Test>::on_initialize(2);
-            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
-                valid_da_root(),
-                1,
-                valid_proof(),
+                valid_proven_batch(),
             ));
         });
     }
 
     #[test]
-    fn submit_commitment_proof_respects_size_limit() {
+    fn submit_proven_batch_respects_size_limit() {
         new_test_ext().execute_with(|| {
-            let proof = StarkProof {
+            let mut payload = valid_proven_batch();
+            payload.commitment_proof = StarkProof {
                 data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
             };
             assert_noop!(
-                Pallet::<Test>::submit_commitment_proof(
-                    RuntimeOrigin::none(),
-                    valid_da_root(),
-                    1,
-                    proof,
-                ),
+                Pallet::<Test>::submit_proven_batch(RuntimeOrigin::none(), payload,),
                 crate::Error::<Test>::ProofTooLarge
             );
+        });
+    }
+
+    #[test]
+    fn submit_proven_batch_rejects_invalid_prover_claim_signature() {
+        new_test_ext().execute_with(|| {
+            let mut payload = valid_proven_batch();
+            let mut claim = signed_prover_claim(&payload, 1);
+            claim.claim_signature = vec![0u8; 64].try_into().expect("bounded invalid signature");
+            payload.prover_claim = Some(claim);
+            assert_noop!(
+                Pallet::<Test>::submit_proven_batch(RuntimeOrigin::none(), payload),
+                crate::Error::<Test>::InvalidProverClaimSignature
+            );
+        });
+    }
+
+    #[test]
+    fn mint_coinbase_requires_prover_note_when_claim_exists() {
+        new_test_ext().execute_with(|| {
+            let params = FeeParameters {
+                proof_fee: 3,
+                batch_proof_fee: 3,
+                inclusion_fee: 0,
+                batch_inclusion_fee: 0,
+                da_byte_fee: 0,
+                retention_byte_fee: 0,
+                hot_retention_blocks: 0,
+            };
+            assert_ok!(Pallet::<Test>::set_fee_parameters(
+                RuntimeOrigin::root(),
+                params
+            ));
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                3,
+                0,
+            ));
+
+            let mut payload = valid_proven_batch();
+            payload.prover_claim = Some(signed_prover_claim(&payload, 3));
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
+                RuntimeOrigin::none(),
+                payload,
+            ));
+
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let rewards = valid_coinbase_data(subsidy);
+            assert_noop!(
+                Pallet::<Test>::mint_coinbase(RuntimeOrigin::none(), rewards),
+                crate::Error::<Test>::MissingProverRewardNote
+            );
+        });
+    }
+
+    #[test]
+    fn mint_coinbase_accepts_valid_miner_and_prover_notes() {
+        new_test_ext().execute_with(|| {
+            let params = FeeParameters {
+                proof_fee: 3,
+                batch_proof_fee: 3,
+                inclusion_fee: 0,
+                batch_inclusion_fee: 0,
+                da_byte_fee: 0,
+                retention_byte_fee: 0,
+                hot_retention_blocks: 0,
+            };
+            assert_ok!(Pallet::<Test>::set_fee_parameters(
+                RuntimeOrigin::root(),
+                params
+            ));
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                None,
+                3,
+                0,
+            ));
+
+            let mut payload = valid_proven_batch();
+            let claim = signed_prover_claim(&payload, 3);
+            payload.prover_claim = Some(claim.clone());
+            assert_ok!(Pallet::<Test>::submit_proven_batch(
+                RuntimeOrigin::none(),
+                payload,
+            ));
+
+            let height: u64 = frame_system::Pallet::<Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let rewards = crate::types::BlockRewardBundle {
+                miner_note: valid_coinbase_note(subsidy),
+                prover_note: Some(valid_coinbase_note_for(
+                    3,
+                    claim.prover_recipient_address,
+                    [10u8; 32],
+                )),
+            };
+            assert_ok!(Pallet::<Test>::mint_coinbase(
+                RuntimeOrigin::none(),
+                rewards
+            ));
+            assert_eq!(Pallet::<Test>::pool_balance(), subsidy as u128 + 3);
         });
     }
 
@@ -1690,10 +1966,14 @@ mod tests {
     }
 
     #[test]
-    fn proofless_sidecar_rejected_without_aggregation_mode() {
+    fn proofless_sidecar_admitted_without_aggregation_mode_but_dispatch_rejects() {
         new_test_ext().execute_with(|| {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
+            assert_ok!(Pallet::<Test>::set_proof_availability_policy(
+                RuntimeOrigin::root(),
+                ProofAvailabilityPolicy::SelfContained,
+            ));
 
             let proof = StarkProof::from_bytes(Vec::new());
             let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
@@ -1715,16 +1995,11 @@ mod tests {
                 anchor,
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
-                fee: 0,
+                fee: 1_000_000,
             };
 
             let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
-            assert!(matches!(
-                validity,
-                Err(TransactionValidityError::Invalid(
-                    InvalidTransaction::Custom(12)
-                ))
-            ));
+            assert!(validity.is_ok());
 
             assert_noop!(
                 Pallet::<Test>::shielded_transfer_unsigned_sidecar(
@@ -1737,7 +2012,7 @@ mod tests {
                     anchor,
                     binding_hash,
                     None,
-                    0,
+                    1_000_000,
                 ),
                 crate::Error::<Test>::ProofBytesRequired
             );
@@ -1804,7 +2079,7 @@ mod tests {
     }
 
     #[test]
-    fn proofless_sidecar_allowed_with_da_policy_and_aggregation_mode() {
+    fn proofless_sidecar_allowed_with_self_contained_policy_and_aggregation_mode() {
         new_test_ext().execute_with(|| {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
@@ -1814,7 +2089,7 @@ mod tests {
             ));
             assert_ok!(Pallet::<Test>::set_proof_availability_policy(
                 RuntimeOrigin::root(),
-                ProofAvailabilityPolicy::DaRequired,
+                ProofAvailabilityPolicy::SelfContained,
             ));
 
             let proof = StarkProof::from_bytes(Vec::new());

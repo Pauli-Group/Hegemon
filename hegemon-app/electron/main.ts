@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session } from 'electron';
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -19,7 +20,8 @@ import type {
   WalletSendRequest,
   WalletSendResult,
   WalletStatus,
-  WalletSyncResult
+  WalletSyncResult,
+  WalletUnlockSession
 } from '../src/types';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +31,22 @@ const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_S
 const contactsFileName = 'contacts.json';
 let contactsWriteQueue: Promise<void> = Promise.resolve();
 let shutdownInProgress = false;
+const DEFAULT_UNLOCK_TTL_MS = 5 * 60 * 1000;
+const MIN_UNLOCK_TTL_MS = 30 * 1000;
+const walletUnlockTtlMs = (() => {
+  const raw = process.env.HEGEMON_WALLET_UNLOCK_TTL_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < MIN_UNLOCK_TTL_MS) {
+    return DEFAULT_UNLOCK_TTL_MS;
+  }
+  return parsed;
+})();
+type WalletUnlockState = {
+  token: string;
+  storePath: string;
+  expiresAt: number;
+};
+let walletUnlockState: WalletUnlockState | null = null;
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.hegemon.desktop');
@@ -53,47 +71,6 @@ const configureAppMenu = () => {
     { role: 'windowMenu' }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-};
-
-const resolveLegacyContactsPaths = () => {
-  const appData = app.getPath('appData');
-  const stable = resolveContactsPath();
-  const candidates = [
-    join(app.getPath('userData'), contactsFileName),
-    join(appData, 'hegemon-app', contactsFileName),
-    join(appData, 'Hegemon Core', contactsFileName),
-    join(appData, 'Electron', contactsFileName)
-  ];
-  return candidates.filter((candidate) => candidate !== stable);
-};
-
-const migrateContactsIfNeeded = async (destinationPath: string) => {
-  if (existsSync(destinationPath)) {
-    return;
-  }
-  for (const legacyPath of resolveLegacyContactsPaths()) {
-    if (!existsSync(legacyPath)) {
-      continue;
-    }
-    try {
-      const raw = await readFile(legacyPath, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        continue;
-      }
-      await mkdir(dirname(destinationPath), { recursive: true });
-      try {
-        await rename(legacyPath, destinationPath);
-      } catch (error) {
-        console.warn('Failed to move legacy contacts file, falling back to copy.', error);
-        await writeFile(destinationPath, JSON.stringify(parsed, null, 2), 'utf-8');
-      }
-      console.info(`Migrated contacts from ${legacyPath} to ${destinationPath}.`);
-      return;
-    } catch (error) {
-      console.warn(`Failed to migrate contacts from ${legacyPath}.`, error);
-    }
-  }
 };
 
 const buildContentSecurityPolicy = (devUrl?: string) => {
@@ -161,7 +138,6 @@ const loadAppIcon = () => {
 
 const loadContacts = async (): Promise<Contact[] | null> => {
   const filePath = resolveContactsPath();
-  await migrateContactsIfNeeded(filePath);
   try {
     const raw = await readFile(filePath, 'utf-8');
     try {
@@ -236,7 +212,45 @@ const createWindow = () => {
 };
 
 const stopManagedServices = async () => {
+  walletUnlockState = null;
   await Promise.allSettled([nodeManager.stopNode(), walletdClient.stop()]);
+};
+
+const resolveStorePathForSession = (storePath: string) =>
+  storePath === '~'
+    ? app.getPath('home')
+    : storePath.startsWith('~/')
+      ? join(app.getPath('home'), storePath.slice(2))
+      : storePath;
+
+const issueWalletUnlockSession = (storePath: string, status: WalletStatus): WalletUnlockSession => {
+  const token = randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + walletUnlockTtlMs;
+  walletUnlockState = {
+    token,
+    storePath: resolveStorePathForSession(storePath),
+    expiresAt
+  };
+  return { status, unlockToken: token, expiresAt };
+};
+
+const requireWalletUnlock = (storePath: string, unlockToken: string) => {
+  const state = walletUnlockState;
+  if (!state) {
+    throw new Error('Wallet is locked. Open or init the store first.');
+  }
+  if (!unlockToken || unlockToken !== state.token) {
+    throw new Error('Wallet unlock token is invalid.');
+  }
+  if (resolveStorePathForSession(storePath) !== state.storePath) {
+    throw new Error('Wallet unlock token does not match the selected store path.');
+  }
+  if (Date.now() > state.expiresAt) {
+    walletUnlockState = null;
+    void walletdClient.stop();
+    throw new Error('Wallet unlock token expired. Re-open the wallet.');
+  }
+  state.expiresAt = Date.now() + walletUnlockTtlMs;
 };
 
 app.whenReady().then(() => {
@@ -304,36 +318,63 @@ ipcMain.handle('node:setMining', async (_event, request: NodeMiningRequest) => {
 ipcMain.handle('node:logs', async () => nodeManager.getLogs());
 
 ipcMain.handle('wallet:init', async (_event, storePath: string, passphrase: string) => {
-  return walletdClient.init(storePath, passphrase) as Promise<WalletStatus>;
+  const status = (await walletdClient.init(storePath, passphrase)) as WalletStatus;
+  return issueWalletUnlockSession(storePath, status);
 });
 
 ipcMain.handle('wallet:restore', async (_event, storePath: string, passphrase: string) => {
-  return walletdClient.restore(storePath, passphrase) as Promise<WalletStatus>;
+  const status = (await walletdClient.restore(storePath, passphrase)) as WalletStatus;
+  return issueWalletUnlockSession(storePath, status);
 });
 
-ipcMain.handle('wallet:status', async (_event, storePath: string, passphrase: string, noSync = false) => {
-  return walletdClient.status(storePath, passphrase) as Promise<WalletStatus>;
+ipcMain.handle('wallet:status', async (_event, storePath: string, unlockToken: string, noSync = false) => {
+  if (noSync) {
+    // `status.get` is local; flag retained for renderer compatibility.
+  }
+  requireWalletUnlock(storePath, unlockToken);
+  return walletdClient.status() as Promise<WalletStatus>;
 });
 
 ipcMain.handle('wallet:sync', async (
   _event,
   storePath: string,
-  passphrase: string,
+  unlockToken: string,
   wsUrl: string,
   forceRescan = false
 ) => {
-  return walletdClient.sync(storePath, passphrase, wsUrl, forceRescan) as Promise<WalletSyncResult>;
+  requireWalletUnlock(storePath, unlockToken);
+  return walletdClient.sync(wsUrl, forceRescan) as Promise<WalletSyncResult>;
 });
 
 ipcMain.handle('wallet:send', async (_event, request: WalletSendRequest) => {
-  return walletdClient.send(request) as Promise<WalletSendResult>;
+  requireWalletUnlock(request.storePath, request.unlockToken);
+  try {
+    return (await walletdClient.send(request)) as WalletSendResult;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    const hasCustomError3 = /custom error:\s*['"]?3['"]?/.test(normalized);
+    const staleAnchor =
+      (normalized.includes('invalid transaction') && hasCustomError3) ||
+      normalized.includes('invalid anchor');
+    if (!staleAnchor) {
+      throw error;
+    }
+
+    // Recover from stale anchor state (e.g. after fork recovery/reorg) by forcing a
+    // wallet rescan against the current chain and retrying submission once.
+    await walletdClient.sync(request.wsUrl, true);
+    return (await walletdClient.send(request)) as WalletSendResult;
+  }
 });
 
 ipcMain.handle('wallet:sendPlan', async (_event, request: WalletSendPlanRequest) => {
+  requireWalletUnlock(request.storePath, request.unlockToken);
   return walletdClient.sendPlan(request) as Promise<WalletSendPlanResult>;
 });
 
 ipcMain.handle('wallet:lock', async () => {
+  walletUnlockState = null;
   await walletdClient.stop();
 });
 
@@ -342,18 +383,13 @@ ipcMain.handle(
   async (
     _event,
     storePath: string,
-    passphrase: string,
+    unlockToken: string,
     wsUrl: string,
     txId: string,
     output: number
   ) => {
-    return walletdClient.disclosureCreate(
-      storePath,
-      passphrase,
-      wsUrl,
-      txId,
-      output
-    ) as Promise<WalletDisclosureCreateResult>;
+    requireWalletUnlock(storePath, unlockToken);
+    return walletdClient.disclosureCreate(wsUrl, txId, output) as Promise<WalletDisclosureCreateResult>;
   }
 );
 
@@ -362,21 +398,18 @@ ipcMain.handle(
   async (
     _event,
     storePath: string,
-    passphrase: string,
+    unlockToken: string,
     wsUrl: string,
     packageJson: object
   ) => {
-    return walletdClient.disclosureVerify(
-      storePath,
-      passphrase,
-      wsUrl,
-      packageJson
-    ) as Promise<WalletDisclosureVerifyResult>;
+    requireWalletUnlock(storePath, unlockToken);
+    return walletdClient.disclosureVerify(wsUrl, packageJson) as Promise<WalletDisclosureVerifyResult>;
   }
 );
 
-ipcMain.handle('wallet:disclosureList', async (_event, storePath: string, passphrase: string) => {
-  return walletdClient.disclosureList(storePath, passphrase) as Promise<WalletDisclosureRecord[]>;
+ipcMain.handle('wallet:disclosureList', async (_event, storePath: string, unlockToken: string) => {
+  requireWalletUnlock(storePath, unlockToken);
+  return walletdClient.disclosureList() as Promise<WalletDisclosureRecord[]>;
 });
 
 ipcMain.handle('contacts:list', async () => {

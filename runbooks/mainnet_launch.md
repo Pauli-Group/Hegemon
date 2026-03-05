@@ -28,7 +28,7 @@ This document provides the pre-launch verification checklist and day-of-launch r
   - All findings documented in SECURITY_REVIEWS.md
 
 - [ ] **PQ Parameters Verified by Cryptographer**
-  - ML-KEM-768: FIPS 203 compliant
+  - ML-KEM-1024: FIPS 203 compliant
   - ML-DSA-65: FIPS 204 compliant
   - FRI parameters: 128-bit security
   - Reviewer: _________________

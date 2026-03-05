@@ -104,7 +104,7 @@ pub async fn upgrade_outbound(
             tracing::info!(
                 peer_id = %hex::encode(peer_id),
                 addr = %addr,
-                "PQ handshake complete with ML-KEM-768"
+                "PQ handshake complete with ML-KEM-1024"
             );
             Ok(PqSecureConnection::new(session, peer_id, addr))
         }
@@ -132,7 +132,7 @@ pub async fn upgrade_inbound(
             tracing::info!(
                 peer_id = %hex::encode(peer_id),
                 addr = %addr,
-                "PQ handshake complete with ML-KEM-768"
+                "PQ handshake complete with ML-KEM-1024"
             );
             Ok(PqSecureConnection::new(session, peer_id, addr))
         }

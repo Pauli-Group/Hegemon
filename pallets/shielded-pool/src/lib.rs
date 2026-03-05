@@ -51,6 +51,7 @@ use frame_support::traits::{Currency, ReservableCurrency, StorageVersion};
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
+use sp_core::Pair;
 use sp_runtime::traits::Saturating;
 use sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
@@ -265,13 +266,6 @@ pub mod pallet {
         #[pallet::constant]
         type MaxCommitmentsPerBatch: Get<u32>;
 
-        /// Maximum number of proof-DA manifest entries permitted in a single block.
-        ///
-        /// Each entry maps a transfer `binding_hash` to the location of its proof bytes in the
-        /// proof-DA blob, plus the on-chain committed proof hash.
-        #[pallet::constant]
-        type MaxProofDaManifestEntries: Get<u32>;
-
         /// Number of historical Merkle roots to keep.
         #[pallet::constant]
         type MerkleRootHistorySize: Get<u32>;
@@ -391,10 +385,11 @@ pub mod pallet {
         ValueQuery,
     >;
 
-    /// Total shielded fees accumulated in the current block.
+    /// Split shielded fee buckets accumulated in the current block.
     #[pallet::storage]
-    #[pallet::getter(fn block_fees)]
-    pub type BlockFees<T: Config> = StorageValue<_, u128, ValueQuery>;
+    #[pallet::getter(fn block_fee_buckets)]
+    pub type BlockFeeBucketsStorage<T: Config> =
+        StorageValue<_, types::BlockFeeBuckets, ValueQuery>;
 
     /// Total fees burned because no coinbase claimed them.
     #[pallet::storage]
@@ -405,7 +400,12 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn coinbase_notes)]
     pub type CoinbaseNotes<T: Config> =
-        StorageMap<_, Blake2_128Concat, u64, types::CoinbaseNoteData, OptionQuery>;
+        StorageMap<_, Blake2_128Concat, u64, types::BlockRewardBundle, OptionQuery>;
+
+    /// Optional prover claim attached to the current block's proven bundle.
+    #[pallet::storage]
+    pub type PendingProverClaim<T: Config> =
+        StorageValue<_, types::ProverCompensationClaim, OptionQuery>;
 
     /// Whether coinbase was already processed this block (prevents double-mint).
     #[pallet::storage]
@@ -415,29 +415,11 @@ pub mod pallet {
     #[pallet::storage]
     pub type ShieldedTransfersProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
-    /// Whether the commitment proof was already submitted this block.
+    /// Whether a proven-batch payload was already submitted this block.
     ///
-    /// Reset on `on_initialize` so exactly one commitment proof can be attached per block.
+    /// Reset on `on_initialize` so exactly one proven-batch payload can be attached per block.
     #[pallet::storage]
-    pub type CommitmentProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
-
-    /// Whether the proof DA commitment was already submitted this block.
-    ///
-    /// Reset on `on_initialize` so exactly one proof DA commitment can be attached per block.
-    #[pallet::storage]
-    pub type ProofDaCommitmentProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
-
-    /// Whether the proof DA manifest was already submitted this block.
-    ///
-    /// Reset on `on_initialize` so exactly one proof DA manifest can be attached per block.
-    #[pallet::storage]
-    pub type ProofDaManifestProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
-
-    /// Whether the aggregation proof was already submitted this block.
-    ///
-    /// Reset on `on_initialize` so exactly one aggregation proof can be attached per block.
-    #[pallet::storage]
-    pub type AggregationProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
+    pub type ProvenBatchProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
     /// Whether this block is operating in "aggregation required" mode.
     ///
@@ -452,12 +434,6 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn da_commitment)]
     pub type DaCommitments<T: Config> =
-        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
-
-    /// Proof DA commitments per block (da_root + chunk count) for aggregation import.
-    #[pallet::storage]
-    #[pallet::getter(fn proof_da_commitment)]
-    pub type ProofDaCommitments<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, types::DaCommitment, OptionQuery>;
 
     /// DA availability policy (full fetch vs sampling).
@@ -640,16 +616,18 @@ pub mod pallet {
         VerifyingKeyNotFound,
         /// Coinbase commitment verification failed.
         InvalidCoinbaseCommitment,
+        /// Prover claim signature is invalid.
+        InvalidProverClaimSignature,
+        /// Prover reward note is required but missing.
+        MissingProverRewardNote,
+        /// Prover reward note was provided unexpectedly.
+        UnexpectedProverRewardNote,
+        /// Prover reward metadata does not match the claim or fee bucket.
+        ProverRewardMismatch,
         /// Coinbase already processed for this block.
         CoinbaseAlreadyProcessed,
-        /// Commitment proof already submitted for this block.
-        CommitmentProofAlreadyProcessed,
-        /// Proof DA commitment already submitted for this block.
-        ProofDaCommitmentAlreadyProcessed,
-        /// Proof DA manifest already submitted for this block.
-        ProofDaManifestAlreadyProcessed,
-        /// Aggregation proof already submitted for this block.
-        AggregationProofAlreadyProcessed,
+        /// Proven batch payload already submitted for this block.
+        ProvenBatchAlreadyProcessed,
         /// Aggregation proof mode was already enabled for this block.
         AggregationModeAlreadyEnabled,
         /// Aggregation proof mode must be enabled before transfers.
@@ -690,9 +668,7 @@ pub mod pallet {
         InlineCiphertextsDisabled,
         /// DA chunk count is invalid for this block.
         InvalidDaChunkCount,
-        /// Proof-DA manifest is invalid (empty or malformed).
-        InvalidProofDaManifest,
-        /// Invalid batch size (must be power of 2: 2, 4, 8, or 16).
+        /// Invalid batch size (must be power of 2: 2, 4, 8, 16, or 32).
         InvalidBatchSize,
         // ========================================
         // EPOCH ERRORS
@@ -802,9 +778,12 @@ pub mod pallet {
         }
 
         fn on_initialize(n: BlockNumberFor<T>) -> Weight {
-            let pending_fees = BlockFees::<T>::get();
-            if pending_fees > 0 && !CoinbaseProcessed::<T>::get() {
-                TotalFeesBurned::<T>::mutate(|total| *total = total.saturating_add(pending_fees));
+            let pending_buckets = BlockFeeBucketsStorage::<T>::get();
+            let pending_total = pending_buckets
+                .miner_fees
+                .saturating_add(pending_buckets.prover_fees);
+            if pending_total > 0 && !CoinbaseProcessed::<T>::get() {
+                TotalFeesBurned::<T>::mutate(|total| *total = total.saturating_add(pending_total));
             }
 
             let mut queue = ForcedInclusionQueue::<T>::get();
@@ -831,15 +810,13 @@ pub mod pallet {
                 ForcedInclusionQueue::<T>::put(queue);
             }
 
-            BlockFees::<T>::kill();
+            BlockFeeBucketsStorage::<T>::kill();
             // Reset coinbase processed flag at start of each block
             CoinbaseProcessed::<T>::kill();
             ShieldedTransfersProcessed::<T>::kill();
-            CommitmentProofProcessed::<T>::kill();
-            ProofDaCommitmentProcessed::<T>::kill();
-            ProofDaManifestProcessed::<T>::kill();
-            AggregationProofProcessed::<T>::kill();
+            ProvenBatchProcessed::<T>::kill();
             AggregationProofRequired::<T>::kill();
+            PendingProverClaim::<T>::kill();
             Weight::from_parts(1_000, 0)
         }
     }
@@ -874,134 +851,64 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Attach the commitment proof for this block.
+        /// Attach the proven-batch payload for this block.
         ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
-        /// commitment proof bytes on-chain so all nodes can verify them during block import.
+        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry all
+        /// consensus proof material for a self-contained aggregation block.
         ///
-        /// The runtime does **not** verify the proof; verification is performed in the node.
-        ///
-        /// The `da_root` is carried explicitly so importers can fetch the DA sidecar before
-        /// reconstructing ciphertexts.
+        /// The runtime does **not** verify the proofs; verification is performed in the node.
         #[pallet::call_index(1)]
         #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_commitment_proof(
+        pub fn submit_proven_batch(
             origin: OriginFor<T>,
-            da_root: [u8; 48],
-            chunk_count: u32,
-            proof: StarkProof,
+            payload: types::BlockProofBundle,
         ) -> DispatchResult {
             ensure_none(origin)?;
 
             ensure!(
-                !CommitmentProofProcessed::<T>::get(),
-                Error::<T>::CommitmentProofAlreadyProcessed
+                !ProvenBatchProcessed::<T>::get(),
+                Error::<T>::ProvenBatchAlreadyProcessed
             );
 
             ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                payload.version == types::BLOCK_PROOF_BUNDLE_SCHEMA,
+                Error::<T>::InvalidProofFormat
+            );
+
+            ensure!(payload.tx_count > 0, Error::<T>::InvalidNullifierCount);
+
+            ensure!(
+                payload.commitment_proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
 
-            ensure!(chunk_count > 0, Error::<T>::InvalidDaChunkCount);
+            Self::validate_block_proof_bundle_mode(&payload)?;
+            ensure!(
+                Self::total_block_proof_bytes(&payload)
+                    <= types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES,
+                Error::<T>::ProofTooLarge
+            );
+
+            ensure!(payload.da_chunk_count > 0, Error::<T>::InvalidDaChunkCount);
 
             let block_number = frame_system::Pallet::<T>::block_number();
             DaCommitments::<T>::insert(
                 block_number,
                 types::DaCommitment {
-                    root: da_root,
-                    chunk_count,
+                    root: payload.da_root,
+                    chunk_count: payload.da_chunk_count,
                 },
             );
-            CommitmentProofProcessed::<T>::put(true);
-            Ok(())
-        }
-
-        /// Attach the proof DA commitment (root + chunk count) for this block.
-        ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
-        /// proof-DA root on-chain so importers can fetch per-transaction proof bytes when
-        /// aggregation mode allows transfers to omit proof bytes from extrinsics.
-        #[pallet::call_index(15)]
-        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_proof_da_commitment(
-            origin: OriginFor<T>,
-            da_root: [u8; 48],
-            chunk_count: u32,
-        ) -> DispatchResult {
-            ensure_none(origin)?;
-
-            ensure!(
-                !ProofDaCommitmentProcessed::<T>::get(),
-                Error::<T>::ProofDaCommitmentAlreadyProcessed
-            );
-
-            ensure!(chunk_count > 0, Error::<T>::InvalidDaChunkCount);
-
-            let block_number = frame_system::Pallet::<T>::block_number();
-            ProofDaCommitments::<T>::insert(
-                block_number,
-                types::DaCommitment {
-                    root: da_root,
-                    chunk_count,
-                },
-            );
-
-            ProofDaCommitmentProcessed::<T>::put(true);
-            Ok(())
-        }
-
-        /// Attach the proof-DA manifest for this block.
-        ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to commit, on-chain,
-        /// the mapping from `binding_hash` to proof location and proof hash. This enables block
-        /// verifiers to bind block-level commitments (such as commitment proofs) to per-transaction
-        /// proof hashes without downloading full proof bytes.
-        ///
-        /// The node import pipeline is responsible for enforcing that the manifest matches:
-        /// - the set of transfers that omitted proof bytes, and
-        /// - the proof-DA blob committed via `submit_proof_da_commitment`.
-        #[pallet::call_index(16)]
-        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_proof_da_manifest(
-            origin: OriginFor<T>,
-            manifest: BoundedVec<types::ProofDaManifestEntry, T::MaxProofDaManifestEntries>,
-        ) -> DispatchResult {
-            ensure_none(origin)?;
-
-            ensure!(
-                !ProofDaManifestProcessed::<T>::get(),
-                Error::<T>::ProofDaManifestAlreadyProcessed
-            );
-
-            ensure!(!manifest.is_empty(), Error::<T>::InvalidProofDaManifest);
-
-            ProofDaManifestProcessed::<T>::put(true);
-            Ok(())
-        }
-
-        /// Attach the aggregation proof for this block.
-        ///
-        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
-        /// aggregation proof bytes on-chain so nodes can verify them during block import.
-        ///
-        /// The runtime does **not** verify the proof; verification is performed in the node.
-        #[pallet::call_index(6)]
-        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
-        pub fn submit_aggregation_proof(origin: OriginFor<T>, proof: StarkProof) -> DispatchResult {
-            ensure_none(origin)?;
-
-            ensure!(
-                !AggregationProofProcessed::<T>::get(),
-                Error::<T>::AggregationProofAlreadyProcessed
-            );
-
-            ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
-                Error::<T>::ProofTooLarge
-            );
-
-            AggregationProofProcessed::<T>::put(true);
+            if let Some(claim) = payload.prover_claim.as_ref() {
+                ensure!(
+                    Self::verify_prover_claim_signature(claim, &payload),
+                    Error::<T>::InvalidProverClaimSignature
+                );
+                PendingProverClaim::<T>::put(claim.clone());
+            } else {
+                PendingProverClaim::<T>::kill();
+            }
+            ProvenBatchProcessed::<T>::put(true);
             Ok(())
         }
 
@@ -1060,8 +967,9 @@ pub mod pallet {
                 Self::validate_encrypted_note(note)?;
             }
             let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
+            let required_breakdown =
+                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1158,7 +1066,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
-            Self::record_fee(u128::from(fee))?;
+            Self::record_fee_split(u128::from(fee), required_breakdown)?;
 
             // Add nullifiers to spent set
             // Note: Zero nullifiers were already rejected above, so no skip needed
@@ -1264,8 +1172,9 @@ pub mod pallet {
                 }
             }
             let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
+            let required_breakdown =
+                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1351,7 +1260,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
-            Self::record_fee(u128::from(fee))?;
+            Self::record_fee_split(u128::from(fee), required_breakdown)?;
 
             // Add nullifiers to spent set
             for nf in nullifiers.iter() {
@@ -1549,11 +1458,11 @@ pub mod pallet {
 
         /// Mint coinbase reward directly to the shielded pool.
         ///
-        /// This is an inherent extrinsic that creates a shielded note for the miner.
+        /// This is an inherent extrinsic that creates shielded reward notes.
         /// Unlike regular shielded transfers, this creates new coins (no transparent input).
         ///
         /// # Arguments
-        /// * `coinbase_data` - The coinbase note data containing encrypted note and audit info
+        /// * `reward_bundle` - Miner note plus optional prover note
         ///
         /// # Security
         /// - Called via inherent (None origin)
@@ -1563,7 +1472,7 @@ pub mod pallet {
         #[pallet::weight((T::WeightInfo::mint_coinbase(), DispatchClass::Mandatory, Pays::No))]
         pub fn mint_coinbase(
             origin: OriginFor<T>,
-            coinbase_data: types::CoinbaseNoteData,
+            reward_bundle: types::BlockRewardBundle,
         ) -> DispatchResult {
             // Inherent extrinsics use None origin
             ensure_none(origin)?;
@@ -1576,46 +1485,118 @@ pub mod pallet {
 
             let block_number = <frame_system::Pallet<T>>::block_number();
             let height: u64 = block_number.try_into().unwrap_or(0);
-            let expected_amount = Self::expected_coinbase_amount(height, BlockFees::<T>::get())?;
+            let fee_buckets = BlockFeeBucketsStorage::<T>::get();
+            let expected_miner_amount =
+                Self::expected_miner_reward_amount(height, fee_buckets.miner_fees)?;
             ensure!(
-                coinbase_data.amount == expected_amount,
+                reward_bundle.miner_note.amount == expected_miner_amount,
                 Error::<T>::CoinbaseAmountMismatch
             );
 
-            // Verify the commitment matches the plaintext data
-            // This ensures the miner can't claim more than stated
-            let expected_commitment = Self::expected_coinbase_commitment(&coinbase_data);
+            let expected_miner_commitment =
+                Self::expected_coinbase_commitment(&reward_bundle.miner_note);
             ensure!(
-                coinbase_data.commitment == expected_commitment,
+                reward_bundle.miner_note.commitment == expected_miner_commitment,
                 Error::<T>::InvalidCoinbaseCommitment
             );
 
-            // Add commitment to tree
-            let index = CommitmentIndex::<T>::get();
-            Commitments::<T>::insert(index, coinbase_data.commitment);
-            EncryptedNotes::<T>::insert(index, coinbase_data.encrypted_note.clone());
-            CoinbaseNotes::<T>::insert(index, coinbase_data);
+            let pending_claim = PendingProverClaim::<T>::get();
+            let expected_prover_amount =
+                u64::try_from(fee_buckets.prover_fees).map_err(|_| Error::<T>::FeeOverflow)?;
 
-            CommitmentIndex::<T>::put(index + 1);
+            let validated_prover_note = match (pending_claim.as_ref(), reward_bundle.prover_note) {
+                (Some(claim), Some(note)) => {
+                    ensure!(
+                        claim.prover_amount == expected_prover_amount
+                            && note.amount == expected_prover_amount
+                            && note.recipient_address == claim.prover_recipient_address,
+                        Error::<T>::ProverRewardMismatch
+                    );
+                    let expected_commitment = Self::expected_coinbase_commitment(&note);
+                    ensure!(
+                        note.commitment == expected_commitment,
+                        Error::<T>::InvalidCoinbaseCommitment
+                    );
+                    Some(note)
+                }
+                (Some(_), None) => return Err(Error::<T>::MissingProverRewardNote.into()),
+                (None, Some(note)) => {
+                    ensure!(
+                        note.amount == expected_prover_amount,
+                        Error::<T>::ProverRewardMismatch
+                    );
+                    let expected_commitment = Self::expected_coinbase_commitment(&note);
+                    ensure!(
+                        note.commitment == expected_commitment,
+                        Error::<T>::InvalidCoinbaseCommitment
+                    );
+                    Some(note)
+                }
+                (None, None) => None,
+            };
 
-            // Update Merkle tree
+            if pending_claim.is_none()
+                && validated_prover_note.is_none()
+                && fee_buckets.prover_fees > 0
+            {
+                TotalFeesBurned::<T>::mutate(|total| {
+                    *total = total.saturating_add(fee_buckets.prover_fees)
+                });
+            }
+
+            // Add reward commitments to tree.
+            let mut index = CommitmentIndex::<T>::get();
+            Commitments::<T>::insert(index, reward_bundle.miner_note.commitment);
+            EncryptedNotes::<T>::insert(index, reward_bundle.miner_note.encrypted_note.clone());
+            CoinbaseNotes::<T>::insert(
+                index,
+                types::BlockRewardBundle {
+                    miner_note: reward_bundle.miner_note.clone(),
+                    prover_note: None,
+                },
+            );
+            index = index.saturating_add(1);
+
+            if let Some(prover_note) = validated_prover_note.as_ref() {
+                Commitments::<T>::insert(index, prover_note.commitment);
+                EncryptedNotes::<T>::insert(index, prover_note.encrypted_note.clone());
+                CoinbaseNotes::<T>::insert(
+                    index,
+                    types::BlockRewardBundle {
+                        miner_note: reward_bundle.miner_note.clone(),
+                        prover_note: Some(prover_note.clone()),
+                    },
+                );
+                index = index.saturating_add(1);
+            }
+
+            CommitmentIndex::<T>::put(index);
+
+            let mut minted_commitments = vec![expected_miner_commitment];
+            if let Some(prover_note) = validated_prover_note.as_ref() {
+                minted_commitments.push(prover_note.commitment);
+            }
             let commitments =
-                BoundedVec::<[u8; 48], T::MaxCommitmentsPerTx>::try_from(vec![expected_commitment])
+                BoundedVec::<[u8; 48], T::MaxCommitmentsPerTx>::try_from(minted_commitments)
                     .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
             Self::update_merkle_tree(&commitments)?;
 
-            // Update pool balance (new coins minted)
-            let amount = CoinbaseNotes::<T>::get(index)
-                .map(|n| n.amount as u128)
+            // Update pool balance (new coins minted).
+            let miner_amount = reward_bundle.miner_note.amount as u128;
+            let prover_amount = validated_prover_note
+                .as_ref()
+                .map(|note| note.amount as u128)
                 .unwrap_or(0);
+            let amount = miner_amount.saturating_add(prover_amount);
             PoolBalance::<T>::mutate(|b| *b = b.saturating_add(amount));
 
             // Mark as processed
             CoinbaseProcessed::<T>::put(true);
             ShieldedTransfersProcessed::<T>::put(true);
+            PendingProverClaim::<T>::kill();
 
             Self::deposit_event(Event::CoinbaseMinted {
-                commitment_index: index,
+                commitment_index: index.saturating_sub(1),
                 amount: amount as u64,
                 block_number,
             });
@@ -1694,8 +1675,9 @@ pub mod pallet {
                 Self::validate_encrypted_note(note)?;
             }
             let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
+            let required_breakdown =
+                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1774,7 +1756,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
-            Self::record_fee(u128::from(fee))?;
+            Self::record_fee_split(u128::from(fee), required_breakdown)?;
 
             // Add nullifiers to spent set
             for nf in nullifiers.iter() {
@@ -1874,7 +1856,7 @@ pub mod pallet {
                 // on-chain policy allows DA-provided proofs.
                 ensure!(aggregation_mode, Error::<T>::ProofBytesRequired);
                 ensure!(
-                    matches!(proof_policy, types::ProofAvailabilityPolicy::DaRequired),
+                    matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained),
                     Error::<T>::ProofBytesRequired
                 );
             }
@@ -1899,8 +1881,9 @@ pub mod pallet {
                 }
             }
             let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_fee)?;
+            let required_breakdown =
+                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
+            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -1983,7 +1966,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
-            Self::record_fee(u128::from(fee))?;
+            Self::record_fee_split(u128::from(fee), required_breakdown)?;
 
             // Add nullifiers to spent set
             for nf in nullifiers.iter() {
@@ -2051,7 +2034,7 @@ pub mod pallet {
         /// - All transactions must use the same Merkle anchor
         /// - Single batch proof verifies all transactions together
         /// - Each nullifier is checked for double-spend
-        /// - Batch size must be a power of 2 (2, 4, 8, or 16)
+        /// - Batch size must be a power of 2 (2, 4, 8, 16, or 32)
         #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,
@@ -2098,8 +2081,9 @@ pub mod pallet {
                 Self::validate_encrypted_note(note)?;
             }
             let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Batch)?;
-            Self::ensure_fee_sufficient(total_fee, required_fee)?;
+            let required_breakdown =
+                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Batch)?;
+            Self::ensure_fee_sufficient(total_fee, required_breakdown.total_fee)?;
 
             // Check anchor is a valid historical Merkle root
             ensure!(
@@ -2167,7 +2151,7 @@ pub mod pallet {
                     return Err(Error::<T>::VerifyingKeyNotFound.into());
                 }
             }
-            Self::record_fee(total_fee)?;
+            Self::record_fee_split(total_fee, required_breakdown)?;
 
             // Add nullifiers to spent set (skip zero padding)
             for nf in nullifiers.iter() {
@@ -2243,9 +2227,9 @@ pub mod pallet {
             Ok(())
         }
 
-        fn expected_coinbase_amount(height: u64, fees: u128) -> Result<u64, Error<T>> {
+        fn expected_miner_reward_amount(height: u64, miner_fees: u128) -> Result<u64, Error<T>> {
             let subsidy = pallet_coinbase::block_subsidy(height);
-            let fee_u64 = u64::try_from(fees).map_err(|_| Error::<T>::FeeOverflow)?;
+            let fee_u64 = u64::try_from(miner_fees).map_err(|_| Error::<T>::FeeOverflow)?;
             let amount = subsidy
                 .checked_add(fee_u64)
                 .ok_or(Error::<T>::FeeOverflow)?;
@@ -2255,15 +2239,32 @@ pub mod pallet {
             Ok(amount)
         }
 
-        fn record_fee(fee: u128) -> Result<(), Error<T>> {
-            if fee == 0 {
+        fn record_fee_split(
+            provided_fee: u128,
+            required: types::ShieldedFeeBreakdown,
+        ) -> Result<(), Error<T>> {
+            if provided_fee == 0 {
                 return Ok(());
             }
-            BlockFees::<T>::try_mutate(|total| {
-                *total = total.checked_add(fee).ok_or(Error::<T>::FeeOverflow)?;
+
+            // Prover share is deterministic; any sender overpayment stays with miners.
+            let prover_fees = required.prover_fee;
+            let miner_fees = provided_fee
+                .checked_sub(prover_fees)
+                .ok_or(Error::<T>::FeeOverflow)?;
+
+            BlockFeeBucketsStorage::<T>::try_mutate(|buckets| {
+                buckets.miner_fees = buckets
+                    .miner_fees
+                    .checked_add(miner_fees)
+                    .ok_or(Error::<T>::FeeOverflow)?;
+                buckets.prover_fees = buckets
+                    .prover_fees
+                    .checked_add(prover_fees)
+                    .ok_or(Error::<T>::FeeOverflow)?;
                 Ok::<(), Error<T>>(())
             })?;
-            PoolBalance::<T>::mutate(|balance| *balance = balance.saturating_sub(fee));
+            PoolBalance::<T>::mutate(|balance| *balance = balance.saturating_sub(provided_fee));
             Ok(())
         }
 
@@ -2282,10 +2283,21 @@ pub mod pallet {
             ciphertext_bytes: u64,
             proof_kind: types::FeeProofKind,
         ) -> Result<u128, Error<T>> {
+            Ok(Self::quote_fee_breakdown(ciphertext_bytes, proof_kind)?.total_fee)
+        }
+
+        pub fn quote_fee_breakdown(
+            ciphertext_bytes: u64,
+            proof_kind: types::FeeProofKind,
+        ) -> Result<types::ShieldedFeeBreakdown, Error<T>> {
             let params = Self::current_fee_parameters();
-            let base = match proof_kind {
+            let prover_fee = match proof_kind {
                 types::FeeProofKind::Single => params.proof_fee,
                 types::FeeProofKind::Batch => params.batch_proof_fee,
+            };
+            let inclusion_fee = match proof_kind {
+                types::FeeProofKind::Single => params.inclusion_fee,
+                types::FeeProofKind::Batch => params.batch_inclusion_fee,
             };
             let bytes = u128::from(ciphertext_bytes);
             let da_fee = bytes
@@ -2296,9 +2308,18 @@ pub mod pallet {
                 .checked_mul(params.retention_byte_fee)
                 .and_then(|value| value.checked_mul(retention_blocks))
                 .ok_or(Error::<T>::FeeOverflow)?;
-            base.checked_add(da_fee)
+            let miner_fee = inclusion_fee
+                .checked_add(da_fee)
                 .and_then(|value| value.checked_add(retention_fee))
-                .ok_or(Error::<T>::FeeOverflow)
+                .ok_or(Error::<T>::FeeOverflow)?;
+            let total_fee = prover_fee
+                .checked_add(miner_fee)
+                .ok_or(Error::<T>::FeeOverflow)?;
+            Ok(types::ShieldedFeeBreakdown {
+                prover_fee,
+                miner_fee,
+                total_fee,
+            })
         }
 
         pub fn forced_inclusions() -> Vec<types::ForcedInclusionStatus> {
@@ -2348,20 +2369,154 @@ pub mod pallet {
             Ok(total)
         }
 
+        fn total_block_proof_bytes(bundle: &types::BlockProofBundle) -> usize {
+            let flat_batches_bytes = bundle
+                .flat_batches
+                .iter()
+                .map(|item| item.proof.data.len())
+                .sum::<usize>();
+            let merge_root_bytes = bundle
+                .merge_root
+                .as_ref()
+                .map(|merge| {
+                    merge.root_proof.data.len()
+                        + merge
+                            .diagnostics_leaf_proofs
+                            .iter()
+                            .map(|item| item.proof.data.len())
+                            .sum::<usize>()
+                })
+                .unwrap_or(0);
+            bundle.commitment_proof.data.len() + flat_batches_bytes + merge_root_bytes
+        }
+
+        fn validate_block_proof_bundle_mode(
+            bundle: &types::BlockProofBundle,
+        ) -> Result<(), Error<T>> {
+            match bundle.proof_mode {
+                types::BlockProofMode::FlatBatches => {
+                    if bundle.flat_batches.is_empty()
+                        || bundle.flat_batches.len() > types::MAX_FLAT_BATCHES_PER_BLOCK
+                    {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    if bundle.merge_root.is_some() {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    for item in &bundle.flat_batches {
+                        if item.tx_count == 0 {
+                            return Err(Error::<T>::InvalidProofFormat);
+                        }
+                        if item.proof_format != types::BLOCK_PROOF_FORMAT_ID_V5 {
+                            return Err(Error::<T>::InvalidProofFormat);
+                        }
+                        if item.proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                            return Err(Error::<T>::ProofTooLarge);
+                        }
+                    }
+                }
+                types::BlockProofMode::MergeRoot => {
+                    if !bundle.flat_batches.is_empty() {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    let merge_root = bundle
+                        .merge_root
+                        .as_ref()
+                        .ok_or(Error::<T>::InvalidProofFormat)?;
+                    if merge_root.root_proof.data.is_empty()
+                        || merge_root.root_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE
+                    {
+                        return Err(Error::<T>::ProofTooLarge);
+                    }
+                    if merge_root.metadata.leaf_count == 0 || merge_root.metadata.tree_arity < 2 {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    for item in &merge_root.diagnostics_leaf_proofs {
+                        if item.tx_count == 0 {
+                            return Err(Error::<T>::InvalidProofFormat);
+                        }
+                        if item.proof_format != types::BLOCK_PROOF_FORMAT_ID_V5 {
+                            return Err(Error::<T>::InvalidProofFormat);
+                        }
+                        if item.proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                            return Err(Error::<T>::ProofTooLarge);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
         fn expected_coinbase_commitment(coinbase_data: &types::CoinbaseNoteData) -> [u8; 48] {
             let pk_recipient =
                 commitment::pk_recipient_from_address(&coinbase_data.recipient_address);
+            let pk_auth = commitment::pk_auth_from_address(&coinbase_data.recipient_address);
             commitment::circuit_coinbase_commitment(
                 &pk_recipient,
+                &pk_auth,
                 coinbase_data.amount,
                 &coinbase_data.public_seed,
                 0,
             )
         }
 
+        fn prover_claim_signing_payload(
+            claim: &types::ProverCompensationClaim,
+            bundle: &types::BlockProofBundle,
+        ) -> Vec<u8> {
+            let mut payload = Vec::with_capacity(
+                20 + 48
+                    + 4
+                    + 48
+                    + 4
+                    + 32
+                    + claim.prover_recipient.len()
+                    + types::DIVERSIFIED_ADDRESS_SIZE
+                    + 8,
+            );
+            payload.extend_from_slice(b"hegemon-prover-claim");
+            payload.extend_from_slice(&bundle.tx_statements_commitment);
+            payload.extend_from_slice(&bundle.tx_count.to_le_bytes());
+            payload.extend_from_slice(&bundle.da_root);
+            payload.extend_from_slice(&bundle.da_chunk_count.to_le_bytes());
+            payload.extend_from_slice(&claim.prover_account);
+            payload.extend_from_slice(&claim.prover_recipient);
+            payload.extend_from_slice(&claim.prover_recipient_address);
+            payload.extend_from_slice(&claim.prover_amount.to_le_bytes());
+            payload
+        }
+
+        fn verify_prover_claim_signature(
+            claim: &types::ProverCompensationClaim,
+            bundle: &types::BlockProofBundle,
+        ) -> bool {
+            if claim.claim_signature.len() != 64 {
+                return false;
+            }
+            let mut sig_bytes = [0u8; 64];
+            sig_bytes.copy_from_slice(&claim.claim_signature);
+            let payload = Self::prover_claim_signing_payload(claim, bundle);
+
+            let sr_pub = sp_core::sr25519::Public::from_raw(claim.prover_account);
+            let sr_sig = sp_core::sr25519::Signature::from_raw(sig_bytes);
+            if sp_core::sr25519::Pair::verify(&sr_sig, &payload, &sr_pub) {
+                return true;
+            }
+
+            let ed_pub = sp_core::ed25519::Public::from_raw(claim.prover_account);
+            let ed_sig = sp_core::ed25519::Signature::from_raw(sig_bytes);
+            sp_core::ed25519::Pair::verify(&ed_sig, &payload, &ed_pub)
+        }
+
         fn validate_encrypted_note(note: &EncryptedNote) -> Result<(), Error<T>> {
             let version = note.ciphertext[0];
             if version != crate::types::NOTE_ENCRYPTION_VERSION {
+                log::info!(
+                    target: "shielded-pool",
+                    "Rejected encrypted note version {}; expected {}",
+                    version,
+                    crate::types::NOTE_ENCRYPTION_VERSION
+                );
                 return Err(Error::<T>::UnsupportedNoteVersion);
             }
 
@@ -2544,9 +2699,13 @@ pub mod pallet {
         /// off-chain or using a different data structure.
         pub fn get_merkle_witness(index: u64) -> Option<merkle::MerkleWitness> {
             use merkle::IncrementalMerkleTree;
+            const MAX_RPC_WITNESS_REBUILD_NOTES: u64 = 65_536;
 
             let tree = MerkleTree::<T>::get();
             if index >= tree.len() {
+                return None;
+            }
+            if tree.len() > MAX_RPC_WITNESS_REBUILD_NOTES {
                 return None;
             }
 
@@ -2630,7 +2789,7 @@ pub mod pallet {
         type Call = Call<T>;
 
         fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
-            log::info!(target: "shielded-pool", "ValidateUnsigned::validate_unsigned called");
+            log::trace!(target: "shielded-pool", "ValidateUnsigned::validate_unsigned called");
             match call {
                 Call::shielded_transfer_unsigned {
                     proof,
@@ -2642,14 +2801,15 @@ pub mod pallet {
                     stablecoin,
                     fee,
                 } => {
-                    log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned");
-                    log::info!(target: "shielded-pool", "  proof.len = {}", proof.data.len());
-                    log::info!(target: "shielded-pool", "  nullifiers.len = {}", nullifiers.len());
-                    log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
-                    log::info!(target: "shielded-pool", "  ciphertexts.len = {}", ciphertexts.len());
-                    log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
-                    log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
-                    log::info!(target: "shielded-pool", "  fee = {}", fee);
+                    log::debug!(
+                        target: "shielded-pool",
+                        "Validating shielded_transfer_unsigned (proof_len={}, nullifiers={}, commitments={}, ciphertexts={}, fee={})",
+                        proof.data.len(),
+                        nullifiers.len(),
+                        commitments.len(),
+                        ciphertexts.len(),
+                        fee
+                    );
 
                     if stablecoin.is_some() {
                         log::info!(
@@ -2748,26 +2908,26 @@ pub mod pallet {
                     };
 
                     // Verify the STARK proof (this is the main validation)
-                    log::info!(target: "shielded-pool", "  Verifying STARK proof...");
+                    log::debug!(target: "shielded-pool", "  Verifying STARK proof...");
                     let verifier = T::ProofVerifier::default();
                     match verifier.verify_stark(proof, &inputs, &vk) {
                         VerificationResult::Valid => {
-                            log::info!(target: "shielded-pool", "  STARK proof PASSED");
+                            log::debug!(target: "shielded-pool", "  STARK proof PASSED");
                         }
                         other => {
-                            log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
+                            log::debug!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
                             return InvalidTransaction::BadProof.into();
                         }
                     }
 
                     // Verify binding hash
-                    log::info!(target: "shielded-pool", "  Verifying binding hash...");
+                    log::debug!(target: "shielded-pool", "  Verifying binding hash...");
                     if !verifier.verify_binding_hash(binding_hash, &inputs) {
-                        log::info!(target: "shielded-pool", "  binding hash FAILED");
+                        log::debug!(target: "shielded-pool", "  binding hash FAILED");
                         return InvalidTransaction::BadSigner.into();
                     }
-                    log::info!(target: "shielded-pool", "  binding hash PASSED");
-                    log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
+                    log::debug!(target: "shielded-pool", "  binding hash PASSED");
+                    log::debug!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
                     // Create tags based on the nullifiers.
                     //
@@ -2806,15 +2966,16 @@ pub mod pallet {
                     stablecoin,
                     fee,
                 } => {
-                    log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned_sidecar");
-                    log::info!(target: "shielded-pool", "  proof.len = {}", proof.data.len());
-                    log::info!(target: "shielded-pool", "  nullifiers.len = {}", nullifiers.len());
-                    log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
-                    log::info!(target: "shielded-pool", "  ciphertext_hashes.len = {}", ciphertext_hashes.len());
-                    log::info!(target: "shielded-pool", "  ciphertext_sizes.len = {}", ciphertext_sizes.len());
-                    log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
-                    log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
-                    log::info!(target: "shielded-pool", "  fee = {}", fee);
+                    log::debug!(
+                        target: "shielded-pool",
+                        "Validating shielded_transfer_unsigned_sidecar (proof_len={}, nullifiers={}, commitments={}, ciphertext_hashes={}, ciphertext_sizes={}, fee={})",
+                        proof.data.len(),
+                        nullifiers.len(),
+                        commitments.len(),
+                        ciphertext_hashes.len(),
+                        ciphertext_sizes.len(),
+                        fee
+                    );
 
                     if stablecoin.is_some() {
                         log::info!(
@@ -2924,48 +3085,47 @@ pub mod pallet {
                     let aggregation_mode = AggregationProofRequired::<T>::get();
                     let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
 
-                    if proof.data.is_empty() {
-                        if !aggregation_mode {
-                            log::info!(
-                                target: "shielded-pool",
-                                "  REJECTED: proof bytes missing outside aggregation mode"
-                            );
-                            return InvalidTransaction::Custom(12).into();
-                        }
-
-                        if !matches!(proof_policy, types::ProofAvailabilityPolicy::DaRequired) {
-                            log::info!(
-                                target: "shielded-pool",
-                                "  REJECTED: proof bytes required by policy"
-                            );
-                            return InvalidTransaction::Custom(12).into();
-                        }
+                    if proof.data.is_empty()
+                        && !matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained)
+                    {
+                        log::info!(
+                            target: "shielded-pool",
+                            "  REJECTED: proof bytes required by policy"
+                        );
+                        return InvalidTransaction::Custom(12).into();
                     }
-                    if !aggregation_mode {
-                        log::info!(target: "shielded-pool", "  Verifying STARK proof...");
+                    // Validation is performed against the current block state. For proofless
+                    // sidecar transfers in SelfContained mode, a block author can still make the
+                    // transaction valid by placing `enable_aggregation_mode` before transfers in
+                    // the candidate block, so mempool admission must not force inline proof
+                    // verification when proof bytes are intentionally omitted.
+                    if !aggregation_mode && !proof.data.is_empty() {
+                        log::debug!(target: "shielded-pool", "  Verifying STARK proof...");
                         match verifier.verify_stark(proof, &inputs, &vk) {
                             VerificationResult::Valid => {
-                                log::info!(target: "shielded-pool", "  STARK proof PASSED");
+                                log::debug!(target: "shielded-pool", "  STARK proof PASSED");
                             }
                             other => {
-                                log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
+                                log::debug!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
                                 return InvalidTransaction::BadProof.into();
                             }
                         }
                     }
 
-                    log::info!(target: "shielded-pool", "  Verifying binding hash...");
+                    log::debug!(target: "shielded-pool", "  Verifying binding hash...");
                     if !verifier.verify_binding_hash(binding_hash, &inputs) {
-                        log::info!(target: "shielded-pool", "  binding hash FAILED");
+                        log::debug!(target: "shielded-pool", "  binding hash FAILED");
                         return InvalidTransaction::BadSigner.into();
                     }
-                    log::info!(target: "shielded-pool", "  binding hash PASSED");
-                    log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
+                    log::debug!(target: "shielded-pool", "  binding hash PASSED");
+                    log::debug!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
                     let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
                         .priority(100)
                         .longevity(64)
-                        .propagate(!proof.data.is_empty());
+                        // Proofless sidecar transfers must still propagate so non-submitting
+                        // miners can include them once aggregation mode is enabled in-block.
+                        .propagate(true);
 
                     let mut provided_any = false;
                     for nf in nullifiers.iter() {
@@ -3003,20 +3163,55 @@ pub mod pallet {
                 // Inherent extrinsics are validated through ProvideInherent::check_inherent
                 // but they still need to pass ValidateUnsigned to be applied.
                 // We return a valid transaction here; the actual validation happens in check_inherent.
-                Call::mint_coinbase { coinbase_data } => {
+                Call::mint_coinbase { reward_bundle } => {
                     if _source != TransactionSource::InBlock {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: source != InBlock"
+                        );
                         return InvalidTransaction::Call.into();
                     }
                     if CoinbaseProcessed::<T>::get() {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: CoinbaseProcessed already set"
+                        );
                         return InvalidTransaction::Stale.into();
                     }
-                    if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
+                    if Self::ensure_coinbase_subsidy(reward_bundle.miner_note.amount).is_err() {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: subsidy exceeds safety cap (amount={})",
+                            reward_bundle.miner_note.amount
+                        );
                         return InvalidTransaction::Custom(9).into();
                     }
-                    let expected_commitment = Self::expected_coinbase_commitment(coinbase_data);
-                    if coinbase_data.commitment != expected_commitment {
+                    let expected_commitment =
+                        Self::expected_coinbase_commitment(&reward_bundle.miner_note);
+                    if reward_bundle.miner_note.commitment != expected_commitment {
+                        log::info!(
+                            target: "shielded-pool",
+                            "ValidateUnsigned mint_coinbase REJECTED: miner commitment mismatch"
+                        );
                         return InvalidTransaction::BadProof.into();
                     }
+                    if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+                        let expected_prover_commitment =
+                            Self::expected_coinbase_commitment(prover_note);
+                        if prover_note.commitment != expected_prover_commitment {
+                            log::info!(
+                                target: "shielded-pool",
+                                "ValidateUnsigned mint_coinbase REJECTED: prover commitment mismatch"
+                            );
+                            return InvalidTransaction::BadProof.into();
+                        }
+                    }
+                    log::info!(
+                        target: "shielded-pool",
+                        "ValidateUnsigned mint_coinbase ACCEPTED (miner_amount={}, has_prover_note={})",
+                        reward_bundle.miner_note.amount,
+                        reward_bundle.prover_note.is_some()
+                    );
                     ValidTransaction::with_tag_prefix("ShieldedPoolCoinbase")
                         .priority(TransactionPriority::MAX) // Inherents have highest priority
                         .longevity(1) // Only valid for current block
@@ -3024,81 +3219,42 @@ pub mod pallet {
                         .propagate(false) // Inherents are not propagated
                         .build()
                 }
-                Call::submit_commitment_proof {
-                    da_root: _,
-                    chunk_count,
-                    proof,
-                } => {
+                Call::submit_proven_batch { payload } => {
                     if _source != TransactionSource::InBlock {
                         return InvalidTransaction::Call.into();
                     }
-                    if CommitmentProofProcessed::<T>::get() {
+                    if ProvenBatchProcessed::<T>::get() {
                         return InvalidTransaction::Stale.into();
                     }
-                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
-                        return InvalidTransaction::ExhaustsResources.into();
+                    if payload.version != types::BLOCK_PROOF_BUNDLE_SCHEMA {
+                        return InvalidTransaction::BadProof.into();
                     }
-                    if *chunk_count == 0 {
+                    if payload.tx_count == 0 {
                         return InvalidTransaction::Custom(10).into();
                     }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolCommitmentProof")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"commitment_proof".to_vec()])
-                        .propagate(false)
-                        .build()
-                }
-                Call::submit_proof_da_commitment {
-                    da_root: _,
-                    chunk_count,
-                } => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
-                    }
-                    if ProofDaCommitmentProcessed::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if *chunk_count == 0 {
-                        return InvalidTransaction::Custom(13).into();
-                    }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolProofDaCommitment")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"proof_da_commitment".to_vec()])
-                        .propagate(false)
-                        .build()
-                }
-                Call::submit_proof_da_manifest { manifest } => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
-                    }
-                    if ProofDaManifestProcessed::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if manifest.is_empty() {
-                        return InvalidTransaction::Custom(14).into();
-                    }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolProofDaManifest")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"proof_da_manifest".to_vec()])
-                        .propagate(false)
-                        .build()
-                }
-                Call::submit_aggregation_proof { proof } => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
-                    }
-                    if AggregationProofProcessed::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                    if payload.commitment_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
                         return InvalidTransaction::ExhaustsResources.into();
                     }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolAggregationProof")
+                    if Self::validate_block_proof_bundle_mode(payload).is_err() {
+                        return InvalidTransaction::BadProof.into();
+                    }
+                    if Self::total_block_proof_bytes(payload)
+                        > types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES
+                    {
+                        return InvalidTransaction::ExhaustsResources.into();
+                    }
+                    if payload.da_chunk_count == 0 {
+                        return InvalidTransaction::Custom(10).into();
+                    }
+                    if let Some(claim) = payload.prover_claim.as_ref() {
+                        if !Self::verify_prover_claim_signature(claim, payload) {
+                            return InvalidTransaction::BadProof.into();
+                        }
+                    }
+                    ValidTransaction::with_tag_prefix("ShieldedPoolProvenBatch")
                         .priority(TransactionPriority::MAX)
                         .longevity(1)
-                        .and_provides(vec![b"aggregation_proof".to_vec()])
+                        .and_provides(vec![b"proven_batch".to_vec()])
                         .propagate(false)
                         .build()
                 }
@@ -3124,9 +3280,10 @@ mod tests {
         use commitment::circuit_note_commitment;
 
         let pk_recipient = [1u8; 32];
+        let pk_auth = [9u8; 32];
         let rho = [2u8; 32];
         let r = [3u8; 32];
-        let cm = circuit_note_commitment(1000, 0, &pk_recipient, &rho, &r);
+        let cm = circuit_note_commitment(1000, 0, &pk_recipient, &pk_auth, &rho, &r);
 
         assert_eq!(cm.len(), 48);
     }

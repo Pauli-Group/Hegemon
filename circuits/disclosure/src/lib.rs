@@ -19,6 +19,7 @@ pub struct PaymentDisclosureClaim {
     pub value: u64,
     pub asset_id: u64,
     pub pk_recipient: [u8; 32],
+    pub pk_auth: [u8; 32],
     #[serde(with = "serde_bytes48")]
     pub commitment: [u8; 48],
 }
@@ -72,6 +73,7 @@ pub fn prove_payment_disclosure(
         claim.value,
         claim.asset_id,
         &claim.pk_recipient,
+        &claim.pk_auth,
         &witness.rho,
         &witness.r,
     );
@@ -113,6 +115,7 @@ pub(crate) fn claim_to_public_inputs(
         value: transaction_core::hashing_pq::Felt::from_u64(claim.value),
         asset_id: transaction_core::hashing_pq::Felt::from_u64(claim.asset_id),
         pk_recipient: bytes32_to_field_elements(&claim.pk_recipient),
+        pk_auth: bytes32_to_field_elements(&claim.pk_auth),
         commitment,
     })
 }

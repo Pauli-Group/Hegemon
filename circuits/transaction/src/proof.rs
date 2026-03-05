@@ -209,9 +209,7 @@ pub fn prove(
 
     let prover = TransactionProverP3::new();
     let stark_trace = prover.build_trace(witness).map_err(|e| {
-        TransactionCircuitError::ConstraintViolation(Box::leak(
-            format!("Trace building failed: {}", e).into_boxed_str(),
-        ))
+        TransactionCircuitError::ConstraintViolationOwned(format!("Trace building failed: {}", e))
     })?;
     let stark_pub_inputs = prover.public_inputs(witness)?;
     let stark_proof = prover.prove_bytes(stark_trace, &stark_pub_inputs)?;
@@ -276,8 +274,9 @@ fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, Transa
 
     match verify_transaction_proof_bytes_p3(&proof.stark_proof, &stark_pub_inputs) {
         Ok(()) => Ok(VerificationReport { verified: true }),
-        Err(e) => Err(TransactionCircuitError::ConstraintViolation(Box::leak(
-            format!("STARK verification failed: {}", e).into_boxed_str(),
+        Err(e) => Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "STARK verification failed: {}",
+            e
         ))),
     }
 }

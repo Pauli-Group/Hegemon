@@ -221,8 +221,13 @@ impl NoteScanner {
     ///
     /// Returns `Some(ScannedNote)` if the note belongs to this wallet.
     pub fn scan_note(&self, note: &PositionedNote) -> Option<ScannedNote> {
-        // Try to decrypt with the incoming viewing key
-        match self.incoming_key.decrypt_note(&note.ciphertext) {
+        let decrypt_result = if let Some(full_key) = self.full_viewing_key.as_ref() {
+            full_key.decrypt_note(&note.ciphertext)
+        } else {
+            self.incoming_key.decrypt_note(&note.ciphertext)
+        };
+
+        match decrypt_result {
             Ok(recovered) => {
                 // Compute nullifier if we have full viewing key
                 let nullifier = self
@@ -433,6 +438,7 @@ mod tests {
                     value: 100,
                     asset_id: 1,
                     pk_recipient: [0u8; 32],
+                    pk_auth: [0u8; 32],
                     rho: [0u8; 32],
                     r: [0u8; 32],
                 },

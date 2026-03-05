@@ -3,8 +3,81 @@
 use alloc::{format, string::String};
 
 use crate::p3_air::{TransactionAirP3, TransactionPublicInputsP3};
-use crate::p3_config::{config_with_fri, TransactionProofP3, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
-use p3_uni_stark::{get_log_num_quotient_chunks, verify};
+use crate::p3_config::{config_with_fri, TransactionProofP3};
+use p3_uni_stark::verify;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InferredFriProfileP3 {
+    pub log_blowup: usize,
+    pub num_queries: usize,
+}
+
+pub fn infer_fri_profile_from_proof_p3(
+    proof: &TransactionProofP3,
+) -> Result<InferredFriProfileP3, TransactionVerifyErrorP3> {
+    let num_queries = proof.opening_proof.query_proofs.len();
+    if num_queries == 0 {
+        return Err(TransactionVerifyErrorP3::VerificationFailed(String::from(
+            "proof has zero FRI queries",
+        )));
+    }
+
+    let final_poly_len = proof.opening_proof.final_poly.len();
+    if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
+        return Err(TransactionVerifyErrorP3::VerificationFailed(String::from(
+            "proof final polynomial length is invalid",
+        )));
+    }
+    let log_final_poly_len = final_poly_len.ilog2() as usize;
+    let commit_phase_len = proof.opening_proof.commit_phase_commits.len();
+    let baseline = commit_phase_len + log_final_poly_len;
+
+    let mut observed_log_max_height: Option<usize> = None;
+    for (query_index, query_proof) in proof.opening_proof.query_proofs.iter().enumerate() {
+        let query_max = query_proof
+            .input_proof
+            .iter()
+            .map(|batch| batch.opening_proof.len())
+            .max()
+            .ok_or_else(|| {
+                TransactionVerifyErrorP3::VerificationFailed(format!(
+                    "query {query_index} has no input opening proofs"
+                ))
+            })?;
+        if query_max < baseline {
+            return Err(TransactionVerifyErrorP3::VerificationFailed(format!(
+                "query {query_index} opening depth {query_max} smaller than required baseline {baseline}"
+            )));
+        }
+        match observed_log_max_height {
+            Some(expected) if expected != query_max => {
+                return Err(TransactionVerifyErrorP3::VerificationFailed(format!(
+                    "query opening depth mismatch: expected {expected}, got {query_max} at query {query_index}"
+                )));
+            }
+            Some(_) => {}
+            None => observed_log_max_height = Some(query_max),
+        }
+    }
+
+    let observed_log_max_height = observed_log_max_height.ok_or_else(|| {
+        TransactionVerifyErrorP3::VerificationFailed(String::from(
+            "proof has no query opening paths",
+        ))
+    })?;
+    let log_blowup = observed_log_max_height
+        .checked_sub(baseline)
+        .ok_or_else(|| {
+            TransactionVerifyErrorP3::VerificationFailed(String::from(
+                "failed to infer FRI blowup from proof shape",
+            ))
+        })?;
+
+    Ok(InferredFriProfileP3 {
+        log_blowup,
+        num_queries,
+    })
+}
 
 pub fn verify_transaction_proof_p3(
     proof: &TransactionProofP3,
@@ -15,10 +88,8 @@ pub fn verify_transaction_proof_p3(
         .map_err(TransactionVerifyErrorP3::InvalidPublicInputs)?;
 
     let pub_inputs_vec = pub_inputs.to_vec();
-    let log_chunks =
-        get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
-    let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-    let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+    let fri_profile = infer_fri_profile_from_proof_p3(proof)?;
+    let config = config_with_fri(fri_profile.log_blowup, fri_profile.num_queries);
     verify(&config.config, &TransactionAirP3, proof, &pub_inputs_vec)
         .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
 }

@@ -13,6 +13,8 @@ pub struct NoteData {
     pub asset_id: u64,
     #[serde(with = "crate::note::serde_bytes32")]
     pub pk_recipient: [u8; 32],
+    #[serde(default, with = "crate::note::serde_bytes32")]
+    pub pk_auth: [u8; 32],
     #[serde(with = "crate::note::serde_bytes32")]
     pub rho: [u8; 32],
     #[serde(with = "crate::note::serde_bytes32")]
@@ -32,6 +34,7 @@ impl NoteData {
             self.value,
             self.asset_id,
             &self.pk_recipient,
+            &self.pk_auth,
             &self.rho,
             &self.r,
         )

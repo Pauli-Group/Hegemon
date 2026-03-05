@@ -1,6 +1,6 @@
 //! PQ P2P Integration Tests (Multi-Node)
 //!
-//! Higher-level integration tests for ML-KEM-768 handshakes across
+//! Higher-level integration tests for ML-KEM-1024 handshakes across
 //! full node instances. These complement the lower-level tests in
 //! `network/tests/pq_handshake.rs`.
 //!
