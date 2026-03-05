@@ -27,7 +27,7 @@ The Substrate node uses `sc-consensus-pow` with a Blake3-based seal format and a
 
 The node service performs additional validity gates during import:
 
-- Commitment proof extraction and verification (for blocks with shielded transfers): `node/src/substrate/service.rs` (`verify_proof_carrying_block(..)`), with proof bytes carried via `ShieldedPool::submit_commitment_proof` (`pallets/shielded-pool/src/lib.rs`).
+- Commitment proof extraction and verification (for blocks with shielded transfers): `node/src/substrate/service.rs` (`verify_proof_carrying_block(..)`), with block proof material carried via `ShieldedPool::submit_proven_batch` (`pallets/shielded-pool/src/lib.rs`), optionally paired with `ShieldedPool::enable_aggregation_mode`.
 - Data-availability encoding + sampling gate: `node/src/substrate/service.rs` (`sample_da_for_block(..)` and DA stores).
 
 These are currently *implemented as node import policy*, not runtime-enforced consensus. If the project intends these to be part of the canonical ledger rules, they must be treated as consensus-critical and consistently applied by all nodes.
@@ -92,13 +92,15 @@ The following invariants are phrased so they can be turned into tests. Treat the
 Suggested tests:
 - Unit/integration test in `tests/multi_node_substrate.rs` that exercises the network import path and asserts the `PowBlockImport` fork-choice is not overridden.
 
-### MUST: Commitment proof + tx-proof invariants (if treated as consensus)
+### MUST: Proven-batch + tx-proof invariants (if treated as consensus)
 
-- **Singleton commitment proof**: for any block containing ≥1 shielded transfer, exactly one `ShieldedPool::submit_commitment_proof` extrinsic MUST be present, and it MUST validate against the included shielded transfers.
-- **No proof on empty blocks**: for blocks with zero shielded transfers, `submit_commitment_proof` MUST be absent.
+- **At most one proven batch payload**: a block MUST contain zero or one `ShieldedPool::submit_proven_batch` extrinsics (duplicates are invalid).
+- **No proven batch on shielded-empty blocks**: for blocks with zero shielded transfers, `submit_proven_batch` MUST be absent.
+- **Proofless sidecars are fail-closed**: if any shielded transfer in a block omits inline proof bytes, the block MUST include `enable_aggregation_mode`, run under `ProofAvailabilityPolicy::SelfContained`, and include a valid same-block `submit_proven_batch`.
+- **Self-contained aggregation payload completeness**: when `verification_mode = SelfContainedAggregation`, the proven-batch payload MUST include non-empty aggregation proof bytes for the selected proof mode.
 
 Suggested tests:
-- Extend `consensus/tests/commitment_proof_handoff.rs`-style coverage with a Substrate-extrinsic block assembly test (construct extrinsics, ensure import rejects missing/duplicate proof).
+- Extend `consensus/tests/commitment_proof_handoff.rs`-style coverage with a Substrate-extrinsic block assembly test (construct extrinsics, ensure import rejects missing/duplicate/invalid `submit_proven_batch` paths).
 
 ### SHOULD: Data availability invariants (if treated as consensus)
 
@@ -116,4 +118,3 @@ Suggested tests:
    - Option B: Legacy `consensus::PowConsensus` is canonical; deprecate/remove Substrate PoW path.
 2. Fix fork-choice wiring so PoW uses total difficulty (Substrate PoW engine semantics).
 3. Convert “consensus-critical env toggles” into a single on-chain/runtime configuration surface (or remove them), so operators cannot accidentally split themselves from the network.
-
