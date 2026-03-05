@@ -58,8 +58,8 @@ p budgets.
 - `pallet-shielded-pool`
   - `shielded_transfer(...)` / `shielded_transfer_unsigned(...)` submit per-transaction STARK proofs.
   - `batch_shielded_transfer(...)` submits a batch STARK proof for multiple transfers sharing an anchor.
-  - `submit_commitment_proof(da_root: [u8;48], chunk_count: u32, proof: StarkProof)` carries a block commitment proof plus DA metadata (verified during node import).
-  - `submit_aggregation_proof(proof: StarkProof)` carries an aggregation proof (outer recursion proof) verified during node import.
+  - `enable_aggregation_mode()` marks the current block as aggregation-required (unsigned/`None` origin; must appear before shielded transfers that rely on proofless sidecar flow).
+  - `submit_proven_batch(payload: BlockProofBundle)` carries the per-block proof bundle (schema `2`) used by import-time verification: commitment proof bytes, `tx_statements_commitment`, DA metadata (`da_root`, `da_chunk_count`), proof mode (`FlatBatches` or `MergeRoot`), and optional prover compensation claim.
 
 ## Runtime pallets (identity, attestations, settlement)
 
