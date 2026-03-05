@@ -46,25 +46,9 @@ RUST_LOG=info \
   --name HegemonArchive
 ```
 
-## 4) Register the archive provider on-chain
+## 4) Archive-provider note
 
-Use Polkadot.js Apps (or another extrinsic tool) connected to `ws://127.0.0.1:9944`.
-Submit `ArchiveMarket.register_provider` from a funded dev account (e.g. `//Alice`):
-
-```
-price_per_byte_block: 1
-min_duration_blocks: 8
-endpoint: "ws://127.0.0.1:9945"
-bond: 1000000000000
-```
-
-Confirm the provider is visible:
-
-```bash
-curl -s -H "Content-Type: application/json" \
-  -d '{"id":1,"jsonrpc":"2.0","method":"archive_listProviders","params":[]}' \
-  http://127.0.0.1:9944 | jq
-```
+The old on-chain `ArchiveMarket.register_provider` flow is no longer part of the live proof-native runtime. Treat this runbook as archival design context only unless the archive market is reintroduced under the new protocol model.
 
 ## 5) Create sender + recipient wallets
 

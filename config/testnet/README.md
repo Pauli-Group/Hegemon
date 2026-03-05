@@ -27,6 +27,8 @@ This creates:
 - `keys/boot1.key`, `keys/boot2.key`, `keys/boot3.key` - Node identity keys
 - `.env.testnet` - Environment file with peer IDs
 
+All miners should use the same approved `HEGEMON_SEEDS` list when joining the shared testnet. Divergent seed lists can reduce connectivity and increase fork risk. Enable NTP/chrony on every host because PoW timestamps are rejected if they exceed the future-skew bound.
+
 ### 3. Generate Chain Spec
 
 ```bash
@@ -57,7 +59,9 @@ docker-compose -f docker-compose.testnet.yml up -d
 
 ```bash
 # Check node health
-curl -s http://localhost:9944/health | jq
+curl -s -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+    http://localhost:9944 | jq '.result'
 
 # Check block height
 curl -s -X POST -H "Content-Type: application/json" \
@@ -66,8 +70,8 @@ curl -s -X POST -H "Content-Type: application/json" \
 
 # Check peer count
 curl -s -X POST -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
-    http://localhost:9944 | jq '. | length'
+    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+    http://localhost:9944 | jq '.result.peers'
 ```
 
 ## Services

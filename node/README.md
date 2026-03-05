@@ -56,4 +56,4 @@ curl -s -H "Content-Type: application/json" \
   http://127.0.0.1:9944
 ```
 
-These should show a live chain and advancing headers. Wallets should use `hegemon_submitShieldedTransfer` rather than `author_submitExtrinsic`.
+These should show a live chain and advancing headers. Wallets should use `hegemon_submitShieldedTransfer` rather than any generic author-submission RPC.

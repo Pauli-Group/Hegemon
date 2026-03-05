@@ -227,13 +227,13 @@ curl -s -X POST -H "Content-Type: application/json" \
 # Check peer count
 echo "=== Node A Peers ==="
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
-  http://127.0.0.1:9944 | jq '.result | length'
+  -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq '.result.peers'
 
 echo "=== Node B Peers ==="
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
-  http://127.0.0.1:9945 | jq '.result | length'
+  -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+  http://127.0.0.1:9945 | jq '.result.peers'
 ```
 
 **Success Criteria**:
@@ -297,8 +297,8 @@ for i in 9944 9945 9946; do
   NUM=$(echo $HEADER | jq -r ".result.number // \"offline\"")
   HASH=$(echo $HEADER | jq -r ".result.hash // \"\"" | cut -c1-18)
   PEERS=$(curl -s -X POST -H "Content-Type: application/json" \
-    -d "{\"jsonrpc\":\"2.0\",\"method\":\"system_peers\",\"params\":[],\"id\":1}" \
-    http://127.0.0.1:$i 2>/dev/null | jq -r ".result | length // 0")
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"system_health\",\"params\":[],\"id\":1}" \
+    http://127.0.0.1:$i 2>/dev/null | jq -r ".result.peers // 0")
   echo "Node $NAME (port $i): Block $NUM | Hash: ${HASH}... | Peers: $PEERS"
 done
 '
@@ -553,7 +553,7 @@ HEGEMON_MINE=1 cargo run --release -p hegemon-node --features substrate -- --dev
 curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}'
 
 # Peer count
-curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}'
+curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}'
 
 # Health
 curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}'

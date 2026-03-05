@@ -136,7 +136,7 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
-STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks. The live Plonky3 transaction/settlement verifier currently runs with production compile-time parameters from `circuits/transaction-core/src/p3_config.rs` (`log_blowup = 4`, `num_queries = 32`), while runtime defaults for parameter storage remain governance metadata. With 384-bit digests, PQ collision resistance reaches ~128 bits for application-level commitments, and 48-byte encodings are used end-to-end.
+STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) should be treated as protocol-release parameters, not live governance knobs. The live Plonky3 transaction/settlement verifier currently runs with production compile-time parameters from `circuits/transaction-core/src/p3_config.rs` (`log_blowup = 4`, `num_queries = 32`), while any runtime defaults are derived from the active protocol manifest. With 384-bit digests, PQ collision resistance reaches ~128 bits for application-level commitments, and 48-byte encodings are used end-to-end.
 
 ### 1.4 Reference module layout
 

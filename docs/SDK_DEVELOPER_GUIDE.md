@@ -1,33 +1,46 @@
 # SDK developer guide
 
-This guide explains how to build against the Rust SDK crates in this monorepo and how to use `pallet-feature-flags` for staged rollouts.
+This guide explains how to build against the Rust SDK crates in this monorepo after the proof-native cut. The key rule is simple: Hegemon clients construct protocol objects and submit them through Hegemon RPC. They do not build an account-based transaction layer on top of the node.
 
 ## SDK layout
-- **`wallet/`** – client primitives for crafting and signing transactions; includes benchmarking helpers under `wallet-bench`.
-- **`network/`** – libp2p-based networking layer and RPC helpers for node integrations.
-- **`protocol/`** – protocol constants, versioning, and cross-component types.
-- **`pallets/`** – FRAME pallets consumed by the runtime; feature-flag hooks live here.
+
+- `wallet/` – client primitives for note selection, proof construction, note encryption, sync, and Hegemon RPC submission.
+- `network/` – PQ transport and peer-to-peer helpers used by nodes and tooling. This is not a libp2p product surface.
+- `protocol/` – protocol constants, versioning helpers, and transaction-format definitions shared across crates.
+- `runtime/manifest.rs` – the compiled protocol manifest that seeds runtime/chainspec defaults.
 
 When adding a new SDK surface:
-1. Expose the API from the crate root and re-export stable types under a `prelude` module.
-2. Include an example under `examples/` that demonstrates end-to-end usage (construct call, sign, submit, and parse events).
-3. Update `DESIGN.md`/`METHODS.md` with any new invariants and link back to this guide.
 
-## Feature flags
-`pallet-feature-flags` gates runtime functionality behind named cohorts.
+1. Expose the API from the crate root and re-export stable types under a `prelude` module where appropriate.
+2. Include an example under `examples/` that demonstrates the real proof-native flow: construct payload, prove or authenticate it, submit through Hegemon RPC, and parse the result.
+3. Update `DESIGN.md`, `METHODS.md`, and this guide with any new invariants.
 
-- Use bounded feature names (`MaxNameLength` in the runtime) and register a cohort of accounts allowed to use the feature during rollout.
-- Guard runtime upgrades or migrations with `FeatureFlags::guard_on_runtime_upgrade` so only active cohorts execute new logic.
-- Expose SDK toggles: surface a `FeatureToggle` struct in SDK clients that maps feature names to activation status pulled from on-chain storage.
-- Testing: add `cargo test -p runtime migration` to confirm `on_runtime_upgrade` honors feature flags when migrating storage.
+## Submission model
 
-## Feature flag workflow for SDKs
-1. Query `FeatureFlags::features` via RPC to fetch active/inactive sets.
-2. Enable the corresponding code path in the SDK only when the feature is active for the caller’s account.
-3. During staged rollouts, ship SDK builds that default to the old behavior and require an explicit `--enable-feature <name>` flag to opt in.
-4. After the feature is fully active, remove the guard and mark the flag as immutable in the SDK changelog.
+SDK code should assume:
+
+- all economically meaningful state transitions are proof-native unsigned protocol calls
+- public balance transfers do not exist
+- generic `author_*` extrinsic submission is not the supported client path
+- protocol evolution comes from release artifacts (`VersionSchedule`, `ProtocolManifest`), not runtime feature flags or governance pallets
+
+That means new client code should prefer:
+
+- `hegemon_submitShieldedTransfer` for shielded sends
+- standard `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
+- runtime/manifest lookups when the client needs protocol defaults
+
+It should not introduce:
+
+- account-based fee assumptions
+- `FeatureFlags`-style staged rollout logic
+- reliance on treasury, identity, settlement, or archive-market pallets that are no longer part of the live runtime
 
 ## Developer checklist
+
 - Run `cargo fmt` and `cargo clippy --workspace --all-targets --all-features` before pushing.
-- Add integration tests that cover event decoding for any new RPC/client surfaces.
-- Document required feature flags and their cohorts in PRs so ops can align runtime upgrades with SDK releases.
+- Add integration tests that cover real Hegemon RPC submission or decoding behavior for any new client surface.
+- When changing protocol defaults, update `runtime/src/manifest.rs` and the node/runtime chainspec builders in the same change.
+- When changing submission semantics, verify both `cargo test -p wallet substrate_rpc -- --nocapture` and `cargo test -p hegemon-node shielded -- --nocapture`.
+
+The SDK should make the proof-native model easier to use, not hide a second account-native model behind convenience wrappers.

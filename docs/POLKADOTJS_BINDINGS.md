@@ -1,98 +1,31 @@
-# Polkadot.js bindings for SHC pallets
+# Polkadot.js bindings for the proof-native runtime
 
-The custom pallets expose SCALE types that Polkadot.js does not know about by default. Use the snippets below to register the types bundle before constructing an API instance:
+Polkadot.js can still connect to the node for chain/state inspection, metadata browsing, and manual RPC experimentation. It should not be treated as the supported transaction-submission interface, because the live chain no longer exposes a normal account/extrinsic lane.
 
-```ts
-import { ApiPromise, WsProvider } from '@polkadot/api';
+## What Polkadot.js is still good for
 
-const provider = new WsProvider('ws://127.0.0.1:9944');
-const api = await ApiPromise.create({
-  provider,
-  typesBundle: {
-    spec: {
-      'synthetic-hegemonic': {
-        types: [
-          {
-            minmax: [0, undefined],
-            types: {
-              StarkHashFunction: { _enum: ['Blake3', 'Sha3'] },
-              StarkVerifierParams: {
-                hash: 'StarkHashFunction',
-                fri_queries: 'u16',
-                blowup_factor: 'u8',
-                security_bits: 'u16'
-              },
-              NettingKind: { _enum: ['Bilateral', 'Multilateral'] },
-              Leg: { from: 'AccountId', to: 'AccountId', asset: 'u32', amount: 'u128' },
-              Instruction: {
-                id: 'u64',
-                legs: 'Vec<Leg>',
-                netting: 'NettingKind',
-                memo: 'Bytes',
-                submitted_at: 'u64'
-              },
-              BatchCommitment: {
-                id: 'u64',
-                instructions: 'Vec<u64>',
-                commitment: 'H256',
-                nullifiers: 'Vec<H256>',
-                proof: 'Bytes',
-                submitted_by: 'AccountId',
-                disputed: 'bool'
-              },
-              SubmissionRules: { min_interval: 'u64', max_size: 'u32' },
-              CommitmentRecord: {
-                commitment: 'Bytes',
-                attestation: 'Option<u32>',
-                submitted_by: 'AccountId',
-                submitted_at: 'u64'
-              },
-              FeedDetails: {
-                owner: 'AccountId',
-                name: 'Bytes',
-                endpoint: 'Bytes',
-                rules: 'SubmissionRules',
-                latest_commitment: 'Option<CommitmentRecord>',
-                last_ingestion: 'u64'
-              }
-            }
-          }
-        ]
-      }
-    }
-  }
-});
-```
+- browsing blocks and headers
+- inspecting runtime metadata
+- reading storage through `state_*`
+- checking node/network status through `system_*`
 
-## Settlement pallet calls and events
+## What it should not be used for
 
-* **submitInstruction(legs, netting, memo)** — queues a settlement instruction. The off-chain worker batches the queue and submits **submitBatch** as either a signed or unsigned transaction when local keys are unavailable.
-* **submitBatch(instructions, commitment, proof, nullifiers, key)** — finalizes a batch. Unsigned calls are accepted only when the payload matches the pending instruction queue.
-* **Events**
-  * `InstructionQueued { id, who, netting }`
-  * `BatchSubmitted { id, who }`
-  * `NullifierConsumed { nullifier }`
+- submitting ordinary signed transactions
+- assuming a balances pallet exists
+- interacting with settlement, archive-market, treasury, or feature-flag pallets that are no longer part of the live runtime
 
-## Oracle pallet calls and events
+## Runtime focus
 
-* **submitCommitment(feedId, commitment, attestation?)** — feed submitters provide commitments respecting the configured submission rules.
-* **verifySubmission(feedId, expectedCommitment)** — feed verifiers may sign this call, and the off-chain worker also dispatches it as an unsigned transaction when a feed is scheduled for ingestion. Successful verification drains the pending ingestion queue.
-* **Events**
-  * `CommitmentSubmitted { feed_id, submitter, attestation }`
-  * `SubmissionVerified { feed_id, verifier }`
-  * `IngestionDispatched { feed_id }`
+The live runtime centers on:
 
-## Sample scripts
+- `ShieldedPool`
+- `Difficulty`
+- the local PoW support pallet
+- `System` and `Timestamp`
 
-Example end-to-end flows are available in `scripts/examples/polkadotjs`:
+If you need to submit a shielded transfer, use the Hegemon RPC method:
 
-* `settlement-submit.js` demonstrates submitting an instruction and forcing the off-chain worker to batch it (signed path) with fallback to unsigned batch submission when no local signer exists.
-* `oracle-verify.js` shows how a feed verifier can sign `verifySubmission` and how a validator can submit the same call unsigned while the feed sits in `PendingIngestions`.
+- `hegemon_submitShieldedTransfer`
 
-Run the scripts with Node 18+ after installing `@polkadot/api`:
-
-```bash
-npm install @polkadot/api
-node scripts/examples/polkadotjs/settlement-submit.js
-node scripts/examples/polkadotjs/oracle-verify.js
-```
+instead of trying to craft a generic account-based extrinsic in Polkadot.js.
