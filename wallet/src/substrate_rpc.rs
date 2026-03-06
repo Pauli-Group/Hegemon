@@ -1163,16 +1163,124 @@ impl SubstrateRpcClient {
     pub async fn submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
         &self,
         bundle: &TransactionBundle,
-        _force_proof_sidecar: Option<bool>,
+        force_proof_sidecar: Option<bool>,
     ) -> Result<[u8; 32], WalletError> {
-        self.submit_transaction(bundle).await
+        use base64::Engine;
+
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+
+        let decoded_notes = bundle.decode_notes()?;
+        let mut da_ciphertexts = Vec::with_capacity(decoded_notes.len());
+        for note in &decoded_notes {
+            da_ciphertexts
+                .push(base64::engine::general_purpose::STANDARD.encode(note.to_da_bytes()?));
+        }
+
+        let da_response: Vec<DaSubmitCiphertextsEntry> = client
+            .request(
+                "da_submitCiphertexts",
+                rpc_params![DaSubmitCiphertextsRequest {
+                    ciphertexts: da_ciphertexts,
+                }],
+            )
+            .await
+            .map_err(|e| WalletError::Rpc(format!("da_submitCiphertexts failed: {}", e)))?;
+
+        if da_response.len() != bundle.commitments.len() {
+            return Err(WalletError::Rpc(
+                "DA sidecar response count did not match commitments count".to_string(),
+            ));
+        }
+
+        let mut ciphertext_hashes = Vec::with_capacity(da_response.len());
+        let mut ciphertext_sizes = Vec::with_capacity(da_response.len());
+        for entry in &da_response {
+            ciphertext_hashes.push(hex_to_array48(&entry.hash)?);
+            ciphertext_sizes.push(entry.size);
+        }
+
+        let proof_sidecar = force_proof_sidecar.unwrap_or(false);
+        let proof = if proof_sidecar {
+            let proof_response: serde_json::Value = client
+                .request(
+                    "da_submitProofs",
+                    rpc_params![DaSubmitProofsRequest {
+                        proofs: vec![DaSubmitProofsItem {
+                            binding_hash: format!("0x{}", hex::encode(bundle.binding_hash)),
+                            proof: base64::engine::general_purpose::STANDARD
+                                .encode(&bundle.proof_bytes),
+                        }],
+                    }],
+                )
+                .await
+                .map_err(|e| WalletError::Rpc(format!("da_submitProofs failed: {}", e)))?;
+
+            let staged = proof_response
+                .as_array()
+                .map(|items| !items.is_empty())
+                .unwrap_or(false);
+            if !staged {
+                return Err(WalletError::Rpc(
+                    "da_submitProofs returned no staged proofs".to_string(),
+                ));
+            }
+            Vec::new()
+        } else {
+            bundle.proof_bytes.clone()
+        };
+
+        let args = pallet_shielded_pool::family::ShieldedTransferSidecarArgs {
+            proof,
+            commitments: bundle.commitments.clone(),
+            ciphertext_hashes,
+            ciphertext_sizes,
+            anchor: bundle.anchor,
+            binding_hash: bundle.binding_hash,
+            stablecoin: if bundle.stablecoin.enabled {
+                Some(pallet_shielded_pool::types::StablecoinPolicyBinding {
+                    asset_id: bundle.stablecoin.asset_id,
+                    policy_hash: bundle.stablecoin.policy_hash,
+                    oracle_commitment: bundle.stablecoin.oracle_commitment,
+                    attestation_commitment: bundle.stablecoin.attestation_commitment,
+                    issuance_delta: bundle.stablecoin.issuance_delta,
+                    policy_version: bundle.stablecoin.policy_version,
+                })
+            } else {
+                None
+            },
+            fee: bundle.fee,
+        };
+
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+            bundle.nullifiers.clone(),
+            args.encode(),
+        );
+        let request = SubmitActionRequest::from_envelope(&envelope)?;
+        let response: SubmitActionResponse = client
+            .request("hegemon_submitAction", rpc_params![request])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_submitAction failed: {}", e)))?;
+
+        if !response.success {
+            return Err(WalletError::Http(format!(
+                "Kernel action submission failed: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
+            )));
+        }
+
+        let tx_hash = response
+            .tx_hash
+            .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_string()))?;
+        hex_to_array(&tx_hash)
     }
 
-    /// Submit a batch of shielded transfers with a single proof
-    ///
-    /// This submits multiple shielded transactions aggregated into a single
-    /// batch proof, providing ~Nx size and verification time savings where
-    /// N is the batch size.
+    /// Batch shielded transfer submission is not currently exposed through the
+    /// wallet RPC client.
     ///
     /// # Arguments
     ///
@@ -1343,10 +1451,30 @@ struct SubmitActionResponse {
     error: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitCiphertextsRequest {
+    ciphertexts: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DaSubmitCiphertextsEntry {
+    hash: String,
+    size: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitProofsRequest {
+    proofs: Vec<DaSubmitProofsItem>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DaSubmitProofsItem {
+    binding_hash: String,
+    proof: String,
+}
+
 impl SubmitActionRequest {
     fn from_bundle(bundle: &TransactionBundle) -> Result<Self, WalletError> {
-        use base64::Engine;
-
         let ciphertexts = bundle
             .decode_notes()?
             .into_iter()
@@ -1388,19 +1516,45 @@ impl SubmitActionRequest {
             args.encode(),
         );
 
+        Self::from_envelope(&envelope)
+    }
+
+    fn from_envelope(
+        envelope: &protocol_kernel::types::ActionEnvelope,
+    ) -> Result<Self, WalletError> {
+        use base64::Engine;
+
         Ok(Self {
             binding_circuit: envelope.binding.circuit,
             binding_crypto: envelope.binding.crypto,
             family_id: envelope.family_id,
             action_id: envelope.action_id,
-            object_refs: Vec::new(),
+            object_refs: envelope
+                .object_refs
+                .iter()
+                .map(|object_ref| SubmitActionObjectRef {
+                    family_id: object_ref.family_id,
+                    object_id: hex::encode(object_ref.object_id),
+                    expected_root: hex::encode(object_ref.expected_root),
+                })
+                .collect(),
             new_nullifiers: envelope.new_nullifiers.iter().map(hex::encode).collect(),
             public_args: base64::engine::general_purpose::STANDARD.encode(&envelope.public_args),
             authorization_proof: (!envelope.authorization.proof_bytes.is_empty()).then(|| {
                 base64::engine::general_purpose::STANDARD
                     .encode(&envelope.authorization.proof_bytes)
             }),
-            authorization_signatures: Vec::new(),
+            authorization_signatures: envelope
+                .authorization
+                .signatures
+                .iter()
+                .map(|sig| SubmitActionSignature {
+                    key_id: hex::encode(sig.key_id),
+                    signature_scheme: sig.signature_scheme,
+                    signature_bytes: base64::engine::general_purpose::STANDARD
+                        .encode(&sig.signature_bytes),
+                })
+                .collect(),
             aux_data: (!envelope.aux_data.is_empty())
                 .then(|| base64::engine::general_purpose::STANDARD.encode(&envelope.aux_data)),
         })

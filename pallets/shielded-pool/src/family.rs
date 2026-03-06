@@ -1,27 +1,22 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use sp_std::vec;
 
 use codec::{Decode, Encode};
 use frame_support::pallet_prelude::BoundedVec;
-use frame_system::RawOrigin;
-use protocol_kernel::traits::{
-    ActionSourceClass, ApplyOutcome, KernelStateView, KernelStateWrite, ValidActionMeta,
-};
+use protocol_kernel::traits::{ApplyOutcome, KernelStateView, KernelStateWrite, ValidActionMeta};
 use protocol_kernel::types::{
     ActionEnvelope, ActionId, FamilyId, KernelVersionBinding, StatementHash,
 };
 use sha2::{Digest, Sha384};
-use sp_runtime::transaction_validity::TransactionSource;
 use sp_runtime::DispatchError;
 use transaction_core::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_core::hashing_pq::ciphertext_hash_bytes;
 
-use crate::pallet::{Call, Pallet};
+use crate::pallet::Pallet;
 use crate::types::{
-    BatchStarkProof, BindingHash, BlockProofBundle, BlockRewardBundle, EncryptedNote,
-    StablecoinPolicyBinding, StarkProof,
+    BatchStarkProof, BlockProofBundle, BlockRewardBundle, EncryptedNote, StablecoinPolicyBinding,
+    StarkProof,
 };
 use crate::Config;
 
@@ -227,78 +222,59 @@ pub fn validate_action<T: Config>(
     let action = ShieldedFamilyAction::decode_envelope(envelope)?;
     match action {
         ShieldedFamilyAction::TransferInline { nullifiers, args } => {
-            let call = Call::<T>::shielded_transfer_unsigned {
-                proof: StarkProof::from_bytes(args.proof),
-                nullifiers: to_bounded_nullifiers::<T>(&nullifiers)?,
-                commitments: to_bounded_commitments::<T>(&args.commitments)?,
-                ciphertexts: to_bounded_ciphertexts::<T>(&args.ciphertexts)?,
-                anchor: args.anchor,
-                binding_hash: BindingHash {
+            Pallet::<T>::validate_shielded_transfer_unsigned_action(
+                &StarkProof::from_bytes(args.proof),
+                &to_bounded_nullifiers::<T>(&nullifiers)?,
+                &to_bounded_commitments::<T>(&args.commitments)?,
+                &to_bounded_ciphertexts::<T>(&args.ciphertexts)?,
+                &args.anchor,
+                &crate::types::BindingHash {
                     data: args.binding_hash,
                 },
-                stablecoin: args.stablecoin,
-                fee: args.fee,
-            };
-            validate_call::<T>(
-                TransactionSource::External,
-                &call,
-                ActionSourceClass::External,
-                nullifier_tags(&nullifiers),
+                &args.stablecoin,
+                args.fee,
             )
+            .map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
         ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
-            let call = Call::<T>::shielded_transfer_unsigned_sidecar {
-                proof: StarkProof::from_bytes(args.proof),
-                nullifiers: to_bounded_nullifiers::<T>(&nullifiers)?,
-                commitments: to_bounded_commitments::<T>(&args.commitments)?,
-                ciphertext_hashes: to_bounded_commitments::<T>(&args.ciphertext_hashes)?,
-                ciphertext_sizes: to_bounded_ciphertext_sizes::<T>(&args.ciphertext_sizes)?,
-                anchor: args.anchor,
-                binding_hash: BindingHash {
+            Pallet::<T>::validate_shielded_transfer_unsigned_sidecar_action(
+                &StarkProof::from_bytes(args.proof),
+                &to_bounded_nullifiers::<T>(&nullifiers)?,
+                &to_bounded_commitments::<T>(&args.commitments)?,
+                &to_bounded_commitments::<T>(&args.ciphertext_hashes)?,
+                &to_bounded_ciphertext_sizes::<T>(&args.ciphertext_sizes)?,
+                &args.anchor,
+                &crate::types::BindingHash {
                     data: args.binding_hash,
                 },
-                stablecoin: args.stablecoin,
-                fee: args.fee,
-            };
-            validate_call::<T>(
-                TransactionSource::External,
-                &call,
-                ActionSourceClass::External,
-                nullifier_tags(&nullifiers),
+                &args.stablecoin,
+                args.fee,
             )
+            .map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
-        ShieldedFamilyAction::BatchTransfer { nullifiers, .. } => Ok(ValidActionMeta {
-            priority: 100,
-            longevity: 64,
-            provides: nullifier_tags(&nullifiers),
-            requires: Vec::new(),
-            propagate: true,
-            source_class: ActionSourceClass::External,
-        }),
-        ShieldedFamilyAction::EnableAggregationMode => Ok(ValidActionMeta {
-            priority: u64::from(u32::MAX),
-            longevity: 1,
-            provides: vec![b"aggregation_mode".to_vec()],
-            requires: Vec::new(),
-            propagate: false,
-            source_class: ActionSourceClass::InBlockOnly,
-        }),
-        ShieldedFamilyAction::SubmitProvenBatch(_) => Ok(ValidActionMeta {
-            priority: u64::from(u32::MAX),
-            longevity: 1,
-            provides: vec![b"proven_batch".to_vec()],
-            requires: Vec::new(),
-            propagate: false,
-            source_class: ActionSourceClass::InBlockOnly,
-        }),
-        ShieldedFamilyAction::MintCoinbase(_) => Ok(ValidActionMeta {
-            priority: u64::from(u32::MAX),
-            longevity: 1,
-            provides: vec![b"coinbase".to_vec()],
-            requires: Vec::new(),
-            propagate: false,
-            source_class: ActionSourceClass::InBlockOnly,
-        }),
+        ShieldedFamilyAction::BatchTransfer { nullifiers, args } => {
+            Pallet::<T>::validate_batch_shielded_transfer_action(
+                &args.proof,
+                &to_bounded_batch_nullifiers::<T>(&nullifiers)?,
+                &to_bounded_batch_commitments::<T>(&args.commitments)?,
+                &to_bounded_batch_ciphertexts::<T>(&args.ciphertexts)?,
+                &args.anchor,
+                args.total_fee,
+            )
+            .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+        }
+        ShieldedFamilyAction::EnableAggregationMode => {
+            Pallet::<T>::validate_enable_aggregation_mode_action()
+                .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+        }
+        ShieldedFamilyAction::SubmitProvenBatch(args) => {
+            Pallet::<T>::validate_submit_proven_batch_action(&args.payload)
+                .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+        }
+        ShieldedFamilyAction::MintCoinbase(args) => {
+            Pallet::<T>::validate_mint_coinbase_action(&args.reward_bundle)
+                .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+        }
     }
 }
 
@@ -312,14 +288,13 @@ pub fn apply_action<T: Config>(
 
     match action {
         ShieldedFamilyAction::TransferInline { nullifiers, args } => {
-            Pallet::<T>::shielded_transfer_unsigned(
-                RawOrigin::None.into(),
+            Pallet::<T>::apply_shielded_transfer_unsigned_action(
                 StarkProof::from_bytes(args.proof),
                 to_bounded_nullifiers::<T>(&nullifiers)?,
                 to_bounded_commitments::<T>(&args.commitments)?,
                 to_bounded_ciphertexts::<T>(&args.ciphertexts)?,
                 args.anchor,
-                BindingHash {
+                crate::types::BindingHash {
                     data: args.binding_hash,
                 },
                 args.stablecoin,
@@ -328,15 +303,14 @@ pub fn apply_action<T: Config>(
             Ok(outcome::<T>(statement_hash, nullifiers))
         }
         ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
-            Pallet::<T>::shielded_transfer_unsigned_sidecar(
-                RawOrigin::None.into(),
+            Pallet::<T>::apply_shielded_transfer_unsigned_sidecar_action(
                 StarkProof::from_bytes(args.proof),
                 to_bounded_nullifiers::<T>(&nullifiers)?,
                 to_bounded_commitments::<T>(&args.commitments)?,
                 to_bounded_commitments::<T>(&args.ciphertext_hashes)?,
                 to_bounded_ciphertext_sizes::<T>(&args.ciphertext_sizes)?,
                 args.anchor,
-                BindingHash {
+                crate::types::BindingHash {
                     data: args.binding_hash,
                 },
                 args.stablecoin,
@@ -345,8 +319,7 @@ pub fn apply_action<T: Config>(
             Ok(outcome::<T>(statement_hash, nullifiers))
         }
         ShieldedFamilyAction::BatchTransfer { nullifiers, args } => {
-            Pallet::<T>::batch_shielded_transfer(
-                RawOrigin::None.into(),
+            Pallet::<T>::apply_batch_shielded_transfer_action(
                 args.proof,
                 to_bounded_batch_nullifiers::<T>(&nullifiers)?,
                 to_bounded_batch_commitments::<T>(&args.commitments)?,
@@ -357,52 +330,18 @@ pub fn apply_action<T: Config>(
             Ok(outcome::<T>(statement_hash, nullifiers))
         }
         ShieldedFamilyAction::EnableAggregationMode => {
-            Pallet::<T>::enable_aggregation_mode(RawOrigin::None.into())?;
+            Pallet::<T>::apply_enable_aggregation_mode_action()?;
             Ok(outcome::<T>(statement_hash, Vec::new()))
         }
         ShieldedFamilyAction::SubmitProvenBatch(args) => {
-            Pallet::<T>::submit_proven_batch(RawOrigin::None.into(), args.payload)?;
+            Pallet::<T>::apply_submit_proven_batch_action(args.payload)?;
             Ok(outcome::<T>(statement_hash, Vec::new()))
         }
         ShieldedFamilyAction::MintCoinbase(args) => {
-            Pallet::<T>::mint_coinbase(RawOrigin::None.into(), args.reward_bundle)?;
+            Pallet::<T>::apply_mint_coinbase_action(args.reward_bundle)?;
             Ok(outcome::<T>(statement_hash, Vec::new()))
         }
     }
-}
-
-fn validate_call<T: Config>(
-    source: TransactionSource,
-    call: &Call<T>,
-    source_class: ActionSourceClass,
-    provides: Vec<Vec<u8>>,
-) -> Result<ValidActionMeta, DispatchError> {
-    let validity =
-        <Pallet<T> as sp_runtime::traits::ValidateUnsigned>::validate_unsigned(source, call);
-    if validity.is_err() {
-        return Err(DispatchError::Other("invalid-shielded-action"));
-    }
-    Ok(ValidActionMeta {
-        priority: 100,
-        longevity: 64,
-        provides,
-        requires: Vec::new(),
-        propagate: matches!(source_class, ActionSourceClass::External),
-        source_class,
-    })
-}
-
-fn nullifier_tags(nullifiers: &[[u8; 48]]) -> Vec<Vec<u8>> {
-    let mut tags = Vec::new();
-    for nf in nullifiers {
-        let mut tag = b"shielded_nf:".to_vec();
-        tag.extend_from_slice(nf);
-        tags.push(tag);
-    }
-    if tags.is_empty() {
-        tags.push(b"shielded_no_nullifiers".to_vec());
-    }
-    tags
 }
 
 fn outcome<T: Config>(

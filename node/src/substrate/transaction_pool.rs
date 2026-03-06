@@ -434,6 +434,12 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
             }
         };
 
+        if extrinsic.is_signed() {
+            return Err(PoolError::InvalidTransaction(
+                "Signed extrinsics are disabled; submit unsigned kernel actions".into(),
+            ));
+        }
+
         // Convert our TransactionSource to Substrate's
         let sc_source = match source {
             TransactionSource::External => sc_transaction_pool_api::TransactionSource::External,

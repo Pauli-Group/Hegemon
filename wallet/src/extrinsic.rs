@@ -1,15 +1,14 @@
 //! Substrate Extrinsic Construction for Hegemon
 //!
-//! This module constructs properly signed Substrate extrinsics for the
-//! Hegemon runtime using ML-DSA (FIPS 204) and SLH-DSA (FIPS 205) post-quantum signatures.
+//! This module now only retains legacy signed-extrinsic helpers for archival or
+//! test-only scenarios. The live wallet submission path is Hegemon RPC with
+//! kernel action envelopes; direct shielded extrinsic construction fail-closes.
 //!
 //! The extrinsic format matches the runtime's `UncheckedExtrinsic` type:
 //! - Address: MultiAddress<AccountId32, ()>
 //! - Call: RuntimeCall (encoded)
 //! - Signature: pq_crypto::Signature (ML-DSA or SLH-DSA)
-//! - SignedExtra: (CheckNonZeroSender, CheckSpecVersion, CheckTxVersion,
-//!                 CheckGenesis, CheckEra, CheckNonce, CheckWeight,
-//!                 ChargeTransactionPayment)
+//! - SignedExtra: ()
 
 use crate::error::WalletError;
 use crate::metadata::RuntimeCallIndex;
@@ -143,7 +142,8 @@ pub struct ShieldedTransferSidecarCall {
     pub fee: u64,
 }
 
-/// Extrinsic builder for signed transactions
+/// Legacy signed extrinsic builder retained for archival/test scenarios.
+#[allow(dead_code)]
 pub struct ExtrinsicBuilder {
     /// ML-DSA signing key
     signing_key: MlDsaSecretKey,
@@ -153,6 +153,7 @@ pub struct ExtrinsicBuilder {
     account_id: [u8; 32],
 }
 
+#[allow(dead_code)]
 impl ExtrinsicBuilder {
     /// Create a new extrinsic builder from a seed
     pub fn from_seed(seed: &[u8; 32]) -> Self {
@@ -191,22 +192,10 @@ impl ExtrinsicBuilder {
         tip: u128,
         metadata: &ChainMetadata,
     ) -> Result<Vec<u8>, WalletError> {
-        // 1. Encode the call
-        let encoded_call = self.encode_shielded_transfer_call(call, call_index)?;
-
-        // 2. Encode SignedExtra
-        let encoded_extra = self.encode_signed_extra(nonce, &era, tip, metadata);
-
-        // 3. Build the payload to sign
-        let payload = self.build_sign_payload(&encoded_call, &encoded_extra, metadata);
-
-        // 4. Sign with ML-DSA
-        let signature = self.sign_payload(&payload);
-
-        // 5. Build the final extrinsic
-        let extrinsic = self.build_extrinsic(&encoded_call, &signature, &encoded_extra);
-
-        Ok(extrinsic)
+        let _ = (call, call_index, nonce, era, tip, metadata);
+        Err(WalletError::InvalidState(
+            "direct shielded extrinsic construction is removed; use Hegemon kernel RPC".into(),
+        ))
     }
 
     /// Encode the shielded_transfer call
@@ -228,69 +217,10 @@ impl ExtrinsicBuilder {
         call: &ShieldedTransferCall,
         call_index: RuntimeCallIndex,
     ) -> Result<Vec<u8>, WalletError> {
-        let mut encoded = Vec::new();
-
-        // Pallet and call indices resolved from runtime metadata.
-        encoded.push(call_index.pallet_index);
-        encoded.push(call_index.call_index);
-
-        // Encode proof (StarkProof is Vec<u8>)
-        // eprintln!("DEBUG CALL: proof size = {} bytes", call.proof.len());
-        encode_compact_vec(&call.proof, &mut encoded);
-        // eprintln!("DEBUG CALL: after proof, encoded size = {}", encoded.len());
-
-        // Encode nullifiers (BoundedVec<[u8;32], _>)
-        // eprintln!("DEBUG CALL: nullifiers count = {}", call.nullifiers.len());
-        encode_compact_len(call.nullifiers.len(), &mut encoded);
-        for nullifier in &call.nullifiers {
-            encoded.extend_from_slice(nullifier);
-        }
-        // eprintln!("DEBUG CALL: after nullifiers, encoded size = {}", encoded.len());
-
-        // Encode commitments (BoundedVec<[u8;48], _>)
-        // eprintln!("DEBUG CALL: commitments count = {}", call.commitments.len());
-        encode_compact_len(call.commitments.len(), &mut encoded);
-        for commitment in &call.commitments {
-            encoded.extend_from_slice(commitment);
-        }
-        // eprintln!("DEBUG CALL: after commitments, encoded size = {}", encoded.len());
-
-        // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
-        // eprintln!("DEBUG CALL: encrypted_notes count = {}", call.encrypted_notes.len());
-        encode_compact_len(call.encrypted_notes.len(), &mut encoded);
-        for note in &call.encrypted_notes {
-            // The encrypted note must include the ciphertext container plus a length-prefixed KEM.
-            let min_len = crate::notes::PALLET_CIPHERTEXT_SIZE + 1;
-            if note.len() < min_len {
-                return Err(WalletError::Serialization(format!(
-                    "Encrypted note too small: expected at least {} bytes, got {}",
-                    min_len,
-                    note.len()
-                )));
-            }
-            encoded.extend_from_slice(note);
-        }
-        // eprintln!("DEBUG CALL: after encrypted_notes, encoded size = {}", encoded.len());
-
-        // Encode anchor ([u8; 48])
-        encoded.extend_from_slice(&call.anchor);
-        // eprintln!("DEBUG CALL: after anchor, encoded size = {}", encoded.len());
-
-        // Encode binding hash (BindingHash { data: [u8; 64] })
-        encoded.extend_from_slice(&call.binding_hash);
-        // eprintln!("DEBUG CALL: after binding_hash, encoded size = {}", encoded.len());
-
-        // Encode stablecoin binding (Option<StablecoinPolicyBinding>)
-        encode_stablecoin_binding(&call.stablecoin, &mut encoded)?;
-
-        // Encode fee (u64, little-endian)
-        encoded.extend_from_slice(&call.fee.to_le_bytes());
-
-        // Encode value_balance (i128, little-endian)
-        encoded.extend_from_slice(&call.value_balance.to_le_bytes());
-        // eprintln!("DEBUG CALL: final call size = {}", encoded.len());
-
-        Ok(encoded)
+        let _ = (call, call_index);
+        Err(WalletError::InvalidState(
+            "direct shielded call encoding is removed; use Hegemon kernel RPC".into(),
+        ))
     }
 
     /// Encode SignedExtra tuple
@@ -686,59 +616,10 @@ pub fn encode_batch_shielded_transfer_call(
     call: &BatchShieldedTransferCall,
     call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
-    if !cfg!(feature = "batch-proofs") {
-        return Err(WalletError::InvalidArgument(
-            "batch proofs are disabled; rebuild with --features batch-proofs",
-        ));
-    }
-
-    let mut encoded = Vec::new();
-
-    // Pallet and call indices resolved from runtime metadata.
-    encoded.push(call_index.pallet_index);
-    encoded.push(call_index.call_index);
-
-    // Encode proof as BatchStarkProof { data: Vec<u8>, batch_size: u32 }
-    // NOTE: This placeholder empty proof is only reachable with the
-    // `batch-proofs` feature enabled (dev/test-only).
-    // The batch_size tells the verifier how many transactions are in the batch.
-    let proof_data: Vec<u8> = Vec::new(); // TODO: actual batch proof generation
-    encode_compact_vec(&proof_data, &mut encoded);
-    encoded.extend_from_slice(&call.batch_size.to_le_bytes());
-
-    // Encode nullifiers (BoundedVec<[u8;48], MaxNullifiersPerBatch>)
-    encode_compact_len(call.nullifiers.len(), &mut encoded);
-    for nullifier in &call.nullifiers {
-        encoded.extend_from_slice(nullifier);
-    }
-
-    // Encode commitments (BoundedVec<[u8;48], MaxCommitmentsPerBatch>)
-    encode_compact_len(call.commitments.len(), &mut encoded);
-    for commitment in &call.commitments {
-        encoded.extend_from_slice(commitment);
-    }
-
-    // Encode encrypted notes (BoundedVec<EncryptedNote, MaxCommitmentsPerBatch>)
-    encode_compact_len(call.encrypted_notes.len(), &mut encoded);
-    for note in &call.encrypted_notes {
-        let min_len = crate::notes::PALLET_CIPHERTEXT_SIZE + 1;
-        if note.len() < min_len {
-            return Err(WalletError::Serialization(format!(
-                "Encrypted note too small: expected at least {} bytes, got {}",
-                min_len,
-                note.len()
-            )));
-        }
-        encoded.extend_from_slice(note);
-    }
-
-    // Encode anchor ([u8; 48])
-    encoded.extend_from_slice(&call.anchor);
-
-    // Encode total_fee (u128)
-    encoded.extend_from_slice(&call.total_fee.to_le_bytes());
-
-    Ok(encoded)
+    let _ = (call, call_index);
+    Err(WalletError::InvalidState(
+        "direct batch shielded call encoding is removed; use Hegemon kernel RPC".into(),
+    ))
 }
 
 /// Build an unsigned extrinsic for a batch shielded transfer
@@ -746,23 +627,10 @@ pub fn build_unsigned_batch_shielded_transfer(
     call: &BatchShieldedTransferCall,
     call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
-    // Encode the call
-    let encoded_call = encode_batch_shielded_transfer_call(call, call_index)?;
-
-    let mut extrinsic = Vec::new();
-
-    // Version byte: 0x04 = unsigned extrinsic
-    extrinsic.push(0x04);
-
-    // Call data
-    extrinsic.extend_from_slice(&encoded_call);
-
-    // Wrap with compact length prefix
-    let mut result = Vec::new();
-    encode_compact_len(extrinsic.len(), &mut result);
-    result.extend_from_slice(&extrinsic);
-
-    Ok(result)
+    let _ = (call, call_index);
+    Err(WalletError::InvalidState(
+        "direct batch shielded extrinsic construction is removed; use Hegemon kernel RPC".into(),
+    ))
 }
 
 // ============================================================================
@@ -777,63 +645,10 @@ pub fn encode_shielded_transfer_unsigned_call(
     call: &ShieldedTransferCall,
     call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
-    let mut encoded = Vec::new();
-
-    // Pallet and call indices resolved from runtime metadata.
-    encoded.push(call_index.pallet_index);
-    encoded.push(call_index.call_index);
-
-    // Encode proof (StarkProof is Vec<u8>)
-    encode_compact_vec(&call.proof, &mut encoded);
-
-    // Encode nullifiers (BoundedVec<[u8;48], _>)
-    encode_compact_len(call.nullifiers.len(), &mut encoded);
-    for nullifier in &call.nullifiers {
-        encoded.extend_from_slice(nullifier);
-    }
-
-    // Encode commitments (BoundedVec<[u8;48], _>)
-    encode_compact_len(call.commitments.len(), &mut encoded);
-    for commitment in &call.commitments {
-        encoded.extend_from_slice(commitment);
-    }
-
-    // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
-    encode_compact_len(call.encrypted_notes.len(), &mut encoded);
-    for note in &call.encrypted_notes {
-        let min_len = crate::notes::PALLET_CIPHERTEXT_SIZE + 1;
-        if note.len() < min_len {
-            return Err(WalletError::Serialization(format!(
-                "Encrypted note too small: expected at least {} bytes, got {}",
-                min_len,
-                note.len()
-            )));
-        }
-        encoded.extend_from_slice(note);
-    }
-
-    // Encode anchor ([u8; 48])
-    encoded.extend_from_slice(&call.anchor);
-
-    // Encode binding hash (BindingHash { data: [u8; 64] })
-    encoded.extend_from_slice(&call.binding_hash);
-
-    if call.stablecoin.is_some() {
-        return Err(WalletError::Serialization(
-            "stablecoin binding not allowed in unsigned transfers".into(),
-        ));
-    }
-
-    // Encode stablecoin binding (Option<StablecoinPolicyBinding>)
-    encode_stablecoin_binding(&call.stablecoin, &mut encoded)?;
-
-    // Encode fee (u64, little-endian)
-    encoded.extend_from_slice(&call.fee.to_le_bytes());
-
-    // NOTE: No value_balance for unsigned transfers - it's always 0
-    // The pallet hardcodes value_balance = 0 for unsigned calls
-
-    Ok(encoded)
+    let _ = (call, call_index);
+    Err(WalletError::InvalidState(
+        "direct unsigned shielded call encoding is removed; use Hegemon kernel RPC".into(),
+    ))
 }
 
 /// Encode an unsigned `shielded_transfer_unsigned_sidecar` call.
@@ -841,69 +656,10 @@ pub fn encode_shielded_transfer_unsigned_sidecar_call(
     call: &ShieldedTransferSidecarCall,
     call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
-    if call.ciphertext_hashes.len() != call.commitments.len() {
-        return Err(WalletError::Serialization(
-            "ciphertext_hashes count must match commitments".into(),
-        ));
-    }
-    if call.ciphertext_sizes.len() != call.commitments.len() {
-        return Err(WalletError::Serialization(
-            "ciphertext_sizes count must match commitments".into(),
-        ));
-    }
-
-    let mut encoded = Vec::new();
-
-    // Pallet and call indices resolved from runtime metadata.
-    encoded.push(call_index.pallet_index);
-    encoded.push(call_index.call_index);
-
-    // Encode proof (StarkProof is Vec<u8>)
-    encode_compact_vec(&call.proof, &mut encoded);
-
-    // Encode nullifiers (BoundedVec<[u8;48], _>)
-    encode_compact_len(call.nullifiers.len(), &mut encoded);
-    for nullifier in &call.nullifiers {
-        encoded.extend_from_slice(nullifier);
-    }
-
-    // Encode commitments (BoundedVec<[u8;48], _>)
-    encode_compact_len(call.commitments.len(), &mut encoded);
-    for commitment in &call.commitments {
-        encoded.extend_from_slice(commitment);
-    }
-
-    // Encode ciphertext hashes (BoundedVec<[u8;48], _>)
-    encode_compact_len(call.ciphertext_hashes.len(), &mut encoded);
-    for hash in &call.ciphertext_hashes {
-        encoded.extend_from_slice(hash);
-    }
-
-    // Encode ciphertext sizes (BoundedVec<u32, _>)
-    encode_compact_len(call.ciphertext_sizes.len(), &mut encoded);
-    for size in &call.ciphertext_sizes {
-        encoded.extend_from_slice(&size.to_le_bytes());
-    }
-
-    // Encode anchor ([u8; 48])
-    encoded.extend_from_slice(&call.anchor);
-
-    // Encode binding hash (BindingHash { data: [u8; 64] })
-    encoded.extend_from_slice(&call.binding_hash);
-
-    if call.stablecoin.is_some() {
-        return Err(WalletError::Serialization(
-            "stablecoin binding not allowed in unsigned sidecar transfers".into(),
-        ));
-    }
-
-    // Encode stablecoin binding (Option<StablecoinPolicyBinding>)
-    encode_stablecoin_binding(&call.stablecoin, &mut encoded)?;
-
-    // Encode fee (u64, little-endian)
-    encoded.extend_from_slice(&call.fee.to_le_bytes());
-
-    Ok(encoded)
+    let _ = (call, call_index);
+    Err(WalletError::InvalidState(
+        "direct unsigned sidecar call encoding is removed; use Hegemon kernel RPC".into(),
+    ))
 }
 
 /// Build an unsigned extrinsic for a pure shielded-to-shielded transfer
@@ -917,27 +673,10 @@ pub fn build_unsigned_shielded_transfer(
     call: &ShieldedTransferCall,
     call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
-    // Encode the call
-    let encoded_call = encode_shielded_transfer_unsigned_call(call, call_index)?;
-
-    let mut extrinsic = Vec::new();
-
-    // Version byte: 0x04 = unsigned extrinsic
-    // Bit 7 = 0 (unsigned), bits 0-6 = 4 (extrinsic format version)
-    extrinsic.push(0x04);
-
-    // Call data (no signature, no extra for unsigned)
-    extrinsic.extend_from_slice(&encoded_call);
-
-    // Wrap with compact length prefix
-    let mut result = Vec::new();
-    encode_compact_len(extrinsic.len(), &mut result);
-    result.extend_from_slice(&extrinsic);
-
-    // eprintln!("DEBUG: Built unsigned extrinsic: {} bytes", result.len());
-    // eprintln!("DEBUG: First 20 bytes: {}", hex::encode(&result[..20.min(result.len())]));
-
-    Ok(result)
+    let _ = (call, call_index);
+    Err(WalletError::InvalidState(
+        "direct unsigned shielded extrinsic construction is removed; use Hegemon kernel RPC".into(),
+    ))
 }
 
 /// Build an unsigned extrinsic for `shielded_transfer_unsigned_sidecar`.
@@ -945,22 +684,18 @@ pub fn build_unsigned_shielded_transfer_sidecar(
     call: &ShieldedTransferSidecarCall,
     call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
-    let encoded_call = encode_shielded_transfer_unsigned_sidecar_call(call, call_index)?;
-
-    let mut extrinsic = Vec::new();
-    extrinsic.push(0x04);
-    extrinsic.extend_from_slice(&encoded_call);
-
-    let mut result = Vec::new();
-    encode_compact_len(extrinsic.len(), &mut result);
-    result.extend_from_slice(&extrinsic);
-    Ok(result)
+    let _ = (call, call_index);
+    Err(WalletError::InvalidState(
+        "direct unsigned shielded sidecar extrinsic construction is removed; use Hegemon kernel RPC"
+            .into(),
+    ))
 }
 
 // ============================================================================
 // SCALE Encoding Helpers
 // ============================================================================
 
+#[allow(dead_code)]
 fn encode_stablecoin_binding(
     binding: &Option<StablecoinPolicyBinding>,
     out: &mut Vec<u8>,
@@ -1030,6 +765,7 @@ fn encode_compact_u128(value: u128, out: &mut Vec<u8>) {
 }
 
 /// Encode a Vec<u8> with compact length prefix
+#[allow(dead_code)]
 fn encode_compact_vec(data: &[u8], out: &mut Vec<u8>) {
     encode_compact_len(data.len(), out);
     out.extend_from_slice(data);
@@ -1044,19 +780,22 @@ fn blake2_256_hash(data: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::notes::{NoteCiphertext, PALLET_CIPHERTEXT_SIZE};
-    use codec::{Compact, Decode};
+    use codec::Decode;
 
+    #[allow(dead_code)]
     #[derive(Debug, Decode)]
     struct DecodedStarkProof {
         data: Vec<u8>,
     }
 
+    #[allow(dead_code)]
     #[derive(Debug, Decode)]
     struct DecodedEncryptedNote {
         ciphertext: [u8; PALLET_CIPHERTEXT_SIZE],
         kem_ciphertext: Vec<u8>,
     }
 
+    #[allow(dead_code)]
     #[derive(Debug, Decode)]
     struct DecodedBindingHash {
         data: [u8; 64],
@@ -1129,40 +868,11 @@ mod tests {
             call_index: 4,
         };
 
-        let extrinsic = build_unsigned_shielded_transfer(&call, index).expect("unsigned extrinsic");
-        let mut encoded = &extrinsic[..];
-        let len = Compact::<u32>::decode(&mut encoded)
-            .expect("extrinsic compact length")
-            .0 as usize;
-        assert_eq!(len, encoded.len(), "compact length prefix mismatch");
-        assert_eq!(encoded[0], 0x04, "unsigned version byte mismatch");
-        assert_eq!(encoded[1], index.pallet_index);
-        assert_eq!(encoded[2], index.call_index);
-
-        let mut call_bytes = &encoded[3..];
-        let decoded: (
-            DecodedStarkProof,
-            Vec<[u8; 48]>,
-            Vec<[u8; 48]>,
-            Vec<DecodedEncryptedNote>,
-            [u8; 48],
-            DecodedBindingHash,
-            Option<()>,
-            u64,
-        ) = Decode::decode(&mut call_bytes).expect("decode unsigned call args");
+        let err = build_unsigned_shielded_transfer(&call, index).expect_err("must fail closed");
         assert!(
-            call_bytes.is_empty(),
-            "trailing bytes remained after unsigned call decode"
+            err.to_string().contains("Hegemon kernel RPC"),
+            "unexpected error: {err}"
         );
-        assert_eq!(decoded.0.data, call.proof);
-        assert_eq!(decoded.1, call.nullifiers);
-        assert_eq!(decoded.2, call.commitments);
-        assert_eq!(decoded.3.len(), 1);
-        assert_eq!(decoded.3[0].ciphertext.len(), PALLET_CIPHERTEXT_SIZE);
-        assert!(!decoded.3[0].kem_ciphertext.is_empty());
-        assert_eq!(decoded.4, anchor, "anchor mutated in unsigned encoding");
-        assert_eq!(decoded.5.data, binding_hash);
-        assert_eq!(decoded.7, call.fee);
     }
 
     #[test]
@@ -1185,40 +895,11 @@ mod tests {
             call_index: 8,
         };
 
-        let extrinsic =
-            build_unsigned_shielded_transfer_sidecar(&call, index).expect("sidecar extrinsic");
-        let mut encoded = &extrinsic[..];
-        let len = Compact::<u32>::decode(&mut encoded)
-            .expect("extrinsic compact length")
-            .0 as usize;
-        assert_eq!(len, encoded.len(), "compact length prefix mismatch");
-        assert_eq!(encoded[0], 0x04, "unsigned version byte mismatch");
-        assert_eq!(encoded[1], index.pallet_index);
-        assert_eq!(encoded[2], index.call_index);
-
-        let mut call_bytes = &encoded[3..];
-        let decoded: (
-            DecodedStarkProof,
-            Vec<[u8; 48]>,
-            Vec<[u8; 48]>,
-            Vec<[u8; 48]>,
-            Vec<u32>,
-            [u8; 48],
-            DecodedBindingHash,
-            Option<()>,
-            u64,
-        ) = Decode::decode(&mut call_bytes).expect("decode sidecar call args");
+        let err =
+            build_unsigned_shielded_transfer_sidecar(&call, index).expect_err("must fail closed");
         assert!(
-            call_bytes.is_empty(),
-            "trailing bytes remained after sidecar call decode"
+            err.to_string().contains("Hegemon kernel RPC"),
+            "unexpected error: {err}"
         );
-        assert_eq!(decoded.0.data, call.proof);
-        assert_eq!(decoded.1, call.nullifiers);
-        assert_eq!(decoded.2, call.commitments);
-        assert_eq!(decoded.3, call.ciphertext_hashes);
-        assert_eq!(decoded.4, call.ciphertext_sizes);
-        assert_eq!(decoded.5, anchor, "anchor mutated in sidecar encoding");
-        assert_eq!(decoded.6.data, binding_hash);
-        assert_eq!(decoded.8, call.fee);
     }
 }

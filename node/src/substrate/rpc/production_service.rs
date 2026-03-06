@@ -70,9 +70,8 @@ use codec::{Decode, Encode};
 use network::PeerId;
 use pallet_shielded_pool::family::{
     build_envelope as build_shielded_kernel_envelope, MintCoinbaseArgs, ShieldedFamilyAction,
-    ShieldedTransferInlineArgs, ACTION_BATCH_SHIELDED_TRANSFER, ACTION_ENABLE_AGGREGATION_MODE,
-    ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
-    ACTION_SUBMIT_PROVEN_BATCH, FAMILY_SHIELDED_POOL,
+    ShieldedTransferInlineArgs, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
+    FAMILY_SHIELDED_POOL,
 };
 use pallet_shielded_pool::types::{
     EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding,
@@ -486,15 +485,10 @@ where
             return Err("stage-1 kernel RPC only accepts shielded family actions".to_string());
         }
         match envelope.action_id {
-            ACTION_SHIELDED_TRANSFER_INLINE
-            | ACTION_SHIELDED_TRANSFER_SIDECAR
-            | ACTION_BATCH_SHIELDED_TRANSFER
-            | ACTION_ENABLE_AGGREGATION_MODE
-            | ACTION_SUBMIT_PROVEN_BATCH
-            | ACTION_MINT_COINBASE => {}
+            ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR => {}
             _ => {
                 return Err(format!(
-                    "unsupported shielded kernel action id {}",
+                    "unsupported public shielded kernel action id {}",
                     envelope.action_id
                 ));
             }

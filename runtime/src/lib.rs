@@ -1038,6 +1038,9 @@ sp_api::impl_runtime_apis! {
             tx: <Block as sp_runtime::traits::Block>::Extrinsic,
             block_hash: <Block as sp_runtime::traits::Block>::Hash,
         ) -> sp_runtime::transaction_validity::TransactionValidity {
+            if tx.is_signed() {
+                return sp_runtime::transaction_validity::InvalidTransaction::Call.into();
+            }
             Executive::validate_transaction(source, tx, block_hash)
         }
     }

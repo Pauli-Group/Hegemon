@@ -52,6 +52,7 @@ use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
+use protocol_kernel::traits::{ActionSourceClass, ValidActionMeta};
 use sp_core::Pair;
 use sp_runtime::traits::Saturating;
 use sp_runtime::transaction_validity::{
@@ -720,20 +721,7 @@ pub mod pallet {
         #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
         pub fn enable_aggregation_mode(origin: OriginFor<T>) -> DispatchResult {
             ensure_none(origin)?;
-
-            ensure!(
-                !AggregationProofRequired::<T>::get(),
-                Error::<T>::AggregationModeAlreadyEnabled
-            );
-
-            // This marker must appear before any transfers that rely on it.
-            ensure!(
-                !ShieldedTransfersProcessed::<T>::get(),
-                Error::<T>::AggregationModeAfterTransfers
-            );
-
-            AggregationProofRequired::<T>::put(true);
-            Ok(())
+            Self::apply_enable_aggregation_mode_action()
         }
 
         /// Attach the proven-batch payload for this block.
@@ -749,31 +737,639 @@ pub mod pallet {
             payload: types::BlockProofBundle,
         ) -> DispatchResult {
             ensure_none(origin)?;
+            Self::apply_submit_proven_batch_action(payload)
+        }
 
+        /// Mint coinbase reward directly to the shielded pool.
+        ///
+        /// This is an inherent extrinsic that creates shielded reward notes.
+        /// Unlike regular shielded transfers, this creates new coins (no transparent input).
+        ///
+        /// # Arguments
+        /// * `reward_bundle` - Miner note plus optional prover note
+        ///
+        /// # Security
+        /// - Called via inherent (None origin)
+        /// - Can only be called once per block
+        /// - Commitment is verified against plaintext data
+        #[pallet::call_index(3)]
+        #[pallet::weight((T::WeightInfo::mint_coinbase(), DispatchClass::Mandatory, Pays::No))]
+        pub fn mint_coinbase(
+            origin: OriginFor<T>,
+            reward_bundle: types::BlockRewardBundle,
+        ) -> DispatchResult {
+            // Inherent extrinsics use None origin
+            ensure_none(origin)?;
+            Self::apply_mint_coinbase_action(reward_bundle)
+        }
+
+        /// Execute an unsigned shielded-to-shielded transfer.
+        ///
+        /// This is the privacy-preserving transfer function that does NOT require
+        /// a transparent account. The ZK proof authenticates the spend, so no
+        /// external signature is needed. This follows the Zcash model where
+        /// shielded-to-shielded transfers are inherently authenticated by the proof.
+        ///
+        /// IMPORTANT: This call ONLY works for pure shielded transfers where
+        /// value_balance = 0 (no value entering or leaving the shielded pool).
+        #[pallet::call_index(4)]
+        #[pallet::weight(T::WeightInfo::shielded_transfer(
+            nullifiers.len() as u32,
+            commitments.len() as u32
+        ))]
+        pub fn shielded_transfer_unsigned(
+            origin: OriginFor<T>,
+            proof: StarkProof,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
+            anchor: [u8; 48],
+            binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
+            fee: u64,
+        ) -> DispatchResult {
+            // This is an unsigned extrinsic - no signer required
+            ensure_none(origin)?;
+            Self::apply_shielded_transfer_unsigned_action(
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                binding_hash,
+                stablecoin,
+                fee,
+            )
+        }
+
+        /// Execute an unsigned shielded transfer where ciphertext bytes live in the DA sidecar.
+        #[pallet::call_index(8)]
+        #[pallet::weight(T::WeightInfo::shielded_transfer(
+            nullifiers.len() as u32,
+            commitments.len() as u32
+        ))]
+        pub fn shielded_transfer_unsigned_sidecar(
+            origin: OriginFor<T>,
+            proof: StarkProof,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_hashes: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_sizes: BoundedVec<u32, T::MaxCommitmentsPerTx>,
+            anchor: [u8; 48],
+            binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
+            fee: u64,
+        ) -> DispatchResult {
+            // This is an unsigned extrinsic - no signer required
+            ensure_none(origin)?;
+            Self::apply_shielded_transfer_unsigned_sidecar_action(
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                binding_hash,
+                stablecoin,
+                fee,
+            )
+        }
+
+        /// Submit a batch of shielded transfers with a single aggregated proof.
+        ///
+        /// This extrinsic allows multiple shielded transfers to be submitted together
+        /// with a single STARK proof that covers all transactions. This significantly
+        /// reduces verification costs from O(N) to O(1).
+        ///
+        /// # Arguments
+        /// * `proof` - The batch STARK proof covering all transactions
+        /// * `nullifiers` - All nullifiers from all transactions in the batch
+        /// * `commitments` - All new note commitments from all transactions
+        /// * `ciphertexts` - Encrypted notes for all recipients
+        /// * `anchor` - Shared Merkle root all transactions were proven against
+        /// * `total_fee` - Total fee across all transactions
+        ///
+        /// # Security
+        /// - All transactions must use the same Merkle anchor
+        /// - Single batch proof verifies all transactions together
+        /// - Each nullifier is checked for double-spend
+        /// - Batch size must be a power of 2 (2, 4, 8, 16, or 32)
+        #[pallet::call_index(5)]
+        #[pallet::weight(T::WeightInfo::shielded_transfer(
+            nullifiers.len() as u32,
+            commitments.len() as u32
+        ))]
+        pub fn batch_shielded_transfer(
+            origin: OriginFor<T>,
+            proof: types::BatchStarkProof,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerBatch>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerBatch>,
+            ciphertexts: BoundedVec<EncryptedNote, T::MaxCommitmentsPerBatch>,
+            anchor: [u8; 48],
+            total_fee: u128,
+        ) -> DispatchResult {
+            // This is an unsigned extrinsic for batch transfers
+            ensure_none(origin)?;
+            Self::apply_batch_shielded_transfer_action(
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                total_fee,
+            )
+        }
+    }
+
+    impl<T: Config> Pallet<T> {
+        fn action_meta_to_validity(
+            source: TransactionSource,
+            prefix: &'static str,
+            meta: ValidActionMeta,
+        ) -> TransactionValidity {
+            match meta.source_class {
+                ActionSourceClass::External => {}
+                ActionSourceClass::LocalOnly => {
+                    if !matches!(
+                        source,
+                        TransactionSource::Local | TransactionSource::InBlock
+                    ) {
+                        return InvalidTransaction::Call.into();
+                    }
+                }
+                ActionSourceClass::InBlockOnly => {
+                    if source != TransactionSource::InBlock {
+                        return InvalidTransaction::Call.into();
+                    }
+                }
+            }
+
+            let mut tx = ValidTransaction::with_tag_prefix(prefix)
+                .priority(meta.priority as TransactionPriority)
+                .longevity(meta.longevity)
+                .propagate(meta.propagate);
+            for tag in meta.provides {
+                tx = tx.and_provides(tag);
+            }
+            for tag in meta.requires {
+                tx = tx.and_requires(tag);
+            }
+            tx.build()
+        }
+
+        fn nullifier_tags(nullifiers: &[[u8; 48]], skip_zero_padding: bool) -> Vec<Vec<u8>> {
+            let mut tags = Vec::new();
+            for nf in nullifiers {
+                if skip_zero_padding && is_zero_nullifier(nf) {
+                    continue;
+                }
+                let mut tag = b"shielded_nf:".to_vec();
+                tag.extend_from_slice(nf);
+                tags.push(tag);
+            }
+            if tags.is_empty() {
+                tags.push(b"shielded_no_nullifiers".to_vec());
+            }
+            tags
+        }
+
+        pub(crate) fn validate_enable_aggregation_mode_action(
+        ) -> Result<ValidActionMeta, InvalidTransaction> {
+            if AggregationProofRequired::<T>::get() {
+                return Err(InvalidTransaction::Stale);
+            }
+            if ShieldedTransfersProcessed::<T>::get() {
+                return Err(InvalidTransaction::Custom(11));
+            }
+            Ok(ValidActionMeta {
+                priority: u64::from(TransactionPriority::MAX),
+                longevity: 1,
+                provides: vec![b"aggregation_mode".to_vec()],
+                requires: Vec::new(),
+                propagate: false,
+                source_class: ActionSourceClass::InBlockOnly,
+            })
+        }
+
+        pub(crate) fn validate_submit_proven_batch_action(
+            payload: &types::BlockProofBundle,
+        ) -> Result<ValidActionMeta, InvalidTransaction> {
+            if ProvenBatchProcessed::<T>::get() {
+                return Err(InvalidTransaction::Stale);
+            }
+            if payload.version != types::BLOCK_PROOF_BUNDLE_SCHEMA {
+                return Err(InvalidTransaction::BadProof);
+            }
+            if payload.tx_count == 0 {
+                return Err(InvalidTransaction::Custom(10));
+            }
+            if payload.commitment_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                return Err(InvalidTransaction::ExhaustsResources);
+            }
+            if Self::validate_block_proof_bundle_mode(payload).is_err() {
+                return Err(InvalidTransaction::BadProof);
+            }
+            if Self::total_block_proof_bytes(payload)
+                > types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES
+            {
+                return Err(InvalidTransaction::ExhaustsResources);
+            }
+            if payload.da_chunk_count == 0 {
+                return Err(InvalidTransaction::Custom(10));
+            }
+            if let Some(claim) = payload.prover_claim.as_ref() {
+                if !Self::verify_prover_claim_signature(claim, payload) {
+                    return Err(InvalidTransaction::BadProof);
+                }
+            }
+            Ok(ValidActionMeta {
+                priority: u64::from(TransactionPriority::MAX),
+                longevity: 1,
+                provides: vec![b"proven_batch".to_vec()],
+                requires: Vec::new(),
+                propagate: false,
+                source_class: ActionSourceClass::InBlockOnly,
+            })
+        }
+
+        pub(crate) fn validate_mint_coinbase_action(
+            reward_bundle: &types::BlockRewardBundle,
+        ) -> Result<ValidActionMeta, InvalidTransaction> {
+            if CoinbaseProcessed::<T>::get() {
+                return Err(InvalidTransaction::Stale);
+            }
+            if Self::ensure_coinbase_subsidy(reward_bundle.miner_note.amount).is_err() {
+                return Err(InvalidTransaction::Custom(9));
+            }
+            let expected_commitment = Self::expected_coinbase_commitment(&reward_bundle.miner_note);
+            if reward_bundle.miner_note.commitment != expected_commitment {
+                return Err(InvalidTransaction::BadProof);
+            }
+            if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+                let expected_prover_commitment = Self::expected_coinbase_commitment(prover_note);
+                if prover_note.commitment != expected_prover_commitment {
+                    return Err(InvalidTransaction::BadProof);
+                }
+            }
+            Ok(ValidActionMeta {
+                priority: u64::from(TransactionPriority::MAX),
+                longevity: 1,
+                provides: vec![b"coinbase".to_vec()],
+                requires: Vec::new(),
+                propagate: false,
+                source_class: ActionSourceClass::InBlockOnly,
+            })
+        }
+
+        pub(crate) fn validate_shielded_transfer_unsigned_action(
+            proof: &StarkProof,
+            nullifiers: &BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: &BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertexts: &BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
+            anchor: &[u8; 48],
+            binding_hash: &BindingHash,
+            stablecoin: &Option<StablecoinPolicyBinding>,
+            fee: u64,
+        ) -> Result<ValidActionMeta, InvalidTransaction> {
+            if Self::ensure_stablecoin_binding(stablecoin).is_err() {
+                return Err(InvalidTransaction::Custom(7));
+            }
+            if !matches!(
+                CiphertextPolicyStorage::<T>::get(),
+                types::CiphertextPolicy::InlineAllowed
+            ) {
+                return Err(InvalidTransaction::Call);
+            }
+            if CoinbaseProcessed::<T>::get() {
+                return Err(InvalidTransaction::Stale);
+            }
+            if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                return Err(InvalidTransaction::ExhaustsResources);
+            }
+            if nullifiers.is_empty() && commitments.is_empty() {
+                return Err(InvalidTransaction::Custom(1));
+            }
+            if !commitments.is_empty() && nullifiers.is_empty() {
+                return Err(InvalidTransaction::Custom(1));
+            }
+            if ciphertexts.len() != commitments.len() {
+                return Err(InvalidTransaction::Custom(2));
+            }
+            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())
+                .map_err(|_| InvalidTransaction::Custom(8))?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
+                .map_err(|_| InvalidTransaction::Custom(8))?;
+            if u128::from(fee) < required_fee {
+                return Err(InvalidTransaction::Custom(8));
+            }
+            if !MerkleRoots::<T>::contains_key(anchor) {
+                return Err(InvalidTransaction::Custom(3));
+            }
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+            }
+            for cm in commitments.iter() {
+                if is_zero_commitment(cm) {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+            }
+            let mut seen = Vec::new();
+            for nf in nullifiers.iter() {
+                if seen.contains(nf) {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+                seen.push(*nf);
+            }
+            for nf in nullifiers.iter() {
+                if Nullifiers::<T>::contains_key(nf) {
+                    return Err(InvalidTransaction::Custom(5));
+                }
+            }
+
+            let vk = VerifyingKeyStorage::<T>::get();
+            if !vk.enabled {
+                return Err(InvalidTransaction::Custom(6));
+            }
+
+            let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
+            let inputs = ShieldedTransferInputs {
+                anchor: *anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                ciphertext_hashes,
+                fee,
+                value_balance: 0,
+                stablecoin: stablecoin.clone(),
+            };
+
+            let verifier = T::ProofVerifier::default();
+            match verifier.verify_stark(proof, &inputs, &vk) {
+                VerificationResult::Valid => {}
+                _ => return Err(InvalidTransaction::BadProof),
+            }
+            if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                return Err(InvalidTransaction::BadSigner);
+            }
+
+            Ok(ValidActionMeta {
+                priority: 100,
+                longevity: 64,
+                provides: Self::nullifier_tags(nullifiers.as_slice(), false),
+                requires: Vec::new(),
+                propagate: true,
+                source_class: ActionSourceClass::External,
+            })
+        }
+
+        pub(crate) fn validate_shielded_transfer_unsigned_sidecar_action(
+            proof: &StarkProof,
+            nullifiers: &BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: &BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_hashes: &BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_sizes: &BoundedVec<u32, T::MaxCommitmentsPerTx>,
+            anchor: &[u8; 48],
+            binding_hash: &BindingHash,
+            stablecoin: &Option<StablecoinPolicyBinding>,
+            fee: u64,
+        ) -> Result<ValidActionMeta, InvalidTransaction> {
+            if Self::ensure_stablecoin_binding(stablecoin).is_err() {
+                return Err(InvalidTransaction::Custom(7));
+            }
+            if CoinbaseProcessed::<T>::get() {
+                return Err(InvalidTransaction::Stale);
+            }
+            if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                return Err(InvalidTransaction::ExhaustsResources);
+            }
+            if nullifiers.is_empty() && commitments.is_empty() {
+                return Err(InvalidTransaction::Custom(1));
+            }
+            if !commitments.is_empty() && nullifiers.is_empty() {
+                return Err(InvalidTransaction::Custom(1));
+            }
+            if ciphertext_hashes.len() != commitments.len() {
+                return Err(InvalidTransaction::Custom(2));
+            }
+            if ciphertext_sizes.len() != commitments.len() {
+                return Err(InvalidTransaction::Custom(2));
+            }
+            if Self::validate_ciphertext_sizes(ciphertext_sizes.as_slice()).is_err() {
+                return Err(InvalidTransaction::Custom(2));
+            }
+            for hash in ciphertext_hashes.iter() {
+                if *hash == [0u8; 48] {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+            }
+            let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())
+                .map_err(|_| InvalidTransaction::Custom(8))?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
+                .map_err(|_| InvalidTransaction::Custom(8))?;
+            if u128::from(fee) < required_fee {
+                return Err(InvalidTransaction::Custom(8));
+            }
+            if !MerkleRoots::<T>::contains_key(anchor) {
+                return Err(InvalidTransaction::Custom(3));
+            }
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+            }
+            for cm in commitments.iter() {
+                if is_zero_commitment(cm) {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+            }
+            let mut seen = Vec::new();
+            for nf in nullifiers.iter() {
+                if seen.contains(nf) {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+                seen.push(*nf);
+            }
+            for nf in nullifiers.iter() {
+                if Nullifiers::<T>::contains_key(nf) {
+                    return Err(InvalidTransaction::Custom(5));
+                }
+            }
+
+            let vk = VerifyingKeyStorage::<T>::get();
+            if !vk.enabled {
+                return Err(InvalidTransaction::Custom(6));
+            }
+
+            let inputs = ShieldedTransferInputs {
+                anchor: *anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
+                fee,
+                value_balance: 0,
+                stablecoin: stablecoin.clone(),
+            };
+
+            let verifier = T::ProofVerifier::default();
+            let aggregation_mode = AggregationProofRequired::<T>::get();
+            let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
+
+            if proof.data.is_empty()
+                && !matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained)
+            {
+                return Err(InvalidTransaction::Custom(12));
+            }
+
+            if !aggregation_mode && !proof.data.is_empty() {
+                match verifier.verify_stark(proof, &inputs, &vk) {
+                    VerificationResult::Valid => {}
+                    _ => return Err(InvalidTransaction::BadProof),
+                }
+            }
+            if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                return Err(InvalidTransaction::BadSigner);
+            }
+
+            Ok(ValidActionMeta {
+                priority: 100,
+                longevity: 64,
+                provides: Self::nullifier_tags(nullifiers.as_slice(), false),
+                requires: Vec::new(),
+                propagate: true,
+                source_class: ActionSourceClass::External,
+            })
+        }
+
+        pub(crate) fn validate_batch_shielded_transfer_action(
+            proof: &types::BatchStarkProof,
+            nullifiers: &BoundedVec<[u8; 48], T::MaxNullifiersPerBatch>,
+            commitments: &BoundedVec<[u8; 48], T::MaxCommitmentsPerBatch>,
+            ciphertexts: &BoundedVec<EncryptedNote, T::MaxCommitmentsPerBatch>,
+            anchor: &[u8; 48],
+            total_fee: u128,
+        ) -> Result<ValidActionMeta, InvalidTransaction> {
+            if !matches!(
+                CiphertextPolicyStorage::<T>::get(),
+                types::CiphertextPolicy::InlineAllowed
+            ) {
+                return Err(InvalidTransaction::Call);
+            }
+            if CoinbaseProcessed::<T>::get() {
+                return Err(InvalidTransaction::Stale);
+            }
+            if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                return Err(InvalidTransaction::ExhaustsResources);
+            }
+            if !proof.is_valid_batch_size() {
+                return Err(InvalidTransaction::BadProof);
+            }
+            if nullifiers.is_empty() && commitments.is_empty() {
+                return Err(InvalidTransaction::Custom(1));
+            }
+            if ciphertexts.len() != commitments.len() {
+                return Err(InvalidTransaction::Custom(2));
+            }
+            for note in ciphertexts.iter() {
+                if Self::validate_encrypted_note(note).is_err() {
+                    return Err(InvalidTransaction::Custom(2));
+                }
+            }
+            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())
+                .map_err(|_| InvalidTransaction::Custom(8))?;
+            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Batch)
+                .map_err(|_| InvalidTransaction::Custom(8))?;
+            if total_fee < required_fee {
+                return Err(InvalidTransaction::Custom(8));
+            }
+            if !MerkleRoots::<T>::contains_key(anchor) {
+                return Err(InvalidTransaction::Custom(3));
+            }
+
+            let mut seen_nullifiers = sp_std::vec::Vec::new();
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
+                if seen_nullifiers.contains(nf) {
+                    return Err(InvalidTransaction::Custom(4));
+                }
+                seen_nullifiers.push(*nf);
+            }
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
+                if Nullifiers::<T>::contains_key(nf) {
+                    return Err(InvalidTransaction::Custom(5));
+                }
+            }
+
+            let batch_inputs = verifier::BatchPublicInputs {
+                anchor: *anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                batch_size: proof.batch_size,
+                total_fee,
+            };
+            let vk = VerifyingKeyStorage::<T>::get();
+            if !vk.enabled {
+                return Err(InvalidTransaction::Custom(6));
+            }
+            let batch_verifier = T::BatchProofVerifier::default();
+            match batch_verifier.verify_batch(proof, &batch_inputs, &vk) {
+                verifier::BatchVerificationResult::Valid => {}
+                verifier::BatchVerificationResult::InvalidBatchSize => {
+                    return Err(InvalidTransaction::BadProof)
+                }
+                _ => return Err(InvalidTransaction::BadProof),
+            }
+
+            Ok(ValidActionMeta {
+                priority: 100,
+                longevity: 64,
+                provides: Self::nullifier_tags(nullifiers.as_slice(), true),
+                requires: Vec::new(),
+                propagate: true,
+                source_class: ActionSourceClass::External,
+            })
+        }
+
+        pub(crate) fn apply_enable_aggregation_mode_action() -> DispatchResult {
+            ensure!(
+                !AggregationProofRequired::<T>::get(),
+                Error::<T>::AggregationModeAlreadyEnabled
+            );
+            ensure!(
+                !ShieldedTransfersProcessed::<T>::get(),
+                Error::<T>::AggregationModeAfterTransfers
+            );
+            AggregationProofRequired::<T>::put(true);
+            Ok(())
+        }
+
+        pub(crate) fn apply_submit_proven_batch_action(
+            payload: types::BlockProofBundle,
+        ) -> DispatchResult {
             ensure!(
                 !ProvenBatchProcessed::<T>::get(),
                 Error::<T>::ProvenBatchAlreadyProcessed
             );
-
             ensure!(
                 payload.version == types::BLOCK_PROOF_BUNDLE_SCHEMA,
                 Error::<T>::InvalidProofFormat
             );
-
             ensure!(payload.tx_count > 0, Error::<T>::InvalidNullifierCount);
-
             ensure!(
                 payload.commitment_proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
-
             Self::validate_block_proof_bundle_mode(&payload)?;
             ensure!(
                 Self::total_block_proof_bytes(&payload)
                     <= types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES,
                 Error::<T>::ProofTooLarge
             );
-
             ensure!(payload.da_chunk_count > 0, Error::<T>::InvalidDaChunkCount);
 
             let block_number = frame_system::Pallet::<T>::block_number();
@@ -797,28 +1393,9 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Mint coinbase reward directly to the shielded pool.
-        ///
-        /// This is an inherent extrinsic that creates shielded reward notes.
-        /// Unlike regular shielded transfers, this creates new coins (no transparent input).
-        ///
-        /// # Arguments
-        /// * `reward_bundle` - Miner note plus optional prover note
-        ///
-        /// # Security
-        /// - Called via inherent (None origin)
-        /// - Can only be called once per block
-        /// - Commitment is verified against plaintext data
-        #[pallet::call_index(3)]
-        #[pallet::weight((T::WeightInfo::mint_coinbase(), DispatchClass::Mandatory, Pays::No))]
-        pub fn mint_coinbase(
-            origin: OriginFor<T>,
+        pub(crate) fn apply_mint_coinbase_action(
             reward_bundle: types::BlockRewardBundle,
         ) -> DispatchResult {
-            // Inherent extrinsics use None origin
-            ensure_none(origin)?;
-
-            // Ensure not already processed this block
             ensure!(
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::CoinbaseAlreadyProcessed
@@ -885,7 +1462,6 @@ pub mod pallet {
                 });
             }
 
-            // Add reward commitments to tree.
             let mut index = CommitmentIndex::<T>::get();
             Commitments::<T>::insert(index, reward_bundle.miner_note.commitment);
             EncryptedNotes::<T>::insert(index, reward_bundle.miner_note.encrypted_note.clone());
@@ -922,7 +1498,6 @@ pub mod pallet {
                     .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
             Self::update_merkle_tree(&commitments)?;
 
-            // Update pool balance (new coins minted).
             let miner_amount = reward_bundle.miner_note.amount as u128;
             let prover_amount = validated_prover_note
                 .as_ref()
@@ -931,7 +1506,6 @@ pub mod pallet {
             let amount = miner_amount.saturating_add(prover_amount);
             PoolBalance::<T>::mutate(|b| *b = b.saturating_add(amount));
 
-            // Mark as processed
             CoinbaseProcessed::<T>::put(true);
             ShieldedTransfersProcessed::<T>::put(true);
             PendingProverClaim::<T>::kill();
@@ -952,22 +1526,7 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Execute an unsigned shielded-to-shielded transfer.
-        ///
-        /// This is the privacy-preserving transfer function that does NOT require
-        /// a transparent account. The ZK proof authenticates the spend, so no
-        /// external signature is needed. This follows the Zcash model where
-        /// shielded-to-shielded transfers are inherently authenticated by the proof.
-        ///
-        /// IMPORTANT: This call ONLY works for pure shielded transfers where
-        /// value_balance = 0 (no value entering or leaving the shielded pool).
-        #[pallet::call_index(4)]
-        #[pallet::weight(T::WeightInfo::shielded_transfer(
-            nullifiers.len() as u32,
-            commitments.len() as u32
-        ))]
-        pub fn shielded_transfer_unsigned(
-            origin: OriginFor<T>,
+        pub(crate) fn apply_shielded_transfer_unsigned_action(
             proof: StarkProof,
             nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
             commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
@@ -977,8 +1536,6 @@ pub mod pallet {
             stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
         ) -> DispatchResult {
-            // This is an unsigned extrinsic - no signer required
-            ensure_none(origin)?;
             ensure!(
                 matches!(
                     CiphertextPolicyStorage::<T>::get(),
@@ -990,19 +1547,13 @@ pub mod pallet {
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::TransfersAfterCoinbase
             );
-
-            // SECURITY: Early size check to prevent DoS via oversized proofs.
             ensure!(
                 proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
 
-            // Pure shielded transfers have value_balance = 0
             let value_balance: i128 = 0;
-
             Self::ensure_stablecoin_binding(&stablecoin)?;
-
-            // Validate counts
             ensure!(
                 !nullifiers.is_empty() || !commitments.is_empty(),
                 Error::<T>::InvalidNullifierCount
@@ -1018,13 +1569,10 @@ pub mod pallet {
             let required_breakdown =
                 Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
             Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
-
-            // Check anchor is a valid historical Merkle root
             ensure!(
                 MerkleRoots::<T>::contains_key(anchor),
                 Error::<T>::InvalidAnchor
             );
-
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
                     return Err(Error::<T>::ZeroNullifierSubmitted.into());
@@ -1035,8 +1583,6 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroCommitmentSubmitted.into());
                 }
             }
-
-            // Check for duplicate nullifiers in transaction
             let mut seen_nullifiers = Vec::new();
             for nf in nullifiers.iter() {
                 if seen_nullifiers.contains(nf) {
@@ -1044,8 +1590,6 @@ pub mod pallet {
                 }
                 seen_nullifiers.push(*nf);
             }
-
-            // Check nullifiers not already spent
             for nf in nullifiers.iter() {
                 ensure!(
                     !Nullifiers::<T>::contains_key(nf),
@@ -1053,7 +1597,6 @@ pub mod pallet {
                 );
             }
 
-            // Build verification inputs
             let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
             let inputs = ShieldedTransferInputs {
                 anchor,
@@ -1064,12 +1607,8 @@ pub mod pallet {
                 value_balance,
                 stablecoin: stablecoin.clone(),
             };
-
-            // Get verifying key
             let vk = VerifyingKeyStorage::<T>::get();
             ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
-
-            // Verify ZK proof (STARK-based, no trusted setup)
             let verifier = T::ProofVerifier::default();
             match verifier.verify_stark(&proof, &inputs, &vk) {
                 VerificationResult::Valid => {}
@@ -1090,21 +1629,16 @@ pub mod pallet {
                 }
                 _ => return Err(Error::<T>::ProofVerificationFailed.into()),
             }
-
-            // Verify value balance commitment (checked in-circuit for PQC)
             ensure!(
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
             Self::record_fee_split(u128::from(fee), required_breakdown)?;
 
-            // Add nullifiers to spent set
             for nf in nullifiers.iter() {
                 Nullifiers::<T>::insert(nf, ());
                 Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
             }
-
-            // Add commitments to Merkle tree
             let mut current_index = CommitmentIndex::<T>::get();
             for (cm, enc) in commitments.iter().zip(ciphertexts.iter()) {
                 Commitments::<T>::insert(current_index, *cm);
@@ -1116,8 +1650,6 @@ pub mod pallet {
                 current_index += 1;
             }
             CommitmentIndex::<T>::put(current_index);
-
-            // Update Merkle tree root
             Self::update_merkle_tree(&commitments)?;
 
             Self::deposit_event(Event::ShieldedTransfer {
@@ -1132,20 +1664,11 @@ pub mod pallet {
                 nullifiers.len(),
                 commitments.len()
             );
-
             ShieldedTransfersProcessed::<T>::put(true);
-
             Ok(())
         }
 
-        /// Execute an unsigned shielded transfer where ciphertext bytes live in the DA sidecar.
-        #[pallet::call_index(8)]
-        #[pallet::weight(T::WeightInfo::shielded_transfer(
-            nullifiers.len() as u32,
-            commitments.len() as u32
-        ))]
-        pub fn shielded_transfer_unsigned_sidecar(
-            origin: OriginFor<T>,
+        pub(crate) fn apply_shielded_transfer_unsigned_sidecar_action(
             proof: StarkProof,
             nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
             commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
@@ -1156,37 +1679,25 @@ pub mod pallet {
             stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
         ) -> DispatchResult {
-            // This is an unsigned extrinsic - no signer required
-            ensure_none(origin)?;
             ensure!(
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::TransfersAfterCoinbase
             );
-
             ensure!(
                 proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
-
-            // Pure shielded transfers have value_balance = 0
             let value_balance: i128 = 0;
-
             Self::ensure_stablecoin_binding(&stablecoin)?;
-
             let aggregation_mode = AggregationProofRequired::<T>::get();
             let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
-
             if proof.data.is_empty() {
-                // Proof bytes cannot be omitted unless aggregation mode is enabled and the
-                // on-chain policy allows DA-provided proofs.
                 ensure!(aggregation_mode, Error::<T>::ProofBytesRequired);
                 ensure!(
                     matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained),
                     Error::<T>::ProofBytesRequired
                 );
             }
-
-            // Validate counts
             ensure!(
                 !nullifiers.is_empty() || !commitments.is_empty(),
                 Error::<T>::InvalidNullifierCount
@@ -1209,13 +1720,10 @@ pub mod pallet {
             let required_breakdown =
                 Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
             Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
-
-            // Check anchor is a valid historical Merkle root
             ensure!(
                 MerkleRoots::<T>::contains_key(anchor),
                 Error::<T>::InvalidAnchor
             );
-
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
                     return Err(Error::<T>::ZeroNullifierSubmitted.into());
@@ -1226,13 +1734,9 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroCommitmentSubmitted.into());
                 }
             }
-
-            // Outputs require at least one input nullifier to spend from.
             if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
                 return Err(Error::<T>::InvalidNullifierCount.into());
             }
-
-            // Check for duplicate nullifiers in transaction
             let mut seen_nullifiers = Vec::new();
             for nf in nullifiers.iter() {
                 if seen_nullifiers.contains(nf) {
@@ -1240,16 +1744,12 @@ pub mod pallet {
                 }
                 seen_nullifiers.push(*nf);
             }
-
-            // Check nullifiers not already spent
             for nf in nullifiers.iter() {
                 ensure!(
                     !Nullifiers::<T>::contains_key(nf),
                     Error::<T>::NullifierAlreadyExists
                 );
             }
-
-            // Build verification inputs
             let inputs = ShieldedTransferInputs {
                 anchor,
                 nullifiers: nullifiers.clone().into_inner(),
@@ -1259,15 +1759,10 @@ pub mod pallet {
                 value_balance,
                 stablecoin: stablecoin.clone(),
             };
-
             let verifier = T::ProofVerifier::default();
-
             if !aggregation_mode {
-                // Get verifying key
                 let vk = VerifyingKeyStorage::<T>::get();
                 ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
-
-                // Verify ZK proof (standard L1 mode).
                 match verifier.verify_stark(&proof, &inputs, &vk) {
                     VerificationResult::Valid => {}
                     VerificationResult::InvalidProofFormat => {
@@ -1285,21 +1780,16 @@ pub mod pallet {
                     _ => return Err(Error::<T>::ProofVerificationFailed.into()),
                 }
             }
-
-            // Verify binding hash
             ensure!(
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
             Self::record_fee_split(u128::from(fee), required_breakdown)?;
 
-            // Add nullifiers to spent set
             for nf in nullifiers.iter() {
                 Nullifiers::<T>::insert(nf, ());
                 Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
             }
-
-            // Add commitments to Merkle tree (ciphertexts live in DA sidecar)
             let mut current_index = CommitmentIndex::<T>::get();
             for cm in commitments.iter() {
                 Commitments::<T>::insert(current_index, *cm);
@@ -1310,47 +1800,17 @@ pub mod pallet {
                 current_index += 1;
             }
             CommitmentIndex::<T>::put(current_index);
-
-            // Update Merkle tree root
             Self::update_merkle_tree(&commitments)?;
-
             Self::deposit_event(Event::ShieldedTransfer {
                 nullifier_count: nullifiers.len() as u32,
                 commitment_count: commitments.len() as u32,
                 value_balance,
             });
-
             ShieldedTransfersProcessed::<T>::put(true);
-
             Ok(())
         }
 
-        /// Submit a batch of shielded transfers with a single aggregated proof.
-        ///
-        /// This extrinsic allows multiple shielded transfers to be submitted together
-        /// with a single STARK proof that covers all transactions. This significantly
-        /// reduces verification costs from O(N) to O(1).
-        ///
-        /// # Arguments
-        /// * `proof` - The batch STARK proof covering all transactions
-        /// * `nullifiers` - All nullifiers from all transactions in the batch
-        /// * `commitments` - All new note commitments from all transactions
-        /// * `ciphertexts` - Encrypted notes for all recipients
-        /// * `anchor` - Shared Merkle root all transactions were proven against
-        /// * `total_fee` - Total fee across all transactions
-        ///
-        /// # Security
-        /// - All transactions must use the same Merkle anchor
-        /// - Single batch proof verifies all transactions together
-        /// - Each nullifier is checked for double-spend
-        /// - Batch size must be a power of 2 (2, 4, 8, 16, or 32)
-        #[pallet::call_index(5)]
-        #[pallet::weight(T::WeightInfo::shielded_transfer(
-            nullifiers.len() as u32,
-            commitments.len() as u32
-        ))]
-        pub fn batch_shielded_transfer(
-            origin: OriginFor<T>,
+        pub(crate) fn apply_batch_shielded_transfer_action(
             proof: types::BatchStarkProof,
             nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerBatch>,
             commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerBatch>,
@@ -1358,8 +1818,6 @@ pub mod pallet {
             anchor: [u8; 48],
             total_fee: u128,
         ) -> DispatchResult {
-            // This is an unsigned extrinsic for batch transfers
-            ensure_none(origin)?;
             ensure!(
                 matches!(
                     CiphertextPolicyStorage::<T>::get(),
@@ -1371,17 +1829,15 @@ pub mod pallet {
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::TransfersAfterCoinbase
             );
-
-            // Validate batch proof structure
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
             ensure!(proof.is_valid_batch_size(), Error::<T>::InvalidBatchSize);
-
-            // Validate we have some data
             ensure!(
                 !nullifiers.is_empty() || !commitments.is_empty(),
                 Error::<T>::InvalidNullifierCount
             );
-
-            // Check that ciphertexts match commitments
             ensure!(
                 ciphertexts.len() == commitments.len(),
                 Error::<T>::EncryptedNotesMismatch
@@ -1393,14 +1849,10 @@ pub mod pallet {
             let required_breakdown =
                 Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Batch)?;
             Self::ensure_fee_sufficient(total_fee, required_breakdown.total_fee)?;
-
-            // Check anchor is a valid historical Merkle root
             ensure!(
                 MerkleRoots::<T>::contains_key(anchor),
                 Error::<T>::InvalidAnchor
             );
-
-            // Check for duplicate nullifiers in batch (skip zero padding)
             let mut seen_nullifiers = sp_std::vec::Vec::new();
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
@@ -1411,8 +1863,6 @@ pub mod pallet {
                 }
                 seen_nullifiers.push(*nf);
             }
-
-            // Check nullifiers not already spent (skip zero padding)
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
                     continue;
@@ -1422,8 +1872,6 @@ pub mod pallet {
                     Error::<T>::NullifierAlreadyExists
                 );
             }
-
-            // Build batch verification inputs
             let batch_inputs = verifier::BatchPublicInputs {
                 anchor,
                 nullifiers: nullifiers.clone().into_inner(),
@@ -1431,12 +1879,8 @@ pub mod pallet {
                 batch_size: proof.batch_size,
                 total_fee,
             };
-
-            // Get verifying key
             let vk = VerifyingKeyStorage::<T>::get();
             ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
-
-            // Verify batch ZK proof (STARK-based, no trusted setup)
             let batch_verifier = T::BatchProofVerifier::default();
             match batch_verifier.verify_batch(&proof, &batch_inputs, &vk) {
                 verifier::BatchVerificationResult::Valid => {}
@@ -1462,7 +1906,6 @@ pub mod pallet {
             }
             Self::record_fee_split(total_fee, required_breakdown)?;
 
-            // Add nullifiers to spent set (skip zero padding)
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
                     continue;
@@ -1470,8 +1913,6 @@ pub mod pallet {
                 Nullifiers::<T>::insert(nf, ());
                 Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
             }
-
-            // Add commitments to Merkle tree
             let mut current_index = CommitmentIndex::<T>::get();
             for (cm, enc) in commitments.iter().zip(ciphertexts.iter()) {
                 Commitments::<T>::insert(current_index, *cm);
@@ -1483,18 +1924,13 @@ pub mod pallet {
                 current_index += 1;
             }
             CommitmentIndex::<T>::put(current_index);
-
-            // Update Merkle tree root
             Self::update_merkle_tree_batch(&commitments)?;
-
-            // Emit batch transfer event
             Self::deposit_event(Event::BatchShieldedTransfer {
                 batch_size: proof.batch_size,
                 nullifier_count: nullifiers.len() as u32,
                 commitment_count: commitments.len() as u32,
                 total_fee,
             });
-
             info!(
                 target: "shielded-pool",
                 "🔐 Batch shielded transfer: {} txs, {} nullifiers, {} commitments",
@@ -1502,14 +1938,10 @@ pub mod pallet {
                 nullifiers.len(),
                 commitments.len()
             );
-
             ShieldedTransfersProcessed::<T>::put(true);
-
             Ok(())
         }
-    }
 
-    impl<T: Config> Pallet<T> {
         /// Ensure the shielded coinbase amount stays within the safety cap.
         fn ensure_coinbase_subsidy(amount: u64) -> DispatchResult {
             Self::ensure_coinbase_cap(amount)
@@ -2071,159 +2503,21 @@ pub mod pallet {
                     stablecoin,
                     fee,
                 } => {
-                    log::debug!(
-                        target: "shielded-pool",
-                        "Validating shielded_transfer_unsigned (proof_len={}, nullifiers={}, commitments={}, ciphertexts={}, fee={})",
-                        proof.data.len(),
-                        nullifiers.len(),
-                        commitments.len(),
-                        ciphertexts.len(),
-                        fee
-                    );
-
-                    if Self::ensure_stablecoin_binding(stablecoin).is_err() {
-                        log::info!(
-                            target: "shielded-pool",
-                            "  REJECTED: stablecoin binding invalid"
-                        );
-                        return InvalidTransaction::Custom(7).into();
-                    }
-
-                    // Basic validation before accepting into pool
-                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
-                        log::info!(target: "shielded-pool", "  REJECTED: Proof exceeds max size");
-                        return InvalidTransaction::ExhaustsResources.into();
-                    }
-
-                    // Check counts are valid
-                    if nullifiers.is_empty() && commitments.is_empty() {
-                        log::info!(target: "shielded-pool", "  REJECTED: Empty nullifiers and commitments");
-                        return InvalidTransaction::Custom(1).into();
-                    }
-                    if !commitments.is_empty() && nullifiers.is_empty() {
-                        log::info!(target: "shielded-pool", "  REJECTED: Missing nullifiers for outputs");
-                        return InvalidTransaction::Custom(1).into();
-                    }
-                    if ciphertexts.len() != commitments.len() {
-                        log::info!(target: "shielded-pool", "  REJECTED: ciphertexts.len != commitments.len");
-                        return InvalidTransaction::Custom(2).into();
-                    }
-                    let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())
-                        .map_err(|_| InvalidTransaction::Custom(8))?;
-                    let required_fee =
-                        Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
-                            .map_err(|_| InvalidTransaction::Custom(8))?;
-                    if u128::from(*fee) < required_fee {
-                        log::info!(target: "shielded-pool", "  REJECTED: fee below minimum");
-                        return InvalidTransaction::Custom(8).into();
-                    }
-
-                    // Check anchor is valid (historical Merkle root)
-                    if !MerkleRoots::<T>::contains_key(anchor) {
-                        log::info!(target: "shielded-pool", "  REJECTED: Invalid anchor - not in MerkleRoots");
-                        return InvalidTransaction::Custom(3).into();
-                    }
-                    log::info!(target: "shielded-pool", "  anchor check PASSED");
-
-                    for nf in nullifiers.iter() {
-                        if is_zero_nullifier(nf) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Zero nullifier submitted");
-                            return InvalidTransaction::Custom(4).into();
+                    match Self::validate_shielded_transfer_unsigned_action(
+                        proof,
+                        nullifiers,
+                        commitments,
+                        ciphertexts,
+                        anchor,
+                        binding_hash,
+                        stablecoin,
+                        *fee,
+                    ) {
+                        Ok(meta) => {
+                            Self::action_meta_to_validity(_source, "ShieldedPoolUnsigned", meta)
                         }
+                        Err(err) => err.into(),
                     }
-                    for cm in commitments.iter() {
-                        if is_zero_commitment(cm) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Zero commitment submitted");
-                            return InvalidTransaction::Custom(4).into();
-                        }
-                    }
-
-                    // Check for duplicate nullifiers within the transaction
-                    let mut seen = Vec::new();
-                    for nf in nullifiers.iter() {
-                        if seen.contains(nf) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Duplicate nullifier in tx");
-                            return InvalidTransaction::Custom(4).into();
-                        }
-                        seen.push(*nf);
-                    }
-
-                    // Check nullifiers haven't been spent already
-                    for nf in nullifiers.iter() {
-                        if Nullifiers::<T>::contains_key(nf) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Nullifier already spent");
-                            return InvalidTransaction::Custom(5).into();
-                        }
-                    }
-                    log::info!(target: "shielded-pool", "  nullifier checks PASSED");
-
-                    // Get verifying key - needed for proof verification
-                    let vk = VerifyingKeyStorage::<T>::get();
-                    if !vk.enabled {
-                        log::info!(target: "shielded-pool", "  REJECTED: Verifying key not enabled");
-                        return InvalidTransaction::Custom(6).into();
-                    }
-                    log::info!(target: "shielded-pool", "  verifying key check PASSED");
-
-                    // Build verification inputs
-                    let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
-                    let inputs = ShieldedTransferInputs {
-                        anchor: *anchor,
-                        nullifiers: nullifiers.clone().into_inner(),
-                        commitments: commitments.clone().into_inner(),
-                        ciphertext_hashes,
-                        fee: *fee,
-                        value_balance: 0, // Pure shielded transfer
-                        stablecoin: stablecoin.clone(),
-                    };
-
-                    // Verify the STARK proof (this is the main validation)
-                    log::debug!(target: "shielded-pool", "  Verifying STARK proof...");
-                    let verifier = T::ProofVerifier::default();
-                    match verifier.verify_stark(proof, &inputs, &vk) {
-                        VerificationResult::Valid => {
-                            log::debug!(target: "shielded-pool", "  STARK proof PASSED");
-                        }
-                        other => {
-                            log::debug!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
-                            return InvalidTransaction::BadProof.into();
-                        }
-                    }
-
-                    // Verify binding hash
-                    log::debug!(target: "shielded-pool", "  Verifying binding hash...");
-                    if !verifier.verify_binding_hash(binding_hash, &inputs) {
-                        log::debug!(target: "shielded-pool", "  binding hash FAILED");
-                        return InvalidTransaction::BadSigner.into();
-                    }
-                    log::debug!(target: "shielded-pool", "  binding hash PASSED");
-                    log::debug!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
-
-                    // Create tags based on the nullifiers.
-                    //
-                    // IMPORTANT: `and_provides` adds exactly ONE tag per call (and will SCALE-encode
-                    // it), so we must call it once per nullifier. Passing a Vec<...> would create a
-                    // single tag and fail to prevent per-nullifier pool conflicts.
-                    let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
-                        .priority(100) // Medium priority
-                        .longevity(64) // Valid for ~64 blocks
-                        .propagate(true);
-
-                    let mut provided_any = false;
-                    for nf in nullifiers.iter() {
-                        let mut tag = b"shielded_nf:".to_vec();
-                        tag.extend_from_slice(nf);
-                        builder = builder.and_provides(tag);
-                        provided_any = true;
-                    }
-
-                    // If a transaction has no real nullifiers, still provide something so it can't
-                    // be duplicated freely in the pool.
-                    if !provided_any {
-                        builder = builder.and_provides(b"shielded_no_nullifiers".to_vec());
-                    }
-
-                    builder.build()
                 }
                 Call::shielded_transfer_unsigned_sidecar {
                     proof,
@@ -2236,297 +2530,74 @@ pub mod pallet {
                     stablecoin,
                     fee,
                 } => {
-                    log::debug!(
-                        target: "shielded-pool",
-                        "Validating shielded_transfer_unsigned_sidecar (proof_len={}, nullifiers={}, commitments={}, ciphertext_hashes={}, ciphertext_sizes={}, fee={})",
-                        proof.data.len(),
-                        nullifiers.len(),
-                        commitments.len(),
-                        ciphertext_hashes.len(),
-                        ciphertext_sizes.len(),
-                        fee
-                    );
-
-                    if Self::ensure_stablecoin_binding(stablecoin).is_err() {
-                        log::info!(
-                            target: "shielded-pool",
-                            "  REJECTED: stablecoin binding invalid"
-                        );
-                        return InvalidTransaction::Custom(7).into();
-                    }
-
-                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
-                        log::info!(target: "shielded-pool", "  REJECTED: Proof exceeds max size");
-                        return InvalidTransaction::ExhaustsResources.into();
-                    }
-
-                    if nullifiers.is_empty() && commitments.is_empty() {
-                        log::info!(target: "shielded-pool", "  REJECTED: Empty nullifiers and commitments");
-                        return InvalidTransaction::Custom(1).into();
-                    }
-                    if !commitments.is_empty() && nullifiers.is_empty() {
-                        log::info!(target: "shielded-pool", "  REJECTED: Missing nullifiers for outputs");
-                        return InvalidTransaction::Custom(1).into();
-                    }
-                    if ciphertext_hashes.len() != commitments.len() {
-                        log::info!(target: "shielded-pool", "  REJECTED: ciphertext_hashes.len != commitments.len");
-                        return InvalidTransaction::Custom(2).into();
-                    }
-                    if ciphertext_sizes.len() != commitments.len() {
-                        log::info!(target: "shielded-pool", "  REJECTED: ciphertext_sizes.len != commitments.len");
-                        return InvalidTransaction::Custom(2).into();
-                    }
-                    if Self::validate_ciphertext_sizes(ciphertext_sizes.as_slice()).is_err() {
-                        log::info!(target: "shielded-pool", "  REJECTED: ciphertext size invalid");
-                        return InvalidTransaction::Custom(2).into();
-                    }
-                    for hash in ciphertext_hashes.iter() {
-                        if *hash == [0u8; 48] {
-                            log::info!(target: "shielded-pool", "  REJECTED: zero ciphertext hash");
-                            return InvalidTransaction::Custom(4).into();
+                    match Self::validate_shielded_transfer_unsigned_sidecar_action(
+                        proof,
+                        nullifiers,
+                        commitments,
+                        ciphertext_hashes,
+                        ciphertext_sizes,
+                        anchor,
+                        binding_hash,
+                        stablecoin,
+                        *fee,
+                    ) {
+                        Ok(meta) => {
+                            Self::action_meta_to_validity(_source, "ShieldedPoolUnsigned", meta)
                         }
+                        Err(err) => err.into(),
                     }
-                    let ciphertext_bytes =
-                        Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())
-                            .map_err(|_| InvalidTransaction::Custom(8))?;
-                    let required_fee =
-                        Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
-                            .map_err(|_| InvalidTransaction::Custom(8))?;
-                    if u128::from(*fee) < required_fee {
-                        log::info!(target: "shielded-pool", "  REJECTED: fee below minimum");
-                        return InvalidTransaction::Custom(8).into();
-                    }
-
-                    if !MerkleRoots::<T>::contains_key(anchor) {
-                        log::info!(target: "shielded-pool", "  REJECTED: Invalid anchor - not in MerkleRoots");
-                        return InvalidTransaction::Custom(3).into();
-                    }
-                    log::info!(target: "shielded-pool", "  anchor check PASSED");
-
-                    for nf in nullifiers.iter() {
-                        if is_zero_nullifier(nf) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Zero nullifier submitted");
-                            return InvalidTransaction::Custom(4).into();
+                }
+                Call::batch_shielded_transfer {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    total_fee,
+                } => {
+                    match Self::validate_batch_shielded_transfer_action(
+                        proof,
+                        nullifiers,
+                        commitments,
+                        ciphertexts,
+                        anchor,
+                        *total_fee,
+                    ) {
+                        Ok(meta) => {
+                            Self::action_meta_to_validity(_source, "ShieldedPoolUnsigned", meta)
                         }
+                        Err(err) => err.into(),
                     }
-                    for cm in commitments.iter() {
-                        if is_zero_commitment(cm) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Zero commitment submitted");
-                            return InvalidTransaction::Custom(4).into();
-                        }
-                    }
-
-                    let mut seen = Vec::new();
-                    for nf in nullifiers.iter() {
-                        if seen.contains(nf) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Duplicate nullifier in tx");
-                            return InvalidTransaction::Custom(4).into();
-                        }
-                        seen.push(*nf);
-                    }
-
-                    for nf in nullifiers.iter() {
-                        if Nullifiers::<T>::contains_key(nf) {
-                            log::info!(target: "shielded-pool", "  REJECTED: Nullifier already spent");
-                            return InvalidTransaction::Custom(5).into();
-                        }
-                    }
-                    log::info!(target: "shielded-pool", "  nullifier checks PASSED");
-
-                    let vk = VerifyingKeyStorage::<T>::get();
-                    if !vk.enabled {
-                        log::info!(target: "shielded-pool", "  REJECTED: Verifying key not enabled");
-                        return InvalidTransaction::Custom(6).into();
-                    }
-                    log::info!(target: "shielded-pool", "  verifying key check PASSED");
-
-                    let inputs = ShieldedTransferInputs {
-                        anchor: *anchor,
-                        nullifiers: nullifiers.clone().into_inner(),
-                        commitments: commitments.clone().into_inner(),
-                        ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
-                        fee: *fee,
-                        value_balance: 0,
-                        stablecoin: stablecoin.clone(),
-                    };
-
-                    let verifier = T::ProofVerifier::default();
-
-                    let aggregation_mode = AggregationProofRequired::<T>::get();
-                    let proof_policy = ProofAvailabilityPolicyStorage::<T>::get();
-
-                    if proof.data.is_empty()
-                        && !matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained)
-                    {
-                        log::info!(
-                            target: "shielded-pool",
-                            "  REJECTED: proof bytes required by policy"
-                        );
-                        return InvalidTransaction::Custom(12).into();
-                    }
-                    // Validation is performed against the current block state. For proofless
-                    // sidecar transfers in SelfContained mode, a block author can still make the
-                    // transaction valid by placing `enable_aggregation_mode` before transfers in
-                    // the candidate block, so mempool admission must not force inline proof
-                    // verification when proof bytes are intentionally omitted.
-                    if !aggregation_mode && !proof.data.is_empty() {
-                        log::debug!(target: "shielded-pool", "  Verifying STARK proof...");
-                        match verifier.verify_stark(proof, &inputs, &vk) {
-                            VerificationResult::Valid => {
-                                log::debug!(target: "shielded-pool", "  STARK proof PASSED");
-                            }
-                            other => {
-                                log::debug!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
-                                return InvalidTransaction::BadProof.into();
-                            }
-                        }
-                    }
-
-                    log::debug!(target: "shielded-pool", "  Verifying binding hash...");
-                    if !verifier.verify_binding_hash(binding_hash, &inputs) {
-                        log::debug!(target: "shielded-pool", "  binding hash FAILED");
-                        return InvalidTransaction::BadSigner.into();
-                    }
-                    log::debug!(target: "shielded-pool", "  binding hash PASSED");
-                    log::debug!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
-
-                    let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
-                        .priority(100)
-                        .longevity(64)
-                        // Proofless sidecar transfers must still propagate so non-submitting
-                        // miners can include them once aggregation mode is enabled in-block.
-                        .propagate(true);
-
-                    let mut provided_any = false;
-                    for nf in nullifiers.iter() {
-                        let mut tag = b"shielded_nf:".to_vec();
-                        tag.extend_from_slice(nf);
-                        builder = builder.and_provides(tag);
-                        provided_any = true;
-                    }
-
-                    if !provided_any {
-                        builder = builder.and_provides(b"shielded_no_nullifiers".to_vec());
-                    }
-
-                    builder.build()
                 }
                 Call::enable_aggregation_mode {} => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
+                    match Self::validate_enable_aggregation_mode_action() {
+                        Ok(meta) => Self::action_meta_to_validity(
+                            _source,
+                            "ShieldedPoolAggregationMode",
+                            meta,
+                        ),
+                        Err(err) => err.into(),
                     }
-                    if AggregationProofRequired::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if ShieldedTransfersProcessed::<T>::get() {
-                        return InvalidTransaction::Custom(11).into();
-                    }
-
-                    ValidTransaction::with_tag_prefix("ShieldedPoolAggregationMode")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"aggregation_mode".to_vec()])
-                        .propagate(false)
-                        .build()
                 }
                 // Inherent call: mint_coinbase
                 // Inherent extrinsics are validated through ProvideInherent::check_inherent
                 // but they still need to pass ValidateUnsigned to be applied.
                 // We return a valid transaction here; the actual validation happens in check_inherent.
                 Call::mint_coinbase { reward_bundle } => {
-                    if _source != TransactionSource::InBlock {
-                        log::info!(
-                            target: "shielded-pool",
-                            "ValidateUnsigned mint_coinbase REJECTED: source != InBlock"
-                        );
-                        return InvalidTransaction::Call.into();
-                    }
-                    if CoinbaseProcessed::<T>::get() {
-                        log::info!(
-                            target: "shielded-pool",
-                            "ValidateUnsigned mint_coinbase REJECTED: CoinbaseProcessed already set"
-                        );
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if Self::ensure_coinbase_subsidy(reward_bundle.miner_note.amount).is_err() {
-                        log::info!(
-                            target: "shielded-pool",
-                            "ValidateUnsigned mint_coinbase REJECTED: subsidy exceeds safety cap (amount={})",
-                            reward_bundle.miner_note.amount
-                        );
-                        return InvalidTransaction::Custom(9).into();
-                    }
-                    let expected_commitment =
-                        Self::expected_coinbase_commitment(&reward_bundle.miner_note);
-                    if reward_bundle.miner_note.commitment != expected_commitment {
-                        log::info!(
-                            target: "shielded-pool",
-                            "ValidateUnsigned mint_coinbase REJECTED: miner commitment mismatch"
-                        );
-                        return InvalidTransaction::BadProof.into();
-                    }
-                    if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
-                        let expected_prover_commitment =
-                            Self::expected_coinbase_commitment(prover_note);
-                        if prover_note.commitment != expected_prover_commitment {
-                            log::info!(
-                                target: "shielded-pool",
-                                "ValidateUnsigned mint_coinbase REJECTED: prover commitment mismatch"
-                            );
-                            return InvalidTransaction::BadProof.into();
+                    match Self::validate_mint_coinbase_action(reward_bundle) {
+                        Ok(meta) => {
+                            Self::action_meta_to_validity(_source, "ShieldedPoolCoinbase", meta)
                         }
+                        Err(err) => err.into(),
                     }
-                    log::info!(
-                        target: "shielded-pool",
-                        "ValidateUnsigned mint_coinbase ACCEPTED (miner_amount={}, has_prover_note={})",
-                        reward_bundle.miner_note.amount,
-                        reward_bundle.prover_note.is_some()
-                    );
-                    ValidTransaction::with_tag_prefix("ShieldedPoolCoinbase")
-                        .priority(TransactionPriority::MAX) // Inherents have highest priority
-                        .longevity(1) // Only valid for current block
-                        .and_provides(vec![b"coinbase".to_vec()])
-                        .propagate(false) // Inherents are not propagated
-                        .build()
                 }
                 Call::submit_proven_batch { payload } => {
-                    if _source != TransactionSource::InBlock {
-                        return InvalidTransaction::Call.into();
-                    }
-                    if ProvenBatchProcessed::<T>::get() {
-                        return InvalidTransaction::Stale.into();
-                    }
-                    if payload.version != types::BLOCK_PROOF_BUNDLE_SCHEMA {
-                        return InvalidTransaction::BadProof.into();
-                    }
-                    if payload.tx_count == 0 {
-                        return InvalidTransaction::Custom(10).into();
-                    }
-                    if payload.commitment_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
-                        return InvalidTransaction::ExhaustsResources.into();
-                    }
-                    if Self::validate_block_proof_bundle_mode(payload).is_err() {
-                        return InvalidTransaction::BadProof.into();
-                    }
-                    if Self::total_block_proof_bytes(payload)
-                        > types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES
-                    {
-                        return InvalidTransaction::ExhaustsResources.into();
-                    }
-                    if payload.da_chunk_count == 0 {
-                        return InvalidTransaction::Custom(10).into();
-                    }
-                    if let Some(claim) = payload.prover_claim.as_ref() {
-                        if !Self::verify_prover_claim_signature(claim, payload) {
-                            return InvalidTransaction::BadProof.into();
+                    match Self::validate_submit_proven_batch_action(payload) {
+                        Ok(meta) => {
+                            Self::action_meta_to_validity(_source, "ShieldedPoolProvenBatch", meta)
                         }
+                        Err(err) => err.into(),
                     }
-                    ValidTransaction::with_tag_prefix("ShieldedPoolProvenBatch")
-                        .priority(TransactionPriority::MAX)
-                        .longevity(1)
-                        .and_provides(vec![b"proven_batch".to_vec()])
-                        .propagate(false)
-                        .build()
                 }
                 // All other calls are invalid as unsigned
                 _ => {
