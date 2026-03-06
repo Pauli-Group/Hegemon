@@ -68,11 +68,18 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::{Decode, Encode};
 use network::PeerId;
+use pallet_shielded_pool::family::{
+    build_envelope as build_shielded_kernel_envelope, MintCoinbaseArgs, ShieldedFamilyAction,
+    ShieldedTransferInlineArgs, ACTION_BATCH_SHIELDED_TRANSFER, ACTION_ENABLE_AGGREGATION_MODE,
+    ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
+    ACTION_SUBMIT_PROVEN_BATCH, FAMILY_SHIELDED_POOL,
+};
 use pallet_shielded_pool::types::{
-    BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
+    EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding,
 };
 use pallet_timestamp;
 use parking_lot::Mutex as ParkingMutex;
+use protocol_kernel::types::ActionEnvelope;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sc_client_api::BlockBackend;
 use sc_transaction_pool_api::TransactionPool;
@@ -88,8 +95,8 @@ use std::sync::{
 };
 use std::time::Instant;
 
-use crate::substrate::mining_worker::MinedBlockRecord;
 use crate::substrate::client::HegemonTransactionPool;
+use crate::substrate::mining_worker::MinedBlockRecord;
 use crate::substrate::service::PeerGraphReport;
 use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
@@ -118,7 +125,7 @@ where
     /// DA chunk store for ciphertext retrieval
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
     /// Pending ciphertext store for sidecar submissions
-    pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
+    _pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     /// Connected peer count snapshot
     peer_count: Arc<AtomicUsize>,
     /// Connected peer detail snapshots
@@ -181,7 +188,7 @@ where
             peer_graph_reports,
             local_peer_id,
             da_chunk_store,
-            pending_ciphertext_store,
+            _pending_ciphertext_store: pending_ciphertext_store,
             start_time: Instant::now(),
             mined_blocks,
             mined_history,
@@ -205,6 +212,23 @@ where
     fn best_number(&self) -> u64 {
         self.client.info().best_number.try_into().unwrap_or(0)
     }
+
+    async fn submit_kernel_action_inner(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>
+    where
+        Block::Hash: Into<sp_core::H256>,
+    {
+        let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
+        let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
+        let at: sp_core::H256 = self.best_hash().into();
+        let tx_hash = self
+            .transaction_pool
+            .submit_one(at, TransactionSource::External, extrinsic)
+            .await
+            .map_err(|e| format!("transaction pool rejected kernel action: {e:?}"))?;
+        let mut out = [0u8; 32];
+        out.copy_from_slice(tx_hash.as_ref());
+        Ok(out)
+    }
 }
 
 // =============================================================================
@@ -220,6 +244,7 @@ where
         + Send
         + Sync
         + 'static,
+    Block::Hash: Into<sp_core::H256>,
     sp_runtime::traits::NumberFor<Block>: From<u64>,
     C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
 {
@@ -455,6 +480,27 @@ where
             reports: report_entries,
         }
     }
+
+    fn submit_action(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String> {
+        if envelope.family_id != FAMILY_SHIELDED_POOL {
+            return Err("stage-1 kernel RPC only accepts shielded family actions".to_string());
+        }
+        match envelope.action_id {
+            ACTION_SHIELDED_TRANSFER_INLINE
+            | ACTION_SHIELDED_TRANSFER_SIDECAR
+            | ACTION_BATCH_SHIELDED_TRANSFER
+            | ACTION_ENABLE_AGGREGATION_MODE
+            | ACTION_SUBMIT_PROVEN_BATCH
+            | ACTION_MINT_COINBASE => {}
+            _ => {
+                return Err(format!(
+                    "unsupported shielded kernel action id {}",
+                    envelope.action_id
+                ));
+            }
+        }
+        futures::executor::block_on(self.submit_kernel_action_inner(envelope))
+    }
 }
 
 fn extract_block_timestamp<Block: BlockT>(block: &Block) -> Option<u64> {
@@ -494,9 +540,15 @@ fn try_decode_coinbase_recipient<Block: BlockT>(
     let bytes = extrinsic.encode();
     let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
     match decoded.function {
-        runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::mint_coinbase {
-            reward_bundle,
-        }) => Some(reward_bundle.miner_note.recipient_address),
+        runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope }) => {
+            let action = ShieldedFamilyAction::decode_envelope(&envelope).ok()?;
+            match action {
+                ShieldedFamilyAction::MintCoinbase(MintCoinbaseArgs { reward_bundle }) => {
+                    Some(reward_bundle.miner_note.recipient_address)
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -665,9 +717,7 @@ where
         let nullifier_count = nullifiers.len();
         let commitment_count = commitments.len();
 
-        // Convert proof to StarkProof
-        let stark_proof = StarkProof::from_bytes(proof);
-        if stark_proof.is_empty() {
+        if proof.is_empty() {
             return Err("Empty proof provided".to_string());
         }
 
@@ -706,22 +756,25 @@ where
             .try_into()
             .map_err(|_| "Failed to convert encrypted notes")?;
 
-        // Convert binding hash
-        let binding = BindingHash { data: binding_hash };
+        let public_args = ShieldedTransferInlineArgs {
+            proof,
+            commitments: bounded_commitments.into_inner(),
+            ciphertexts: bounded_ciphertexts.into_inner(),
+            anchor,
+            binding_hash,
+            stablecoin,
+            fee,
+        }
+        .encode();
 
-        // Build the unsigned proof-native pallet call
-        let call = runtime::RuntimeCall::ShieldedPool(
-            pallet_shielded_pool::Call::shielded_transfer_unsigned {
-                proof: stark_proof,
-                nullifiers: bounded_nullifiers,
-                commitments: bounded_commitments,
-                ciphertexts: bounded_ciphertexts,
-                anchor,
-                binding_hash: binding,
-                stablecoin,
-                fee,
-            },
+        let envelope = build_shielded_kernel_envelope(
+            runtime::manifest::default_version_binding(),
+            ACTION_SHIELDED_TRANSFER_INLINE,
+            bounded_nullifiers.into_inner(),
+            public_args,
         );
+
+        let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
         let at: sp_core::H256 = self.best_hash().into();
 

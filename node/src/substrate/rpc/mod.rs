@@ -9,7 +9,7 @@
 //! |-------------------------|----------------------------|----------|
 //! | GET `/blocks/latest`    | `chain_getHeader`          | chain    |
 //! | GET `/blocks/:hash`     | `chain_getBlock`           | chain    |
-//! | POST `/transactions`    | `hegemon_submitShieldedTransfer` | shielded |
+//! | POST `/transactions`    | `hegemon_submitAction`      | hegemon  |
 //! | GET `/wallet/notes`     | `hegemon_walletNotes`      | custom   |
 //! | GET `/wallet/commitments`| `hegemon_walletCommitments`| custom  |
 //! | POST `/wallet/prove`    | `hegemon_generateProof`    | custom   |
@@ -20,7 +20,8 @@
 //!
 //! | Method                          | Description                              |
 //! |---------------------------------|------------------------------------------|
-//! | `hegemon_submitShieldedTransfer`| Submit shielded transfer with STARK proof|
+//! | `hegemon_submitAction`          | Submit a kernel action envelope          |
+//! | `hegemon_submitShieldedTransfer`| Deprecated shielded-send adapter         |
 //! | `hegemon_getEncryptedNotes`     | Fetch ML-KEM encrypted notes             |
 //! | `hegemon_getMerkleWitness`      | Get Poseidon Merkle path for a note      |
 //! | `hegemon_getShieldedPoolStatus` | Get shielded pool statistics             |
@@ -48,7 +49,8 @@
 //! │  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
 //! │  ┌─────────────────────────────────────────────────────────────┐│
 //! │  │                    Shielded Pool RPCs                       ││
-//! │  │  - submitShieldedTransfer (STARK proofs)                    ││
+//! │  │  - submitAction (kernel envelopes)                          ││
+//! │  │  - submitShieldedTransfer (deprecated adapter)              ││
 //! │  │  - getEncryptedNotes (ML-KEM)                               ││
 //! │  │  - getMerkleWitness (Poseidon)                              ││
 //! │  └─────────────────────────────────────────────────────────────┘│
@@ -115,7 +117,7 @@ pub struct FullDeps<S, P> {
 /// - Standard Substrate RPCs (when available)
 /// - Custom Hegemon RPCs for mining and consensus
 /// - Wallet RPCs for note management and proof generation
-/// - Shielded pool RPCs for STARK-based private transfers
+/// - Shielded pool RPCs for note retrieval plus deprecated shielded-send compatibility
 pub fn create_full<S, P>(
     deps: FullDeps<S, P>,
 ) -> Result<RpcModule<()>, Box<dyn std::error::Error + Send + Sync>>

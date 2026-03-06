@@ -382,7 +382,7 @@ The repository now contains a `wallet` crate that wires these ideas into code:
   * `wallet address --root <hex> --index <n>` derives additional diversified addresses on demand.
   * `wallet tx-craft ...` reads JSON inputs/recipients, creates redacted `TransactionWitness` JSON (omits `sk_spend`), and emits ML-KEM note ciphertexts for the recipients.
   * `wallet scan --ivk <path> --ledger <path>` decrypts ledger ciphertexts with an incoming viewing key and returns per-asset balances plus recovered note summaries.
-  * `wallet substrate-sync`, `wallet substrate-daemon`, and `wallet substrate-send` are the live Substrate RPC flows; `wallet substrate-send` uses proof-backed `submitShieldedTransfer`.
+  * `wallet substrate-sync`, `wallet substrate-daemon`, and `wallet substrate-send` are the live Substrate RPC flows; `wallet substrate-send` now wraps the proof-backed shielded transfer in a kernel action and submits it through `hegemon_submitAction`.
 
 Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone can watch address derivation, note encryption, and viewing-key-based balance recovery stay compatible with the proving system.
 

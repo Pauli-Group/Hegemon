@@ -26,6 +26,7 @@ parking_lot = "0.12"
 rayon = "1"
 pq-noise = { path = "../pq-noise" }
 protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning" }
+protocol-kernel = { path = "../protocol/kernel", package = "protocol-kernel" }
 rcgen = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -98,6 +99,7 @@ runtime = { path = "../runtime", optional = true }
 
 # Shielded pool pallet (for RPC types)
 pallet-shielded-pool = { path = "../pallets/shielded-pool", optional = true }
+pallet-kernel = { path = "../pallets/kernel", optional = true }
 
 # Archive market pallet (for RPC types)
 pallet-archive-market = { path = "../pallets/archive-market", optional = true }
@@ -161,6 +163,7 @@ substrate = [
     "dep:pallet-timestamp",
     "dep:pallet-coinbase",
     "dep:pallet-shielded-pool",
+    "dep:pallet-kernel",
     "dep:pallet-archive-market",
     "dep:frame-support",
     "dep:tower",

@@ -21,6 +21,7 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
+use protocol_kernel::types::{ActionEnvelope, AuthorizationBundle, ObjectRef, SignatureEnvelope};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -205,6 +206,46 @@ pub struct NodeConfigSnapshot {
     pub max_peers: u32,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActionObjectRefRequest {
+    pub family_id: u16,
+    pub object_id: String,
+    pub expected_root: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActionSignatureRequest {
+    pub key_id: String,
+    pub signature_scheme: u16,
+    pub signature_bytes: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitActionRequest {
+    pub binding_circuit: u16,
+    pub binding_crypto: u16,
+    pub family_id: u16,
+    pub action_id: u16,
+    #[serde(default)]
+    pub object_refs: Vec<ActionObjectRefRequest>,
+    #[serde(default)]
+    pub new_nullifiers: Vec<String>,
+    pub public_args: String,
+    #[serde(default)]
+    pub authorization_proof: Option<String>,
+    #[serde(default)]
+    pub authorization_signatures: Vec<ActionSignatureRequest>,
+    #[serde(default)]
+    pub aux_data: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitActionResponse {
+    pub success: bool,
+    pub tx_hash: Option<String>,
+    pub error: Option<String>,
+}
+
 /// Hegemon RPC API trait definition
 ///
 /// This trait defines all the custom RPC endpoints for the Hegemon node.
@@ -286,6 +327,10 @@ pub trait HegemonApi {
     /// Get peer graph details (direct peers + reported peers).
     #[method(name = "peerGraph")]
     async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot>;
+
+    /// Submit a kernel action envelope.
+    #[method(name = "submitAction")]
+    async fn submit_action(&self, request: SubmitActionRequest) -> RpcResult<SubmitActionResponse>;
 }
 
 /// Trait for mining handle operations
@@ -330,6 +375,8 @@ pub trait HegemonService: Send + Sync {
     fn peer_list(&self) -> Vec<PeerDetail>;
     /// Get peer graph details (direct peers + reported peers).
     fn peer_graph(&self) -> PeerGraphSnapshot;
+    /// Submit a generic kernel action.
+    fn submit_action(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>;
 }
 
 /// Hegemon RPC implementation
@@ -498,6 +545,168 @@ where
     async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot> {
         Ok(self.service.peer_graph())
     }
+
+    async fn submit_action(&self, request: SubmitActionRequest) -> RpcResult<SubmitActionResponse> {
+        let object_refs = request
+            .object_refs
+            .into_iter()
+            .map(|item| {
+                Ok(ObjectRef {
+                    family_id: item.family_id,
+                    object_id: hex_to_array32(&item.object_id)?,
+                    expected_root: hex_to_array48(&item.expected_root)?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>();
+        let object_refs = match object_refs {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(err),
+                })
+            }
+        };
+
+        let new_nullifiers = request
+            .new_nullifiers
+            .into_iter()
+            .map(|value| hex_to_array48(&value))
+            .collect::<Result<Vec<_>, _>>();
+        let new_nullifiers = match new_nullifiers {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(err),
+                })
+            }
+        };
+
+        let public_args = match base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &request.public_args,
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(format!("invalid public_args encoding: {err}")),
+                })
+            }
+        };
+
+        let proof_bytes = match request.authorization_proof {
+            Some(value) => {
+                match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &value) {
+                    Ok(decoded) => decoded,
+                    Err(err) => {
+                        return Ok(SubmitActionResponse {
+                            success: false,
+                            tx_hash: None,
+                            error: Some(format!("invalid authorization_proof encoding: {err}")),
+                        })
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+
+        let signatures = request
+            .authorization_signatures
+            .into_iter()
+            .map(|sig| {
+                Ok(SignatureEnvelope {
+                    key_id: hex_to_array32(&sig.key_id)?,
+                    signature_scheme: sig.signature_scheme,
+                    signature_bytes: base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &sig.signature_bytes,
+                    )
+                    .map_err(|e| format!("invalid signature_bytes encoding: {e}"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>();
+        let signatures = match signatures {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(err),
+                })
+            }
+        };
+
+        let aux_data = match request.aux_data {
+            Some(value) => {
+                match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &value) {
+                    Ok(decoded) => decoded,
+                    Err(err) => {
+                        return Ok(SubmitActionResponse {
+                            success: false,
+                            tx_hash: None,
+                            error: Some(format!("invalid aux_data encoding: {err}")),
+                        })
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+
+        let envelope = ActionEnvelope {
+            binding: protocol_kernel::types::KernelVersionBinding {
+                circuit: request.binding_circuit,
+                crypto: request.binding_crypto,
+            },
+            family_id: request.family_id,
+            action_id: request.action_id,
+            object_refs,
+            new_nullifiers,
+            public_args,
+            authorization: AuthorizationBundle {
+                proof_bytes,
+                signatures,
+            },
+            aux_data,
+        };
+
+        match self.service.submit_action(envelope) {
+            Ok(tx_hash) => Ok(SubmitActionResponse {
+                success: true,
+                tx_hash: Some(format!("0x{}", hex::encode(tx_hash))),
+                error: None,
+            }),
+            Err(err) => Ok(SubmitActionResponse {
+                success: false,
+                tx_hash: None,
+                error: Some(err),
+            }),
+        }
+    }
+}
+
+fn hex_to_array32(value: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(value.trim_start_matches("0x")).map_err(|e| e.to_string())?;
+    if bytes.len() != 32 {
+        return Err(format!("expected 32 bytes, got {}", bytes.len()));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn hex_to_array48(value: &str) -> Result<[u8; 48], String> {
+    let bytes = hex::decode(value.trim_start_matches("0x")).map_err(|e| e.to_string())?;
+    if bytes.len() != 48 {
+        return Err(format!("expected 48 bytes, got {}", bytes.len()));
+    }
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -639,6 +848,10 @@ mod tests {
                     }],
                 }],
             }
+        }
+
+        fn submit_action(&self, _envelope: ActionEnvelope) -> Result<[u8; 32], String> {
+            Ok([0xabu8; 32])
         }
     }
 

@@ -1,8 +1,8 @@
 use sp_core::H256;
 
 use crate::{
-    manifest, AccountId, Balance, DifficultyConfig, PowDifficulty, RuntimeGenesisConfig,
-    ShieldedPoolConfig, SystemConfig,
+    manifest, AccountId, Balance, DifficultyConfig, KernelConfig, PowDifficulty,
+    RuntimeGenesisConfig, ShieldedPoolConfig, SystemConfig,
 };
 
 /// Structured chain spec describing PoW parameters, telemetry defaults, and genesis state.
@@ -26,6 +26,10 @@ fn base_genesis(endowed: &[(AccountId, Balance)]) -> RuntimeGenesisConfig {
     RuntimeGenesisConfig {
         system: SystemConfig::default(),
         difficulty: DifficultyConfig::default(),
+        kernel: KernelConfig {
+            family_roots: manifest::kernel_family_roots(),
+            _phantom: Default::default(),
+        },
         shielded_pool: ShieldedPoolConfig {
             verifying_key: Some(manifest::shielded_verifying_key()),
             fee_parameters: Some(manifest.fee_parameters),

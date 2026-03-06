@@ -1,7 +1,7 @@
 //! Shielded Transaction RPC Endpoints
 //!
 //! This module provides RPC endpoints for shielded transactions:
-//! - Submit shielded transfers with STARK proofs
+//! - Submit shielded transfers through the deprecated shielded-send adapter
 //! - Get encrypted notes for scanning
 //! - Get Merkle witnesses for note spending
 //!
@@ -9,7 +9,7 @@
 //!
 //! | Method                          | Description                              |
 //! |---------------------------------|------------------------------------------|
-//! | `hegemon_submitShieldedTransfer`| Submit a shielded transfer with STARK proof |
+//! | `hegemon_submitShieldedTransfer`| Deprecated adapter for shielded transfer submission |
 //! | `hegemon_getEncryptedNotes`     | Fetch ML-KEM encrypted notes             |
 //! | `hegemon_getMerkleWitness`      | Get Poseidon Merkle path for a note      |
 //! | `hegemon_getShieldedPoolStatus` | Get shielded pool statistics             |
@@ -525,17 +525,21 @@ where
         }
 
         // Submit to service
-        match self.service.submit_shielded_transfer(
-            proof,
-            nullifiers,
-            commitments,
-            encrypted_notes,
-            anchor,
-            binding_hash,
-            stablecoin,
-            request.fee,
-            request.value_balance,
-        ).await {
+        match self
+            .service
+            .submit_shielded_transfer(
+                proof,
+                nullifiers,
+                commitments,
+                encrypted_notes,
+                anchor,
+                binding_hash,
+                stablecoin,
+                request.fee,
+                request.value_balance,
+            )
+            .await
+        {
             Ok(tx_hash) => Ok(ShieldedTransferResponse {
                 success: true,
                 tx_hash: Some(hex::encode(tx_hash)),

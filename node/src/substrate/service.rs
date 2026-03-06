@@ -156,6 +156,14 @@ use network::{
     PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use p3_field::PrimeField64;
+use pallet_shielded_pool::family::ShieldedFamilyAction;
+use pallet_shielded_pool::family::{
+    build_envelope as build_shielded_kernel_envelope, EnableAggregationModeArgs, MintCoinbaseArgs,
+    SubmitProvenBatchArgs, ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE,
+    ACTION_SUBMIT_PROVEN_BATCH,
+};
+#[cfg(test)]
+use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
 use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
@@ -206,8 +214,6 @@ fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     out[37..69].copy_from_slice(&decoded.pk_auth);
     Some(out)
 }
-
-type ShieldedPoolCall = pallet_shielded_pool::Call<runtime::Runtime>;
 
 // Import jsonrpsee for RPC server
 use jsonrpsee::server::ServerBuilder;
@@ -1380,33 +1386,29 @@ fn build_da_blob_from_extrinsics(
     let mut used_ciphertext_hashes = Vec::new();
 
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let ciphertexts = match call {
-            ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => Some(
-                ciphertexts
+        let ciphertexts = match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(encrypted_note_bytes)
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
+            ShieldedFamilyAction::BatchTransfer { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(encrypted_note_bytes)
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
                 let pending = pending_ciphertexts
                     .ok_or_else(|| "pending ciphertext store missing".to_string())?;
-                let hashes = ciphertext_hashes.as_slice();
+                let hashes = args.ciphertext_hashes.as_slice();
                 let ciphertexts = pending.get_many(hashes)?;
-                validate_ciphertexts_against_hashes(&ciphertexts, ciphertext_sizes, hashes)?;
+                validate_ciphertexts_against_hashes(&ciphertexts, &args.ciphertext_sizes, hashes)?;
                 used_ciphertext_hashes.extend_from_slice(hashes);
                 Some(ciphertexts)
             }
@@ -1538,14 +1540,59 @@ struct DaTxLayout {
 
 fn has_sidecar_transfers(extrinsics: &[runtime::UncheckedExtrinsic]) -> bool {
     extrinsics.iter().any(|extrinsic| {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-            return false;
-        };
         matches!(
-            call,
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+            shielded_action_from_extrinsic(extrinsic),
+            Some((_, ShieldedFamilyAction::TransferSidecar { .. }))
         )
     })
+}
+
+fn shielded_action_from_runtime_call(
+    call: &runtime::RuntimeCall,
+) -> Option<(
+    protocol_kernel::types::KernelVersionBinding,
+    ShieldedFamilyAction,
+)> {
+    let runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope }) = call else {
+        return None;
+    };
+    let action = ShieldedFamilyAction::decode_envelope(envelope).ok()?;
+    Some((envelope.binding, action))
+}
+
+fn shielded_action_from_extrinsic(
+    extrinsic: &runtime::UncheckedExtrinsic,
+) -> Option<(
+    protocol_kernel::types::KernelVersionBinding,
+    ShieldedFamilyAction,
+)> {
+    shielded_action_from_runtime_call(&extrinsic.function)
+}
+
+fn kernel_shielded_runtime_call(
+    action_id: u16,
+    new_nullifiers: Vec<[u8; 48]>,
+    public_args: Vec<u8>,
+) -> runtime::RuntimeCall {
+    let envelope = build_shielded_kernel_envelope(
+        runtime::manifest::default_version_binding(),
+        action_id,
+        new_nullifiers,
+        public_args,
+    );
+    runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope })
+}
+
+fn kernel_shielded_extrinsic(
+    action_id: u16,
+    new_nullifiers: Vec<[u8; 48]>,
+    public_args: Vec<u8>,
+) -> runtime::UncheckedExtrinsic {
+    runtime::UncheckedExtrinsic::new_unsigned(kernel_shielded_runtime_call(
+        action_id,
+        new_nullifiers,
+        public_args,
+    ))
 }
 
 fn da_layout_from_extrinsics(
@@ -1553,27 +1600,25 @@ fn da_layout_from_extrinsics(
 ) -> Result<Vec<DaTxLayout>, String> {
     let mut layouts = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let sizes = match call {
-            ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => Some(
-                ciphertexts
+        let sizes = match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(|note| encrypted_note_bytes(note).len())
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
+            ShieldedFamilyAction::BatchTransfer { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(|note| encrypted_note_bytes(note).len())
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                ciphertext_sizes, ..
-            } => Some(
-                ciphertext_sizes
+            ShieldedFamilyAction::TransferSidecar { args, .. } => Some(
+                args.ciphertext_sizes
                     .iter()
                     .map(|size| *size as usize)
                     .collect::<Vec<_>>(),
@@ -1659,15 +1704,15 @@ fn transfer_ciphertexts_from_extrinsics(
 ) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        match call {
-            ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => {
-                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+        match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                out.extend(args.ciphertexts.iter().map(encrypted_note_bytes));
             }
-            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => {
-                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+            ShieldedFamilyAction::BatchTransfer { args, .. } => {
+                out.extend(args.ciphertexts.iter().map(encrypted_note_bytes));
             }
             _ => {}
         }
@@ -1680,16 +1725,16 @@ fn coinbase_ciphertexts_from_extrinsics(
 ) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        let ShieldedPoolCall::mint_coinbase { reward_bundle } = call else {
+        let ShieldedFamilyAction::MintCoinbase(args) = action else {
             continue;
         };
         out.push(encrypted_note_bytes(
-            &reward_bundle.miner_note.encrypted_note,
+            &args.reward_bundle.miner_note.encrypted_note,
         ));
-        if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+        if let Some(prover_note) = args.reward_bundle.prover_note.as_ref() {
             out.push(encrypted_note_bytes(&prover_note.encrypted_note));
         }
     }
@@ -1699,13 +1744,15 @@ fn coinbase_ciphertexts_from_extrinsics(
 fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        match call {
-            ShieldedPoolCall::shielded_transfer_unsigned { binding_hash, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { binding_hash, .. } => {
-                out.push(binding_hash.data);
+        match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                out.push(args.binding_hash);
+            }
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
+                out.push(args.binding_hash);
             }
             _ => {}
         }
@@ -1780,66 +1827,53 @@ fn statement_bindings_from_extrinsics(
     let mut bindings = Vec::new();
 
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((binding_version, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let version = DEFAULT_VERSION_BINDING;
-        let binding = match call {
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                stablecoin,
-                fee,
-                ..
-            } => {
-                let ciphertext_hashes = ciphertexts
+        let version: protocol_versioning::VersionBinding = binding_version.into();
+        let binding = match action {
+            ShieldedFamilyAction::TransferInline { nullifiers, args } => {
+                let ciphertext_hashes = args
+                    .ciphertexts
                     .iter()
                     .map(encrypted_note_bytes)
                     .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
                     .collect::<Vec<_>>();
                 consensus::types::TxStatementBinding {
                     statement_hash: statement_hash_from_materialized_call(
-                        anchor,
+                        &args.anchor,
                         nullifiers.as_slice(),
-                        commitments.as_slice(),
+                        args.commitments.as_slice(),
                         &ciphertext_hashes,
-                        *fee,
+                        args.fee,
                         0,
                         version,
-                        stablecoin.as_ref(),
+                        args.stablecoin.as_ref(),
                     ),
-                    anchor: *anchor,
-                    fee: *fee,
+                    anchor: args.anchor,
+                    fee: args.fee,
                     circuit_version: u32::from(version.circuit),
                 }
             }
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                nullifiers,
-                commitments,
-                ciphertext_hashes,
-                anchor,
-                stablecoin,
-                fee,
-                ..
-            } => consensus::types::TxStatementBinding {
-                statement_hash: statement_hash_from_materialized_call(
-                    anchor,
-                    nullifiers.as_slice(),
-                    commitments.as_slice(),
-                    ciphertext_hashes.as_slice(),
-                    *fee,
-                    0,
-                    version,
-                    stablecoin.as_ref(),
-                ),
-                anchor: *anchor,
-                fee: *fee,
-                circuit_version: u32::from(version.circuit),
-            },
-            ShieldedPoolCall::batch_shielded_transfer { .. } => {
+            ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
+                consensus::types::TxStatementBinding {
+                    statement_hash: statement_hash_from_materialized_call(
+                        &args.anchor,
+                        nullifiers.as_slice(),
+                        args.commitments.as_slice(),
+                        args.ciphertext_hashes.as_slice(),
+                        args.fee,
+                        0,
+                        version,
+                        args.stablecoin.as_ref(),
+                    ),
+                    anchor: args.anchor,
+                    fee: args.fee,
+                    circuit_version: u32::from(version.circuit),
+                }
+            }
+            ShieldedFamilyAction::BatchTransfer { .. } => {
                 return Err(
                     "batch shielded transfers are not supported in block proof generation".into(),
                 );
@@ -1855,22 +1889,18 @@ fn statement_bindings_from_extrinsics(
 fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        match call {
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                binding_hash,
-                ..
+        match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                if args.proof.is_empty() {
+                    out.push(args.binding_hash);
+                }
             }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof,
-                binding_hash,
-                ..
-            } => {
-                if proof.data.is_empty() {
-                    out.push(binding_hash.data);
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
+                if args.proof.is_empty() {
+                    out.push(args.binding_hash);
                 }
             }
             _ => {}
@@ -2242,6 +2272,8 @@ fn build_commitment_block_proof_from_materials(
     let mut sorted_nullifiers = nullifiers.clone();
     sorted_nullifiers.sort_unstable();
     let nullifier_root = nullifier_root_from_list(&nullifiers)?;
+    let starting_kernel_root = kernel_root_from_shielded_root(&starting_root);
+    let ending_kernel_root = kernel_root_from_shielded_root(&ending_root);
 
     let prover = CommitmentBlockProver::new();
     let proof = prover
@@ -2249,6 +2281,8 @@ fn build_commitment_block_proof_from_materials(
             statement_hashes,
             starting_root,
             ending_root,
+            starting_kernel_root,
+            ending_kernel_root,
             nullifier_root,
             da_root,
             nullifiers,
@@ -3075,6 +3109,10 @@ impl HeaderProofExt for SubstrateProofHeader {
     fn da_params(&self) -> consensus::DaParams {
         self.da_params
     }
+
+    fn kernel_root(&self) -> consensus::types::StateRoot {
+        [0u8; 48]
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3087,16 +3125,16 @@ fn extract_proven_batch_payload(
 ) -> Result<Option<ProvenBatchPayload>, String> {
     let mut found: Option<ProvenBatchPayload> = None;
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        if let ShieldedPoolCall::submit_proven_batch { payload } = call {
+        if let ShieldedFamilyAction::SubmitProvenBatch(args) = action {
             if found.is_some() {
                 return Err("multiple submit_proven_batch extrinsics in block".into());
             }
             found = Some(ProvenBatchPayload {
-                payload: payload.clone(),
+                payload: args.payload,
             });
         }
     }
@@ -3122,9 +3160,10 @@ fn extract_shielded_transfers_for_parallel_verification(
     let mut ciphertext_cursor = 0usize;
 
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((binding_version, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
+        let version: protocol_versioning::VersionBinding = binding_version.into();
 
         let mut next_resolved_ciphertexts = || -> Result<Option<Vec<Vec<u8>>>, String> {
             let resolved = match resolved_ciphertexts {
@@ -3139,67 +3178,52 @@ fn extract_shielded_transfers_for_parallel_verification(
             Ok(Some(ciphertexts))
         };
 
-        match call {
-            ShieldedPoolCall::mint_coinbase { .. } => {
+        match action {
+            ShieldedFamilyAction::MintCoinbase(_) => {
                 // Coinbase ciphertexts are stored separately from the DA blob.
             }
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ciphertexts,
-                ..
-            } => {
+            ShieldedFamilyAction::TransferInline { nullifiers, args } => {
                 let ciphertexts = match next_resolved_ciphertexts()? {
                     Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
+                    None => args
+                        .ciphertexts
                         .iter()
                         .map(encrypted_note_bytes)
                         .collect::<Vec<_>>(),
                 };
-                let proof_bytes = resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
+                let proof = pallet_shielded_pool::types::StarkProof::from_bytes(args.proof.clone());
+                let binding_hash = pallet_shielded_pool::types::BindingHash {
+                    data: args.binding_hash,
+                };
+                let proof_bytes =
+                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
                 let tx_proof = build_transaction_proof(
                     proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
+                    nullifiers.clone(),
+                    args.commitments.clone(),
                     &ciphertexts,
-                    *anchor,
-                    stablecoin.clone(),
-                    *fee,
+                    args.anchor,
+                    args.stablecoin.clone(),
+                    args.fee,
                     0,
                 )?;
-                let tx = crate::transaction::proof_to_transaction(
-                    &tx_proof,
-                    DEFAULT_VERSION_BINDING,
-                    ciphertexts,
-                );
+                let tx = crate::transaction::proof_to_transaction(&tx_proof, version, ciphertexts);
                 transactions.push(tx);
                 proofs.push(tx_proof);
-                proof_binding_hashes.push(binding_hash.data);
+                proof_binding_hashes.push(args.binding_hash);
             }
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                let nullifiers_vec = nullifiers.iter().copied().collect::<Vec<_>>();
-                let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
-                let hash_vec = ciphertext_hashes.to_vec();
+            ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
+                let nullifiers_vec = nullifiers.clone();
+                let commitments_vec = args.commitments.clone();
+                let hash_vec = args.ciphertext_hashes.clone();
                 let maybe_ciphertexts = next_resolved_ciphertexts()?;
+                let proof = pallet_shielded_pool::types::StarkProof::from_bytes(args.proof.clone());
+                let binding_hash = pallet_shielded_pool::types::BindingHash {
+                    data: args.binding_hash,
+                };
                 let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
-                    proof,
-                    binding_hash,
+                    &proof,
+                    &binding_hash,
                     pending_proofs,
                 ) {
                     Ok(bytes) => Some(bytes),
@@ -3217,17 +3241,17 @@ fn extract_shielded_transfers_for_parallel_verification(
                     (Some(proof_bytes), Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
+                            &args.ciphertext_sizes,
+                            &args.ciphertext_hashes,
                         )?;
                         Some(build_transaction_proof(
                             proof_bytes,
                             nullifiers_vec.clone(),
                             commitments_vec.clone(),
                             ciphertexts,
-                            *anchor,
-                            stablecoin.clone(),
-                            *fee,
+                            args.anchor,
+                            args.stablecoin.clone(),
+                            args.fee,
                             0,
                         )?)
                     }
@@ -3236,56 +3260,54 @@ fn extract_shielded_transfers_for_parallel_verification(
                         nullifiers_vec.clone(),
                         commitments_vec.clone(),
                         &hash_vec,
-                        *anchor,
-                        stablecoin.clone(),
-                        *fee,
+                        args.anchor,
+                        args.stablecoin.clone(),
+                        args.fee,
                         0,
                     )?),
                     (None, Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
+                            &args.ciphertext_sizes,
+                            &args.ciphertext_hashes,
                         )?;
                         None
                     }
                     (None, None) => None,
                 };
                 let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
-                    (Some(proof), Some(ciphertexts)) => crate::transaction::proof_to_transaction(
-                        proof,
-                        DEFAULT_VERSION_BINDING,
-                        ciphertexts,
-                    ),
+                    (Some(proof), Some(ciphertexts)) => {
+                        crate::transaction::proof_to_transaction(proof, version, ciphertexts)
+                    }
                     (Some(proof), None) => consensus::types::Transaction::new_with_hashes(
                         nullifiers_vec,
                         commitments_vec,
                         proof.public_inputs.balance_tag,
-                        DEFAULT_VERSION_BINDING,
+                        version,
                         hash_vec,
                     ),
                     (None, Some(ciphertexts)) => consensus::types::Transaction::new(
                         nullifiers_vec,
                         commitments_vec,
                         [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
+                        version,
                         ciphertexts,
                     ),
                     (None, None) => consensus::types::Transaction::new_with_hashes(
                         nullifiers_vec,
                         commitments_vec,
                         [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
+                        version,
                         hash_vec,
                     ),
                 };
                 transactions.push(tx);
                 if let Some(tx_proof) = tx_proof {
                     proofs.push(tx_proof);
-                    proof_binding_hashes.push(binding_hash.data);
+                    proof_binding_hashes.push(args.binding_hash);
                 }
             }
-            ShieldedPoolCall::batch_shielded_transfer { .. } => {
+            ShieldedFamilyAction::BatchTransfer { .. } => {
                 return Err(
                     "batch shielded transfers are not supported in block proof generation".into(),
                 );
@@ -3353,6 +3375,13 @@ fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], String>
     Ok(blake3_384(&data))
 }
 
+fn kernel_root_from_shielded_root(root: &[u8; 48]) -> [u8; 48] {
+    protocol_kernel::compute_kernel_global_root(vec![(
+        runtime::manifest::FAMILY_SHIELDED_POOL,
+        *root,
+    )])
+}
+
 fn hash_bytes_to_felts(bytes: &[u8; 48]) -> [Felt; 6] {
     let mut felts = [Felt::new(0); 6];
     for (idx, chunk) in bytes.chunks(8).enumerate() {
@@ -3378,6 +3407,8 @@ fn decode_nullifier_list(label: &str, nullifiers: &[[u8; 48]]) -> Result<Vec<[Fe
 fn derive_nullifier_challenges(
     starting_state_root: &[u8; 48],
     ending_state_root: &[u8; 48],
+    starting_kernel_root: &[u8; 48],
+    ending_kernel_root: &[u8; 48],
     nullifier_root: &[u8; 48],
     da_root: &[u8; 48],
     tx_count: u32,
@@ -3388,6 +3419,8 @@ fn derive_nullifier_challenges(
     hasher.update(b"blk-nullifier-perm-v1");
     hasher.update(starting_state_root);
     hasher.update(ending_state_root);
+    hasher.update(starting_kernel_root);
+    hasher.update(ending_kernel_root);
     hasher.update(nullifier_root);
     hasher.update(da_root);
     hasher.update(&tx_count.to_le_bytes());
@@ -3454,10 +3487,14 @@ fn derive_commitment_block_proof_from_bytes(
 
     let starting_state_root = parent_tree.root();
     let ending_state_root = tree.root();
+    let starting_kernel_root = kernel_root_from_shielded_root(&starting_state_root);
+    let ending_kernel_root = kernel_root_from_shielded_root(&ending_state_root);
     let tx_count = transactions.len() as u32;
     let (perm_alpha, perm_beta) = derive_nullifier_challenges(
         &starting_state_root,
         &ending_state_root,
+        &starting_kernel_root,
+        &ending_kernel_root,
         &nullifier_root,
         &da_root,
         tx_count,
@@ -3472,6 +3509,11 @@ fn derive_commitment_block_proof_from_bytes(
         )?,
         starting_state_root: bytes48_to_felts_checked("starting_state_root", &starting_state_root)?,
         ending_state_root: bytes48_to_felts_checked("ending_state_root", &ending_state_root)?,
+        starting_kernel_root: bytes48_to_felts_checked(
+            "starting_kernel_root",
+            &starting_kernel_root,
+        )?,
+        ending_kernel_root: bytes48_to_felts_checked("ending_kernel_root", &ending_kernel_root)?,
         nullifier_root: hash_bytes_to_felts(&nullifier_root),
         da_root: hash_bytes_to_felts(&da_root),
         tx_count,
@@ -3523,8 +3565,8 @@ fn verify_proof_carrying_block(
     let proof_policy = fetch_proof_availability_policy(client, parent_hash)?;
     let aggregation_mode_enabled = extrinsics.iter().any(|extrinsic| {
         matches!(
-            &extrinsic.function,
-            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+            shielded_action_from_extrinsic(extrinsic),
+            Some((_, ShieldedFamilyAction::EnableAggregationMode))
         )
     });
     let verification_mode = if aggregation_mode_enabled
@@ -3964,72 +4006,46 @@ fn load_proofless_ready_wait() -> Duration {
 }
 
 fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return false;
-    };
-
     matches!(
-        call,
-        ShieldedPoolCall::shielded_transfer_unsigned { .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
-            | ShieldedPoolCall::batch_shielded_transfer { .. }
+        shielded_action_from_runtime_call(call),
+        Some((_, ShieldedFamilyAction::TransferInline { .. }))
+            | Some((_, ShieldedFamilyAction::TransferSidecar { .. }))
+            | Some((_, ShieldedFamilyAction::BatchTransfer { .. }))
     )
 }
 
 fn is_proofless_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return false;
-    };
-
-    match call {
-        ShieldedPoolCall::shielded_transfer_unsigned { proof, .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { proof, .. } => {
-            proof.data.is_empty()
-        }
+    match shielded_action_from_runtime_call(call) {
+        Some((_, ShieldedFamilyAction::TransferInline { args, .. })) => args.proof.is_empty(),
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, .. })) => args.proof.is_empty(),
         _ => false,
     }
 }
 
 fn is_sidecar_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return false;
-    };
-
     matches!(
-        call,
-        ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+        shielded_action_from_runtime_call(call),
+        Some((_, ShieldedFamilyAction::TransferSidecar { .. }))
     )
 }
 
 fn proofless_binding_hash_from_call(call: &runtime::RuntimeCall) -> Option<[u8; 64]> {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return None;
-    };
-
-    match call {
-        ShieldedPoolCall::shielded_transfer_unsigned {
-            proof,
-            binding_hash,
-            ..
+    match shielded_action_from_runtime_call(call) {
+        Some((_, ShieldedFamilyAction::TransferInline { args, .. })) => {
+            args.proof.is_empty().then_some(args.binding_hash)
         }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-            proof,
-            binding_hash,
-            ..
-        } => proof.data.is_empty().then_some(binding_hash.data),
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, .. })) => {
+            args.proof.is_empty().then_some(args.binding_hash)
+        }
         _ => None,
     }
 }
 
-fn sidecar_ciphertext_hashes_from_call(call: &runtime::RuntimeCall) -> Option<&[[u8; 48]]> {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return None;
-    };
-
-    match call {
-        ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-            ciphertext_hashes, ..
-        } => Some(ciphertext_hashes.as_slice()),
+fn sidecar_ciphertext_hashes_from_call(call: &runtime::RuntimeCall) -> Option<Vec<[u8; 48]>> {
+    match shielded_action_from_runtime_call(call) {
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, .. })) => {
+            Some(args.ciphertext_hashes)
+        }
         _ => None,
     }
 }
@@ -4110,21 +4126,32 @@ fn ready_proofless_binding_hashes_for_preview(
     }
 }
 
-fn shielded_transfer_order_key(call: &ShieldedPoolCall) -> [u8; 32] {
-    sp_core::hashing::blake2_256(&call.encode())
+fn shielded_transfer_order_key_material(
+    binding_hash: Option<[u8; 64]>,
+    nullifiers: &[[u8; 48]],
+) -> [u8; 32] {
+    let mut bytes = Vec::new();
+    if let Some(binding_hash) = binding_hash {
+        bytes.extend_from_slice(&binding_hash);
+    }
+    for nf in nullifiers {
+        bytes.extend_from_slice(nf);
+    }
+    sp_core::hashing::blake2_256(&bytes)
 }
 
 fn shielded_transfer_key_from_extrinsic(
     extrinsic: &runtime::UncheckedExtrinsic,
 ) -> Option<[u8; 32]> {
-    let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-        return None;
-    };
-    match call {
-        ShieldedPoolCall::shielded_transfer_unsigned { .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
-        | ShieldedPoolCall::batch_shielded_transfer { .. } => {
-            Some(shielded_transfer_order_key(call))
+    match shielded_action_from_extrinsic(extrinsic) {
+        Some((_, ShieldedFamilyAction::TransferInline { args, nullifiers })) => Some(
+            shielded_transfer_order_key_material(Some(args.binding_hash), &nullifiers),
+        ),
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, nullifiers })) => Some(
+            shielded_transfer_order_key_material(Some(args.binding_hash), &nullifiers),
+        ),
+        Some((_, ShieldedFamilyAction::BatchTransfer { nullifiers, .. })) => {
+            Some(shielded_transfer_order_key_material(None, &nullifiers))
         }
         _ => None,
     }
@@ -4249,28 +4276,27 @@ impl ShieldedConflictFilterStats {
     }
 }
 
-fn shielded_conflict_keys_from_call(
-    call: &ShieldedPoolCall,
+fn shielded_conflict_keys_from_action(
+    action: &ShieldedFamilyAction,
 ) -> Option<(Option<[u8; 64]>, Vec<[u8; 48]>)> {
-    match call {
-        ShieldedPoolCall::shielded_transfer_unsigned {
-            binding_hash,
-            nullifiers,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-            binding_hash,
-            nullifiers,
-            ..
-        } => Some((
-            Some(binding_hash.data),
+    match action {
+        ShieldedFamilyAction::TransferInline { args, nullifiers } => Some((
+            Some(args.binding_hash),
             nullifiers
                 .iter()
                 .copied()
                 .filter(|nf| *nf != [0u8; 48])
                 .collect(),
         )),
-        ShieldedPoolCall::batch_shielded_transfer { nullifiers, .. } => Some((
+        ShieldedFamilyAction::TransferSidecar { args, nullifiers } => Some((
+            Some(args.binding_hash),
+            nullifiers
+                .iter()
+                .copied()
+                .filter(|nf| *nf != [0u8; 48])
+                .collect(),
+        )),
+        ShieldedFamilyAction::BatchTransfer { nullifiers, .. } => Some((
             None,
             nullifiers
                 .iter()
@@ -4302,8 +4328,8 @@ fn filter_conflicting_shielded_transfers(
         };
 
         let mut conflict = false;
-        if let runtime::RuntimeCall::ShieldedPool(call) = &decoded.function {
-            if let Some((binding_hash, nullifiers)) = shielded_conflict_keys_from_call(call) {
+        if let Some((_, action)) = shielded_action_from_extrinsic(&decoded) {
+            if let Some((binding_hash, nullifiers)) = shielded_conflict_keys_from_action(&action) {
                 if let Some(binding_hash) = binding_hash {
                     if !seen_binding_hashes.insert(binding_hash) {
                         stats.dropped_binding_conflicts =
@@ -4348,17 +4374,19 @@ fn split_shielded_fee_buckets_from_decoded(
 ) -> Result<BlockFeeBuckets, String> {
     let mut buckets = BlockFeeBuckets::default();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let (provided, prover_component) = match call {
-            ShieldedPoolCall::shielded_transfer_unsigned { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => {
-                (u128::from(*fee), fee_params.proof_fee)
+        let (provided, prover_component) = match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                (u128::from(args.fee), fee_params.proof_fee)
             }
-            ShieldedPoolCall::batch_shielded_transfer { total_fee, .. } => {
-                (*total_fee, fee_params.batch_proof_fee)
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
+                (u128::from(args.fee), fee_params.proof_fee)
+            }
+            ShieldedFamilyAction::BatchTransfer { args, .. } => {
+                (args.total_fee, fee_params.batch_proof_fee)
             }
             _ => continue,
         };
@@ -4383,14 +4411,14 @@ fn extract_block_reward_bundle(
 ) -> Result<Option<pallet_shielded_pool::types::BlockRewardBundle>, String> {
     let mut found: Option<pallet_shielded_pool::types::BlockRewardBundle> = None;
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        if let ShieldedPoolCall::mint_coinbase { reward_bundle } = call {
+        if let ShieldedFamilyAction::MintCoinbase(args) = action {
             if found.is_some() {
                 return Err("multiple mint_coinbase extrinsics in block".to_string());
             }
-            found = Some(reward_bundle.clone());
+            found = Some(args.reward_bundle);
         }
     }
     Ok(found)
@@ -4680,8 +4708,10 @@ pub fn wire_block_builder_api(
                     preview_extrinsics.push(extrinsic);
                 }
             }
-            preview_extrinsics.push(runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {}),
+            preview_extrinsics.push(kernel_shielded_extrinsic(
+                ACTION_ENABLE_AGGREGATION_MODE,
+                Vec::new(),
+                EnableAggregationModeArgs.encode(),
             ));
 
             let mut preview_shielded_count = shielded_transfer_count;
@@ -4770,8 +4800,10 @@ pub fn wire_block_builder_api(
         }
 
         if aggregation_proofs_enabled && aggregation_mode_required_for_block {
-            let enable_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {}),
+            let enable_extrinsic = kernel_shielded_extrinsic(
+                ACTION_ENABLE_AGGREGATION_MODE,
+                Vec::new(),
+                EnableAggregationModeArgs.encode(),
             );
             match block_builder.push(enable_extrinsic.clone()) {
                 Ok(_) => {
@@ -4802,7 +4834,7 @@ pub fn wire_block_builder_api(
                     if let Some(ciphertext_hashes) =
                         sidecar_ciphertext_hashes_from_call(&extrinsic.function)
                     {
-                        if !pending_ciphertexts_for_filter.contains_all(ciphertext_hashes) {
+                        if !pending_ciphertexts_for_filter.contains_all(&ciphertext_hashes) {
                             deferred_missing_ciphertext_sidecar_count =
                                 deferred_missing_ciphertext_sidecar_count.saturating_add(1);
                             tracing::warn!(
@@ -4929,8 +4961,8 @@ pub fn wire_block_builder_api(
         }
         let aggregation_mode_enabled = decoded_applied.iter().any(|extrinsic| {
             matches!(
-                &extrinsic.function,
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+                shielded_action_from_extrinsic(extrinsic),
+                Some((_, ShieldedFamilyAction::EnableAggregationMode))
             )
         });
         if !missing_proof_bindings.is_empty() {
@@ -4977,10 +5009,13 @@ pub fn wire_block_builder_api(
                 let proof_size_uncompressed =
                     block_proof_payload_aggregation_uncompressed_bytes(&ready_batch.payload);
                 selected_prover_claim = ready_batch.payload.prover_claim.clone();
-                let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                    runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
+                let proven_batch_extrinsic = kernel_shielded_extrinsic(
+                    ACTION_SUBMIT_PROVEN_BATCH,
+                    Vec::new(),
+                    SubmitProvenBatchArgs {
                         payload: ready_batch.payload,
-                    }),
+                    }
+                    .encode(),
                 );
                 tracing::debug!(
                     block_number,
@@ -5089,10 +5124,10 @@ pub fn wire_block_builder_api(
                 has_prover_claim = selected_prover_claim.is_some(),
                 "Encrypting shielded block rewards"
             );
-            let coinbase_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
-                    reward_bundle,
-                }),
+            let coinbase_extrinsic = kernel_shielded_extrinsic(
+                ACTION_MINT_COINBASE,
+                Vec::new(),
+                MintCoinbaseArgs { reward_bundle }.encode(),
             );
             match block_builder.push(coinbase_extrinsic.clone()) {
                 Ok(_) => {
@@ -5131,10 +5166,13 @@ pub fn wire_block_builder_api(
                                 format!("failed to encrypt fallback block reward bundle: {e}")
                             })?;
 
-                        let fallback_coinbase = runtime::UncheckedExtrinsic::new_unsigned(
-                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                        let fallback_coinbase = kernel_shielded_extrinsic(
+                            ACTION_MINT_COINBASE,
+                            Vec::new(),
+                            MintCoinbaseArgs {
                                 reward_bundle: fallback_reward_bundle,
-                            }),
+                            }
+                            .encode(),
                         );
                         match block_builder.push(fallback_coinbase.clone()) {
                             Ok(_) => {
@@ -6533,7 +6571,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let PartialComponentsWithClient {
         client,
         backend: _backend,
-        keystore_container,
+        keystore_container: _keystore_container,
         transaction_pool,
         select_chain: _select_chain,
         pow_block_import,
@@ -9788,30 +9826,21 @@ mod tests {
     use super::*;
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
-        let nullifiers =
-            frame_support::BoundedVec::try_from(vec![nullifier]).expect("bounded nullifiers");
-        let commitments = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
-            .expect("bounded commitments");
-        let ciphertext_hashes = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
-            .expect("bounded ciphertext hashes");
-        let ciphertext_sizes =
-            frame_support::BoundedVec::try_from(vec![32u32]).expect("bounded ciphertext sizes");
-
-        runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::ShieldedPool(
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
-                nullifiers,
-                commitments,
-                ciphertext_hashes,
-                ciphertext_sizes,
+        kernel_shielded_extrinsic(
+            ACTION_SHIELDED_TRANSFER_SIDECAR,
+            vec![nullifier],
+            ShieldedTransferSidecarArgs {
+                proof: Vec::new(),
+                commitments: vec![[binding_byte; 48]],
+                ciphertext_hashes: vec![[binding_byte; 48]],
+                ciphertext_sizes: vec![32u32],
                 anchor: [7u8; 48],
-                binding_hash: pallet_shielded_pool::types::BindingHash {
-                    data: [binding_byte; 64],
-                },
+                binding_hash: [binding_byte; 64],
                 stablecoin: None,
                 fee: 0,
-            },
-        ))
+            }
+            .encode(),
+        )
         .encode()
     }
 

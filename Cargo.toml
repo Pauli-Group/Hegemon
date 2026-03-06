@@ -14,6 +14,7 @@ members = [
     "state/merkle",
     "consensus",
     "protocol/versioning",
+    "protocol/kernel",
     "network",
     "pq-noise",
     "wallet",
@@ -32,6 +33,7 @@ members = [
     "pallets/stablecoin-policy",
     "pallets/shielded-pool",
     "pallets/archive-market",
+    "pallets/kernel",
     "tests", "node",
     "runtime",
 ]

@@ -325,7 +325,10 @@ where
         _fee: u64,
         _value_balance: i128,
     ) -> Result<[u8; 32], String> {
-        Err("Shielded transfer submission is only exposed through the production RPC service.".to_string())
+        Err(
+            "Shielded transfer submission is only exposed through the production RPC service."
+                .to_string(),
+        )
     }
 
     fn get_encrypted_notes(

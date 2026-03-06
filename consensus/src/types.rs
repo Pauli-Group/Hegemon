@@ -22,6 +22,15 @@ pub type NullifierRoot = [u8; 48];
 pub type SupplyDigest = u128;
 pub type Amount = u64;
 pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
+pub const STAGE1_SHIELDED_POOL_FAMILY_ID: u16 = 1;
+
+pub fn kernel_root_from_shielded_root(root: &StateRoot) -> StateRoot {
+    let mut bytes = Vec::with_capacity(24 + 2 + 48);
+    bytes.extend_from_slice(b"hegemon-kernel-root-v1");
+    bytes.extend_from_slice(&STAGE1_SHIELDED_POOL_FAMILY_ID.to_le_bytes());
+    bytes.extend_from_slice(root);
+    blake3_384(&bytes)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transaction {

@@ -76,6 +76,8 @@ fn derive_nullifier_challenges_inputs(
     hasher.update(b"blk-nullifier-perm-v1");
     hasher.update(&limbs_to_bytes(&inputs.starting_state_root));
     hasher.update(&limbs_to_bytes(&inputs.ending_state_root));
+    hasher.update(&limbs_to_bytes(&inputs.starting_kernel_root));
+    hasher.update(&limbs_to_bytes(&inputs.ending_kernel_root));
     hasher.update(&limbs_to_bytes(&inputs.nullifier_root));
     hasher.update(&limbs_to_bytes(&inputs.da_root));
     hasher.update(&tx_count.to_le_bytes());

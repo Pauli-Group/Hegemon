@@ -26,7 +26,7 @@ SDK code should assume:
 
 That means new client code should prefer:
 
-- `hegemon_submitShieldedTransfer` for shielded sends
+- `hegemon_submitAction` for protocol action submission, including shielded sends
 - standard `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
 - runtime/manifest lookups when the client needs protocol defaults
 

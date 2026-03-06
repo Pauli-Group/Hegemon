@@ -25,7 +25,7 @@ Every miner should use the same `HEGEMON_SEEDS` list to avoid accidental forks. 
 The live node exposes:
 
 - standard `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
-- Hegemon-specific RPC such as `hegemon_submitShieldedTransfer`, `hegemon_getEncryptedNotes`, and `hegemon_getMerkleWitness`
+- Hegemon-specific RPC such as `hegemon_submitAction`, `hegemon_getEncryptedNotes`, and `hegemon_getMerkleWitness`
 - mining/prover RPC under the `hegemon_*` and `prover_*` namespaces
 
 The node no longer treats generic `author_*` transaction submission as a supported public interface. Clients should submit shielded transactions through the Hegemon RPC namespace.
@@ -56,4 +56,4 @@ curl -s -H "Content-Type: application/json" \
   http://127.0.0.1:9944
 ```
 
-These should show a live chain and advancing headers. Wallets should use `hegemon_submitShieldedTransfer` rather than any generic author-submission RPC.
+These should show a live chain and advancing headers. Wallets should use `hegemon_submitAction` rather than any generic author-submission RPC. `hegemon_submitShieldedTransfer` remains only as a deprecated adapter for older callers.

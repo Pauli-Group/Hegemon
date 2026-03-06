@@ -13,6 +13,7 @@ use crate::reward::{
 };
 use crate::types::{
     CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId, ValidatorSetCommitment,
+    kernel_root_from_shielded_root,
 };
 use crate::version_policy::VersionSchedule;
 use crypto::hashes::{blake3_384, sha256};
@@ -274,6 +275,10 @@ impl<V: ProofVerifier> PowConsensus<V> {
         let computed_state_root = commitment_tree.root();
         if computed_state_root != block.header.state_root {
             return Err(ConsensusError::InvalidHeader("state root mismatch"));
+        }
+        let computed_kernel_root = kernel_root_from_shielded_root(&computed_state_root);
+        if computed_kernel_root != block.header.kernel_root {
+            return Err(ConsensusError::InvalidHeader("kernel root mismatch"));
         }
 
         let block_hash = block.header.hash()?;

@@ -24,8 +24,8 @@ The live runtime centers on:
 - the local PoW support pallet
 - `System` and `Timestamp`
 
-If you need to submit a shielded transfer, use the Hegemon RPC method:
+If you need to submit a protocol action, use the Hegemon RPC method:
 
-- `hegemon_submitShieldedTransfer`
+- `hegemon_submitAction`
 
-instead of trying to craft a generic account-based extrinsic in Polkadot.js.
+`hegemon_submitShieldedTransfer` remains only as a deprecated shielded-send adapter. Do not treat either as a generic account-based extrinsic path.

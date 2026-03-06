@@ -30,6 +30,7 @@ pub use inherent::*;
 pub use pallet::*;
 
 pub mod commitment;
+pub mod family;
 pub mod inherent;
 pub mod merkle;
 pub mod nullifier;

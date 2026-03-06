@@ -68,6 +68,8 @@ impl CommitmentBlockProverP3 {
             [0u8; 48],
             [0u8; 48],
             [0u8; 48],
+            [0u8; 48],
+            [0u8; 48],
             nullifiers,
             sorted_nullifiers,
         )
@@ -108,6 +110,8 @@ impl CommitmentBlockProverP3 {
             &statement_hashes,
             starting_root,
             ending_root,
+            starting_root,
+            ending_root,
             nullifier_root,
             da_root,
             nullifiers,
@@ -129,6 +133,8 @@ impl CommitmentBlockProverP3 {
         let sorted_nullifiers = sorted_nullifiers(&nullifiers);
         self.prove_from_statement_hashes_with_inputs(
             statement_hashes,
+            [0u8; 48],
+            [0u8; 48],
             [0u8; 48],
             [0u8; 48],
             [0u8; 48],
@@ -215,6 +221,8 @@ impl CommitmentBlockProverP3 {
         statement_hashes: &[Commitment],
         starting_state_root: Commitment,
         ending_state_root: Commitment,
+        starting_kernel_root: Commitment,
+        ending_kernel_root: Commitment,
         nullifier_root: Commitment,
         da_root: Commitment,
         nullifiers: Vec<Commitment>,
@@ -225,6 +233,8 @@ impl CommitmentBlockProverP3 {
         }
         validate_commitment_bytes("starting_state_root", &starting_state_root)?;
         validate_commitment_bytes("ending_state_root", &ending_state_root)?;
+        validate_commitment_bytes("starting_kernel_root", &starting_kernel_root)?;
+        validate_commitment_bytes("ending_kernel_root", &ending_kernel_root)?;
 
         let expected_nullifiers = statement_hashes.len().saturating_mul(MAX_INPUTS);
         if nullifiers.len() != expected_nullifiers {
@@ -260,11 +270,16 @@ impl CommitmentBlockProverP3 {
 
         let start_root_vals = bytes48_to_vals("starting_state_root", &starting_state_root)?;
         let end_root_vals = bytes48_to_vals("ending_state_root", &ending_state_root)?;
+        let start_kernel_root_vals =
+            bytes48_to_vals("starting_kernel_root", &starting_kernel_root)?;
+        let end_kernel_root_vals = bytes48_to_vals("ending_kernel_root", &ending_kernel_root)?;
         let nullifier_root_vals = hash_bytes_to_vals(&nullifier_root);
         let da_root_vals = hash_bytes_to_vals(&da_root);
         let (perm_alpha, perm_beta) = derive_nullifier_challenges(
             &starting_state_root,
             &ending_state_root,
+            &starting_kernel_root,
+            &ending_kernel_root,
             &nullifier_root,
             &da_root,
             statement_hashes.len() as u32,
@@ -288,6 +303,8 @@ impl CommitmentBlockProverP3 {
             tx_statements_commitment: commitment_vals,
             starting_state_root: start_root_vals,
             ending_state_root: end_root_vals,
+            starting_kernel_root: start_kernel_root_vals,
+            ending_kernel_root: end_kernel_root_vals,
             nullifier_root: nullifier_root_vals,
             da_root: da_root_vals,
             tx_count: statement_hashes.len() as u32,
@@ -698,6 +715,8 @@ fn validate_commitment_bytes(label: &str, value: &Commitment) -> Result<(), Bloc
 fn derive_nullifier_challenges(
     starting_state_root: &Commitment,
     ending_state_root: &Commitment,
+    starting_kernel_root: &Commitment,
+    ending_kernel_root: &Commitment,
     nullifier_root: &Commitment,
     da_root: &Commitment,
     tx_count: u32,
@@ -708,6 +727,8 @@ fn derive_nullifier_challenges(
     hasher.update(b"blk-nullifier-perm-v1");
     hasher.update(starting_state_root);
     hasher.update(ending_state_root);
+    hasher.update(starting_kernel_root);
+    hasher.update(ending_kernel_root);
     hasher.update(nullifier_root);
     hasher.update(da_root);
     hasher.update(&tx_count.to_le_bytes());

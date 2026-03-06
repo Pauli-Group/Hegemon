@@ -3,10 +3,19 @@ use codec::Encode;
 use pallet_shielded_pool::types::{
     CiphertextPolicy, DaAvailabilityPolicy, FeeParameters, ProofAvailabilityPolicy,
 };
+use protocol_kernel::manifest::{FamilySpec, KernelManifest};
+use protocol_kernel::types::{compute_kernel_global_root, FamilyId, FamilyRoot};
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use sp_std::collections::btree_map::BTreeMap;
 use sp_std::vec::Vec;
 
 const STABLECOIN_POLICY_HASH_DOMAIN: &[u8] = b"stablecoin-policy-v1";
+
+pub const FAMILY_SHIELDED_POOL: FamilyId = pallet_shielded_pool::family::FAMILY_SHIELDED_POOL;
+pub const FAMILY_ASSET_FACTORY: FamilyId = 2;
+pub const FAMILY_ORACLE: FamilyId = 3;
+pub const FAMILY_ATTESTATION: FamilyId = 4;
+pub const FAMILY_ZKVM: FamilyId = 100;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StablecoinPolicyManifestEntry {
@@ -94,6 +103,82 @@ pub fn default_version_binding() -> VersionBinding {
         .first()
         .copied()
         .unwrap_or(DEFAULT_VERSION_BINDING)
+}
+
+pub fn shielded_family_root() -> FamilyRoot {
+    pallet_shielded_pool::merkle::CompactMerkleTree::new().root()
+}
+
+pub fn kernel_family_roots() -> Vec<(FamilyId, Vec<u8>)> {
+    vec![(FAMILY_SHIELDED_POOL, shielded_family_root().to_vec())]
+}
+
+pub fn kernel_global_root() -> [u8; 48] {
+    compute_kernel_global_root(vec![(FAMILY_SHIELDED_POOL, shielded_family_root())])
+}
+
+pub fn kernel_manifest() -> KernelManifest {
+    let protocol = protocol_manifest();
+    let mut families = BTreeMap::new();
+    let params_commitment = hash48(&protocol.fee_parameters.encode());
+
+    families.insert(
+        FAMILY_SHIELDED_POOL,
+        FamilySpec {
+            family_id: FAMILY_SHIELDED_POOL,
+            enabled_at: 0,
+            retired_at: None,
+            supported_actions: vec![
+                pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+                pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+                pallet_shielded_pool::family::ACTION_BATCH_SHIELDED_TRANSFER,
+                pallet_shielded_pool::family::ACTION_ENABLE_AGGREGATION_MODE,
+                pallet_shielded_pool::family::ACTION_SUBMIT_PROVEN_BATCH,
+                pallet_shielded_pool::family::ACTION_MINT_COINBASE,
+            ],
+            verifier_key_hashes: vec![[0u8; 32]],
+            params_commitment,
+            empty_root: shielded_family_root(),
+        },
+    );
+    for family_id in [
+        FAMILY_ASSET_FACTORY,
+        FAMILY_ORACLE,
+        FAMILY_ATTESTATION,
+        FAMILY_ZKVM,
+    ] {
+        families.insert(
+            family_id,
+            FamilySpec {
+                family_id,
+                enabled_at: u64::MAX,
+                retired_at: None,
+                supported_actions: Vec::new(),
+                verifier_key_hashes: Vec::new(),
+                params_commitment: [0u8; 48],
+                empty_root: [0u8; 48],
+            },
+        );
+    }
+
+    KernelManifest {
+        manifest_version: 1,
+        allowed_bindings: protocol
+            .version_bindings
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        families,
+        policy_commitments: BTreeMap::new(),
+    }
+}
+
+fn hash48(bytes: &[u8]) -> [u8; 48] {
+    let mut out = [0u8; 48];
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(bytes);
+    hasher.finalize_xof().fill(&mut out);
+    out
 }
 
 #[cfg(feature = "std")]

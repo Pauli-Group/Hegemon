@@ -26,15 +26,15 @@ use frame_support::traits::{ConstU32, VariantCount};
 use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, Weight};
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
+use protocol_kernel::router::FamilyRouter as KernelFamilyRouter;
+use protocol_kernel::traits::{KernelStateView, KernelStateWrite, ManifestProvider};
 use scale_info::TypeInfo;
 use sp_application_crypto::RuntimeAppPublic;
 use sp_core::offchain::StorageKind;
 use sp_core::{blake2_256, H256};
-use sp_std::vec;
-use sp_runtime::traits::{
-    BlakeTwo256, Hash as HashT, IdentifyAccount, Lazy, Verify,
-};
+use sp_runtime::traits::{BlakeTwo256, Hash as HashT, IdentifyAccount, Lazy, Verify};
 use sp_runtime::{generic, AccountId32, MultiAddress, Perbill, RuntimeDebug};
+use sp_std::vec;
 use sp_std::vec::Vec;
 
 mod pq_crypto {
@@ -771,7 +771,7 @@ pub struct HegemonCallFilter;
 
 impl frame_support::traits::Contains<RuntimeCall> for HegemonCallFilter {
     fn contains(call: &RuntimeCall) -> bool {
-        matches!(call, RuntimeCall::ShieldedPool(_))
+        matches!(call, RuntimeCall::Kernel(_))
     }
 }
 
@@ -892,13 +892,75 @@ impl pallet_shielded_pool::Config for Runtime {
     type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
 }
 
+pub struct RuntimeManifestProvider;
+
+impl ManifestProvider for RuntimeManifestProvider {
+    fn manifest_at(_height: u64) -> protocol_kernel::manifest::KernelManifest {
+        manifest::kernel_manifest()
+    }
+}
+
+pub struct RuntimeFamilyRouter;
+
+impl KernelFamilyRouter for RuntimeFamilyRouter {
+    fn validate(
+        manifest: &protocol_kernel::manifest::KernelManifest,
+        state: &dyn KernelStateView,
+        envelope: &protocol_kernel::types::ActionEnvelope,
+    ) -> Result<protocol_kernel::traits::ValidActionMeta, sp_runtime::DispatchError> {
+        match envelope.family_id {
+            pallet_shielded_pool::family::FAMILY_SHIELDED_POOL => {
+                pallet_shielded_pool::family::validate_action::<Runtime>(manifest, state, envelope)
+            }
+            _ => Err(sp_runtime::DispatchError::Other("unknown-family")),
+        }
+    }
+
+    fn apply(
+        manifest: &protocol_kernel::manifest::KernelManifest,
+        state: &mut dyn KernelStateWrite,
+        envelope: &protocol_kernel::types::ActionEnvelope,
+    ) -> Result<protocol_kernel::traits::ApplyOutcome, sp_runtime::DispatchError> {
+        match envelope.family_id {
+            pallet_shielded_pool::family::FAMILY_SHIELDED_POOL => {
+                pallet_shielded_pool::family::apply_action::<Runtime>(manifest, state, envelope)
+            }
+            _ => Err(sp_runtime::DispatchError::Other("unknown-family")),
+        }
+    }
+}
+
+parameter_types! {
+    pub const KernelMaxObjectRefs: u32 = 16;
+    pub const KernelMaxNullifiersPerAction: u32 = 64;
+    pub const KernelMaxPublicArgsBytes: u32 = 64 * 1024 * 1024;
+    pub const KernelMaxProofBytes: u32 = 64 * 1024 * 1024;
+    pub const KernelMaxAuxDataBytes: u32 = 64 * 1024 * 1024;
+    pub const KernelMaxSignatures: u32 = 8;
+    pub const KernelMaxSignatureBytes: u32 = 4096;
+}
+
+impl pallet_kernel::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type ManifestProvider = RuntimeManifestProvider;
+    type FamilyRouter = RuntimeFamilyRouter;
+    type MaxObjectRefs = KernelMaxObjectRefs;
+    type MaxNullifiersPerAction = KernelMaxNullifiersPerAction;
+    type MaxPublicArgsBytes = KernelMaxPublicArgsBytes;
+    type MaxProofBytes = KernelMaxProofBytes;
+    type MaxAuxDataBytes = KernelMaxAuxDataBytes;
+    type MaxSignatures = KernelMaxSignatures;
+    type MaxSignatureBytes = KernelMaxSignatureBytes;
+}
+
 construct_runtime!(
     pub enum Runtime {
         System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
         Pow: pow::{Pallet, Storage, Event<T>},
         Difficulty: pallet_difficulty::{Pallet, Storage, Event<T>, Config<T>},
-        ShieldedPool: pallet_shielded_pool::{Pallet, Call, Storage, Event<T>, Config<T>, Inherent, ValidateUnsigned},
+        Kernel: pallet_kernel::{Pallet, Call, Storage, Event<T>, Config<T>, ValidateUnsigned},
+        ShieldedPool: pallet_shielded_pool::{Pallet, Storage, Event<T>, Config<T>},
     }
 );
 

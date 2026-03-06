@@ -7,8 +7,8 @@ use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofVerificationMode, ProvenBatchMode,
-    StarkCommitment, TxStatementBinding, VersionCommitment, compute_fee_commitment,
-    compute_proof_commitment, compute_version_commitment, da_root,
+    StarkCommitment, StateRoot, TxStatementBinding, VersionCommitment, compute_fee_commitment,
+    compute_proof_commitment, compute_version_commitment, da_root, kernel_root_from_shielded_root,
 };
 use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
@@ -136,6 +136,23 @@ pub fn verify_commitment_proof_payload(
     if proof_ending_root != expected_tree.root() {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "ending state root mismatch".to_string(),
+        ));
+    }
+
+    let proof_starting_kernel_root = felts_to_bytes48(&proof.public_inputs.starting_kernel_root);
+    let expected_starting_kernel_root =
+        kernel_root_from_shielded_root(&parent_commitment_tree.root());
+    if proof_starting_kernel_root != expected_starting_kernel_root {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "starting kernel root mismatch".to_string(),
+        ));
+    }
+
+    let proof_ending_kernel_root = felts_to_bytes48(&proof.public_inputs.ending_kernel_root);
+    let expected_ending_kernel_root = kernel_root_from_shielded_root(&expected_tree.root());
+    if proof_ending_kernel_root != expected_ending_kernel_root {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "ending kernel root mismatch".to_string(),
         ));
     }
 
@@ -550,6 +567,7 @@ pub trait HeaderProofExt {
     fn version_commitment(&self) -> VersionCommitment;
     fn da_root(&self) -> DaRoot;
     fn da_params(&self) -> DaParams;
+    fn kernel_root(&self) -> StateRoot;
 }
 
 impl HeaderProofExt for crate::header::BlockHeader {
@@ -575,6 +593,10 @@ impl HeaderProofExt for crate::header::BlockHeader {
 
     fn da_params(&self) -> DaParams {
         self.da_params
+    }
+
+    fn kernel_root(&self) -> StateRoot {
+        self.kernel_root
     }
 }
 

@@ -25,6 +25,8 @@ pallet-coinbase = { path = "../coinbase", default-features = false }
 
 transaction-core = { path = "../../circuits/transaction-core", default-features = false }
 batch-circuit = { path = "../../circuits/batch", default-features = false, optional = true }
+protocol-kernel = { path = "../../protocol/kernel", default-features = false }
+protocol-versioning = { path = "../../protocol/versioning", package = "protocol-versioning", default-features = false }
 
 [dev-dependencies]
 sp-io = { workspace = true, features = ["std"] }
@@ -49,6 +51,8 @@ std = [
     "pallet-coinbase/std",
     "transaction-core/std",
     "batch-circuit?/std",
+    "protocol-kernel/std",
+    "protocol-versioning/std",
 ]
 runtime-benchmarks = ["frame-benchmarking"]
 try-runtime = ["frame-support/try-runtime"]

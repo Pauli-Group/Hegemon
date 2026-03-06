@@ -53,21 +53,22 @@ p budgets.
 - `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
 - The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
 
-## Runtime pallets (shielded pool)
+## Runtime kernel and shielded family
+
+- `pallet-kernel`
+  - `submit_action(envelope)` is the only live public dispatch surface for proof-native protocol actions.
+  - `FamilyRoots` stores the active family roots.
+  - `KernelGlobalRoot` commits to the family-root map and is part of the live validity shape.
 
 - `pallet-shielded-pool`
-  - `shielded_transfer(...)` / `shielded_transfer_unsigned(...)` submit per-transaction STARK proofs.
-  - `batch_shielded_transfer(...)` submits a batch STARK proof for multiple transfers sharing an anchor.
-  - `enable_aggregation_mode()` marks the current block as aggregation-required (unsigned/`None` origin; must appear before shielded transfers that rely on proofless sidecar flow).
-  - `submit_proven_batch(payload: BlockProofBundle)` carries the per-block proof bundle (schema `2`) used by import-time verification: commitment proof bytes, `tx_statements_commitment`, DA metadata (`da_root`, `da_chunk_count`), proof mode (`FlatBatches` or `MergeRoot`), and optional prover compensation claim.
-
-## Runtime pallets (identity, attestations, settlement)
-
-- `pallet-identity`
-  - `register_did(document: Vec<u8>, tags: Vec<IdentityTag>, session_key: Option<SessionKey>)` stores the DID document, identity tags, and an optional PQ session key bundle (Dilithium/Falcon).
-- `pallet-attestations` / `pallet-settlement`
-  - `set_verifier_params(params: StarkVerifierParams)` (admin origin) updates the on-chain STARK verifier parameters.
-  - The live Plonky3 transaction/settlement verifier path uses compile-time production settings (`log_blowup = 4`, `num_queries = 32`) from `transaction-core`. Runtime constants still seed on-chain `StarkVerifierParams` storage for governance workflows. With 384-bit digests, PQ collision resistance reaches ~128 bits.
+  - remains the first kernel family backend for shielded commitments, nullifiers, fee accounting, and proof verification
+  - no longer exposes its six live state-changing calls as a public runtime dispatch surface
+  - still implements the underlying action semantics for:
+    - per-transfer shielded proofs
+    - batch transfer proofs
+    - aggregation-mode markers
+    - proven block-batch payloads
+    - shielded coinbase minting
 
 ## Node RPC endpoints
 
