@@ -39,6 +39,9 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "initialDifficulty": "0x9896800",
             "initialBits": 0x1d1a_d7f2_u32
         },
+        "kernel": {
+            "familyRoots": manifest::kernel_family_roots()
+        },
         "shieldedPool": {
             "verifyingKey": verifying_key_value,
             "feeParameters": protocol_manifest.fee_parameters,

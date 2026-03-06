@@ -24,7 +24,7 @@ The visible proof is:
 - [x] (2026-03-06 20:18Z) Added the shielded family adapter and routed all six live shielded action kinds through kernel envelopes.
 - [x] (2026-03-06 20:18Z) Made `KernelGlobalRoot` consensus-visible by extending the commitment-proof public inputs and consensus verification to check kernel roots.
 - [x] (2026-03-06 20:18Z) Added `hegemon_submitAction`, switched wallet/node submission to kernel actions, and kept `hegemon_submitShieldedTransfer` only as a deprecated adapter.
-- [ ] Regenerate genesis/chainspec for the kernel stage.
+- [x] (2026-03-06 21:34Z) Regenerated the checked-in dev chainspec from the release `hegemon-node build-spec` path so genesis now includes the `kernel.familyRoots` section.
 - [x] (2026-03-06 20:18Z) Validated `cargo check -p protocol-kernel`, `cargo check -p pallet-kernel`, `cargo check -p runtime`, `cargo check -p wallet`, `cargo check -p hegemon-node`, `cargo test -p wallet substrate_rpc -- --nocapture`, and `cargo test -p hegemon-node shielded -- --nocapture`.
 
 ## Surprises & Discoveries
@@ -58,7 +58,7 @@ Stage 1 now has the right outer shape for later additive families. The important
 
 The main implementation lesson was that adding `kernel_root` to the data model was not enough. Consensus verification also had to prove and check the kernel roots explicitly, otherwise the root would have remained bookkeeping instead of a real validity constraint. That check now exists both in the commitment-proof payload verification and in the BFT/PoW header validation paths.
 
-One follow-up remains outside this implementation pass: regenerate and commit fresh stage-1 chainspec/genesis artifacts for dev/test JSON consumers.
+The checked-in dev chainspec now matches the stage-1 kernelized runtime. If testnet/mainnet JSON artifacts are promoted from placeholder status later, they should be regenerated from the same release build path rather than edited by hand.
 
 ## Context and Orientation
 
