@@ -127,9 +127,9 @@ use crate::substrate::prover_coordinator::{
     BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
 };
 use crate::substrate::rpc::{
-    BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc,
-    NodeConfigSnapshot, ProductionRpcService, ProverApiServer, ProverRpc, ShieldedApiServer,
-    ShieldedRpc, WalletApiServer, WalletRpc,
+    BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc, NodeConfigSnapshot,
+    ProductionRpcService, ProverApiServer, ProverRpc, ShieldedApiServer, ShieldedRpc,
+    WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
@@ -5220,7 +5220,7 @@ pub fn wire_block_builder_api(
 // to be committed to the backend.
 
 use crate::substrate::mining_worker::BlockTemplate;
-use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult};
+use sc_consensus::{BlockImport, BlockImportParams, ImportResult};
 use sp_consensus::BlockOrigin;
 use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
@@ -5249,6 +5249,20 @@ fn finalize_imported_block(
     }
 }
 
+fn configure_pow_import_params(
+    import_params: &mut BlockImportParams<runtime::Block>,
+    seal_item: DigestItem,
+    post_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
+) {
+    import_params.post_digests.push(seal_item);
+    import_params.post_hash = Some(post_hash);
+
+    // Leave fork_choice unset so PowBlockImport applies cumulative-difficulty selection.
+    use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
+    let intermediate = PowIntermediate::<sp_core::U256> { difficulty: None };
+    import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
+}
+
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
 /// This sets the `import_fn` callback on the chain state provider to use
@@ -5260,7 +5274,7 @@ fn finalize_imported_block(
 /// 1. Mining worker finds valid seal via `mine_round()`
 /// 2. Calls `chain_state.import_block(template, seal)`
 /// 3. `import_fn` callback constructs `BlockImportParams`
-/// 4. `PowBlockImport.import_block()` verifies the seal
+/// 4. `PowBlockImport.import_block()` verifies the seal and applies total-difficulty fork choice
 /// 5. If valid, block is committed to backend
 ///
 /// # Arguments
@@ -5290,7 +5304,7 @@ fn finalize_imported_block(
 ///
 /// // Now when mining finds a valid seal:
 /// let hash = chain_state.import_block(&template, &seal)?;
-/// // Block is imported directly (PoW already verified by mining worker)
+/// // Block is imported through PowBlockImport so best-chain selection uses total difficulty
 /// ```
 ///
 /// # State Persistence
@@ -5301,7 +5315,7 @@ fn finalize_imported_block(
 /// to the database after block import.
 fn wire_pow_block_import(
     chain_state: &Arc<ProductionChainStateProvider>,
-    _pow_block_import: ConcretePowBlockImport,
+    pow_block_import: ConcretePowBlockImport,
     client: Arc<HegemonFullClient>,
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
@@ -5312,10 +5326,8 @@ fn wire_pow_block_import(
     use codec::Encode;
     use sp_runtime::traits::Block as BlockT;
 
-    // Use the client directly for block import
-    // The mining worker already verified the PoW, so we don't need PowBlockImport
-    // to re-verify (which would fail due to pre_hash computation differences)
     let block_import = client;
+    let pow_block_import = pow_block_import;
     let proof_verification_enabled = proof_verification_enabled();
     let parallel_verifier = ParallelProofVerifier::new();
     chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Blake3Seal| {
@@ -5391,17 +5403,22 @@ fn wire_pow_block_import(
             .map_err(|err| format!("mined block proof verification failed: {err}"))?;
         }
 
-        // Construct the block with seal in header
-        let block = runtime::Block::new(header.clone(), encoded_extrinsics);
+        // Construct the block with seal in header so we can derive the final post-seal hash.
+        let block = runtime::Block::new(header.clone(), encoded_extrinsics.clone());
         let block_hash = block.hash();
         let mut block_hash_bytes = [0u8; 32];
         block_hash_bytes.copy_from_slice(block_hash.as_bytes());
 
-        // Construct BlockImportParams for direct client import
-        // No post_digests needed since seal is already in header
-        let mut import_params = BlockImportParams::new(BlockOrigin::Own, header);
-        import_params.body = Some(block.extrinsics().to_vec());
-        import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
+        // PowBlockImport expects the seal in post_digests, not in header.digest().
+        let mut header_without_seal = header.clone();
+        let seal_item = header_without_seal
+            .digest_mut()
+            .pop()
+            .ok_or_else(|| "mined block header missing PoW seal".to_string())?;
+
+        let mut import_params = BlockImportParams::new(BlockOrigin::Own, header_without_seal);
+        import_params.body = Some(encoded_extrinsics);
+        configure_pow_import_params(&mut import_params, seal_item, block_hash);
 
         // Apply StorageChanges if available.
         let storage_changes = match storage_changes_key {
@@ -5429,10 +5446,10 @@ fn wire_pow_block_import(
             import_params.state_action = sc_consensus::StateAction::Skip;
         }
 
-        // Import the block directly through the client
-        // This bypasses PowBlockImport verification since we already verified locally
+        // Import through PowBlockImport so local mining follows the same seal verification and
+        // cumulative-difficulty fork-choice path as network imports.
         let import_result = futures::executor::block_on(async {
-            let import = block_import.clone();
+            let import = pow_block_import.clone();
             import.import_block(import_params).await
         });
 
@@ -6188,10 +6205,10 @@ pub struct PartialComponentsWithClient {
     /// This is the production transaction pool that validates transactions
     /// against the runtime. It replaces MockTransactionPool for full client mode.
     pub transaction_pool: Arc<HegemonTransactionPool>,
-    /// Chain selection rule
+    /// Select-chain helper required by `PowBlockImport`.
     ///
-    /// Uses LongestChain which selects the chain with the most blocks.
-    /// This is the standard selection rule for PoW chains.
+    /// Canonical PoW best-chain selection still comes from `PowBlockImport`'s
+    /// cumulative-difficulty fork choice when imports leave `fork_choice` unset.
     pub select_chain: HegemonSelectChain,
     /// PoW block import wrapper
     ///
@@ -6343,13 +6360,15 @@ pub fn new_partial_with_client(
     // ==========================================================================
     //
     // The block import pipeline verifies PoW seals before importing blocks:
-    // 1. Create LongestChain for chain selection (standard PoW rule)
+    // 1. Create the select-chain helper required by PowBlockImport
     // 2. Create Blake3Algorithm with client reference for difficulty queries
     // 3. Wrap client in PowBlockImport for PoW verification
     //
     // Flow: Network → Import Queue → PowBlockImport → Client → Backend
 
-    // Create chain selection rule (LongestChain for PoW)
+    // PowBlockImport still needs a SelectChain implementation, but best-chain selection comes
+    // from PowBlockImport's total-difficulty fork-choice logic when import_params.fork_choice
+    // is left unset.
     let select_chain = sc_consensus::LongestChain::new(backend.clone());
 
     // Create Blake3 PoW algorithm with client for difficulty queries
@@ -6392,7 +6411,7 @@ pub fn new_partial_with_client(
 
     tracing::info!("PoW block import pipeline created");
     tracing::debug!("  - Blake3Algorithm for PoW verification");
-    tracing::debug!("  - LongestChain for chain selection");
+    tracing::debug!("  - LongestChain helper for PowBlockImport");
     tracing::debug!("  - PowBlockImport wrapping full client");
 
     // Initialize PQ service configuration
@@ -7763,7 +7782,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     "block-import-handler",
                     Some("consensus"),
                     async move {
-                        use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy};
+                        use sc_consensus::{BlockImport, BlockImportParams};
                         use sp_consensus::BlockOrigin;
                         use sp_runtime::traits::Block as BlockT;
 
@@ -8118,18 +8137,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkInitialSync, header);
                                 import_params.body = Some(extrinsics);
-                                import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
-                                import_params.post_digests.push(seal_item);
-                                import_params.post_hash = Some(post_hash);
-
-                                // Add PowIntermediate - difficulty will be computed from parent
-                                // PowBlockImport::import_block requires this intermediate with key "pow1"
-                                // Setting difficulty to None causes it to be queried from the algorithm
-                                use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
-                                let intermediate = PowIntermediate::<sp_core::U256> {
-                                    difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
-                                };
-                                import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
+                                configure_pow_import_params(&mut import_params, seal_item, post_hash);
 
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
@@ -8691,16 +8699,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkBroadcast, header_mut);
                                 import_params.body = Some(extrinsics);
-                                import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
-                                import_params.post_digests.push(seal_item);
-                                import_params.post_hash = Some(post_hash);
-
-                                // Add PowIntermediate - difficulty will be computed from parent
-                                use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
-                                let intermediate = PowIntermediate::<sp_core::U256> {
-                                    difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
-                                };
-                                import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
+                                configure_pow_import_params(&mut import_params, seal_item, post_hash);
 
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
@@ -10200,6 +10199,9 @@ pub fn wire_import_tracker(
 mod import_tests {
     use super::*;
     use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
+    use sp_runtime::generic::Digest;
+    use sp_runtime::traits::Header as HeaderT;
+    use sp_runtime::DigestItem;
 
     #[test]
     fn test_full_block_import_config_default() {
@@ -10288,5 +10290,28 @@ mod import_tests {
         // Best block should come from tracker
         assert_eq!(provider.best_number(), 0);
         assert_eq!(provider.best_hash(), H256::zero());
+    }
+
+    #[test]
+    fn test_configure_pow_import_params_preserves_pow_fork_choice() {
+        let header = runtime::Header::new(
+            1,
+            H256::zero(),
+            H256::zero(),
+            H256::zero(),
+            Digest::default(),
+        );
+        let mut import_params = BlockImportParams::new(BlockOrigin::Own, header);
+        let post_hash = H256::repeat_byte(0x42);
+        let seal_item = DigestItem::Seal(*b"pow_", vec![1, 2, 3, 4]);
+
+        configure_pow_import_params(&mut import_params, seal_item, post_hash);
+
+        assert!(
+            import_params.fork_choice.is_none(),
+            "PowBlockImport must supply cumulative-difficulty fork choice"
+        );
+        assert_eq!(import_params.post_hash, Some(post_hash));
+        assert_eq!(import_params.post_digests.len(), 1);
     }
 }

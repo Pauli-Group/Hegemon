@@ -100,10 +100,11 @@ pub type FullTransactionPool<Client> = sc_transaction_pool::BasicPool<
 pub type HegemonTransactionPool =
     sc_transaction_pool::TransactionPoolHandle<runtime::Block, HegemonFullClient>;
 
-/// Type alias for the chain selection rule (Task 11.4.5)
+/// Type alias for the select-chain helper used by `PowBlockImport` (Task 11.4.5).
 ///
-/// Uses `LongestChain` which selects the chain with the most blocks.
-/// This is the standard selection rule for PoW chains.
+/// `PowBlockImport` still requires a `SelectChain` implementation from the backend, but
+/// canonical best-chain selection comes from the PoW engine's cumulative-difficulty fork choice
+/// when callers leave `BlockImportParams.fork_choice` unset.
 pub type HegemonSelectChain = sc_consensus::LongestChain<FullBackend, runtime::Block>;
 
 /// Type alias for the PoW block import wrapper (Task 11.4.5)
