@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.1 - 2026-03-09
+- Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.9.1`.
+- Interface package bump: `hegemon-app` is now `0.9.1`.
+- Architecture docs: record the phased scaling path from a single public author + private prover backend to federated pools and a PQ-authenticated prover market in `docs/SCALABILITY_PATH.md`, with pointers from `DESIGN.md`, `METHODS.md`, and `README.md`.
+
 ## v0.9.0 - 2026-02-24
 - Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.9.0`.
 - Interface package bump: `hegemon-app` is now `0.9.0`.
