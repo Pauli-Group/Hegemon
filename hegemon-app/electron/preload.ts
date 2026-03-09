@@ -4,6 +4,8 @@ import type {
   DialogOpenOptions,
   NodeMiningRequest,
   NodeManagedStatus,
+  PoolMinerStartRequest,
+  PoolMinerStatus,
   NodeStartOptions,
   NodeSummaryRequest,
   WalletSendPlanRequest,
@@ -18,6 +20,12 @@ contextBridge.exposeInMainWorld('hegemon', {
     setMining: (request: NodeMiningRequest) => ipcRenderer.invoke('node:setMining', request),
     logs: () => ipcRenderer.invoke('node:logs'),
     managedStatus: () => ipcRenderer.invoke('node:managedStatus') as Promise<NodeManagedStatus>
+  },
+  poolMiner: {
+    start: (request: PoolMinerStartRequest) => ipcRenderer.invoke('poolMiner:start', request),
+    stop: () => ipcRenderer.invoke('poolMiner:stop'),
+    status: () => ipcRenderer.invoke('poolMiner:status') as Promise<PoolMinerStatus>,
+    logs: () => ipcRenderer.invoke('poolMiner:logs')
   },
   wallet: {
     init: (storePath: string, passphrase: string) => ipcRenderer.invoke('wallet:init', storePath, passphrase),

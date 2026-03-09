@@ -199,6 +199,18 @@ impl MiningWorker {
         self.solution_rx.try_recv().ok()
     }
 
+    /// Inject an externally discovered solution into the worker pipeline.
+    pub fn submit_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        self.solution_tx
+            .send(solution)
+            .map_err(|_| "mining solution receiver is closed".to_string())
+    }
+
+    /// Snapshot the current work template.
+    pub fn current_work(&self) -> Option<MiningWork> {
+        self.current_work.read().clone()
+    }
+
     /// Receive a solution (blocking with timeout)
     pub fn recv_solution_timeout(&self, timeout: Duration) -> Option<MiningSolution> {
         self.solution_rx.recv_timeout(timeout).ok()
@@ -351,6 +363,19 @@ impl MiningCoordinator {
     /// Try to get a solution
     pub fn try_recv_solution(&self) -> Option<MiningSolution> {
         self.worker.as_ref().and_then(|w| w.try_recv_solution())
+    }
+
+    /// Inject an externally discovered solution into the current worker.
+    pub fn submit_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        self.worker
+            .as_ref()
+            .ok_or_else(|| "mining worker not running".to_string())?
+            .submit_solution(solution)
+    }
+
+    /// Snapshot the current work template if the worker is active.
+    pub fn current_work(&self) -> Option<MiningWork> {
+        self.worker.as_ref().and_then(|w| w.current_work())
     }
 
     /// Check if mining is active

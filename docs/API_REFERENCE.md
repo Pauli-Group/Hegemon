@@ -77,12 +77,51 @@ Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
 - `hegemon_stopMining() -> MiningControlResponse`
+- `hegemon_poolWork(params?: { auth_token?: String }) -> PoolWorkResponse`
+- `hegemon_submitPoolShare(request: { worker_name: String, nonce: u64, pre_hash: String, parent_hash: String, height: u64, auth_token?: String }) -> SubmitPoolShareResponse`
+- `hegemon_poolStatus(params?: { auth_token?: String }) -> PoolStatusResponse`
 - `hegemon_consensusStatus() -> ConsensusStatus`
 - `hegemon_telemetry() -> TelemetrySnapshot`
 - `hegemon_storageFootprint() -> StorageFootprint`
 - `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, chain spec identity, listen addresses, PQ verbosity, peer limits)
 - `hegemon_peerList() -> Vec<PeerDetail>` (connected PQ peers with address, direction, best height/hash, last-seen seconds)
 - `hegemon_peerGraph() -> PeerGraphSnapshot` (direct peers plus reported peers from discovery)
+
+`PoolWorkResponse` fields:
+- `available: bool`
+- `height: Option<u64>`
+- `pre_hash: Option<String>` (hex)
+- `parent_hash: Option<String>` (hex)
+- `network_difficulty: Option<u32>` (compact PoW bits)
+- `share_difficulty: Option<u32>` (compact bits; defaults to network difficulty unless `HEGEMON_POOL_SHARE_BITS` is set)
+- `reason: Option<String>`
+
+`SubmitPoolShareResponse` fields:
+- `accepted: bool`
+- `block_candidate: bool`
+- `network_target_met: bool`
+- `error: Option<String>`
+- `accepted_shares: u64`
+- `rejected_shares: u64`
+- `worker_accepted_shares: u64`
+- `worker_rejected_shares: u64`
+
+`PoolStatusResponse` fields:
+- `available: bool`
+- `network_difficulty: Option<u32>`
+- `share_difficulty: Option<u32>`
+- `accepted_shares: u64`
+- `rejected_shares: u64`
+- `worker_count: usize`
+- `workers: Vec<PoolWorkerStatusEntry>`
+
+`PoolWorkerStatusEntry` fields:
+- `worker_name: String`
+- `accepted_shares: u64`
+- `rejected_shares: u64`
+- `block_candidates: u64`
+- `payout_fraction_ppm: u64` (accepted-share fraction scaled by 1,000,000)
+- `last_share_at_ms: Option<u64>`
 
 `PeerDetail` fields:
 - `peer_id: String` (hex)

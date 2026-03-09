@@ -176,6 +176,31 @@ impl PowHandle {
         solution
     }
 
+    /// Submit a solution discovered outside the local mining threads.
+    pub fn submit_external_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        let coordinator = self.coordinator.lock();
+        coordinator.submit_solution(solution.clone())?;
+
+        info!(
+            height = solution.work.height,
+            nonce = solution.seal.nonce,
+            "Accepted external PoW solution"
+        );
+
+        let _ = self.event_tx.send(PowEvent::SolutionFound {
+            height: solution.work.height,
+            nonce: solution.seal.nonce,
+        });
+
+        Ok(())
+    }
+
+    /// Snapshot the current work template if one is active.
+    pub fn current_work(&self) -> Option<MiningWork> {
+        let coordinator = self.coordinator.lock();
+        coordinator.current_work()
+    }
+
     /// Check if mining is active
     pub fn is_mining(&self) -> bool {
         let coordinator = self.coordinator.lock();
@@ -233,6 +258,14 @@ impl crate::substrate::rpc::MiningHandle for PowHandle {
 
     fn thread_count(&self) -> u32 {
         self.config.threads as u32
+    }
+
+    fn current_work(&self) -> Option<MiningWork> {
+        PowHandle::current_work(self)
+    }
+
+    fn submit_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        PowHandle::submit_external_solution(self, solution)
     }
 }
 

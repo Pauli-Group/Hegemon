@@ -17,12 +17,16 @@
 //! | `hegemon_storageFootprint`| Get storage usage statistics             |
 //! | `hegemon_nodeConfig`      | Get node config snapshot                 |
 
+use consensus::{compute_work, seal_meets_target, Blake3Seal, MiningSolution, MiningWork};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
+use parking_lot::Mutex;
 use protocol_kernel::types::{ActionEnvelope, AuthorizationBundle, ObjectRef, SignatureEnvelope};
 use serde::{Deserialize, Serialize};
+use sp_core::H256;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Mining status response
@@ -246,6 +250,82 @@ pub struct SubmitActionResponse {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PoolAuthParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PoolWorkResponse {
+    pub available: bool,
+    pub height: Option<u64>,
+    pub pre_hash: Option<String>,
+    pub parent_hash: Option<String>,
+    pub network_difficulty: Option<u32>,
+    pub share_difficulty: Option<u32>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitPoolShareRequest {
+    pub worker_name: String,
+    pub nonce: u64,
+    pub pre_hash: String,
+    pub parent_hash: String,
+    pub height: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitPoolShareResponse {
+    pub accepted: bool,
+    pub block_candidate: bool,
+    pub network_target_met: bool,
+    pub error: Option<String>,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub worker_accepted_shares: u64,
+    pub worker_rejected_shares: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PoolStatusResponse {
+    pub available: bool,
+    pub network_difficulty: Option<u32>,
+    pub share_difficulty: Option<u32>,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub worker_count: usize,
+    pub workers: Vec<PoolWorkerStatusEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PoolWorkerStatusEntry {
+    pub worker_name: String,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub block_candidates: u64,
+    pub payout_fraction_ppm: u64,
+    pub last_share_at_ms: Option<u64>,
+}
+
+#[derive(Default)]
+struct WorkerShareStats {
+    accepted: u64,
+    rejected: u64,
+    block_candidates: u64,
+    last_share_at_ms: Option<u64>,
+}
+
+#[derive(Default)]
+struct PoolShareStats {
+    accepted: u64,
+    rejected: u64,
+    workers: HashMap<String, WorkerShareStats>,
+}
+
 /// Hegemon RPC API trait definition
 ///
 /// This trait defines all the custom RPC endpoints for the Hegemon node.
@@ -331,6 +411,21 @@ pub trait HegemonApi {
     /// Submit a kernel action envelope.
     #[method(name = "submitAction")]
     async fn submit_action(&self, request: SubmitActionRequest) -> RpcResult<SubmitActionResponse>;
+
+    /// Get the current authoring work template for pool workers.
+    #[method(name = "poolWork")]
+    async fn pool_work(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolWorkResponse>;
+
+    /// Submit a pool share or full-target solution for the current template.
+    #[method(name = "submitPoolShare")]
+    async fn submit_pool_share(
+        &self,
+        request: SubmitPoolShareRequest,
+    ) -> RpcResult<SubmitPoolShareResponse>;
+
+    /// Get aggregate share status for the current process.
+    #[method(name = "poolStatus")]
+    async fn pool_status(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolStatusResponse>;
 }
 
 /// Trait for mining handle operations
@@ -350,6 +445,10 @@ pub trait MiningHandle: Send + Sync {
     fn blocks_found(&self) -> u64;
     /// Get thread count
     fn thread_count(&self) -> u32;
+    /// Snapshot the current work template, if one exists.
+    fn current_work(&self) -> Option<MiningWork>;
+    /// Submit an externally discovered solution.
+    fn submit_solution(&self, solution: MiningSolution) -> Result<(), String>;
 }
 
 /// Trait for node service operations
@@ -386,6 +485,8 @@ pub struct HegemonRpc<S, P> {
     config_snapshot: NodeConfigSnapshot,
     deny_unsafe: sc_rpc::DenyUnsafe,
     mining_control_auth_token: Option<String>,
+    pool_auth_token: Option<String>,
+    pool_share_stats: Arc<Mutex<PoolShareStats>>,
 }
 
 impl<S, P> HegemonRpc<S, P>
@@ -404,12 +505,18 @@ where
             .ok()
             .map(|token| token.trim().to_string())
             .filter(|token| !token.is_empty());
+        let pool_auth_token = std::env::var("HEGEMON_POOL_RPC_TOKEN")
+            .ok()
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty());
         Self {
             service,
             pow_handle,
             config_snapshot,
             deny_unsafe,
             mining_control_auth_token,
+            pool_auth_token,
+            pool_share_stats: Arc::new(Mutex::new(PoolShareStats::default())),
         }
     }
 
@@ -434,6 +541,36 @@ where
         }
 
         Ok(())
+    }
+
+    fn ensure_pool_access_allowed(&self, provided_token: Option<&str>) -> RpcResult<()> {
+        if let Some(expected) = self.pool_auth_token.as_deref() {
+            let provided = provided_token.unwrap_or_default().trim();
+            if provided.is_empty() || provided != expected {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    "invalid or missing pool auth token",
+                    None::<()>,
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn pool_share_bits_for_work(&self, work: &MiningWork) -> u32 {
+        std::env::var("HEGEMON_POOL_SHARE_BITS")
+            .ok()
+            .and_then(|raw| {
+                let trimmed = raw.trim();
+                if let Some(hex) = trimmed.strip_prefix("0x") {
+                    u32::from_str_radix(hex, 16).ok()
+                } else {
+                    trimmed.parse::<u32>().ok()
+                }
+            })
+            .filter(|bits| *bits != 0)
+            .unwrap_or(work.pow_bits)
     }
 }
 
@@ -687,6 +824,210 @@ where
             }),
         }
     }
+
+    async fn pool_work(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolWorkResponse> {
+        self.ensure_pool_access_allowed(
+            params
+                .as_ref()
+                .and_then(|value| value.auth_token.as_deref()),
+        )?;
+
+        let Some(work) = self.pow_handle.current_work() else {
+            return Ok(PoolWorkResponse {
+                available: false,
+                height: None,
+                pre_hash: None,
+                parent_hash: None,
+                network_difficulty: None,
+                share_difficulty: None,
+                reason: Some("no active mining work template".to_string()),
+            });
+        };
+
+        Ok(PoolWorkResponse {
+            available: true,
+            height: Some(work.height),
+            pre_hash: Some(format!("0x{}", hex::encode(work.pre_hash.as_bytes()))),
+            parent_hash: Some(format!("0x{}", hex::encode(work.parent_hash.as_bytes()))),
+            network_difficulty: Some(work.pow_bits),
+            share_difficulty: Some(self.pool_share_bits_for_work(&work)),
+            reason: None,
+        })
+    }
+
+    async fn submit_pool_share(
+        &self,
+        request: SubmitPoolShareRequest,
+    ) -> RpcResult<SubmitPoolShareResponse> {
+        self.ensure_pool_access_allowed(request.auth_token.as_deref())?;
+
+        let worker_name = request.worker_name.trim();
+        if worker_name.is_empty() {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                "worker_name is required",
+                None::<()>,
+            ));
+        }
+
+        let Some(work) = self.pow_handle.current_work() else {
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("no active mining work template".to_string()),
+                accepted_shares: 0,
+                rejected_shares: 0,
+                worker_accepted_shares: 0,
+                worker_rejected_shares: 0,
+            });
+        };
+
+        let requested_pre_hash = H256::from(hex_to_array32(&request.pre_hash)?);
+        let requested_parent_hash = H256::from(hex_to_array32(&request.parent_hash)?);
+        if request.height != work.height
+            || requested_pre_hash != work.pre_hash
+            || requested_parent_hash != work.parent_hash
+        {
+            let mut stats = self.pool_share_stats.lock();
+            stats.rejected = stats.rejected.saturating_add(1);
+            let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+            worker_stats.rejected = worker_stats.rejected.saturating_add(1);
+            worker_stats.last_share_at_ms = Some(current_time_ms());
+            let accepted_shares = stats.accepted;
+            let rejected_shares = stats.rejected;
+            let worker_accepted_shares = worker_stats.accepted;
+            let worker_rejected_shares = worker_stats.rejected;
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("stale or mismatched work submission".to_string()),
+                accepted_shares,
+                rejected_shares,
+                worker_accepted_shares,
+                worker_rejected_shares,
+            });
+        }
+
+        let seal = Blake3Seal {
+            nonce: request.nonce,
+            difficulty: work.pow_bits,
+            work: compute_work(&work.pre_hash, request.nonce),
+        };
+        let share_bits = self.pool_share_bits_for_work(&work);
+        let share_target_met = seal_meets_target(&seal.work, share_bits);
+        let network_target_met = seal_meets_target(&seal.work, work.pow_bits);
+
+        let mut stats = self.pool_share_stats.lock();
+        let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+        if !share_target_met {
+            stats.rejected = stats.rejected.saturating_add(1);
+            worker_stats.rejected = worker_stats.rejected.saturating_add(1);
+            worker_stats.last_share_at_ms = Some(current_time_ms());
+            let accepted_shares = stats.accepted;
+            let rejected_shares = stats.rejected;
+            let worker_accepted_shares = worker_stats.accepted;
+            let worker_rejected_shares = worker_stats.rejected;
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("share does not meet configured pool target".to_string()),
+                accepted_shares,
+                rejected_shares,
+                worker_accepted_shares,
+                worker_rejected_shares,
+            });
+        }
+
+        stats.accepted = stats.accepted.saturating_add(1);
+        worker_stats.accepted = worker_stats.accepted.saturating_add(1);
+        if network_target_met {
+            worker_stats.block_candidates = worker_stats.block_candidates.saturating_add(1);
+        }
+        worker_stats.last_share_at_ms = Some(current_time_ms());
+        let accepted_shares = stats.accepted;
+        let rejected_shares = stats.rejected;
+        let worker_accepted_shares = worker_stats.accepted;
+        let worker_rejected_shares = worker_stats.rejected;
+        drop(stats);
+
+        if network_target_met {
+            let solution = MiningSolution {
+                seal,
+                work: work.clone(),
+            };
+            self.pow_handle.submit_solution(solution).map_err(|err| {
+                ErrorObjectOwned::owned(
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                    format!("failed to forward full-difficulty solution: {err}"),
+                    None::<()>,
+                )
+            })?;
+        }
+
+        Ok(SubmitPoolShareResponse {
+            accepted: true,
+            block_candidate: network_target_met,
+            network_target_met,
+            error: None,
+            accepted_shares,
+            rejected_shares,
+            worker_accepted_shares,
+            worker_rejected_shares,
+        })
+    }
+
+    async fn pool_status(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolStatusResponse> {
+        self.ensure_pool_access_allowed(
+            params
+                .as_ref()
+                .and_then(|value| value.auth_token.as_deref()),
+        )?;
+
+        let current_work = self.pow_handle.current_work();
+        let stats = self.pool_share_stats.lock();
+        let accepted_total = stats.accepted.max(1);
+        let mut workers = stats
+            .workers
+            .iter()
+            .map(|(worker_name, worker)| PoolWorkerStatusEntry {
+                worker_name: worker_name.clone(),
+                accepted_shares: worker.accepted,
+                rejected_shares: worker.rejected,
+                block_candidates: worker.block_candidates,
+                payout_fraction_ppm: ((worker.accepted as u128) * 1_000_000u128
+                    / accepted_total as u128)
+                    as u64,
+                last_share_at_ms: worker.last_share_at_ms,
+            })
+            .collect::<Vec<_>>();
+        workers.sort_by(|left, right| {
+            right
+                .accepted_shares
+                .cmp(&left.accepted_shares)
+                .then_with(|| left.worker_name.cmp(&right.worker_name))
+        });
+        Ok(PoolStatusResponse {
+            available: current_work.is_some(),
+            network_difficulty: current_work.as_ref().map(|work| work.pow_bits),
+            share_difficulty: current_work
+                .as_ref()
+                .map(|work| self.pool_share_bits_for_work(work)),
+            accepted_shares: stats.accepted,
+            rejected_shares: stats.rejected,
+            worker_count: stats.workers.len(),
+            workers,
+        })
+    }
+}
+
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
 }
 
 fn hex_to_array32(value: &str) -> Result<[u8; 32], String> {
@@ -756,6 +1097,19 @@ mod tests {
 
         fn thread_count(&self) -> u32 {
             self.threads
+        }
+
+        fn current_work(&self) -> Option<MiningWork> {
+            Some(MiningWork {
+                pre_hash: H256::repeat_byte(0x11),
+                pow_bits: 0x207fffff,
+                height: 42,
+                parent_hash: H256::repeat_byte(0x22),
+            })
+        }
+
+        fn submit_solution(&self, _solution: MiningSolution) -> Result<(), String> {
+            Ok(())
         }
     }
 
@@ -1060,5 +1414,68 @@ mod tests {
             err.message().contains("--rpc-methods=unsafe"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_pool_work_exposes_current_template() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
+
+        let work = rpc.pool_work(None).await.unwrap();
+        assert!(work.available);
+        assert_eq!(work.height, Some(42));
+        assert_eq!(work.network_difficulty, Some(0x207fffff));
+        assert_eq!(work.share_difficulty, Some(0x207fffff));
+    }
+
+    #[tokio::test]
+    async fn test_submit_pool_share_accepts_full_target_solution() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle.clone(), mock_config(), sc_rpc::DenyUnsafe::No);
+        let work = handle.current_work().expect("mock work");
+
+        let response = rpc
+            .submit_pool_share(SubmitPoolShareRequest {
+                worker_name: "alpha".to_string(),
+                nonce: 0,
+                pre_hash: format!("0x{}", hex::encode(work.pre_hash.as_bytes())),
+                parent_hash: format!("0x{}", hex::encode(work.parent_hash.as_bytes())),
+                height: work.height,
+                auth_token: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(response.accepted);
+        assert!(response.block_candidate);
+        assert!(response.network_target_met);
+        assert_eq!(response.accepted_shares, 1);
+        assert_eq!(response.worker_accepted_shares, 1);
+    }
+
+    #[tokio::test]
+    async fn test_submit_pool_share_rejects_stale_work() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
+
+        let response = rpc
+            .submit_pool_share(SubmitPoolShareRequest {
+                worker_name: "alpha".to_string(),
+                nonce: 0,
+                pre_hash: format!("0x{}", hex::encode([0u8; 32])),
+                parent_hash: format!("0x{}", hex::encode([0u8; 32])),
+                height: 7,
+                auth_token: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(!response.accepted);
+        assert!(response.error.unwrap_or_default().contains("stale"));
+        assert_eq!(response.rejected_shares, 1);
+        assert_eq!(response.worker_rejected_shares, 1);
     }
 }

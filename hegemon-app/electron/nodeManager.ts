@@ -145,7 +145,12 @@ export class NodeManager extends EventEmitter {
       HEGEMON_MINE: mineFlag,
       HEGEMON_MINE_THREADS: options.mineThreads
         ? String(options.mineThreads)
-        : process.env.HEGEMON_MINE_THREADS
+        : process.env.HEGEMON_MINE_THREADS,
+      HEGEMON_POOL_SHARE_BITS:
+        options.poolShareBits !== undefined
+          ? String(options.poolShareBits)
+          : process.env.HEGEMON_POOL_SHARE_BITS,
+      HEGEMON_POOL_RPC_TOKEN: options.poolAuthToken ?? process.env.HEGEMON_POOL_RPC_TOKEN
     };
     for (const [key, value] of Object.entries(DESKTOP_LIVENESS_ENV_DEFAULTS)) {
       const current = env[key];

@@ -9,6 +9,8 @@ import type {
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
+  PoolMinerStartRequest,
+  PoolMinerStatus,
   WalletSendRequest,
   WalletSendResult,
   WalletSendPlanRequest,
@@ -26,6 +28,12 @@ export type HegemonApi = {
     setMining: (request: NodeMiningRequest) => Promise<void>;
     logs: () => Promise<string[]>;
     managedStatus: () => Promise<NodeManagedStatus>;
+  };
+  poolMiner: {
+    start: (request: PoolMinerStartRequest) => Promise<void>;
+    stop: () => Promise<void>;
+    status: () => Promise<PoolMinerStatus>;
+    logs: () => Promise<string[]>;
   };
   wallet: {
     init: (storePath: string, passphrase: string) => Promise<WalletUnlockSession>;

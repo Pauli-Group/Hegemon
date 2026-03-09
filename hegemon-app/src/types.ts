@@ -1,11 +1,18 @@
 export type NodeConnectionMode = 'local' | 'remote';
+export type NodeParticipationRole = 'full_node' | 'pooled_hasher' | 'authoring_pool' | 'private_prover';
 
 export type NodeConnection = {
   id: string;
   label: string;
   mode: NodeConnectionMode;
+  participationRole?: NodeParticipationRole;
   wsUrl: string;
   httpUrl?: string;
+  operatorEndpoint?: string;
+  workerName?: string;
+  payoutAddress?: string;
+  poolAuthToken?: string;
+  poolShareBits?: number;
   chainSpecPath?: string;
   dev?: boolean;
   tmp?: boolean;
@@ -111,6 +118,58 @@ export type NodeManagedStatus = {
   connectionId: string | null;
   pid: number | null;
   rpcPort: number | null;
+};
+
+export type PoolWorkerSnapshot = {
+  workerName: string;
+  acceptedShares: number;
+  rejectedShares: number;
+  blockCandidates: number;
+  payoutFractionPpm: number;
+  lastShareAtMs: number | null;
+};
+
+export type PoolStatus = {
+  available: boolean;
+  networkDifficulty: number | null;
+  shareDifficulty: number | null;
+  acceptedShares: number;
+  rejectedShares: number;
+  workerCount: number;
+  workers: PoolWorkerSnapshot[];
+};
+
+export type PoolWork = {
+  available: boolean;
+  height: number | null;
+  preHash: string | null;
+  parentHash: string | null;
+  networkDifficulty: number | null;
+  shareDifficulty: number | null;
+  reason: string | null;
+};
+
+export type PoolMinerStartRequest = {
+  endpoint: string;
+  workerName: string;
+  authToken?: string;
+  threads: number;
+};
+
+export type PoolMinerStatus = {
+  running: boolean;
+  endpoint: string | null;
+  workerName: string | null;
+  threads: number;
+  currentHeight: number | null;
+  acceptedShares: number;
+  rejectedShares: number;
+  blockCandidates: number;
+  hashesComputed: number;
+  hashRate: number;
+  lastShareAtMs: number | null;
+  pool: PoolStatus | null;
+  error?: string | null;
 };
 
 export type WalletBalance = {
@@ -253,6 +312,8 @@ export type NodeStartOptions = {
   ciphertextDaRetentionBlocks?: number;
   proofDaRetentionBlocks?: number;
   daStoreCapacity?: number;
+  poolShareBits?: number;
+  poolAuthToken?: string;
 };
 
 export type NodeSummaryRequest = {
