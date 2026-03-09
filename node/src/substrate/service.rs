@@ -125,6 +125,7 @@ use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::prover_coordinator::{
     BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
+    RootFinalizeWorkData,
 };
 use crate::substrate::rpc::{
     BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc, NodeConfigSnapshot,
@@ -2291,6 +2292,71 @@ fn build_commitment_block_proof_from_materials(
         .map_err(|e| format!("commitment block proof failed: {e}"))?;
 
     Ok(Some(proof))
+}
+
+fn build_root_finalize_work_data(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    candidate_txs: &[Vec<u8>],
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<Option<RootFinalizeWorkData>, String> {
+    if prepared_proof_mode_from_env() != PreparedProofMode::MergeRoot {
+        return Ok(None);
+    }
+    let context = build_candidate_context(candidate_txs, da_params, pending_ciphertexts, pending_proofs)?;
+    let proofs = context.tx_proofs.as_ref();
+    if proofs.is_empty() {
+        return Ok(None);
+    }
+
+    let statement_hashes = context
+        .statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+
+    let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
+    let starting_state_root = tree.root();
+    for (index, proof) in proofs.iter().enumerate() {
+        let anchor = proof.public_inputs.merkle_root;
+        if !tree.contains_root(&anchor) {
+            return Err(format!(
+                "transaction {index} anchor not found in commitment tree history"
+            ));
+        }
+        for &commitment in proof.commitments.iter().filter(|c| **c != [0u8; 48]) {
+            tree.append(commitment)
+                .map_err(|err| format!("commitment tree append failed: {err}"))?;
+        }
+    }
+    let ending_state_root = tree.root();
+
+    let mut nullifiers = Vec::new();
+    for proof in proofs {
+        nullifiers.extend_from_slice(&proof.nullifiers);
+    }
+    let mut sorted_nullifiers = nullifiers.clone();
+    sorted_nullifiers.sort_unstable();
+    let nullifier_root = nullifier_root_from_list(&nullifiers)?;
+    let starting_kernel_root = kernel_root_from_shielded_root(&starting_state_root);
+    let ending_kernel_root = kernel_root_from_shielded_root(&ending_state_root);
+
+    Ok(Some(RootFinalizeWorkData {
+        statement_hashes,
+        tx_proofs: proofs.to_vec(),
+        tx_statements_commitment: context.tx_statements_commitment,
+        da_root: context.da_root,
+        da_chunk_count: context.da_chunk_count,
+        starting_state_root,
+        ending_state_root,
+        starting_kernel_root,
+        ending_kernel_root,
+        nullifier_root,
+        nullifiers,
+        sorted_nullifiers,
+    }))
 }
 
 fn batch_slot_txs() -> usize {
@@ -9156,11 +9222,44 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 },
             )
         };
-        let prover_coordinator = ProverCoordinator::new(
+        let root_work_for_coord = {
+            let client = client.clone();
+            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
+            let pending_proofs = Arc::clone(&pending_proof_store);
+            Arc::new(
+                move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
+                    let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                    let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                    if filter_stats.dropped_total() > 0 {
+                        tracing::warn!(
+                            block_number,
+                            total_candidates = filter_stats.total,
+                            kept_candidates = filter_stats.kept,
+                            dropped_decode_errors = filter_stats.dropped_decode_errors,
+                            dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                            dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                            "Filtered conflicting shielded transfers before root-finalize work package publication"
+                        );
+                    }
+                    let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
+                    let pending_proofs_snapshot = { pending_proofs.lock().clone() };
+                    build_root_finalize_work_data(
+                        client.as_ref(),
+                        parent_hash,
+                        &filtered,
+                        da_params,
+                        &pending_ciphertexts_snapshot,
+                        &pending_proofs_snapshot,
+                    )
+                },
+            )
+        };
+        let prover_coordinator = ProverCoordinator::new_with_root_finalize_builder(
             coordinator_cfg,
             best_for_coord,
             pending_for_coord,
             build_for_coord,
+            Some(root_work_for_coord),
         );
         prover_coordinator.start();
         prover_coordinator_for_rpc = Some(Arc::clone(&prover_coordinator));
@@ -9402,9 +9501,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "da_getChunk",
                             "da_getParams",
                             "prover_getWorkPackage",
+                            "prover_getStageWorkPackage",
                             "prover_submitWorkResult",
+                            "prover_submitStageWorkResult",
                             "prover_getWorkStatus",
                             "prover_getMarketParams",
+                            "prover_getStagePlanStatus",
                             "hegemon_poolWork",
                             "hegemon_submitPoolShare",
                             "hegemon_poolStatus",

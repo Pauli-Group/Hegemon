@@ -883,21 +883,27 @@ where
             });
         };
 
-        let requested_pre_hash = H256::from(hex_to_array32(&request.pre_hash)?);
-        let requested_parent_hash = H256::from(hex_to_array32(&request.parent_hash)?);
+        let requested_pre_hash = H256::from(hex_to_array32(&request.pre_hash).map_err(|err| {
+            ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>)
+        })?);
+        let requested_parent_hash =
+            H256::from(hex_to_array32(&request.parent_hash).map_err(|err| {
+                ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>)
+            })?);
         if request.height != work.height
             || requested_pre_hash != work.pre_hash
             || requested_parent_hash != work.parent_hash
         {
             let mut stats = self.pool_share_stats.lock();
             stats.rejected = stats.rejected.saturating_add(1);
-            let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
-            worker_stats.rejected = worker_stats.rejected.saturating_add(1);
-            worker_stats.last_share_at_ms = Some(current_time_ms());
+            let (worker_accepted_shares, worker_rejected_shares) = {
+                let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+                worker_stats.rejected = worker_stats.rejected.saturating_add(1);
+                worker_stats.last_share_at_ms = Some(current_time_ms());
+                (worker_stats.accepted, worker_stats.rejected)
+            };
             let accepted_shares = stats.accepted;
             let rejected_shares = stats.rejected;
-            let worker_accepted_shares = worker_stats.accepted;
-            let worker_rejected_shares = worker_stats.rejected;
             return Ok(SubmitPoolShareResponse {
                 accepted: false,
                 block_candidate: false,
@@ -920,15 +926,16 @@ where
         let network_target_met = seal_meets_target(&seal.work, work.pow_bits);
 
         let mut stats = self.pool_share_stats.lock();
-        let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
         if !share_target_met {
             stats.rejected = stats.rejected.saturating_add(1);
-            worker_stats.rejected = worker_stats.rejected.saturating_add(1);
-            worker_stats.last_share_at_ms = Some(current_time_ms());
+            let (worker_accepted_shares, worker_rejected_shares) = {
+                let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+                worker_stats.rejected = worker_stats.rejected.saturating_add(1);
+                worker_stats.last_share_at_ms = Some(current_time_ms());
+                (worker_stats.accepted, worker_stats.rejected)
+            };
             let accepted_shares = stats.accepted;
             let rejected_shares = stats.rejected;
-            let worker_accepted_shares = worker_stats.accepted;
-            let worker_rejected_shares = worker_stats.rejected;
             return Ok(SubmitPoolShareResponse {
                 accepted: false,
                 block_candidate: false,
@@ -942,15 +949,17 @@ where
         }
 
         stats.accepted = stats.accepted.saturating_add(1);
-        worker_stats.accepted = worker_stats.accepted.saturating_add(1);
-        if network_target_met {
-            worker_stats.block_candidates = worker_stats.block_candidates.saturating_add(1);
-        }
-        worker_stats.last_share_at_ms = Some(current_time_ms());
+        let (worker_accepted_shares, worker_rejected_shares) = {
+            let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+            worker_stats.accepted = worker_stats.accepted.saturating_add(1);
+            if network_target_met {
+                worker_stats.block_candidates = worker_stats.block_candidates.saturating_add(1);
+            }
+            worker_stats.last_share_at_ms = Some(current_time_ms());
+            (worker_stats.accepted, worker_stats.rejected)
+        };
         let accepted_shares = stats.accepted;
         let rejected_shares = stats.rejected;
-        let worker_accepted_shares = worker_stats.accepted;
-        let worker_rejected_shares = worker_stats.rejected;
         drop(stats);
 
         if network_target_met {

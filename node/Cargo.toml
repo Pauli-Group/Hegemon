@@ -53,6 +53,7 @@ rpassword = "7.4.0"
 atty = "0.2.14"
 url = "2"
 base64 = "0.22"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
 # Substrate SDK dependencies (optional, enabled with "substrate" feature)
 # Using polkadot-sdk git dependencies for version alignment
@@ -179,13 +180,17 @@ substrate = [
 [dev-dependencies]
 rand = "0.8"
 tempfile = "3.8"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 
 # Substrate-based node binary
 [[bin]]
 name = "hegemon-node"
 path = "src/bin/substrate_node.rs"
+required-features = ["substrate"]
+
+[[bin]]
+name = "hegemon-prover-worker"
+path = "src/bin/prover_worker.rs"
 required-features = ["substrate"]
 
 [lints]

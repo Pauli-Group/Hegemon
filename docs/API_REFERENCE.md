@@ -87,6 +87,11 @@ Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
 - `hegemon_peerList() -> Vec<PeerDetail>` (connected PQ peers with address, direction, best height/hash, last-seen seconds)
 - `hegemon_peerGraph() -> PeerGraphSnapshot` (direct peers plus reported peers from discovery)
 
+Pool worker notes:
+- `hegemon_poolWork` exposes the current authoring template to pooled hash workers.
+- `hegemon_submitPoolShare` accepts pool shares and full-target solutions; full-target solutions are forwarded into the mining coordinator.
+- `hegemon_poolStatus` reports aggregate and per-worker share accounting for the current process.
+
 `PoolWorkResponse` fields:
 - `available: bool`
 - `height: Option<u64>`
@@ -164,6 +169,33 @@ Block validity and data-availability RPC methods exposed by the Substrate node:
   - `DaChunkResult`: `{ chunk: Bytes, merkle_proof: Vec<H256> }`
 - `da_getParams() -> DaParams`
   - Returns global DA parameters (chunk size, sample count, encoding scheme).
+
+Prover market RPC methods exposed on the Substrate node:
+
+- `prover_getWorkPackage() -> Option<WorkPackageResponse>`
+- `prover_getStageWorkPackage() -> Option<WorkPackageResponse>`
+- `prover_submitWorkResult(request) -> SubmitWorkResultResponse`
+- `prover_submitStageWorkResult(request) -> SubmitWorkResultResponse`
+- `prover_getWorkStatus(package_id) -> Option<WorkStatusResponse>`
+- `prover_getMarketParams() -> MarketParamsResponse`
+- `prover_getStagePlanStatus() -> StagePlanStatusResponse`
+
+`WorkPackageResponse` can now carry `root_finalize_payload` for standalone private
+prover workers. In the current branch this payload is intended for the
+`MergeRoot` root-finalize path and includes:
+
+- resolved transaction proof material (bincode + base64)
+- statement hashes
+- `tx_statements_commitment`
+- DA metadata
+- commitment-proof public inputs (starting/ending roots and nullifier data)
+
+Standalone private prover worker binary:
+
+- `hegemon-prover-worker`
+  - Polls `prover_getStageWorkPackage`
+  - Builds commitment proof + merge-root payload for `root_finalize`
+  - Submits the completed bundle with `prover_submitStageWorkResult`
 
 Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursive epoch proofs are temporarily disabled until a Plonky3 recursion path is reintroduced.
 

@@ -5,6 +5,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use transaction_circuit::proof::TransactionProof;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BundleMatchKey {
@@ -69,8 +70,25 @@ pub struct WorkPackage {
     pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<Vec<u8>>,
+    pub root_finalize_payload: Option<RootFinalizeWorkData>,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct RootFinalizeWorkData {
+    pub statement_hashes: Vec<[u8; 48]>,
+    pub tx_proofs: Vec<TransactionProof>,
+    pub tx_statements_commitment: [u8; 48],
+    pub da_root: [u8; 48],
+    pub da_chunk_count: u32,
+    pub starting_state_root: [u8; 48],
+    pub ending_state_root: [u8; 48],
+    pub starting_kernel_root: [u8; 48],
+    pub ending_kernel_root: [u8; 48],
+    pub nullifier_root: [u8; 48],
+    pub nullifiers: Vec<[u8; 48]>,
+    pub sorted_nullifiers: Vec<[u8; 48]>,
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +138,11 @@ pub type BestBlockFn = dyn Fn() -> (H256, u64) + Send + Sync + 'static;
 pub type PendingTxsFn = dyn Fn(usize) -> Vec<Vec<u8>> + Send + Sync + 'static;
 pub type PrepareBundleFn =
     dyn Fn(H256, u64, Vec<Vec<u8>>) -> Result<PreparedBundle, String> + Send + Sync + 'static;
+pub type BuildRootFinalizeWorkFn =
+    dyn Fn(H256, u64, Vec<Vec<u8>>) -> Result<Option<RootFinalizeWorkData>, String>
+        + Send
+        + Sync
+        + 'static;
 
 #[allow(deprecated)]
 #[deprecated(note = "Use PrepareBundleFn instead.")]
@@ -273,6 +296,7 @@ pub struct ProverCoordinator {
     best_block_fn: Arc<BestBlockFn>,
     pending_txs_fn: Arc<PendingTxsFn>,
     worker_pool: Arc<WorkerPool>,
+    build_root_finalize_work_fn: Option<Arc<BuildRootFinalizeWorkFn>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -428,7 +452,9 @@ struct CoordinatorState {
     prepared: HashMap<BundleMatchKey, PreparedBundle>,
     work_packages: HashMap<String, WorkPackageRecord>,
     work_package_queue: VecDeque<String>,
+    stage_work_package_queue: VecDeque<String>,
     latest_work_package: Option<String>,
+    latest_stage_work_package: Option<String>,
     fanout_assemblies: HashMap<String, FanoutAssemblyState>,
     work_status: HashMap<String, WorkStatus>,
     source_submissions: HashMap<String, u32>,
@@ -621,6 +647,22 @@ impl ProverCoordinator {
         pending_txs_fn: Arc<PendingTxsFn>,
         prepare_bundle_fn: Arc<PrepareBundleFn>,
     ) -> Arc<Self> {
+        Self::new_with_root_finalize_builder(
+            config,
+            best_block_fn,
+            pending_txs_fn,
+            prepare_bundle_fn,
+            None,
+        )
+    }
+
+    pub fn new_with_root_finalize_builder(
+        config: ProverCoordinatorConfig,
+        best_block_fn: Arc<BestBlockFn>,
+        pending_txs_fn: Arc<PendingTxsFn>,
+        prepare_bundle_fn: Arc<PrepareBundleFn>,
+        build_root_finalize_work_fn: Option<Arc<BuildRootFinalizeWorkFn>>,
+    ) -> Arc<Self> {
         let worker_pool = Arc::new(WorkerPool::new(
             config.workers,
             Arc::clone(&prepare_bundle_fn),
@@ -631,6 +673,7 @@ impl ProverCoordinator {
             best_block_fn,
             pending_txs_fn,
             worker_pool,
+            build_root_finalize_work_fn,
         })
     }
 
@@ -708,7 +751,9 @@ impl ProverCoordinator {
             state.prepared.clear();
             state.work_packages.clear();
             state.work_package_queue.clear();
+            state.stage_work_package_queue.clear();
             state.latest_work_package = None;
+            state.latest_stage_work_package = None;
             state.fanout_assemblies.clear();
             state.work_status.clear();
             state.source_submissions.clear();
@@ -730,7 +775,9 @@ impl ProverCoordinator {
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.work_package_queue.clear();
+                state.stage_work_package_queue.clear();
                 state.latest_work_package = None;
+                state.latest_stage_work_package = None;
                 state.fanout_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
@@ -849,7 +896,10 @@ impl ProverCoordinator {
             queued_jobs: state.pending_jobs.len(),
             inflight_jobs: state.inflight_jobs.len(),
             prepared_bundles: state.prepared.len(),
-            latest_work_package: state.latest_work_package.clone(),
+            latest_work_package: state
+                .latest_stage_work_package
+                .clone()
+                .or_else(|| state.latest_work_package.clone()),
             stage_queue: per_stage.into_values().collect(),
         }
     }
@@ -887,6 +937,33 @@ impl ProverCoordinator {
             return Some(package);
         }
         state.latest_work_package = None;
+        None
+    }
+
+    pub fn get_stage_work_package(&self) -> Option<WorkPackage> {
+        let mut state = self.state.lock();
+        Self::expire_work_packages_locked(&mut state);
+        let queue_len = state.stage_work_package_queue.len();
+        for _ in 0..queue_len {
+            let Some(package_id) = state.stage_work_package_queue.pop_front() else {
+                break;
+            };
+            let Some(record) = state.work_packages.get(&package_id) else {
+                continue;
+            };
+            if record.submissions >= self.config.max_submissions_per_package {
+                continue;
+            }
+            let package = record.package.clone();
+            state.stage_work_package_queue.push_back(package_id.clone());
+            state.latest_stage_work_package = Some(package_id.clone());
+            state
+                .work_status
+                .entry(package_id.clone())
+                .or_insert(WorkStatus::Pending);
+            return Some(package);
+        }
+        state.latest_stage_work_package = None;
         None
     }
 
@@ -1187,7 +1264,9 @@ impl ProverCoordinator {
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.work_package_queue.clear();
+                state.stage_work_package_queue.clear();
                 state.latest_work_package = None;
+                state.latest_stage_work_package = None;
                 state.fanout_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
@@ -1218,7 +1297,9 @@ impl ProverCoordinator {
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.work_package_queue.clear();
+                state.stage_work_package_queue.clear();
                 state.latest_work_package = None;
+                state.latest_stage_work_package = None;
                 state.fanout_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
@@ -1347,7 +1428,9 @@ impl ProverCoordinator {
 
             state.work_packages.clear();
             state.work_package_queue.clear();
+            state.stage_work_package_queue.clear();
             state.latest_work_package = None;
+            state.latest_stage_work_package = None;
             state.work_status.clear();
             state.source_submissions.clear();
             state.fanout_assemblies.clear();
@@ -1379,6 +1462,41 @@ impl ProverCoordinator {
                     },
                 );
                 state.work_status.insert(package_id, WorkStatus::Pending);
+            }
+
+            if let Some(builder) = self.build_root_finalize_work_fn.as_ref() {
+                match builder(parent_hash, block_number, primary_candidate.clone()) {
+                    Ok(Some(root_payload)) => {
+                        let package = Self::build_root_finalize_work_package(
+                            parent_hash,
+                            block_number,
+                            candidate_set_id.clone(),
+                            primary_candidate.clone(),
+                            self.config.work_package_ttl,
+                            root_payload,
+                        );
+                        let package_id = package.package_id.clone();
+                        state.latest_stage_work_package = Some(package_id.clone());
+                        state.stage_work_package_queue.push_back(package_id.clone());
+                        state.work_packages.insert(
+                            package_id.clone(),
+                            WorkPackageRecord {
+                                package,
+                                submissions: 0,
+                            },
+                        );
+                        state.work_status.insert(package_id, WorkStatus::Pending);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            block_number,
+                            tx_count = primary_candidate.len(),
+                            error = %error,
+                            "Failed to publish root-finalize stage work package"
+                        );
+                    }
+                }
             }
 
             state.fanout_assemblies.insert(
@@ -1667,6 +1785,53 @@ impl ProverCoordinator {
             dependencies,
             tx_count,
             candidate_txs,
+            root_finalize_payload: None,
+            created_at_ms,
+            expires_at_ms,
+        }
+    }
+
+    fn build_root_finalize_work_package(
+        parent_hash: H256,
+        block_number: u64,
+        candidate_set_id: String,
+        candidate_txs: Vec<Vec<u8>>,
+        ttl: Duration,
+        payload: RootFinalizeWorkData,
+    ) -> WorkPackage {
+        let created_at_ms = Self::now_ms();
+        let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
+        let tx_count = candidate_txs.len() as u32;
+        let arity = Self::aggregation_tree_arity();
+        let candidate_digest = Self::candidate_digest(&candidate_txs);
+        let (level, shape_id, dependencies) =
+            Self::root_stage_metadata(parent_hash, block_number, &candidate_txs, arity);
+        let package_id = Self::stage_work_id(
+            parent_hash,
+            block_number,
+            "root_finalize",
+            level,
+            0,
+            arity,
+            tx_count,
+            candidate_digest,
+        );
+        WorkPackage {
+            package_id,
+            parent_hash,
+            block_number,
+            candidate_set_id,
+            chunk_start_tx_index: 0,
+            chunk_tx_count: tx_count.min(u16::MAX as u32) as u16,
+            expected_chunks: 1,
+            stage_type: "root_finalize".to_string(),
+            level,
+            arity,
+            shape_id,
+            dependencies,
+            tx_count,
+            candidate_txs,
+            root_finalize_payload: Some(payload),
             created_at_ms,
             expires_at_ms,
         }
@@ -1711,6 +1876,9 @@ impl ProverCoordinator {
         state
             .work_package_queue
             .retain(|package_id| state.work_packages.contains_key(package_id));
+        state
+            .stage_work_package_queue
+            .retain(|package_id| state.work_packages.contains_key(package_id));
         state.fanout_assemblies.retain(|_, assembly| {
             assembly
                 .chunks
@@ -1720,6 +1888,11 @@ impl ProverCoordinator {
         if let Some(latest) = state.latest_work_package.as_ref() {
             if !state.work_packages.contains_key(latest) {
                 state.latest_work_package = None;
+            }
+        }
+        if let Some(latest) = state.latest_stage_work_package.as_ref() {
+            if !state.work_packages.contains_key(latest) {
+                state.latest_stage_work_package = None;
             }
         }
     }

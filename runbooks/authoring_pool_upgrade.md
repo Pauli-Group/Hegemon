@@ -15,11 +15,12 @@ bundle can feed many hashers; weak machines do not need to become independent
 shielded block authors.
 
 > **Current repository status:** the node already exposes coordinator-side
-> `prover_*` RPC methods for external work packages, but the repo does not yet
-> ship a standalone external prover worker daemon or a public pooled share
-> protocol. This runbook therefore defines the target operating model and the
-> immediate hardening steps you can apply now; the full cutover requires the
-> implementation work tracked in `.agent/POOLED_MINING_BOOTSTRAP_EXECPLAN.md`.
+> `prover_*` RPC methods for external work packages. The repo now also ships
+> a standalone private prover worker binary (`hegemon-prover-worker`) plus a
+> pooled hash-worker client in the desktop app. Pool share accounting is still
+> process-local and the prover worker currently targets the `MergeRoot`
+> root-finalize path, but the core topology is now runnable rather than
+> aspirational.
 
 ## 1. Target topology
 
@@ -42,8 +43,8 @@ The intended information flow is:
    node.
 2. The public authoring node canonicalizes the parent-scoped candidate set and starts
    prove-ahead scheduling.
-3. The private prover backend pulls deterministic chunk work over the tunnel and
-   submits batch results.
+3. The private prover backend pulls deterministic proving work over the tunnel
+   and submits results.
 4. The public authoring node assembles a ready `BlockProofBundle`.
 5. Hash workers mine on the same prepared template.
 6. The winning share/nonce returns to the public authoring node, which
@@ -128,14 +129,26 @@ broadcast blocks in this phase.
 
 The private prover backend should run:
 
-- the future external proving worker logic once that binary/service exists
+- `hegemon-prover-worker`
 - no public-facing node role
 - no local public mining role
 
 It should poll `prover_*` over the private tunnel, solve the work packages it
-is capable of handling, and send the results back to the author. Until the
-standalone worker exists, treat this as the next implementation target rather
-than a turnkey deployment step.
+is capable of handling, and send the results back to the author.
+
+Example launch:
+
+```bash
+HEGEMON_PROVER_RPC_URL=http://127.0.0.1:9944 \
+HEGEMON_PROVER_SOURCE=private-prover-01 \
+./target/release/hegemon-prover-worker
+```
+
+Notes:
+
+- this worker currently consumes `root_finalize` stage packages
+- it is intended for the `MergeRoot` proof mode
+- it expects the private tunnel to expose the authoring node RPC securely
 
 ### Laptop / app users
 
@@ -253,10 +266,8 @@ Do not recruit second pool operators until:
 - set `HEGEMON_PROVER_WORKERS=0` on the public authoring node
 - verify the coordinator on the public authoring node still publishes `prover_*` work
   packages over the private path
-- if the standalone worker exists in your build, verify the private prover backend can
-  pull those work packages and return accepted results
-- otherwise, keep this step marked as blocked by the missing external worker
-  implementation and do not expose the prover publicly as a workaround
+- launch `hegemon-prover-worker` on the private prover backend and verify it
+  can pull stage work packages and return accepted results
 
 ### Step 3: freeze the public miner story
 
@@ -284,11 +295,10 @@ Before declaring the cutover complete, verify:
 - NTP/chrony is healthy on all mining hosts
 - a wallet can submit portable self-contained transactions through
   the public authoring node
-- if the standalone worker exists, the private prover backend can complete external work
-  packages
-- if the standalone worker does not exist yet, the topology is still hardened
-  correctly and the implementation gap is tracked explicitly before inviting
-  public pooled miners
+- the private prover backend can complete external work packages through
+  `hegemon-prover-worker`
+- pooled hash workers can fetch author work and submit shares without local
+  proving hardware
 - pooled miners can hash without local proving
 
 ## 8. What comes next

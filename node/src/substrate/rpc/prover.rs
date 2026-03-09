@@ -1,6 +1,7 @@
 //! Prover market RPC endpoints.
 
-use crate::substrate::prover_coordinator::{ProverCoordinator, WorkStatus};
+use crate::substrate::prover_coordinator::{ProverCoordinator, RootFinalizeWorkData, WorkStatus};
+use base64::Engine;
 use codec::Decode;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
@@ -25,8 +26,25 @@ pub struct WorkPackageResponse {
     pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<String>,
+    pub root_finalize_payload: Option<RootFinalizePayloadResponse>,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RootFinalizePayloadResponse {
+    pub statement_hashes: Vec<String>,
+    pub tx_proofs_bincode: String,
+    pub tx_statements_commitment: String,
+    pub da_root: String,
+    pub da_chunk_count: u32,
+    pub starting_state_root: String,
+    pub ending_state_root: String,
+    pub starting_kernel_root: String,
+    pub ending_kernel_root: String,
+    pub nullifier_root: String,
+    pub nullifiers: Vec<String>,
+    pub sorted_nullifiers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -116,10 +134,51 @@ impl ProverRpc {
         Self { coordinator }
     }
 
+    fn map_root_finalize_payload(
+        payload: RootFinalizeWorkData,
+    ) -> RpcResult<RootFinalizePayloadResponse> {
+        let tx_proofs_bincode = bincode::serialize(&payload.tx_proofs).map_err(|err| {
+            ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                format!("failed to serialize tx proofs: {err}"),
+                None::<()>,
+            )
+        })?;
+        Ok(RootFinalizePayloadResponse {
+            statement_hashes: payload
+                .statement_hashes
+                .into_iter()
+                .map(|value| format!("0x{}", hex::encode(value)))
+                .collect(),
+            tx_proofs_bincode: base64::engine::general_purpose::STANDARD.encode(tx_proofs_bincode),
+            tx_statements_commitment: format!(
+                "0x{}",
+                hex::encode(payload.tx_statements_commitment)
+            ),
+            da_root: format!("0x{}", hex::encode(payload.da_root)),
+            da_chunk_count: payload.da_chunk_count,
+            starting_state_root: format!("0x{}", hex::encode(payload.starting_state_root)),
+            ending_state_root: format!("0x{}", hex::encode(payload.ending_state_root)),
+            starting_kernel_root: format!("0x{}", hex::encode(payload.starting_kernel_root)),
+            ending_kernel_root: format!("0x{}", hex::encode(payload.ending_kernel_root)),
+            nullifier_root: format!("0x{}", hex::encode(payload.nullifier_root)),
+            nullifiers: payload
+                .nullifiers
+                .into_iter()
+                .map(|value| format!("0x{}", hex::encode(value)))
+                .collect(),
+            sorted_nullifiers: payload
+                .sorted_nullifiers
+                .into_iter()
+                .map(|value| format!("0x{}", hex::encode(value)))
+                .collect(),
+        })
+    }
+
     fn map_work_package(
         package: crate::substrate::prover_coordinator::WorkPackage,
-    ) -> WorkPackageResponse {
-        WorkPackageResponse {
+    ) -> RpcResult<WorkPackageResponse> {
+        Ok(WorkPackageResponse {
             package_id: package.package_id,
             parent_hash: format!("0x{}", hex::encode(package.parent_hash)),
             block_number: package.block_number,
@@ -138,9 +197,13 @@ impl ProverRpc {
                 .into_iter()
                 .map(|tx| format!("0x{}", hex::encode(tx)))
                 .collect(),
+            root_finalize_payload: package
+                .root_finalize_payload
+                .map(Self::map_root_finalize_payload)
+                .transpose()?,
             created_at_ms: package.created_at_ms,
             expires_at_ms: package.expires_at_ms,
-        }
+        })
     }
 
     fn submit_work_result_impl(
@@ -178,17 +241,17 @@ impl ProverRpc {
 #[async_trait::async_trait]
 impl ProverApiServer for ProverRpc {
     async fn get_work_package(&self) -> RpcResult<Option<WorkPackageResponse>> {
-        Ok(self
-            .coordinator
-            .get_work_package()
-            .map(Self::map_work_package))
+        match self.coordinator.get_work_package() {
+            Some(package) => Ok(Some(Self::map_work_package(package)?)),
+            None => Ok(None),
+        }
     }
 
     async fn get_stage_work_package(&self) -> RpcResult<Option<WorkPackageResponse>> {
-        Ok(self
-            .coordinator
-            .get_work_package()
-            .map(Self::map_work_package))
+        match self.coordinator.get_stage_work_package() {
+            Some(package) => Ok(Some(Self::map_work_package(package)?)),
+            None => Ok(None),
+        }
     }
 
     async fn submit_work_result(

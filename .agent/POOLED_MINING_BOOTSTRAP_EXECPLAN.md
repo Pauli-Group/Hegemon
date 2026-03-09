@@ -21,7 +21,8 @@ The observable result is:
 - [x] (2026-03-09 20:58Z) Added `runbooks/authoring_pool_upgrade.md` to describe the immediate public-author + private-prover topology, public app miner posture, and onboarding criteria.
 - [x] (2026-03-09 22:05Z) Updated `hegemon-app` so node connections carry an explicit participation role (`full node`, `pooled hasher`, `public author`, `private prover`) and the UI now defaults to pooled-hashing/full-node language instead of generic local mining language.
 - [x] (2026-03-09 23:34Z) Implemented the first pooled miner UX in `hegemon-app`: pooled hash workers can now be configured and started from Electron, background hash loops submit shares through the new pool RPC, and the UI shows worker status, logs, and pool accounting.
-- [ ] Define the network/API work needed to support pool-style hash workers without exposing raw authoring to ordinary users (completed: `hegemon_poolWork`, `hegemon_submitPoolShare`, and `hegemon_poolStatus` backend RPC foundation plus external-solution injection into the mining coordinator, worker-level payout fractions, share-difficulty configuration, and the Electron pooled hash worker; remaining: standalone external prover worker, stronger payout persistence, and a dedicated pool share protocol beyond JSON-RPC).
+- [x] (2026-03-10 00:22Z) Implemented the first standalone private prover worker (`hegemon-prover-worker`) and author-side `root_finalize` stage package publication for the `MergeRoot` path.
+- [ ] Define the remaining network/API work needed to support pool-style workers at production quality (completed: pooled hash-worker flow, worker-level payout fractions, configurable share difficulty, author-side pool RPC, stage-package publication, and standalone private prover worker; remaining: durable payout persistence, a hardened pool share protocol beyond JSON-RPC, and broader external proving modes beyond the current `MergeRoot` root-finalize path).
 
 ## Surprises & Discoveries
 
@@ -34,14 +35,14 @@ The observable result is:
 - Observation: the existing runbooks already carry the approved `HEGEMON_SEEDS` list and NTP/chrony requirements, so the new runbook should repeat those values rather than invent a new bootstrap story.
   Evidence: `runbooks/miner_wallet_quickstart.md` and `runbooks/two_person_testnet.md`.
 
-- Observation: the repository exposes coordinator-side `prover_*` RPC methods, but it does not yet ship a standalone external prover worker binary or service that can run on the private proving machine.
-  Evidence: searching the tree finds `node/src/substrate/rpc/prover.rs` and coordinator tests, but no standalone worker executable or runbook for external prover workers.
+- Observation: the clean standalone prover cut is to publish `root_finalize` stage packages that already include resolved transaction proofs and commitment-proof public inputs, then let the worker generate the commitment proof and merge-root artifact offline.
+  Evidence: `node/src/substrate/prover_coordinator.rs` now carries `root_finalize_payload`, and `node/src/bin/prover_worker.rs` consumes `prover_getStageWorkPackage` to build a full `BlockProofBundle`.
 
 - Observation: the desktop app previously modeled node intent only as `local` vs `remote` plus a generic mining toggle, which implicitly suggested ordinary users should become local authors if they wanted to participate.
   Evidence: before this change, `hegemon-app/src/App.tsx` exposed `Auto-start mining`, `Miner address`, and `Mine threads` without any explicit participation-role model.
 
-- Observation: the easiest backend slice to ship now is pool-work distribution for hashers, not the public prover worker, because the current proving path still lacks a standalone worker and a fully sufficient public work-package shape for external provers.
-  Evidence: the node can now expose current mining work and accept externally discovered solutions, while the public prover worker remains blocked on missing standalone worker plumbing and richer work-package context.
+- Observation: pooled hashing and standalone private proving were both shippable once the author published the right package shapes. Hashers only need current PoW work, while the prover worker needs resolved transaction proofs plus commitment-proof public inputs.
+  Evidence: the author node now exposes `hegemon_poolWork` / `hegemon_submitPoolShare` for hashers and `prover_getStageWorkPackage` root-finalize payloads for the standalone prover worker.
 
 - Observation: a practical pooled worker can run today inside the desktop app by hashing in background Node worker threads against `hegemon_poolWork` and submitting accepted shares through `hegemon_submitPoolShare`; this does not require changing consensus.
   Evidence: `hegemon-app/electron/poolMinerManager.ts` now starts worker threads with `hash-wasm`, polls pool work over RPC, and the renderer shows accepted shares, block candidates, and per-worker payout fractions from `hegemon_poolStatus`.
@@ -80,9 +81,13 @@ The observable result is:
   Rationale: this ships a real background hasher immediately, keeps the renderer responsive, avoids inventing a custom native module, and reuses the new pool RPC without waiting on a separate packaged worker binary.
   Date/Author: 2026-03-09 / Codex
 
+- Decision: publish standalone prover work only for the `MergeRoot` root-finalize stage in the first cut.
+  Rationale: the root-finalize path can be reconstructed offline from resolved transaction proofs plus commitment-proof public inputs. The current leaf-batch external path still lacks the public witness/context needed for a robust standalone worker.
+  Date/Author: 2026-03-10 / Codex
+
 ## Outcomes & Retrospective
 
-The planning artifacts now state the intended topology clearly, the desktop app now reflects that topology at the UX level, and the authoring node plus Electron app now form a working pooled-hasher path: the author exposes current work and accepts shares, the desktop app can hash in the background and submit shares, and the UI surfaces worker-level accounting and estimated payout fractions. The remaining gap is prover-side scale-out and durable operator economics. There is still no standalone external prover worker service, and the current pool accounting is in-memory rather than durable. The next contributor should treat this ExecPlan as the bridge from “users can hash through the pool” to “private proving capacity and payout persistence are production-grade.”
+The planning artifacts now state the intended topology clearly, the desktop app now reflects that topology at the UX level, the authoring node plus Electron app form a working pooled-hasher path, and the repo now ships a standalone private prover worker for the current `MergeRoot` root-finalize path. The remaining gap is operator hardening and economic durability, not basic topology enablement. Pool accounting is still in-memory rather than durable, and the standalone prover worker is narrower than the long-term prover market design. The next contributor should treat this ExecPlan as the bridge from “the topology works” to “the pool and prover economy are production-grade.”
 
 ## Context and Orientation
 
@@ -104,7 +109,7 @@ First, keep the immediate operations story stable. The new runbook `runbooks/aut
 
 Second, align the app and user-facing documentation to pooled hashing. Audit `hegemon-app/src/App.tsx` and related operator screens to find any copy or flows that imply ordinary users should become public shielded block authors. Replace those assumptions with three explicit roles: full node, pooled hasher, and operator-only author. The default public path should be pooled hashing or full-node verification. Authoring should be advanced/operator-only.
 
-Third, define the concrete transport work for pooled mining. The node does not yet expose a proper pool template/share interface, and the repo does not yet ship a standalone external prover worker for the private proving machine. The next implementation milestone must therefore specify both pieces. The plan should prefer a minimal, explicit pool API that lets the public authoring node serve work and accept shares without requiring clients to run the full authoring path, plus a standalone worker that can poll `prover_*` over a private link. The initial version can be brokered and centralized around the authoring pool; it does not need to solve the entire public prover market.
+Third, harden the pooled transport work that now exists. The node exposes a pool template/share interface, the desktop app can act as a pooled hash worker, and the repo ships a standalone private prover worker for the `MergeRoot` root-finalize path. The next implementation milestone should harden those surfaces: durable payout persistence, better pool auth, and broader external proving coverage.
 
 Fourth, document the participant-role criteria in the user/operator materials. New participants should have a crisp rule for joining as a hasher, a prover, or a second pool operator. This guidance must appear in the runbook and any relevant onboarding docs so operators do not have to reconstruct it from architecture prose.
 
@@ -145,7 +150,7 @@ This ExecPlan is accepted when all of the following are true:
 3. The app/product work for pooled hashing is decomposed into implementable tasks with named files, surfaces, and success criteria.
 4. The repo contains explicit criteria for classifying new participants as hashers, provers, or second pool operators.
 
-When app or protocol changes begin, additional acceptance must include a working demonstration: start the public authoring node, fetch work through `hegemon_poolWork`, submit an accepted share through `hegemon_submitPoolShare`, then connect a pooled worker end to end. A later milestone must also start the standalone prover worker on the private proving machine and confirm the authoring node continues to use the private prover backend for block assembly.
+Acceptance now includes a working demonstration: start the public authoring node, fetch work through `hegemon_poolWork`, submit an accepted share through `hegemon_submitPoolShare`, connect a pooled worker end to end, and start the standalone prover worker on the private proving machine so the authoring node continues to use the private prover backend for block assembly.
 
 ## Idempotence and Recovery
 
@@ -176,8 +181,8 @@ The next implementation milestone driven by this ExecPlan should end with the fo
 
 - A pool-facing work endpoint on the public authoring side that serves PoW templates or share work units to hashers. The initial version is `hegemon_poolWork`.
 - A pool-facing share submission endpoint that accepts accepted/rejected share results and records them for payout accounting. The initial version is `hegemon_submitPoolShare`, with aggregate counters exposed by `hegemon_poolStatus`.
-- A standalone prover worker executable or service that can run on the private proving machine, poll the authoring node’s `prover_*` work packages over a private link, and return accepted results.
-- A private or PQ-authenticated proving path between the authoring node and one or more prover workers. The current `prover_*` RPC methods are sufficient for the immediate private deployment once the worker exists, but not yet sufficient as the final public prover market transport.
+- A standalone prover worker executable or service that can run on the private proving machine, poll the authoring node’s `prover_*` stage work packages over a private link, and return accepted results. The current implementation is `hegemon-prover-worker` for the `MergeRoot` root-finalize path.
+- A private or PQ-authenticated proving path between the authoring node and one or more prover workers. The current `prover_*` RPC methods are sufficient for the immediate private deployment, but not yet sufficient as the final public prover market transport.
 - Clear role labels in the app and docs: `full node`, `pooled hasher`, `prover`, and `pool operator`.
 
 Revision note: created on 2026-03-09 to turn the documented scaling direction into an operator runbook plus a concrete work plan for the first pooled mining UX and the immediate public-author / private-prover topology.
