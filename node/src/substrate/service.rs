@@ -4741,13 +4741,6 @@ pub fn wire_block_builder_api(
             }
         }
         for inherent_ext in inherent_extrinsics {
-            if matches!(
-                &inherent_ext.function,
-                runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { .. })
-            ) {
-                tracing::info!("Skipping runtime-generated timestamp inherent; using runtime fallback");
-                continue;
-            }
             let is_shielded = is_shielded_transfer_call(&inherent_ext.function);
             match block_builder.push(inherent_ext.clone()) {
                 Ok(_) => {
