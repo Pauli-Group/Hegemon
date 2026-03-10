@@ -4716,7 +4716,38 @@ pub fn wire_block_builder_api(
         // Push inherent extrinsics
         let mut shielded_transfer_count = 0usize;
         let mut applied = Vec::new();
+        let has_timestamp_inherent = inherent_extrinsics.iter().any(|ext| {
+            matches!(
+                &ext.function,
+                runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { .. })
+            )
+        });
+        if !has_timestamp_inherent {
+            let now = timestamp_provider.timestamp().as_millis();
+            let timestamp_ext = runtime::UncheckedExtrinsic::new_unsigned(
+                runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { now }),
+            );
+            match block_builder.push(timestamp_ext.clone()) {
+                Ok(_) => {
+                    applied.push(timestamp_ext.encode());
+                    tracing::info!(now, "Injected explicit timestamp inherent");
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to push explicit timestamp inherent: {:?}",
+                        e
+                    ));
+                }
+            }
+        }
         for inherent_ext in inherent_extrinsics {
+            if matches!(
+                &inherent_ext.function,
+                runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { .. })
+            ) {
+                tracing::info!("Skipping runtime-generated timestamp inherent; using runtime fallback");
+                continue;
+            }
             let is_shielded = is_shielded_transfer_call(&inherent_ext.function);
             match block_builder.push(inherent_ext.clone()) {
                 Ok(_) => {

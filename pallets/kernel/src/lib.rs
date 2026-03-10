@@ -66,6 +66,7 @@ pub mod pallet {
     #[derive(frame_support::DefaultNoBound)]
     pub struct GenesisConfig<T: Config> {
         pub family_roots: Vec<(FamilyId, Vec<u8>)>,
+        #[serde(skip)]
         pub _phantom: core::marker::PhantomData<T>,
     }
 
