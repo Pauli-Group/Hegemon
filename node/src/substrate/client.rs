@@ -1468,4 +1468,40 @@ mod tests {
 
         assert!(provider.has_state_execution());
     }
+
+    #[test]
+    fn test_production_provider_empty_template_requires_timestamp_inherent() {
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+
+        let parent = H256::repeat_byte(0x22);
+        provider.set_best_block_fn(move || (parent, 0));
+        provider.set_difficulty_fn(|| 0x1d00ffff);
+        provider.set_pending_txs_fn(Vec::new);
+
+        let saw_empty_pending = Arc::new(std::sync::Mutex::new(false));
+        let saw_empty_pending_clone = Arc::clone(&saw_empty_pending);
+        provider.set_execute_extrinsics_fn(move |_parent, number, extrinsics| {
+            assert_eq!(number, 1);
+            assert!(
+                extrinsics.is_empty(),
+                "empty template regression should execute with no pending txs"
+            );
+            *saw_empty_pending_clone.lock().unwrap() = true;
+            Ok(StateExecutionResult {
+                applied_extrinsics: Vec::new(),
+                state_root: H256::repeat_byte(0x33),
+                extrinsics_root: H256::repeat_byte(0x44),
+                failed_count: 0,
+                storage_changes: None,
+            })
+        });
+
+        let template = provider.build_block_template();
+        assert_eq!(template.number, 1);
+        assert!(
+            *saw_empty_pending.lock().unwrap(),
+            "state execution callback should run for empty templates"
+        );
+        assert_eq!(template.state_root, Some(H256::repeat_byte(0x33)));
+    }
 }

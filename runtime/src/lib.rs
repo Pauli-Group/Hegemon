@@ -22,7 +22,6 @@ pub mod manifest;
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
-use frame_support::dispatch::GetDispatchInfo;
 use frame_support::traits::{ConstU32, VariantCount};
 use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, Weight};
 pub use frame_support::{construct_runtime, parameter_types};
@@ -779,7 +778,7 @@ pub struct HegemonCallFilter;
 
 impl frame_support::traits::Contains<RuntimeCall> for HegemonCallFilter {
     fn contains(call: &RuntimeCall) -> bool {
-        matches!(call, RuntimeCall::Kernel(_))
+        matches!(call, RuntimeCall::Kernel(_) | RuntimeCall::Timestamp(_))
     }
 }
 
@@ -1021,19 +1020,6 @@ sp_api::impl_runtime_apis! {
 
     impl sp_block_builder::BlockBuilder<Block> for Runtime {
         fn apply_extrinsic(extrinsic: <Block as sp_runtime::traits::Block>::Extrinsic) -> sp_runtime::ApplyExtrinsicResult {
-            if let RuntimeCall::Timestamp(pallet_timestamp::Call::set { now }) = &extrinsic.function {
-                let dispatch_info = extrinsic.function.get_dispatch_info();
-                frame_system::Pallet::<Runtime>::note_extrinsic(extrinsic.encode());
-                let result = pallet_timestamp::Pallet::<Runtime>::set(
-                    RuntimeOrigin::none(),
-                    *now,
-                );
-                let applied: frame_support::dispatch::DispatchResultWithPostInfo = result
-                    .map(|_| frame_support::dispatch::PostDispatchInfo::default())
-                    .map_err(Into::into);
-                frame_system::Pallet::<Runtime>::note_applied_extrinsic(&applied, dispatch_info);
-                return Ok(result.map(|_| ()));
-            }
             Executive::apply_extrinsic(extrinsic)
         }
 
