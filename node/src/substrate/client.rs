@@ -1502,6 +1502,6 @@ mod tests {
             *saw_empty_pending.lock().unwrap(),
             "state execution callback should run for empty templates"
         );
-        assert_eq!(template.state_root, Some(H256::repeat_byte(0x33)));
+        assert_eq!(template.state_root, H256::repeat_byte(0x33));
     }
 }

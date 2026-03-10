@@ -1,6 +1,6 @@
 use sp_io::TestExternalities;
-use sp_runtime::BuildStorage;
 use sp_runtime::traits::Header as HeaderT;
+use sp_runtime::BuildStorage;
 
 use runtime::{Executive, Header, RuntimeCall, UncheckedExtrinsic};
 
@@ -22,11 +22,10 @@ fn header_with_number(number: u64) -> Header {
 #[test]
 fn block_builder_inherent_extrinsics_include_timestamp_and_finalize() {
     new_ext().execute_with(|| {
-        let inherent = UncheckedExtrinsic::new_bare(RuntimeCall::Timestamp(
-            pallet_timestamp::Call::set {
+        let inherent =
+            UncheckedExtrinsic::new_bare(RuntimeCall::Timestamp(pallet_timestamp::Call::set {
                 now: 1_700_000_000_000u64,
-            },
-        ));
+            }));
 
         Executive::initialize_block(&header_with_number(1));
         let apply_result = Executive::apply_extrinsic(inherent);
