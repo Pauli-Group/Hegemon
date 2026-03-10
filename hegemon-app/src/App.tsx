@@ -49,7 +49,7 @@ const participationRoleLabels: Record<NodeParticipationRole, string> = {
 const participationRoleMeta: Record<
   NodeParticipationRole,
   {
-    statusLabel: string;
+    statusLabel?: string;
     statusTone: 'ok' | 'warn';
     summary: string;
     guidance: string;
@@ -58,14 +58,12 @@ const participationRoleMeta: Record<
   }
 > = {
   full_node: {
-    statusLabel: 'Ready today',
     statusTone: 'ok',
     summary: 'Verifies the network, serves wallet traffic, and relays chain state without local shielded block authoring.',
     guidance:
       'Use this for wallets, verification, and monitoring. Switch to Public author only if you control proving access or operate a pool.'
   },
   pooled_hasher: {
-    statusLabel: 'Ready today',
     statusTone: 'ok',
     summary:
       'Intended public mining path for ordinary users. The machine should hash against pool-provided templates instead of authoring shielded blocks.',
@@ -2564,7 +2562,9 @@ export default function App() {
               <p className="label">Participation</p>
               <h3 className="text-base font-semibold">{participationRoleLabels[activeParticipationRole]}</h3>
             </div>
-            <span className={`status-pill ${activeParticipationMeta.statusTone}`}>{activeParticipationMeta.statusLabel}</span>
+            {activeParticipationMeta.statusLabel ? (
+              <span className={`status-pill ${activeParticipationMeta.statusTone}`}>{activeParticipationMeta.statusLabel}</span>
+            ) : null}
           </div>
           <p className="text-sm text-surfaceMuted">{activeParticipationMeta.summary}</p>
           <p className="text-xs text-surfaceMuted/80">{activeParticipationMeta.guidance}</p>
@@ -3018,7 +3018,9 @@ export default function App() {
         <div className="panel">
           <p className="label">Role</p>
           <p className="text-lg font-medium">{participationRoleLabels[activeParticipationRole]}</p>
-          <p className="text-xs text-surfaceMuted">{activeParticipationMeta.statusLabel}</p>
+          {activeParticipationMeta.statusLabel ? (
+            <p className="text-xs text-surfaceMuted">{activeParticipationMeta.statusLabel}</p>
+          ) : null}
         </div>
         <div className="panel">
           <p className="label">Health</p>
