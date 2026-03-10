@@ -2305,7 +2305,12 @@ fn build_root_finalize_work_data(
     if prepared_proof_mode_from_env() != PreparedProofMode::MergeRoot {
         return Ok(None);
     }
-    let context = build_candidate_context(candidate_txs, da_params, pending_ciphertexts, pending_proofs)?;
+    let context = build_candidate_context(
+        candidate_txs,
+        da_params,
+        pending_ciphertexts,
+        pending_proofs,
+    )?;
     let proofs = context.tx_proofs.as_ref();
     if proofs.is_empty() {
         return Ok(None);

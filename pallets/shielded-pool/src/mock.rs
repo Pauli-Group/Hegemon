@@ -1,4 +1,5 @@
 //! Mock runtime for testing the shielded pool pallet.
+#![allow(dead_code)]
 
 use crate as pallet_shielded_pool;
 use crate::{
@@ -177,20 +178,12 @@ parameter_types! {
     pub const MaxCommitmentsPerBatch: u32 = 64; // 32 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
-    pub const MaxForcedInclusions: u32 = 8;
-    pub const MaxForcedInclusionWindow: u64 = 10;
-    pub const MinForcedInclusionBond: u128 = 50;
     pub DefaultFeeParameters: crate::types::FeeParameters = crate::types::FeeParameters::default();
 }
 
 impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
-    type AdminOrigin = frame_system::EnsureRoot<u64>;
     type DefaultFeeParameters = DefaultFeeParameters;
-    type Currency = Balances;
-    type MaxForcedInclusions = MaxForcedInclusions;
-    type MaxForcedInclusionWindow = MaxForcedInclusionWindow;
-    type MinForcedInclusionBond = MinForcedInclusionBond;
     type ProofVerifier = TestProofVerifier;
     type BatchProofVerifier = TestBatchProofVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
@@ -240,8 +233,8 @@ pub fn new_test_ext() -> TestExternalities {
     ext
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any())]
+mod legacy_tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{

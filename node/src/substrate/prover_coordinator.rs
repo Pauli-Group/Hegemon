@@ -138,11 +138,10 @@ pub type BestBlockFn = dyn Fn() -> (H256, u64) + Send + Sync + 'static;
 pub type PendingTxsFn = dyn Fn(usize) -> Vec<Vec<u8>> + Send + Sync + 'static;
 pub type PrepareBundleFn =
     dyn Fn(H256, u64, Vec<Vec<u8>>) -> Result<PreparedBundle, String> + Send + Sync + 'static;
-pub type BuildRootFinalizeWorkFn =
-    dyn Fn(H256, u64, Vec<Vec<u8>>) -> Result<Option<RootFinalizeWorkData>, String>
-        + Send
-        + Sync
-        + 'static;
+pub type BuildRootFinalizeWorkFn = dyn Fn(H256, u64, Vec<Vec<u8>>) -> Result<Option<RootFinalizeWorkData>, String>
+    + Send
+    + Sync
+    + 'static;
 
 #[allow(deprecated)]
 #[deprecated(note = "Use PrepareBundleFn instead.")]

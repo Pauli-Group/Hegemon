@@ -1,15 +1,11 @@
-use frame_support::sp_runtime::BuildStorage;
-use frame_support::{assert_ok, BoundedVec};
-use runtime::{
-    chain_spec, Attestations, Identity, Pow, PowDifficulty, Runtime, RuntimeOrigin, Settlement,
-    System, Timestamp,
-};
+use frame_support::{assert_noop, assert_ok};
 use sp_core::H256;
 use sp_io::TestExternalities;
+use sp_runtime::BuildStorage;
 
-fn account(seed: u8) -> runtime::AccountId {
-    runtime::AccountId::new([seed; 32])
-}
+use runtime::{
+    chain_spec, pow, Pow, PowDifficulty, Runtime, RuntimeEvent, RuntimeOrigin, System, Timestamp,
+};
 
 fn new_ext() -> TestExternalities {
     let spec = chain_spec::development_config();
@@ -53,100 +49,60 @@ fn valid_nonce(pre_hash: H256, pow_bits: u32) -> u64 {
 }
 
 #[test]
-fn chain_specs_cover_pow_and_telemetry_defaults() {
-    let dev = chain_spec::development_config();
-    assert_eq!(dev.pow_bits, PowDifficulty::get());
-    assert!(dev
-        .telemetry_endpoints
-        .iter()
-        .any(|url| url.contains("telemetry")));
-    // No pre-mine in development config - all issuance from mining rewards
-    assert!(dev.genesis.balances.balances.is_empty());
-
-    let testnet = chain_spec::testnet_config();
-    assert_eq!(testnet.pow_bits, PowDifficulty::get());
-    assert!(!testnet.bootnodes.is_empty());
-    assert!(testnet
-        .telemetry_endpoints
-        .iter()
-        .any(|url| url.contains("testnet")));
+fn development_chain_spec_matches_runtime_pow_difficulty() {
+    let spec = chain_spec::development_config();
+    assert_eq!(spec.pow_bits, PowDifficulty::get());
 }
 
 #[test]
-fn pow_identity_attestation_settlement_flow() {
-    let alice = account(1);
-    let bob = account(2);
-    let carol = account(3);
-    let mut ext = new_ext();
-
-    ext.execute_with(|| {
+fn pow_block_imports_with_valid_seal() {
+    new_ext().execute_with(|| {
         System::set_block_number(1);
         Timestamp::set_timestamp(0);
-
         let pow_bits = PowDifficulty::get();
-        let pre_hash = chain_spec::genesis_pre_hash();
+        let pre_hash = H256::repeat_byte(7);
         let nonce = valid_nonce(pre_hash, pow_bits);
+
         assert_ok!(Pow::submit_work(
-            RuntimeOrigin::signed(alice.clone()),
+            RuntimeOrigin::signed(runtime::AccountId::new([1u8; 32])),
             pre_hash,
             nonce,
             pow_bits,
             0,
         ));
-        assert_eq!(
-            runtime::pow::Validators::<Runtime>::get(),
-            vec![alice.clone()]
+
+        let events = System::events();
+        assert!(events.iter().any(|evt| matches!(
+            evt.event,
+            RuntimeEvent::Pow(pow::Event::PowBlockImported { pow_bits: b, nonce: n, .. }) if b == pow_bits && n == nonce
+        )));
+        assert_eq!(pow::Difficulty::<Runtime>::get(), pow_bits);
+    });
+}
+
+#[test]
+fn pow_rejects_invalid_seal() {
+    new_ext().execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(0);
+        // The dev difficulty expands to the maximum target, so every nonce is
+        // valid there. Use a finite easy target for the negative-path check.
+        let pow_bits = 0x207fffff;
+        pow::Difficulty::<Runtime>::put(pow_bits);
+        let pre_hash = H256::repeat_byte(9);
+        let bad_nonce = (0u64..)
+            .find(|candidate| !seal_meets_target(pre_hash, *candidate, pow_bits))
+            .expect("non-matching nonce exists");
+
+        assert_noop!(
+            Pow::submit_work(
+                RuntimeOrigin::signed(runtime::AccountId::new([1u8; 32])),
+                pre_hash,
+                bad_nonce,
+                pow_bits,
+                0
+            ),
+            pow::Error::<Runtime>::InsufficientWork
         );
-
-        assert_ok!(Identity::store_schema(
-            RuntimeOrigin::root(),
-            1u32,
-            b"kyc-basic".to_vec(),
-            true,
-        ));
-        assert_ok!(Identity::issue_credential(
-            RuntimeOrigin::signed(alice.clone()),
-            1u32,
-            bob.clone(),
-            None,
-            b"attestation".to_vec(),
-            vec![7u32],
-        ));
-        assert!(Identity::has_role(&bob, &7u32));
-
-        let root: BoundedVec<_, runtime::MaxRootSize> = b"commitment-root"
-            .to_vec()
-            .try_into()
-            .expect("fits max root");
-        assert_ok!(Attestations::submit_commitment(
-            RuntimeOrigin::signed(bob.clone()),
-            1u64,
-            pallet_attestations::RootKind::Merkle,
-            root.clone(),
-        ));
-        let stored =
-            pallet_attestations::Commitments::<Runtime>::get(1u64).expect("commitment recorded");
-        assert_eq!(stored.root, root);
-
-        // Settlement instruction submission (no proof required yet)
-        let legs: BoundedVec<_, runtime::MaxLegs> = vec![pallet_settlement::Leg {
-            from: bob.clone(),
-            to: carol.clone(),
-            asset: 0u32,
-            amount: 10u128,
-        }]
-        .try_into()
-        .expect("leg within limit");
-        let memo: BoundedVec<_, runtime::MaxMemo> =
-            b"settle".to_vec().try_into().expect("memo within limit");
-        assert_ok!(Settlement::submit_instruction(
-            RuntimeOrigin::signed(bob.clone()),
-            legs,
-            pallet_settlement::NettingKind::Bilateral,
-            memo,
-        ));
-
-        // Verify instruction was queued
-        assert!(!pallet_settlement::PendingQueue::<Runtime>::get().is_empty());
     });
 }

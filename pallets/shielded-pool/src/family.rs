@@ -74,6 +74,7 @@ pub struct MintCoinbaseArgs {
     pub reward_bundle: BlockRewardBundle,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShieldedFamilyAction {
     TransferInline {

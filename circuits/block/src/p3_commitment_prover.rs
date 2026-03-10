@@ -62,14 +62,15 @@ impl CommitmentBlockProverP3 {
         let statement_hashes = statement_hashes_from_transactions(transactions)?;
         let nullifiers = nullifiers_from_transactions(transactions)?;
         let sorted_nullifiers = sorted_nullifiers(&nullifiers);
+        let zero_root = [0u8; 48];
         self.prove_from_statement_hashes_with_inputs(
             &statement_hashes,
-            [0u8; 48],
-            [0u8; 48],
-            [0u8; 48],
-            [0u8; 48],
-            [0u8; 48],
-            [0u8; 48],
+            zero_root,
+            zero_root,
+            kernel_root_from_shielded_root(&zero_root),
+            kernel_root_from_shielded_root(&zero_root),
+            zero_root,
+            zero_root,
             nullifiers,
             sorted_nullifiers,
         )
@@ -106,12 +107,14 @@ impl CommitmentBlockProverP3 {
 
         let ending_root = tree.root();
         let statement_hashes = statement_hashes_from_transactions(transactions)?;
+        let starting_kernel_root = kernel_root_from_shielded_root(&starting_root);
+        let ending_kernel_root = kernel_root_from_shielded_root(&ending_root);
         self.prove_from_statement_hashes_with_inputs(
             &statement_hashes,
             starting_root,
             ending_root,
-            starting_root,
-            ending_root,
+            starting_kernel_root,
+            ending_kernel_root,
             nullifier_root,
             da_root,
             nullifiers,
@@ -635,6 +638,14 @@ fn blake3_384(data: &[u8]) -> Commitment {
     let mut out = [0u8; 48];
     hasher.finalize_xof().fill(&mut out);
     out
+}
+
+fn kernel_root_from_shielded_root(root: &Commitment) -> Commitment {
+    let mut bytes = Vec::with_capacity(24 + 2 + root.len());
+    bytes.extend_from_slice(b"hegemon-kernel-root-v1");
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(root);
+    blake3_384(&bytes)
 }
 
 fn hashes_to_vals(hashes: &[Commitment]) -> Vec<Val> {

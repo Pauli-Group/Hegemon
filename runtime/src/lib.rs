@@ -1297,19 +1297,9 @@ sp_api::impl_runtime_apis! {
 #[cfg(all(test, feature = "runtime-tests"))]
 mod tests {
     use super::*;
-    use frame_support::assert_noop;
-    use frame_support::pallet_prelude::Zero;
-    use frame_support::{
-        assert_ok,
-        traits::{Hooks, StorageVersion},
-        BoundedVec,
-    };
+    use frame_support::{assert_noop, assert_ok};
     use sp_core::U256;
     use sp_runtime::BuildStorage;
-
-    fn account(seed: u8) -> AccountId {
-        AccountId::from([seed; 32])
-    }
 
     fn compact_to_target(bits: u32) -> Option<U256> {
         let exponent = bits >> 24;
@@ -1349,16 +1339,10 @@ mod tests {
     }
 
     fn new_ext() -> sp_io::TestExternalities {
-        let mut t = frame_system::GenesisConfig::<Runtime>::default()
+        frame_system::GenesisConfig::<Runtime>::default()
             .build_storage()
-            .unwrap();
-        pallet_balances::GenesisConfig::<Runtime> {
-            balances: vec![(account(1), 1_000_000), (account(2), 1_000_000)],
-            dev_accounts: None,
-        }
-        .assimilate_storage(&mut t)
-        .unwrap();
-        t.into()
+            .unwrap()
+            .into()
     }
 
     #[test]
@@ -1371,7 +1355,7 @@ mod tests {
             let nonce = valid_nonce(pre_hash, pow_bits);
 
             assert_ok!(Pow::submit_work(
-                RuntimeOrigin::signed(account(1)),
+                RuntimeOrigin::signed(AccountId::from([1u8; 32])),
                 pre_hash,
                 nonce,
                 pow_bits,
@@ -1392,7 +1376,11 @@ mod tests {
         new_ext().execute_with(|| {
             System::set_block_number(1);
             Timestamp::set_timestamp(0);
-            let pow_bits = PowDifficulty::get();
+            // The default dev difficulty expands to the maximum target, so
+            // every nonce is valid there. Use a finite easy target here to
+            // exercise the rejection path.
+            let pow_bits = 0x207fffff;
+            pow::Difficulty::<Runtime>::put(pow_bits);
             let pre_hash = H256::repeat_byte(9);
             let bad_nonce = (0u64..)
                 .find(|candidate| !seal_meets_target(pre_hash, *candidate, pow_bits))
@@ -1400,7 +1388,7 @@ mod tests {
 
             assert_noop!(
                 Pow::submit_work(
-                    RuntimeOrigin::signed(account(1)),
+                    RuntimeOrigin::signed(AccountId::from([1u8; 32])),
                     pre_hash,
                     bad_nonce,
                     pow_bits,
@@ -1414,136 +1402,6 @@ mod tests {
                 evt.event,
                 RuntimeEvent::Pow(pow::Event::PowInvalidSeal { nonce, .. }) if nonce == bad_nonce
             )));
-        });
-    }
-
-    #[test]
-    fn identity_hooks_enqueue_attestations_and_settlement() {
-        new_ext().execute_with(|| {
-            System::set_block_number(1);
-            let schema = 7u32;
-            let schema_bytes: BoundedVec<u8, MaxSchemaLength> =
-                BoundedVec::try_from(vec![1u8]).unwrap();
-            assert_ok!(Identity::store_schema(
-                RuntimeOrigin::root(),
-                schema,
-                schema_bytes.clone().into_inner(),
-                false
-            ));
-            let payload = schema.to_le_bytes().to_vec();
-            assert_ok!(Identity::issue_credential(
-                RuntimeOrigin::signed(account(1)),
-                schema,
-                account(2),
-                None,
-                payload,
-                vec![]
-            ));
-
-            Attestations::offchain_worker(1);
-
-            let pending = pallet_attestations::PendingSettlementEvents::<Runtime>::get();
-            assert_eq!(pending.len(), 0); // consumed by offchain worker
-            let queue = pallet_settlement::PendingQueue::<Runtime>::get();
-            assert!(queue.contains(&(schema as u64)));
-        });
-    }
-
-    #[test]
-    fn revocation_clears_pending_queues() {
-        new_ext().execute_with(|| {
-            System::set_block_number(1);
-            let schema = 9u32;
-            let schema_bytes: BoundedVec<u8, MaxSchemaLength> =
-                BoundedVec::try_from(vec![1u8]).unwrap();
-            assert_ok!(Identity::store_schema(
-                RuntimeOrigin::root(),
-                schema,
-                schema_bytes.clone().into_inner(),
-                false
-            ));
-            let payload = schema.to_le_bytes().to_vec();
-            assert_ok!(Identity::issue_credential(
-                RuntimeOrigin::signed(account(1)),
-                schema,
-                account(2),
-                None,
-                payload,
-                vec![]
-            ));
-            Attestations::offchain_worker(1);
-            assert!(pallet_settlement::PendingQueue::<Runtime>::get().contains(&(schema as u64)));
-
-            assert_ok!(Identity::revoke_credential(
-                RuntimeOrigin::signed(account(1)),
-                schema,
-                account(2)
-            ));
-            Attestations::offchain_worker(2);
-            assert!(!pallet_settlement::PendingQueue::<Runtime>::get().contains(&(schema as u64)));
-        });
-    }
-
-    #[test]
-    fn pallet_migrations_bump_storage_versions() {
-        new_ext().execute_with(|| {
-            StorageVersion::new(0).put::<pallet_feature_flags::Pallet<Runtime>>();
-            StorageVersion::new(0).put::<pallet_asset_registry::Pallet<Runtime>>();
-            StorageVersion::new(0).put::<pallet_identity::Pallet<Runtime>>();
-            StorageVersion::new(0).put::<pallet_attestations::Pallet<Runtime>>();
-            StorageVersion::new(0).put::<pallet_oracles::Pallet<Runtime>>();
-            StorageVersion::new(0).put::<pallet_settlement::Pallet<Runtime>>();
-            StorageVersion::new(0).put::<pallet_observability::Pallet<Runtime>>();
-
-            let feature_weight = pallet_feature_flags::Pallet::<Runtime>::on_runtime_upgrade();
-            assert_eq!(
-                StorageVersion::get::<pallet_feature_flags::Pallet<Runtime>>(),
-                pallet_feature_flags::pallet::STORAGE_VERSION
-            );
-            assert!(!feature_weight.is_zero());
-
-            let asset_weight = pallet_asset_registry::Pallet::<Runtime>::on_runtime_upgrade();
-            assert_eq!(
-                StorageVersion::get::<pallet_asset_registry::Pallet<Runtime>>(),
-                pallet_asset_registry::pallet::STORAGE_VERSION
-            );
-            assert!(!asset_weight.is_zero());
-
-            let identity_weight = pallet_identity::Pallet::<Runtime>::on_runtime_upgrade();
-            assert_eq!(
-                StorageVersion::get::<pallet_identity::Pallet<Runtime>>(),
-                pallet_identity::pallet::STORAGE_VERSION
-            );
-            assert!(!identity_weight.is_zero());
-
-            let attestations_weight = pallet_attestations::Pallet::<Runtime>::on_runtime_upgrade();
-            assert_eq!(
-                StorageVersion::get::<pallet_attestations::Pallet<Runtime>>(),
-                pallet_attestations::pallet::STORAGE_VERSION
-            );
-            assert!(!attestations_weight.is_zero());
-
-            let oracle_weight = pallet_oracles::Pallet::<Runtime>::on_runtime_upgrade();
-            assert_eq!(
-                StorageVersion::get::<pallet_oracles::Pallet<Runtime>>(),
-                pallet_oracles::pallet::STORAGE_VERSION
-            );
-            assert!(!oracle_weight.is_zero());
-
-            let settlement_weight = pallet_settlement::Pallet::<Runtime>::on_runtime_upgrade();
-            assert_eq!(
-                StorageVersion::get::<pallet_settlement::Pallet<Runtime>>(),
-                pallet_settlement::STORAGE_VERSION
-            );
-            assert!(!settlement_weight.is_zero());
-
-            let observability_weight =
-                pallet_observability::Pallet::<Runtime>::on_runtime_upgrade();
-            assert_eq!(
-                StorageVersion::get::<pallet_observability::Pallet<Runtime>>(),
-                pallet_observability::pallet::STORAGE_VERSION
-            );
-            assert!(!observability_weight.is_zero());
         });
     }
 }

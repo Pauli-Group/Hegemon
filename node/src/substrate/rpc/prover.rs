@@ -353,7 +353,9 @@ fn parse_bytes(value: &str) -> Result<Vec<u8>, ErrorObjectOwned> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::substrate::prover_coordinator::{ProverCoordinator, ProverCoordinatorConfig};
+    use crate::substrate::prover_coordinator::{
+        ProverCoordinator, ProverCoordinatorConfig, RootFinalizeWorkData,
+    };
     use codec::Encode;
     use sp_core::H256;
     use std::sync::Arc;
@@ -404,7 +406,31 @@ mod tests {
                 Err("disabled local builder for rpc test".to_string())
             },
         );
-        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        let root_finalize = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Ok(Some(RootFinalizeWorkData {
+                    statement_hashes: vec![[7u8; 48]],
+                    tx_proofs: Vec::new(),
+                    tx_statements_commitment: [5u8; 48],
+                    da_root: [6u8; 48],
+                    da_chunk_count: 1,
+                    starting_state_root: [1u8; 48],
+                    ending_state_root: [2u8; 48],
+                    starting_kernel_root: [3u8; 48],
+                    ending_kernel_root: [4u8; 48],
+                    nullifier_root: [8u8; 48],
+                    nullifiers: vec![[9u8; 48]],
+                    sorted_nullifiers: vec![[9u8; 48]],
+                }))
+            },
+        );
+        let coordinator = ProverCoordinator::new_with_root_finalize_builder(
+            config,
+            best,
+            pending,
+            build,
+            Some(root_finalize),
+        );
         coordinator.start();
         tokio::time::sleep(Duration::from_millis(60)).await;
 
@@ -419,7 +445,12 @@ mod tests {
             .await
             .expect("stage package call should succeed")
             .expect("stage package should exist");
-        assert_eq!(stage_package.package_id, package.package_id);
+        assert_eq!(stage_package.stage_type, "root_finalize");
+        assert_eq!(stage_package.parent_hash, package.parent_hash);
+        assert_eq!(stage_package.block_number, package.block_number);
+        assert_eq!(stage_package.tx_count, package.tx_count);
+        assert_eq!(stage_package.candidate_set_id, package.candidate_set_id);
+        assert!(stage_package.root_finalize_payload.is_some());
 
         let encoded = payload(package.tx_count).encode();
         let submit = rpc

@@ -3,7 +3,7 @@ mod common;
 use block_circuit::CommitmentBlockProver;
 use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
-use consensus::types::{ProvenBatch, ProvenBatchMode};
+use consensus::types::{ProvenBatch, ProvenBatchMode, kernel_root_from_shielded_root};
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
     commitment_nullifier_lists,
@@ -211,6 +211,8 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
             &statement_hashes,
             base_tree.root(),
             updated_tree.root(),
+            kernel_root_from_shielded_root(&base_tree.root()),
+            kernel_root_from_shielded_root(&updated_tree.root()),
             updated_nullifiers.commitment(),
             block.header.da_root,
             lists.nullifiers,

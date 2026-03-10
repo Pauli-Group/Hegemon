@@ -883,13 +883,14 @@ where
             });
         };
 
-        let requested_pre_hash = H256::from(hex_to_array32(&request.pre_hash).map_err(|err| {
-            ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>)
-        })?);
-        let requested_parent_hash =
-            H256::from(hex_to_array32(&request.parent_hash).map_err(|err| {
-                ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>)
-            })?);
+        let requested_pre_hash = H256::from(
+            hex_to_array32(&request.pre_hash)
+                .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?,
+        );
+        let requested_parent_hash = H256::from(
+            hex_to_array32(&request.parent_hash)
+                .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?,
+        );
         if request.height != work.height
             || requested_pre_hash != work.pre_hash
             || requested_parent_hash != work.parent_hash
@@ -1007,8 +1008,7 @@ where
                 rejected_shares: worker.rejected,
                 block_candidates: worker.block_candidates,
                 payout_fraction_ppm: ((worker.accepted as u128) * 1_000_000u128
-                    / accepted_total as u128)
-                    as u64,
+                    / accepted_total as u128) as u64,
                 last_share_at_ms: worker.last_share_at_ms,
             })
             .collect::<Vec<_>>();
@@ -1442,13 +1442,21 @@ mod tests {
     async fn test_submit_pool_share_accepts_full_target_solution() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle.clone(), mock_config(), sc_rpc::DenyUnsafe::No);
+        let rpc = HegemonRpc::new(
+            service,
+            handle.clone(),
+            mock_config(),
+            sc_rpc::DenyUnsafe::No,
+        );
         let work = handle.current_work().expect("mock work");
+        let nonce = (0..u64::MAX)
+            .find(|nonce| seal_meets_target(&compute_work(&work.pre_hash, *nonce), work.pow_bits))
+            .expect("mock work should admit a valid nonce");
 
         let response = rpc
             .submit_pool_share(SubmitPoolShareRequest {
                 worker_name: "alpha".to_string(),
-                nonce: 0,
+                nonce,
                 pre_hash: format!("0x{}", hex::encode(work.pre_hash.as_bytes())),
                 parent_hash: format!("0x{}", hex::encode(work.parent_hash.as_bytes())),
                 height: work.height,

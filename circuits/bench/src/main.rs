@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    panic::{self, AssertUnwindSafe},
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Context, Result};
 use batch_circuit::{prewarm_batch_verifier_cache, verify_batch_proof, BatchTransactionProver};
@@ -13,7 +16,7 @@ use rand_chacha::ChaCha20Rng;
 use serde::Serialize;
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
-    constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
+    constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, NATIVE_ASSET_ID},
     hashing_pq::{bytes48_to_felts, felts_to_bytes48, spend_auth_key_bytes, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
@@ -99,6 +102,7 @@ fn main() -> Result<()> {
     let report = run_benchmark(
         iterations,
         cli.prove,
+        cli.smoke,
         cli.tree_depth,
         cli.batch_size,
         cli.batch_only,
@@ -132,6 +136,7 @@ fn main() -> Result<()> {
 fn run_benchmark(
     iterations: usize,
     prove: bool,
+    smoke: bool,
     _tree_depth: usize,
     batch_size: usize,
     batch_only: bool,
@@ -157,10 +162,29 @@ fn run_benchmark(
     let mut tx_log_chunks: Option<usize> = None;
     let mut rng = ChaCha20Rng::seed_from_u64(0xC1C01E75);
 
+    let mut commitment_tree = if !batch_only {
+        Some(
+            CommitmentTree::new(CIRCUIT_MERKLE_DEPTH)
+                .context("init shared commitment tree for benchmark")?,
+        )
+    } else {
+        None
+    };
+
     if !batch_only {
         for idx in 0..iterations {
             let witness_start = Instant::now();
-            let witness = synthetic_witness(&mut rng, idx as u64);
+            let witness = if smoke {
+                smoke_transaction_witness(idx as u8).context("build smoke transaction witness")?
+            } else {
+                chain_synthetic_witness(
+                    commitment_tree
+                        .as_mut()
+                        .expect("shared commitment tree available when proving transactions"),
+                    idx as u64,
+                )
+                .context("build benchmark transaction witness")?
+            };
             witness_time += witness_start.elapsed();
 
             if tx_log_chunks.is_none() {
@@ -201,20 +225,47 @@ fn run_benchmark(
     let mut commitment_verify_ns = 0u128;
     let mut commitment_proof_bytes = 0usize;
     let mut commitment_tx_count = 0usize;
-    if prove && !proofs.is_empty() {
-        let prover = CommitmentBlockProver::new();
-        let prove_start = Instant::now();
-        let proof = prover
-            .prove_block_commitment(&proofs)
-            .context("prove commitment block proof")?;
-        commitment_prove_ns = prove_start.elapsed().as_nanos();
-        block_ns = commitment_prove_ns;
-        commitment_proof_bytes = proof.proof_bytes.len();
-        commitment_tx_count = proof.public_inputs.tx_count as usize;
+    if smoke && prove && !proofs.is_empty() {
+        eprintln!("circuits-bench smoke: skipping commitment proof path");
+    } else if prove && !proofs.is_empty() {
+        let proof_result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let prover = CommitmentBlockProver::new();
+            let prove_start = Instant::now();
+            let proof = prover.prove_block_commitment_with_tree(
+                commitment_tree
+                    .as_mut()
+                    .expect("shared commitment tree available for commitment proving"),
+                &proofs,
+                [0u8; 48],
+            )?;
+            let commitment_prove_ns = prove_start.elapsed().as_nanos();
+            let verify_start = Instant::now();
+            verify_block_commitment(&proof)?;
+            let commitment_verify_ns = verify_start.elapsed().as_nanos();
+            Ok::<_, block_circuit::BlockError>((proof, commitment_prove_ns, commitment_verify_ns))
+        }));
 
-        let verify_start = Instant::now();
-        verify_block_commitment(&proof).context("verify commitment block proof")?;
-        commitment_verify_ns = verify_start.elapsed().as_nanos();
+        match proof_result {
+            Ok(Ok((proof, prove_ns, verify_ns))) => {
+                commitment_prove_ns = prove_ns;
+                block_ns = commitment_prove_ns;
+                commitment_proof_bytes = proof.proof_bytes.len();
+                commitment_tx_count = proof.public_inputs.tx_count as usize;
+                commitment_verify_ns = verify_ns;
+            }
+            Ok(Err(err)) if smoke => {
+                eprintln!("circuits-bench smoke: skipping commitment proof after error: {err}");
+            }
+            Err(_) if smoke => {
+                eprintln!("circuits-bench smoke: commitment proof panicked; skipping");
+            }
+            Ok(Err(err)) => {
+                return Err(err).context("prove commitment block proof");
+            }
+            Err(payload) => {
+                panic::resume_unwind(payload);
+            }
+        }
     }
 
     let block_duration = Duration::from_nanos(block_ns.min(u64::MAX as u128) as u64);
@@ -239,7 +290,7 @@ fn run_benchmark(
             // Reuse one valid witness shape per iteration while mutating spend
             // keys/output randomness to avoid duplicate nullifier/commitment rows.
             let seed = (batch_idx as u64) << 16;
-            let base_witness = synthetic_witness(&mut rng, seed);
+            let base_witness = standalone_synthetic_witness(&mut rng, seed);
             let mut witnesses = Vec::with_capacity(batch_size);
             for tx_idx in 0..batch_size {
                 let mut witness = base_witness.clone();
@@ -358,7 +409,97 @@ fn build_commitment_tree(leaves: &[HashFelt]) -> Result<(Vec<MerklePath>, [u8; 4
     Ok((paths, root))
 }
 
-fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness {
+fn append_note(tree: &mut CommitmentTree, note: &NoteData) -> Result<usize> {
+    let commitment = felts_to_bytes48(&note.commitment());
+    tree.append(commitment)
+        .map(|(index, _)| index)
+        .context("append benchmark note to commitment tree")
+}
+
+fn merkle_path_from_tree(tree: &CommitmentTree, index: usize) -> Result<MerklePath> {
+    let siblings = tree
+        .authentication_path(index)
+        .context("commitment tree authentication path")?
+        .into_iter()
+        .map(|bytes| bytes48_to_felts(&bytes).ok_or_else(|| anyhow!("non-canonical bytes48")))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(MerklePath { siblings })
+}
+
+fn chain_synthetic_witness(tree: &mut CommitmentTree, counter: u64) -> Result<TransactionWitness> {
+    let seed = counter as u8;
+    let input_native = NoteData {
+        value: 9,
+        asset_id: NATIVE_ASSET_ID,
+        pk_recipient: [seed.wrapping_add(1); 32],
+        pk_auth: [0u8; 32],
+        rho: [seed.wrapping_add(2); 32],
+        r: [seed.wrapping_add(3); 32],
+    };
+    let input_asset = NoteData {
+        value: 7,
+        asset_id: counter + 100,
+        pk_recipient: [seed.wrapping_add(5); 32],
+        pk_auth: [0u8; 32],
+        rho: [seed.wrapping_add(6); 32],
+        r: [seed.wrapping_add(7); 32],
+    };
+
+    let input_notes = vec![input_native, input_asset];
+    let mut note_positions = Vec::with_capacity(MAX_INPUTS);
+    for note in &input_notes {
+        note_positions.push(append_note(tree, note)? as u64);
+    }
+    let merkle_root = tree.root();
+
+    let mut input_witnesses = Vec::with_capacity(input_notes.len());
+    for (note, position) in input_notes.into_iter().zip(note_positions.into_iter()) {
+        let merkle_path = merkle_path_from_tree(tree, position as usize)?;
+        input_witnesses.push(InputNoteWitness {
+            note,
+            position,
+            rho_seed: [seed.wrapping_add(8); 32],
+            merkle_path,
+        });
+    }
+
+    let outputs = vec![
+        OutputNoteWitness {
+            note: NoteData {
+                value: 4,
+                asset_id: NATIVE_ASSET_ID,
+                pk_recipient: [seed.wrapping_add(9); 32],
+                pk_auth: [0u8; 32],
+                rho: [seed.wrapping_add(10); 32],
+                r: [seed.wrapping_add(11); 32],
+            },
+        },
+        OutputNoteWitness {
+            note: NoteData {
+                value: 7,
+                asset_id: counter + 100,
+                pk_recipient: [seed.wrapping_add(12); 32],
+                pk_auth: [0u8; 32],
+                rho: [seed.wrapping_add(13); 32],
+                r: [seed.wrapping_add(14); 32],
+            },
+        },
+    ];
+
+    Ok(TransactionWitness {
+        inputs: input_witnesses,
+        outputs,
+        ciphertext_hashes: vec![[0u8; 48]; 2],
+        sk_spend: [seed.wrapping_add(15); 32],
+        merkle_root,
+        fee: 5,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: DEFAULT_VERSION_BINDING,
+    })
+}
+
+fn standalone_synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness {
     let sk_spend = random_bytes(rng);
     let input_pk_auth = spend_auth_key_bytes(&sk_spend);
 
@@ -434,6 +575,48 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         stablecoin: StablecoinPolicyBinding::default(),
         version: DEFAULT_VERSION_BINDING,
     }
+}
+
+fn smoke_transaction_witness(seed: u8) -> Result<TransactionWitness> {
+    let sk_spend = [seed.wrapping_add(8); 32];
+    let pk_auth = spend_auth_key_bytes(&sk_spend);
+    let input_note = NoteData {
+        value: 100,
+        asset_id: 0,
+        pk_recipient: [seed.wrapping_add(1); 32],
+        pk_auth,
+        rho: [seed.wrapping_add(2); 32],
+        r: [seed.wrapping_add(3); 32],
+    };
+    let output_note = NoteData {
+        value: 80,
+        asset_id: 0,
+        pk_recipient: [seed.wrapping_add(4); 32],
+        pk_auth: [seed.wrapping_add(14); 32],
+        rho: [seed.wrapping_add(5); 32],
+        r: [seed.wrapping_add(6); 32],
+    };
+    let leaf = input_note.commitment();
+    let (paths, merkle_root) = build_commitment_tree(&[leaf])?;
+    Ok(TransactionWitness {
+        inputs: vec![InputNoteWitness {
+            note: input_note,
+            position: 0,
+            rho_seed: [seed.wrapping_add(7); 32],
+            merkle_path: paths
+                .into_iter()
+                .next()
+                .expect("single leaf path should exist"),
+        }],
+        outputs: vec![OutputNoteWitness { note: output_note }],
+        ciphertext_hashes: vec![[seed.wrapping_add(9); 48]; 1],
+        sk_spend,
+        merkle_root,
+        fee: 0,
+        value_balance: -20,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: DEFAULT_VERSION_BINDING,
+    })
 }
 
 fn random_bytes(rng: &mut ChaCha20Rng) -> [u8; 32] {
