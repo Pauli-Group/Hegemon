@@ -171,7 +171,7 @@ use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
-use sp_api::{Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
+use sp_api::{ApiExt, Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
@@ -4688,6 +4688,19 @@ pub fn wire_block_builder_api(
             }
         };
 
+        let block_builder_api_version = client_for_exec
+            .runtime_api()
+            .api_version::<dyn sp_block_builder::BlockBuilder<runtime::Block>>(parent_substrate_hash)
+            .ok()
+            .flatten();
+
+        tracing::info!(
+            block_number,
+            block_builder_api_version = ?block_builder_api_version,
+            extrinsic_inclusion_mode = ?block_builder.extrinsic_inclusion_mode(),
+            "BlockBuilder created"
+        );
+
         // Create inherent extrinsics (timestamp, coinbase, etc.)
         let inherent_extrinsics = match block_builder.create_inherents(inherent_data.clone()) {
             Ok(exts) => {
@@ -4697,9 +4710,18 @@ pub fn wire_block_builder_api(
                     exts.len()
                 );
                 for (i, ext) in exts.iter().enumerate() {
+                    let inherent_kind = if matches!(
+                        &ext.function,
+                        runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { .. })
+                    ) {
+                        "timestamp"
+                    } else {
+                        "non_timestamp"
+                    };
                     let encoded = ext.encode();
                     tracing::info!(
                         index = i,
+                        inherent_kind,
                         encoded_len = encoded.len(),
                         first_bytes = %hex::encode(&encoded[..encoded.len().min(20)]),
                         "Inherent extrinsic {}", i
