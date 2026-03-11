@@ -951,8 +951,8 @@ pub mod pallet {
             })
         }
 
-        pub(crate) fn validate_submit_proven_batch_action(
-            payload: &types::BlockProofBundle,
+        pub(crate) fn validate_submit_candidate_artifact_action(
+            payload: &types::CandidateArtifact,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if ProvenBatchProcessed::<T>::get() {
                 return Err(InvalidTransaction::Stale);
@@ -977,7 +977,7 @@ pub mod pallet {
             if payload.da_chunk_count == 0 {
                 return Err(InvalidTransaction::Custom(10));
             }
-            if let Some(claim) = payload.prover_claim.as_ref() {
+            if let Some(claim) = payload.artifact_claim.as_ref() {
                 if !Self::verify_prover_claim_signature(claim, payload) {
                     return Err(InvalidTransaction::BadProof);
                 }
@@ -990,6 +990,14 @@ pub mod pallet {
                 propagate: false,
                 source_class: ActionSourceClass::InBlockOnly,
             })
+        }
+
+        #[allow(deprecated)]
+        #[deprecated(note = "Use validate_submit_candidate_artifact_action instead.")]
+        pub(crate) fn validate_submit_proven_batch_action(
+            payload: &types::BlockProofBundle,
+        ) -> Result<ValidActionMeta, InvalidTransaction> {
+            Self::validate_submit_candidate_artifact_action(payload)
         }
 
         pub(crate) fn validate_mint_coinbase_action(
@@ -1339,8 +1347,8 @@ pub mod pallet {
             Ok(())
         }
 
-        pub(crate) fn apply_submit_proven_batch_action(
-            payload: types::BlockProofBundle,
+        pub(crate) fn apply_submit_candidate_artifact_action(
+            payload: types::CandidateArtifact,
         ) -> DispatchResult {
             ensure!(
                 !ProvenBatchProcessed::<T>::get(),
@@ -1371,7 +1379,7 @@ pub mod pallet {
                     chunk_count: payload.da_chunk_count,
                 },
             );
-            if let Some(claim) = payload.prover_claim.as_ref() {
+            if let Some(claim) = payload.artifact_claim.as_ref() {
                 ensure!(
                     Self::verify_prover_claim_signature(claim, &payload),
                     Error::<T>::InvalidProverClaimSignature
@@ -1382,6 +1390,14 @@ pub mod pallet {
             }
             ProvenBatchProcessed::<T>::put(true);
             Ok(())
+        }
+
+        #[allow(deprecated)]
+        #[deprecated(note = "Use apply_submit_candidate_artifact_action instead.")]
+        pub(crate) fn apply_submit_proven_batch_action(
+            payload: types::BlockProofBundle,
+        ) -> DispatchResult {
+            Self::apply_submit_candidate_artifact_action(payload)
         }
 
         pub(crate) fn apply_mint_coinbase_action(

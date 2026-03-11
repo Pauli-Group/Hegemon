@@ -519,6 +519,7 @@ pub struct HegemonRpc<S, P> {
     deny_unsafe: sc_rpc::DenyUnsafe,
     mining_control_auth_token: Option<String>,
     pool_auth_token: Option<String>,
+    legacy_pool_rpc_enabled: bool,
     pool_share_stats: Arc<Mutex<PoolShareStats>>,
 }
 
@@ -542,6 +543,9 @@ where
             .ok()
             .map(|token| token.trim().to_string())
             .filter(|token| !token.is_empty());
+        let legacy_pool_rpc_enabled = std::env::var("HEGEMON_ENABLE_LEGACY_POOL_RPC")
+            .map(|raw| raw == "1" || raw.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         Self {
             service,
             pow_handle,
@@ -549,6 +553,7 @@ where
             deny_unsafe,
             mining_control_auth_token,
             pool_auth_token,
+            legacy_pool_rpc_enabled,
             pool_share_stats: Arc::new(Mutex::new(PoolShareStats::default())),
         }
     }
@@ -589,6 +594,17 @@ where
         }
 
         Ok(())
+    }
+
+    fn ensure_legacy_pool_rpc_enabled(&self) -> RpcResult<()> {
+        if self.legacy_pool_rpc_enabled {
+            return Ok(());
+        }
+        Err(ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            "legacy pool RPC is disabled; use hegemon_compactJob/hegemon_submitCompactSolution or set HEGEMON_ENABLE_LEGACY_POOL_RPC=1",
+            None::<()>,
+        ))
     }
 
     fn pool_share_bits_for_work(&self, work: &MiningWork) -> u32 {
@@ -937,6 +953,7 @@ where
     }
 
     async fn pool_work(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolWorkResponse> {
+        self.ensure_legacy_pool_rpc_enabled()?;
         self.ensure_pool_access_allowed(
             params
                 .as_ref()
@@ -1003,6 +1020,7 @@ where
         &self,
         request: SubmitPoolShareRequest,
     ) -> RpcResult<SubmitPoolShareResponse> {
+        self.ensure_legacy_pool_rpc_enabled()?;
         self.ensure_pool_access_allowed(request.auth_token.as_deref())?;
 
         let worker_name = request.worker_name.trim();
@@ -1116,6 +1134,7 @@ where
     }
 
     async fn pool_status(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolStatusResponse> {
+        self.ensure_legacy_pool_rpc_enabled()?;
         self.ensure_pool_access_allowed(
             params
                 .as_ref()

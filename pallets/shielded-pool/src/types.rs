@@ -173,11 +173,11 @@ pub const MAX_PROVER_RECIPIENT_LEN: u32 = 2048;
 /// Maximum encoded bytes for a prover claim signature.
 pub const MAX_PROVER_CLAIM_SIGNATURE_LEN: u32 = 4096;
 
-/// Signed prover claim used to bind an external prover payout to a submitted bundle.
+/// Signed artifact claim used to bind an external prover/artifact payout to an included artifact.
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
 )]
-pub struct ProverCompensationClaim {
+pub struct ArtifactClaim {
     /// Claimed prover account bytes (AccountId32 encoding).
     pub prover_account: [u8; 32],
     /// Full shielded address bytes (bech32 string bytes) used for note encryption.
@@ -190,8 +190,9 @@ pub struct ProverCompensationClaim {
     pub claim_signature: BoundedVec<u8, ConstU32<MAX_PROVER_CLAIM_SIGNATURE_LEN>>,
 }
 
-/// Fresh-testnet consensus payout claim for an included candidate artifact.
-pub type ArtifactClaim = ProverCompensationClaim;
+#[allow(deprecated)]
+#[deprecated(note = "Use ArtifactClaim instead.")]
+pub type ProverCompensationClaim = ArtifactClaim;
 
 /// Per-block payload that carries all consensus-required proof material for
 /// self-contained aggregation blocks.
@@ -253,9 +254,9 @@ pub struct MergeRootProofPayload {
     pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
 }
 
-/// Per-block proof bundle payload.
+/// Parent-agnostic proof object over an ordered transaction set.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
-pub struct BlockProofBundle {
+pub struct CandidateArtifact {
     /// Payload format version.
     pub version: u8,
     /// Number of shielded transfers covered by this payload.
@@ -274,15 +275,13 @@ pub struct BlockProofBundle {
     pub flat_batches: Vec<BatchProofItem>,
     /// Optional merge-root proof payload (required in MergeRoot mode).
     pub merge_root: Option<MergeRootProofPayload>,
-    /// Optional external prover payout claim.
-    pub prover_claim: Option<ProverCompensationClaim>,
+    /// Optional external artifact payout claim.
+    pub artifact_claim: Option<ArtifactClaim>,
 }
 
-/// Parent-agnostic proof object over an ordered transaction set.
-///
-/// The current runtime keeps the legacy encoding so nodes can migrate the
-/// operator and RPC surfaces first, then cut over the full block body wiring.
-pub type CandidateArtifact = BlockProofBundle;
+#[allow(deprecated)]
+#[deprecated(note = "Use CandidateArtifact instead.")]
+pub type BlockProofBundle = CandidateArtifact;
 
 /// Public metadata for announcing a reusable candidate artifact without
 /// sending the full payload immediately.
@@ -292,13 +291,14 @@ pub struct ArtifactAnnouncement {
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
     pub proof_mode: BlockProofMode,
+    pub claimed_payout_amount: u64,
 }
 
 #[deprecated(note = "Use BLOCK_PROOF_BUNDLE_SCHEMA instead.")]
 pub const PROVEN_BATCH_V1_VERSION: u8 = BLOCK_PROOF_BUNDLE_SCHEMA;
 
-#[deprecated(note = "Use BlockProofBundle instead.")]
-pub type ProvenBatchV1 = BlockProofBundle;
+#[deprecated(note = "Use CandidateArtifact instead.")]
+pub type ProvenBatchV1 = CandidateArtifact;
 
 /// Balance commitment for value balance verification.
 ///

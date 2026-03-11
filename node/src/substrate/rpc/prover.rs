@@ -82,6 +82,7 @@ pub struct ArtifactAnnouncementResponse {
     pub tx_statements_commitment: String,
     pub tx_count: u32,
     pub proof_mode: String,
+    pub claimed_payout_amount: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -146,8 +147,7 @@ pub trait ProverApi {
     #[method(name = "getCandidateArtifact")]
     async fn get_candidate_artifact(
         &self,
-        tx_statements_commitment: String,
-        tx_count: u32,
+        artifact_hash: String,
     ) -> RpcResult<Option<CandidateArtifactResponse>>;
 }
 
@@ -277,6 +277,7 @@ impl ProverRpc {
                 consensus::ProvenBatchMode::FlatBatches => "flat_batches".to_string(),
                 consensus::ProvenBatchMode::MergeRoot => "merge_root".to_string(),
             },
+            claimed_payout_amount: announcement.claimed_payout_amount,
         }
     }
 }
@@ -384,26 +385,25 @@ impl ProverApiServer for ProverRpc {
 
     async fn get_candidate_artifact(
         &self,
-        tx_statements_commitment: String,
-        tx_count: u32,
+        artifact_hash: String,
     ) -> RpcResult<Option<CandidateArtifactResponse>> {
-        let commitment = parse_bytes(&tx_statements_commitment)?;
-        if commitment.len() != 48 {
+        let artifact_hash = parse_bytes(&artifact_hash)?;
+        if artifact_hash.len() != 32 {
             return Err(ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
                 format!(
-                    "expected 48-byte tx_statements_commitment, got {}",
-                    commitment.len()
+                    "expected 32-byte artifact_hash, got {}",
+                    artifact_hash.len()
                 ),
                 None::<()>,
             ));
         }
-        let mut tx_commitment = [0u8; 48];
-        tx_commitment.copy_from_slice(&commitment);
+        let mut artifact_hash_bytes = [0u8; 32];
+        artifact_hash_bytes.copy_from_slice(&artifact_hash);
 
         let artifact = self
             .coordinator
-            .lookup_candidate_artifact_any_parent(tx_commitment, tx_count);
+            .lookup_candidate_artifact_by_hash(artifact_hash_bytes);
         Ok(artifact.map(|artifact| CandidateArtifactResponse {
             artifact_hash: format!(
                 "0x{}",
@@ -467,7 +467,7 @@ mod tests {
                 proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![3, 4]),
             }],
             merge_root: None,
-            prover_claim: None,
+            artifact_claim: None,
         }
     }
 
@@ -592,7 +592,12 @@ mod tests {
             .expect("announcement call should succeed");
         assert!(!announcements.is_empty());
         let artifact = rpc
-            .get_candidate_artifact(format!("0x{}", hex::encode([5u8; 48])), package.tx_count)
+            .get_candidate_artifact(format!(
+                "0x{}",
+                hex::encode(crate::substrate::artifact_market::candidate_artifact_hash(
+                    &payload(package.tx_count),
+                ))
+            ))
             .await
             .expect("artifact call should succeed")
             .expect("artifact should exist");

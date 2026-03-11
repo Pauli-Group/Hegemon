@@ -15,7 +15,7 @@ use transaction_core::hashing_pq::ciphertext_hash_bytes;
 
 use crate::pallet::Pallet;
 use crate::types::{
-    BatchStarkProof, BlockProofBundle, BlockRewardBundle, EncryptedNote, StablecoinPolicyBinding,
+    BatchStarkProof, BlockRewardBundle, CandidateArtifact, EncryptedNote, StablecoinPolicyBinding,
     StarkProof,
 };
 use crate::Config;
@@ -26,8 +26,12 @@ pub const ACTION_SHIELDED_TRANSFER_INLINE: ActionId = 1;
 pub const ACTION_SHIELDED_TRANSFER_SIDECAR: ActionId = 2;
 pub const ACTION_BATCH_SHIELDED_TRANSFER: ActionId = 3;
 pub const ACTION_ENABLE_AGGREGATION_MODE: ActionId = 4;
-pub const ACTION_SUBMIT_PROVEN_BATCH: ActionId = 5;
+pub const ACTION_SUBMIT_CANDIDATE_ARTIFACT: ActionId = 5;
 pub const ACTION_MINT_COINBASE: ActionId = 6;
+
+#[allow(deprecated)]
+#[deprecated(note = "Use ACTION_SUBMIT_CANDIDATE_ARTIFACT instead.")]
+pub const ACTION_SUBMIT_PROVEN_BATCH: ActionId = ACTION_SUBMIT_CANDIDATE_ARTIFACT;
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct ShieldedTransferInlineArgs {
@@ -65,9 +69,13 @@ pub struct BatchShieldedTransferArgs {
 pub struct EnableAggregationModeArgs;
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
-pub struct SubmitProvenBatchArgs {
-    pub payload: BlockProofBundle,
+pub struct SubmitCandidateArtifactArgs {
+    pub payload: CandidateArtifact,
 }
+
+#[allow(deprecated)]
+#[deprecated(note = "Use SubmitCandidateArtifactArgs instead.")]
+pub type SubmitProvenBatchArgs = SubmitCandidateArtifactArgs;
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct MintCoinbaseArgs {
@@ -90,7 +98,7 @@ pub enum ShieldedFamilyAction {
         args: BatchShieldedTransferArgs,
     },
     EnableAggregationMode,
-    SubmitProvenBatch(SubmitProvenBatchArgs),
+    SubmitCandidateArtifact(SubmitCandidateArtifactArgs),
     MintCoinbase(MintCoinbaseArgs),
 }
 
@@ -126,10 +134,10 @@ impl ShieldedFamilyAction {
                 })
             }
             ACTION_ENABLE_AGGREGATION_MODE => Ok(Self::EnableAggregationMode),
-            ACTION_SUBMIT_PROVEN_BATCH => {
-                let args = SubmitProvenBatchArgs::decode(&mut &envelope.public_args[..])
-                    .map_err(|_| DispatchError::Other("bad-proven-batch-args"))?;
-                Ok(Self::SubmitProvenBatch(args))
+            ACTION_SUBMIT_CANDIDATE_ARTIFACT => {
+                let args = SubmitCandidateArtifactArgs::decode(&mut &envelope.public_args[..])
+                    .map_err(|_| DispatchError::Other("bad-candidate-artifact-args"))?;
+                Ok(Self::SubmitCandidateArtifact(args))
             }
             ACTION_MINT_COINBASE => {
                 let args = MintCoinbaseArgs::decode(&mut &envelope.public_args[..])
@@ -182,7 +190,9 @@ impl ShieldedFamilyAction {
                         hasher.update(&args.encode())
                     }
                     ShieldedFamilyAction::EnableAggregationMode => hasher.update(&[]),
-                    ShieldedFamilyAction::SubmitProvenBatch(args) => hasher.update(&args.encode()),
+                    ShieldedFamilyAction::SubmitCandidateArtifact(args) => {
+                        hasher.update(&args.encode())
+                    }
                     ShieldedFamilyAction::MintCoinbase(args) => hasher.update(&args.encode()),
                     _ => {}
                 }
@@ -268,8 +278,8 @@ pub fn validate_action<T: Config>(
             Pallet::<T>::validate_enable_aggregation_mode_action()
                 .map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
-        ShieldedFamilyAction::SubmitProvenBatch(args) => {
-            Pallet::<T>::validate_submit_proven_batch_action(&args.payload)
+        ShieldedFamilyAction::SubmitCandidateArtifact(args) => {
+            Pallet::<T>::validate_submit_candidate_artifact_action(&args.payload)
                 .map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
         ShieldedFamilyAction::MintCoinbase(args) => {
@@ -334,8 +344,8 @@ pub fn apply_action<T: Config>(
             Pallet::<T>::apply_enable_aggregation_mode_action()?;
             Ok(outcome::<T>(statement_hash, Vec::new()))
         }
-        ShieldedFamilyAction::SubmitProvenBatch(args) => {
-            Pallet::<T>::apply_submit_proven_batch_action(args.payload)?;
+        ShieldedFamilyAction::SubmitCandidateArtifact(args) => {
+            Pallet::<T>::apply_submit_candidate_artifact_action(args.payload)?;
             Ok(outcome::<T>(statement_hash, Vec::new()))
         }
         ShieldedFamilyAction::MintCoinbase(args) => {

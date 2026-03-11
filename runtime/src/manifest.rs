@@ -133,7 +133,7 @@ pub fn kernel_manifest() -> KernelManifest {
                 pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
                 pallet_shielded_pool::family::ACTION_BATCH_SHIELDED_TRANSFER,
                 pallet_shielded_pool::family::ACTION_ENABLE_AGGREGATION_MODE,
-                pallet_shielded_pool::family::ACTION_SUBMIT_PROVEN_BATCH,
+                pallet_shielded_pool::family::ACTION_SUBMIT_CANDIDATE_ARTIFACT,
                 pallet_shielded_pool::family::ACTION_MINT_COINBASE,
             ],
             verifier_key_hashes: vec![[0u8; 32]],

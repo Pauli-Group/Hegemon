@@ -736,6 +736,22 @@ impl ProverCoordinator {
             .map(|bundle| bundle.payload)
     }
 
+    pub fn lookup_candidate_artifact_by_hash(
+        &self,
+        artifact_hash: [u8; 32],
+    ) -> Option<pallet_shielded_pool::types::CandidateArtifact> {
+        let state = self.state.lock();
+        state
+            .prepared
+            .values()
+            .find(|bundle| {
+                crate::substrate::artifact_market::candidate_artifact_hash(&bundle.payload)
+                    == artifact_hash
+            })
+            .cloned()
+            .map(|bundle| bundle.payload)
+    }
+
     pub fn list_artifact_announcements(&self) -> Vec<consensus::ArtifactAnnouncement> {
         let state = self.state.lock();
         let mut announcements = state
@@ -1264,7 +1280,7 @@ impl ProverCoordinator {
             proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
             flat_batches,
             merge_root: None,
-            prover_claim: anchor_payload.prover_claim.clone(),
+            artifact_claim: anchor_payload.artifact_claim.clone(),
         })
     }
 
@@ -2206,8 +2222,39 @@ impl ProverCoordinator {
                 bundle.key.tx_statements_commitment == tx_statements_commitment
                     && bundle.key.tx_count == tx_count
             })
-            .max_by_key(|bundle| bundle.candidate_txs.len())
+            .max_by(|left, right| compare_prepared_bundles(left, right))
     }
+}
+
+fn proof_mode_rank(mode: pallet_shielded_pool::types::BlockProofMode) -> u8 {
+    match mode {
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => 0,
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => 1,
+    }
+}
+
+fn claim_amount(bundle: &PreparedBundle) -> u64 {
+    bundle
+        .payload
+        .artifact_claim
+        .as_ref()
+        .map(|claim| claim.prover_amount)
+        .unwrap_or(0)
+}
+
+fn compare_prepared_bundles(left: &PreparedBundle, right: &PreparedBundle) -> std::cmp::Ordering {
+    left.key
+        .tx_count
+        .cmp(&right.key.tx_count)
+        .then_with(|| {
+            proof_mode_rank(left.payload.proof_mode).cmp(&proof_mode_rank(right.payload.proof_mode))
+        })
+        .then_with(|| claim_amount(right).cmp(&claim_amount(left)))
+        .then_with(|| {
+            crate::substrate::artifact_market::candidate_artifact_hash(&right.payload).cmp(
+                &crate::substrate::artifact_market::candidate_artifact_hash(&left.payload),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -2252,7 +2299,7 @@ mod tests {
                 proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![4, 5, 6]),
             }],
             merge_root: None,
-            prover_claim: None,
+            artifact_claim: None,
         }
     }
 

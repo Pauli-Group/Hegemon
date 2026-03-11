@@ -160,8 +160,8 @@ use p3_field::PrimeField64;
 use pallet_shielded_pool::family::ShieldedFamilyAction;
 use pallet_shielded_pool::family::{
     build_envelope as build_shielded_kernel_envelope, EnableAggregationModeArgs, MintCoinbaseArgs,
-    SubmitProvenBatchArgs, ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE,
-    ACTION_SUBMIT_PROVEN_BATCH,
+    SubmitCandidateArtifactArgs, ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE,
+    ACTION_SUBMIT_CANDIDATE_ARTIFACT,
 };
 #[cfg(test)]
 use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
@@ -3108,7 +3108,7 @@ fn prepare_block_proof_bundle(
         proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
         flat_batches: Vec::new(),
         merge_root: None,
-        prover_claim: None,
+        artifact_claim: None,
     };
     match aggregation_artifacts {
         PreparedAggregationArtifacts::Flat(flat_batches) => {
@@ -3208,9 +3208,9 @@ fn extract_proven_batch_payload(
             continue;
         };
 
-        if let ShieldedFamilyAction::SubmitProvenBatch(args) = action {
+        if let ShieldedFamilyAction::SubmitCandidateArtifact(args) = action {
             if found.is_some() {
-                return Err("multiple submit_proven_batch extrinsics in block".into());
+                return Err("multiple submit_candidate_artifact extrinsics in block".into());
             }
             found = Some(ProvenBatchPayload {
                 payload: args.payload,
@@ -3718,13 +3718,13 @@ fn verify_proof_carrying_block(
         if payload.tx_count != transactions.len() as u32 {
             return Err("proven batch tx_count mismatch".to_string());
         }
-        if let Some(claim) = payload.prover_claim.as_ref() {
+        if let Some(claim) = payload.artifact_claim.as_ref() {
             if !verify_prover_claim_signature(claim, &payload) {
                 return Err("invalid prover claim signature".to_string());
             }
         }
 
-        match payload.prover_claim.as_ref() {
+        match payload.artifact_claim.as_ref() {
             Some(claim) => {
                 let reward_bundle = reward_bundle.ok_or_else(|| {
                     "missing mint_coinbase extrinsic for prover claim".to_string()
@@ -5113,7 +5113,7 @@ pub fn wire_block_builder_api(
             .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
         let requires_proven_batch = aggregation_mode_enabled && shielded_tx_count > 0;
-        let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
+        let mut selected_prover_claim: Option<pallet_shielded_pool::types::ArtifactClaim> = None;
         if requires_proven_batch {
             let tx_statements_commitment =
                 CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
@@ -5133,11 +5133,11 @@ pub fn wire_block_builder_api(
                     + block_proof_payload_aggregation_bytes(&ready_batch.payload);
                 let proof_size_uncompressed =
                     block_proof_payload_aggregation_uncompressed_bytes(&ready_batch.payload);
-                selected_prover_claim = ready_batch.payload.prover_claim.clone();
+                selected_prover_claim = ready_batch.payload.artifact_claim.clone();
                 let proven_batch_extrinsic = kernel_shielded_extrinsic(
-                    ACTION_SUBMIT_PROVEN_BATCH,
+                    ACTION_SUBMIT_CANDIDATE_ARTIFACT,
                     Vec::new(),
-                    SubmitProvenBatchArgs {
+                    SubmitCandidateArtifactArgs {
                         payload: ready_batch.payload,
                     }
                     .encode(),
@@ -9516,64 +9516,69 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             .register_method("rpc_methods", |_, _, _| {
                 // Return a static list of methods we support
                 // Polkadot.js Apps uses this to discover available methods
-                let result: Result<serde_json::Value, jsonrpsee::types::ErrorObjectOwned> =
-                    Ok(serde_json::json!({
-                        "methods": [
-                            "chain_getBlock",
-                            "chain_getBlockHash",
-                            "chain_getHeader",
-                            "chain_getFinalizedHead",
-                            "chain_subscribeNewHead",
-                            "chain_subscribeFinalizedHeads",
-                            "chain_unsubscribeNewHead",
-                            "chain_unsubscribeFinalizedHeads",
-                            "state_call",
-                            "state_getKeys",
-                            "state_getKeysPaged",
-                            "state_getMetadata",
-                            "state_getPairs",
-                            "state_getReadProof",
-                            "state_getRuntimeVersion",
-                            "state_getStorage",
-                            "state_getStorageAt",
-                            "state_getStorageHash",
-                            "state_getStorageHashAt",
-                            "state_getStorageSize",
-                            "state_getStorageSizeAt",
-                            "state_queryStorage",
-                            "state_queryStorageAt",
-                            "state_subscribeRuntimeVersion",
-                            "state_subscribeStorage",
-                            "state_unsubscribeRuntimeVersion",
-                            "state_unsubscribeStorage",
-                            "system_chain",
-                            "system_chainType",
-                            "system_health",
-                            "system_localListenAddresses",
-                            "system_localPeerId",
-                            "system_name",
-                            "system_nodeRoles",
-                            "system_peers",
-                            "system_properties",
-                            "system_version",
-                            "block_getCommitmentProof",
-                            "da_getChunk",
-                            "da_getParams",
-                            "prover_getWorkPackage",
-                            "prover_getStageWorkPackage",
-                            "prover_submitWorkResult",
-                            "prover_submitStageWorkResult",
-                            "prover_getWorkStatus",
-                            "prover_getMarketParams",
-                            "prover_getStagePlanStatus",
-                            "hegemon_poolWork",
-                            "hegemon_submitPoolShare",
-                            "hegemon_poolStatus",
-                            "rpc_methods",
-                            "hegemon_peerList",
-                            "hegemon_peerGraph"
-                        ]
-                    }));
+                let result: Result<serde_json::Value, jsonrpsee::types::ErrorObjectOwned> = {
+                    let legacy_pool_rpc_enabled = std::env::var("HEGEMON_ENABLE_LEGACY_POOL_RPC")
+                        .map(|raw| raw == "1" || raw.eq_ignore_ascii_case("true"))
+                        .unwrap_or(false);
+                    let mut methods = vec![
+                        "chain_getBlock",
+                        "chain_getBlockHash",
+                        "chain_getHeader",
+                        "chain_getFinalizedHead",
+                        "chain_subscribeNewHead",
+                        "chain_subscribeFinalizedHeads",
+                        "chain_unsubscribeNewHead",
+                        "chain_unsubscribeFinalizedHeads",
+                        "state_call",
+                        "state_getKeys",
+                        "state_getKeysPaged",
+                        "state_getMetadata",
+                        "state_getPairs",
+                        "state_getReadProof",
+                        "state_getRuntimeVersion",
+                        "state_getStorage",
+                        "state_getStorageAt",
+                        "state_getStorageHash",
+                        "state_getStorageHashAt",
+                        "state_getStorageSize",
+                        "state_getStorageSizeAt",
+                        "state_queryStorage",
+                        "state_queryStorageAt",
+                        "state_subscribeRuntimeVersion",
+                        "state_subscribeStorage",
+                        "state_unsubscribeRuntimeVersion",
+                        "state_unsubscribeStorage",
+                        "system_chain",
+                        "system_chainType",
+                        "system_health",
+                        "system_localListenAddresses",
+                        "system_localPeerId",
+                        "system_name",
+                        "system_nodeRoles",
+                        "system_peers",
+                        "system_properties",
+                        "system_version",
+                        "block_getCommitmentProof",
+                        "da_getChunk",
+                        "da_getParams",
+                        "prover_getWorkPackage",
+                        "prover_getStageWorkPackage",
+                        "prover_submitWorkResult",
+                        "prover_submitStageWorkResult",
+                        "prover_getWorkStatus",
+                        "prover_getMarketParams",
+                        "prover_getStagePlanStatus",
+                        "rpc_methods",
+                        "hegemon_peerList",
+                        "hegemon_peerGraph",
+                    ];
+                    if legacy_pool_rpc_enabled {
+                        methods.push("hegemon_poolWork");
+                        methods.push("hegemon_submitPoolShare");
+                        methods.push("hegemon_poolStatus");
+                    }
+                    Ok(serde_json::json!({ "methods": methods }))
+                };
                 result
             })
             .expect("rpc_methods registration should not fail");

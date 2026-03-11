@@ -286,6 +286,7 @@ pub struct ArtifactAnnouncement {
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
     pub proof_mode: ProvenBatchMode,
+    pub claimed_payout_amount: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

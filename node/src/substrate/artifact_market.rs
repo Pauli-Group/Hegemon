@@ -23,6 +23,11 @@ pub fn artifact_announcement(
                 consensus::ProvenBatchMode::MergeRoot
             }
         },
+        claimed_payout_amount: artifact
+            .artifact_claim
+            .as_ref()
+            .map(|claim| claim.prover_amount)
+            .unwrap_or(0),
     }
 }
 
@@ -41,7 +46,7 @@ mod tests {
             proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
             flat_batches: vec![],
             merge_root: None,
-            prover_claim: None,
+            artifact_claim: None,
         }
     }
 
