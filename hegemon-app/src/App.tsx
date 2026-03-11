@@ -20,7 +20,12 @@ import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
-const approvedSeeds = 'hegemon.pauli.group:31333,158.69.222.121:31333';
+const canonicalTestnetP2pPort = 30333;
+const approvedSeeds = 'hegemon.pauli.group:30333,158.69.222.121:30333';
+const legacySeedAliases: Record<string, string> = {
+  'hegemon.pauli.group:31333': 'hegemon.pauli.group:30333',
+  '158.69.222.121:31333': '158.69.222.121:30333'
+};
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
@@ -29,7 +34,7 @@ const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
 const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 const minWalletPassphraseLength = 12;
 const defaultRpcPort = 9944;
-const defaultP2pPort = 30333;
+const defaultP2pPort = canonicalTestnetP2pPort;
 const defaultMineThreads = (() => {
   const hardwareConcurrency =
     typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency)
@@ -107,12 +112,27 @@ const normalizeTxId = (value: string | null | undefined) => {
   return trimmed.replace(/^0x/i, '').toLowerCase();
 };
 
-const normalizeSeedsValue = (value: string | null | undefined) =>
-  (value ?? '')
-    .split(',')
-    .map((seed) => seed.trim().toLowerCase())
-    .filter(Boolean)
-    .join(',');
+const canonicalizeSeedEntry = (seed: string) => {
+  const normalized = seed.trim().toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+  return legacySeedAliases[normalized] ?? normalized;
+};
+
+const normalizeSeedsValue = (value: string | null | undefined) => {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawSeed of (value ?? '').split(',')) {
+    const seed = canonicalizeSeedEntry(rawSeed);
+    if (!seed || seen.has(seed)) {
+      continue;
+    }
+    seen.add(seed);
+    normalized.push(seed);
+  }
+  return normalized.join(',');
+};
 
 const makeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -461,6 +481,34 @@ const normalizeRpcPort = (value?: number): number | undefined => {
   return value;
 };
 
+const parseListenAddrPort = (value?: string | null): number | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const parts = value.trim().split('/');
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (parts[index] !== 'tcp') {
+      continue;
+    }
+    const port = Number.parseInt(parts[index + 1], 10);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+      return port;
+    }
+  }
+  return undefined;
+};
+
+const rewriteListenAddrPort = (value: string, port: number): string => {
+  const parts = value.trim().split('/');
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (parts[index] === 'tcp') {
+      parts[index + 1] = String(port);
+      return parts.join('/');
+    }
+  }
+  return value;
+};
+
 const isLoopbackWsEndpoint = (value: string): boolean =>
   value.startsWith('ws://127.0.0.1:') || value.startsWith('ws://localhost:') || value.startsWith('ws://[::1]:');
 
@@ -681,9 +729,26 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
   }
 
+  const currentSeeds = (next.seeds ?? '').trim();
   const normalizedSeeds = normalizeSeedsValue(next.seeds);
+  if (currentSeeds && normalizedSeeds !== currentSeeds.toLowerCase()) {
+    next = { ...next, seeds: normalizedSeeds };
+  }
   if ((isDefaultLocal || isDefaultTestnet) && normalizedSeeds === '') {
     next = { ...next, seeds: approvedSeeds };
+  }
+
+  if (next.mode === 'local') {
+    if (next.p2pPort === 31333) {
+      next = { ...next, p2pPort: canonicalTestnetP2pPort };
+    }
+    const listenAddrPort = parseListenAddrPort(next.listenAddr);
+    if (listenAddrPort === 31333 && next.listenAddr) {
+      next = {
+        ...next,
+        listenAddr: rewriteListenAddrPort(next.listenAddr, canonicalTestnetP2pPort)
+      };
+    }
   }
 
   if ((isDefaultLocal || isDefaultTestnet) && (!next.mineThreads || next.mineThreads === 1)) {

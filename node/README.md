@@ -15,7 +15,7 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 When joining a shared network, set the approved seed list before starting the node:
 
 ```bash
-export HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333"
+export HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333"
 ```
 
 Every miner should use the same `HEGEMON_SEEDS` list to avoid accidental forks. Also enable time sync (`ntpd`, `chronyd`, or the platform equivalent) because PoW timestamps are rejected if they exceed the future-skew bound.

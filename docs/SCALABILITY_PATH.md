@@ -63,7 +63,7 @@ Why this is the right first step:
 Current approved seed list for miners:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333"
+HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333"
 ```
 
 All miners in this topology must use the same approved `HEGEMON_SEEDS` list to

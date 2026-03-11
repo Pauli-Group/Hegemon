@@ -86,7 +86,7 @@ The private prover should never become the first public entry point for users.
 All mining hosts must share the same approved bootstrap seeds:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333"
+HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333"
 ```
 
 If miners use diverging seed lists, peer partitions and forks become much more

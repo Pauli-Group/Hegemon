@@ -157,6 +157,7 @@ struct PeerConnection {
 enum PeerAdmission {
     Inserted,
     Duplicate,
+    SelfPeer,
     MaxPeersReached,
 }
 
@@ -189,10 +190,14 @@ pub struct PqNetworkBackend {
 impl PqNetworkBackend {
     async fn admit_peer(
         peers: &Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
+        local_peer_id: [u8; 32],
         peer_id: [u8; 32],
         connection: PeerConnection,
         max_peers: usize,
     ) -> PeerAdmission {
+        if peer_id == local_peer_id {
+            return PeerAdmission::SelfPeer;
+        }
         let mut peers_guard = peers.write().await;
         if peers_guard.contains_key(&peer_id) {
             return PeerAdmission::Duplicate;
@@ -319,6 +324,7 @@ impl PqNetworkBackend {
                                                 let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
                                                 let admission = Self::admit_peer(
                                                     &peers,
+                                                    transport.local_peer_id(),
                                                     peer_id,
                                                     PeerConnection {
                                                         info: info.clone(),
@@ -333,6 +339,14 @@ impl PqNetworkBackend {
                                                             peer_id = %hex::encode(peer_id),
                                                             addr = %addr,
                                                             "Duplicate inbound peer connection; dropping"
+                                                        );
+                                                        return;
+                                                    }
+                                                    PeerAdmission::SelfPeer => {
+                                                        tracing::debug!(
+                                                            peer_id = %hex::encode(peer_id),
+                                                            addr = %addr,
+                                                            "Rejecting inbound self-peer connection"
                                                         );
                                                         return;
                                                     }
@@ -562,6 +576,13 @@ impl PqNetworkBackend {
                                 }
                             }
                             Err(e) => {
+                                if e == "Self peer connection" {
+                                    tracing::info!(
+                                        addr = %addr,
+                                        "Skipping bootstrap node because it resolves to the local peer"
+                                    );
+                                    break;
+                                }
                                 tracing::warn!(
                                     addr = %addr,
                                     error = %e,
@@ -620,6 +641,7 @@ impl PqNetworkBackend {
         let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
         let admission = Self::admit_peer(
             &peers,
+            transport.local_peer_id(),
             peer_id,
             PeerConnection {
                 info: info.clone(),
@@ -636,6 +658,14 @@ impl PqNetworkBackend {
                     "Duplicate outbound peer connection; dropping"
                 );
                 return Ok(peer_id);
+            }
+            PeerAdmission::SelfPeer => {
+                tracing::debug!(
+                    peer_id = %hex::encode(peer_id),
+                    addr = %addr,
+                    "Rejecting outbound self-peer connection"
+                );
+                return Err("Self peer connection".to_string());
             }
             PeerAdmission::MaxPeersReached => {
                 return Err("Max peers reached".to_string());
@@ -1138,17 +1168,45 @@ mod tests {
         };
 
         assert_eq!(
-            PqNetworkBackend::admit_peer(&peers, [1u8; 32], make_conn([1u8; 32]), 2).await,
+            PqNetworkBackend::admit_peer(&peers, [9u8; 32], [1u8; 32], make_conn([1u8; 32]), 2)
+                .await,
             PeerAdmission::Inserted
         );
         assert_eq!(
-            PqNetworkBackend::admit_peer(&peers, [2u8; 32], make_conn([2u8; 32]), 2).await,
+            PqNetworkBackend::admit_peer(&peers, [9u8; 32], [2u8; 32], make_conn([2u8; 32]), 2)
+                .await,
             PeerAdmission::Inserted
         );
         assert_eq!(
-            PqNetworkBackend::admit_peer(&peers, [3u8; 32], make_conn([3u8; 32]), 2).await,
+            PqNetworkBackend::admit_peer(&peers, [9u8; 32], [3u8; 32], make_conn([3u8; 32]), 2)
+                .await,
             PeerAdmission::MaxPeersReached
         );
         assert_eq!(peers.read().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_admit_peer_rejects_self_peer() {
+        let peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let (msg_tx, _msg_rx) = mpsc::channel::<Vec<u8>>(8);
+        let peer_id = [7u8; 32];
+        let connection = PeerConnection {
+            info: PqConnectionInfo {
+                peer_id,
+                addr: "127.0.0.1:30333".parse().unwrap(),
+                is_outbound: false,
+                bytes_sent: 0,
+                bytes_received: 0,
+                protocol: "/hegemon/pq/1".to_string(),
+            },
+            msg_tx,
+        };
+
+        assert_eq!(
+            PqNetworkBackend::admit_peer(&peers, peer_id, peer_id, connection, 2).await,
+            PeerAdmission::SelfPeer
+        );
+        assert_eq!(peers.read().await.len(), 0);
     }
 }

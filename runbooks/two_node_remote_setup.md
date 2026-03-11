@@ -132,7 +132,7 @@ mkdir -p /tmp/my-hegemon-node
 
 # Start your mining node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" \
+HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333" \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --dev \
   --base-path /tmp/my-hegemon-node \
@@ -185,7 +185,7 @@ mkdir -p /tmp/friend-hegemon-node
 
 # Start the node, connecting to the bootnode
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" \
+HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333" \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --dev \
   --base-path /tmp/friend-hegemon-node \

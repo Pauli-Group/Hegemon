@@ -385,6 +385,7 @@ where
     }
 
     fn mark_peer_incompatible(&mut self, peer_id: PeerId, reason: &str) {
+        self.clear_all_pending_requests_for_peer(peer_id);
         if let Some(peer_state) = self.peers.get_mut(&peer_id) {
             peer_state.compatibility = PeerCompatibility::Incompatible;
             peer_state.failed_requests = MAX_PEER_FAILURES;
@@ -397,6 +398,17 @@ where
             reason = reason,
             "Marked peer as incompatible"
         );
+    }
+
+    fn clear_pending_requests_for_peer(&mut self, peer_id: PeerId, kinds: &[PendingRequestKind]) {
+        self.pending_requests.retain(|_, pending| {
+            pending.peer != peer_id || !kinds.contains(&pending.request_type.kind())
+        });
+    }
+
+    fn clear_all_pending_requests_for_peer(&mut self, peer_id: PeerId) {
+        self.pending_requests
+            .retain(|_, pending| pending.peer != peer_id);
     }
 
     /// Create a new sync service
@@ -625,6 +637,7 @@ where
     pub fn on_peer_disconnected(&mut self, peer_id: &PeerId) {
         self.peers.remove(peer_id);
         self.incompatible_peers.retain(|queued| queued != peer_id);
+        self.clear_all_pending_requests_for_peer(*peer_id);
 
         // If we were syncing/probing this peer, reset to idle
         match &self.state {
@@ -1735,11 +1748,12 @@ where
                                 peer = %hex::encode(peer),
                                 "Compatibility probe timed out"
                             );
-                            if let Some(peer_state) = self.peers.get_mut(&peer) {
-                                peer_state.failed_requests =
-                                    peer_state.failed_requests.saturating_add(1);
-                            }
+                            self.clear_pending_requests_for_peer(
+                                peer,
+                                &[PendingRequestKind::CompatibilityProbe],
+                            );
                             self.stats.failed_requests += 1;
+                            self.mark_peer_incompatible(peer, "compatibility probe timeout");
                             self.state = SyncState::Idle;
                         }
                     }
@@ -1784,6 +1798,10 @@ where
                             tracing::warn!(
                                 peer = %hex::encode(peer),
                                 "Tip poll timed out"
+                            );
+                            self.clear_pending_requests_for_peer(
+                                peer,
+                                &[PendingRequestKind::GetBlocks],
                             );
                             if let Some(peer_state) = self.peers.get_mut(&peer) {
                                 peer_state.failed_requests =
@@ -1862,6 +1880,10 @@ where
                             tracing::warn!(
                                 peer = %hex::encode(peer),
                                 "Sync request timed out, retrying"
+                            );
+                            self.clear_pending_requests_for_peer(
+                                peer,
+                                &[PendingRequestKind::GetBlocks],
                             );
 
                             // Mark peer as having failed
