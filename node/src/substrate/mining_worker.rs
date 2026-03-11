@@ -1,6 +1,6 @@
-//! Mining Worker for Blake3 PoW Block Production
+//! Mining Worker for SHA-256d PoW Block Production
 //!
-//! This module coordinates actual block production using the Blake3 PoW algorithm.
+//! This module coordinates actual block production using the SHA-256d PoW algorithm.
 //! It integrates with the Substrate service to:
 //!
 //! - Query current block templates from the runtime
@@ -23,7 +23,7 @@
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                                                                  │
 //! │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
-//! │  │   Client    │───▶│   Block     │───▶│   Blake3 PoW        │  │
+//! │  │   Client    │───▶│   Block     │───▶│   SHA-256d PoW      │  │
 //! │  │  (best_hash)│    │  Template   │    │   Mining Loop       │  │
 //! │  └─────────────┘    └─────────────┘    └─────────────────────┘  │
 //! │                            │                      │              │
@@ -55,7 +55,7 @@
 //!
 //! When a valid PoW solution is found:
 //! 1. Construct the complete block with seal
-//! 2. Verify locally with Blake3Algorithm
+//! 2. Verify locally with Sha256dAlgorithm
 //! 3. Import via the block import pipeline
 //! 4. Broadcast block announcement via PQ network
 
@@ -63,7 +63,7 @@ use crate::pow::PowHandle;
 use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
 use crate::substrate::service::StorageChangesHandle;
 use codec::Encode;
-use consensus::{Blake3Seal, MiningWork};
+use consensus::{MiningWork, Sha256dSeal};
 use sp_core::H256;
 use sp_runtime::generic::Digest;
 use sp_runtime::traits::Header as HeaderT;
@@ -274,7 +274,7 @@ impl BlockTemplate {
     /// - State root
     /// - Extrinsics root
     /// - Digest (containing the PoW seal)
-    pub fn encode_header(&self, seal: &Blake3Seal) -> Vec<u8> {
+    pub fn encode_header(&self, seal: &Sha256dSeal) -> Vec<u8> {
         // Create seal digest item with our engine ID "bpow"
         let seal_bytes = seal.encode();
         let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
@@ -490,7 +490,7 @@ pub trait ChainStateProvider: Send + Sync {
     fn pending_transactions(&self) -> Vec<Vec<u8>>;
 
     /// Import a mined block
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String>;
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String>;
 
     /// Notify that chain state may have changed (e.g., new block from network)
     fn on_new_block(&self, block_hash: &H256, block_number: u64);
@@ -558,7 +558,7 @@ impl ChainStateProvider for MockChainStateProvider {
         Vec::new()
     }
 
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String> {
         // Compute block hash from seal
         let block_hash = H256::from_slice(seal.work.as_bytes());
 
@@ -1291,7 +1291,7 @@ mod tests {
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
 
         // Create a mock seal
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(12_345),
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0x42),
@@ -1420,7 +1420,7 @@ mod tests {
 
         // Import a block
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(12_345),
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0xbb),

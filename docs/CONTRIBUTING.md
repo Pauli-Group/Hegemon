@@ -28,6 +28,7 @@ GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 
 - `rust-lints`: executes formatting and linting (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -D warnings`).
 - `rust-tests`: runs `cargo test --workspace` so crypto, circuits, consensus, wallet, state, and protocol crates stay green.
+- `restart-recovery-harness`: builds the node package and runs `./scripts/test-substrate.sh restart-recovery` to exercise the OVH/public-node plus prover-stack stop/restart path in a local harness.
 - `circuits-proof`: runs circuit unit tests plus `cargo run -p circuits-bench -- --smoke --prove` to ensure the proving pipeline compiles.
 - `wallet`: executes wallet integration tests and the wallet benchmark smoke test.
 - `go-net`: bootstraps Go 1.21 and runs `go test ./...` plus `go run ./cmd/netbench --smoke` inside `consensus/bench`.

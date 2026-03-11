@@ -43,7 +43,7 @@ pub use protocol_versioning::{
 };
 pub use substrate::{BlockOrigin, ImportReceipt, import_pow_block};
 pub use substrate_pow::{
-    Blake3Algorithm, Blake3Seal, compact_to_target, compute_work, counter_to_nonce, mine_round,
+    Sha256dAlgorithm, Sha256dSeal, compact_to_target, compute_work, counter_to_nonce, mine_round,
     nonce_counter_prefix, seal_meets_target, target_to_compact, verify_seal,
 };
 pub use types::{

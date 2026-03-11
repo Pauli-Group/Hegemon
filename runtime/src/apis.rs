@@ -6,7 +6,7 @@
 //!
 //! # Usage
 //!
-//! The node's Blake3Pow algorithm uses these APIs to:
+//! The node's SHA-256d PoW algorithm uses these APIs to:
 //! 1. Query current difficulty for block validation
 //! 2. Query difficulty for mining target calculation
 //! 3. Check consensus parameters
@@ -38,7 +38,7 @@ use sp_std::vec::Vec;
 decl_runtime_apis! {
     /// API for PoW difficulty queries
     ///
-    /// The node's Blake3Pow algorithm calls this to get the current
+    /// The node's SHA-256d PoW algorithm calls this to get the current
     /// difficulty target for block validation and mining.
     ///
     /// # Implementation

@@ -4,7 +4,7 @@
 //! as specified in Phase 2 of the Substrate migration plan.
 
 use consensus::{
-    Blake3Seal, compact_to_target, compute_work, counter_to_nonce, mine_round,
+    Sha256dSeal, compact_to_target, compute_work, counter_to_nonce, mine_round,
     nonce_counter_prefix, seal_meets_target, target_to_compact, verify_seal,
 };
 use sp_core::{H256, U256};
@@ -88,7 +88,7 @@ fn test_verify_rejects_invalid_seal() {
     let valid_seal = mine_round(&pre_hash, difficulty, 0, 100_000).expect("should find seal");
 
     // Create invalid seal with wrong nonce
-    let invalid_seal = Blake3Seal {
+    let invalid_seal = Sha256dSeal {
         nonce: counter_to_nonce(nonce_counter_prefix(&valid_seal.nonce).wrapping_add(1)),
         difficulty,
         work: valid_seal.work, // Work won't match new nonce
@@ -106,7 +106,7 @@ fn test_verify_rejects_wrong_work() {
     let valid_seal = mine_round(&pre_hash, difficulty, 0, 100_000).expect("should find seal");
 
     // Create invalid seal with wrong work hash
-    let invalid_seal = Blake3Seal {
+    let invalid_seal = Sha256dSeal {
         nonce: valid_seal.nonce,
         difficulty,
         work: H256::repeat_byte(0xff), // Wrong work
@@ -239,14 +239,14 @@ fn test_mined_solution_is_valid() {
 fn test_blake3_seal_codec() {
     use codec::{Decode, Encode};
 
-    let seal = Blake3Seal {
+    let seal = Sha256dSeal {
         nonce: counter_to_nonce(0x123456789abcdef0),
         difficulty: 0x1d00ffff,
         work: H256::repeat_byte(0x55),
     };
 
     let encoded = seal.encode();
-    let decoded = Blake3Seal::decode(&mut &encoded[..]).unwrap();
+    let decoded = Sha256dSeal::decode(&mut &encoded[..]).unwrap();
 
     assert_eq!(seal, decoded);
 }

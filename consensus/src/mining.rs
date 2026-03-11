@@ -31,7 +31,7 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
-use crate::substrate_pow::{Blake3Seal, mine_round};
+use crate::substrate_pow::{Sha256dSeal, mine_round};
 use sp_core::H256;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -108,7 +108,7 @@ pub struct MiningWork {
 #[derive(Clone, Debug)]
 pub struct MiningSolution {
     /// The valid seal found
-    pub seal: Blake3Seal,
+    pub seal: Sha256dSeal,
     /// The work this solution is for
     pub work: MiningWork,
 }

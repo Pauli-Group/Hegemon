@@ -67,6 +67,10 @@ frame-support = { workspace = true, features = ["std"] }
 frame-system = { workspace = true, features = ["std"] }
 sp-io = { workspace = true, features = ["std"] }
 pallet-coinbase = { path = "../pallets/coinbase", features = ["std"] }
+rand = "0.8"
+tempfile = "3"
+transaction-circuit = { path = "../circuits/transaction" }
+wallet = { path = "../wallet" }
 
 [features]
 default = ["std"]

@@ -30,10 +30,6 @@ pub struct Sha256dSeal {
     pub work: H256,
 }
 
-#[allow(deprecated)]
-#[deprecated(note = "Use Sha256dSeal instead.")]
-pub type Blake3Seal = Sha256dSeal;
-
 /// SHA-256d-based Proof of Work algorithm for Hegemon.
 pub struct Sha256dAlgorithm<C> {
     client: Arc<C>,
@@ -53,10 +49,6 @@ impl<C> Clone for Sha256dAlgorithm<C> {
         }
     }
 }
-
-#[allow(deprecated)]
-#[deprecated(note = "Use Sha256dAlgorithm instead.")]
-pub type Blake3Algorithm<C> = Sha256dAlgorithm<C>;
 
 /// Convert compact bits representation to a target U256.
 ///

@@ -18,7 +18,7 @@
 //! | `hegemon_nodeConfig`      | Get node config snapshot                 |
 
 use crate::substrate::template_builder::compact_job_from_work;
-use consensus::{compute_work, seal_meets_target, Blake3Seal, MiningSolution, MiningWork};
+use consensus::{compute_work, seal_meets_target, MiningSolution, MiningWork, Sha256dSeal};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
@@ -612,7 +612,7 @@ where
         work: &MiningWork,
         nonce: [u8; 32],
     ) -> RpcResult<SubmitPoolShareResponse> {
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce,
             difficulty: work.pow_bits,
             work: compute_work(&work.pre_hash, nonce),

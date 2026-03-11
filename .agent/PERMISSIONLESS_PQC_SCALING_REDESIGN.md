@@ -22,6 +22,9 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 - [x] (2026-03-11 06:45Z) Added additive artifact-market and compact-job surfaces: `CandidateArtifact` / `ArtifactAnnouncement` / `ArtifactClaim` naming aliases were added in consensus/runtime-facing types, `node/src/substrate/artifact_market.rs` and `node/src/substrate/template_builder.rs` were introduced, `hegemon_compactJob` / `hegemon_submitCompactSolution` were added, and prover RPC now exposes artifact announcement + fetch endpoints.
 - [x] (2026-03-11 06:45Z) Updated operator/testnet docs for the laptop -> `hegemon-ovh` -> `hegemon-prover` rollout, including the boot-wallet flow, the approved `HEGEMON_SEEDS` list, the current `config/dev-chainspec.json` hash, and the SSH-tunneled private-prover topology.
 - [x] (2026-03-11 14:24Z) Root-caused the blocked wallet flow to a runtime validation bug: `validate_shielded_transfer_*` was reading the persisted `CoinbaseProcessed` flag from the previous best state and rejecting next-block mempool transfers as stale. Removed that check from unsigned validation, kept it in `apply_*`, added a regression test in `pallets/shielded-pool/src/lib.rs`, regenerated the chainspec, redeployed OVH/prover/laptop, and completed a confirmed boot-wallet -> test-wallet -> boot-wallet round trip on the fresh chain.
+- [x] (2026-03-11 20:10Z) Added a real runtime regression in `runtime/tests/kernel_wallet_transfer.rs` that seeds a wallet note, builds a real wallet transaction, wraps it in a kernel `ActionEnvelope`, proves `Kernel::validate_unsigned` accepts it, and then executes `Kernel::submit_action` successfully against the production `StarkVerifier` runtime configuration.
+- [x] (2026-03-11 20:10Z) Added `./scripts/test-substrate.sh restart-recovery` plus the `restart-recovery-harness` CI job to emulate the laptop -> OVH/public node -> private prover stack topology locally, stop the prover node + external worker, verify the OVH-like node keeps mining, then restart the prover stack and require resync to the same tip.
+- [x] (2026-03-11 20:10Z) Removed the remaining live SHA-256d PoW compatibility names (`Blake3Seal` / `Blake3Algorithm`) and deleted the wallet proof-debug artifact so the shipping code and tests now use the fresh-testnet vocabulary directly.
 - [ ] Complete the deeper consensus/runtime cutover from legacy `BlockProofBundle` / centralized authoring assumptions to a fully inline `CandidateArtifact` block body and retire the remaining legacy pooled-hash compatibility path.
 
 ## Surprises & Discoveries
@@ -87,8 +90,8 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
   Rationale: miners should hash compact jobs, but import should not depend on an out-of-band artifact fetch on the critical path. The market can still distribute artifacts pre-block via announcements and fetch-on-demand; the final block should carry the winning artifact bytes for deterministic import.
   Date/Author: 2026-03-11 / Codex
 
-- Decision: keep compatibility aliases for the old BLAKE3 and `BlockProofBundle` names while moving behavior and new public surfaces to SHA-256d and `CandidateArtifact`.
-  Rationale: the codebase has too many internal references to rename atomically without risking a half-working tree. The important requirement for the fresh testnet is behavioral: no real BLAKE3 mining path remains, and new miner/prover/operator surfaces should speak the new vocabulary first.
+- Decision: remove the old BLAKE3 PoW type aliases from the live code path once the fresh chain and transaction round trip were green.
+  Rationale: once the wallet flow and live rollout were stable, keeping `Blake3Seal` / `Blake3Algorithm` around only preserved the wrong mental model. The fresh-testnet SHA-256d path should be explicit in code, tests, and logs.
   Date/Author: 2026-03-11 / Codex
 
 - Decision: split seed handling into two phases for rollout.

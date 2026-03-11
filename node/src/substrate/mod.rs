@@ -2,7 +2,7 @@
 //!
 //! This module contains the Substrate-specific implementation including:
 //! - Chain specification configuration
-//! - Node service setup with Blake3 PoW
+//! - Node service setup with SHA-256d PoW
 //! - RPC extensions
 //! - CLI commands
 //! - PQ-secure network transport (Phase 3)
@@ -13,7 +13,7 @@
 //! # Phase 2 Status
 //!
 //! This phase implements the sc-consensus-pow integration:
-//! - Blake3Algorithm for PoW mining and verification
+//! - Sha256dAlgorithm for PoW mining and verification
 //! - MiningCoordinator for multi-threaded mining
 //! - PowBlockImport for the block import pipeline
 //! - Mining RPC methods (hegemon_startMining, hegemon_stopMining)

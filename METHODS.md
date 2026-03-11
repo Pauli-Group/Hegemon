@@ -949,6 +949,8 @@ Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and 
    - `cargo test -p synthetic-crypto` for deterministic PQ primitive vectors.
    - `cargo test -p transaction-circuit && cargo test -p block-circuit` for circuit constraints.
    - `cargo test -p wallet` for CLI/integration fixtures.
+   - `cargo test -p runtime --test kernel_wallet_transfer` for the wallet-built unsigned transfer regression through the live `Kernel::submit_action` path.
+   - `./scripts/test-substrate.sh restart-recovery` for the local OVH/public-node plus prover-stack stop/restart harness.
 4. **Benchmarks (smoke mode)**:
    - `cargo run -p circuits-bench -- --smoke --prove --json` – validates witness → proof → block aggregation loop.
    - `cargo run -p wallet-bench -- --smoke --json` – stresses key derivation, encryption, and nullifier derivations.
@@ -967,6 +969,10 @@ Document benchmark outputs in pull requests when they change noticeably; CI will
 | --- | --- |
 | `rust-lints` | Runs fmt + clippy on the entire workspace. |
 | `rust-tests` | Executes `cargo test --workspace`. |
+| `runtime-build` | Builds the native runtime crate. |
+| `runtime-wasm` | Builds the release node so the WASM runtime artifact is exercised. |
+| `restart-recovery-harness` | Builds the node package and runs `./scripts/test-substrate.sh restart-recovery` to prove the OVH-like public node keeps mining while the prover node + external worker are stopped and restarted. |
+| `runtime-benchmarks` | Runs runtime benchmark smoke coverage. |
 | `crypto-tests` | Locks in ML-DSA/ML-KEM behavior with focused tests. |
 | `circuits-proof` | Runs the transaction/block tests and ensures `circuits-bench --smoke --prove` succeeds. |
 | `wallet` | Runs wallet tests and the wallet benchmark smoke profile. |

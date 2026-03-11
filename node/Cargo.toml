@@ -118,7 +118,7 @@ fast-proofs = ["block-circuit?/fast-proofs"]
 # This provides:
 # - CLI scaffolding (sc-cli)
 # - Node service framework (sc-service)
-# - Blake3 PoW consensus (sc-consensus-pow)
+# - SHA-256d PoW consensus (sc-consensus-pow)
 # - Mining coordination
 # - Runtime with WASM binary and DifficultyApi
 #

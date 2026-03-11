@@ -126,9 +126,6 @@ pub fn build_transaction_with_binding(
     let derived = store
         .derived_keys()?
         .ok_or(WalletError::InvalidState("missing derived keys"))?;
-    let fvk = store
-        .full_viewing_key()?
-        .ok_or(WalletError::InvalidState("missing viewing key"))?;
     let plan = plan_selections(store, recipients, fee, &stablecoin)?;
 
     let mut rng = OsRng;
@@ -226,12 +223,9 @@ pub fn build_transaction_with_binding(
 
     let tree = store.commitment_tree()?;
     let wallet_root = tree.root();
-    // eprintln!("DEBUG: wallet merkle_root = {:?}", wallet_root);
-    // eprintln!("DEBUG: tree.len = {}", tree.len());
 
     let plan_inputs = plan.inputs();
     let mut inputs = Vec::new();
-    let mut nullifiers = Vec::new();
     for note in plan_inputs.iter() {
         let expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
             &note.recovered.note_data.commitment(),
@@ -262,21 +256,7 @@ pub fn build_transaction_with_binding(
                 ))
             })?;
 
-        // eprintln!("DEBUG: note.position = {}", note.position);
-        // eprintln!("DEBUG: auth_path.len() = {}", auth_path.len());
-
-        // Verify the path locally to debug
         let leaf = note.recovered.note_data.commitment();
-        // eprintln!("DEBUG: recovered note commitment (Poseidon) = {:?}", leaf);
-
-        // Get tree leaf at that position and compare
-        let tree_leaf = auth_path.first().map(|_| {
-            // Actually need to get the leaf from tree.levels[0][position]
-            // But we don't have direct access. Let me print the first few siblings
-            // eprintln!("DEBUG: auth_path siblings: {:?}", &auth_path[..std::cmp::min(3, auth_path.len())]);
-        });
-        let _ = tree_leaf;
-
         let mut current = leaf;
         let mut pos = note.position;
         let mut siblings = Vec::with_capacity(auth_path.len());
@@ -293,8 +273,6 @@ pub fn build_transaction_with_binding(
             current = merkle_node(left, right);
             pos >>= 1;
         }
-        // eprintln!("DEBUG: computed_root = {:?}", current);
-        // eprintln!("DEBUG: expected_root = {:?}", wallet_root);
         if felts_to_bytes48(&current) != wallet_root {
             return Err(WalletError::InvalidState(
                 "merkle path does not match wallet root",
@@ -308,8 +286,6 @@ pub fn build_transaction_with_binding(
         let mut input_witness = note.recovered.to_input_witness(note.position);
         input_witness.merkle_path = merkle_path;
         inputs.push(input_witness);
-
-        nullifiers.push(fvk.compute_nullifier(&note.recovered.note.rho, note.position));
     }
     let ciphertext_hashes = ciphertexts
         .iter()
@@ -330,27 +306,6 @@ pub fn build_transaction_with_binding(
     // Generate STARK proof using the real prover
     let prover = build_stark_prover();
     let proof_result = prover.prove(&witness)?;
-
-    // Debug: compare wallet-computed nullifiers vs prover nullifiers (only in debug builds)
-    #[cfg(debug_assertions)]
-    {
-        eprintln!("DEBUG tx_builder: wallet computed nullifiers vs prover nullifiers:");
-        for (i, (wallet_nf, prover_nf)) in nullifiers
-            .iter()
-            .zip(proof_result.nullifiers.iter())
-            .enumerate()
-        {
-            eprintln!("  [{}] wallet:  {}", i, hex::encode(wallet_nf));
-            eprintln!("  [{}] prover:  {}", i, hex::encode(prover_nf));
-            if wallet_nf != prover_nf {
-                eprintln!("  [{}] MISMATCH!", i);
-            }
-        }
-    }
-
-    // eprintln!("DEBUG tx_builder: proof_result.value_balance = {}", proof_result.value_balance);
-    // eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
-    // eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
 
     // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
     let binding_hash = compute_binding_hash(

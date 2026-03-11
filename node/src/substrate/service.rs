@@ -4,7 +4,7 @@
 //! Hegemon node, including:
 //! - Partial node components setup with full Substrate client
 //! - Full node service initialization
-//! - Block import pipeline configuration with Blake3 PoW
+//! - Block import pipeline configuration with SHA-256d PoW
 //! - Mining coordination with ProductionChainStateProvider
 //! - PQ-secure network transport
 //! - Network bridge for block/tx routing
@@ -33,7 +33,7 @@
 //! │  ┌─────────────────────────▼─────────────────────────────────────────┐  │
 //! │  │                    Block Import Pipeline                          │  │
 //! │  │  ┌────────────────┐   ┌──────────────────┐   ┌────────────────┐  │  │
-//! │  │  │  Import Queue  │──▶│  Blake3 PoW      │──▶│    Client      │  │  │
+//! │  │  │  Import Queue  │──▶│  SHA-256d PoW    │──▶│    Client      │  │  │
 //! │  │  │   (verifier)   │   │  Block Import    │   │   (backend)    │  │  │
 //! │  │  └────────────────┘   └──────────────────┘   └────────────────┘  │  │
 //! │  └───────────────────────────────────────────────────────────────────┘  │
@@ -146,8 +146,8 @@ use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
-    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal,
-    ParallelProofVerifier,
+    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, ParallelProofVerifier,
+    Sha256dAlgorithm, Sha256dSeal,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
@@ -2374,6 +2374,14 @@ fn batch_slot_txs() -> usize {
 
 fn batch_verifier_prewarm_sizes() -> Vec<usize> {
     if let Ok(raw) = std::env::var("HEGEMON_BATCH_VERIFY_PREWARM_TXS") {
+        let trimmed = raw.trim();
+        if trimmed == "0"
+            || trimmed.eq_ignore_ascii_case("off")
+            || trimmed.eq_ignore_ascii_case("false")
+            || trimmed.eq_ignore_ascii_case("disable")
+        {
+            return Vec::new();
+        }
         let mut parsed = raw
             .split(',')
             .filter_map(|part| part.trim().parse::<usize>().ok())
@@ -5371,7 +5379,7 @@ pub fn wire_block_builder_api(
 // import_fn callback. When a mined block needs to be imported, the callback
 // constructs a proper BlockImportParams and imports through PowBlockImport.
 //
-// The PowBlockImport verifies the Blake3 PoW seal before allowing the block
+// The PowBlockImport verifies the SHA-256d PoW seal before allowing the block
 // to be committed to the backend.
 
 use crate::substrate::mining_worker::BlockTemplate;
@@ -5485,12 +5493,12 @@ fn wire_pow_block_import(
     let pow_block_import = pow_block_import;
     let proof_verification_enabled = proof_verification_enabled();
     let parallel_verifier = ParallelProofVerifier::new();
-    chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Blake3Seal| {
+    chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Sha256dSeal| {
         // Construct the block header from the template
         let parent_hash: sp_core::H256 = template.parent_hash.into();
 
         // Include the seal in the header's digest for storage
-        // Use our custom engine ID "bpow" for Blake3 PoW
+        // Use our custom engine ID "bpow" for SHA-256d PoW
         let seal_bytes = seal.encode();
         let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
         let digest = Digest {
@@ -5816,7 +5824,7 @@ fn wire_pow_block_import(
 
     tracing::info!("Block import wired with StorageChanges application");
     tracing::debug!("  - Mined blocks imported with state persistence");
-    tracing::debug!("  - Blake3 seals validated before commit");
+    tracing::debug!("  - SHA-256d seals validated before commit");
 }
 
 /// PQ network configuration for the node service
@@ -6367,13 +6375,13 @@ pub struct PartialComponentsWithClient {
     pub select_chain: HegemonSelectChain,
     /// PoW block import wrapper
     ///
-    /// Wraps the client with PoW verification using Blake3Algorithm.
+    /// Wraps the client with PoW verification using Sha256dAlgorithm.
     /// All blocks imported through this wrapper are verified for valid PoW.
     pub pow_block_import: ConcretePowBlockImport,
-    /// Blake3 PoW algorithm
+    /// SHA-256d PoW algorithm
     ///
     /// The PoW algorithm implementation used for block verification and mining.
-    pub pow_algorithm: Blake3Algorithm<HegemonFullClient>,
+    pub pow_algorithm: Sha256dAlgorithm<HegemonFullClient>,
     /// Task manager for spawning async tasks
     pub task_manager: TaskManager,
     /// PoW mining handle
@@ -6516,7 +6524,7 @@ pub fn new_partial_with_client(
     //
     // The block import pipeline verifies PoW seals before importing blocks:
     // 1. Create the select-chain helper required by PowBlockImport
-    // 2. Create Blake3Algorithm with client reference for difficulty queries
+    // 2. Create Sha256dAlgorithm with client reference for difficulty queries
     // 3. Wrap client in PowBlockImport for PoW verification
     //
     // Flow: Network → Import Queue → PowBlockImport → Client → Backend
@@ -6526,8 +6534,8 @@ pub fn new_partial_with_client(
     // is left unset.
     let select_chain = sc_consensus::LongestChain::new(backend.clone());
 
-    // Create Blake3 PoW algorithm with client for difficulty queries
-    let pow_algorithm = Blake3Algorithm::new(client.clone());
+    // Create SHA-256d PoW algorithm with client for difficulty queries
+    let pow_algorithm = Sha256dAlgorithm::new(client.clone());
 
     // Create inherent data providers creator
     // Timestamp inherents are required for runtime validation during import.
@@ -6551,7 +6559,7 @@ pub fn new_partial_with_client(
     }
 
     // Create the PoW block import wrapper
-    // This verifies Blake3 PoW seals before allowing blocks to be imported
+    // This verifies SHA-256d PoW seals before allowing blocks to be imported
     //
     let pow_import_config = crate::substrate::block_import::BlockImportConfig::from_env();
 
@@ -6565,7 +6573,7 @@ pub fn new_partial_with_client(
     );
 
     tracing::info!("PoW block import pipeline created");
-    tracing::debug!("  - Blake3Algorithm for PoW verification");
+    tracing::debug!("  - Sha256dAlgorithm for PoW verification");
     tracing::debug!("  - LongestChain helper for PowBlockImport");
     tracing::debug!("  - PowBlockImport wrapping full client");
 
@@ -6672,7 +6680,7 @@ pub fn new_partial_with_client(
 /// | Component | `new_full()` (scaffold) | `new_full_with_client()` (production) |
 /// |-----------|------------------------|--------------------------------------|
 /// | Client | Mock state | Real TFullClient |
-/// | State root | Blake3 hash of extrinsics | Runtime-computed |
+/// | State root | Scaffold placeholder | Runtime-computed |
 /// | Block import | BlockImportTracker | PowBlockImport |
 /// | Tx validation | No validation | Runtime validation |
 /// | Difficulty | Constant fallback | Runtime API query |
@@ -8278,7 +8286,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 };
 
                                 // Compute pre_hash (hash of header WITHOUT seal)
-                                // This is what Blake3Algorithm::verify will use to validate the PoW
+                                // This is what Sha256dAlgorithm::verify will use to validate the PoW
                                 let pre_hash = header.hash();
                                 tracing::info!(
                                     block_number,
@@ -10284,7 +10292,7 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String>
+    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Sha256dSeal) -> Result<H256, String>
            + Send
            + Sync
            + 'static {
@@ -10422,7 +10430,7 @@ mod import_tests {
         let callback = tracker.create_import_callback();
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
@@ -10448,7 +10456,7 @@ mod import_tests {
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         // Create invalid seal (work doesn't meet target)
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(0),
             difficulty: 0x0300ffff,        // Very hard
             work: H256::repeat_byte(0xff), // Max value won't meet target

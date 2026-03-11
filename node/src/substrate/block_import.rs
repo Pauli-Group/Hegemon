@@ -1,7 +1,7 @@
 //! Block Import Pipeline (Task 10.3)
 //!
 //! This module implements the block import pipeline for the Hegemon node,
-//! integrating sc-consensus-pow with our Blake3 PoW algorithm.
+//! integrating sc-consensus-pow with our SHA-256d PoW algorithm.
 //!
 //! # Architecture
 //!
@@ -18,7 +18,7 @@
 //! │     │               │                    │          │ (RocksDB)│        │
 //! │     │               │                    │          └──────────┘        │
 //! │     │               │                    ▼                              │
-//! │     │               │            Blake3Algorithm                        │
+//! │     │               │            Sha256dAlgorithm                       │
 //! │     │               │              (verify seal)                        │
 //! │     │               │                    │                              │
 //! │     │               ▼                    ▼                              │
@@ -37,7 +37,7 @@
 //! # Key Components
 //!
 //! 1. **PowBlockImport**: Wraps the client to add PoW verification on import
-//! 2. **Blake3Algorithm**: Implements sc-consensus-pow::PowAlgorithm
+//! 2. **Sha256dAlgorithm**: Implements sc-consensus-pow::PowAlgorithm
 //! 3. **Import Queue**: Manages concurrent block imports from network/mining
 //! 4. **Verifier**: Decodes and validates PoW seals before full import
 //!
@@ -54,7 +54,7 @@
 //! ```
 
 use codec::Decode;
-use consensus::{compact_to_target, compute_work, seal_meets_target, Blake3Seal};
+use consensus::{compact_to_target, compute_work, seal_meets_target, Sha256dSeal};
 use sp_core::{H256, U256};
 use sp_runtime::traits::Block as BlockT;
 use std::marker::PhantomData;
@@ -196,8 +196,8 @@ impl ImportStats {
 /// Seal data extracted from a block for verification
 #[derive(Clone, Debug)]
 pub struct ExtractedSeal {
-    /// The Blake3 seal containing nonce, difficulty, and work
-    pub seal: Blake3Seal,
+    /// The SHA-256d seal containing nonce, difficulty, and work
+    pub seal: Sha256dSeal,
     /// The pre-hash of the block (header hash before seal)
     pub pre_hash: H256,
     /// The full header hash (after seal)
@@ -221,7 +221,7 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
         .enumerate()
         .find_map(|(idx, item)| {
             if let DigestItem::Seal(engine_id, data) = item {
-                // Our engine ID for Blake3 PoW
+                // Our engine ID for SHA-256d PoW
                 if engine_id == b"pow_" || engine_id == b"pow0" || engine_id == b"bpow" {
                     return Some((idx, data.clone()));
                 }
@@ -231,8 +231,8 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
         .ok_or_else(|| ImportError::SealDecode("No PoW seal found in header".into()))?;
 
     // Decode the seal
-    let seal = Blake3Seal::decode(&mut &seal_item[..])
-        .map_err(|e| ImportError::SealDecode(format!("Failed to decode Blake3Seal: {:?}", e)))?;
+    let seal = Sha256dSeal::decode(&mut &seal_item[..])
+        .map_err(|e| ImportError::SealDecode(format!("Failed to decode Sha256dSeal: {:?}", e)))?;
 
     // Compute pre-hash (header hash without the seal)
     let header_hash = header.hash();
@@ -374,7 +374,7 @@ where
 /// Mock block import for testing and scaffold mode
 ///
 /// This implements a simple in-memory block import that:
-/// - Validates seals using Blake3
+/// - Validates seals using SHA-256d
 /// - Tracks import statistics
 /// - Does not require a full Substrate client
 #[derive(Clone)]
@@ -405,7 +405,7 @@ impl MockBlockImport {
         &self,
         block_number: u64,
         parent_hash: H256,
-        seal: &Blake3Seal,
+        seal: &Sha256dSeal,
     ) -> ImportResult<H256> {
         let start = std::time::Instant::now();
 
@@ -493,12 +493,12 @@ pub fn create_mock_block_import_from_env() -> MockBlockImport {
 /// This is the production implementation that requires:
 /// - Full Substrate client (TFullClient)
 /// - WASM executor
-/// - Blake3Algorithm implementing PowAlgorithm
+/// - Sha256dAlgorithm implementing PowAlgorithm
 ///
 /// # Task 10.3 Implementation Notes
 ///
 /// The full implementation flow:
-/// 1. Create Blake3Algorithm with client reference
+/// 1. Create Sha256dAlgorithm with client reference
 /// 2. Wrap client in PowBlockImport
 /// 3. Create import queue with PowVerifier
 /// 4. Return components for service integration
@@ -507,7 +507,7 @@ pub fn create_mock_block_import_from_env() -> MockBlockImport {
 /// use sc_consensus_pow::{PowBlockImport, PowVerifier, import_queue};
 ///
 /// // Create the PoW algorithm
-/// let pow_algorithm = Blake3Algorithm::new(client.clone());
+/// let pow_algorithm = Sha256dAlgorithm::new(client.clone());
 ///
 /// // Create the block import
 /// let pow_block_import = PowBlockImport::new(
@@ -549,7 +549,7 @@ pub mod substrate_integration {
     ///
     /// ```ignore
     /// // In new_partial() after creating the client:
-    /// let pow_algorithm = consensus::Blake3Algorithm::new(client.clone());
+    /// let pow_algorithm = consensus::Sha256dAlgorithm::new(client.clone());
     ///
     /// // Use the client directly as it implements BlockImport
     /// let pow_block_import = sc_consensus_pow::PowBlockImport::new(
@@ -695,7 +695,7 @@ mod tests {
         });
 
         // Create an invalid seal (work doesn't meet target)
-        let invalid_seal = Blake3Seal {
+        let invalid_seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(0),
             difficulty: 0x0300ffff,        // Very hard
             work: H256::repeat_byte(0xff), // Max value won't meet hard target
@@ -717,7 +717,7 @@ mod tests {
         });
 
         // Even an invalid seal should be accepted
-        let invalid_seal = Blake3Seal {
+        let invalid_seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(0),
             difficulty: 0x0300ffff,
             work: H256::repeat_byte(0xff),
@@ -778,7 +778,7 @@ mod tests {
         let state_root = H256::repeat_byte(0x22);
         let extrinsics_root = H256::repeat_byte(0x33);
 
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(5),
             difficulty: 0x2100ffff,
             work: H256::repeat_byte(0xaa),

@@ -12,7 +12,7 @@
 //! This module is used by the node service to set up the PoW block import
 //! pipeline and manage mining operations.
 
-use consensus::{Blake3Seal, MiningCoordinator, MiningSolution, MiningWork};
+use consensus::{MiningCoordinator, MiningSolution, MiningWork, Sha256dSeal};
 use sp_core::H256;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -297,7 +297,7 @@ impl PowVerifier {
     }
 
     /// Verify a PoW seal
-    pub fn verify(&self, pre_hash: &H256, seal: &Blake3Seal) -> Result<(), PowVerifyError> {
+    pub fn verify(&self, pre_hash: &H256, seal: &Sha256dSeal) -> Result<(), PowVerifyError> {
         // Check difficulty matches expected
         if seal.difficulty != self.expected_difficulty {
             return Err(PowVerifyError::DifficultyMismatch {

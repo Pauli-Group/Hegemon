@@ -55,7 +55,7 @@
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
-use consensus::Blake3Seal;
+use consensus::{Sha256dAlgorithm, Sha256dSeal};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -109,7 +109,7 @@ pub type HegemonSelectChain = sc_consensus::LongestChain<FullBackend, runtime::B
 
 /// Type alias for the PoW block import wrapper (Task 11.4.5)
 ///
-/// This wraps the client with PoW verification using our Blake3Algorithm.
+/// This wraps the client with PoW verification using our Sha256dAlgorithm.
 /// All blocks imported through this wrapper are verified for valid PoW
 /// before being committed to the backend.
 ///
@@ -118,7 +118,7 @@ pub type HegemonSelectChain = sc_consensus::LongestChain<FullBackend, runtime::B
 /// - `Arc<HegemonFullClient>`: The inner block import (implements BlockImport)
 /// - `HegemonFullClient`: Client for runtime API queries
 /// - `HegemonSelectChain`: Chain selection rule
-/// - `Blake3Algorithm<HegemonFullClient>`: Our PoW algorithm
+/// - `Sha256dAlgorithm<HegemonFullClient>`: Our PoW algorithm
 /// - CIDP: A function type for creating inherent data providers
 ///
 /// For our PoW chain, CIDP supplies timestamp inherent data so imports
@@ -128,7 +128,7 @@ pub type HegemonPowBlockImport<CIDP> = sc_consensus_pow::PowBlockImport<
     Arc<HegemonFullClient>,
     HegemonFullClient,
     HegemonSelectChain,
-    consensus::Blake3Algorithm<HegemonFullClient>,
+    Sha256dAlgorithm<HegemonFullClient>,
     CIDP,
 >;
 
@@ -308,7 +308,7 @@ impl ChainStateProvider for SubstrateChainStateProvider {
         self.pending_txs.read().clone()
     }
 
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String> {
         // Compute block hash from seal work
         let block_hash = H256::from_slice(seal.work.as_bytes());
 
@@ -469,7 +469,7 @@ pub struct ProductionChainStateProvider {
     pending_txs_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> Vec<Vec<u8>> + Send + Sync>>>,
     /// Callback to import a block
     import_fn: parking_lot::RwLock<
-        Option<Box<dyn Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync>>,
+        Option<Box<dyn Fn(&BlockTemplate, &Sha256dSeal) -> Result<H256, String> + Send + Sync>>,
     >,
     /// Callback called after successful block import (Task 11.3)
     /// Used to clear included transactions from the pool
@@ -586,7 +586,7 @@ impl ProductionChainStateProvider {
     /// Set the callback for importing blocks
     pub fn set_import_fn<F>(&self, f: F)
     where
-        F: Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync + 'static,
+        F: Fn(&BlockTemplate, &Sha256dSeal) -> Result<H256, String> + Send + Sync + 'static,
     {
         *self.import_fn.write() = Some(Box::new(f));
     }
@@ -771,7 +771,7 @@ impl ChainStateProvider for ProductionChainStateProvider {
         }
     }
 
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String> {
         if let Some(ref f) = *self.import_fn.read() {
             let result = f(template, seal);
             if self.config.verbose {
@@ -1127,7 +1127,7 @@ mod tests {
         provider.add_pending_tx(vec![1, 2, 3]);
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
@@ -1209,7 +1209,7 @@ mod tests {
         provider.set_import_fn(move |_, _| Ok(import_hash));
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
@@ -1250,7 +1250,7 @@ mod tests {
     #[test]
     fn test_production_provider_on_import_success() {
         use crate::substrate::mining_worker::BlockTemplate;
-        use consensus::Blake3Seal;
+        use consensus::Sha256dSeal;
 
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
 
@@ -1283,7 +1283,7 @@ mod tests {
         let template = BlockTemplate::new(parent, 6, 0x1f_00_ff_ff)
             .with_extrinsics(vec![tx1.clone(), tx2.clone()]);
 
-        let seal = Blake3Seal {
+        let seal = Sha256dSeal {
             nonce: consensus::counter_to_nonce(1),
             difficulty: 0x1f_00_ff_ff,
             work: H256::zero(),
