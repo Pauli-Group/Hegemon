@@ -21,6 +21,7 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 - [x] (2026-03-11 06:45Z) Cut the first fresh-testnet PoW migration slice: `consensus/src/substrate_pow.rs` now uses a 32-byte nonce plus `sha256d(pre_hash || nonce)`, the runtime PoW pallet/smoke tests were updated to the same nonce width and hash function, and the node RPC/mining surfaces were moved off implicit `u64` pool-share nonces.
 - [x] (2026-03-11 06:45Z) Added additive artifact-market and compact-job surfaces: `CandidateArtifact` / `ArtifactAnnouncement` / `ArtifactClaim` naming aliases were added in consensus/runtime-facing types, `node/src/substrate/artifact_market.rs` and `node/src/substrate/template_builder.rs` were introduced, `hegemon_compactJob` / `hegemon_submitCompactSolution` were added, and prover RPC now exposes artifact announcement + fetch endpoints.
 - [x] (2026-03-11 06:45Z) Updated operator/testnet docs for the laptop -> `hegemon-ovh` -> `hegemon-prover` rollout, including the boot-wallet flow, the approved `HEGEMON_SEEDS` list, the current `config/dev-chainspec.json` hash, and the SSH-tunneled private-prover topology.
+- [x] (2026-03-11 14:24Z) Root-caused the blocked wallet flow to a runtime validation bug: `validate_shielded_transfer_*` was reading the persisted `CoinbaseProcessed` flag from the previous best state and rejecting next-block mempool transfers as stale. Removed that check from unsigned validation, kept it in `apply_*`, added a regression test in `pallets/shielded-pool/src/lib.rs`, regenerated the chainspec, redeployed OVH/prover/laptop, and completed a confirmed boot-wallet -> test-wallet -> boot-wallet round trip on the fresh chain.
 - [ ] Complete the deeper consensus/runtime cutover from legacy `BlockProofBundle` / centralized authoring assumptions to a fully inline `CandidateArtifact` block body and retire the remaining legacy pooled-hash compatibility path.
 
 ## Surprises & Discoveries
@@ -48,6 +49,9 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 
 - Observation: the currently advertised public seed endpoints still serve the old genesis and therefore cannot be reused for the laptop-only fresh-genesis smoke test.
   Evidence: after regenerating `config/dev-chainspec.json` locally and starting a release node with the legacy public seeds, compatibility probes reported `peer_genesis=04d82e...` while the local fresh genesis was `cfe3ba0d...`, and the node stayed at height 0 until the stale peers were removed.
+
+- Observation: the shielded transfer rejection was not a bad proof; it was a mempool-validity bug caused by block-local bookkeeping being persisted into the next best state.
+  Evidence: the wallet-built bundle passed `StarkVerifier` and binding-hash verification locally, the anchor and nullifier were valid on-chain, and direct storage inspection showed `CoinbaseProcessed = 0x01` on the live best block. The unsigned validator rejected on that flag before proof verification.
 
 ## Decision Log
 
@@ -89,6 +93,10 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 
 - Decision: split seed handling into two phases for rollout.
   Rationale: before `hegemon-ovh` is redeployed onto the fresh chainspec, the current public endpoints still point at the old network and will only create incompatible peers. Local fresh-genesis smoke tests therefore run with no public seeds, and the approved shared seed list is published only after OVH is serving the fresh genesis.
+  Date/Author: 2026-03-11 / Codex
+
+- Decision: `CoinbaseProcessed` remains an `apply_*` ordering invariant, not a `validate_*` mempool invariant.
+  Rationale: the flag is per-block execution state. Reading it during transaction-pool validation against the previous best block incorrectly makes every next-block unsigned transfer stale on a chain that mints a coinbase every block.
   Date/Author: 2026-03-11 / Codex
 
 ## Outcomes & Retrospective

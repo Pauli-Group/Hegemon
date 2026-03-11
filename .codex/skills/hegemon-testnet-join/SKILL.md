@@ -13,7 +13,7 @@ Connect a new node to the Hegemon testnet, verify it is on the canonical chain, 
 # Defaults
 - Approved public seed list: hegemon.pauli.group:30333,158.69.222.121:30333
 - Chain spec: config/dev-chainspec.json
-- Chainspec SHA-256: 53b91533a63d0cc619be9c314fa34c4ef8d45fd67d8eab4dad7b568d04cee093
+- Chainspec SHA-256: bfeec5a92d0f0a981c6e0ff6997e2a3556858ea139a5835e09b7e1686b43ae99
 - Genesis hash: 0x85cd1fb8f6a79054a672e6247da1c21e75c2fd2ef9e78d195de85f5846b935cf
 - RPC port: 9944
 - P2P listen: /ip4/0.0.0.0/tcp/30333
@@ -25,7 +25,7 @@ Connect a new node to the Hegemon testnet, verify it is on the canonical chain, 
    - cargo build --release -p walletd
 2. Verify the shared chainspec matches the boot node. Do not use --chain dev.
    - shasum -a 256 config/dev-chainspec.json
-   - Expected: 53b91533a63d0cc619be9c314fa34c4ef8d45fd67d8eab4dad7b568d04cee093
+   - Expected: bfeec5a92d0f0a981c6e0ff6997e2a3556858ea139a5835e09b7e1686b43ae99
 3. Create or open a wallet and export the shielded mining address:
    - export HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "YOUR_PASSPHRASE" \
      | ./target/release/walletd --store ~/.hegemon-wallet --mode open \

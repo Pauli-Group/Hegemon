@@ -1040,9 +1040,6 @@ pub mod pallet {
             ) {
                 return Err(InvalidTransaction::Call);
             }
-            if CoinbaseProcessed::<T>::get() {
-                return Err(InvalidTransaction::Stale);
-            }
             if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
                 return Err(InvalidTransaction::ExhaustsResources);
             }
@@ -1136,9 +1133,6 @@ pub mod pallet {
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if Self::ensure_stablecoin_binding(stablecoin).is_err() {
                 return Err(InvalidTransaction::Custom(7));
-            }
-            if CoinbaseProcessed::<T>::get() {
-                return Err(InvalidTransaction::Stale);
             }
             if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
                 return Err(InvalidTransaction::ExhaustsResources);
@@ -1254,9 +1248,6 @@ pub mod pallet {
                 types::CiphertextPolicy::InlineAllowed
             ) {
                 return Err(InvalidTransaction::Call);
-            }
-            if CoinbaseProcessed::<T>::get() {
-                return Err(InvalidTransaction::Stale);
             }
             if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
                 return Err(InvalidTransaction::ExhaustsResources);
@@ -2615,6 +2606,9 @@ mod mock;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use frame_support::BoundedVec;
+    use sp_runtime::traits::ValidateUnsigned;
+    use sp_runtime::transaction_validity::TransactionSource;
 
     #[test]
     fn note_commitment_matches_types() {
@@ -2627,5 +2621,61 @@ mod tests {
         let cm = circuit_note_commitment(1000, 0, &pk_recipient, &pk_auth, &rho, &r);
 
         assert_eq!(cm.len(), 48);
+    }
+
+    #[test]
+    fn validate_unsigned_transfer_is_not_rejected_by_persisted_coinbase_flag() {
+        mock::new_test_ext().execute_with(|| {
+            let anchor = pallet::MerkleTree::<mock::Test>::get().root();
+            pallet::CoinbaseProcessed::<mock::Test>::put(true);
+
+            let nullifiers: BoundedVec<[u8; 48], mock::MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+
+            let mut encrypted_note = types::EncryptedNote::default();
+            encrypted_note.ciphertext[0] = types::NOTE_ENCRYPTION_VERSION;
+            encrypted_note.ciphertext[1..3].copy_from_slice(&types::CRYPTO_SUITE_GAMMA.to_le_bytes());
+            let ciphertexts: BoundedVec<types::EncryptedNote, mock::MaxEncryptedNotesPerTx> =
+                vec![encrypted_note.clone()].try_into().unwrap();
+
+            let ciphertext_hashes = {
+                let mut bytes = Vec::new();
+                bytes.extend_from_slice(&encrypted_note.ciphertext);
+                bytes.extend_from_slice(&encrypted_note.kem_ciphertext);
+                vec![transaction_core::hashing_pq::ciphertext_hash_bytes(&bytes)]
+            };
+            let inputs = verifier::ShieldedTransferInputs {
+                anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                ciphertext_hashes,
+                fee: 0,
+                value_balance: 0,
+                stablecoin: None,
+            };
+            let binding_hash = verifier::StarkVerifier::compute_binding_hash(&inputs);
+
+            let call = crate::Call::<mock::Test>::shielded_transfer_unsigned {
+                proof: types::StarkProof::from_bytes(vec![1u8; 32]),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                binding_hash,
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity = pallet::Pallet::<mock::Test>::validate_unsigned(
+                TransactionSource::External,
+                &call,
+            );
+            assert!(
+                validity.is_ok(),
+                "persisted coinbase flag should not make next-block mempool transfers stale: {validity:?}"
+            );
+        });
     }
 }
