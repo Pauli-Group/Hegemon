@@ -184,6 +184,7 @@ const clampThreadCount = (threads: number | undefined) => {
 
 const nodeRequire = createRequire(import.meta.url);
 const hashWasmModulePath = nodeRequire.resolve('hash-wasm');
+const RPC_TIMEOUT_MS = 5_000;
 
 const normalizeEndpoint = (endpoint: string) => {
   const trimmed = endpoint.trim();
@@ -300,7 +301,7 @@ export class PoolMinerManager extends EventEmitter {
       this.workers.push(worker);
     }
 
-    await this.pollPool();
+    void this.pollPool();
   }
 
   async stop(): Promise<void> {
@@ -477,11 +478,24 @@ export class PoolMinerManager extends EventEmitter {
       method,
       params
     };
-    const response = await fetch(this.endpoint!, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(this.endpoint!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`RPC ${method} timed out after ${RPC_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       throw new Error(`RPC ${method} failed with ${response.status}`);
     }

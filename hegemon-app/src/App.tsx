@@ -3071,6 +3071,7 @@ export default function App() {
       </div>
       <p className="text-sm text-surfaceMuted">{miningHint}</p>
       {poolMinerError ? <p className="text-guard text-sm">{poolMinerError}</p> : null}
+      {!poolMinerError && poolMinerStatus?.error ? <p className="text-guard text-sm">{poolMinerStatus.error}</p> : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <div className="panel">
