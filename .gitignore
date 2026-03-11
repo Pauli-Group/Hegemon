@@ -16,6 +16,7 @@ tmp/
 .env.testnet
 keys/
 config/testnet-*.json
+config/testnet-*.md
 
 # Wallet artifacts and keys
 export.json
