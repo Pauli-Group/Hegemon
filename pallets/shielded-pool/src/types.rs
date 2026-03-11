@@ -202,6 +202,7 @@ pub type ProverCompensationClaim = ArtifactClaim;
     Debug,
     PartialEq,
     Eq,
+    Hash,
     Encode,
     Decode,
     DecodeWithMemTracking,

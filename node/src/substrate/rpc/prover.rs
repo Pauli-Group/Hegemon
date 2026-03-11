@@ -90,6 +90,7 @@ pub struct CandidateArtifactResponse {
     pub artifact_hash: String,
     pub tx_statements_commitment: String,
     pub tx_count: u32,
+    pub candidate_txs: Vec<String>,
     pub payload: String,
 }
 
@@ -403,20 +404,25 @@ impl ProverApiServer for ProverRpc {
 
         let artifact = self
             .coordinator
-            .lookup_candidate_artifact_by_hash(artifact_hash_bytes);
-        Ok(artifact.map(|artifact| CandidateArtifactResponse {
+            .lookup_prepared_bundle_by_hash(artifact_hash_bytes);
+        Ok(artifact.map(|bundle| CandidateArtifactResponse {
             artifact_hash: format!(
                 "0x{}",
                 hex::encode(crate::substrate::artifact_market::candidate_artifact_hash(
-                    &artifact,
+                    &bundle.payload,
                 ))
             ),
             tx_statements_commitment: format!(
                 "0x{}",
-                hex::encode(artifact.tx_statements_commitment)
+                hex::encode(bundle.payload.tx_statements_commitment)
             ),
-            tx_count: artifact.tx_count,
-            payload: format!("0x{}", hex::encode(artifact.encode())),
+            tx_count: bundle.payload.tx_count,
+            candidate_txs: bundle
+                .candidate_txs
+                .iter()
+                .map(|tx| format!("0x{}", hex::encode(tx)))
+                .collect(),
+            payload: format!("0x{}", hex::encode(bundle.payload.encode())),
         }))
     }
 }

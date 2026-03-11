@@ -3145,6 +3145,8 @@ fn prepare_block_proof_bundle(
             parent_hash,
             tx_statements_commitment,
             tx_count,
+            proof_mode: payload.proof_mode,
+            artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(&payload),
         },
         payload,
         candidate_txs,
@@ -6755,6 +6757,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Auto-start mining if HEGEMON_MINE=1 is set
     let mined_block_store = Arc::new(parking_lot::Mutex::new(Vec::<MinedBlockRecord>::new()));
     let mut prover_coordinator_for_rpc: Option<Arc<ProverCoordinator>> = None;
+    let prover_coordinator_shared: Arc<parking_lot::RwLock<Option<Arc<ProverCoordinator>>>> =
+        Arc::new(parking_lot::RwLock::new(None));
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         pow_handle.start_mining();
@@ -6986,6 +6990,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let client_for_network = client.clone();
                 let da_chunk_store_for_handler = Arc::clone(&da_chunk_store);
                 let da_request_tracker_for_handler = Arc::clone(&da_request_tracker);
+                let prover_coordinator_for_events = Arc::clone(&prover_coordinator_shared);
                 let peer_count_for_rpc = Arc::clone(&peer_count);
                 let peer_details_for_events = Arc::clone(&peer_details);
                 let peer_graph_reports_for_events = Arc::clone(&peer_graph_reports);
@@ -7419,8 +7424,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    }
                                     // Handle sync protocol messages
                                     use crate::substrate::network_bridge::{
-                                        BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,
-                                        DA_CHUNKS_PROTOCOL, SYNC_PROTOCOL,
+                                        ArtifactProtocolMessage, BlockAnnounce, DaChunkProtocolMessage,
+                                        ARTIFACTS_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL, DA_CHUNKS_PROTOCOL,
+                                        SYNC_PROTOCOL,
                                     };
                                     use crate::substrate::network_bridge::SyncMessage;
                                     // Handle sync protocol messages
@@ -7564,6 +7570,88 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     error = %e,
                                                     data_len = data.len(),
                                                     "Failed to decode DA chunk message"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    else if protocol == ARTIFACTS_PROTOCOL {
+                                        match ArtifactProtocolMessage::decode(&mut &data[..]) {
+                                            Ok(ArtifactProtocolMessage::Announcement {
+                                                artifact_hash,
+                                                ..
+                                            }) => {
+                                                let coordinator =
+                                                    prover_coordinator_for_events.read().clone();
+                                                if let Some(coordinator) = coordinator {
+                                                    if coordinator
+                                                        .lookup_prepared_bundle_by_hash(artifact_hash)
+                                                        .is_none()
+                                                    {
+                                                        let request = ArtifactProtocolMessage::Request {
+                                                            artifact_hash,
+                                                        };
+                                                        let _ = pq_handle_for_status
+                                                            .send_message(
+                                                                peer_id,
+                                                                ARTIFACTS_PROTOCOL.to_string(),
+                                                                request.encode(),
+                                                            )
+                                                            .await;
+                                                    }
+                                                }
+                                            }
+                                            Ok(ArtifactProtocolMessage::Request { artifact_hash }) => {
+                                                let coordinator =
+                                                    prover_coordinator_for_events.read().clone();
+                                                if let Some(coordinator) = coordinator {
+                                                    let response = if let Some(bundle) =
+                                                        coordinator.lookup_prepared_bundle_by_hash(
+                                                            artifact_hash,
+                                                        )
+                                                    {
+                                                        ArtifactProtocolMessage::Response {
+                                                            artifact_hash,
+                                                            payload: bundle.payload,
+                                                            candidate_txs: bundle.candidate_txs,
+                                                        }
+                                                    } else {
+                                                        ArtifactProtocolMessage::NotFound {
+                                                            artifact_hash,
+                                                        }
+                                                    };
+                                                    let _ = pq_handle_for_status
+                                                        .send_message(
+                                                            peer_id,
+                                                            ARTIFACTS_PROTOCOL.to_string(),
+                                                            response.encode(),
+                                                        )
+                                                        .await;
+                                                }
+                                            }
+                                            Ok(ArtifactProtocolMessage::Response {
+                                                artifact_hash: _,
+                                                payload,
+                                                candidate_txs,
+                                            }) => {
+                                                let coordinator =
+                                                    prover_coordinator_for_events.read().clone();
+                                                if let Some(coordinator) = coordinator {
+                                                    let parent_hash =
+                                                        client_for_network.chain_info().best_hash;
+                                                    coordinator.import_network_artifact(
+                                                        parent_hash,
+                                                        payload,
+                                                        candidate_txs,
+                                                    );
+                                                }
+                                            }
+                                            Ok(ArtifactProtocolMessage::NotFound { .. }) => {}
+                                            Err(e) => {
+                                                tracing::debug!(
+                                                    peer = %hex::encode(peer_id),
+                                                    protocol = %protocol,
+                                                    error = %e,
+                                                    "Failed to decode artifact protocol message"
                                                 );
                                             }
                                         }
@@ -9322,6 +9410,51 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         );
         prover_coordinator.start();
         prover_coordinator_for_rpc = Some(Arc::clone(&prover_coordinator));
+        *prover_coordinator_shared.write() = Some(Arc::clone(&prover_coordinator));
+        if let Some(handle) = pq_network_handle.clone() {
+            let coordinator_for_broadcast = Arc::clone(&prover_coordinator);
+            task_manager.spawn_handle().spawn(
+                "artifact-announcement-broadcast",
+                Some("network"),
+                async move {
+                    use crate::substrate::network_bridge::{
+                        ArtifactProtocolMessage, ARTIFACTS_PROTOCOL,
+                    };
+                    use std::collections::HashSet;
+
+                    let mut announced = HashSet::<[u8; 32]>::new();
+                    let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+                    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                    loop {
+                        tick.tick().await;
+                        let announcements = coordinator_for_broadcast.list_artifact_announcements();
+                        for announcement in announcements {
+                            if !announced.insert(announcement.artifact_hash) {
+                                continue;
+                            }
+                            let msg = ArtifactProtocolMessage::Announcement {
+                                artifact_hash: announcement.artifact_hash,
+                                tx_statements_commitment: announcement.tx_statements_commitment,
+                                tx_count: announcement.tx_count,
+                                proof_mode: match announcement.proof_mode {
+                                    consensus::ProvenBatchMode::FlatBatches => {
+                                        pallet_shielded_pool::types::BlockProofMode::FlatBatches
+                                    }
+                                    consensus::ProvenBatchMode::MergeRoot => {
+                                        pallet_shielded_pool::types::BlockProofMode::MergeRoot
+                                    }
+                                },
+                                claimed_payout_amount: announcement.claimed_payout_amount,
+                            };
+                            let _ = handle
+                                .broadcast_to_all(ARTIFACTS_PROTOCOL, msg.encode())
+                                .await;
+                        }
+                    }
+                },
+            );
+        }
 
         // =======================================================================
         // Wire pending_txs_fn to coordinator-selected transaction set

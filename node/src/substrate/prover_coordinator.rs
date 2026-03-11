@@ -12,6 +12,8 @@ pub struct BundleMatchKey {
     pub parent_hash: H256,
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
+    pub proof_mode: pallet_shielded_pool::types::BlockProofMode,
+    pub artifact_hash: [u8; 32],
 }
 
 #[derive(Clone, Debug)]
@@ -709,12 +711,16 @@ impl ProverCoordinator {
         tx_count: u32,
     ) -> Option<PreparedBundle> {
         let state = self.state.lock();
-        let key = BundleMatchKey {
-            parent_hash,
-            tx_statements_commitment,
-            tx_count,
-        };
-        state.prepared.get(&key).cloned()
+        state
+            .prepared
+            .values()
+            .filter(|bundle| {
+                bundle.key.parent_hash == parent_hash
+                    && bundle.key.tx_statements_commitment == tx_statements_commitment
+                    && bundle.key.tx_count == tx_count
+            })
+            .max_by(|left, right| compare_prepared_bundles(left, right))
+            .cloned()
     }
 
     pub fn lookup_prepared_bundle_any_parent(
@@ -740,6 +746,14 @@ impl ProverCoordinator {
         &self,
         artifact_hash: [u8; 32],
     ) -> Option<pallet_shielded_pool::types::CandidateArtifact> {
+        self.lookup_prepared_bundle_by_hash(artifact_hash)
+            .map(|bundle| bundle.payload)
+    }
+
+    pub fn lookup_prepared_bundle_by_hash(
+        &self,
+        artifact_hash: [u8; 32],
+    ) -> Option<PreparedBundle> {
         let state = self.state.lock();
         state
             .prepared
@@ -749,7 +763,29 @@ impl ProverCoordinator {
                     == artifact_hash
             })
             .cloned()
-            .map(|bundle| bundle.payload)
+    }
+
+    pub fn import_network_artifact(
+        &self,
+        parent_hash: H256,
+        payload: pallet_shielded_pool::types::CandidateArtifact,
+        candidate_txs: Vec<Vec<u8>>,
+    ) {
+        let mut state = self.state.lock();
+        let key = candidate_bundle_key(parent_hash, &payload);
+        let incoming = PreparedBundle {
+            key: key.clone(),
+            payload,
+            candidate_txs,
+            build_ms: 0,
+        };
+        let should_replace = match state.prepared.get(&key) {
+            Some(existing) => compare_prepared_bundles(&incoming, existing).is_gt(),
+            None => true,
+        };
+        if should_replace {
+            state.prepared.insert(key, incoming);
+        }
     }
 
     pub fn list_artifact_announcements(&self) -> Vec<consensus::ArtifactAnnouncement> {
@@ -1098,11 +1134,7 @@ impl ProverCoordinator {
             }
             Ok(())
         } else {
-            let key = BundleMatchKey {
-                parent_hash: package.parent_hash,
-                tx_statements_commitment: payload.tx_statements_commitment,
-                tx_count: payload.tx_count,
-            };
+            let key = candidate_bundle_key(package.parent_hash, &payload);
             let incoming = PreparedBundle {
                 key: key.clone(),
                 payload,
@@ -1179,13 +1211,7 @@ impl ProverCoordinator {
         };
         state.fanout_assemblies.remove(&candidate_set_id);
 
-        let tx_count = assembled_payload.tx_count;
-        let tx_statements_commitment = assembled_payload.tx_statements_commitment;
-        let key = BundleMatchKey {
-            parent_hash,
-            tx_statements_commitment,
-            tx_count,
-        };
+        let key = candidate_bundle_key(parent_hash, &assembled_payload);
         Ok(Some(PreparedBundle {
             key,
             payload: assembled_payload,
@@ -2233,6 +2259,19 @@ fn proof_mode_rank(mode: pallet_shielded_pool::types::BlockProofMode) -> u8 {
     }
 }
 
+fn candidate_bundle_key(
+    parent_hash: H256,
+    payload: &pallet_shielded_pool::types::CandidateArtifact,
+) -> BundleMatchKey {
+    BundleMatchKey {
+        parent_hash,
+        tx_statements_commitment: payload.tx_statements_commitment,
+        tx_count: payload.tx_count,
+        proof_mode: payload.proof_mode,
+        artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(payload),
+    }
+}
+
 fn claim_amount(bundle: &PreparedBundle) -> u64 {
     bundle
         .payload
@@ -2314,13 +2353,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
@@ -2355,13 +2391,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 std::thread::sleep(Duration::from_millis(150));
                 let commitment = [1u8; 48];
+                let payload = ready_payload(1, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count: 1,
-                    },
-                    payload: ready_payload(1, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 150,
                 })
@@ -2403,13 +2436,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 std::thread::sleep(Duration::from_millis(40));
                 let commitment = [1u8; 48];
+                let payload = ready_payload(1, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count: 1,
-                    },
-                    payload: ready_payload(1, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 40,
                 })
@@ -2652,13 +2682,10 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(140));
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 140,
                 })
@@ -2701,13 +2728,10 @@ mod tests {
                 let sleep_ms = if tx_count == 1 { 20 } else { 260 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: sleep_ms as u128,
                 })
@@ -2752,13 +2776,10 @@ mod tests {
                 let sleep_ms = if tx_count == 1 { 300 } else { 20 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: sleep_ms as u128,
                 })
@@ -2813,13 +2834,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
@@ -2862,13 +2880,10 @@ mod tests {
                 let sleep_ms = if tx_count == 1 { 20 } else { 260 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: sleep_ms as u128,
                 })
@@ -2981,13 +2996,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
@@ -3041,13 +3053,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
