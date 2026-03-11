@@ -1,18 +1,26 @@
-# Authoring pool upgrade runbook (public author + private prover backend)
+# Template-builder rollout runbook (`hegemon-ovh` public builder + `hegemon-prover` private prover)
 
 Use this runbook to move from the current “single public miner with local
-proving assumptions” setup to the first pooled-authoring topology for Hegemon.
+proving assumptions” setup to the first permissionless-template-builder
+topology for Hegemon.
 The goal is simple:
 
-- one node becomes the only public authoring node
-- one private machine contributes proving over an outbound-only tunnel
+- `hegemon-ovh` becomes the only public template builder / compact-job endpoint
+- `hegemon-prover` contributes proving over an outbound-only tunnel
 - users can participate as pooled hashers or full nodes without needing proving
   hardware.
 
 This is the right intermediate step because it increases participation and PoW
 security immediately while preserving prover efficiency. A single prepared
-bundle can feed many hashers; weak machines do not need to become independent
-shielded block authors.
+artifact-backed template can feed many hashers; weak machines do not need to
+become independent shielded block authors.
+
+Before doing any server work, follow
+[config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md).
+The laptop-created `hegemon-boot-wallet` address must be configured as both
+`HEGEMON_MINER_ADDRESS` and `HEGEMON_PROVER_REWARD_ADDRESS` on the laptop,
+`hegemon-ovh`, and `hegemon-prover`. Do not copy the wallet store to either
+server.
 
 > **Current repository status:** the node already exposes coordinator-side
 > `prover_*` RPC methods for external work packages. The repo now also ships
@@ -26,35 +34,38 @@ shielded block authors.
 
 Treat the deployment as three roles:
 
-- **Authoring pool node**: public-facing node that accepts
-  wallet traffic, canonicalizes candidate sets, schedules proving, assembles
-  ready block bundles, and broadcasts final blocks.
+- **Public template-builder node (`hegemon-ovh`)**: public-facing node that
+  accepts wallet traffic, canonicalizes candidate sets, schedules proving,
+  assembles ready artifacts/templates, and broadcasts final blocks.
 - **Private prover backend**: non-public machine that pulls
-  `prover_*` work packages from the author over a private tunnel and returns
+  `prover_*` work packages from the builder over a private tunnel and returns
   results.
 - **Participants (laptop, app users, community miners)**: pooled hashers or
   full nodes. They should not be independent shielded block authors unless they
   bring their own proving capacity and are prepared to operate as a separate
-  authoring pool.
+  template-builder / pool.
 
 The intended information flow is:
 
-1. Wallets submit portable self-contained transactions to the public authoring
+1. Wallets submit portable self-contained transactions to the public
+   template-builder
    node.
-2. The public authoring node canonicalizes the parent-scoped candidate set and starts
+2. The public template-builder node canonicalizes the parent-scoped candidate
+   set and starts
    prove-ahead scheduling.
 3. The private prover backend pulls deterministic proving work over the tunnel
    and submits results.
-4. The public authoring node assembles a ready `BlockProofBundle`.
+4. The public template-builder node assembles a ready `CandidateArtifact` and
+   compact mining job.
 5. Hash workers mine on the same prepared template.
-6. The winning share/nonce returns to the public authoring node, which
+6. The winning share/nonce returns to the public template-builder node, which
    broadcasts the block to the network.
 
 ## 2. Network boundaries
 
-### Public authoring node surface
+### Public template-builder node surface
 
-Expose only what is needed for the public authoring node:
+Expose only what is needed for the public template-builder node:
 
 - P2P listener for the Hegemon network.
 - pool/public API surface for pooled miners and app users.
@@ -76,8 +87,8 @@ The private prover backend should have:
 
 - no inbound public internet exposure
 - no public P2P listener requirement
-- only outbound connectivity to the public authoring node through WireGuard,
-  Tailscale, or an SSH reverse tunnel
+- only outbound connectivity to the public template-builder node through
+  WireGuard, Tailscale, or an SSH reverse tunnel
 
 The private prover should never become the first public entry point for users.
 

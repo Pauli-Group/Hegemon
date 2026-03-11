@@ -18,7 +18,10 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 - [x] (2026-03-11 18:05Z) Audited the current pool, prover, and mining surfaces in `node/src/substrate/rpc/hegemon.rs`, `node/src/substrate/rpc/prover.rs`, `node/src/substrate/service.rs`, `consensus/src/substrate_pow.rs`, and the runbooks.
 - [x] (2026-03-11 18:20Z) Re-scoped the redesign around the clarified target: fresh testnet, worldwide Bitcoin mining infrastructure, no mandatory two-stage block building, and no single privileged template server.
 - [x] (2026-03-11 19:05Z) Rewrote the plan around permissionless template builders, parent-agnostic candidate artifacts, compact ASIC-facing jobs, and a transaction lifecycle that keeps heavy proof bytes off the mining path.
-- [ ] Translate this plan into code milestones and cut the new testnet consensus surface, mining surface, artifact market, and template-builder path end to end.
+- [x] (2026-03-11 06:45Z) Cut the first fresh-testnet PoW migration slice: `consensus/src/substrate_pow.rs` now uses a 32-byte nonce plus `sha256d(pre_hash || nonce)`, the runtime PoW pallet/smoke tests were updated to the same nonce width and hash function, and the node RPC/mining surfaces were moved off implicit `u64` pool-share nonces.
+- [x] (2026-03-11 06:45Z) Added additive artifact-market and compact-job surfaces: `CandidateArtifact` / `ArtifactAnnouncement` / `ArtifactClaim` naming aliases were added in consensus/runtime-facing types, `node/src/substrate/artifact_market.rs` and `node/src/substrate/template_builder.rs` were introduced, `hegemon_compactJob` / `hegemon_submitCompactSolution` were added, and prover RPC now exposes artifact announcement + fetch endpoints.
+- [x] (2026-03-11 06:45Z) Updated operator/testnet docs for the laptop -> `hegemon-ovh` -> `hegemon-prover` rollout, including the boot-wallet flow, the approved `HEGEMON_SEEDS` list, the current `config/dev-chainspec.json` hash, and the SSH-tunneled private-prover topology.
+- [ ] Complete the deeper consensus/runtime cutover from legacy `BlockProofBundle` / centralized authoring assumptions to a fully inline `CandidateArtifact` block body and retire the remaining legacy pooled-hash compatibility path.
 
 ## Surprises & Discoveries
 
@@ -36,6 +39,15 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 
 - Observation: the current operator runbooks already treat common seed configuration and time sync as hard mining invariants.
   Evidence: `runbooks/miner_wallet_quickstart.md`, `runbooks/two_person_testnet.md`, and `runbooks/authoring_pool_upgrade.md` all insist on a shared approved `HEGEMON_SEEDS` list and NTP/chrony because partitions and future-skewed timestamps break PoW operation.
+
+- Observation: the node crate was already much closer to the target nonce width than the Substrate PoW helpers were.
+  Evidence: `consensus::header::PowSeal`, `node/src/miner.rs`, and the consensus test helpers already carry a `[u8; 32]` nonce, while `consensus/src/substrate_pow.rs`, runtime smoke tests, and pool-share RPC still assumed `u64`.
+
+- Observation: introducing the new artifact-market vocabulary can be done safely as an additive layer before the full block-body cutover.
+  Evidence: the existing proving path already flows through one reusable payload object (`BlockProofBundle` in the runtime, `ProvenBatch` in consensus) and one prepared-bundle cache (`node/src/substrate/prover_coordinator.rs`), which made `CandidateArtifact`/announcement surfaces straightforward to add without destabilizing proof generation first.
+
+- Observation: the currently advertised public seed endpoints still serve the old genesis and therefore cannot be reused for the laptop-only fresh-genesis smoke test.
+  Evidence: after regenerating `config/dev-chainspec.json` locally and starting a release node with the legacy public seeds, compatibility probes reported `peer_genesis=04d82e...` while the local fresh genesis was `cfe3ba0d...`, and the node stayed at height 0 until the stale peers were removed.
 
 ## Decision Log
 
@@ -69,6 +81,14 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 
 - Decision: the first fresh-testnet artifact path keeps winning blocks self-contained by carrying the chosen artifact inline in the block body.
   Rationale: miners should hash compact jobs, but import should not depend on an out-of-band artifact fetch on the critical path. The market can still distribute artifacts pre-block via announcements and fetch-on-demand; the final block should carry the winning artifact bytes for deterministic import.
+  Date/Author: 2026-03-11 / Codex
+
+- Decision: keep compatibility aliases for the old BLAKE3 and `BlockProofBundle` names while moving behavior and new public surfaces to SHA-256d and `CandidateArtifact`.
+  Rationale: the codebase has too many internal references to rename atomically without risking a half-working tree. The important requirement for the fresh testnet is behavioral: no real BLAKE3 mining path remains, and new miner/prover/operator surfaces should speak the new vocabulary first.
+  Date/Author: 2026-03-11 / Codex
+
+- Decision: split seed handling into two phases for rollout.
+  Rationale: before `hegemon-ovh` is redeployed onto the fresh chainspec, the current public endpoints still point at the old network and will only create incompatible peers. Local fresh-genesis smoke tests therefore run with no public seeds, and the approved shared seed list is published only after OVH is serving the fresh genesis.
   Date/Author: 2026-03-11 / Codex
 
 ## Outcomes & Retrospective

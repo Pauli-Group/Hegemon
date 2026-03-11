@@ -43,15 +43,16 @@ pub use protocol_versioning::{
 };
 pub use substrate::{BlockOrigin, ImportReceipt, import_pow_block};
 pub use substrate_pow::{
-    Blake3Algorithm, Blake3Seal, compact_to_target, compute_work, mine_round, seal_meets_target,
-    target_to_compact, verify_seal,
+    Blake3Algorithm, Blake3Seal, compact_to_target, compute_work, counter_to_nonce, mine_round,
+    nonce_counter_prefix, seal_meets_target, target_to_compact, verify_seal,
 };
 pub use types::{
-    BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, BatchProofItem, CoinbaseData, CoinbaseSource, Commitment,
-    ConsensusBlock, DaChunk, DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding,
-    DaParams, DaRoot, FeeCommitment, MergeRootMetadata, MergeRootProofPayload, Nullifier,
-    ProvenBatchMode, StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob,
-    da_root, encode_da_blob, encode_da_blob_multipage, verify_da_chunk, verify_da_multi_chunk,
+    ArtifactAnnouncement, ArtifactClaim, BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, BatchProofItem,
+    CandidateArtifact, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk,
+    DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot,
+    FeeCommitment, MergeRootMetadata, MergeRootProofPayload, Nullifier, ProvenBatchMode,
+    StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob, da_root,
+    encode_da_blob, encode_da_blob_multipage, verify_da_chunk, verify_da_multi_chunk,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

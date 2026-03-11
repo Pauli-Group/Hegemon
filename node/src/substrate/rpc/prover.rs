@@ -2,7 +2,7 @@
 
 use crate::substrate::prover_coordinator::{ProverCoordinator, RootFinalizeWorkData, WorkStatus};
 use base64::Engine;
-use codec::Decode;
+use codec::{Decode, Encode};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
@@ -51,7 +51,7 @@ pub struct RootFinalizePayloadResponse {
 pub struct SubmitWorkResultRequest {
     pub source: String,
     pub package_id: String,
-    /// SCALE-encoded `BlockProofBundle` bytes (0x-prefixed hex or base64).
+    /// SCALE-encoded `CandidateArtifact` bytes (0x-prefixed hex or base64).
     pub payload: String,
 }
 
@@ -74,6 +74,22 @@ pub struct MarketParamsResponse {
     pub max_submissions_per_package: u32,
     pub max_submissions_per_source: u32,
     pub max_payload_bytes: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtifactAnnouncementResponse {
+    pub artifact_hash: String,
+    pub tx_statements_commitment: String,
+    pub tx_count: u32,
+    pub proof_mode: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CandidateArtifactResponse {
+    pub artifact_hash: String,
+    pub tx_statements_commitment: String,
+    pub tx_count: u32,
+    pub payload: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +139,16 @@ pub trait ProverApi {
 
     #[method(name = "getStagePlanStatus")]
     async fn get_stage_plan_status(&self) -> RpcResult<StagePlanStatusResponse>;
+
+    #[method(name = "listArtifactAnnouncements")]
+    async fn list_artifact_announcements(&self) -> RpcResult<Vec<ArtifactAnnouncementResponse>>;
+
+    #[method(name = "getCandidateArtifact")]
+    async fn get_candidate_artifact(
+        &self,
+        tx_statements_commitment: String,
+        tx_count: u32,
+    ) -> RpcResult<Option<CandidateArtifactResponse>>;
 }
 
 pub struct ProverRpc {
@@ -212,14 +238,14 @@ impl ProverRpc {
     ) -> RpcResult<SubmitWorkResultResponse> {
         let payload_bytes = parse_bytes(&request.payload)?;
         let payload =
-            pallet_shielded_pool::types::BlockProofBundle::decode(&mut payload_bytes.as_slice())
+            pallet_shielded_pool::types::CandidateArtifact::decode(&mut payload_bytes.as_slice())
                 .map_err(|err| {
-                    ErrorObjectOwned::owned(
-                        INVALID_PARAMS_CODE,
-                        format!("failed to decode payload: {err}"),
-                        None::<()>,
-                    )
-                })?;
+                ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("failed to decode payload: {err}"),
+                    None::<()>,
+                )
+            })?;
 
         match self.coordinator.submit_external_work_result(
             &request.source,
@@ -234,6 +260,23 @@ impl ProverRpc {
                 accepted: false,
                 error: Some(err),
             }),
+        }
+    }
+
+    fn map_artifact_announcement(
+        announcement: consensus::ArtifactAnnouncement,
+    ) -> ArtifactAnnouncementResponse {
+        ArtifactAnnouncementResponse {
+            artifact_hash: format!("0x{}", hex::encode(announcement.artifact_hash)),
+            tx_statements_commitment: format!(
+                "0x{}",
+                hex::encode(announcement.tx_statements_commitment)
+            ),
+            tx_count: announcement.tx_count,
+            proof_mode: match announcement.proof_mode {
+                consensus::ProvenBatchMode::FlatBatches => "flat_batches".to_string(),
+                consensus::ProvenBatchMode::MergeRoot => "merge_root".to_string(),
+            },
         }
     }
 }
@@ -329,6 +372,53 @@ impl ProverApiServer for ProverRpc {
                 .collect(),
         })
     }
+
+    async fn list_artifact_announcements(&self) -> RpcResult<Vec<ArtifactAnnouncementResponse>> {
+        Ok(self
+            .coordinator
+            .list_artifact_announcements()
+            .into_iter()
+            .map(Self::map_artifact_announcement)
+            .collect())
+    }
+
+    async fn get_candidate_artifact(
+        &self,
+        tx_statements_commitment: String,
+        tx_count: u32,
+    ) -> RpcResult<Option<CandidateArtifactResponse>> {
+        let commitment = parse_bytes(&tx_statements_commitment)?;
+        if commitment.len() != 48 {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                format!(
+                    "expected 48-byte tx_statements_commitment, got {}",
+                    commitment.len()
+                ),
+                None::<()>,
+            ));
+        }
+        let mut tx_commitment = [0u8; 48];
+        tx_commitment.copy_from_slice(&commitment);
+
+        let artifact = self
+            .coordinator
+            .lookup_candidate_artifact_any_parent(tx_commitment, tx_count);
+        Ok(artifact.map(|artifact| CandidateArtifactResponse {
+            artifact_hash: format!(
+                "0x{}",
+                hex::encode(crate::substrate::artifact_market::candidate_artifact_hash(
+                    &artifact,
+                ))
+            ),
+            tx_statements_commitment: format!(
+                "0x{}",
+                hex::encode(artifact.tx_statements_commitment)
+            ),
+            tx_count: artifact.tx_count,
+            payload: format!("0x{}", hex::encode(artifact.encode())),
+        }))
+    }
 }
 
 fn parse_bytes(value: &str) -> Result<Vec<u8>, ErrorObjectOwned> {
@@ -361,8 +451,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    fn payload(tx_count: u32) -> pallet_shielded_pool::types::BlockProofBundle {
-        pallet_shielded_pool::types::BlockProofBundle {
+    fn payload(tx_count: u32) -> pallet_shielded_pool::types::CandidateArtifact {
+        pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count,
             tx_statements_commitment: [5u8; 48],
@@ -495,6 +585,19 @@ mod tests {
         assert_eq!(params.max_submissions_per_package, 4);
         assert_eq!(params.max_submissions_per_source, 4);
         assert_eq!(params.max_payload_bytes, 1024);
+
+        let announcements = rpc
+            .list_artifact_announcements()
+            .await
+            .expect("announcement call should succeed");
+        assert!(!announcements.is_empty());
+        let artifact = rpc
+            .get_candidate_artifact(format!("0x{}", hex::encode([5u8; 48])), package.tx_count)
+            .await
+            .expect("artifact call should succeed")
+            .expect("artifact should exist");
+        assert_eq!(artifact.tx_count, package.tx_count);
+        assert!(artifact.payload.starts_with("0x"));
 
         let stage_status = rpc
             .get_stage_plan_status()

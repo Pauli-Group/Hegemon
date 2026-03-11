@@ -313,7 +313,7 @@ pub fn build_transaction_with_binding(
     }
     let ciphertext_hashes = ciphertexts
         .iter()
-        .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+        .map(|ct| ct.to_pallet_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
         .collect::<Result<Vec<_>, _>>()?;
     let witness = TransactionWitness {
         inputs,
@@ -541,7 +541,7 @@ pub fn build_stablecoin_burn(
 
     let ciphertext_hashes = ciphertexts
         .iter()
-        .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+        .map(|ct| ct.to_pallet_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
         .collect::<Result<Vec<_>, _>>()?;
     let witness = TransactionWitness {
         inputs,

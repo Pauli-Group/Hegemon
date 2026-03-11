@@ -544,11 +544,11 @@ pub mod pow {
         PowBlockImported {
             author: T::AccountId,
             pow_bits: u32,
-            nonce: u64,
+            nonce: [u8; 32],
         },
         PowInvalidSeal {
             pow_bits: u32,
-            nonce: u64,
+            nonce: [u8; 32],
         },
     }
 
@@ -567,7 +567,7 @@ pub mod pow {
         pub fn submit_work(
             origin: OriginFor<T>,
             pre_hash: H256,
-            nonce: u64,
+            nonce: [u8; 32],
             pow_bits: u32,
             timestamp: Moment,
         ) -> DispatchResult {
@@ -597,10 +597,12 @@ pub mod pow {
     }
 
     impl<T: Config> Pallet<T> {
-        fn seal_meets_target(pre_hash: H256, nonce: u64, pow_bits: u32) -> bool {
-            let mut data = pre_hash.as_bytes().to_vec();
-            data.extend_from_slice(&nonce.to_le_bytes());
-            let hash = sp_io::hashing::blake2_256(&data);
+        fn seal_meets_target(pre_hash: H256, nonce: [u8; 32], pow_bits: u32) -> bool {
+            let mut data = [0u8; 64];
+            data[..32].copy_from_slice(pre_hash.as_bytes());
+            data[32..].copy_from_slice(&nonce);
+            let first = sp_io::hashing::sha2_256(&data);
+            let hash = sp_io::hashing::sha2_256(&first);
             let hash_u256 = U256::from_big_endian(&hash);
             if let Some(target) = Self::compact_to_target(pow_bits) {
                 hash_u256 <= target
@@ -679,14 +681,7 @@ pub mod pow {
             })
         }
 
-        fn note_validator(account: T::AccountId) {
-            let _ = Validators::<T>::try_mutate(|vals| {
-                if !vals.contains(&account) {
-                    let _ = vals.try_push(account);
-                }
-                Ok::<(), ()>(())
-            });
-        }
+        fn note_validator(_account: T::AccountId) {}
     }
 }
 
@@ -1327,10 +1322,18 @@ mod tests {
         Some(target)
     }
 
-    fn seal_meets_target(pre_hash: H256, nonce: u64, pow_bits: u32) -> bool {
-        let mut data = pre_hash.as_bytes().to_vec();
-        data.extend_from_slice(&nonce.to_le_bytes());
-        let hash = sp_io::hashing::blake2_256(&data);
+    fn counter_to_nonce(counter: u64) -> [u8; 32] {
+        let mut nonce = [0u8; 32];
+        nonce[..8].copy_from_slice(&counter.to_le_bytes());
+        nonce
+    }
+
+    fn seal_meets_target(pre_hash: H256, nonce: [u8; 32], pow_bits: u32) -> bool {
+        let mut data = [0u8; 64];
+        data[..32].copy_from_slice(pre_hash.as_bytes());
+        data[32..].copy_from_slice(&nonce);
+        let first = sp_io::hashing::sha2_256(&data);
+        let hash = sp_io::hashing::sha2_256(&first);
         let hash_u256 = U256::from_big_endian(&hash);
         if let Some(target) = compact_to_target(pow_bits) {
             hash_u256 <= target
@@ -1339,8 +1342,9 @@ mod tests {
         }
     }
 
-    fn valid_nonce(pre_hash: H256, pow_bits: u32) -> u64 {
+    fn valid_nonce(pre_hash: H256, pow_bits: u32) -> [u8; 32] {
         (0u64..)
+            .map(counter_to_nonce)
             .find(|candidate| seal_meets_target(pre_hash, *candidate, pow_bits))
             .expect("nonce available for easy difficulty")
     }
@@ -1390,6 +1394,7 @@ mod tests {
             pow::Difficulty::<Runtime>::put(pow_bits);
             let pre_hash = H256::repeat_byte(9);
             let bad_nonce = (0u64..)
+                .map(counter_to_nonce)
                 .find(|candidate| !seal_meets_target(pre_hash, *candidate, pow_bits))
                 .expect("non-matching nonce exists");
 

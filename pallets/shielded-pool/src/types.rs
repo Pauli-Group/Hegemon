@@ -190,6 +190,9 @@ pub struct ProverCompensationClaim {
     pub claim_signature: BoundedVec<u8, ConstU32<MAX_PROVER_CLAIM_SIGNATURE_LEN>>,
 }
 
+/// Fresh-testnet consensus payout claim for an included candidate artifact.
+pub type ArtifactClaim = ProverCompensationClaim;
+
 /// Per-block payload that carries all consensus-required proof material for
 /// self-contained aggregation blocks.
 #[derive(
@@ -273,6 +276,22 @@ pub struct BlockProofBundle {
     pub merge_root: Option<MergeRootProofPayload>,
     /// Optional external prover payout claim.
     pub prover_claim: Option<ProverCompensationClaim>,
+}
+
+/// Parent-agnostic proof object over an ordered transaction set.
+///
+/// The current runtime keeps the legacy encoding so nodes can migrate the
+/// operator and RPC surfaces first, then cut over the full block body wiring.
+pub type CandidateArtifact = BlockProofBundle;
+
+/// Public metadata for announcing a reusable candidate artifact without
+/// sending the full payload immediately.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct ArtifactAnnouncement {
+    pub artifact_hash: [u8; 32],
+    pub tx_statements_commitment: [u8; 48],
+    pub tx_count: u32,
+    pub proof_mode: BlockProofMode,
 }
 
 #[deprecated(note = "Use BLOCK_PROOF_BUNDLE_SCHEMA instead.")]

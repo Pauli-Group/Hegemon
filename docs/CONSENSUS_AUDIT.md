@@ -15,9 +15,9 @@ This repo currently implements some “consensus-like” gates (proof verificati
 
 ### PoW and fork-choice (Substrate path)
 
-The Substrate node uses `sc-consensus-pow` with a Blake3-based seal format and a runtime-provided difficulty:
+The Substrate node uses `sc-consensus-pow` with a SHA-256d seal format and a runtime-provided difficulty:
 
-- Seal and work function: `blake3(pre_hash || nonce)` and `work <= target(bits)` (`consensus/src/substrate_pow.rs`).
+- Seal and work function: `sha256d(pre_hash || nonce)` with a 32-byte nonce, and `work <= target(bits)` (`consensus/src/substrate_pow.rs`).
 - Difficulty source of truth: runtime API `DifficultyApi::difficulty() -> U256` backed by `pallet-difficulty` storage (`runtime/src/apis.rs`, `pallets/difficulty/src/lib.rs`).
 - Import pipeline: `sc_consensus_pow::PowBlockImport` is instantiated in `node/src/substrate/service.rs` and used for network block import (`node/src/substrate/service.rs`).
 
@@ -55,8 +55,8 @@ This stack is not what `hegemon-node` imports/produces today. Until the repo cho
 
 | Topic | `consensus/spec/consensus_protocol.md` (legacy spec) | `hegemon-node` (shipping Substrate path) | Risk |
 |---|---|---|---|
-| PoW hash | Mentions `sha256d(...)` | Blake3 seal: `blake3(pre_hash || nonce)` | Cross-implementation confusion; incorrect audits |
-| Nonce width | 256-bit nonce | `Blake3Seal.nonce: u64` | Mismatch in security analysis + header formats |
+| PoW hash | Mentions `sha256d(...)` | SHA-256d seal: `sha256d(pre_hash || nonce)` | Remaining divergence is the Substrate pre-hash/source-of-header encoding, not the work function |
+| Nonce width | 256-bit nonce | `Sha256dSeal.nonce: [u8; 32]` | Fresh-testnet nonce surface now matches the spec width |
 | Difficulty window | `RETARGET_WINDOW = 120` | `pallet-difficulty` uses `RETARGET_INTERVAL = 10` | Spec does not match chain behavior |
 | Timestamp rules | Median-time-past, +90s skew | Substrate timestamp inherent checks; no explicit MTP in runtime | Different reorg/acceptance surface |
 | Fork choice | “cumulative work” | `PowBlockImport` cumulative difficulty (callers leave `fork_choice` unset) | Keep this invariant covered by tests |
@@ -83,7 +83,7 @@ The following invariants are phrased so they can be turned into tests. Treat the
 
 - **No manual fork-choice override for PoW imports**: code that calls `sc_consensus_pow::PowBlockImport::import_block` MUST leave `BlockImportParams.fork_choice` as `None`, so the PoW engine can set `ForkChoiceStrategy::Custom` based on total difficulty.
 - **Seal placement is canonical**: imported network headers MUST have the PoW seal removed from the header digest and provided via `post_digests.last()` (Substrate PoW engine requirement).
-- **Difficulty coherence**: `ConsensusApi::difficulty_bits()` MUST be consistent with `DifficultyApi::difficulty()` (i.e., `difficulty_bits == target_to_compact(U256::MAX / difficulty)` within the tolerance that `consensus::Blake3Algorithm` enforces).
+- **Difficulty coherence**: `ConsensusApi::difficulty_bits()` MUST be consistent with `DifficultyApi::difficulty()` (i.e., `difficulty_bits == target_to_compact(U256::MAX / difficulty)` within the tolerance that `consensus::Sha256dAlgorithm` enforces).
 
 Suggested tests:
 - Unit/integration test in `tests/multi_node_substrate.rs` that exercises the network import path and asserts the `PowBlockImport` fork-choice is not overridden.

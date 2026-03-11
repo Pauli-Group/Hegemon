@@ -1,11 +1,11 @@
-//! Blake3 PoW Algorithm Tests
+//! SHA-256d PoW Algorithm Tests
 //!
-//! Comprehensive tests for the Blake3-based Proof of Work algorithm
+//! Comprehensive tests for the SHA-256d-based Proof of Work algorithm
 //! as specified in Phase 2 of the Substrate migration plan.
 
 use consensus::{
-    Blake3Seal, compact_to_target, compute_work, mine_round, seal_meets_target, target_to_compact,
-    verify_seal,
+    Blake3Seal, compact_to_target, compute_work, counter_to_nonce, mine_round,
+    nonce_counter_prefix, seal_meets_target, target_to_compact, verify_seal,
 };
 use sp_core::{H256, U256};
 
@@ -89,7 +89,7 @@ fn test_verify_rejects_invalid_seal() {
 
     // Create invalid seal with wrong nonce
     let invalid_seal = Blake3Seal {
-        nonce: valid_seal.nonce.wrapping_add(1),
+        nonce: counter_to_nonce(nonce_counter_prefix(&valid_seal.nonce).wrapping_add(1)),
         difficulty,
         work: valid_seal.work, // Work won't match new nonce
     };
@@ -150,7 +150,7 @@ fn test_target_compact_roundtrip() {
 #[test]
 fn test_compute_work_deterministic() {
     let pre_hash = H256::repeat_byte(0xab);
-    let nonce = 12345u64;
+    let nonce = counter_to_nonce(12_345);
 
     let work1 = compute_work(&pre_hash, nonce);
     let work2 = compute_work(&pre_hash, nonce);
@@ -163,8 +163,8 @@ fn test_compute_work_deterministic() {
 fn test_compute_work_varies_with_nonce() {
     let pre_hash = H256::repeat_byte(0xab);
 
-    let work1 = compute_work(&pre_hash, 1);
-    let work2 = compute_work(&pre_hash, 2);
+    let work1 = compute_work(&pre_hash, counter_to_nonce(1));
+    let work2 = compute_work(&pre_hash, counter_to_nonce(2));
 
     assert_ne!(work1, work2);
 }
@@ -172,7 +172,7 @@ fn test_compute_work_varies_with_nonce() {
 /// Test compute_work produces different results for different pre_hashes
 #[test]
 fn test_compute_work_varies_with_prehash() {
-    let nonce = 12345u64;
+    let nonce = counter_to_nonce(12_345);
 
     let work1 = compute_work(&H256::repeat_byte(0x01), nonce);
     let work2 = compute_work(&H256::repeat_byte(0x02), nonce);
@@ -234,13 +234,13 @@ fn test_mined_solution_is_valid() {
     assert_eq!(seal.work, expected_work);
 }
 
-/// Test Blake3Seal encoding/decoding
+/// Test PoW seal encoding/decoding
 #[test]
 fn test_blake3_seal_codec() {
     use codec::{Decode, Encode};
 
     let seal = Blake3Seal {
-        nonce: 0x123456789abcdef0,
+        nonce: counter_to_nonce(0x123456789abcdef0),
         difficulty: 0x1d00ffff,
         work: H256::repeat_byte(0x55),
     };
@@ -303,8 +303,10 @@ fn test_mining_rounds_cover_different_ranges() {
 
     // If both found solutions, their nonces should be in different ranges
     if let (Some(s0), Some(s1)) = (seal_round_0, seal_round_1) {
-        assert!(s0.nonce < nonces_per_round);
-        assert!(s1.nonce >= nonces_per_round && s1.nonce < 2 * nonces_per_round);
+        let nonce0 = nonce_counter_prefix(&s0.nonce);
+        let nonce1 = nonce_counter_prefix(&s1.nonce);
+        assert!(nonce0 < nonces_per_round);
+        assert!(nonce1 >= nonces_per_round && nonce1 < 2 * nonces_per_round);
     }
 }
 

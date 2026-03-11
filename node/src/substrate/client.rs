@@ -319,7 +319,7 @@ impl ChainStateProvider for SubstrateChainStateProvider {
         tracing::info!(
             block_number = template.number,
             block_hash = %hex::encode(block_hash.as_bytes()),
-            nonce = seal.nonce,
+            nonce = ?seal.nonce,
             "Block imported to SubstrateChainStateProvider (full import via PowBlockImport pending - Task 10.3)"
         );
 
@@ -1128,7 +1128,7 @@ mod tests {
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         let seal = Blake3Seal {
-            nonce: 12345,
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
@@ -1210,7 +1210,7 @@ mod tests {
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         let seal = Blake3Seal {
-            nonce: 12345,
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
@@ -1284,7 +1284,7 @@ mod tests {
             .with_extrinsics(vec![tx1.clone(), tx2.clone()]);
 
         let seal = Blake3Seal {
-            nonce: 1,
+            nonce: consensus::counter_to_nonce(1),
             difficulty: 0x1f_00_ff_ff,
             work: H256::zero(),
         };

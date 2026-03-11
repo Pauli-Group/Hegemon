@@ -30,10 +30,18 @@ fn compact_to_target(bits: u32) -> Option<sp_core::U256> {
     Some(target)
 }
 
-fn seal_meets_target(pre_hash: H256, nonce: u64, pow_bits: u32) -> bool {
-    let mut data = pre_hash.as_bytes().to_vec();
-    data.extend_from_slice(&nonce.to_le_bytes());
-    let hash = sp_io::hashing::blake2_256(&data);
+fn counter_to_nonce(counter: u64) -> [u8; 32] {
+    let mut nonce = [0u8; 32];
+    nonce[..8].copy_from_slice(&counter.to_le_bytes());
+    nonce
+}
+
+fn seal_meets_target(pre_hash: H256, nonce: [u8; 32], pow_bits: u32) -> bool {
+    let mut data = [0u8; 64];
+    data[..32].copy_from_slice(pre_hash.as_bytes());
+    data[32..].copy_from_slice(&nonce);
+    let first = sp_io::hashing::sha2_256(&data);
+    let hash = sp_io::hashing::sha2_256(&first);
     let hash_u256 = sp_core::U256::from_big_endian(&hash);
     if let Some(target) = compact_to_target(pow_bits) {
         hash_u256 <= target
@@ -42,8 +50,9 @@ fn seal_meets_target(pre_hash: H256, nonce: u64, pow_bits: u32) -> bool {
     }
 }
 
-fn valid_nonce(pre_hash: H256, pow_bits: u32) -> u64 {
+fn valid_nonce(pre_hash: H256, pow_bits: u32) -> [u8; 32] {
     (0u64..)
+        .map(counter_to_nonce)
         .find(|candidate| seal_meets_target(pre_hash, *candidate, pow_bits))
         .expect("nonce available for easy difficulty")
 }
@@ -91,6 +100,7 @@ fn pow_rejects_invalid_seal() {
         pow::Difficulty::<Runtime>::put(pow_bits);
         let pre_hash = H256::repeat_byte(9);
         let bad_nonce = (0u64..)
+            .map(counter_to_nonce)
             .find(|candidate| !seal_meets_target(pre_hash, *candidate, pow_bits))
             .expect("non-matching nonce exists");
 

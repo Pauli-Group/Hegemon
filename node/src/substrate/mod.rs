@@ -63,6 +63,7 @@
 //! - Task 11.6.2: Chain sync state machine ✅
 //! - Task 11.6.3: Warp sync (optional) 🔲
 
+pub mod artifact_market;
 pub mod block_import;
 pub mod chain_spec;
 pub mod client;
@@ -75,9 +76,11 @@ pub mod prover_coordinator;
 pub mod rpc;
 pub mod service;
 pub mod sync;
+pub mod template_builder;
 pub mod transaction_pool;
 
 // Re-export common types
+pub use artifact_market::{artifact_announcement, candidate_artifact_hash};
 pub use block_import::{
     create_mock_block_import, create_mock_block_import_from_env, extract_seal_from_header,
     verify_pow_seal, BlockImportConfig, ExtractedSeal, HegemonBlockImport, ImportError,
@@ -109,6 +112,7 @@ pub use sync::{
     ChainSyncService, PeerSyncState, SyncHandle, SyncState, SyncStats, HEADER_BATCH,
     MAX_BODIES_PER_RESPONSE, MAX_HEADERS_PER_RESPONSE,
 };
+pub use template_builder::{compact_job_from_work, job_id_for_work, CompactMiningJob};
 pub use transaction_pool::{
     MockTransactionPool, PoolBridgeStats, PoolError, SubmissionResult,
     TransactionPool as TransactionPoolTrait, TransactionPoolBridge, TransactionPoolConfig,

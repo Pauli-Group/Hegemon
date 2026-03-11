@@ -2,6 +2,11 @@
 
 This directory contains configuration and tools for deploying the Hegemon testnet.
 
+For the fresh-testnet rollout on the laptop + `hegemon-ovh` + `hegemon-prover`,
+follow [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md)
+before starting any host. The laptop-created boot-wallet address is the payout
+address that should be configured everywhere for mining and proving.
+
 ## Quick Start
 
 ### Prerequisites
@@ -128,13 +133,13 @@ The soak test monitors:
 To connect an external node to the testnet:
 
 ```bash
+HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333" \
 hegemon-node \
     --dev \
     --chain=config/testnet/testnet-raw.json \
     --base-path=/data/hegemon \
     --port=30333 \
     --rpc-port=9944 \
-    --bootnodes=/dns4/boot1.testnet.hegemon.network/tcp/30333/p2p/$BOOT1_PEER_ID \
     --name=my-node
 ```
 

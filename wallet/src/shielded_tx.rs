@@ -265,7 +265,7 @@ impl<'a> ShieldedTxBuilder<'a> {
 
         let ciphertext_hashes = ciphertexts
             .iter()
-            .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+            .map(|ct| ct.to_pallet_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Build witness

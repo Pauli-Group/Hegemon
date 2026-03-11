@@ -10321,7 +10321,7 @@ impl BlockImportTracker {
                 tracing::info!(
                     block_number = template.number,
                     block_hash = %hex::encode(block_hash.as_bytes()),
-                    nonce = seal.nonce,
+                    nonce = ?seal.nonce,
                     difficulty = seal.difficulty,
                     "Block imported via BlockImportTracker"
                 );
@@ -10423,7 +10423,7 @@ mod import_tests {
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         let seal = Blake3Seal {
-            nonce: 12345,
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
@@ -10449,7 +10449,7 @@ mod import_tests {
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         // Create invalid seal (work doesn't meet target)
         let seal = Blake3Seal {
-            nonce: 0,
+            nonce: consensus::counter_to_nonce(0),
             difficulty: 0x0300ffff,        // Very hard
             work: H256::repeat_byte(0xff), // Max value won't meet target
         };

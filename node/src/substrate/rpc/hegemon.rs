@@ -17,6 +17,7 @@
 //! | `hegemon_storageFootprint`| Get storage usage statistics             |
 //! | `hegemon_nodeConfig`      | Get node config snapshot                 |
 
+use crate::substrate::template_builder::compact_job_from_work;
 use consensus::{compute_work, seal_meets_target, Blake3Seal, MiningSolution, MiningWork};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
@@ -268,12 +269,33 @@ pub struct PoolWorkResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompactJobResponse {
+    pub available: bool,
+    pub job_id: Option<String>,
+    pub height: Option<u64>,
+    pub pre_hash: Option<String>,
+    pub parent_hash: Option<String>,
+    pub network_bits: Option<u32>,
+    pub share_bits: Option<u32>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubmitPoolShareRequest {
     pub worker_name: String,
-    pub nonce: u64,
+    pub nonce: String,
     pub pre_hash: String,
     pub parent_hash: String,
     pub height: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitCompactSolutionRequest {
+    pub worker_name: String,
+    pub job_id: String,
+    pub nonce: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
 }
@@ -416,11 +438,22 @@ pub trait HegemonApi {
     #[method(name = "poolWork")]
     async fn pool_work(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolWorkResponse>;
 
+    /// Get the current compact mining job.
+    #[method(name = "compactJob")]
+    async fn compact_job(&self, params: Option<PoolAuthParams>) -> RpcResult<CompactJobResponse>;
+
     /// Submit a pool share or full-target solution for the current template.
     #[method(name = "submitPoolShare")]
     async fn submit_pool_share(
         &self,
         request: SubmitPoolShareRequest,
+    ) -> RpcResult<SubmitPoolShareResponse>;
+
+    /// Submit a compact-job solution using an explicit `job_id` and 32-byte nonce.
+    #[method(name = "submitCompactSolution")]
+    async fn submit_compact_solution(
+        &self,
+        request: SubmitCompactSolutionRequest,
     ) -> RpcResult<SubmitPoolShareResponse>;
 
     /// Get aggregate share status for the current process.
@@ -571,6 +604,84 @@ where
             })
             .filter(|bits| *bits != 0)
             .unwrap_or(work.pow_bits)
+    }
+
+    fn submit_share_for_work(
+        &self,
+        worker_name: &str,
+        work: &MiningWork,
+        nonce: [u8; 32],
+    ) -> RpcResult<SubmitPoolShareResponse> {
+        let seal = Blake3Seal {
+            nonce,
+            difficulty: work.pow_bits,
+            work: compute_work(&work.pre_hash, nonce),
+        };
+        let share_bits = self.pool_share_bits_for_work(work);
+        let share_target_met = seal_meets_target(&seal.work, share_bits);
+        let network_target_met = seal_meets_target(&seal.work, work.pow_bits);
+
+        let mut stats = self.pool_share_stats.lock();
+        if !share_target_met {
+            stats.rejected = stats.rejected.saturating_add(1);
+            let (worker_accepted_shares, worker_rejected_shares) = {
+                let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+                worker_stats.rejected = worker_stats.rejected.saturating_add(1);
+                worker_stats.last_share_at_ms = Some(current_time_ms());
+                (worker_stats.accepted, worker_stats.rejected)
+            };
+            let accepted_shares = stats.accepted;
+            let rejected_shares = stats.rejected;
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("share does not meet configured pool target".to_string()),
+                accepted_shares,
+                rejected_shares,
+                worker_accepted_shares,
+                worker_rejected_shares,
+            });
+        }
+
+        stats.accepted = stats.accepted.saturating_add(1);
+        let (worker_accepted_shares, worker_rejected_shares) = {
+            let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+            worker_stats.accepted = worker_stats.accepted.saturating_add(1);
+            if network_target_met {
+                worker_stats.block_candidates = worker_stats.block_candidates.saturating_add(1);
+            }
+            worker_stats.last_share_at_ms = Some(current_time_ms());
+            (worker_stats.accepted, worker_stats.rejected)
+        };
+        let accepted_shares = stats.accepted;
+        let rejected_shares = stats.rejected;
+        drop(stats);
+
+        if network_target_met {
+            let solution = MiningSolution {
+                seal,
+                work: work.clone(),
+            };
+            self.pow_handle.submit_solution(solution).map_err(|err| {
+                ErrorObjectOwned::owned(
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                    format!("failed to forward full-difficulty solution: {err}"),
+                    None::<()>,
+                )
+            })?;
+        }
+
+        Ok(SubmitPoolShareResponse {
+            accepted: true,
+            block_candidate: network_target_met,
+            network_target_met,
+            error: None,
+            accepted_shares,
+            rejected_shares,
+            worker_accepted_shares,
+            worker_rejected_shares,
+        })
     }
 }
 
@@ -855,6 +966,39 @@ where
         })
     }
 
+    async fn compact_job(&self, params: Option<PoolAuthParams>) -> RpcResult<CompactJobResponse> {
+        self.ensure_pool_access_allowed(
+            params
+                .as_ref()
+                .and_then(|value| value.auth_token.as_deref()),
+        )?;
+
+        let Some(work) = self.pow_handle.current_work() else {
+            return Ok(CompactJobResponse {
+                available: false,
+                job_id: None,
+                height: None,
+                pre_hash: None,
+                parent_hash: None,
+                network_bits: None,
+                share_bits: None,
+                reason: Some("no active mining work template".to_string()),
+            });
+        };
+
+        let job = compact_job_from_work(&work, self.pool_share_bits_for_work(&work));
+        Ok(CompactJobResponse {
+            available: true,
+            job_id: Some(format!("0x{}", hex::encode(job.job_id))),
+            height: Some(job.height),
+            pre_hash: Some(format!("0x{}", hex::encode(job.pre_hash.as_bytes()))),
+            parent_hash: Some(format!("0x{}", hex::encode(job.parent_hash.as_bytes()))),
+            network_bits: Some(job.network_bits),
+            share_bits: Some(job.share_bits),
+            reason: None,
+        })
+    }
+
     async fn submit_pool_share(
         &self,
         request: SubmitPoolShareRequest,
@@ -917,76 +1061,58 @@ where
             });
         }
 
-        let seal = Blake3Seal {
-            nonce: request.nonce,
-            difficulty: work.pow_bits,
-            work: compute_work(&work.pre_hash, request.nonce),
-        };
-        let share_bits = self.pool_share_bits_for_work(&work);
-        let share_target_met = seal_meets_target(&seal.work, share_bits);
-        let network_target_met = seal_meets_target(&seal.work, work.pow_bits);
+        let nonce = hex_to_array32(&request.nonce)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+        self.submit_share_for_work(worker_name, &work, nonce)
+    }
 
-        let mut stats = self.pool_share_stats.lock();
-        if !share_target_met {
-            stats.rejected = stats.rejected.saturating_add(1);
-            let (worker_accepted_shares, worker_rejected_shares) = {
-                let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
-                worker_stats.rejected = worker_stats.rejected.saturating_add(1);
-                worker_stats.last_share_at_ms = Some(current_time_ms());
-                (worker_stats.accepted, worker_stats.rejected)
-            };
-            let accepted_shares = stats.accepted;
-            let rejected_shares = stats.rejected;
+    async fn submit_compact_solution(
+        &self,
+        request: SubmitCompactSolutionRequest,
+    ) -> RpcResult<SubmitPoolShareResponse> {
+        self.ensure_pool_access_allowed(request.auth_token.as_deref())?;
+
+        let worker_name = request.worker_name.trim();
+        if worker_name.is_empty() {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                "worker_name is required",
+                None::<()>,
+            ));
+        }
+
+        let Some(work) = self.pow_handle.current_work() else {
             return Ok(SubmitPoolShareResponse {
                 accepted: false,
                 block_candidate: false,
                 network_target_met: false,
-                error: Some("share does not meet configured pool target".to_string()),
-                accepted_shares,
-                rejected_shares,
-                worker_accepted_shares,
-                worker_rejected_shares,
+                error: Some("no active mining work template".to_string()),
+                accepted_shares: 0,
+                rejected_shares: 0,
+                worker_accepted_shares: 0,
+                worker_rejected_shares: 0,
+            });
+        };
+
+        let job = compact_job_from_work(&work, self.pool_share_bits_for_work(&work));
+        let requested_job_id = hex_to_array32(&request.job_id)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+        if requested_job_id != job.job_id {
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("stale or mismatched compact job".to_string()),
+                accepted_shares: self.pool_share_stats.lock().accepted,
+                rejected_shares: self.pool_share_stats.lock().rejected,
+                worker_accepted_shares: 0,
+                worker_rejected_shares: 0,
             });
         }
 
-        stats.accepted = stats.accepted.saturating_add(1);
-        let (worker_accepted_shares, worker_rejected_shares) = {
-            let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
-            worker_stats.accepted = worker_stats.accepted.saturating_add(1);
-            if network_target_met {
-                worker_stats.block_candidates = worker_stats.block_candidates.saturating_add(1);
-            }
-            worker_stats.last_share_at_ms = Some(current_time_ms());
-            (worker_stats.accepted, worker_stats.rejected)
-        };
-        let accepted_shares = stats.accepted;
-        let rejected_shares = stats.rejected;
-        drop(stats);
-
-        if network_target_met {
-            let solution = MiningSolution {
-                seal,
-                work: work.clone(),
-            };
-            self.pow_handle.submit_solution(solution).map_err(|err| {
-                ErrorObjectOwned::owned(
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                    format!("failed to forward full-difficulty solution: {err}"),
-                    None::<()>,
-                )
-            })?;
-        }
-
-        Ok(SubmitPoolShareResponse {
-            accepted: true,
-            block_candidate: network_target_met,
-            network_target_met,
-            error: None,
-            accepted_shares,
-            rejected_shares,
-            worker_accepted_shares,
-            worker_rejected_shares,
-        })
+        let nonce = hex_to_array32(&request.nonce)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+        self.submit_share_for_work(worker_name, &work, nonce)
     }
 
     async fn pool_status(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolStatusResponse> {
@@ -1062,6 +1188,7 @@ fn hex_to_array48(value: &str) -> Result<[u8; 48], String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use consensus::counter_to_nonce;
 
     #[derive(Clone)]
     struct MockMiningHandle {
@@ -1439,6 +1566,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_compact_job_exposes_current_template() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
+
+        let job = rpc.compact_job(None).await.unwrap();
+        assert!(job.available);
+        assert!(job.job_id.is_some());
+        assert_eq!(job.height, Some(42));
+        assert_eq!(job.network_bits, Some(0x207fffff));
+        assert_eq!(job.share_bits, Some(0x207fffff));
+    }
+
+    #[tokio::test]
     async fn test_submit_pool_share_accepts_full_target_solution() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
@@ -1450,13 +1591,14 @@ mod tests {
         );
         let work = handle.current_work().expect("mock work");
         let nonce = (0..u64::MAX)
+            .map(counter_to_nonce)
             .find(|nonce| seal_meets_target(&compute_work(&work.pre_hash, *nonce), work.pow_bits))
             .expect("mock work should admit a valid nonce");
 
         let response = rpc
             .submit_pool_share(SubmitPoolShareRequest {
                 worker_name: "alpha".to_string(),
-                nonce,
+                nonce: format!("0x{}", hex::encode(nonce)),
                 pre_hash: format!("0x{}", hex::encode(work.pre_hash.as_bytes())),
                 parent_hash: format!("0x{}", hex::encode(work.parent_hash.as_bytes())),
                 height: work.height,
@@ -1481,7 +1623,7 @@ mod tests {
         let response = rpc
             .submit_pool_share(SubmitPoolShareRequest {
                 worker_name: "alpha".to_string(),
-                nonce: 0,
+                nonce: format!("0x{}", hex::encode(counter_to_nonce(0))),
                 pre_hash: format!("0x{}", hex::encode([0u8; 32])),
                 parent_hash: format!("0x{}", hex::encode([0u8; 32])),
                 height: 7,
@@ -1494,5 +1636,37 @@ mod tests {
         assert!(response.error.unwrap_or_default().contains("stale"));
         assert_eq!(response.rejected_shares, 1);
         assert_eq!(response.worker_rejected_shares, 1);
+    }
+
+    #[tokio::test]
+    async fn test_submit_compact_solution_accepts_full_target_solution() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(
+            service,
+            handle.clone(),
+            mock_config(),
+            sc_rpc::DenyUnsafe::No,
+        );
+        let work = handle.current_work().expect("mock work");
+        let nonce = (0..u64::MAX)
+            .map(counter_to_nonce)
+            .find(|nonce| seal_meets_target(&compute_work(&work.pre_hash, *nonce), work.pow_bits))
+            .expect("mock work should admit a valid nonce");
+        let job = rpc.compact_job(None).await.unwrap();
+
+        let response = rpc
+            .submit_compact_solution(SubmitCompactSolutionRequest {
+                worker_name: "alpha".to_string(),
+                job_id: job.job_id.expect("job id"),
+                nonce: format!("0x{}", hex::encode(nonce)),
+                auth_token: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(response.accepted);
+        assert!(response.block_candidate);
+        assert!(response.network_target_met);
     }
 }

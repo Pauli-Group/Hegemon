@@ -263,6 +263,31 @@ pub struct ProvenBatch {
     pub merge_root: Option<MergeRootProofPayload>,
 }
 
+/// Consensus-facing artifact claim for the prover or artifact publisher
+/// whose proof object is included in the winning block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactClaim {
+    pub payout_account: [u8; 32],
+    pub payout_amount: u64,
+}
+
+/// Parent-agnostic proof object over an exact ordered transaction set.
+///
+/// The current fresh-testnet implementation reuses the existing self-contained
+/// aggregation payload shape while the node and operator surfaces migrate to
+/// the new artifact-market naming.
+pub type CandidateArtifact = ProvenBatch;
+
+/// Public metadata that lets builders discover and compare reusable candidate
+/// artifacts without downloading the full payload immediately.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactAnnouncement {
+    pub artifact_hash: [u8; 32],
+    pub tx_statements_commitment: [u8; 48],
+    pub tx_count: u32,
+    pub proof_mode: ProvenBatchMode,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxStatementBinding {
     pub statement_hash: [u8; 48],

@@ -869,7 +869,7 @@ where
                         tracing::info!(
                             block_number = template.number,
                             block_hash = %hex::encode(block_hash.as_bytes()),
-                            nonce = solution.seal.nonce,
+                            nonce = ?solution.seal.nonce,
                             "Block imported successfully"
                         );
 
@@ -1292,7 +1292,7 @@ mod tests {
 
         // Create a mock seal
         let seal = Blake3Seal {
-            nonce: 12345,
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0x42),
         };
@@ -1421,7 +1421,7 @@ mod tests {
         // Import a block
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
         let seal = Blake3Seal {
-            nonce: 12345,
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0xbb),
         };

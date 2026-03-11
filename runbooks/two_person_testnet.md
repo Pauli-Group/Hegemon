@@ -2,6 +2,8 @@
 
 This guide walks through setting up a two-node Hegemon network where both participants can mine blocks, earn coinbase rewards directly to their shielded wallets, and send private transactions to each other using walletd.
 
+For the fresh-testnet rollout that uses the laptop + `hegemon-ovh` + `hegemon-prover` topology, follow [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md) first and use the laptop-created boot-wallet address as the payout address on every mining/proving host.
+
 ## Prerequisites
 
 Both participants need:

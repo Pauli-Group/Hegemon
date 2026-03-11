@@ -17,7 +17,7 @@ pub struct BundleMatchKey {
 #[derive(Clone, Debug)]
 pub struct PreparedBundle {
     pub key: BundleMatchKey,
-    pub payload: pallet_shielded_pool::types::BlockProofBundle,
+    pub payload: pallet_shielded_pool::types::CandidateArtifact,
     pub candidate_txs: Vec<Vec<u8>>,
     pub build_ms: u128,
 }
@@ -37,7 +37,7 @@ pub struct PreparedLookupDiagnostics {
 }
 
 fn block_proof_bundle_payload_bytes(
-    payload: &pallet_shielded_pool::types::BlockProofBundle,
+    payload: &pallet_shielded_pool::types::CandidateArtifact,
 ) -> usize {
     let aggregation_bytes = match payload.proof_mode {
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
@@ -438,7 +438,7 @@ struct FanoutAssemblyState {
     candidate_txs: Vec<Vec<u8>>,
     expected_chunks: u16,
     chunks: Vec<ChunkPlan>,
-    received: HashMap<String, pallet_shielded_pool::types::BlockProofBundle>,
+    received: HashMap<String, pallet_shielded_pool::types::CandidateArtifact>,
 }
 
 #[derive(Default)]
@@ -727,6 +727,30 @@ impl ProverCoordinator {
             .cloned()
     }
 
+    pub fn lookup_candidate_artifact_any_parent(
+        &self,
+        tx_statements_commitment: [u8; 48],
+        tx_count: u32,
+    ) -> Option<pallet_shielded_pool::types::CandidateArtifact> {
+        self.lookup_prepared_bundle_any_parent(tx_statements_commitment, tx_count)
+            .map(|bundle| bundle.payload)
+    }
+
+    pub fn list_artifact_announcements(&self) -> Vec<consensus::ArtifactAnnouncement> {
+        let state = self.state.lock();
+        let mut announcements = state
+            .prepared
+            .values()
+            .map(|bundle| crate::substrate::artifact_market::artifact_announcement(&bundle.payload))
+            .collect::<Vec<_>>();
+        announcements.sort_by(|left, right| {
+            left.tx_statements_commitment
+                .cmp(&right.tx_statements_commitment)
+                .then_with(|| left.tx_count.cmp(&right.tx_count))
+        });
+        announcements
+    }
+
     #[allow(deprecated)]
     #[deprecated(note = "Use lookup_prepared_bundle instead.")]
     pub fn lookup_ready_batch(
@@ -970,7 +994,7 @@ impl ProverCoordinator {
         &self,
         source: &str,
         package_id: &str,
-        payload: pallet_shielded_pool::types::BlockProofBundle,
+        payload: pallet_shielded_pool::types::CandidateArtifact,
     ) -> Result<(), String> {
         let mut state = self.state.lock();
         Self::expire_work_packages_locked(&mut state);
@@ -1094,7 +1118,7 @@ impl ProverCoordinator {
     fn register_chunk_result_and_maybe_assemble(
         state: &mut CoordinatorState,
         package: &WorkPackage,
-        payload: pallet_shielded_pool::types::BlockProofBundle,
+        payload: pallet_shielded_pool::types::CandidateArtifact,
     ) -> Result<Option<PreparedBundle>, String> {
         if payload.proof_mode != pallet_shielded_pool::types::BlockProofMode::FlatBatches {
             return Err("fan-out chunk payload must use FlatBatches mode".to_string());
@@ -1156,7 +1180,7 @@ impl ProverCoordinator {
 
     fn assemble_fanout_payload(
         assembly: &FanoutAssemblyState,
-    ) -> Result<pallet_shielded_pool::types::BlockProofBundle, String> {
+    ) -> Result<pallet_shielded_pool::types::CandidateArtifact, String> {
         let mut chunk_specs = assembly.chunks.clone();
         chunk_specs.sort_by_key(|chunk| chunk.start_tx_index);
         let Some(first_spec) = chunk_specs.first() else {
@@ -1230,7 +1254,7 @@ impl ProverCoordinator {
             return Err("fan-out chunk coverage does not match candidate tx count".to_string());
         }
 
-        Ok(pallet_shielded_pool::types::BlockProofBundle {
+        Ok(pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count: covered,
             tx_statements_commitment: anchor_payload.tx_statements_commitment,
@@ -2212,8 +2236,8 @@ mod tests {
     fn ready_payload(
         tx_count: u32,
         commitment: [u8; 48],
-    ) -> pallet_shielded_pool::types::BlockProofBundle {
-        pallet_shielded_pool::types::BlockProofBundle {
+    ) -> pallet_shielded_pool::types::CandidateArtifact {
+        pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count,
             tx_statements_commitment: commitment,

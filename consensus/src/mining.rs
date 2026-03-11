@@ -284,7 +284,7 @@ fn mining_thread_loop(
             // Found a solution!
             tracing::info!(
                 thread_id,
-                nonce = seal.nonce,
+                nonce = ?seal.nonce,
                 round,
                 "🎯 Mining thread found solution!"
             );

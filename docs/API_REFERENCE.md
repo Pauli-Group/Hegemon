@@ -77,8 +77,10 @@ Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
 - `hegemon_stopMining() -> MiningControlResponse`
+- `hegemon_compactJob(params?: { auth_token?: String }) -> CompactJobResponse`
+- `hegemon_submitCompactSolution(request: { worker_name: String, job_id: String, nonce: String, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolWork(params?: { auth_token?: String }) -> PoolWorkResponse`
-- `hegemon_submitPoolShare(request: { worker_name: String, nonce: u64, pre_hash: String, parent_hash: String, height: u64, auth_token?: String }) -> SubmitPoolShareResponse`
+- `hegemon_submitPoolShare(request: { worker_name: String, nonce: String, pre_hash: String, parent_hash: String, height: u64, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolStatus(params?: { auth_token?: String }) -> PoolStatusResponse`
 - `hegemon_consensusStatus() -> ConsensusStatus`
 - `hegemon_telemetry() -> TelemetrySnapshot`
@@ -88,9 +90,21 @@ Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
 - `hegemon_peerGraph() -> PeerGraphSnapshot` (direct peers plus reported peers from discovery)
 
 Pool worker notes:
+- `hegemon_compactJob` is the preferred compact-job miner surface. It exposes a stable `job_id`, `pre_hash`, `parent_hash`, and share/network targets without assuming an implicit `u64` nonce.
+- `hegemon_submitCompactSolution` accepts a 32-byte nonce (`0x`-prefixed hex) plus the advertised `job_id`.
 - `hegemon_poolWork` exposes the current authoring template to pooled hash workers.
-- `hegemon_submitPoolShare` accepts pool shares and full-target solutions; full-target solutions are forwarded into the mining coordinator.
+- `hegemon_submitPoolShare` remains as a compatibility path and now also accepts a 32-byte nonce (`0x`-prefixed hex); full-target solutions are forwarded into the mining coordinator.
 - `hegemon_poolStatus` reports aggregate and per-worker share accounting for the current process.
+
+`CompactJobResponse` fields:
+- `available: bool`
+- `job_id: Option<String>` (hex)
+- `height: Option<u64>`
+- `pre_hash: Option<String>` (hex)
+- `parent_hash: Option<String>` (hex)
+- `network_bits: Option<u32>` (compact PoW bits)
+- `share_bits: Option<u32>` (compact bits; defaults to network difficulty unless `HEGEMON_POOL_SHARE_BITS` is set)
+- `reason: Option<String>`
 
 `PoolWorkResponse` fields:
 - `available: bool`
@@ -179,6 +193,8 @@ Prover market RPC methods exposed on the Substrate node:
 - `prover_getWorkStatus(package_id) -> Option<WorkStatusResponse>`
 - `prover_getMarketParams() -> MarketParamsResponse`
 - `prover_getStagePlanStatus() -> StagePlanStatusResponse`
+- `prover_listArtifactAnnouncements() -> Vec<ArtifactAnnouncementResponse>`
+- `prover_getCandidateArtifact(tx_statements_commitment: String, tx_count: u32) -> Option<CandidateArtifactResponse>`
 
 `WorkPackageResponse` can now carry `root_finalize_payload` for standalone private
 prover workers. In the current branch this payload is intended for the
@@ -198,6 +214,11 @@ Standalone private prover worker binary:
   - Submits the completed bundle with `prover_submitStageWorkResult`
 
 Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursive epoch proofs are temporarily disabled until a Plonky3 recursion path is reintroduced.
+
+Artifact market RPC notes:
+
+- `prover_listArtifactAnnouncements` returns lightweight reusable-artifact metadata for prepared candidate artifacts.
+- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a matching `(tx_statements_commitment, tx_count)` pair when one is available.
 
 ## Documentation hooks
 

@@ -440,7 +440,7 @@ impl MockBlockImport {
             block_number = block_number,
             block_hash = %hex::encode(block_hash.as_bytes()),
             parent_hash = %hex::encode(parent_hash.as_bytes()),
-            nonce = seal.nonce,
+            nonce = ?seal.nonce,
             verification_ms = verification_time,
             "MockBlockImport: Block imported"
         );
@@ -696,7 +696,7 @@ mod tests {
 
         // Create an invalid seal (work doesn't meet target)
         let invalid_seal = Blake3Seal {
-            nonce: 0,
+            nonce: consensus::counter_to_nonce(0),
             difficulty: 0x0300ffff,        // Very hard
             work: H256::repeat_byte(0xff), // Max value won't meet hard target
         };
@@ -718,7 +718,7 @@ mod tests {
 
         // Even an invalid seal should be accepted
         let invalid_seal = Blake3Seal {
-            nonce: 0,
+            nonce: consensus::counter_to_nonce(0),
             difficulty: 0x0300ffff,
             work: H256::repeat_byte(0xff),
         };
@@ -779,7 +779,7 @@ mod tests {
         let extrinsics_root = H256::repeat_byte(0x33);
 
         let seal = Blake3Seal {
-            nonce: 5,
+            nonce: consensus::counter_to_nonce(5),
             difficulty: 0x2100ffff,
             work: H256::repeat_byte(0xaa),
         };

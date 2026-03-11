@@ -64,7 +64,7 @@ pub enum PowEvent {
     /// A new work template is being mined
     NewWork { height: u64, difficulty: u32 },
     /// A solution was found
-    SolutionFound { height: u64, nonce: u64 },
+    SolutionFound { height: u64, nonce: [u8; 32] },
     /// Mining hashrate update
     HashrateUpdate { hashrate: f64 },
 }
@@ -163,7 +163,7 @@ impl PowHandle {
         if let Some(ref sol) = solution {
             info!(
                 height = sol.work.height,
-                nonce = sol.seal.nonce,
+                nonce = ?sol.seal.nonce,
                 "Found PoW solution"
             );
 
@@ -183,7 +183,7 @@ impl PowHandle {
 
         info!(
             height = solution.work.height,
-            nonce = solution.seal.nonce,
+            nonce = ?solution.seal.nonce,
             "Accepted external PoW solution"
         );
 
