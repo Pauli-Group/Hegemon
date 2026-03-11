@@ -2118,6 +2118,8 @@ export default function App() {
       ? 'Stop pooled hashing'
       : 'Start pooled hashing';
   const poolMinerHashRate = formatHashRate(poolMinerStatus?.hashRate);
+  const effectiveMiningActive = activeParticipationRole === 'pooled_hasher' ? poolMinerRunning : Boolean(activeSummary?.mining);
+  const effectiveMiningHashRate = activeParticipationRole === 'pooled_hasher' ? poolMinerStatus?.hashRate : activeSummary?.hashRate;
   const miningHint = activeSummary?.mining
     ? 'Public author mode is active. To change local authoring settings, stop the node, update Participation + retention, then restart.'
     : activeParticipationRole === 'authoring_pool'
@@ -2342,15 +2344,6 @@ export default function App() {
             Version {activeSummary?.nodeVersion ?? 'N/A'}
             {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? ' · External RPC (not managed by app)' : ''}
           </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">
-            Proof format {activeSummary?.aggregationProofFormat ?? 'N/A'}
-            {activeSummary?.proverStageType
-              ? ` · Stage ${activeSummary.proverStageType} (L${activeSummary.proverStageLevel ?? 0}, k${activeSummary.proverStageArity ?? 0})`
-              : ''}
-            {typeof activeSummary?.proverReadyBundleAgeMs === 'number'
-              ? ` · Bundle age ${formatNumber(activeSummary.proverReadyBundleAgeMs)} ms`
-              : ''}
-          </p>
         </div>
         <div className="status-group">
           <p className="label">Wallet</p>
@@ -2376,9 +2369,9 @@ export default function App() {
             <span className="text-xs text-surfaceMuted/80 mono">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
           </div>
           <p className="text-xs text-surfaceMuted/70 mt-1">
-            Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Supply {formatHash(activeSummary?.supplyDigest)}
+            Mining {effectiveMiningActive ? 'Active' : 'Idle'} · Supply {formatHash(activeSummary?.supplyDigest)}
           </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">Hash rate {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">Hash rate {formatHashRate(effectiveMiningHashRate)}</p>
         </div>
       </div>
     </div>
@@ -2412,7 +2405,7 @@ export default function App() {
             </div>
             <p>Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}</p>
             <p>
-              Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Hash rate {formatHashRate(activeSummary?.hashRate)}
+              Mining {effectiveMiningActive ? 'Active' : 'Idle'} · Hash rate {formatHashRate(effectiveMiningHashRate)}
             </p>
             <p className="mono text-xs">Supply digest {formatHash(activeSummary?.supplyDigest)}</p>
           </div>
@@ -2461,7 +2454,7 @@ export default function App() {
                   : 'N/A'}
               </span>
             </p>
-            <p>Mining {activeSummary?.mining ? 'Active' : 'Idle'}</p>
+            <p>Mining {effectiveMiningActive ? 'Active' : 'Idle'}</p>
           </div>
         </section>
       </div>
@@ -3116,13 +3109,17 @@ export default function App() {
         <div className="panel">
           <p className="label">Mining</p>
           <p className="text-lg font-medium">
-            {activeSummary?.mining === null || activeSummary?.mining === undefined
+            {activeParticipationRole === 'pooled_hasher'
+              ? poolMinerRunning
+                ? 'Active'
+                : 'Idle'
+              : activeSummary?.mining === null || activeSummary?.mining === undefined
               ? 'N/A'
               : activeSummary.mining
                 ? 'Active'
                 : 'Idle'}
           </p>
-          <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(effectiveMiningHashRate)}</p>
         </div>
         {activeParticipationRole === 'pooled_hasher' ? (
           <div className="panel">
@@ -3142,7 +3139,7 @@ export default function App() {
         <div className="panel">
           <p className="label">Mining details</p>
           <p className="text-sm text-surfaceMuted">Threads: {activeSummary?.miningThreads ?? 'N/A'}</p>
-          <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(effectiveMiningHashRate)}</p>
           <p className="text-sm text-surfaceMuted">Blocks found: {formatNumber(activeSummary?.blocksFound)}</p>
           <p className="text-sm text-surfaceMuted">Difficulty: {formatNumber(activeSummary?.difficulty)}</p>
           <p className="text-sm text-surfaceMuted">Block height: {formatNumber(activeSummary?.blockHeight)}</p>

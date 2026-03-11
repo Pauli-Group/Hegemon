@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
 import type { PoolMinerStartRequest, PoolMinerStatus, PoolStatus, PoolWorkerSnapshot } from '../src/types';
 
@@ -64,7 +65,7 @@ type WorkerCommand =
 
 const WORKER_SCRIPT = `
 const { parentPort, workerData } = require('node:worker_threads');
-const { createBLAKE3 } = require('hash-wasm');
+const { createBLAKE3 } = require(workerData.hashWasmModulePath);
 
 let running = true;
 let currentWork = null;
@@ -181,6 +182,9 @@ const clampThreadCount = (threads: number | undefined) => {
   return Math.max(1, Math.min(32, Math.floor(threads)));
 };
 
+const nodeRequire = createRequire(import.meta.url);
+const hashWasmModulePath = nodeRequire.resolve('hash-wasm');
+
 const normalizeEndpoint = (endpoint: string) => {
   const trimmed = endpoint.trim();
   if (trimmed.startsWith('ws://')) {
@@ -279,7 +283,7 @@ export class PoolMinerManager extends EventEmitter {
     for (let workerIndex = 0; workerIndex < threads; workerIndex += 1) {
       const worker = new Worker(WORKER_SCRIPT, {
         eval: true,
-        workerData: { workerIndex, totalThreads: threads }
+        workerData: { workerIndex, totalThreads: threads, hashWasmModulePath }
       });
       worker.on('message', (message: WorkerMessage) => {
         void this.handleWorkerMessage(message);
