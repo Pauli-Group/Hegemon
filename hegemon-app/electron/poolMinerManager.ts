@@ -72,6 +72,11 @@ let currentWork = null;
 let currentPreHashBytes = null;
 let currentWorkerNonce = Number(workerData.workerIndex || 0);
 const stride = Math.max(1, Number(workerData.totalThreads || 1));
+const HASH_REPORT_INTERVAL_MS = 250;
+const SHARE_REPORT_INTERVAL_MS = 250;
+let pendingHashCount = 0;
+let lastHashReportAt = Date.now();
+let lastShareReportAt = 0;
 
 function compactToTarget(bits) {
   const exponent = bits >>> 24;
@@ -120,6 +125,9 @@ parentPort.on('message', (message) => {
     };
     currentPreHashBytes = Buffer.from(currentWork.preHashHex, 'hex');
     currentWorkerNonce = Number(workerData.workerIndex || 0);
+    pendingHashCount = 0;
+    lastHashReportAt = Date.now();
+    lastShareReportAt = 0;
     return;
   }
   if (message.type === 'clearWork') {
@@ -136,6 +144,10 @@ async function main() {
   const hasher = await createBLAKE3();
   while (running) {
     if (!currentWork || !currentPreHashBytes || currentWork.shareTarget === null) {
+      if (pendingHashCount > 0) {
+        parentPort.postMessage({ type: 'hashes', count: pendingHashCount });
+        pendingHashCount = 0;
+      }
       await new Promise((resolve) => setTimeout(resolve, 50));
       continue;
     }
@@ -149,21 +161,35 @@ async function main() {
       const workHex = hasher.digest();
       const workValue = BigInt('0x' + workHex);
       if (workValue <= currentWork.shareTarget) {
-        parentPort.postMessage({
-          type: 'share',
-          nonce,
-          height: currentWork.height,
-          preHash: '0x' + currentWork.preHashHex,
-          parentHash: currentWork.parentHashHex
-        });
+        const now = Date.now();
+        if (now - lastShareReportAt >= SHARE_REPORT_INTERVAL_MS) {
+          lastShareReportAt = now;
+          parentPort.postMessage({
+            type: 'share',
+            nonce,
+            height: currentWork.height,
+            preHash: '0x' + currentWork.preHashHex,
+            parentHash: currentWork.parentHashHex
+          });
+        }
       }
       processed += 1;
     }
 
     if (processed > 0) {
-      parentPort.postMessage({ type: 'hashes', count: processed });
+      pendingHashCount += processed;
+      const now = Date.now();
+      if (now - lastHashReportAt >= HASH_REPORT_INTERVAL_MS) {
+        parentPort.postMessage({ type: 'hashes', count: pendingHashCount });
+        pendingHashCount = 0;
+        lastHashReportAt = now;
+      }
     }
     await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  if (pendingHashCount > 0) {
+    parentPort.postMessage({ type: 'hashes', count: pendingHashCount });
   }
 }
 
