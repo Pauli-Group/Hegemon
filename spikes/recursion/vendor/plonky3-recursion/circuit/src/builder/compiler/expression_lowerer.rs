@@ -421,15 +421,21 @@ where
             }
         }
 
-        let (dsu_connects, explicit_connects): (Vec<_>, Vec<_>) = self
-            .pending_connects
-            .iter()
-            .copied()
-            .partition(|(a, b)| {
-                let a_witness = is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *a);
-                let b_witness = is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *b);
-                !(a_witness ^ b_witness)
-            });
+        let disable_connect_dsu = true;
+        let (dsu_connects, explicit_connects): (Vec<_>, Vec<_>) = if disable_connect_dsu {
+            (Vec::new(), self.pending_connects.to_vec())
+        } else {
+            self.pending_connects
+                .iter()
+                .copied()
+                .partition(|(a, b)| {
+                    let a_witness =
+                        is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *a);
+                    let b_witness =
+                        is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *b);
+                    !(a_witness ^ b_witness)
+                })
+        };
 
         // Build DSU over expression IDs to honor connect(a, b), except when an
         // unconstrained output participates. Those connects are enforced explicitly
@@ -437,13 +443,8 @@ where
         let mut parents = build_connect_dsu(&dsu_connects);
 
         // Track nodes that participate in any connect
-        let in_connect: HashSet<usize> = self
-            .pending_connects
+        let in_connect: HashSet<usize> = dsu_connects
             .iter()
-            .filter(|(a, b)| {
-                !is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *a)
-                    && !is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *b)
-            })
             .flat_map(|(a, b)| [a.0 as usize, b.0 as usize])
             .collect();
 
