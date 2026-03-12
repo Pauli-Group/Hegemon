@@ -1,4 +1,5 @@
 use crate::error::ProofError;
+mod v5;
 use block_circuit::CommitmentBlockProver;
 use crypto::hashes::blake3_384;
 use p3_batch_stark::{BatchProof, CommonData, verify_batch};
@@ -117,6 +118,18 @@ struct AggregationProofV4Payload {
 
 fn aggregation_verifier_cache() -> &'static AggregationVerifierCache {
     AGGREGATION_VERIFIER_CACHE.get_or_init(AggregationVerifierCache::default)
+}
+
+fn legacy_v4_enabled() -> bool {
+    std::env::var("HEGEMON_AGG_LEGACY_V4")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 struct AggregationCacheResult {
@@ -750,6 +763,20 @@ pub fn warm_aggregation_cache_from_proof_bytes(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
+    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+        && payload_v5.version == 5
+    {
+        return v5::warm_aggregation_cache_from_payload(
+            &payload_v5,
+            tx_count,
+            expected_statement_commitment,
+        );
+    }
+    if !legacy_v4_enabled() {
+        return Err(ProofError::AggregationProofV5Decode(
+            "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
+        ));
+    }
     let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
         ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
@@ -850,6 +877,16 @@ pub fn verify_aggregation_proof_with_metrics(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
+    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+        && payload_v5.version == 5
+    {
+        return v5::verify_with_metrics(&payload_v5, tx_count, expected_statement_commitment);
+    }
+    if !legacy_v4_enabled() {
+        return Err(ProofError::AggregationProofV5Decode(
+            "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
+        ));
+    }
     let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
         ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
@@ -1164,7 +1201,10 @@ mod tests {
         let encoded = postcard::to_allocvec(&payload).expect("encode");
         let err = verify_aggregation_proof(&encoded, 1, &commitment)
             .expect_err("legacy payload version must be rejected");
-        assert!(matches!(err, ProofError::AggregationProofV4Decode(_)));
+        assert!(matches!(
+            err,
+            ProofError::AggregationProofV4Decode(_) | ProofError::AggregationProofV5Decode(_)
+        ));
     }
 
     #[test]
@@ -1189,7 +1229,10 @@ mod tests {
         let encoded = postcard::to_allocvec(&payload).expect("encode");
         let err = verify_aggregation_proof(&encoded, 1, &commitment)
             .expect_err("legacy payload format id must be rejected");
-        assert!(matches!(err, ProofError::AggregationProofV4Decode(_)));
+        assert!(matches!(
+            err,
+            ProofError::AggregationProofV4Decode(_) | ProofError::AggregationProofV5Decode(_)
+        ));
     }
 
     #[test]

@@ -443,6 +443,37 @@ impl ProofVerifier for ParallelProofVerifier {
                             "missing merge_root payload for MergeRoot mode".to_string(),
                         )
                     })?;
+                    let statement_bindings = resolved_statement_bindings
+                        .as_deref()
+                        .ok_or(ProofError::MissingTransactionStatementBindings)?;
+                    let statement_hashes = statement_bindings
+                        .iter()
+                        .map(|binding| binding.statement_hash)
+                        .collect::<Vec<_>>();
+                    let expected_leaf_count =
+                        statement_hashes.len().div_ceil(merge_root_leaf_fan_in_from_env()) as u32;
+                    if merge_root.metadata.leaf_count != expected_leaf_count {
+                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                            "merge-root leaf_count mismatch (payload {}, expected {})",
+                            merge_root.metadata.leaf_count, expected_leaf_count
+                        )));
+                    }
+                    let expected_tree_levels = expected_merge_root_tree_levels(tx_count);
+                    if merge_root.metadata.tree_levels != expected_tree_levels {
+                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                            "merge-root tree_levels mismatch (payload {}, expected {})",
+                            merge_root.metadata.tree_levels, expected_tree_levels
+                        )));
+                    }
+                    let expected_leaf_manifest =
+                        merge_root_leaf_manifest_commitment_from_statement_hashes(
+                            &statement_hashes,
+                        )?;
+                    if merge_root.metadata.leaf_manifest_commitment != expected_leaf_manifest {
+                        return Err(ProofError::ProvenBatchBindingMismatch(
+                            "merge-root leaf_manifest_commitment mismatch".to_string(),
+                        ));
+                    }
                     if merge_root.root_proof.is_empty() {
                         return Err(ProofError::MissingAggregationProofForSelfContainedMode);
                     }
@@ -659,6 +690,43 @@ fn commitment_from_statement_bindings(
         .collect::<Vec<_>>();
     CommitmentBlockProver::commitment_from_statement_hashes(&hashes)
         .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))
+}
+
+fn merge_root_leaf_fan_in_from_env() -> usize {
+    std::env::var("HEGEMON_AGG_LEAF_FANIN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(1)
+}
+
+fn expected_merge_root_tree_levels(tx_count: usize) -> u16 {
+    if tx_count <= merge_root_leaf_fan_in_from_env() {
+        1
+    } else {
+        2
+    }
+}
+
+fn merge_root_leaf_manifest_commitment_from_statement_hashes(
+    statement_hashes: &[[u8; 48]],
+) -> Result<[u8; 48], ProofError> {
+    let leaf_fan_in = merge_root_leaf_fan_in_from_env();
+    let mut manifest_material = Vec::new();
+    manifest_material.extend_from_slice(b"agg-leaf-manifest-v1");
+    manifest_material.extend_from_slice(&(leaf_fan_in as u16).to_le_bytes());
+    manifest_material.extend_from_slice(&(statement_hashes.len() as u32).to_le_bytes());
+    for (leaf_index, chunk) in statement_hashes.chunks(leaf_fan_in).enumerate() {
+        let leaf_commitment = CommitmentBlockProver::commitment_from_statement_hashes(chunk)
+            .map_err(|err| ProofError::AggregationProofInputsMismatch(err.to_string()))?;
+        let mut descriptor = Vec::new();
+        descriptor.extend_from_slice(b"agg-leaf-v1");
+        descriptor.extend_from_slice(&(leaf_index as u32).to_le_bytes());
+        descriptor.extend_from_slice(&(chunk.len() as u16).to_le_bytes());
+        descriptor.extend_from_slice(&leaf_commitment);
+        manifest_material.extend_from_slice(&blake3_384(&descriptor));
+    }
+    Ok(blake3_384(&manifest_material))
 }
 
 fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {

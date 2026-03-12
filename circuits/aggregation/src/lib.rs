@@ -3,6 +3,8 @@
 //! This crate produces a single batch-STARK proof that attests a list of
 //! transaction proofs were verified inside a recursion circuit.
 
+mod v5;
+
 use p3_air::{Air, BaseAir};
 use p3_batch_stark::common::{GlobalPreprocessed, PreprocessedInstanceMeta};
 use p3_batch_stark::{CommonData, StarkGenericConfig};
@@ -42,6 +44,13 @@ use transaction_circuit::{
     },
     InputNoteWitness, StablecoinPolicyBinding, TransactionAirP3, TransactionProof,
     TransactionWitness,
+};
+
+pub use v5::{
+    AggregationNodeKind, AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
+    AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
+    prove_aggregation, prove_leaf_aggregation, prove_merge_aggregation,
+    prewarm_thread_local_aggregation_cache_from_env,
 };
 
 type InnerFri = FriProofTargets<
@@ -85,6 +94,7 @@ struct AggregationProverCacheEntry {
     circuit: Circuit<Challenge>,
     verifier_inputs: Vec<InnerVerifierInputs>,
     witness_assignment_plans: Vec<ProofWitnessAssignmentPlan>,
+    airs: Vec<CircuitTableAir<circuit_config::GoldilocksConfig, 2>>,
     common: Arc<CommonData<circuit_config::GoldilocksConfig>>,
     witness_multiplicities: OuterWitnessMultiplicities,
 }
@@ -295,6 +305,8 @@ pub enum AggregationError {
     InvalidPublicInputs { index: usize, message: String },
     #[error("transaction proof {index} encoding invalid")]
     InvalidProofFormat { index: usize },
+    #[error("child proof {index} encoding invalid: {message}")]
+    InvalidChildProof { index: usize, message: String },
     #[error("transaction proof {index} shape invalid: {message}")]
     InvalidProofShape { index: usize, message: String },
     #[error(
@@ -307,8 +319,12 @@ pub enum AggregationError {
     },
     #[error("transaction proof {index} shape mismatch")]
     ProofShapeMismatch { index: usize },
+    #[error("child proof {index} shape mismatch: {message}")]
+    ChildProofShapeMismatch { index: usize, message: String },
     #[error("transaction proof final polynomial length invalid")]
     InvalidFinalPolynomialLength,
+    #[error("aggregation payload invalid: {0}")]
+    InvalidAggregationPayload(String),
     #[error("recursion circuit build failed: {0}")]
     CircuitBuild(String),
     #[error("recursion trace generation failed: {0}")]
@@ -697,6 +713,7 @@ fn build_aggregation_prover_cache_entry(
         circuit,
         verifier_inputs,
         witness_assignment_plans,
+        airs,
         common,
         witness_multiplicities,
     })
@@ -1024,7 +1041,8 @@ fn build_sample_representative_proof() -> Result<TransactionProof, AggregationEr
     })
 }
 
-pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), AggregationError> {
+#[allow(dead_code)]
+fn legacy_v4_prewarm_thread_local_aggregation_cache_from_env() -> Result<(), AggregationError> {
     let mut targets = aggregation_warmup_target_shapes();
     if targets.is_empty() {
         let max_txs = aggregation_prewarm_max_txs();
@@ -1303,7 +1321,8 @@ fn persist_cache_build_marker(
 ///
 /// The returned bytes are a postcard-serialized `BatchProof` that can be
 /// submitted via `submit_aggregation_proof`.
-pub fn prove_aggregation(
+#[allow(dead_code)]
+fn legacy_v4_prove_aggregation(
     transaction_proofs: &[TransactionProof],
     tx_statements_commitment: [u8; 48],
 ) -> Result<Vec<u8>, AggregationError> {

@@ -2456,6 +2456,43 @@ fn merge_root_arity_from_env() -> u16 {
         .max(2)
 }
 
+fn merge_root_leaf_fan_in_from_env() -> usize {
+    std::env::var("HEGEMON_AGG_LEAF_FANIN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(1)
+}
+
+fn merge_root_tree_levels_for_tx_count(tx_count: usize) -> u16 {
+    if tx_count <= merge_root_leaf_fan_in_from_env() {
+        1
+    } else {
+        2
+    }
+}
+
+fn merge_root_leaf_manifest_commitment(
+    statement_hashes: &[[u8; 48]],
+) -> Result<[u8; 48], String> {
+    let leaf_fan_in = merge_root_leaf_fan_in_from_env();
+    let mut manifest_material = Vec::new();
+    manifest_material.extend_from_slice(b"agg-leaf-manifest-v1");
+    manifest_material.extend_from_slice(&(leaf_fan_in as u16).to_le_bytes());
+    manifest_material.extend_from_slice(&(statement_hashes.len() as u32).to_le_bytes());
+    for (leaf_index, chunk) in statement_hashes.chunks(leaf_fan_in).enumerate() {
+        let leaf_commitment = CommitmentBlockProver::commitment_from_statement_hashes(chunk)
+            .map_err(|err| format!("leaf manifest statement commitment failed: {err}"))?;
+        let mut descriptor = Vec::new();
+        descriptor.extend_from_slice(b"agg-leaf-v1");
+        descriptor.extend_from_slice(&(leaf_index as u32).to_le_bytes());
+        descriptor.extend_from_slice(&(chunk.len() as u16).to_le_bytes());
+        descriptor.extend_from_slice(&leaf_commitment);
+        manifest_material.extend_from_slice(&blake3_384(&descriptor));
+    }
+    Ok(blake3_384(&manifest_material))
+}
+
 #[allow(dead_code)]
 fn build_flat_batch_proofs_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
@@ -2670,6 +2707,7 @@ fn build_flat_batch_proofs_from_materials(
 
 fn build_merge_root_proof_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
+    statement_hashes: Arc<Vec<[u8; 48]>>,
     tx_statements_commitment: [u8; 48],
 ) -> Result<pallet_shielded_pool::types::MergeRootProofPayload, String> {
     if proofs.is_empty() {
@@ -2680,19 +2718,16 @@ fn build_merge_root_proof_from_materials(
     })
     .map_err(|err| format!("merge root proof generation failed: {err}"))?;
     let root_proof = encode_aggregation_proof_bytes(proof_bytes);
-
-    let mut manifest_material = Vec::with_capacity(48 + 2 + 8);
-    manifest_material.extend_from_slice(&tx_statements_commitment);
-    manifest_material.extend_from_slice(&merge_root_arity_from_env().to_le_bytes());
-    manifest_material.extend_from_slice(&(1u32).to_le_bytes());
-    let leaf_manifest_commitment = blake3_384(&manifest_material);
+    let leaf_count = proofs.len().div_ceil(merge_root_leaf_fan_in_from_env()) as u32;
+    let tree_levels = merge_root_tree_levels_for_tx_count(proofs.len());
+    let leaf_manifest_commitment = merge_root_leaf_manifest_commitment(statement_hashes.as_ref())?;
 
     Ok(pallet_shielded_pool::types::MergeRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(root_proof),
         metadata: pallet_shielded_pool::types::MergeRootMetadata {
             tree_arity: merge_root_arity_from_env(),
-            tree_levels: 1,
-            leaf_count: 1,
+            tree_levels,
+            leaf_count,
             leaf_manifest_commitment,
         },
         diagnostics_leaf_proofs: Vec::new(),
@@ -3024,6 +3059,7 @@ fn prepare_block_proof_bundle(
                     ),
                     PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
                         aggregation_proofs,
+                        Arc::new(statement_hashes.clone()),
                         tx_statements_commitment,
                     )
                     .map(PreparedAggregationArtifacts::Merge),

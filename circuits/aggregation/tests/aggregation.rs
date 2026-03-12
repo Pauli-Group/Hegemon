@@ -1,6 +1,6 @@
 use aggregation_circuit::{
-    prove_aggregation, AggregationProofV4Payload, AGGREGATION_PROOF_FORMAT_ID_V4,
-    AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+    AggregationNodeKind, AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
+    AGGREGATION_PUBLIC_VALUES_ENCODING_V2, prove_aggregation,
 };
 use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
@@ -137,39 +137,30 @@ fn sample_witness() -> TransactionWitness {
 
 fn statement_hash_from_proof(proof: &TransactionProof) -> [u8; 48] {
     let public = &proof.public_inputs;
-    let mut binding_message = Vec::new();
-    binding_message.extend_from_slice(&public.merkle_root);
-    for nf in &public.nullifiers {
-        binding_message.extend_from_slice(nf);
-    }
-    for cm in &public.commitments {
-        binding_message.extend_from_slice(cm);
-    }
-    for ct in &public.ciphertext_hashes {
-        binding_message.extend_from_slice(ct);
-    }
-    binding_message.extend_from_slice(&public.native_fee.to_le_bytes());
-    binding_message.extend_from_slice(&public.value_balance.to_le_bytes());
-
-    let mut msg0 = Vec::new();
-    msg0.extend_from_slice(b"binding-hash-v1");
-    msg0.push(0);
-    msg0.extend_from_slice(&binding_message);
-    let hash0 = blake2_256(&msg0);
-
-    let mut msg1 = Vec::new();
-    msg1.extend_from_slice(b"binding-hash-v1");
-    msg1.push(1);
-    msg1.extend_from_slice(&binding_message);
-    let hash1 = blake2_256(&msg1);
-
-    let mut binding_hash = [0u8; 64];
-    binding_hash[..32].copy_from_slice(&hash0);
-    binding_hash[32..].copy_from_slice(&hash1);
-
     let mut statement_message = Vec::new();
     statement_message.extend_from_slice(b"tx-statement-v1");
-    statement_message.extend_from_slice(&binding_hash);
+    statement_message.extend_from_slice(&public.merkle_root);
+    for nf in &public.nullifiers {
+        statement_message.extend_from_slice(nf);
+    }
+    for cm in &public.commitments {
+        statement_message.extend_from_slice(cm);
+    }
+    for ct in &public.ciphertext_hashes {
+        statement_message.extend_from_slice(ct);
+    }
+    statement_message.extend_from_slice(&public.native_fee.to_le_bytes());
+    statement_message.extend_from_slice(&public.value_balance.to_le_bytes());
+    statement_message.extend_from_slice(&public.balance_tag);
+    statement_message.extend_from_slice(&public.circuit_version.to_le_bytes());
+    statement_message.extend_from_slice(&public.crypto_suite.to_le_bytes());
+    statement_message.push(public.stablecoin.enabled as u8);
+    statement_message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
+    statement_message.extend_from_slice(&public.stablecoin.policy_hash);
+    statement_message.extend_from_slice(&public.stablecoin.oracle_commitment);
+    statement_message.extend_from_slice(&public.stablecoin.attestation_commitment);
+    statement_message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
+    statement_message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
     blake3_384(&statement_message)
 }
 
@@ -184,7 +175,7 @@ fn tx_statements_commitment_from_proofs(proofs: &[TransactionProof]) -> [u8; 48]
 
 #[test]
 #[ignore = "expensive end-to-end aggregation proof generation; run manually"]
-fn aggregation_proof_roundtrip() {
+fn aggregation_v5_leaf_roundtrip() {
     let witness = sample_witness();
     let (proving_key, _verifying_key) = generate_keys();
     let proof = transaction_circuit::proof::prove(&witness, &proving_key)
@@ -198,7 +189,7 @@ fn aggregation_proof_roundtrip() {
     verify_aggregation_proof(&aggregation_bytes, proofs.len(), &tx_statements_commitment)
         .expect("verify aggregation proof");
 
-    let mut corrupted_payload: aggregation_circuit::AggregationProofV4Payload =
+    let mut corrupted_payload: aggregation_circuit::AggregationProofV5Payload =
         postcard::from_bytes(&aggregation_bytes).expect("decode payload");
     corrupted_payload.outer_proof[0] ^= 0x01;
     let corrupted_bytes = postcard::to_allocvec(&corrupted_payload).expect("encode payload");
@@ -212,20 +203,23 @@ fn aggregation_proof_roundtrip() {
 }
 
 #[test]
-fn aggregation_payload_validation_rejects_invalid_encodings() {
+fn aggregation_v5_payload_validation_rejects_invalid_encodings() {
     let expected_commitment = [0u8; 48];
-    let payload = AggregationProofV4Payload {
-        version: AGGREGATION_PROOF_FORMAT_ID_V4,
-        proof_format: AGGREGATION_PROOF_FORMAT_ID_V4,
+    let payload = AggregationProofV5Payload {
+        version: AGGREGATION_PROOF_FORMAT_ID_V5,
+        proof_format: AGGREGATION_PROOF_FORMAT_ID_V5,
+        node_kind: AggregationNodeKind::Leaf,
+        fan_in: 8,
+        child_count: 1,
+        subtree_tx_count: 1,
         tree_arity: 8,
         tree_levels: 1,
         root_level: 0,
         shape_id: [0u8; 32],
-        tx_count: 1,
         tx_statements_commitment: expected_commitment.to_vec(),
-        public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+        public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
         inner_public_inputs_len: 1,
-        representative_proof: vec![0xAA], // intentionally invalid postcard proof bytes
+        representative_child_proof: vec![0xAA], // intentionally invalid postcard proof bytes
         packed_public_values: vec![0, 0],
         outer_proof: vec![0xBB], // intentionally invalid postcard proof bytes
     };
@@ -234,7 +228,7 @@ fn aggregation_payload_validation_rejects_invalid_encodings() {
         .expect_err("invalid proof encoding must be rejected");
     assert!(matches!(
         err,
-        consensus::ProofError::AggregationProofV4Decode(_)
-            | consensus::ProofError::AggregationProofV4Binding(_)
+        consensus::ProofError::AggregationProofV5Decode(_)
+            | consensus::ProofError::AggregationProofV5Binding(_)
     ));
 }
