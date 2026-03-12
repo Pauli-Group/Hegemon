@@ -8,7 +8,10 @@ mod v5;
 use p3_air::{Air, BaseAir};
 use p3_batch_stark::common::{GlobalPreprocessed, PreprocessedInstanceMeta};
 use p3_batch_stark::{CommonData, StarkGenericConfig};
-use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner, WitnessId};
+use p3_circuit::{
+    Circuit, CircuitBuilder, CircuitError, CircuitRunner, Expr, NonPrimitiveOpId,
+    NonPrimitiveOpType, Op, WitnessId,
+};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::common::CircuitTableAir;
 use p3_circuit_prover::{BatchStarkProver, TablePacking};
@@ -90,7 +93,19 @@ struct AggregationProverKey {
 type OuterWitnessMultiplicities = Vec<StarkVal<Config>>;
 
 struct ProofWitnessAssignmentPlan {
+    value_positions: Vec<usize>,
     witness_ids: Vec<WitnessId>,
+}
+
+#[derive(Clone, Copy)]
+struct ProofWitnessSource {
+    op_id: NonPrimitiveOpId,
+    output_idx: usize,
+}
+
+struct ProofWitnessAssignmentPlanSpec {
+    value_positions: Vec<usize>,
+    sources: Vec<ProofWitnessSource>,
 }
 
 struct AggregationProverCacheEntry {
@@ -505,26 +520,126 @@ fn collect_verifier_witness_targets(inputs: &InnerVerifierInputs) -> Vec<p3_recu
     targets
 }
 
-fn build_witness_assignment_plans(
-    circuit: &Circuit<Challenge>,
+fn build_witness_assignment_plan_specs(
+    circuit_builder: &CircuitBuilder<Challenge>,
     verifier_inputs: &[InnerVerifierInputs],
-) -> Result<Vec<ProofWitnessAssignmentPlan>, AggregationError> {
+) -> Result<Vec<ProofWitnessAssignmentPlanSpec>, AggregationError> {
+    let graph = circuit_builder.graph();
+    let non_primitive_ops = circuit_builder.non_primitive_ops();
     verifier_inputs
         .iter()
         .map(|inputs| {
             let targets = collect_verifier_witness_targets(inputs);
-            let mut witness_ids = Vec::with_capacity(targets.len());
-            for target in targets {
-                let witness_id = circuit.expr_to_widx.get(&target).copied().ok_or_else(|| {
-                    AggregationError::CircuitBuild(
-                        "failed to resolve witness index for verifier target".to_string(),
-                    )
-                })?;
-                witness_ids.push(witness_id);
+            let mut value_positions = Vec::new();
+            let mut sources = Vec::new();
+            for (value_index, target) in targets.into_iter().enumerate() {
+                let Expr::NonPrimitiveOutput { call, output_idx } = graph.get_expr(target) else {
+                    continue;
+                };
+                let Expr::NonPrimitiveCall { op_id, .. } = graph.get_expr(*call) else {
+                    return Err(AggregationError::CircuitBuild(
+                        "verifier witness target must reference a non-primitive call".to_string(),
+                    ));
+                };
+                let op = non_primitive_ops
+                    .get(op_id.0 as usize)
+                    .ok_or_else(|| {
+                        AggregationError::CircuitBuild(
+                            "verifier witness target references unknown non-primitive op"
+                                .to_string(),
+                        )
+                    })?;
+                if op.op_type == NonPrimitiveOpType::WitnessInput {
+                    value_positions.push(value_index);
+                    sources.push(ProofWitnessSource {
+                        op_id: *op_id,
+                        output_idx: *output_idx as usize,
+                    });
+                }
             }
-            Ok(ProofWitnessAssignmentPlan { witness_ids })
+            Ok(ProofWitnessAssignmentPlanSpec {
+                value_positions,
+                sources,
+            })
         })
         .collect()
+}
+
+fn resolve_witness_assignment_plans(
+    circuit: &Circuit<Challenge>,
+    specs: &[ProofWitnessAssignmentPlanSpec],
+) -> Result<Vec<ProofWitnessAssignmentPlan>, AggregationError> {
+    let witness_outputs = circuit
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::NonPrimitiveOpWithExecutor {
+                executor,
+                outputs,
+                op_id,
+                ..
+            } if *executor.op_type() == NonPrimitiveOpType::WitnessInput => Some((*op_id, outputs)),
+            _ => None,
+        })
+        .flat_map(|(op_id, outputs)| {
+            outputs
+                .iter()
+                .enumerate()
+                .filter_map(move |(output_idx, output_group)| {
+                    output_group
+                        .first()
+                        .copied()
+                        .map(|witness_id| ((op_id, output_idx), witness_id))
+                })
+        })
+        .collect::<HashMap<_, _>>();
+
+    let plans = specs.iter()
+        .map(|spec| {
+            let witness_ids = spec
+                .sources
+                .iter()
+                .map(|source| {
+                    witness_outputs
+                        .get(&(source.op_id, source.output_idx))
+                        .copied()
+                        .ok_or_else(|| {
+                            AggregationError::CircuitBuild(
+                                "failed to resolve witness-input source".to_string(),
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ProofWitnessAssignmentPlan {
+                value_positions: spec.value_positions.clone(),
+                witness_ids,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if std::env::var("HEGEMON_AGG_PROFILE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        let assigned = plans
+            .iter()
+            .flat_map(|plan| plan.witness_ids.iter().copied())
+            .collect::<HashSet<_>>();
+        let total = witness_outputs.values().copied().collect::<HashSet<_>>();
+        let missing = total
+            .difference(&assigned)
+            .copied()
+            .collect::<Vec<_>>();
+        eprintln!(
+            "aggregation_profile stage=leaf_assignment_global witness_input_total={} assigned_total={} missing_total={} missing_preview={:?}",
+            total.len(),
+            assigned.len(),
+            missing.len(),
+            missing.iter().take(8).collect::<Vec<_>>()
+        );
+    }
+
+    Ok(plans)
 }
 
 fn collect_proof_witness_values(proof: &TransactionProofP3) -> Vec<Challenge> {
@@ -675,19 +790,31 @@ fn build_aggregation_prover_cache_entry(
             started.elapsed().as_millis()
         );
     }
+    let witness_assignment_specs =
+        build_witness_assignment_plan_specs(&circuit_builder, &verifier_inputs)?;
     let circuit = circuit_builder
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
     if profile {
+        let owned = collect_owned_witnesses(&circuit);
+        let unowned = (0..circuit.witness_count)
+            .map(WitnessId)
+            .filter(|witness_id| !owned.contains(witness_id))
+            .collect::<Vec<_>>();
         eprintln!(
-            "aggregation_profile stage=cache_circuit_build_done tx_count={} build_ms={} total_ms={}",
+            "aggregation_profile stage=cache_circuit_build_done tx_count={} build_ms={} total_ms={} witness_count={} owned_count={} unowned_count={} unowned_preview={:?}",
             key.tx_count,
             circuit_build_started.elapsed().as_millis(),
-            started.elapsed().as_millis()
+            started.elapsed().as_millis(),
+            circuit.witness_count,
+            owned.len(),
+            unowned.len(),
+            unowned.iter().take(8).collect::<Vec<_>>()
         );
     }
     let witness_plan_started = Instant::now();
-    let witness_assignment_plans = build_witness_assignment_plans(&circuit, &verifier_inputs)?;
+    let witness_assignment_plans =
+        resolve_witness_assignment_plans(&circuit, &witness_assignment_specs)?;
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_witness_plan_build tx_count={} plan_ms={} total_ms={}",
@@ -1806,6 +1933,66 @@ fn pack_recursion_public_values_v1(values: &[Challenge]) -> Vec<u64> {
     out
 }
 
+fn describe_witness_origin(circuit: &Circuit<Challenge>, witness_id: WitnessId) -> String {
+    let mut parts = Vec::new();
+    if let Some(public_pos) = circuit.public_rows.iter().position(|row| *row == witness_id) {
+        parts.push(format!("public_row[{public_pos}]"));
+    }
+    for (op_index, op) in circuit.ops.iter().enumerate() {
+        match op {
+            Op::Const { out, .. } if *out == witness_id => {
+                parts.push(format!("op[{op_index}]=Const"));
+            }
+            Op::Public { out, public_pos } if *out == witness_id => {
+                parts.push(format!("op[{op_index}]=Public({public_pos})"));
+            }
+            Op::Add { out, .. } if *out == witness_id => {
+                parts.push(format!("op[{op_index}]=Add"));
+            }
+            Op::Mul { out, .. } if *out == witness_id => {
+                parts.push(format!("op[{op_index}]=Mul"));
+            }
+            Op::NonPrimitiveOpWithExecutor {
+                executor,
+                outputs,
+                op_id,
+                ..
+            } => {
+                for (output_idx, group) in outputs.iter().enumerate() {
+                    if group.contains(&witness_id) {
+                        parts.push(format!(
+                            "op[{op_index}]=NonPrimitive({:?}, op_id={}, output_idx={output_idx})",
+                            executor.op_type(),
+                            op_id.0
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        "unowned".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn collect_owned_witnesses(circuit: &Circuit<Challenge>) -> HashSet<WitnessId> {
+    let mut owned = circuit.public_rows.iter().copied().collect::<HashSet<_>>();
+    for op in &circuit.ops {
+        match op {
+            Op::Const { out, .. } | Op::Public { out, .. } | Op::Add { out, .. } | Op::Mul { out, .. } => {
+                owned.insert(*out);
+            }
+            Op::NonPrimitiveOpWithExecutor { outputs, .. } => {
+                owned.extend(outputs.iter().flatten().copied());
+            }
+        }
+    }
+    owned
+}
+
 fn set_stark_verifier_witnesses_with_plans(
     runner: &mut CircuitRunner<Challenge>,
     witness_assignment_plans: &[ProofWitnessAssignmentPlan],
@@ -1819,18 +2006,21 @@ fn set_stark_verifier_witnesses_with_plans(
     }
     for (assignment_plan, proof) in witness_assignment_plans.iter().zip(proofs.iter()) {
         let values = collect_proof_witness_values(proof);
-        if assignment_plan.witness_ids.len() != values.len() {
+        if assignment_plan.value_positions.len() != assignment_plan.witness_ids.len() {
             return Err(CircuitError::PublicInputLengthMismatch {
                 expected: assignment_plan.witness_ids.len(),
-                got: values.len(),
+                got: assignment_plan.value_positions.len(),
             });
         }
-        for (witness_id, value) in assignment_plan
-            .witness_ids
+        for (&position, witness_id) in assignment_plan
+            .value_positions
             .iter()
-            .copied()
-            .zip(values.into_iter())
+            .zip(assignment_plan.witness_ids.iter().copied())
         {
+            let value = *values.get(position).ok_or(CircuitError::PublicInputLengthMismatch {
+                expected: position + 1,
+                got: values.len(),
+            })?;
             runner.set_witness_value(witness_id, value)?;
         }
     }

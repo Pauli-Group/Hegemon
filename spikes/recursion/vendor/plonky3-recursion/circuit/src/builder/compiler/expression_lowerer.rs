@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use core::cell::RefCell;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use alloc::{format, vec};
@@ -57,6 +58,27 @@ fn build_connect_dsu(connects: &[(ExprId, ExprId)]) -> HashMap<usize, usize> {
     parents
 }
 
+fn is_unconstrained_output_expr<F: Field>(
+    graph: &ExpressionGraph<F>,
+    non_primitive_ops: &[NonPrimitiveOperationData<F>],
+    expr_id: ExprId,
+) -> bool {
+    let Expr::NonPrimitiveOutput { call, .. } = graph.get_expr(expr_id) else {
+        return false;
+    };
+    let Expr::NonPrimitiveCall { op_id, .. } = graph.get_expr(*call) else {
+        return false;
+    };
+    non_primitive_ops
+        .get(op_id.0 as usize)
+        .map(|data| data.op_type == NonPrimitiveOpType::WitnessInput)
+        .unwrap_or(false)
+}
+
+fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+    matches!(graph.get_expr(expr_id), Expr::Public(_))
+}
+
 /// Responsible for lowering expression graphs to primitive operations.
 ///
 /// This component handles:
@@ -103,15 +125,17 @@ where
         }
     }
 
-    fn emit_non_primitive_op<AllocFn>(
+    fn emit_non_primitive_op<AllocFn, FreshAllocFn>(
         data: &NonPrimitiveOperationData<F>,
         output_exprs: &[(u32, ExprId)],
         expr_to_widx: &mut HashMap<ExprId, WitnessId>,
         alloc_witness_id_for_expr: &mut AllocFn,
+        alloc_fresh_witness_id: &mut FreshAllocFn,
         ops: &mut Vec<Op<F>>,
     ) -> Result<(), CircuitBuilderError>
     where
         AllocFn: FnMut(usize) -> WitnessId,
+        FreshAllocFn: FnMut() -> WitnessId,
     {
         for (_output_idx, expr_id) in output_exprs {
             expr_to_widx
@@ -245,6 +269,45 @@ where
                     op_id: data.op_id,
                 });
             }
+            NonPrimitiveOpType::WitnessInput => {
+                let executor = match data.params.as_ref().ok_or(
+                    CircuitBuilderError::InvalidNonPrimitiveOpConfiguration { op: data.op_type },
+                )? {
+                    NonPrimitiveOpParams::Unconstrained { executor } => executor.clone(),
+                    _ => {
+                        return Err(CircuitBuilderError::InvalidNonPrimitiveOpConfiguration {
+                            op: data.op_type,
+                        });
+                    }
+                };
+
+                if data.input_exprs.len() != 1 {
+                    return Err(CircuitBuilderError::NonPrimitiveOpArity {
+                        op: "WitnessInput",
+                        expected: "1 [in]".to_string(),
+                        got: data.input_exprs.len(),
+                    });
+                }
+
+                let inputs = vec![
+                    data.input_exprs[0]
+                        .iter()
+                        .map(|&expr| get_witness_id(expr_to_widx, expr, "WitnessInput operation input"))
+                        .collect::<Result<_, _>>()?,
+                ];
+                let mut outputs: Vec<Vec<WitnessId>> = Vec::with_capacity(output_exprs.len());
+                for (_output_idx, expr_idx) in output_exprs {
+                    let widx = alloc_fresh_witness_id();
+                    expr_to_widx.insert(*expr_idx, widx);
+                    outputs.push(vec![widx]);
+                }
+                ops.push(Op::NonPrimitiveOpWithExecutor {
+                    inputs,
+                    outputs,
+                    executor,
+                    op_id: data.op_id,
+                });
+            }
             NonPrimitiveOpType::Unconstrained => {
                 let executor = match data.params.as_ref().ok_or(
                     CircuitBuilderError::InvalidNonPrimitiveOpConfiguration { op: data.op_type },
@@ -252,7 +315,7 @@ where
                     NonPrimitiveOpParams::Unconstrained { executor } => executor.clone(),
                     _ => {
                         return Err(CircuitBuilderError::InvalidNonPrimitiveOpConfiguration {
-                            op: NonPrimitiveOpType::Unconstrained,
+                            op: data.op_type,
                         });
                     }
                 };
@@ -358,13 +421,31 @@ where
             }
         }
 
-        // Build DSU over expression IDs to honor connect(a, b)
-        let mut parents = build_connect_dsu(self.pending_connects);
+        let (dsu_connects, explicit_connects): (Vec<_>, Vec<_>) = self
+            .pending_connects
+            .iter()
+            .copied()
+            .partition(|(a, b)| {
+                let a_witness = is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *a);
+                let b_witness = is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *b);
+                let a_public = is_public_expr(self.graph, *a);
+                let b_public = is_public_expr(self.graph, *b);
+                !((a_witness && !b_witness && !b_public) || (b_witness && !a_witness && !a_public))
+            });
+
+        // Build DSU over expression IDs to honor connect(a, b), except when an
+        // unconstrained output participates. Those connects are enforced explicitly
+        // after lowering so witness-only inputs keep their own slots.
+        let mut parents = build_connect_dsu(&dsu_connects);
 
         // Track nodes that participate in any connect
         let in_connect: HashSet<usize> = self
             .pending_connects
             .iter()
+            .filter(|(a, b)| {
+                !is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *a)
+                    && !is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *b)
+            })
             .flat_map(|(a, b)| [a.0 as usize, b.0 as usize])
             .collect();
 
@@ -372,6 +453,7 @@ where
         let mut expr_to_widx: HashMap<ExprId, WitnessId> = HashMap::new();
         let mut public_rows: Vec<WitnessId> = vec![WitnessId(0); self.public_input_count];
         let mut public_mappings = HashMap::new();
+        let witness_alloc = RefCell::new(self.witness_alloc);
 
         // Unified class slot map: DSU root -> chosen out slot
         let mut root_to_widx: HashMap<usize, WitnessId> = HashMap::new();
@@ -380,7 +462,7 @@ where
         for (expr_idx, expr) in self.graph.nodes().iter().enumerate() {
             if let Expr::Const(val) = expr {
                 let id = ExprId(expr_idx as u32);
-                let w = self.witness_alloc.alloc();
+                let w = witness_alloc.borrow_mut().alloc();
                 ops.push(Op::Const { out: w, val: *val });
                 expr_to_widx.insert(id, w);
 
@@ -397,11 +479,12 @@ where
                 let root = dsu_find(&mut parents, expr_idx);
                 *root_to_widx
                     .entry(root)
-                    .or_insert_with(|| self.witness_alloc.alloc())
+                    .or_insert_with(|| witness_alloc.borrow_mut().alloc())
             } else {
-                self.witness_alloc.alloc()
+                witness_alloc.borrow_mut().alloc()
             }
         };
+        let mut alloc_fresh_witness_id = || witness_alloc.borrow_mut().alloc();
 
         // Pass B: emit public inputs
         for (expr_idx, expr) in self.graph.nodes().iter().enumerate() {
@@ -499,6 +582,7 @@ where
                             outputs,
                             &mut expr_to_widx,
                             &mut alloc_witness_id_for_expr,
+                            &mut alloc_fresh_witness_id,
                             &mut ops,
                         )?;
                     }
@@ -530,6 +614,7 @@ where
                             outputs,
                             &mut expr_to_widx,
                             &mut alloc_witness_id_for_expr,
+                            &mut alloc_fresh_witness_id,
                             &mut ops,
                         )?;
                     }
@@ -565,7 +650,34 @@ where
             }
         }
 
-        let witness_count = self.witness_alloc.witness_count();
+        let zero_widx = *expr_to_widx
+            .get(&ExprId::ZERO)
+            .ok_or(CircuitBuilderError::MissingExprMapping {
+                expr_id: ExprId::ZERO,
+                context: "expected zero constant witness mapping".to_string(),
+            })?;
+        for (a, b) in explicit_connects {
+            let a_is_unconstrained =
+                is_unconstrained_output_expr(self.graph, self.non_primitive_ops, a);
+            let b_is_unconstrained =
+                is_unconstrained_output_expr(self.graph, self.non_primitive_ops, b);
+            let (source_expr, target_expr) = match (a_is_unconstrained, b_is_unconstrained) {
+                (true, false) => (a, b),
+                (false, true) => (b, a),
+                _ => (a, b),
+            };
+            let source_widx = get_witness_id(&expr_to_widx, source_expr, "explicit connect source")?;
+            let target_widx = get_witness_id(&expr_to_widx, target_expr, "explicit connect target")?;
+            if source_widx != target_widx {
+                ops.push(Op::Add {
+                    a: source_widx,
+                    b: zero_widx,
+                    out: target_widx,
+                });
+            }
+        }
+
+        let witness_count = witness_alloc.borrow().witness_count();
         Ok((
             ops,
             public_rows,

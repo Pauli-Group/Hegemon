@@ -28,6 +28,8 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - [x] (2026-03-12 08:12Z) Added merge-stage profiling instrumentation in `circuits/aggregation/src/v5.rs` plus a new ignored benchmark `aggregation_v5_merge_cold_warm_profile` in `circuits/aggregation/tests/aggregation.rs`.
 - [x] (2026-03-12 08:27Z) Proved that the current merge implementation is structurally broken on the legacy outer batch-proof backend: the first `leaf_fanin=4`, `merge_fanin=16`, `queries=2`, `blowup=2` merge profile fails with `CircuitBuild(\"... verify_merkle_batch_circuit ... expected: goldilocks digest_elems=6, got: 4\")`.
 - [x] (2026-03-12 08:50Z) Prototyped a recursion-compatible outer batch config inside `circuits/aggregation` by switching the aggregation crate’s outer proof path to the transaction-style 6-element Goldilocks Poseidon2 configuration. The aggregation crate compiles and merge profiling now gets past the old digest-arity crash, but the same `leaf_fanin=4`, `merge_fanin=16`, `queries=2`, `blowup=2` run still fails after a `480214 ms` merge cache build with `CircuitRun(\"PublicInputLengthMismatch { expected: 5917, got: 291 }\")`.
+- [x] (2026-03-12 15:57Z) Fixed the first merge packing bug in the prototype path: small-case merge profiling (`leaf_fanin=1`, `merge_fanin=2`, `queries=2`, `blowup=2`) now reports `expected_public_len=460` and `packed_public_len=460`, and `v5_merge_set_targets` completes. The remaining blocker has moved to merge witness assignment: the same run now fails with `CircuitRun(\"WitnessConflict { witness_id: WitnessId(507), ... }\")` during `runner.run()`.
+- [x] (2026-03-12 16:20Z) Confirmed the merge witness-assignment failure is not a public-input bug anymore. The current prototype resolves merge witness sources through `Unconstrained` op outputs instead of `expr_to_widx`, but the small-case merge still fails at `runner.run()` with `WitnessConflict { witness_id: WitnessId(507), ... }`. That means the lowerer is still collapsing some external merge inputs onto computed witness slots through connect-class sharing; the next fix belongs in the recursion/circuit-lowering layer, not in another ad hoc `v5.rs` flattener.
 - [ ] Update docs/scripts and run the full targeted node/integration harnesses after the node-side DAG lands (current state: the strict `scripts/throughput_sidecar_aggregation_tmux.sh` run now reaches full RPC startup and mining instead of hanging in recursive prewarm, but I stopped the long PoW run before the full proofless batch completed).
 
 ## Surprises & Discoveries
@@ -61,6 +63,12 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 
 - Observation: fixing the outer digest arity alone is not enough; merge proving still mis-packs child outer-proof public inputs.
   Evidence: after switching the aggregation crate prototype to a 6-element outer config, the same merge profile reached `v5_merge_cache_lookup tx_count=16 cache_hit=false cache_build_ms=480204 cache_lookup_ms=480214 total_ms=483926` and then failed with `CircuitRun("PublicInputLengthMismatch { expected: 5917, got: 291 }")`.
+
+- Observation: the child outer-proof public-input packing bug is now resolved on the prototype path, but merge proving still fails because the witness-assignment plan is not yet aligned with the merge circuit’s connected witness layout.
+  Evidence: after fixing the packed public-input construction and removing obvious public-input leakage from the witness plan, the small debug case (`leaf_fanin=1`, `merge_fanin=2`) reports `v5_merge_public_input_summary tx_count=2 expected_public_len=460 packed_public_len=460` and `v5_merge_set_targets ... set_witness_ms=1`, then fails with `CircuitRun("WitnessConflict { witness_id: WitnessId(507), ... }")`.
+
+- Observation: resolving merge witness sources through lowered `expr_to_widx` representatives is fundamentally unreliable for this circuit.
+  Evidence: even after resolving witness sources through `Unconstrained` op outputs instead of `expr_to_widx`, the same small merge case still fails during `runner.run()` with `WitnessConflict { witness_id: WitnessId(507), ... }`. This shows the remaining conflict comes from lowerer/connect-class witness sharing, not from the aggregation crate’s packed public inputs.
 
 ## Decision Log
 
@@ -99,6 +107,8 @@ The circuit and consensus cutover is now partially landed. The repository compil
 The node-side DAG now exists in the working tree and compiles: the coordinator publishes leaf and merge stage payloads, the standalone worker accepts those payloads, and local workers execute the same leaf/merge prove helpers before the coordinator assembles the final `CandidateArtifact` itself. The remaining gap is broader validation rather than missing code paths: run the strict integration/throughput harnesses and tighten any behavioral regressions that show up there.
 
 The new experimental result is that the architecture is still blocked at the circuit layer, but the blocker is now concrete. The leaf stage has a credible direction: recursion-specific tx proofs plus `fan_in=4`, `queries=2`, `log_blowup=2` are the best numbers so far that still fit the intended `32/64` target with a larger merge arity. The merge stage, however, is not converged. On the legacy outer backend it fails immediately because the recursive Goldilocks merge verifier expects 6-element digests and the batch prover emits 4. On the prototype 6-element outer backend it burns `~480s` building merge cache/common data and then fails because child outer-proof public values are packed incorrectly. The next successful milestone is therefore not “more workers” or “more scheduler work”; it is a merge proof that completes on `hegemon-prover` for a feasible `32/64`-tx tree shape.
+
+The latest refinement is that merge public-input packing is no longer the first failure. The prototype path now reaches `runner.run()` on a small merge case after public-input length and witness-assignment-plan length both line up. The remaining blocker is a witness conflict inside the merge circuit, which means some merge verifier targets are still being populated with values that do not respect the circuit’s connected witness structure. That is the current place where the recursive architecture remains unrealized.
 
 ## Context and Orientation
 
@@ -212,6 +222,8 @@ High-signal evidence from the current experiment loop:
     cold merge proof: CircuitBuild("CircuitBuilder(NonPrimitiveOpArity { op: \"verify_merkle_batch_circuit\", expected: \"goldilocks digest_elems=6\", got: 4 })")
     v5_merge_cache_lookup tx_count=16 cache_hit=false cache_build_ms=480204 cache_lookup_ms=480214 total_ms=483926
     cold merge proof: CircuitRun("PublicInputLengthMismatch { expected: 5917, got: 291 }")
+    v5_merge_public_input_summary tx_count=2 expected_public_len=460 packed_public_len=460
+    cold merge proof: CircuitRun("WitnessConflict { witness_id: WitnessId(507), ... }")
 
 ## Interfaces and Dependencies
 

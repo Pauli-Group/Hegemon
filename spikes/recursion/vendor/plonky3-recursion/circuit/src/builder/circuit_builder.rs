@@ -28,7 +28,7 @@ struct WitnessInputExecutor {
 impl WitnessInputExecutor {
     pub const fn new() -> Self {
         Self {
-            op_type: NonPrimitiveOpType::Unconstrained,
+            op_type: NonPrimitiveOpType::WitnessInput,
         }
     }
 }
@@ -155,6 +155,14 @@ where
         }
     }
 
+    pub fn graph(&self) -> &crate::ExpressionGraph<F> {
+        self.expr_builder.graph()
+    }
+
+    pub fn non_primitive_ops(&self) -> &[NonPrimitiveOperationData<F>] {
+        &self.non_primitive_ops
+    }
+
     /// Enables a non-primitive operation type on this builder.
     pub fn enable_op(&mut self, op: NonPrimitiveOpType, cfg: crate::op::NonPrimitiveOpConfig<F>) {
         self.config.enable_op(op, cfg);
@@ -238,8 +246,11 @@ where
         &self,
         op: NonPrimitiveOpType,
     ) -> Result<(), CircuitBuilderError> {
-        // Unconstrained operations are always enable
-        if !self.is_op_enabled(&op) && op != NonPrimitiveOpType::Unconstrained {
+        // WitnessInput and Unconstrained operations are always enabled.
+        if !self.is_op_enabled(&op)
+            && op != NonPrimitiveOpType::Unconstrained
+            && op != NonPrimitiveOpType::WitnessInput
+        {
             return Err(CircuitBuilderError::OpNotAllowed { op });
         }
         Ok(())
@@ -549,7 +560,7 @@ where
         label: &'static str,
     ) -> (NonPrimitiveOpId, ExprId, Vec<Option<ExprId>>) {
         self.push_non_primitive_op_with_outputs(
-            NonPrimitiveOpType::Unconstrained,
+            NonPrimitiveOpType::WitnessInput,
             input_exprs,
             (0..n_outputs).map(|_| Some(label)).collect(),
             Some(NonPrimitiveOpParams::Unconstrained {

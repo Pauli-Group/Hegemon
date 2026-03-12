@@ -142,8 +142,9 @@ impl<F: CircuitField> CircuitRunner<F> {
             ) => {
                 // ok
             }
-            // Unconstrained operations don't need private data.
-            (crate::op::NonPrimitiveOpType::Unconstrained, _) => return Ok(()),
+            // WitnessInput and Unconstrained operations don't need private data.
+            (crate::op::NonPrimitiveOpType::Unconstrained, _)
+            | (crate::op::NonPrimitiveOpType::WitnessInput, _) => return Ok(()),
         }
 
         // Disallow double-setting private data
@@ -184,6 +185,27 @@ impl<F: CircuitField> CircuitRunner<F> {
     #[instrument(skip_all)]
     pub fn run(mut self) -> Result<Traces<F>, CircuitError> {
         self.execute_all()?;
+
+        let mut owned = self.circuit.public_rows.iter().copied().collect::<hashbrown::HashSet<_>>();
+        for op in &self.circuit.ops {
+            match op {
+                Op::Const { out, .. }
+                | Op::Public { out, .. }
+                | Op::Add { out, .. }
+                | Op::Mul { out, .. } => {
+                    owned.insert(*out);
+                }
+                Op::NonPrimitiveOpWithExecutor { outputs, .. } => {
+                    owned.extend(outputs.iter().flatten().copied());
+                }
+            }
+        }
+        for (index, witness) in self.witness.iter_mut().enumerate() {
+            let witness_id = WitnessId(index as u32);
+            if witness.is_none() && !owned.contains(&witness_id) {
+                *witness = Some(F::ZERO);
+            }
+        }
 
         // Delegate to trace builders for each table
         let witness_trace = WitnessTraceBuilder::new(&self.witness).build()?;
@@ -274,7 +296,13 @@ impl<F: CircuitField> CircuitRunner<F> {
                         &mut self.op_states,
                     );
 
-                    executor.execute(&inputs, &outputs, &mut ctx)?;
+                    executor.execute(&inputs, &outputs, &mut ctx).map_err(|err| {
+                        CircuitError::NonPrimitiveExecutionFailed {
+                            operation_index: op_id,
+                            op: *executor.op_type(),
+                            message: format!("{err:?}"),
+                        }
+                    })?;
                 }
             }
         }
