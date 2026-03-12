@@ -620,10 +620,34 @@ fn build_aggregation_prover_cache_entry(
     }
 
     let circuit_build_started = Instant::now();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=cache_circuit_build_start tx_count={} total_ms={}",
+            key.tx_count,
+            started.elapsed().as_millis()
+        );
+    }
     let circuit = circuit_builder
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=cache_circuit_build_done tx_count={} build_ms={} total_ms={}",
+            key.tx_count,
+            circuit_build_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+    }
+    let witness_plan_started = Instant::now();
     let witness_assignment_plans = build_witness_assignment_plans(&circuit, &verifier_inputs)?;
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=cache_witness_plan_build tx_count={} plan_ms={} total_ms={}",
+            key.tx_count,
+            witness_plan_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+    }
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_circuit_build tx_count={} build_ms={} total_ms={}",
@@ -700,6 +724,12 @@ fn get_or_build_aggregation_common_data(
             drop(state);
 
             let build_started = Instant::now();
+            if profile {
+                eprintln!(
+                    "aggregation_profile stage=cache_common_lookup_build_start tx_count={} total_ms=0",
+                    key.tx_count
+                );
+            }
             let built = Arc::new(build_common_data_parallel(outer_config, airs, degrees));
             let build_ms = build_started.elapsed().as_millis();
 
