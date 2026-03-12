@@ -6,7 +6,6 @@ use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
 use crypto::hashes::blake3_384;
 use p3_field::PrimeCharacteristicRing;
-use sp_core::hashing::blake2_256;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;

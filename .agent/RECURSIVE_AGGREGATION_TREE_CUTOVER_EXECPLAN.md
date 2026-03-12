@@ -19,9 +19,11 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - [x] (2026-03-12 04:08Z) Hard-cut consensus verification to V5 by default in `consensus/src/aggregation.rs`, keeping V4 only behind `HEGEMON_AGG_LEGACY_V4`, and added V5-specific error variants in `consensus/src/error.rs`.
 - [x] (2026-03-12 04:08Z) Updated block-import metadata checks in `consensus/src/proof.rs` and artifact assembly metadata in `node/src/substrate/service.rs` so `leaf_count`, `tree_levels`, and `leaf_manifest_commitment` match the new leaf tree instead of the old monolithic stub.
 - [x] (2026-03-12 04:08Z) Verified targeted compile/tests for the landed slice: `cargo check -p aggregation-circuit`, `cargo check -p consensus`, `cargo test -p aggregation-circuit --test aggregation aggregation_v5_payload_validation_rejects_invalid_encodings -- --nocapture`, and `cargo test -p consensus verify_aggregation_proof_rejects_legacy_payload_version -- --nocapture`.
-- [ ] Replace placeholder stage scheduling in `node/src/substrate/prover_coordinator.rs` with a real leaf/merge DAG and local-only root assembly.
-- [ ] Extend prover RPC and `node/src/bin/prover_worker.rs` for `leaf_batch_prove` and `merge_node_prove`, and treat stale/rejected packages as normal churn.
-- [ ] Update docs/scripts and run the full targeted node/integration harnesses after the node-side DAG lands.
+- [x] (2026-03-12 04:08Z) Confirmed the node crate still compiles against the V5/proof-metadata changes with the documented macOS `libclang` environment: `LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib cargo check -p hegemon-node`.
+- [x] (2026-03-12 04:37Z) Replaced the primary MergeRoot scheduler path in `node/src/substrate/prover_coordinator.rs` with a real leaf/merge DAG backed by `RootFinalizeWorkData`: leaf packages now carry sliced tx proof bytes, local workers execute `prove_leaf_aggregation` / `prove_merge_aggregation`, merge work is published only after all leaves complete, and final `CandidateArtifact` assembly is local to the coordinator.
+- [x] (2026-03-12 04:37Z) Extended prover RPC and `node/src/bin/prover_worker.rs` for `leaf_batch_prove` and `merge_node_prove`, and switched `submitStageWorkResult` to raw stage-proof bytes instead of SCALE-encoded `CandidateArtifact` payloads.
+- [x] (2026-03-12 04:37Z) Verified node-side compile and one behavioral test after the DAG cut: `cargo test -p hegemon-node prover_rpc_workflow_methods_operate_end_to_end -- --nocapture`.
+- [ ] Update docs/scripts and run the full targeted node/integration harnesses after the node-side DAG lands (current state: the strict `scripts/throughput_sidecar_aggregation_tmux.sh` run now reaches full RPC startup and mining instead of hanging in recursive prewarm, but I stopped the long PoW run before the full proofless batch completed).
 
 ## Surprises & Discoveries
 
@@ -42,6 +44,9 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 
 - Observation: the current V5 cut is bounded to a two-level tree (`leaf` or `merge-over-leaf`) because the merge recursion is wired specifically against leaf children.
   Evidence: `circuits/aggregation/src/v5.rs` and `consensus/src/aggregation/v5.rs` currently reject non-leaf merge children with `"merge stage currently expects leaf children"` / `"merge nodes currently require leaf children"`.
+
+- Observation: `RootFinalizeWorkData` already contains every input needed for the recursive stage DAG except the final root proof bytes, so the node-side cutover did not need a second service-side context builder.
+  Evidence: `node/src/substrate/service.rs` already produced `statement_hashes`, `tx_proofs`, `tx_statements_commitment`, DA metadata, tree roots, and nullifier data; the coordinator now slices that into `LeafBatchWorkData` and uses it again for final local artifact assembly.
 
 ## Decision Log
 
@@ -69,7 +74,7 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 
 The circuit and consensus cutover is now partially landed. The repository compiles with a V5 aggregation payload, leaf proofs recurse over fixed-size transaction-proof groups, merge proofs recurse over fixed-size batches of leaf proofs, and consensus rejects V4 by default unless `HEGEMON_AGG_LEGACY_V4=1` is explicitly set. The block-import metadata path also now expects real leaf-tree metadata instead of the old hard-coded `tree_levels=1` / `leaf_count=1` stub.
 
-The remaining gap is entirely node-side orchestration. The coordinator/RPC/worker stack still needs to publish and consume leaf and merge stage payloads end-to-end so the prepared-bundle path actually scales with external workers. Until that lands, the new V5 proof format exists and can be verified, but the shipped node still uses the old monolithic local assembly path for recursion scheduling.
+The node-side DAG now exists in the working tree and compiles: the coordinator publishes leaf and merge stage payloads, the standalone worker accepts those payloads, and local workers execute the same leaf/merge prove helpers before the coordinator assembles the final `CandidateArtifact` itself. The remaining gap is broader validation rather than missing code paths: run the strict integration/throughput harnesses and tighten any behavioral regressions that show up there.
 
 ## Context and Orientation
 

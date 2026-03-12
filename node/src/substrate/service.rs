@@ -2713,8 +2713,9 @@ fn build_merge_root_proof_from_materials(
     if proofs.is_empty() {
         return Err("candidate tx set has no merge-root proof material".to_string());
     }
+    let proofs_for_aggregation = Arc::clone(&proofs);
     let proof_bytes = run_aggregation_prepare_job(move || {
-        prove_aggregation(proofs.as_ref(), tx_statements_commitment)
+        prove_aggregation(proofs_for_aggregation.as_ref(), tx_statements_commitment)
     })
     .map_err(|err| format!("merge root proof generation failed: {err}"))?;
     let root_proof = encode_aggregation_proof_bytes(proof_bytes);

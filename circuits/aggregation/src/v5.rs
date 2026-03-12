@@ -609,7 +609,48 @@ struct AggregationProverCacheResultWrapper {
 }
 
 pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), AggregationError> {
+    let explicit_targets = aggregation_warmup_target_shapes();
+    let target_max_txs = explicit_targets
+        .into_iter()
+        .max()
+        .unwrap_or_else(aggregation_prewarm_max_txs);
+    if target_max_txs == 0 {
+        return Ok(());
+    }
     let representative = build_sample_representative_proof()?;
+    let representative_public = stark_public_inputs_p3(&representative).map_err(|err| {
+        AggregationError::InvalidPublicInputs {
+            index: 0,
+            message: err.to_string(),
+        }
+    })?;
+    let representative_public_vec = representative_public.to_vec();
+    let representative_inner: TransactionProofP3 =
+        postcard::from_bytes(&representative.stark_proof)
+            .map_err(|_| AggregationError::InvalidProofFormat { index: 0 })?;
+    let query_count = representative_inner.opening_proof.query_proofs.len();
+    let log_blowup = resolve_log_blowup(
+        &representative_inner,
+        &representative_public_vec,
+        query_count,
+    )
+    .map_err(|message| AggregationError::InvalidProofShape { index: 0, message })?;
+    let shape = ProofShape {
+        degree_bits: representative_inner.degree_bits,
+        commit_phase_len: representative_inner.opening_proof.commit_phase_commits.len(),
+        final_poly_len: representative_inner.opening_proof.final_poly.len(),
+        query_count,
+    };
+    let leaf_key = AggregationProverKey {
+        tx_count: leaf_fan_in(),
+        pub_inputs_len: representative_public_vec.len(),
+        log_blowup,
+        shape,
+    };
+    let _ = get_or_build_aggregation_prover_cache_entry(leaf_key, &representative_inner)?;
+    if target_max_txs <= leaf_fan_in() {
+        return Ok(());
+    }
     let statement_hash = statement_hash_from_tx_proof(&representative);
     let leaf = prove_leaf_aggregation(
         std::slice::from_ref(&representative),

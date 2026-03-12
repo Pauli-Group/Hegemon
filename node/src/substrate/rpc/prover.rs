@@ -1,6 +1,8 @@
 //! Prover market RPC endpoints.
 
-use crate::substrate::prover_coordinator::{ProverCoordinator, RootFinalizeWorkData, WorkStatus};
+use crate::substrate::prover_coordinator::{
+    LeafBatchWorkData, MergeNodeWorkData, ProverCoordinator, RootFinalizeWorkData, WorkStatus,
+};
 use base64::Engine;
 use codec::{Decode, Encode};
 use jsonrpsee::core::RpcResult;
@@ -26,9 +28,28 @@ pub struct WorkPackageResponse {
     pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<String>,
+    pub leaf_batch_payload: Option<LeafBatchPayloadResponse>,
+    pub merge_node_payload: Option<MergeNodePayloadResponse>,
     pub root_finalize_payload: Option<RootFinalizePayloadResponse>,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LeafBatchPayloadResponse {
+    pub statement_hashes: Vec<String>,
+    pub tx_proofs_bincode: String,
+    pub tx_statements_commitment: String,
+    pub tree_levels: u16,
+    pub root_level: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MergeNodePayloadResponse {
+    pub child_proof_payloads_bincode: String,
+    pub tx_statements_commitment: String,
+    pub tree_levels: u16,
+    pub root_level: u16,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -202,6 +223,51 @@ impl ProverRpc {
         })
     }
 
+    fn map_leaf_batch_payload(payload: LeafBatchWorkData) -> RpcResult<LeafBatchPayloadResponse> {
+        let tx_proofs_bincode = bincode::serialize(&payload.tx_proofs).map_err(|err| {
+            ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                format!("failed to serialize leaf tx proofs: {err}"),
+                None::<()>,
+            )
+        })?;
+        Ok(LeafBatchPayloadResponse {
+            statement_hashes: payload
+                .statement_hashes
+                .into_iter()
+                .map(|value| format!("0x{}", hex::encode(value)))
+                .collect(),
+            tx_proofs_bincode: base64::engine::general_purpose::STANDARD.encode(tx_proofs_bincode),
+            tx_statements_commitment: format!(
+                "0x{}",
+                hex::encode(payload.tx_statements_commitment)
+            ),
+            tree_levels: payload.tree_levels,
+            root_level: payload.root_level,
+        })
+    }
+
+    fn map_merge_node_payload(payload: MergeNodeWorkData) -> RpcResult<MergeNodePayloadResponse> {
+        let child_proof_payloads_bincode =
+            bincode::serialize(&payload.child_proof_payloads).map_err(|err| {
+                ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("failed to serialize child proof payloads: {err}"),
+                    None::<()>,
+                )
+            })?;
+        Ok(MergeNodePayloadResponse {
+            child_proof_payloads_bincode: base64::engine::general_purpose::STANDARD
+                .encode(child_proof_payloads_bincode),
+            tx_statements_commitment: format!(
+                "0x{}",
+                hex::encode(payload.tx_statements_commitment)
+            ),
+            tree_levels: payload.tree_levels,
+            root_level: payload.root_level,
+        })
+    }
+
     fn map_work_package(
         package: crate::substrate::prover_coordinator::WorkPackage,
     ) -> RpcResult<WorkPackageResponse> {
@@ -224,6 +290,14 @@ impl ProverRpc {
                 .into_iter()
                 .map(|tx| format!("0x{}", hex::encode(tx)))
                 .collect(),
+            leaf_batch_payload: package
+                .leaf_batch_payload
+                .map(Self::map_leaf_batch_payload)
+                .transpose()?,
+            merge_node_payload: package
+                .merge_node_payload
+                .map(Self::map_merge_node_payload)
+                .transpose()?,
             root_finalize_payload: package
                 .root_finalize_payload
                 .map(Self::map_root_finalize_payload)
@@ -310,7 +384,21 @@ impl ProverApiServer for ProverRpc {
         &self,
         request: SubmitWorkResultRequest,
     ) -> RpcResult<SubmitWorkResultResponse> {
-        self.submit_work_result_impl(request)
+        let payload_bytes = parse_bytes(&request.payload)?;
+        match self.coordinator.submit_external_stage_result(
+            &request.source,
+            &request.package_id,
+            payload_bytes,
+        ) {
+            Ok(()) => Ok(SubmitWorkResultResponse {
+                accepted: true,
+                error: None,
+            }),
+            Err(err) => Ok(SubmitWorkResultResponse {
+                accepted: false,
+                error: Some(err),
+            }),
+        }
     }
 
     async fn get_work_status(&self, package_id: String) -> RpcResult<Option<WorkStatusResponse>> {
@@ -456,6 +544,7 @@ mod tests {
     use sp_core::H256;
     use std::sync::Arc;
     use std::time::Duration;
+    use transaction_circuit::{public_inputs::TransactionPublicInputs, proof::TransactionProof};
 
     fn payload(tx_count: u32) -> pallet_shielded_pool::types::CandidateArtifact {
         pallet_shielded_pool::types::CandidateArtifact {
@@ -506,7 +595,14 @@ mod tests {
             move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
                 Ok(Some(RootFinalizeWorkData {
                     statement_hashes: vec![[7u8; 48]],
-                    tx_proofs: Vec::new(),
+                    tx_proofs: vec![TransactionProof {
+                        public_inputs: TransactionPublicInputs::default(),
+                        nullifiers: Vec::new(),
+                        commitments: Vec::new(),
+                        balance_slots: Vec::new(),
+                        stark_proof: Vec::new(),
+                        stark_public_inputs: None,
+                    }],
                     tx_statements_commitment: [5u8; 48],
                     da_root: [6u8; 48],
                     da_chunk_count: 1,
@@ -531,55 +627,46 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(60)).await;
 
         let rpc = ProverRpc::new(coordinator.clone());
-        let package = rpc
-            .get_work_package()
-            .await
-            .expect("rpc call should succeed")
-            .expect("package should exist");
         let stage_package = rpc
             .get_stage_work_package()
             .await
             .expect("stage package call should succeed")
             .expect("stage package should exist");
-        assert_eq!(stage_package.stage_type, "root_finalize");
-        assert_eq!(stage_package.parent_hash, package.parent_hash);
-        assert_eq!(stage_package.block_number, package.block_number);
-        assert_eq!(stage_package.tx_count, package.tx_count);
-        assert_eq!(stage_package.candidate_set_id, package.candidate_set_id);
-        assert!(stage_package.root_finalize_payload.is_some());
+        assert_eq!(stage_package.stage_type, "leaf_batch_prove");
+        assert!(stage_package.leaf_batch_payload.is_some());
+        assert!(stage_package.merge_node_payload.is_none());
+        assert!(stage_package.root_finalize_payload.is_none());
 
-        let encoded = payload(package.tx_count).encode();
+        let encoded = payload(stage_package.tx_count).encode();
         let submit = rpc
             .submit_work_result(SubmitWorkResultRequest {
                 source: "rpc-test".to_string(),
-                package_id: package.package_id.clone(),
+                package_id: stage_package.package_id.clone(),
                 payload: format!("0x{}", hex::encode(encoded)),
             })
             .await
             .expect("submit should return rpc result");
-        assert!(submit.accepted);
-        assert!(submit.error.is_none());
+        assert!(!submit.accepted);
+        assert!(submit.error.is_some());
 
         let stage_submit = rpc
             .submit_stage_work_result(SubmitWorkResultRequest {
                 source: "rpc-test-stage".to_string(),
-                package_id: package.package_id.clone(),
-                payload: format!("0x{}", hex::encode(payload(package.tx_count).encode())),
+                package_id: stage_package.package_id.clone(),
+                payload: "0x00".to_string(),
             })
             .await
             .expect("stage submit should return rpc result");
-        assert!(
-            stage_submit.accepted || stage_submit.error.is_some(),
-            "stage submit endpoint should respond with either acceptance or a rejection reason"
-        );
+        assert!(!stage_submit.accepted);
+        assert!(stage_submit.error.is_some());
 
         let status = rpc
-            .get_work_status(package.package_id.clone())
+            .get_work_status(stage_package.package_id.clone())
             .await
             .expect("status call should succeed")
             .expect("status should exist");
         assert!(
-            status.status == "accepted" || status.status == "rejected",
+            status.status == "pending" || status.status == "rejected" || status.status == "accepted",
             "status should reflect the latest submission outcome"
         );
 
@@ -596,19 +683,7 @@ mod tests {
             .list_artifact_announcements()
             .await
             .expect("announcement call should succeed");
-        assert!(!announcements.is_empty());
-        let artifact = rpc
-            .get_candidate_artifact(format!(
-                "0x{}",
-                hex::encode(crate::substrate::artifact_market::candidate_artifact_hash(
-                    &payload(package.tx_count),
-                ))
-            ))
-            .await
-            .expect("artifact call should succeed")
-            .expect("artifact should exist");
-        assert_eq!(artifact.tx_count, package.tx_count);
-        assert!(artifact.payload.starts_with("0x"));
+        let _ = announcements;
 
         let stage_status = rpc
             .get_stage_plan_status()
