@@ -7,6 +7,7 @@ use consensus::verify_aggregation_proof;
 use crypto::hashes::blake3_384;
 use p3_field::PrimeCharacteristicRing;
 use std::time::Instant;
+use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
@@ -177,12 +178,24 @@ fn statement_hashes_from_proofs(proofs: &[TransactionProof]) -> Vec<[u8; 48]> {
     proofs.iter().map(statement_hash_from_proof).collect()
 }
 
+fn configured_leaf_fanin() -> usize {
+    std::env::var("HEGEMON_AGG_LEAF_FANIN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(1)
+}
+
 #[test]
 #[ignore = "expensive end-to-end aggregation proof generation; run manually"]
 fn aggregation_v5_leaf_roundtrip() {
     let witness = sample_witness();
     let (proving_key, _verifying_key) = generate_keys();
-    let proof = transaction_circuit::proof::prove(&witness, &proving_key)
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
         .expect("generate transaction proof");
 
     let proofs = vec![proof];
@@ -242,9 +255,13 @@ fn aggregation_v5_payload_validation_rejects_invalid_encodings() {
 fn aggregation_v5_leaf_fanin8_profile_roundtrip() {
     let witness = sample_witness();
     let (proving_key, _verifying_key) = generate_keys();
-    let proof = transaction_circuit::proof::prove(&witness, &proving_key)
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
         .expect("generate transaction proof");
-    let proofs = vec![proof; 8];
+    let proofs = vec![proof; configured_leaf_fanin()];
     let statement_hashes = statement_hashes_from_proofs(&proofs);
     let commitment = tx_statements_commitment_from_proofs(&proofs);
 
@@ -258,9 +275,14 @@ fn aggregation_v5_leaf_fanin8_profile_roundtrip() {
 fn aggregation_v5_leaf_fanin8_cold_warm_profile() {
     let witness = sample_witness();
     let (proving_key, _verifying_key) = generate_keys();
-    let proof = transaction_circuit::proof::prove(&witness, &proving_key)
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
         .expect("generate transaction proof");
-    let proofs = vec![proof; 8];
+    let fan_in = configured_leaf_fanin();
+    let proofs = vec![proof; fan_in];
     let statement_hashes = statement_hashes_from_proofs(&proofs);
     let commitment = tx_statements_commitment_from_proofs(&proofs);
 
@@ -277,7 +299,7 @@ fn aggregation_v5_leaf_fanin8_cold_warm_profile() {
     verify_aggregation_proof(&warm_leaf, proofs.len(), &commitment).expect("verify warm leaf");
 
     eprintln!(
-        "leaf_cold_warm_profile fan_in=8 cold_ms={} warm_ms={}",
-        cold_ms, warm_ms
+        "leaf_cold_warm_profile fan_in={} cold_ms={} warm_ms={}",
+        fan_in, cold_ms, warm_ms
     );
 }

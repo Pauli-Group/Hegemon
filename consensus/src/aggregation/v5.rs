@@ -293,7 +293,8 @@ fn decode_leaf_child_context(bytes: &[u8]) -> Result<LeafChildContext, ProofErro
         final_poly_len: inner_proof.opening_proof.final_poly.len(),
         query_count: inner_proof.opening_proof.query_proofs.len(),
     };
-    let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs_vec.len());
+    let log_blowup = resolve_log_blowup(&inner_proof, &pub_inputs_vec, shape.query_count)
+        .map_err(ProofError::AggregationProofInputsMismatch)?;
     let expected_shape_id = leaf_shape_id(leaf_fan_in(), pub_inputs_vec.len(), log_blowup, shape);
     if payload.shape_id != expected_shape_id {
         return Err(ProofError::AggregationProofV5Binding(
@@ -496,9 +497,11 @@ pub(crate) fn verify_with_metrics(
                 final_poly_len: inner_proof.opening_proof.final_poly.len(),
                 query_count: inner_proof.opening_proof.query_proofs.len(),
             };
-            let log_blowup = transaction_log_blowup_for_public_inputs(pub_inputs.to_vec().len());
+            let pub_inputs_vec = pub_inputs.to_vec();
+            let log_blowup = resolve_log_blowup(&inner_proof, &pub_inputs_vec, shape.query_count)
+                .map_err(ProofError::AggregationProofInputsMismatch)?;
             let expected_shape_id =
-                leaf_shape_id(leaf_fan_in(), pub_inputs.to_vec().len(), log_blowup, shape);
+                leaf_shape_id(leaf_fan_in(), pub_inputs_vec.len(), log_blowup, shape);
             if payload.shape_id != expected_shape_id {
                 return Err(ProofError::AggregationProofV5Binding(
                     "leaf shape_id mismatch".to_string(),
@@ -506,7 +509,7 @@ pub(crate) fn verify_with_metrics(
             }
             let cache_key = AggregationVerifierKey {
                 tx_count: leaf_fan_in(),
-                pub_inputs_len: pub_inputs.to_vec().len(),
+                pub_inputs_len: pub_inputs_vec.len(),
                 log_blowup,
                 shape,
             };

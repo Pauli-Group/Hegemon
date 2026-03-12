@@ -11,7 +11,7 @@ use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, 
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::verify_circuit;
-use p3_uni_stark::get_log_num_quotient_chunks;
+use p3_uni_stark::{get_log_num_quotient_chunks, verify as verify_stark};
 use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -252,6 +252,76 @@ fn build_aggregation_verifier_cache_entry(
 fn transaction_log_blowup_for_public_inputs(pub_inputs_len: usize) -> usize {
     let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
     FRI_LOG_BLOWUP.max(log_chunks)
+}
+
+fn resolve_log_blowup(
+    proof: &TransactionProofP3,
+    pub_inputs: &[Val],
+    query_count: usize,
+) -> Result<usize, String> {
+    if query_count == 0 {
+        return Err("proof has zero FRI queries".to_string());
+    }
+
+    let inferred = infer_log_blowup_from_proof_shape(proof);
+    let mut candidates = Vec::new();
+    let mut push_unique = |value: usize| {
+        if !candidates.contains(&value) {
+            candidates.push(value);
+        }
+    };
+
+    if let Some(log_blowup) = inferred {
+        push_unique(log_blowup);
+        for delta in 1..=2 {
+            push_unique(log_blowup.saturating_sub(delta));
+            push_unique(log_blowup.saturating_add(delta));
+        }
+    }
+    push_unique(FRI_LOG_BLOWUP);
+    for fallback in 0..=8 {
+        push_unique(fallback);
+    }
+
+    for log_blowup in candidates.iter().copied() {
+        let config = config_with_fri(log_blowup, query_count);
+        if verify_stark(&config.config, &TransactionAirP3, proof, pub_inputs).is_ok() {
+            return Ok(log_blowup);
+        }
+    }
+
+    Err(format!(
+        "unable to resolve FRI log_blowup (inferred={inferred:?}, attempted={candidates:?})"
+    ))
+}
+
+fn infer_log_blowup_from_proof_shape(proof: &TransactionProofP3) -> Option<usize> {
+    let final_poly_len = proof.opening_proof.final_poly.len();
+    if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
+        return None;
+    }
+    let log_final_poly_len = final_poly_len.ilog2() as usize;
+    let commit_phase_len = proof.opening_proof.commit_phase_commits.len();
+    let baseline = commit_phase_len + log_final_poly_len;
+
+    let mut observed_log_max_height: Option<usize> = None;
+    for query_proof in proof.opening_proof.query_proofs.iter() {
+        let query_max = query_proof
+            .input_proof
+            .iter()
+            .map(|batch| batch.opening_proof.len())
+            .max()?;
+        if query_max < baseline {
+            return None;
+        }
+        match observed_log_max_height {
+            Some(expected) if expected != query_max => return None,
+            Some(_) => {}
+            None => observed_log_max_height = Some(query_max),
+        }
+    }
+
+    observed_log_max_height?.checked_sub(baseline)
 }
 
 fn tree_levels_for_tx_count(tx_count: usize, arity: u16) -> u16 {
