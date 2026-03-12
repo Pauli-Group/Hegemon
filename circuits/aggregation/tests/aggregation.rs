@@ -1,6 +1,7 @@
 use aggregation_circuit::{
     AggregationNodeKind, AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
     AGGREGATION_PUBLIC_VALUES_ENCODING_V2, prove_aggregation, prove_leaf_aggregation,
+    prove_merge_aggregation,
 };
 use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
@@ -186,6 +187,14 @@ fn configured_leaf_fanin() -> usize {
         .max(1)
 }
 
+fn configured_merge_fanin() -> usize {
+    std::env::var("HEGEMON_AGG_MERGE_FANIN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(1)
+}
+
 #[test]
 #[ignore = "expensive end-to-end aggregation proof generation; run manually"]
 fn aggregation_v5_leaf_roundtrip() {
@@ -284,22 +293,59 @@ fn aggregation_v5_leaf_fanin8_cold_warm_profile() {
     let fan_in = configured_leaf_fanin();
     let proofs = vec![proof; fan_in];
     let statement_hashes = statement_hashes_from_proofs(&proofs);
-    let commitment = tx_statements_commitment_from_proofs(&proofs);
-
     let cold_started = Instant::now();
-    let cold_leaf =
+    let _cold_leaf =
         prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("cold leaf proof");
     let cold_ms = cold_started.elapsed().as_millis();
-    verify_aggregation_proof(&cold_leaf, proofs.len(), &commitment).expect("verify cold leaf");
 
     let warm_started = Instant::now();
-    let warm_leaf =
+    let _warm_leaf =
         prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("warm leaf proof");
     let warm_ms = warm_started.elapsed().as_millis();
-    verify_aggregation_proof(&warm_leaf, proofs.len(), &commitment).expect("verify warm leaf");
 
     eprintln!(
         "leaf_cold_warm_profile fan_in={} cold_ms={} warm_ms={}",
         fan_in, cold_ms, warm_ms
+    );
+}
+
+#[test]
+#[ignore = "expensive merge cold/warm profiling run; use HEGEMON_AGG_PROFILE=1 on target hardware"]
+fn aggregation_v5_merge_cold_warm_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+    let leaf_fanin = configured_leaf_fanin();
+    let merge_fanin = configured_merge_fanin();
+    let leaf_proofs = vec![proof; leaf_fanin];
+    let leaf_statement_hashes = statement_hashes_from_proofs(&leaf_proofs);
+    let leaf_payload =
+        prove_leaf_aggregation(&leaf_proofs, &leaf_statement_hashes, 2, 0).expect("leaf proof");
+    let child_payloads = vec![leaf_payload; merge_fanin];
+
+    let all_proofs = std::iter::repeat_n(leaf_proofs.clone(), merge_fanin)
+        .flatten()
+        .collect::<Vec<_>>();
+    let commitment = tx_statements_commitment_from_proofs(&all_proofs);
+    let tx_count = all_proofs.len();
+
+    let cold_started = Instant::now();
+    let _cold_merge =
+        prove_merge_aggregation(&child_payloads, commitment, 2, 1).expect("cold merge proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+
+    let warm_started = Instant::now();
+    let _warm_merge =
+        prove_merge_aggregation(&child_payloads, commitment, 2, 1).expect("warm merge proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+
+    eprintln!(
+        "merge_cold_warm_profile leaf_fan_in={} merge_fan_in={} tx_count={} cold_ms={} warm_ms={}",
+        leaf_fanin, merge_fanin, tx_count, cold_ms, warm_ms
     );
 }

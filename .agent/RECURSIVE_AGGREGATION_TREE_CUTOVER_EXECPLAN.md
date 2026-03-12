@@ -23,6 +23,11 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - [x] (2026-03-12 04:37Z) Replaced the primary MergeRoot scheduler path in `node/src/substrate/prover_coordinator.rs` with a real leaf/merge DAG backed by `RootFinalizeWorkData`: leaf packages now carry sliced tx proof bytes, local workers execute `prove_leaf_aggregation` / `prove_merge_aggregation`, merge work is published only after all leaves complete, and final `CandidateArtifact` assembly is local to the coordinator.
 - [x] (2026-03-12 04:37Z) Extended prover RPC and `node/src/bin/prover_worker.rs` for `leaf_batch_prove` and `merge_node_prove`, and switched `submitStageWorkResult` to raw stage-proof bytes instead of SCALE-encoded `CandidateArtifact` payloads.
 - [x] (2026-03-12 04:37Z) Verified node-side compile and one behavioral test after the DAG cut: `cargo test -p hegemon-node prover_rpc_workflow_methods_operate_end_to_end -- --nocapture`.
+- [x] (2026-03-12 07:20Z) Ran a remote leaf-parameter sweep on `hegemon-prover` with the ignored `aggregation_v5_leaf_fanin8_cold_warm_profile` benchmark. Measured cold/warm leaf totals were `fan_in=4, queries=4, blowup=2 -> 192015/141124 ms`, `fan_in=4, queries=2, blowup=2 -> 131712/99431 ms`, `fan_in=2, queries=4, blowup=2 -> 96443/71036 ms`, and `fan_in=2, queries=2, blowup=2 -> 66013/50219 ms`.
+- [x] (2026-03-12 07:20Z) Reduced those leaf timings to whole-tree implications. Under the current two-level implementation (`max_recursive_txs = leaf_fanin * merge_fanin`), `fan_in=2` needs `merge_fanin=16` just to reach `32` tx and still cannot reach `64` without `merge_fanin=32` or a third level. The best `32/64`-oriented leaf candidate from the sweep is therefore `fan_in=4, queries=2, blowup=2`, which implies a `32 tx, 4-worker` leaf phase of roughly `132s + 99s = 231s` before merge/finalize.
+- [x] (2026-03-12 08:12Z) Added merge-stage profiling instrumentation in `circuits/aggregation/src/v5.rs` plus a new ignored benchmark `aggregation_v5_merge_cold_warm_profile` in `circuits/aggregation/tests/aggregation.rs`.
+- [x] (2026-03-12 08:27Z) Proved that the current merge implementation is structurally broken on the legacy outer batch-proof backend: the first `leaf_fanin=4`, `merge_fanin=16`, `queries=2`, `blowup=2` merge profile fails with `CircuitBuild(\"... verify_merkle_batch_circuit ... expected: goldilocks digest_elems=6, got: 4\")`.
+- [x] (2026-03-12 08:50Z) Prototyped a recursion-compatible outer batch config inside `circuits/aggregation` by switching the aggregation crate’s outer proof path to the transaction-style 6-element Goldilocks Poseidon2 configuration. The aggregation crate compiles and merge profiling now gets past the old digest-arity crash, but the same `leaf_fanin=4`, `merge_fanin=16`, `queries=2`, `blowup=2` run still fails after a `480214 ms` merge cache build with `CircuitRun(\"PublicInputLengthMismatch { expected: 5917, got: 291 }\")`.
 - [ ] Update docs/scripts and run the full targeted node/integration harnesses after the node-side DAG lands (current state: the strict `scripts/throughput_sidecar_aggregation_tmux.sh` run now reaches full RPC startup and mining instead of hanging in recursive prewarm, but I stopped the long PoW run before the full proofless batch completed).
 
 ## Surprises & Discoveries
@@ -48,6 +53,15 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - Observation: `RootFinalizeWorkData` already contains every input needed for the recursive stage DAG except the final root proof bytes, so the node-side cutover did not need a second service-side context builder.
   Evidence: `node/src/substrate/service.rs` already produced `statement_hashes`, `tx_proofs`, `tx_statements_commitment`, DA metadata, tree roots, and nullifier data; the coordinator now slices that into `LeafBatchWorkData` and uses it again for final local artifact assembly.
 
+- Observation: leaf proving is now measurable enough to choose between shapes, and the raw fastest leaf is not automatically the best architecture because the current tree is only two levels.
+  Evidence: on `hegemon-prover`, `fan_in=2, queries=2, blowup=2` measured `cold_ms=66013 warm_ms=50219`, but that shape only reaches `32` tx if `merge_fanin=16` and still cannot reach `64` without `merge_fanin=32` or another recursion level. `fan_in=4, queries=2, blowup=2` measured `cold_ms=131712 warm_ms=99431` and remains the best candidate that can plausibly serve both `32` and `64` with a larger merge arity.
+
+- Observation: the legacy outer batch-STARK backend used by the aggregation crate cannot feed the recursive merge verifier on Goldilocks.
+  Evidence: the first merge-profile run failed with `CircuitBuild("CircuitBuilder(NonPrimitiveOpArity { op: \"verify_merkle_batch_circuit\", expected: \"goldilocks digest_elems=6\", got: 4 })")`.
+
+- Observation: fixing the outer digest arity alone is not enough; merge proving still mis-packs child outer-proof public inputs.
+  Evidence: after switching the aggregation crate prototype to a 6-element outer config, the same merge profile reached `v5_merge_cache_lookup tx_count=16 cache_hit=false cache_build_ms=480204 cache_lookup_ms=480214 total_ms=483926` and then failed with `CircuitRun("PublicInputLengthMismatch { expected: 5917, got: 291 }")`.
+
 ## Decision Log
 
 - Decision: create a dedicated ExecPlan for this cutover instead of extending the broader permissionless-scaling plan.
@@ -70,11 +84,21 @@ The user-visible result is that additional prover workers can reduce prepared-ar
   Rationale: the immediate throughput acceptance target in the user’s plan is `tx_count=32` and `64`, which fit exactly inside an `8 x 8` leaf/merge tree. General multi-merge recursion requires another layer of node/public-value plumbing in the recursive batch verifier and would have blocked the usable cutover already implemented in circuits/consensus.
   Date/Author: 2026-03-12 / Codex
 
+- Decision: drive the circuit redesign from direct `hegemon-prover` leaf/merge benchmarks before returning to the node-level throughput harness.
+  Rationale: the early `32 tx` harness runs only showed that all leaves were inflight and none finished. The direct circuit benchmarks immediately exposed the actual leaf cost structure, the two-level tree-capacity limit, and the merge-stage backend mismatch.
+  Date/Author: 2026-03-12 / Codex
+
+- Decision: treat the 6-element outer batch config as a proving-path prototype only until the same config and public-input packing are wired consistently into merge proving and consensus verification.
+  Rationale: the prototype removed the old digest-arity crash and proved the merge stage can enter real work, but it also revealed a second blocker (`PublicInputLengthMismatch`) before a merge proof could complete. That makes it evidence for the next design step, not a finished cutover.
+  Date/Author: 2026-03-12 / Codex
+
 ## Outcomes & Retrospective
 
 The circuit and consensus cutover is now partially landed. The repository compiles with a V5 aggregation payload, leaf proofs recurse over fixed-size transaction-proof groups, merge proofs recurse over fixed-size batches of leaf proofs, and consensus rejects V4 by default unless `HEGEMON_AGG_LEGACY_V4=1` is explicitly set. The block-import metadata path also now expects real leaf-tree metadata instead of the old hard-coded `tree_levels=1` / `leaf_count=1` stub.
 
 The node-side DAG now exists in the working tree and compiles: the coordinator publishes leaf and merge stage payloads, the standalone worker accepts those payloads, and local workers execute the same leaf/merge prove helpers before the coordinator assembles the final `CandidateArtifact` itself. The remaining gap is broader validation rather than missing code paths: run the strict integration/throughput harnesses and tighten any behavioral regressions that show up there.
+
+The new experimental result is that the architecture is still blocked at the circuit layer, but the blocker is now concrete. The leaf stage has a credible direction: recursion-specific tx proofs plus `fan_in=4`, `queries=2`, `log_blowup=2` are the best numbers so far that still fit the intended `32/64` target with a larger merge arity. The merge stage, however, is not converged. On the legacy outer backend it fails immediately because the recursive Goldilocks merge verifier expects 6-element digests and the batch prover emits 4. On the prototype 6-element outer backend it burns `~480s` building merge cache/common data and then fails because child outer-proof public values are packed incorrectly. The next successful milestone is therefore not “more workers” or “more scheduler work”; it is a merge proof that completes on `hegemon-prover` for a feasible `32/64`-tx tree shape.
 
 ## Context and Orientation
 
@@ -117,6 +141,22 @@ All commands run from repository root `/Users/pldd/Projects/Reflexivity/Hegemon`
     cargo test -p consensus aggregation -- --nocapture
     cargo test -p hegemon-node prover_coordinator -- --nocapture
     cargo test -p hegemon-node prover_rpc -- --nocapture
+
+    For direct remote circuit profiling on `hegemon-prover`, use:
+
+    ssh hegemon-prover 'source ~/.cargo/env && cd ~/Hegemon-codex-bench && \
+      HEGEMON_AGG_PROFILE=1 \
+      HEGEMON_AGG_LEAF_FANIN=4 \
+      HEGEMON_AGG_MERGE_FANIN=16 \
+      HEGEMON_TX_RECURSION_NUM_QUERIES=2 \
+      HEGEMON_TX_RECURSION_LOG_BLOWUP=2 \
+      HEGEMON_AGG_OUTER_NUM_QUERIES=2 \
+      HEGEMON_AGG_OUTER_LOG_BLOWUP=2 \
+      HEGEMON_AGG_PROVER_THREADS=1 \
+      HEGEMON_AGG_LEVEL_PARALLELISM=1 \
+      HEGEMON_AGG_COMMON_LOOKUP_THREADS=1 \
+      cargo test -p aggregation-circuit --test aggregation aggregation_v5_merge_cold_warm_profile \
+        --release -- --ignored --nocapture'
 
 2. Validate the worker and stage loop on a local dev chain:
 
@@ -165,6 +205,14 @@ Important file paths for this cutover:
 
 Evidence snippets and final command output will be appended here as milestones complete.
 
+High-signal evidence from the current experiment loop:
+
+    leaf_cold_warm_profile fan_in=4 cold_ms=131712 warm_ms=99431
+    leaf_cold_warm_profile fan_in=2 cold_ms=66013 warm_ms=50219
+    cold merge proof: CircuitBuild("CircuitBuilder(NonPrimitiveOpArity { op: \"verify_merkle_batch_circuit\", expected: \"goldilocks digest_elems=6\", got: 4 })")
+    v5_merge_cache_lookup tx_count=16 cache_hit=false cache_build_ms=480204 cache_lookup_ms=480214 total_ms=483926
+    cold merge proof: CircuitRun("PublicInputLengthMismatch { expected: 5917, got: 291 }")
+
 ## Interfaces and Dependencies
 
 The implementation must leave these interfaces in place:
@@ -190,3 +238,4 @@ The implementation must leave these interfaces in place:
 - In `node/src/bin/prover_worker.rs`, dispatch must handle `leaf_batch_prove` and `merge_node_prove` and keep looping on stale/rejected work instead of exiting.
 
 Plan update note (2026-03-12 10:31Z / Codex): Created this ExecPlan before implementation so the recursive-tree cutover has a self-contained execution record separate from the broader permissionless-scaling plan.
+Plan update note (2026-03-12 08:50Z / Codex): Added the `hegemon-prover` experiment results, including the leaf parameter sweep, the legacy merge digest-arity failure, and the prototype 6-element outer-config run that exposed the next blocker in child outer-proof public-input packing.

@@ -11,7 +11,7 @@ use p3_batch_stark::{CommonData, StarkGenericConfig};
 use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner, WitnessId};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::common::CircuitTableAir;
-use p3_circuit_prover::{config as circuit_config, BatchStarkProver, TablePacking};
+use p3_circuit_prover::{BatchStarkProver, TablePacking};
 use p3_commit::Pcs;
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
@@ -68,6 +68,9 @@ type InnerFri = FriProofTargets<
 type InnerVerifierInputs =
     StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>;
 
+const DEFAULT_AGG_OUTER_LOG_BLOWUP: usize = 2;
+const DEFAULT_AGG_OUTER_NUM_QUERIES: usize = 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ProofShape {
     degree_bits: usize,
@@ -84,7 +87,7 @@ struct AggregationProverKey {
     shape: ProofShape,
 }
 
-type OuterWitnessMultiplicities = Vec<StarkVal<circuit_config::GoldilocksConfig>>;
+type OuterWitnessMultiplicities = Vec<StarkVal<Config>>;
 
 struct ProofWitnessAssignmentPlan {
     witness_ids: Vec<WitnessId>,
@@ -94,8 +97,8 @@ struct AggregationProverCacheEntry {
     circuit: Circuit<Challenge>,
     verifier_inputs: Vec<InnerVerifierInputs>,
     witness_assignment_plans: Vec<ProofWitnessAssignmentPlan>,
-    airs: Vec<CircuitTableAir<circuit_config::GoldilocksConfig, 2>>,
-    common: Arc<CommonData<circuit_config::GoldilocksConfig>>,
+    airs: Vec<CircuitTableAir<Config, 2>>,
+    common: Arc<CommonData<Config>>,
     witness_multiplicities: OuterWitnessMultiplicities,
 }
 
@@ -112,7 +115,7 @@ thread_local! {
 
 #[derive(Default)]
 struct AggregationCommonCacheState {
-    entries: HashMap<AggregationProverKey, Arc<CommonData<circuit_config::GoldilocksConfig>>>,
+    entries: HashMap<AggregationProverKey, Arc<CommonData<Config>>>,
     in_progress: HashSet<AggregationProverKey>,
 }
 
@@ -148,11 +151,35 @@ fn aggregation_lookup_threads() -> usize {
         .max(1)
 }
 
+fn aggregation_outer_log_blowup() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_LOG_BLOWUP")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_AGG_OUTER_LOG_BLOWUP)
+        .max(1)
+}
+
+fn aggregation_outer_num_queries() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_NUM_QUERIES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_AGG_OUTER_NUM_QUERIES)
+        .max(1)
+}
+
+fn aggregation_outer_config() -> Config {
+    config_with_fri(
+        aggregation_outer_log_blowup(),
+        aggregation_outer_num_queries(),
+    )
+    .config
+}
+
 fn build_common_data_parallel(
-    config: &circuit_config::GoldilocksConfig,
-    airs: &mut [CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
+    config: &Config,
+    airs: &mut [CircuitTableAir<Config, 2>],
     trace_ext_degree_bits: &[usize],
-) -> CommonData<circuit_config::GoldilocksConfig> {
+) -> CommonData<Config> {
     let started = Instant::now();
     let profile = std::env::var("HEGEMON_AGG_PROFILE")
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
@@ -196,7 +223,7 @@ fn build_common_data_parallel(
 
         let domain = <_ as Pcs<
             Challenge,
-            <circuit_config::GoldilocksConfig as StarkGenericConfig>::Challenger,
+            <Config as StarkGenericConfig>::Challenger,
         >>::natural_domain_for_degree(pcs, ext_degree);
         let matrix_index = domains_and_traces.len();
         domains_and_traces.push((domain, preprocessed));
@@ -222,7 +249,7 @@ fn build_common_data_parallel(
     } else {
         let (commitment, prover_data) = <_ as Pcs<
             Challenge,
-            <circuit_config::GoldilocksConfig as StarkGenericConfig>::Challenger,
+            <Config as StarkGenericConfig>::Challenger,
         >>::commit_preprocessing(pcs, domains_and_traces);
         Some(GlobalPreprocessed {
             commitment,
@@ -680,12 +707,9 @@ fn build_aggregation_prover_cache_entry(
 
     let table_packing = TablePacking::new(4, 4, 1);
     let airs_setup_started = Instant::now();
-    let (airs_degrees, witness_multiplicities) = get_airs_and_degrees_with_prep::<
-        circuit_config::GoldilocksConfig,
-        _,
-        2,
-    >(&circuit, table_packing, None)
-    .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    let (airs_degrees, witness_multiplicities) =
+        get_airs_and_degrees_with_prep::<Config, _, 2>(&circuit, table_packing, None)
+            .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_airs_setup tx_count={} setup_ms={} total_ms={}",
@@ -696,7 +720,7 @@ fn build_aggregation_prover_cache_entry(
     }
     let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
 
-    let outer_config = circuit_config::goldilocks().build();
+    let outer_config = aggregation_outer_config();
     let common_started = Instant::now();
     let common =
         get_or_build_aggregation_common_data(key, &outer_config, &mut airs, &degrees, profile);
@@ -721,11 +745,11 @@ fn build_aggregation_prover_cache_entry(
 
 fn get_or_build_aggregation_common_data(
     key: AggregationProverKey,
-    outer_config: &circuit_config::GoldilocksConfig,
-    airs: &mut [CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
+    outer_config: &Config,
+    airs: &mut [CircuitTableAir<Config, 2>],
     degrees: &[usize],
     profile: bool,
-) -> Arc<CommonData<circuit_config::GoldilocksConfig>> {
+) -> Arc<CommonData<Config>> {
     let cache = aggregation_common_cache();
     loop {
         let mut state = cache
@@ -1656,7 +1680,7 @@ fn legacy_v4_prove_aggregation(
         );
     }
 
-    let outer_prover = BatchStarkProver::new(circuit_config::goldilocks().build())
+    let outer_prover = BatchStarkProver::new(aggregation_outer_config())
         .with_table_packing(TablePacking::new(4, 4, 1));
     let prove_started = Instant::now();
     let configured_threads = std::env::var("HEGEMON_AGG_PROVER_THREADS")

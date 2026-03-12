@@ -2,26 +2,23 @@ use super::*;
 use block_circuit::CommitmentBlockProver;
 use crypto::hashes::blake3_384;
 use p3_batch_stark::BatchProof;
-use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
+use p3_goldilocks::Goldilocks;
 use p3_lookup::logup::LogUpGadget;
 use p3_recursion::pcs::{
     FriProofTargets, InputProofTargets, RecExtensionValMmcs, RecValMmcs, Witness,
 };
 use p3_recursion::{BatchStarkVerifierInputsBuilder, Recursive, generate_batch_challenges};
-use p3_symmetric::{Hash, PaddingFreeSponge, TruncatedPermutation};
+use p3_symmetric::Hash as MerkleDigest;
 use serde::{Deserialize, Serialize};
 
 pub const AGGREGATION_PROOF_FORMAT_ID_V5: u8 = 5;
 pub const AGGREGATION_PUBLIC_VALUES_ENCODING_V2: u8 = 2;
-const OUTER_DIGEST_ELEMS: usize = 4;
-const BATCH_PROOF_LOG_BLOWUP: usize = 1;
+const OUTER_DIGEST_ELEMS: usize = DIGEST_ELEMS;
 const BATCH_PROOF_LOG_FINAL_POLY_LEN: usize = 0;
 const BATCH_PROOF_COMMIT_POW_BITS: usize = 0;
-const BATCH_PROOF_QUERY_POW_BITS: usize = 16;
+const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
+const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
 
-type OuterPerm = Poseidon2Goldilocks<8>;
-type OuterHash = PaddingFreeSponge<OuterPerm, 8, 4, 4>;
-type OuterCompress = TruncatedPermutation<OuterPerm, 2, 4, 8>;
 type OuterBatchFri = FriProofTargets<
     Val,
     Challenge,
@@ -29,13 +26,13 @@ type OuterBatchFri = FriProofTargets<
         Val,
         Challenge,
         OUTER_DIGEST_ELEMS,
-        RecValMmcs<Val, OUTER_DIGEST_ELEMS, OuterHash, OuterCompress>,
+        RecValMmcs<Val, OUTER_DIGEST_ELEMS, Hash, Compress>,
     >,
-    InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, OuterHash, OuterCompress>>,
+    InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, Hash, Compress>>,
     Witness<Val>,
 >;
 type OuterBatchHashTargets = p3_recursion::pcs::HashTargets<Val, OUTER_DIGEST_ELEMS>;
-type OuterBatchProof = BatchProof<circuit_config::GoldilocksConfig>;
+type OuterBatchProof = BatchProof<Config>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AggregationNodeKind {
@@ -79,13 +76,13 @@ struct MergeAggregationProverCacheEntry {
     circuit: Circuit<Challenge>,
     verifier_inputs: Vec<
         BatchStarkVerifierInputsBuilder<
-            circuit_config::GoldilocksConfig,
+            Config,
             OuterBatchHashTargets,
             OuterBatchFri,
         >,
     >,
     witness_assignment_plans: Vec<MergeWitnessAssignmentPlan>,
-    common: Arc<CommonData<circuit_config::GoldilocksConfig>>,
+    common: Arc<CommonData<Config>>,
     witness_multiplicities: OuterWitnessMultiplicities,
 }
 
@@ -97,8 +94,28 @@ thread_local! {
 struct LeafChildContext {
     payload: AggregationProofV5Payload,
     outer_proof_bytes: Vec<u8>,
-    common: Arc<CommonData<circuit_config::GoldilocksConfig>>,
-    airs: Vec<CircuitTableAir<circuit_config::GoldilocksConfig, 2>>,
+    common: Arc<CommonData<Config>>,
+    airs: Vec<CircuitTableAir<Config, 2>>,
+}
+
+fn outer_batch_log_blowup() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_LOG_BLOWUP")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_LOG_BLOWUP)
+        .max(1)
+}
+
+fn outer_batch_num_queries() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_NUM_QUERIES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_NUM_QUERIES)
+        .max(1)
+}
+
+fn outer_batch_config() -> Config {
+    config_with_fri(outer_batch_log_blowup(), outer_batch_num_queries()).config
 }
 
 fn leaf_fan_in() -> usize {
@@ -235,18 +252,15 @@ fn public_values_as_vals(values: &[u64]) -> Vec<Val> {
 
 fn batch_verifier_params() -> FriVerifierParams {
     FriVerifierParams {
-        log_blowup: BATCH_PROOF_LOG_BLOWUP,
+        log_blowup: outer_batch_log_blowup(),
         log_final_poly_len: BATCH_PROOF_LOG_FINAL_POLY_LEN,
         commit_pow_bits: BATCH_PROOF_COMMIT_POW_BITS,
-        query_pow_bits: BATCH_PROOF_QUERY_POW_BITS,
+        query_pow_bits: FRI_POW_BITS,
     }
 }
 
 fn batch_extra_params() -> [usize; 2] {
-    [
-        BATCH_PROOF_QUERY_POW_BITS,
-        BATCH_PROOF_LOG_BLOWUP + BATCH_PROOF_LOG_FINAL_POLY_LEN,
-    ]
+    [FRI_POW_BITS, outer_batch_log_blowup() + BATCH_PROOF_LOG_FINAL_POLY_LEN]
 }
 
 fn outer_fri_targets(fri: &OuterBatchFri) -> Vec<p3_recursion::Target> {
@@ -280,7 +294,7 @@ fn outer_fri_targets(fri: &OuterBatchFri) -> Vec<p3_recursion::Target> {
 
 fn collect_merge_assignment_targets(
     inputs: &BatchStarkVerifierInputsBuilder<
-        circuit_config::GoldilocksConfig,
+        Config,
         OuterBatchHashTargets,
         OuterBatchFri,
     >,
@@ -331,7 +345,7 @@ fn collect_merge_assignment_targets(
 }
 
 fn hash_targets_values<const N: usize>(
-    hash: &Hash<Goldilocks, Goldilocks, N>,
+    hash: &MerkleDigest<Goldilocks, Goldilocks, N>,
 ) -> Vec<Challenge> {
     hash.as_ref().iter().copied().map(Challenge::from).collect()
 }
@@ -377,7 +391,7 @@ fn collect_merge_assignment_values(proof: &OuterBatchProof) -> Vec<Challenge> {
 fn build_merge_assignment_plans(
     circuit: &Circuit<Challenge>,
     verifier_inputs: &[BatchStarkVerifierInputsBuilder<
-        circuit_config::GoldilocksConfig,
+        Config,
         OuterBatchHashTargets,
         OuterBatchFri,
     >],
@@ -426,7 +440,10 @@ fn set_merge_verifier_witnesses(
     Ok(())
 }
 
-fn child_air_public_counts(airs: &[CircuitTableAir<circuit_config::GoldilocksConfig, 2>], public_values_len: usize) -> Vec<usize> {
+fn child_air_public_counts(
+    airs: &[CircuitTableAir<Config, 2>],
+    public_values_len: usize,
+) -> Vec<usize> {
     airs.iter()
         .map(|air| {
             if matches!(air, CircuitTableAir::Public(_)) {
@@ -439,7 +456,7 @@ fn child_air_public_counts(airs: &[CircuitTableAir<circuit_config::GoldilocksCon
 }
 
 fn child_air_public_values(
-    airs: &[CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
+    airs: &[CircuitTableAir<Config, 2>],
     public_values: &[u64],
 ) -> Vec<Vec<Val>> {
     let public_vals = public_values_as_vals(public_values);
@@ -520,6 +537,7 @@ fn get_or_build_merge_cache_entry(
         });
     }
 
+    let build_started = Instant::now();
     let representative_outer: OuterBatchProof =
         postcard::from_bytes(&representative_child.outer_proof_bytes).map_err(|_| {
             AggregationError::InvalidAggregationPayload(
@@ -533,11 +551,11 @@ fn get_or_build_merge_cache_entry(
     let mut circuit_builder = CircuitBuilder::<Challenge>::new();
     let mut verifier_inputs = Vec::with_capacity(key.fan_in);
     let lookup_gadget = LogUpGadget::new();
-    let outer_config = circuit_config::goldilocks().build();
+    let outer_config = outer_batch_config();
 
     for _ in 0..key.fan_in {
         let inputs = BatchStarkVerifierInputsBuilder::<
-            circuit_config::GoldilocksConfig,
+            Config,
             OuterBatchHashTargets,
             OuterBatchFri,
         >::allocate(
@@ -547,10 +565,10 @@ fn get_or_build_merge_cache_entry(
             &air_public_counts,
         );
         p3_recursion::verify_batch_circuit::<
-            CircuitTableAir<circuit_config::GoldilocksConfig, 2>,
-            circuit_config::GoldilocksConfig,
+            CircuitTableAir<Config, 2>,
+            Config,
             OuterBatchHashTargets,
-            InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, OuterHash, OuterCompress>>,
+            InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, Hash, Compress>>,
             OuterBatchFri,
             LogUpGadget,
             POSEIDON2_RATE,
@@ -573,15 +591,12 @@ fn get_or_build_merge_cache_entry(
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
     let witness_assignment_plans = build_merge_assignment_plans(&circuit, &verifier_inputs)?;
     let table_packing = TablePacking::new(4, 4, 1);
-    let (airs_degrees, witness_multiplicities) = get_airs_and_degrees_with_prep::<
-        circuit_config::GoldilocksConfig,
-        _,
-        2,
-    >(&circuit, table_packing, None)
-    .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    let (airs_degrees, witness_multiplicities) =
+        get_airs_and_degrees_with_prep::<Config, _, 2>(&circuit, table_packing, None)
+            .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
     let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
     let common = Arc::new(build_common_data_parallel(
-        &circuit_config::goldilocks().build(),
+        &outer_batch_config(),
         &mut airs,
         &degrees,
     ));
@@ -598,7 +613,7 @@ fn get_or_build_merge_cache_entry(
     Ok(AggregationProverCacheResultWrapper {
         entry: built,
         cache_hit: false,
-        cache_build_ms: 0,
+        cache_build_ms: build_started.elapsed().as_millis(),
     })
 }
 
@@ -867,7 +882,7 @@ pub fn prove_leaf_aggregation(
         );
     }
     let outer_prove_started = Instant::now();
-    let outer_proof = BatchStarkProver::new(circuit_config::goldilocks().build())
+    let outer_proof = BatchStarkProver::new(outer_batch_config())
         .with_table_packing(TablePacking::new(4, 4, 1))
         .prove_all_tables(
             &traces,
@@ -941,6 +956,10 @@ pub fn prove_merge_aggregation(
     tree_levels: u16,
     root_level: u16,
 ) -> Result<Vec<u8>, AggregationError> {
+    let started = Instant::now();
+    let profile = std::env::var("HEGEMON_AGG_PROFILE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     if child_payloads.is_empty() {
         return Err(AggregationError::EmptyBatch);
     }
@@ -950,10 +969,21 @@ pub fn prove_merge_aggregation(
             merge_fan_in()
         )));
     }
+    let decode_started = Instant::now();
     let child_contexts = child_payloads
         .iter()
         .map(|payload| decode_leaf_child_context(payload))
         .collect::<Result<Vec<_>, _>>()?;
+    let decode_ms = decode_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_merge_decode_children tx_count={} active_children={} decode_ms={} total_ms={}",
+            merge_fan_in(),
+            child_payloads.len(),
+            decode_ms,
+            started.elapsed().as_millis()
+        );
+    }
     let representative_child = child_contexts
         .first()
         .ok_or(AggregationError::EmptyBatch)?;
@@ -976,11 +1006,24 @@ pub fn prove_merge_aggregation(
         child_shape_id: representative_child.payload.shape_id,
         child_public_values_len: representative_child.payload.inner_public_inputs_len as usize,
     };
+    let cache_lookup_started = Instant::now();
     let cache_result = get_or_build_merge_cache_entry(cache_key, representative_child)?;
-    let outer_config = circuit_config::goldilocks().build();
+    let cache_lookup_ms = cache_lookup_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_merge_cache_lookup tx_count={} cache_hit={} cache_build_ms={} cache_lookup_ms={} total_ms={}",
+            merge_fan_in(),
+            cache_result.cache_hit,
+            cache_result.cache_build_ms,
+            cache_lookup_ms,
+            started.elapsed().as_millis()
+        );
+    }
+    let outer_config = outer_batch_config();
     let lookup_gadget = LogUpGadget::new();
     let mut recursion_public_inputs = Vec::new();
     let mut proofs = Vec::with_capacity(merge_fan_in());
+    let challenge_started = Instant::now();
     for (index, child) in child_contexts.iter().enumerate() {
         let outer_proof: OuterBatchProof = postcard::from_bytes(&child.outer_proof_bytes).map_err(|_| {
             AggregationError::InvalidChildProof {
@@ -1042,21 +1085,54 @@ pub fn prove_merge_aggregation(
         recursion_public_inputs.extend(packed);
         proofs.push(padded);
     }
+    let challenge_ms = challenge_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_merge_challenges_and_pack tx_count={} challenge_pack_ms={} total_ms={}",
+            merge_fan_in(),
+            challenge_ms,
+            started.elapsed().as_millis()
+        );
+    }
 
     let mut runner = cache_result.entry.circuit.clone().runner();
+    let set_public_started = Instant::now();
     runner
         .set_public_inputs(&recursion_public_inputs)
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
+    let set_public_ms = set_public_started.elapsed().as_millis();
+    let set_witness_started = Instant::now();
     set_merge_verifier_witnesses(
         &mut runner,
         &cache_result.entry.witness_assignment_plans,
         &proofs,
     )
     .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
+    let set_witness_ms = set_witness_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_merge_set_targets tx_count={} set_public_ms={} set_witness_ms={} total_ms={}",
+            merge_fan_in(),
+            set_public_ms,
+            set_witness_ms,
+            started.elapsed().as_millis()
+        );
+    }
+    let run_started = Instant::now();
     let traces = runner
         .run()
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
-    let outer_proof = BatchStarkProver::new(circuit_config::goldilocks().build())
+    let run_ms = run_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_merge_runner_run tx_count={} run_ms={} total_ms={}",
+            merge_fan_in(),
+            run_ms,
+            started.elapsed().as_millis()
+        );
+    }
+    let outer_prove_started = Instant::now();
+    let outer_proof = BatchStarkProver::new(outer_batch_config())
         .with_table_packing(TablePacking::new(4, 4, 1))
         .prove_all_tables(
             &traces,
@@ -1064,11 +1140,21 @@ pub fn prove_merge_aggregation(
             cache_result.entry.witness_multiplicities.clone(),
         )
         .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))?;
+    let outer_prove_ms = outer_prove_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_merge_outer_prove tx_count={} outer_prove_ms={} total_ms={}",
+            merge_fan_in(),
+            outer_prove_ms,
+            started.elapsed().as_millis()
+        );
+    }
     let packed_public_values = pack_recursion_public_values_v1(&recursion_public_inputs);
     let subtree_tx_count: u32 = child_contexts
         .iter()
         .map(|child| child.payload.subtree_tx_count)
         .sum();
+    let serialize_started = Instant::now();
     let payload = AggregationProofV5Payload {
         version: AGGREGATION_PROOF_FORMAT_ID_V5,
         proof_format: AGGREGATION_PROOF_FORMAT_ID_V5,
@@ -1095,7 +1181,32 @@ pub fn prove_merge_aggregation(
         outer_proof: postcard::to_allocvec(&outer_proof.proof)
             .map_err(|_| AggregationError::SerializeFailed)?,
     };
-    postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)
+    let encoded = postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)?;
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_merge_serialize tx_count={} serialize_ms={} total_ms={}",
+            merge_fan_in(),
+            serialize_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+    }
+    tracing::info!(
+        target: "aggregation::metrics",
+        active_children = child_payloads.len(),
+        merge_fan_in = merge_fan_in(),
+        cache_hit = cache_result.cache_hit,
+        cache_build_ms = cache_result.cache_build_ms,
+        cache_lookup_ms,
+        decode_ms,
+        challenge_ms,
+        set_public_ms,
+        set_witness_ms,
+        run_ms,
+        outer_prove_ms,
+        total_ms = started.elapsed().as_millis(),
+        "prove_merge_aggregation completed"
+    );
+    Ok(encoded)
 }
 
 pub fn prove_aggregation(
