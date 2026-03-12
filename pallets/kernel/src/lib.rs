@@ -209,7 +209,16 @@ pub mod pallet {
             let state = KernelStateAdapter::<T>(core::marker::PhantomData);
             let meta = match T::FamilyRouter::validate(&manifest, &state, envelope) {
                 Ok(meta) => meta,
-                Err(_) => return InvalidTransaction::BadProof.into(),
+                Err(err) => {
+                    log::warn!(
+                        target: "kernel",
+                        "kernel action validation failed: family_id={} action_id={} err={:?}",
+                        envelope.family_id,
+                        envelope.action_id,
+                        err,
+                    );
+                    return InvalidTransaction::BadProof.into();
+                }
             };
 
             match meta.source_class {

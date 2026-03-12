@@ -233,7 +233,8 @@ pub fn validate_action<T: Config>(
     let action = ShieldedFamilyAction::decode_envelope(envelope)?;
     match action {
         ShieldedFamilyAction::TransferInline { nullifiers, args } => {
-            Pallet::<T>::validate_shielded_transfer_unsigned_action(
+            let proof_len = args.proof.len();
+            let result = Pallet::<T>::validate_shielded_transfer_unsigned_action(
                 &StarkProof::from_bytes(args.proof),
                 &to_bounded_nullifiers::<T>(&nullifiers)?,
                 &to_bounded_commitments::<T>(&args.commitments)?,
@@ -244,11 +245,23 @@ pub fn validate_action<T: Config>(
                 },
                 &args.stablecoin,
                 args.fee,
-            )
-            .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            );
+            if let Err(ref err) = result {
+                log::warn!(
+                    target: "shielded-pool",
+                    "kernel transfer-inline validation failed: err={:?} proof_bytes={} nullifiers={} commitments={} fee={}",
+                    err,
+                    proof_len,
+                    nullifiers.len(),
+                    args.commitments.len(),
+                    args.fee,
+                );
+            }
+            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
         ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
-            Pallet::<T>::validate_shielded_transfer_unsigned_sidecar_action(
+            let proof_len = args.proof.len();
+            let result = Pallet::<T>::validate_shielded_transfer_unsigned_sidecar_action(
                 &StarkProof::from_bytes(args.proof),
                 &to_bounded_nullifiers::<T>(&nullifiers)?,
                 &to_bounded_commitments::<T>(&args.commitments)?,
@@ -260,19 +273,42 @@ pub fn validate_action<T: Config>(
                 },
                 &args.stablecoin,
                 args.fee,
-            )
-            .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            );
+            if let Err(ref err) = result {
+                log::warn!(
+                    target: "shielded-pool",
+                    "kernel transfer-sidecar validation failed: err={:?} proof_bytes={} nullifiers={} commitments={} ciphertext_hashes={} fee={}",
+                    err,
+                    proof_len,
+                    nullifiers.len(),
+                    args.commitments.len(),
+                    args.ciphertext_hashes.len(),
+                    args.fee,
+                );
+            }
+            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
         ShieldedFamilyAction::BatchTransfer { nullifiers, args } => {
-            Pallet::<T>::validate_batch_shielded_transfer_action(
+            let result = Pallet::<T>::validate_batch_shielded_transfer_action(
                 &args.proof,
                 &to_bounded_batch_nullifiers::<T>(&nullifiers)?,
                 &to_bounded_batch_commitments::<T>(&args.commitments)?,
                 &to_bounded_batch_ciphertexts::<T>(&args.ciphertexts)?,
                 &args.anchor,
                 args.total_fee,
-            )
-            .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            );
+            if let Err(ref err) = result {
+                log::warn!(
+                    target: "shielded-pool",
+                    "kernel batch-transfer validation failed: err={:?} proof_bytes={} nullifiers={} commitments={} total_fee={}",
+                    err,
+                    args.proof.data.len(),
+                    nullifiers.len(),
+                    args.commitments.len(),
+                    args.total_fee,
+                );
+            }
+            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
         ShieldedFamilyAction::EnableAggregationMode => {
             Pallet::<T>::validate_enable_aggregation_mode_action()
