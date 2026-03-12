@@ -333,16 +333,30 @@ fn aggregation_v5_merge_cold_warm_profile() {
         .collect::<Vec<_>>();
     let commitment = tx_statements_commitment_from_proofs(&all_proofs);
     let tx_count = all_proofs.len();
+    let tree_levels: usize = if tx_count <= configured_leaf_fanin() { 1 } else { 2 };
+    let root_level: usize = tree_levels.saturating_sub(1);
 
     let cold_started = Instant::now();
-    let _cold_merge =
-        prove_merge_aggregation(&child_payloads, commitment, 2, 1).expect("cold merge proof");
+    let cold_merge = prove_merge_aggregation(
+        &child_payloads,
+        commitment,
+        tree_levels as u16,
+        root_level as u16,
+    )
+    .expect("cold merge proof");
     let cold_ms = cold_started.elapsed().as_millis();
+    verify_aggregation_proof(&cold_merge, tx_count, &commitment).expect("verify cold merge proof");
 
     let warm_started = Instant::now();
-    let _warm_merge =
-        prove_merge_aggregation(&child_payloads, commitment, 2, 1).expect("warm merge proof");
+    let warm_merge = prove_merge_aggregation(
+        &child_payloads,
+        commitment,
+        tree_levels as u16,
+        root_level as u16,
+    )
+    .expect("warm merge proof");
     let warm_ms = warm_started.elapsed().as_millis();
+    verify_aggregation_proof(&warm_merge, tx_count, &commitment).expect("verify warm merge proof");
 
     eprintln!(
         "merge_cold_warm_profile leaf_fan_in={} merge_fan_in={} tx_count={} cold_ms={} warm_ms={}",

@@ -34,6 +34,9 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - [x] (2026-03-12 20:47Z) Re-ran the minimal release merge profile (`leaf_fanin=1`, `merge_fanin=2`, `queries=2`, `blowup=2`). The failure moved from an opaque witness conflict to a precise overlap class: for each child, `4748 / 5200` canonical private targets land on witness ids that are simultaneously `WitnessInput` outputs, `Unconstrained` inputs, and later `Add(out)` rows.
 - [x] (2026-03-12 21:38Z) Added fast verifier-side consistency tests in the vendored recursion layer. The Goldilocks-12 Poseidon2 hash/compress checks and a direct `RecExtensionValMmcs` verification check pass, while a new ignored reproducer shows the same recursive batch-verifier commitment mismatch on a tiny extension-degree-2 circuit-table proof.
 - [x] (2026-03-12 21:38Z) Aligned the recursive merge verifier with the actual batch-proof format by setting child AIR public-value counts to zero in the merge proof path and in consensus cache construction. This shrank the single-child merge verifier public bus from `165` to `21`, but the first recursive batch-verifier commitment check still fails.
+- [x] (2026-03-12 22:57Z) Fixed the generic recursive batch-verifier bug in the vendored recursion layer by matching native batch-STARK observation order for flattened batch opened values and by aligning recursive batch verification with the native `trace_domain.next_point(zeta)` / preprocessed-domain rules. The fast Goldilocks D2 recursive batch-verifier repro now passes.
+- [x] (2026-03-12 22:57Z) Realigned consensus V5 decoding/verification to the same 6-element Goldilocks outer-proof config the prover now emits. The merge prover’s outer proof bytes now decode correctly in consensus instead of failing immediately as “merge outer proof encoding invalid”.
+- [x] (2026-03-12 22:57Z) Verified the end-to-end one-child merge roundtrip under release settings by extending `aggregation_v5_merge_cold_warm_profile` to call `verify_aggregation_proof` on both the cold and warm merge payloads. With `HEGEMON_AGG_LEAF_FANIN=1` and `HEGEMON_AGG_MERGE_FANIN=1`, the full prove+verify path passes.
 - [ ] (2026-03-12 20:47Z) Remove or rewire the lowerer/backend overlap so merge can assign those proof-fed witnesses once without later `Add(out)` conflicts (current state: the diagnostic filter experiment proved these rows are required early by `Unconstrained` op `1120`, so the remaining fix belongs below aggregation packing).
 - [ ] Update docs/scripts and run the full targeted node/integration harnesses after the node-side DAG lands (current state: the strict `scripts/throughput_sidecar_aggregation_tmux.sh` run now reaches full RPC startup and mining instead of hanging in recursive prewarm, but I stopped the long PoW run before the full proofless batch completed).
 
@@ -90,6 +93,12 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - Observation: the Goldilocks-12 Poseidon2 primitives and the recursive extension-MMCS verifier are not the failing layer.
   Evidence: the new unit tests `poseidon2_hash_targets_matches_native_goldilocks12`, `poseidon2_compress_targets_matches_native_goldilocks12`, and `rec_extension_val_mmcs_matches_native_goldilocks12` all pass.
 
+- Observation: the actual generic failure was in the recursive batch-verifier transcript wiring, not in the hash primitive or the MMCS primitive.
+  Evidence: the new unit repro `recursive_batch_verifier_accepts_simple_goldilocks_d2_circuit_table_proof` initially failed on the same “first commitment digest copy mismatch” seen in merge. After changing `BatchProofTargets::flattened_opened_values_targets` to observe trace/preprocessed/permutation openings in native batch order (`local,next` per instance) and aligning the recursive verifier with native batch-domain handling, that repro passes.
+
+- Observation: consensus V5 merge verification had a separate decode mismatch after the recursive batch-verifier fix landed.
+  Evidence: once `merge(2 leaves)` stopped failing in `runner.run()`, the next failure became `AggregationProofV5Decode("merge outer proof encoding invalid")`. The root cause was that `consensus/src/aggregation/v5.rs` still expected the legacy 4-element / width-8 outer proof type while the prover now serializes the 6-element transaction-style outer proof.
+
 ## Decision Log
 
 - Decision: create a dedicated ExecPlan for this cutover instead of extending the broader permissionless-scaling plan.
@@ -128,6 +137,10 @@ The user-visible result is that additional prover workers can reduce prepared-ar
   Rationale: the passing hash/MMCS/challenger tests narrow the live bug to the recursive batch-verifier wiring, and the ignored repro cuts iteration time from minutes to seconds without breaking normal workspace test runs.
   Date/Author: 2026-03-12 / Codex
 
+- Decision: keep the new generic Goldilocks D2 recursive batch-verifier repro as a normal unit test now that it passes.
+  Rationale: that test is the shortest high-signal regression guard for the bug that previously blocked `merge(2 leaves)`, and it now completes in seconds rather than minutes.
+  Date/Author: 2026-03-12 / Codex
+
 ## Outcomes & Retrospective
 
 The circuit and consensus cutover is now partially landed. The repository compiles with a V5 aggregation payload, leaf proofs recurse over fixed-size transaction-proof groups, merge proofs recurse over fixed-size batches of leaf proofs, and consensus rejects V4 by default unless `HEGEMON_AGG_LEGACY_V4=1` is explicitly set. The block-import metadata path also now expects real leaf-tree metadata instead of the old hard-coded `tree_levels=1` / `leaf_count=1` stub.
@@ -141,6 +154,8 @@ The latest refinement is that merge public-input packing is no longer the first 
 The newest execution result is more concrete than that earlier summary. Aggregation now resolves leaf and merge witness plans from the recursive layer’s canonical private targets rather than from hand-maintained op-order flatteners, and the crate still compiles. The minimal release merge profile continues to fail, but the failure is now pinned to a specific overlap class: most merge private targets after the commitment prefix map to witness ids that are simultaneously direct proof inputs, inputs to `Unconstrained` hint gadgets, and later `Add(out)` rows in the compiled circuit. A temporary filter that skipped those rows proved they are genuinely required before the hint gadget runs, so the remaining bug is below aggregation packing, in how the recursion/lowering backend treats those proof-fed rows.
 
 The latest narrowing step shows the failure is generic to the recursive batch verifier for Goldilocks extension-degree-2 circuit-table proofs, not to the leaf aggregation circuit itself. A tiny vendored unit repro now fails on the same “first commitment digest copy mismatch” in about ten seconds, while the low-level Goldilocks-12 Poseidon2 and extension-MMCS checks pass. That means the remaining bug sits in the recursive batch-verifier/FRI wiring between those primitives, not in the primitives themselves.
+
+That generic recursive batch-verifier bug is now fixed. The vendored unit repro over a tiny Goldilocks D2 circuit-table proof passes, the merge prover’s single-child release roundtrip now proves and verifies through consensus, and the original `merge(2 leaves)` proving path reaches `v5_merge_runner_run` and `v5_merge_outer_prove` successfully. The remaining work is broader validation and throughput reruns, not the original commitment-root backend mismatch.
 
 ## Context and Orientation
 
@@ -285,3 +300,4 @@ Plan update note (2026-03-12 10:31Z / Codex): Created this ExecPlan before imple
 Plan update note (2026-03-12 08:50Z / Codex): Added the `hegemon-prover` experiment results, including the leaf parameter sweep, the legacy merge digest-arity failure, and the prototype 6-element outer-config run that exposed the next blocker in child outer-proof public-input packing.
 Plan update note (2026-03-12 20:47Z / Codex): Recorded the canonical private-target refactor in aggregation, the minimal release merge reruns, and the concrete remaining blocker: merge private targets still overlap `WitnessInput`, `Unconstrained`, and later `Add(out)` rows in the lowered recursion backend.
 Plan update note (2026-03-12 21:38Z / Codex): Added the fast recursion-layer consistency tests and the ignored generic Goldilocks D2 repro, and recorded that the remaining failure sits above Poseidon2/MMCS primitives but below aggregation packing.
+Plan update note (2026-03-12 22:57Z / Codex): Recorded the recursive batch-verifier fix (native batch observation order + native domain handling), the consensus outer-proof config alignment, and the passing one-child release merge roundtrip.

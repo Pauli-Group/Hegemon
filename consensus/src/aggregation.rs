@@ -59,9 +59,9 @@ struct AggregationVerifierKey {
 }
 
 struct AggregationVerifierCacheEntry {
-    outer_config: circuit_config::GoldilocksConfig,
-    airs: Vec<CircuitTableAir<circuit_config::GoldilocksConfig, 2>>,
-    common: CommonData<circuit_config::GoldilocksConfig>,
+    outer_config: Config,
+    airs: Vec<CircuitTableAir<Config, 2>>,
+    common: CommonData<Config>,
     public_table_indices: Vec<usize>,
 }
 
@@ -97,6 +97,8 @@ const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
 const MAX_AGGREGATION_SLOT_PADDING_FACTOR: usize = 16;
 const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
 const STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
+const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
+const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct AggregationProofV4Payload {
@@ -118,6 +120,26 @@ struct AggregationProofV4Payload {
 
 fn aggregation_verifier_cache() -> &'static AggregationVerifierCache {
     AGGREGATION_VERIFIER_CACHE.get_or_init(AggregationVerifierCache::default)
+}
+
+fn outer_batch_log_blowup() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_LOG_BLOWUP")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_LOG_BLOWUP)
+        .max(1)
+}
+
+fn outer_batch_num_queries() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_NUM_QUERIES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_NUM_QUERIES)
+        .max(1)
+}
+
+fn outer_batch_config() -> Config {
+    config_with_fri(outer_batch_log_blowup(), outer_batch_num_queries()).config
 }
 
 fn legacy_v4_enabled() -> bool {
@@ -214,7 +236,7 @@ fn build_aggregation_verifier_cache_entry(
 
     let table_packing = TablePacking::new(4, 4, 1);
     let (airs_degrees, _) =
-        get_airs_and_degrees_with_prep::<circuit_config::GoldilocksConfig, _, 2>(
+        get_airs_and_degrees_with_prep::<Config, _, 2>(
             &circuit,
             table_packing,
             None,
@@ -226,7 +248,7 @@ fn build_aggregation_verifier_cache_entry(
         })?;
     let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
 
-    let outer_config = circuit_config::goldilocks().build();
+    let outer_config = outer_batch_config();
     let common = CommonData::from_airs_and_degrees(&outer_config, &mut airs, &degrees);
 
     let public_table_indices = airs
@@ -1058,7 +1080,7 @@ pub fn verify_aggregation_proof_with_metrics(
     let cache_result =
         get_or_build_aggregation_verifier_cache_entry(cache_key, &representative_proof)?;
 
-    let outer_proof: BatchProof<circuit_config::GoldilocksConfig> =
+    let outer_proof: BatchProof<Config> =
         postcard::from_bytes(&payload.outer_proof).map_err(|_| {
             ProofError::AggregationProofV4Decode(
                 "outer aggregation proof encoding invalid".to_string(),

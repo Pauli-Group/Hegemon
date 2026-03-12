@@ -1,25 +1,19 @@
 use super::*;
 use p3_batch_stark::BatchProof;
-use p3_goldilocks::Poseidon2Goldilocks;
 use p3_lookup::logup::LogUpGadget;
 use p3_recursion::pcs::{
     FriProofTargets, InputProofTargets, RecExtensionValMmcs, RecValMmcs, Witness,
 };
 use p3_recursion::BatchStarkVerifierInputsBuilder;
-use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use serde::{Deserialize, Serialize};
 
 const AGGREGATION_PROOF_FORMAT_VERSION_V5: u8 = 5;
 const AGGREGATION_PUBLIC_VALUES_ENCODING_V2: u8 = 2;
-const OUTER_DIGEST_ELEMS: usize = 4;
-const BATCH_PROOF_LOG_BLOWUP: usize = 1;
+const OUTER_DIGEST_ELEMS: usize = DIGEST_ELEMS;
 const BATCH_PROOF_LOG_FINAL_POLY_LEN: usize = 0;
 const BATCH_PROOF_COMMIT_POW_BITS: usize = 0;
-const BATCH_PROOF_QUERY_POW_BITS: usize = 16;
-
-type OuterPerm = Poseidon2Goldilocks<8>;
-type OuterHash = PaddingFreeSponge<OuterPerm, 8, 4, 4>;
-type OuterCompress = TruncatedPermutation<OuterPerm, 2, 4, 8>;
+const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
+const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
 type OuterBatchFri = FriProofTargets<
     Val,
     Challenge,
@@ -27,13 +21,13 @@ type OuterBatchFri = FriProofTargets<
         Val,
         Challenge,
         OUTER_DIGEST_ELEMS,
-        RecValMmcs<Val, OUTER_DIGEST_ELEMS, OuterHash, OuterCompress>,
+        RecValMmcs<Val, OUTER_DIGEST_ELEMS, Hash, Compress>,
     >,
-    InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, OuterHash, OuterCompress>>,
+    InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, Hash, Compress>>,
     Witness<Val>,
 >;
 type OuterBatchHashTargets = p3_recursion::pcs::HashTargets<Val, OUTER_DIGEST_ELEMS>;
-type OuterBatchProof = BatchProof<circuit_config::GoldilocksConfig>;
+type OuterBatchProof = BatchProof<Config>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum AggregationNodeKind {
@@ -69,9 +63,9 @@ struct MergeAggregationVerifierKey {
 }
 
 struct MergeAggregationVerifierCacheEntry {
-    outer_config: circuit_config::GoldilocksConfig,
-    airs: Vec<CircuitTableAir<circuit_config::GoldilocksConfig, 2>>,
-    common: CommonData<circuit_config::GoldilocksConfig>,
+    outer_config: Config,
+    airs: Vec<CircuitTableAir<Config, 2>>,
+    common: CommonData<Config>,
     public_table_indices: Vec<usize>,
 }
 
@@ -165,18 +159,46 @@ fn tree_levels_for_tx_count(tx_count: usize) -> u16 {
 
 fn batch_verifier_params() -> FriVerifierParams {
     FriVerifierParams {
-        log_blowup: BATCH_PROOF_LOG_BLOWUP,
+        log_blowup: outer_batch_log_blowup(),
         log_final_poly_len: BATCH_PROOF_LOG_FINAL_POLY_LEN,
         commit_pow_bits: BATCH_PROOF_COMMIT_POW_BITS,
-        query_pow_bits: BATCH_PROOF_QUERY_POW_BITS,
+        query_pow_bits: FRI_POW_BITS,
     }
 }
 
+fn outer_batch_log_blowup() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_LOG_BLOWUP")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_LOG_BLOWUP)
+        .max(1)
+}
+
+fn outer_batch_num_queries() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_NUM_QUERIES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_NUM_QUERIES)
+        .max(1)
+}
+
+fn outer_batch_config() -> Config {
+    config_with_fri(outer_batch_log_blowup(), outer_batch_num_queries()).config
+}
+
 fn child_air_public_counts(
-    airs: &[CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
-    _public_values_len: usize,
+    airs: &[CircuitTableAir<Config, 2>],
+    public_values_len: usize,
 ) -> Vec<usize> {
-    vec![0; airs.len()]
+    airs.iter()
+        .map(|air| {
+            if matches!(air, CircuitTableAir::Public(_)) {
+                public_values_len
+            } else {
+                0
+            }
+        })
+        .collect()
 }
 
 fn decode_payload(decoded: &[u8]) -> Result<AggregationProofV5Payload, ProofError> {
@@ -326,11 +348,11 @@ fn build_merge_verifier_cache_entry(
     );
     let mut circuit_builder = CircuitBuilder::<Challenge>::new();
     let lookup_gadget = LogUpGadget::new();
-    let outer_config = circuit_config::goldilocks().build();
+    let outer_config = outer_batch_config();
 
     for _ in 0..key.fan_in {
         let inputs = BatchStarkVerifierInputsBuilder::<
-            circuit_config::GoldilocksConfig,
+            Config,
             OuterBatchHashTargets,
             OuterBatchFri,
         >::allocate(
@@ -340,10 +362,10 @@ fn build_merge_verifier_cache_entry(
             &air_public_counts,
         );
         p3_recursion::verify_batch_circuit::<
-            CircuitTableAir<circuit_config::GoldilocksConfig, 2>,
-            circuit_config::GoldilocksConfig,
+            CircuitTableAir<Config, 2>,
+            Config,
             OuterBatchHashTargets,
-            InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, OuterHash, OuterCompress>>,
+            InputProofTargets<Val, Challenge, RecValMmcs<Val, OUTER_DIGEST_ELEMS, Hash, Compress>>,
             OuterBatchFri,
             LogUpGadget,
             POSEIDON2_RATE,
@@ -366,7 +388,7 @@ fn build_merge_verifier_cache_entry(
         ))
     })?;
     let table_packing = TablePacking::new(4, 4, 1);
-    let (airs_degrees, _) = get_airs_and_degrees_with_prep::<circuit_config::GoldilocksConfig, _, 2>(
+    let (airs_degrees, _) = get_airs_and_degrees_with_prep::<Config, _, 2>(
         &circuit,
         table_packing,
         None,

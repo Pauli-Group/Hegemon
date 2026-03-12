@@ -925,7 +925,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reproduces current Goldilocks D2 recursive batch verifier mismatch"]
     fn recursive_batch_verifier_accepts_simple_goldilocks_d2_circuit_table_proof() {
         let mut builder = CircuitBuilder::<Challenge>::new();
         let x = builder.add_public_input();

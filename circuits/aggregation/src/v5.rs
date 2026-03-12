@@ -538,16 +538,33 @@ fn set_merge_verifier_witnesses(
 
 fn child_air_public_counts(
     airs: &[CircuitTableAir<Config, 2>],
-    _public_values_len: usize,
+    public_values_len: usize,
 ) -> Vec<usize> {
-    vec![0; airs.len()]
+    airs.iter()
+        .map(|air| {
+            if matches!(air, CircuitTableAir::Public(_)) {
+                public_values_len
+            } else {
+                0
+            }
+        })
+        .collect()
 }
 
 fn child_air_public_values(
     airs: &[CircuitTableAir<Config, 2>],
-    _public_values: &[u64],
+    public_values: &[u64],
 ) -> Vec<Vec<Val>> {
-    vec![Vec::new(); airs.len()]
+    let public_vals = public_values_as_vals(public_values);
+    airs.iter()
+        .map(|air| {
+            if matches!(air, CircuitTableAir::Public(_)) {
+                public_vals.clone()
+            } else {
+                Vec::new()
+            }
+        })
+        .collect()
 }
 
 fn decode_leaf_child_context(bytes: &[u8]) -> Result<LeafChildContext, AggregationError> {

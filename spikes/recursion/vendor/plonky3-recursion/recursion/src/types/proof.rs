@@ -366,16 +366,18 @@ impl<
 
     /// Allocates the necessary circuit targets for storing the proof's public data.
     fn new(circuit: &mut CircuitBuilder<SC::Challenge>, input: &Self::Input) -> Self {
-        // Flattened opened values are ordered as:
-        // 1. All `trace_local` rows per instance (instance 0 .. N)
-        // 2. All `trace_next` rows per instance (instance 0 .. N)
-        // 3. Quotient chunks for each instance in commit order
+        // Flattened opened values are only used for challenger observation.
+        // Their order must match native batch-STARK challenge generation:
+        // 1. Per instance: `trace_local`, then `trace_next`
+        // 2. Quotient chunks for each instance in commit order
+        // 3. Per instance with preprocessed columns: `preprocessed_local`, then `preprocessed_next`
+        // 4. Per instance with lookups: `permutation_local`, then `permutation_next`
         let mut aggregated_trace_local = Vec::new();
-        let mut aggregated_trace_next = Vec::new();
+        let aggregated_trace_next = Vec::new();
         let mut aggregated_permutation_local = Vec::new();
-        let mut aggregated_permutation_next = Vec::new();
+        let aggregated_permutation_next = Vec::new();
         let mut aggregated_preprocessed_local = Vec::new();
-        let mut aggregated_preprocessed_next = Vec::new();
+        let aggregated_preprocessed_next = Vec::new();
         let mut aggregated_quotient_chunks = Vec::new();
 
         let commitments_targets = CommitmentTargets::new(circuit, &input.commitments);
@@ -401,16 +403,16 @@ impl<
 
         for instance in &opened_values_targets.instances {
             aggregated_trace_local.extend(&instance.opened_values_no_lookups.trace_local_targets);
-            aggregated_trace_next.extend(&instance.opened_values_no_lookups.trace_next_targets);
+            aggregated_trace_local.extend(&instance.opened_values_no_lookups.trace_next_targets);
             if let Some(prep_local) = &instance.opened_values_no_lookups.preprocessed_local_targets
             {
                 aggregated_preprocessed_local.extend(prep_local);
             }
             if let Some(prep_next) = &instance.opened_values_no_lookups.preprocessed_next_targets {
-                aggregated_preprocessed_next.extend(prep_next);
+                aggregated_preprocessed_local.extend(prep_next);
             }
             aggregated_permutation_local.extend(&instance.permutation_local_targets);
-            aggregated_permutation_next.extend(&instance.permutation_next_targets);
+            aggregated_permutation_local.extend(&instance.permutation_next_targets);
             for chunk in &instance.opened_values_no_lookups.quotient_chunks_targets {
                 aggregated_quotient_chunks.push(chunk.clone());
             }
