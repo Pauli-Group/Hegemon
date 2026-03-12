@@ -11,7 +11,7 @@ use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::common::CircuitTableAir;
 use p3_circuit_prover::{config as circuit_config, BatchStarkProver, TablePacking};
 use p3_commit::Pcs;
-use p3_field::{BasedVectorSpace, PrimeField64};
+use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
@@ -30,13 +30,18 @@ use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 use thiserror::Error;
+use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+use transaction_circuit::keys::generate_keys;
+use transaction_circuit::note::{MerklePath, NoteData, OutputNoteWitness};
+use transaction_circuit::proof;
 use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
     p3_config::{
         config_with_fri, Challenge, Compress, Config, Hash, TransactionProofP3, Val, DIGEST_ELEMS,
         FRI_LOG_BLOWUP_FAST, FRI_LOG_BLOWUP_PROD, FRI_POW_BITS, POSEIDON2_RATE,
     },
-    TransactionAirP3, TransactionProof,
+    InputNoteWitness, StablecoinPolicyBinding, TransactionAirP3, TransactionProof,
+    TransactionWitness,
 };
 
 type InnerFri = FriProofTargets<
@@ -830,6 +835,26 @@ fn aggregation_prewarm_mode() -> String {
         .unwrap_or_else(|_| "checkpoint".to_string())
 }
 
+fn aggregation_liveness_lane_enabled() -> bool {
+    std::env::var("HEGEMON_PROVER_LIVENESS_LANE")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn aggregation_queue_capacity() -> usize {
+    std::env::var("HEGEMON_BATCH_QUEUE_CAPACITY")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(4)
+        .max(1)
+}
+
 fn checkpoint_warmup_targets(current_tx_count: usize, max_txs: usize) -> Vec<usize> {
     let mut targets = Vec::new();
     let mut next = current_tx_count.max(1);
@@ -843,6 +868,15 @@ fn checkpoint_warmup_targets(current_tx_count: usize, max_txs: usize) -> Vec<usi
         }
     }
     targets
+}
+
+fn default_warmup_targets(current_tx_count: usize, max_txs: usize) -> Vec<usize> {
+    let capped_max = max_txs.max(current_tx_count);
+    if !aggregation_liveness_lane_enabled() || aggregation_queue_capacity() <= 1 {
+        vec![capped_max]
+    } else {
+        checkpoint_warmup_targets(current_tx_count, capped_max)
+    }
 }
 
 fn aggregation_warmup_target_shapes() -> Vec<usize> {
@@ -861,6 +895,204 @@ fn aggregation_warmup_target_shapes() -> Vec<usize> {
         .unwrap_or_default()
 }
 
+fn compute_sample_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
+    let mut current = leaf;
+    let mut pos = position;
+    for sibling in path
+        .iter()
+        .take(transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH)
+    {
+        current = if pos & 1 == 0 {
+            merkle_node(current, *sibling)
+        } else {
+            merkle_node(*sibling, current)
+        };
+        pos >>= 1;
+    }
+    current
+}
+
+fn build_sample_merkle_paths(
+    leaf0: HashFelt,
+    leaf1: HashFelt,
+) -> (MerklePath, MerklePath, HashFelt) {
+    let mut siblings0 = vec![leaf1];
+    let mut siblings1 = vec![leaf0];
+    let mut current = merkle_node(leaf0, leaf1);
+
+    for _ in 1..transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH {
+        let zero = [Val::ZERO; 6];
+        siblings0.push(zero);
+        siblings1.push(zero);
+        current = merkle_node(current, zero);
+    }
+
+    (
+        MerklePath {
+            siblings: siblings0,
+        },
+        MerklePath {
+            siblings: siblings1,
+        },
+        current,
+    )
+}
+
+fn sample_witness_for_aggregation_cache() -> TransactionWitness {
+    let sk_spend = [42u8; 32];
+    let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+    let input_note_native = NoteData {
+        value: 8,
+        asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+        pk_recipient: [2u8; 32],
+        pk_auth,
+        rho: [3u8; 32],
+        r: [4u8; 32],
+    };
+    let input_note_asset = NoteData {
+        value: 5,
+        asset_id: 1,
+        pk_recipient: [5u8; 32],
+        pk_auth,
+        rho: [6u8; 32],
+        r: [7u8; 32],
+    };
+    let leaf0 = input_note_native.commitment();
+    let leaf1 = input_note_asset.commitment();
+    let (merkle_path0, merkle_path1, merkle_root) = build_sample_merkle_paths(leaf0, leaf1);
+    debug_assert_eq!(
+        compute_sample_merkle_root(leaf0, 0, &merkle_path0.siblings),
+        merkle_root
+    );
+    debug_assert_eq!(
+        compute_sample_merkle_root(leaf1, 1, &merkle_path1.siblings),
+        merkle_root
+    );
+
+    TransactionWitness {
+        inputs: vec![
+            InputNoteWitness {
+                note: input_note_native,
+                position: 0,
+                rho_seed: [9u8; 32],
+                merkle_path: merkle_path0,
+            },
+            InputNoteWitness {
+                note: input_note_asset,
+                position: 1,
+                rho_seed: [8u8; 32],
+                merkle_path: merkle_path1,
+            },
+        ],
+        outputs: vec![
+            OutputNoteWitness {
+                note: NoteData {
+                    value: 3,
+                    asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+                    pk_recipient: [11u8; 32],
+                    pk_auth: [111u8; 32],
+                    rho: [12u8; 32],
+                    r: [13u8; 32],
+                },
+            },
+            OutputNoteWitness {
+                note: NoteData {
+                    value: 5,
+                    asset_id: 1,
+                    pk_recipient: [21u8; 32],
+                    pk_auth: [121u8; 32],
+                    rho: [22u8; 32],
+                    r: [23u8; 32],
+                },
+            },
+        ],
+        ciphertext_hashes: vec![[0u8; 48]; 2],
+        sk_spend,
+        merkle_root: felts_to_bytes48(&merkle_root),
+        fee: 5,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    }
+}
+
+fn build_sample_representative_proof() -> Result<TransactionProof, AggregationError> {
+    let witness = sample_witness_for_aggregation_cache();
+    let (proving_key, _verifying_key) = generate_keys();
+    proof::prove(&witness, &proving_key).map_err(|err| {
+        AggregationError::ProvingFailed(format!("sample tx proof generation failed: {err}"))
+    })
+}
+
+pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), AggregationError> {
+    let mut targets = aggregation_warmup_target_shapes();
+    if targets.is_empty() {
+        let max_txs = aggregation_prewarm_max_txs();
+        if max_txs == 0 {
+            return Ok(());
+        }
+        targets = default_warmup_targets(1, max_txs.max(1));
+    }
+    targets.retain(|value| *value > 0);
+    targets.sort_unstable();
+    targets.dedup();
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let started = Instant::now();
+    let representative = build_sample_representative_proof()?;
+    let pub_inputs = stark_public_inputs_p3(&representative).map_err(|err| {
+        AggregationError::InvalidPublicInputs {
+            index: 0,
+            message: err.to_string(),
+        }
+    })?;
+    let pub_inputs_vec = pub_inputs.to_vec();
+    let representative_inner_proof: TransactionProofP3 =
+        postcard::from_bytes(&representative.stark_proof)
+            .map_err(|_| AggregationError::InvalidProofFormat { index: 0 })?;
+    let query_count = representative_inner_proof.opening_proof.query_proofs.len();
+    let log_blowup = resolve_log_blowup(&representative_inner_proof, &pub_inputs_vec, query_count)
+        .map_err(|message| AggregationError::InvalidProofShape { index: 0, message })?;
+    let shape = ProofShape {
+        degree_bits: representative_inner_proof.degree_bits,
+        commit_phase_len: representative_inner_proof
+            .opening_proof
+            .commit_phase_commits
+            .len(),
+        final_poly_len: representative_inner_proof.opening_proof.final_poly.len(),
+        query_count,
+    };
+    let pub_inputs_len = pub_inputs_vec.len();
+
+    let mut built = 0usize;
+    let mut cache_hits = 0usize;
+    for tx_count in targets.iter().copied() {
+        let key = AggregationProverKey {
+            tx_count,
+            pub_inputs_len,
+            log_blowup,
+            shape,
+        };
+        let result = get_or_build_aggregation_prover_cache_entry(key, &representative_inner_proof)?;
+        if result.cache_hit {
+            cache_hits = cache_hits.saturating_add(1);
+        } else {
+            built = built.saturating_add(1);
+        }
+    }
+
+    tracing::info!(
+        ?targets,
+        built,
+        cache_hits,
+        total_ms = started.elapsed().as_millis(),
+        "aggregation prover thread-local cache prewarm complete"
+    );
+    Ok(())
+}
+
 fn maybe_prewarm_aggregation_cache(
     representative_proof: &TransactionProofP3,
     pub_inputs_len: usize,
@@ -875,13 +1107,12 @@ fn maybe_prewarm_aggregation_cache(
             return;
         }
         let mode = aggregation_prewarm_mode();
-        let capped_max = max_txs.max(current_tx_count);
         // Checkpoint mode is default to avoid O(target) shape churn in the hot
         // path. Operators can opt into legacy linear warmup explicitly.
         targets = if mode == "linear" {
-            (current_tx_count..=capped_max).collect()
+            (current_tx_count..=max_txs.max(current_tx_count)).collect()
         } else {
-            checkpoint_warmup_targets(current_tx_count, capped_max)
+            default_warmup_targets(current_tx_count, max_txs)
         };
     } else {
         targets.retain(|tx_count| *tx_count >= current_tx_count);

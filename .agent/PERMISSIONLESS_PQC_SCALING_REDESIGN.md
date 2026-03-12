@@ -25,6 +25,9 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 - [x] (2026-03-11 20:10Z) Added a real runtime regression in `runtime/tests/kernel_wallet_transfer.rs` that seeds a wallet note, builds a real wallet transaction, wraps it in a kernel `ActionEnvelope`, proves `Kernel::validate_unsigned` accepts it, and then executes `Kernel::submit_action` successfully against the production `StarkVerifier` runtime configuration.
 - [x] (2026-03-11 20:10Z) Added `./scripts/test-substrate.sh restart-recovery` plus the `restart-recovery-harness` CI job to emulate the laptop -> OVH/public node -> private prover stack topology locally, stop the prover node + external worker, verify the OVH-like node keeps mining, then restart the prover stack and require resync to the same tip.
 - [x] (2026-03-11 20:10Z) Removed the remaining live SHA-256d PoW compatibility names (`Blake3Seal` / `Blake3Algorithm`) and deleted the wallet proof-debug artifact so the shipping code and tests now use the fresh-testnet vocabulary directly.
+- [x] (2026-03-11 19:25Z) Fixed the fresh-runtime proof-availability default for the proofless lane by switching `runtime/src/manifest.rs` to `ProofAvailabilityPolicy::SelfContained`, rebuilt the release node, regenerated a fresh raw easy spec from the updated binary, and confirmed that a one-shot proofless sidecar transfer is now admitted successfully instead of dying immediately as `BadProof`.
+- [x] (2026-03-11 19:59Z) Instrumented `pallets/kernel`, `pallets/shielded-pool::family`, and `circuits/aggregation` to surface the actual strict-aggregation failure path. The strict `8`-tx proofless batch now reproduces cleanly: submission succeeds, `prepare_block_proof_bundle` starts, the aggregation prover verifies all eight inner proofs, and then the cold recursive cache build stalls at `aggregation_profile stage=cache_circuit_build_start`.
+- [x] (2026-03-11 20:57Z) Added worker-thread-local aggregation cache prewarm in `node/src/substrate/prover_coordinator.rs` and switched the default warmup policy in `circuits/aggregation/src/lib.rs` to target-only when liveness is disabled / queue capacity is `1`. This moved the first strict-batch cold start out of live traffic and into worker startup, and showed that the `8`-proof `MergeRoot` shape still spends more than a minute just in `cache_circuit_build` before any block traffic starts.
 - [ ] Complete the deeper consensus/runtime cutover from legacy `BlockProofBundle` / centralized authoring assumptions to a fully inline `CandidateArtifact` block body and retire the remaining legacy pooled-hash compatibility path.
 
 ## Surprises & Discoveries
@@ -55,6 +58,18 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 
 - Observation: the shielded transfer rejection was not a bad proof; it was a mempool-validity bug caused by block-local bookkeeping being persisted into the next best state.
   Evidence: the wallet-built bundle passed `StarkVerifier` and binding-hash verification locally, the anchor and nullifier were valid on-chain, and direct storage inspection showed `CoinbaseProcessed = 0x01` on the live best block. The unsigned validator rejected on that flag before proof verification.
+
+- Observation: the fresh proofless lane was still running against an inline-proof policy on newly generated dev specs until the runtime manifest was updated.
+  Evidence: a one-shot `HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROOF_SIDECAR=1` submit against a spec generated from the pre-fix release binary was rejected as `Pool(InvalidTransaction::BadProof)`, while the same submit succeeded after rebuilding the release node with `ProofAvailabilityPolicy::SelfContained` as the manifest default and regenerating the raw spec.
+
+- Observation: the current strict proofless batch path is not wallet-bound anymore once the policy fix lands; it stalls inside the recursive aggregation cold start.
+  Evidence: with `HEGEMON_AGG_PROFILE=1`, the strict `8`-tx batch reaches `prepare_block_proof_bundle: starting aggregation stage`, logs `aggregation_profile stage=decode_and_shape`, verifies all eight inner proofs (`cache_verify_inner tx_index=0..7`), then emits `aggregation_profile stage=cache_circuit_build_start tx_count=8` and makes no further progress before the harness times out waiting for a prepared bundle.
+
+- Observation: moving aggregation cache warmup onto the actual prover worker threads is necessary but not sufficient.
+  Evidence: after adding worker-thread-local prewarm, the startup log showed `aggregation_profile stage=cache_verify_inner tx_count=8` followed by `aggregation_profile stage=cache_circuit_build_start tx_count=8` during node startup, before any throughput traffic was submitted. With target-only warmup in strict mode, the first-batch cost moved ahead of traffic, but `cache_circuit_build_done` still arrived only after roughly 110 seconds on the test machine, and the next bottleneck became `common_prepare_metadata` / `common_commit_preprocessed`.
+
+- Observation: the repository does not yet have an end-to-end multi-prover throughput path for proofless batches.
+  Evidence: the coordinator publishes fan-out `leaf_batch_prove` work packages, but the shipped standalone worker only handles `root_finalize`. At the same time, `build_flat_batch_proofs_from_materials` still requires transaction witnesses, which proofless sidecar work packages do not expose. That leaves `MergeRoot` as the only viable proofless batch mode, and it is currently a single cold recursive build.
 
 ## Decision Log
 
@@ -100,6 +115,18 @@ This ExecPlan deliberately targets a **fresh testnet**. It does not preserve com
 
 - Decision: `CoinbaseProcessed` remains an `apply_*` ordering invariant, not a `validate_*` mempool invariant.
   Rationale: the flag is per-block execution state. Reading it during transaction-pool validation against the previous best block incorrectly makes every next-block unsigned transfer stale on a chain that mints a coinbase every block.
+  Date/Author: 2026-03-11 / Codex
+
+- Decision: treat `ProofAvailabilityPolicy::SelfContained` as the fresh-testnet default from genesis.
+  Rationale: the permissionless scaling redesign assumes proofless sidecar admission plus same-block `CandidateArtifact` import. Requiring operators or benchmarks to manually flip the chain out of `InlineRequired` just recreates the wrong architecture by default.
+  Date/Author: 2026-03-11 / Codex
+
+- Decision: do not interpret `HEGEMON_PROVER_WORKERS` as evidence of prover-market scaling for a single strict batch.
+  Rationale: the current local coordinator schedules one `root_finalize` bundle job for one strict candidate. More local worker slots do not increase throughput unless there are multiple jobs to run or the chunked `leaf_batch_prove` path is actually consumable by external workers.
+  Date/Author: 2026-03-11 / Codex
+
+- Decision: in strict throughput mode, aggregation warmup should target the exact batch shape instead of checkpointing through `1/2/4/...`.
+  Rationale: when `HEGEMON_PROVER_LIVENESS_LANE=0` and `HEGEMON_BATCH_QUEUE_CAPACITY=1`, intermediate warmup shapes are dead work. Warming only the final target shape moves the real cost forward without wasting startup on lanes the scheduler will never use.
   Date/Author: 2026-03-11 / Codex
 
 ## Outcomes & Retrospective

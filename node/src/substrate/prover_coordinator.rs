@@ -195,15 +195,32 @@ struct WorkerPool {
 impl WorkerPool {
     fn new(workers: usize, prepare_bundle_fn: Arc<PrepareBundleFn>) -> Self {
         let (results_tx, results_rx) = mpsc::channel();
+        let (prewarm_tx, prewarm_rx) = mpsc::channel();
         let mut senders = Vec::with_capacity(workers);
         for worker_index in 0..workers {
             let (worker_tx, worker_rx) = mpsc::channel();
             let worker_results_tx = results_tx.clone();
             let worker_prepare_bundle_fn = Arc::clone(&prepare_bundle_fn);
+            let worker_prewarm_tx = prewarm_tx.clone();
             let worker_name = format!("hegemon-prover-worker-{worker_index}");
             let _ = std::thread::Builder::new()
                 .name(worker_name)
                 .spawn(move || {
+                    let prewarm_result =
+                        aggregation_circuit::prewarm_thread_local_aggregation_cache_from_env();
+                    let _ = worker_prewarm_tx.send(
+                        prewarm_result
+                            .as_ref()
+                            .map(|_| ())
+                            .map_err(|error| error.to_string()),
+                    );
+                    if let Err(error) = prewarm_result {
+                        tracing::warn!(
+                            worker_index,
+                            error = %error,
+                            "Failed to prewarm aggregation prover cache on worker thread"
+                        );
+                    }
                     while let Ok(command) = worker_rx.recv() {
                         let WorkerCommand::Run {
                             job,
@@ -250,6 +267,39 @@ impl WorkerPool {
                 });
             senders.push(worker_tx);
         }
+        drop(prewarm_tx);
+
+        if should_block_on_worker_prewarm() {
+            let timeout = worker_prewarm_timeout();
+            for worker_index in 0..workers {
+                match prewarm_rx.recv_timeout(timeout) {
+                    Ok(Ok(())) => {
+                        tracing::info!(
+                            worker_index,
+                            timeout_secs = timeout.as_secs(),
+                            "Aggregation prover worker prewarm complete"
+                        );
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(
+                            worker_index,
+                            error = %error,
+                            timeout_secs = timeout.as_secs(),
+                            "Aggregation prover worker prewarm failed during startup"
+                        );
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        tracing::warn!(
+                            worker_index,
+                            timeout_secs = timeout.as_secs(),
+                            "Timed out waiting for aggregation prover worker prewarm"
+                        );
+                        break;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        }
         Self {
             senders,
             results_rx: Mutex::new(results_rx),
@@ -280,6 +330,28 @@ impl WorkerPool {
     fn worker_count(&self) -> usize {
         self.senders.len()
     }
+}
+
+fn should_block_on_worker_prewarm() -> bool {
+    std::env::var("HEGEMON_AGG_PREWARM_BLOCKING")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn worker_prewarm_timeout() -> Duration {
+    Duration::from_secs(
+        std::env::var("HEGEMON_AGG_PREWARM_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(900)
+            .max(1),
+    )
 }
 
 impl Drop for WorkerPool {

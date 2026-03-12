@@ -285,6 +285,13 @@ else
 fi
 WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
 WALLET_RPC_REQUEST_TIMEOUT_SECS="${HEGEMON_TP_WALLET_RPC_REQUEST_TIMEOUT_SECS:-180}"
+if [ -n "${HEGEMON_TP_RPC_WAIT_SECS:-}" ]; then
+  RPC_WAIT_SECS="${HEGEMON_TP_RPC_WAIT_SECS}"
+elif [ "$AGG_PREWARM_MAX_TXS" -gt 0 ]; then
+  RPC_WAIT_SECS=300
+else
+  RPC_WAIT_SECS=60
+fi
 SEND_RETRIES="${HEGEMON_TP_SEND_RETRIES:-4}"
 SEND_RETRY_DELAY_SECS="${HEGEMON_TP_SEND_RETRY_DELAY_SECS:-2}"
 TP_SEEDS="${HEGEMON_TP_SEEDS:-}"
@@ -695,6 +702,10 @@ NODE_ADAPTIVE_LIVENESS_ENV=""
 if [ -n "$ADAPTIVE_LIVENESS_MS" ]; then
   NODE_ADAPTIVE_LIVENESS_ENV="HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS=${ADAPTIVE_LIVENESS_MS}"
 fi
+NODE_PREWARM_BLOCKING_ENV=""
+if [ "$AGG_PREWARM_MAX_TXS" -gt 0 ]; then
+  NODE_PREWARM_BLOCKING_ENV="HEGEMON_AGG_PREWARM_BLOCKING=1"
+fi
 
 wallet_sync() {
   local store="$1"
@@ -775,6 +786,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
      HEGEMON_PROVER_LIVENESS_LANE='${PROVER_LIVENESS_LANE}' \
      $NODE_ADAPTIVE_LIVENESS_ENV \
+     $NODE_PREWARM_BLOCKING_ENV \
      HEGEMON_BATCH_QUEUE_CAPACITY='${BATCH_QUEUE_CAPACITY}' \
      HEGEMON_BATCH_INCREMENTAL_UPSIZE='${BATCH_INCREMENTAL_UPSIZE}' \
      HEGEMON_BATCH_TARGET_TXS='${TX_COUNT}' \
@@ -794,15 +806,15 @@ tmux new-session -d -s "$SESSION" -n node \
      ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
 
 echo "Waiting for RPC to respond..." >&2
-for i in $(seq 1 60); do
+for i in $(seq 1 "$RPC_WAIT_SECS"); do
   if curl -s -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
     "$RPC_HTTP" >/dev/null 2>&1; then
     break
   fi
   sleep 1
-  if [ "$i" -eq 60 ]; then
-    echo "RPC did not respond after 60s; check logs: $LOG_FILE" >&2
+  if [ "$i" -eq "$RPC_WAIT_SECS" ]; then
+    echo "RPC did not respond after ${RPC_WAIT_SECS}s; check logs: $LOG_FILE" >&2
     exit 1
   fi
 done
