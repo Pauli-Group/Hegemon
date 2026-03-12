@@ -65,6 +65,14 @@ pub enum CircuitError {
         message: String,
     },
 
+    /// Primitive operation execution failed.
+    #[error("Primitive operation {operation_index} ({op}) execution failed: {message}")]
+    PrimitiveExecutionFailed {
+        operation_index: usize,
+        op: String,
+        message: String,
+    },
+
     /// Division by zero encountered.
     #[error("Division by zero encountered")]
     DivisionByZero,

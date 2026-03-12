@@ -660,6 +660,453 @@ fn verify_query<EF: Field>(
     builder.pop_scope(); // close `verify_query` scope
 }
 
+#[cfg(test)]
+mod tests {
+    use hashbrown::HashMap;
+    use p3_circuit::{CircuitError, Op, WitnessId};
+    use p3_challenger::DuplexChallenger;
+    use p3_batch_stark::CommonData;
+    use p3_circuit_prover::TablePacking;
+    use p3_circuit_prover::air::PublicAir;
+    use p3_circuit_prover::common::CircuitTableAir;
+    use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
+    use p3_circuit_prover::BatchStarkProver;
+    use p3_dft::Radix2DitParallel;
+    use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
+    use p3_field::extension::BinomialExtensionField;
+    use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_matrix::Matrix;
+    use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
+    use p3_lookup::logup::LogUpGadget;
+    use p3_poseidon2::ExternalLayerConstants;
+    use p3_symmetric::{
+        CryptographicHasher, PaddingFreeSponge, PseudoCompressionFunction, TruncatedPermutation,
+    };
+    use p3_commit::{ExtensionMmcs, Mmcs};
+    use p3_uni_stark::StarkConfig;
+
+    use super::*;
+    use crate::BatchStarkVerifierInputsBuilder;
+    use crate::generation::generate_batch_challenges;
+    use crate::FriVerifierParams;
+    use crate::pcs::{
+        FriProofTargets, HashTargets, InputProofTargets, RecExtensionValMmcs, RecValMmcs,
+        Witness,
+    };
+    use crate::verifier::verify_batch_circuit;
+
+    type Challenge = BinomialExtensionField<Goldilocks, 2>;
+    type Perm = Poseidon2Goldilocks<POSEIDON2_WIDTH>;
+    type Hash = PaddingFreeSponge<Perm, POSEIDON2_WIDTH, POSEIDON2_RATE, POSEIDON2_RATE>;
+    type Compress = TruncatedPermutation<Perm, 2, POSEIDON2_RATE, POSEIDON2_WIDTH>;
+    type ValMmcs = p3_merkle_tree::MerkleTreeMmcs<
+        <Goldilocks as p3_field::Field>::Packing,
+        <Goldilocks as p3_field::Field>::Packing,
+        Hash,
+        Compress,
+        POSEIDON2_RATE,
+    >;
+    type ChallengeMmcs = ExtensionMmcs<Goldilocks, Challenge, ValMmcs>;
+    type Dft = Radix2DitParallel<Goldilocks>;
+    type Challenger = DuplexChallenger<Goldilocks, Perm, POSEIDON2_WIDTH, POSEIDON2_RATE>;
+    type Pcs = TwoAdicFriPcs<Goldilocks, Dft, ValMmcs, ChallengeMmcs>;
+    type Config = StarkConfig<Pcs, Challenge, Challenger>;
+    type InnerFri = FriProofTargets<
+        Goldilocks,
+        Challenge,
+        RecExtensionValMmcs<
+            Goldilocks,
+            Challenge,
+            POSEIDON2_RATE,
+            RecValMmcs<Goldilocks, POSEIDON2_RATE, Hash, Compress>,
+        >,
+        InputProofTargets<
+            Goldilocks,
+            Challenge,
+            RecValMmcs<Goldilocks, POSEIDON2_RATE, Hash, Compress>,
+        >,
+        Witness<Goldilocks>,
+    >;
+
+    fn native_perm() -> Perm {
+        let external_constants =
+            ExternalLayerConstants::<Goldilocks, POSEIDON2_WIDTH>::new_from_saved_array(
+                EXTERNAL_ROUND_CONSTANTS,
+                Goldilocks::new_array,
+            );
+        let internal_constants = Goldilocks::new_array(INTERNAL_ROUND_CONSTANTS).to_vec();
+        Perm::new(external_constants, internal_constants)
+    }
+
+    #[test]
+    fn poseidon2_hash_targets_matches_native_goldilocks12() {
+        let native_hash = Hash::new(native_perm());
+        let inputs = [
+            Goldilocks::from_u64(3),
+            Goldilocks::from_u64(5),
+            Goldilocks::from_u64(8),
+            Goldilocks::from_u64(13),
+            Goldilocks::from_u64(21),
+            Goldilocks::from_u64(34),
+            Goldilocks::from_u64(55),
+        ];
+        let expected = native_hash.hash_iter(inputs);
+
+        let mut builder = CircuitBuilder::<Challenge>::new();
+        let targets = inputs
+            .iter()
+            .enumerate()
+            .map(|(idx, value)| {
+                let target = builder.add_const(Challenge::from(*value));
+                builder.tag(target, format!("input-{idx}")).unwrap();
+                target
+            })
+            .collect::<Vec<_>>();
+        let digest = poseidon2_hash_targets(&mut builder, &targets);
+        for (idx, target) in digest.into_iter().enumerate() {
+            builder.tag(target, format!("digest-{idx}")).unwrap();
+        }
+
+        let circuit = builder.build().unwrap();
+        let traces = circuit.runner().run().unwrap();
+        for (idx, expected_limb) in expected.into_iter().enumerate() {
+            let observed = traces
+                .probe(&format!("digest-{idx}"))
+                .copied()
+                .expect("digest tag should exist");
+            assert_eq!(observed, Challenge::from(expected_limb));
+        }
+    }
+
+    #[test]
+    fn poseidon2_compress_targets_matches_native_goldilocks12() {
+        let native_compress = Compress::new(native_perm());
+        let left = Goldilocks::new_array([2, 4, 6, 8, 10, 12]);
+        let right = Goldilocks::new_array([1, 3, 5, 7, 9, 11]);
+        let expected = native_compress.compress([left, right]);
+
+        let mut builder = CircuitBuilder::<Challenge>::new();
+        let left_targets = left
+            .iter()
+            .copied()
+            .map(|value| builder.add_const(Challenge::from(value)))
+            .collect::<Vec<_>>();
+        let right_targets = right
+            .iter()
+            .copied()
+            .map(|value| builder.add_const(Challenge::from(value)))
+            .collect::<Vec<_>>();
+        let digest = poseidon2_compress_targets(
+            &mut builder,
+            &left_targets.try_into().unwrap(),
+            &right_targets.try_into().unwrap(),
+        );
+        for (idx, target) in digest.into_iter().enumerate() {
+            builder.tag(target, format!("compress-{idx}")).unwrap();
+        }
+
+        let circuit = builder.build().unwrap();
+        let traces = circuit.runner().run().unwrap();
+        for (idx, expected_limb) in expected.into_iter().enumerate() {
+            let observed = traces
+                .probe(&format!("compress-{idx}"))
+                .copied()
+                .expect("compress tag should exist");
+            assert_eq!(observed, Challenge::from(expected_limb));
+        }
+    }
+
+    #[test]
+    fn rec_extension_val_mmcs_matches_native_goldilocks12() {
+        let native_mmcs = ChallengeMmcs::new(ValMmcs::new(
+            Hash::new(native_perm()),
+            Compress::new(native_perm()),
+        ));
+
+        let mat_a = RowMajorMatrix::new(
+            vec![
+                Challenge::from_basis_coefficients_slice(&[Goldilocks::from_u64(1), Goldilocks::from_u64(2)]).unwrap(),
+                Challenge::from_basis_coefficients_slice(&[Goldilocks::from_u64(3), Goldilocks::from_u64(4)]).unwrap(),
+                Challenge::from_basis_coefficients_slice(&[Goldilocks::from_u64(5), Goldilocks::from_u64(6)]).unwrap(),
+                Challenge::from_basis_coefficients_slice(&[Goldilocks::from_u64(7), Goldilocks::from_u64(8)]).unwrap(),
+            ],
+            1,
+        );
+        let mat_b = RowMajorMatrix::new(
+            vec![
+                Challenge::from_basis_coefficients_slice(&[Goldilocks::from_u64(9), Goldilocks::from_u64(10)]).unwrap(),
+                Challenge::from_basis_coefficients_slice(&[Goldilocks::from_u64(11), Goldilocks::from_u64(12)]).unwrap(),
+            ],
+            1,
+        );
+
+        let dimensions = vec![
+            p3_matrix::Dimensions {
+                width: mat_a.width(),
+                height: mat_a.height(),
+            },
+            p3_matrix::Dimensions {
+                width: mat_b.width(),
+                height: mat_b.height(),
+            },
+        ];
+
+        let (commitment, prover_data) = native_mmcs.commit(vec![mat_a, mat_b]);
+        let index = 1usize;
+        let opening = native_mmcs.open_batch(index, &prover_data);
+        native_mmcs
+            .verify_batch(&commitment, &dimensions, index, (&opening).into())
+            .unwrap();
+
+        let mut builder = CircuitBuilder::<Challenge>::new();
+        let commitment_targets = commitment
+            .as_ref()
+            .iter()
+            .copied()
+            .map(|value| builder.add_const(Challenge::from(value)))
+            .collect::<Vec<_>>();
+        let index_bits = (0..2)
+            .map(|bit| {
+                let value = if (index >> bit) & 1 == 1 {
+                    Challenge::ONE
+                } else {
+                    Challenge::ZERO
+                };
+                builder.add_const(value)
+            })
+            .collect::<Vec<_>>();
+        let opened_targets = opening
+            .opened_values
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .copied()
+                    .map(|value| builder.add_const(value))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let proof_targets = opening
+            .opening_proof
+            .iter()
+            .map(|digest| {
+                digest
+                    .iter()
+                    .copied()
+                    .map(|value| builder.add_const(Challenge::from(value)))
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
+            })
+            .collect::<Vec<[Target; POSEIDON2_RATE]>>();
+
+        let flattened_dimensions = dimensions
+            .iter()
+            .map(|dim| p3_matrix::Dimensions {
+                width: dim.width * <Challenge as BasedVectorSpace<Goldilocks>>::DIMENSION,
+                height: dim.height,
+            })
+            .collect::<Vec<_>>();
+        let flattened_openings =
+            flatten_extension_rows_to_base_targets::<Goldilocks, Challenge>(&mut builder, &opened_targets)
+                .unwrap();
+        verify_merkle_batch_circuit::<Goldilocks, Challenge, POSEIDON2_RATE>(
+            &mut builder,
+            &commitment_targets,
+            &flattened_dimensions,
+            &index_bits,
+            &flattened_openings,
+            &proof_targets,
+        )
+        .unwrap();
+
+        let circuit = builder.build().unwrap();
+        let _traces = circuit.runner().run().unwrap();
+    }
+
+    #[test]
+    #[ignore = "reproduces current Goldilocks D2 recursive batch verifier mismatch"]
+    fn recursive_batch_verifier_accepts_simple_goldilocks_d2_circuit_table_proof() {
+        let mut builder = CircuitBuilder::<Challenge>::new();
+        let x = builder.add_public_input();
+        let y = builder.add_public_input();
+        let z = builder.add_public_input();
+        let expected = builder.add_public_input();
+
+        let xy = builder.mul(x, y);
+        let res = builder.add(xy, z);
+        let diff = builder.sub(res, expected);
+        builder.assert_zero(diff);
+
+        let circuit = builder.build().unwrap();
+        let (airs_degrees, witness_multiplicities) =
+            get_airs_and_degrees_with_prep::<Config, _, 2>(&circuit, TablePacking::default(), None)
+                .unwrap();
+        let (mut airs, degrees): (Vec<_>, Vec<usize>) = airs_degrees.into_iter().unzip();
+
+        let x_val = Challenge::from_basis_coefficients_slice(&[
+            Goldilocks::from_u64(3),
+            Goldilocks::NEG_ONE,
+        ])
+        .unwrap();
+        let y_val = Challenge::from_basis_coefficients_slice(&[
+            Goldilocks::from_u64(7),
+            Goldilocks::from_u64(11),
+        ])
+        .unwrap();
+        let z_val = Challenge::from_basis_coefficients_slice(&[
+            Goldilocks::from_u64(13),
+            Goldilocks::from_u64(17),
+        ])
+        .unwrap();
+        let expected_val = x_val * y_val + z_val;
+
+        let mut runner = circuit.runner();
+        runner
+            .set_public_inputs(&[x_val, y_val, z_val, expected_val])
+            .unwrap();
+        let traces = runner.run().unwrap();
+
+        let perm = native_perm();
+        let val_mmcs = ValMmcs::new(Hash::new(perm.clone()), Compress::new(perm.clone()));
+        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
+        let fri_params = create_test_fri_params(challenge_mmcs, 0);
+        let query_pow_bits = fri_params.query_proof_of_work_bits;
+        let log_height_max = fri_params.log_final_poly_len + fri_params.log_blowup;
+        let perm_for_config = native_perm();
+        let val_mmcs_for_config =
+            ValMmcs::new(Hash::new(perm_for_config.clone()), Compress::new(perm_for_config.clone()));
+        let challenge_mmcs_for_config = ChallengeMmcs::new(val_mmcs_for_config.clone());
+        let fri_params_for_config = create_test_fri_params(challenge_mmcs_for_config, 0);
+        let pcs = Pcs::new(Dft::default(), val_mmcs_for_config, fri_params_for_config);
+        let config = Config::new(pcs, Challenger::new(perm_for_config));
+        let fri_verifier_params = FriVerifierParams::from(&fri_params);
+
+        let common = CommonData::from_airs_and_degrees(&config, &mut airs, &degrees);
+        let perm_for_prover = native_perm();
+        let val_mmcs_for_prover =
+            ValMmcs::new(Hash::new(perm_for_prover.clone()), Compress::new(perm_for_prover.clone()));
+        let challenge_mmcs_for_prover = ChallengeMmcs::new(val_mmcs_for_prover.clone());
+        let fri_params_for_prover = create_test_fri_params(challenge_mmcs_for_prover, 0);
+        let prover_config = Config::new(
+            Pcs::new(Dft::default(), val_mmcs_for_prover, fri_params_for_prover),
+            Challenger::new(perm_for_prover),
+        );
+        let prover = BatchStarkProver::new(prover_config);
+        let proof = prover
+            .prove_all_tables(&traces, &common, witness_multiplicities)
+            .unwrap();
+        let public_values =
+            PublicAir::<Goldilocks, 2>::trace_to_public_values(&traces.public_trace);
+        prover
+            .verify_all_tables_with_public_values(&proof, &common, Some(public_values.clone()))
+            .unwrap();
+
+        let mut public_values_by_air = vec![Vec::new(); airs.len()];
+        for (idx, air) in airs.iter().enumerate() {
+            if matches!(air, CircuitTableAir::Public(_)) {
+                public_values_by_air[idx] = public_values.clone();
+            }
+        }
+        let air_public_counts = public_values_by_air
+            .iter()
+            .map(Vec::len)
+            .collect::<Vec<_>>();
+
+        let mut recursive_builder = CircuitBuilder::<Challenge>::new();
+        let verifier_inputs = BatchStarkVerifierInputsBuilder::<
+            Config,
+            HashTargets<Goldilocks, POSEIDON2_RATE>,
+            InnerFri,
+        >::allocate(
+            &mut recursive_builder,
+            &proof.proof,
+            &common,
+            &air_public_counts,
+        );
+        verify_batch_circuit::<
+            CircuitTableAir<Config, 2>,
+            Config,
+            HashTargets<Goldilocks, POSEIDON2_RATE>,
+            InputProofTargets<Goldilocks, Challenge, RecValMmcs<Goldilocks, POSEIDON2_RATE, Hash, Compress>>,
+            InnerFri,
+            LogUpGadget,
+            POSEIDON2_RATE,
+        >(
+            &config,
+            &airs,
+            &mut recursive_builder,
+            &verifier_inputs.proof_targets,
+            &verifier_inputs.air_public_targets,
+            &fri_verifier_params,
+            &verifier_inputs.common_data,
+            &LogUpGadget::new(),
+        )
+        .unwrap();
+
+        let recursive_circuit = recursive_builder.build().unwrap();
+        let challenges = generate_batch_challenges(
+            &airs,
+            &config,
+            &proof.proof,
+            &public_values_by_air,
+            Some(&[query_pow_bits, log_height_max]),
+            &common,
+            &LogUpGadget::new(),
+        )
+        .unwrap();
+        let public_inputs = verifier_inputs.pack_values(
+            &public_values_by_air,
+            &proof.proof,
+            &common,
+            &challenges,
+        );
+
+        let mut recursive_runner = recursive_circuit.clone().runner();
+        recursive_runner.set_public_inputs(&public_inputs).unwrap();
+        let (private_targets, private_values) =
+            verifier_inputs.private_witness_inputs(&proof.proof, &common);
+        let mut private_positions = HashMap::<WitnessId, Vec<usize>>::new();
+        for (position, (target, value)) in private_targets
+            .into_iter()
+            .zip(private_values.into_iter())
+            .enumerate()
+        {
+            let witness = recursive_circuit.expr_to_widx[&target];
+            private_positions.entry(witness).or_default().push(position);
+            recursive_runner.set_witness_value(witness, value).unwrap();
+        }
+
+        match recursive_runner.run() {
+            Ok(_traces) => {}
+            Err(CircuitError::PrimitiveExecutionFailed {
+                operation_index,
+                op,
+                message,
+            }) => {
+                let op_ref = &recursive_circuit.ops[operation_index];
+                let detail = match op_ref {
+                    Op::Add { a, b, out } => format!(
+                        "a={a:?} a_positions={:?} b={b:?} b_positions={:?} out={out:?} out_positions={:?}",
+                        private_positions.get(a),
+                        private_positions.get(b),
+                        private_positions.get(out),
+                    ),
+                    Op::Mul { a, b, out } => format!(
+                        "a={a:?} a_positions={:?} b={b:?} b_positions={:?} out={out:?} out_positions={:?}",
+                        private_positions.get(a),
+                        private_positions.get(b),
+                        private_positions.get(out),
+                    ),
+                    _ => format!("{op_ref:?}"),
+                };
+                panic!("recursive batch verifier failed: op={op}; message={message}; detail={detail}");
+            }
+            Err(err) => panic!("recursive batch verifier failed: {err:?}"),
+        }
+    }
+}
+
 /// Compute the final query point after all FRI folding rounds.
 /// This is the point at which the final polynomial should be evaluated.
 fn compute_final_query_point<F, EF>(

@@ -8,10 +8,7 @@ mod v5;
 use p3_air::{Air, BaseAir};
 use p3_batch_stark::common::{GlobalPreprocessed, PreprocessedInstanceMeta};
 use p3_batch_stark::{CommonData, StarkGenericConfig};
-use p3_circuit::{
-    Circuit, CircuitBuilder, CircuitError, CircuitRunner, Expr, NonPrimitiveOpId,
-    NonPrimitiveOpType, Op, WitnessId,
-};
+use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner, Op, WitnessId};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::common::CircuitTableAir;
 use p3_circuit_prover::{BatchStarkProver, TablePacking};
@@ -97,15 +94,8 @@ struct ProofWitnessAssignmentPlan {
     witness_ids: Vec<WitnessId>,
 }
 
-#[derive(Clone, Copy)]
-struct ProofWitnessSource {
-    op_id: NonPrimitiveOpId,
-    output_idx: usize,
-}
-
 struct ProofWitnessAssignmentPlanSpec {
-    value_positions: Vec<usize>,
-    sources: Vec<ProofWitnessSource>,
+    targets: Vec<p3_recursion::Target>,
 }
 
 struct AggregationProverCacheEntry {
@@ -454,47 +444,14 @@ fn infer_log_blowup_from_proof_shape(proof: &TransactionProofP3) -> Option<usize
 }
 
 fn build_witness_assignment_plan_specs(
-    circuit_builder: &CircuitBuilder<Challenge>,
     verifier_inputs: &[InnerVerifierInputs],
     representative_proof: &TransactionProofP3,
 ) -> Result<Vec<ProofWitnessAssignmentPlanSpec>, AggregationError> {
-    let graph = circuit_builder.graph();
-    let non_primitive_ops = circuit_builder.non_primitive_ops();
     verifier_inputs
         .iter()
         .map(|inputs| {
             let (targets, _values) = inputs.private_witness_inputs(representative_proof, &None);
-            let mut value_positions = Vec::new();
-            let mut sources = Vec::new();
-            for (value_index, target) in targets.into_iter().enumerate() {
-                let Expr::NonPrimitiveOutput { call, output_idx } = graph.get_expr(target) else {
-                    continue;
-                };
-                let Expr::NonPrimitiveCall { op_id, .. } = graph.get_expr(*call) else {
-                    return Err(AggregationError::CircuitBuild(
-                        "verifier witness target must reference a non-primitive call".to_string(),
-                    ));
-                };
-                let op = non_primitive_ops
-                    .get(op_id.0 as usize)
-                    .ok_or_else(|| {
-                        AggregationError::CircuitBuild(
-                            "verifier witness target references unknown non-primitive op"
-                                .to_string(),
-                        )
-                    })?;
-                if op.op_type == NonPrimitiveOpType::WitnessInput {
-                    value_positions.push(value_index);
-                    sources.push(ProofWitnessSource {
-                        op_id: *op_id,
-                        output_idx: *output_idx as usize,
-                    });
-                }
-            }
-            Ok(ProofWitnessAssignmentPlanSpec {
-                value_positions,
-                sources,
-            })
+            Ok(ProofWitnessAssignmentPlanSpec { targets })
         })
         .collect()
 }
@@ -503,49 +460,66 @@ fn resolve_witness_assignment_plans(
     circuit: &Circuit<Challenge>,
     specs: &[ProofWitnessAssignmentPlanSpec],
 ) -> Result<Vec<ProofWitnessAssignmentPlan>, AggregationError> {
-    let witness_outputs = circuit
-        .ops
-        .iter()
-        .filter_map(|op| match op {
-            Op::NonPrimitiveOpWithExecutor {
-                executor,
-                outputs,
-                op_id,
-                ..
-            } if *executor.op_type() == NonPrimitiveOpType::WitnessInput => Some((*op_id, outputs)),
-            _ => None,
-        })
-        .flat_map(|(op_id, outputs)| {
-            outputs
-                .iter()
-                .enumerate()
-                .filter_map(move |(output_idx, output_group)| {
-                    output_group
-                        .first()
-                        .copied()
-                        .map(|witness_id| ((op_id, output_idx), witness_id))
-                })
-        })
-        .collect::<HashMap<_, _>>();
+    let public_rows = circuit.public_rows.iter().copied().collect::<HashSet<_>>();
+    let witness_outputs = collect_witness_input_outputs(circuit);
 
     let plans = specs.iter()
-        .map(|spec| {
-            let witness_ids = spec
-                .sources
-                .iter()
-                .map(|source| {
-                    witness_outputs
-                        .get(&(source.op_id, source.output_idx))
-                        .copied()
-                        .ok_or_else(|| {
-                            AggregationError::CircuitBuild(
-                                "failed to resolve witness-input source".to_string(),
-                            )
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+        .enumerate()
+        .map(|(plan_index, spec)| {
+            let mut value_positions = Vec::new();
+            let mut witness_ids = Vec::new();
+            let mut filtered_public = 0usize;
+            let mut filtered_non_witness = 0usize;
+            let mut filtered_preview = Vec::new();
+
+            for (value_index, target) in spec.targets.iter().copied().enumerate() {
+                let witness_id = circuit
+                    .expr_to_widx
+                    .get(&target)
+                    .copied()
+                    .ok_or_else(|| {
+                        AggregationError::CircuitBuild(
+                            "failed to resolve private witness target after lowering".to_string(),
+                        )
+                    })?;
+                if public_rows.contains(&witness_id) {
+                    filtered_public += 1;
+                    continue;
+                }
+                if !witness_outputs.contains(&witness_id) {
+                    filtered_non_witness += 1;
+                    if filtered_preview.len() < 8 {
+                        filtered_preview.push((
+                            value_index,
+                            target.0,
+                            witness_id.0,
+                            describe_witness_origin(circuit, witness_id),
+                        ));
+                    }
+                    continue;
+                }
+
+                value_positions.push(value_index);
+                witness_ids.push(witness_id);
+            }
+
+            if std::env::var("HEGEMON_AGG_PROFILE")
+                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                eprintln!(
+                    "aggregation_profile stage=leaf_assignment_resolved plan_index={} witness_targets={} filtered_targets={} filtered_public={} filtered_non_witness={} filtered_preview={:?}",
+                    plan_index,
+                    witness_ids.len(),
+                    spec.targets.len().saturating_sub(witness_ids.len()),
+                    filtered_public,
+                    filtered_non_witness,
+                    filtered_preview
+                );
+            }
+
             Ok(ProofWitnessAssignmentPlan {
-                value_positions: spec.value_positions.clone(),
+                value_positions,
                 witness_ids,
             })
         })
@@ -559,14 +533,13 @@ fn resolve_witness_assignment_plans(
             .iter()
             .flat_map(|plan| plan.witness_ids.iter().copied())
             .collect::<HashSet<_>>();
-        let total = witness_outputs.values().copied().collect::<HashSet<_>>();
-        let missing = total
+        let missing = witness_outputs
             .difference(&assigned)
             .copied()
             .collect::<Vec<_>>();
         eprintln!(
             "aggregation_profile stage=leaf_assignment_global witness_input_total={} assigned_total={} missing_total={} missing_preview={:?}",
-            total.len(),
+            witness_outputs.len(),
             assigned.len(),
             missing.len(),
             missing.iter().take(8).collect::<Vec<_>>()
@@ -574,6 +547,22 @@ fn resolve_witness_assignment_plans(
     }
 
     Ok(plans)
+}
+
+fn collect_witness_input_outputs(circuit: &Circuit<Challenge>) -> HashSet<WitnessId> {
+    circuit
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::NonPrimitiveOpWithExecutor {
+                executor, outputs, ..
+            } if executor
+                .op_type()
+                .eq(&p3_circuit::NonPrimitiveOpType::WitnessInput) => Some(outputs),
+            _ => None,
+        })
+        .flat_map(|outputs| outputs.iter().flatten().copied())
+        .collect()
 }
 
 fn collect_proof_witness_values(proof: &TransactionProofP3) -> Vec<Challenge> {
@@ -651,7 +640,7 @@ fn build_aggregation_prover_cache_entry(
         );
     }
     let witness_assignment_specs =
-        build_witness_assignment_plan_specs(&circuit_builder, &verifier_inputs, representative_proof)?;
+        build_witness_assignment_plan_specs(&verifier_inputs, representative_proof)?;
     let circuit = circuit_builder
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;

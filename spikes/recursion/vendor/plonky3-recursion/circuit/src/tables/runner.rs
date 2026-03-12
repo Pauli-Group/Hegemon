@@ -246,26 +246,27 @@ impl<F: CircuitField> CircuitRunner<F> {
         // Clone ops to avoid borrowing issues.
         let ops = self.circuit.ops.clone();
 
-        for op in ops {
-            match op {
-                Op::Const { out, val } => {
-                    self.set_witness(out, val)?;
-                }
+        for (op_index, op) in ops.into_iter().enumerate() {
+            let op_debug = format!("{op:?}");
+            let exec_result: Result<(), CircuitError> = (|| match op {
+                Op::Const { out, val } => self.set_witness(out, val),
                 Op::Public { out, public_pos: _ } => {
                     // Public inputs should already be set
                     if self.witness[out.0 as usize].is_none() {
-                        return Err(CircuitError::PublicInputNotSet { witness_id: out });
+                        Err(CircuitError::PublicInputNotSet { witness_id: out })
+                    } else {
+                        Ok(())
                     }
                 }
                 Op::Add { a, b, out } => {
                     let a_val = self.get_witness(a)?;
                     if let Ok(b_val) = self.get_witness(b) {
                         let result = a_val + b_val;
-                        self.set_witness(out, result)?;
+                        self.set_witness(out, result)
                     } else {
                         let out_val = self.get_witness(out)?;
                         let b_val = out_val - a_val;
-                        self.set_witness(b, b_val)?;
+                        self.set_witness(b, b_val)
                     }
                 }
                 Op::Mul { a, b, out } => {
@@ -274,12 +275,12 @@ impl<F: CircuitField> CircuitRunner<F> {
                     let a_val = self.get_witness(a)?;
                     if let Ok(b_val) = self.get_witness(b) {
                         let result = a_val * b_val;
-                        self.set_witness(out, result)?;
+                        self.set_witness(out, result)
                     } else {
                         let result_val = self.get_witness(out)?;
                         let a_inv = a_val.try_inverse().ok_or(CircuitError::DivisionByZero)?;
                         let b_val = result_val * a_inv;
-                        self.set_witness(b, b_val)?;
+                        self.set_witness(b, b_val)
                     }
                 }
                 Op::NonPrimitiveOpWithExecutor {
@@ -302,8 +303,19 @@ impl<F: CircuitField> CircuitRunner<F> {
                             op: *executor.op_type(),
                             message: format!("{err:?}"),
                         }
-                    })?;
+                    })
                 }
+            })();
+
+            if let Err(err) = exec_result {
+                return match err {
+                    CircuitError::NonPrimitiveExecutionFailed { .. } => Err(err),
+                    other => Err(CircuitError::PrimitiveExecutionFailed {
+                        operation_index: op_index,
+                        op: op_debug,
+                        message: format!("{other:?}"),
+                    }),
+                };
             }
         }
         Ok(())

@@ -2,7 +2,7 @@ use super::*;
 use block_circuit::CommitmentBlockProver;
 use crypto::hashes::blake3_384;
 use p3_batch_stark::BatchProof;
-use p3_circuit::{Expr, NonPrimitiveOpId, NonPrimitiveOpType, Op};
+use p3_circuit::{Op, WitnessId};
 use p3_goldilocks::Goldilocks;
 use p3_lookup::logup::LogUpGadget;
 use p3_recursion::pcs::{
@@ -74,15 +74,8 @@ struct MergeWitnessAssignmentPlan {
     witness_ids: Vec<WitnessId>,
 }
 
-#[derive(Clone, Copy)]
-struct MergeWitnessSource {
-    op_id: NonPrimitiveOpId,
-    output_idx: usize,
-}
-
 struct MergeWitnessAssignmentPlanSpec {
-    value_positions: Vec<usize>,
-    sources: Vec<MergeWitnessSource>,
+    targets: Vec<p3_recursion::Target>,
 }
 
 struct MergeAggregationProverCacheEntry {
@@ -318,7 +311,6 @@ fn collect_merge_assignment_values(
 }
 
 fn build_merge_assignment_plan_specs(
-    circuit_builder: &CircuitBuilder<Challenge>,
     verifier_inputs: &[BatchStarkVerifierInputsBuilder<
         Config,
         OuterBatchHashTargets,
@@ -327,41 +319,12 @@ fn build_merge_assignment_plan_specs(
     representative_outer: &OuterBatchProof,
     representative_common: &CommonData<Config>,
 ) -> Result<Vec<MergeWitnessAssignmentPlanSpec>, AggregationError> {
-    let graph = circuit_builder.graph();
-    let non_primitive_ops = circuit_builder.non_primitive_ops();
     verifier_inputs
         .iter()
         .enumerate()
         .map(|(plan_index, inputs)| {
             let (targets, _values) =
                 inputs.private_witness_inputs(representative_outer, representative_common);
-            let total_targets = targets.len();
-            let mut value_positions = Vec::new();
-            let mut sources = Vec::with_capacity(targets.len());
-            for (value_index, target) in targets.into_iter().enumerate() {
-                let Expr::NonPrimitiveOutput { call, output_idx } = graph.get_expr(target) else {
-                    continue;
-                };
-                let Expr::NonPrimitiveCall { op_id, .. } = graph.get_expr(*call) else {
-                    return Err(AggregationError::CircuitBuild(
-                        "merge witness target must reference a non-primitive call".to_string(),
-                    ));
-                };
-                let op = non_primitive_ops
-                    .get(op_id.0 as usize)
-                    .ok_or_else(|| {
-                        AggregationError::CircuitBuild(
-                            "merge witness target references unknown non-primitive op".to_string(),
-                        )
-                    })?;
-                if op.op_type == NonPrimitiveOpType::WitnessInput {
-                    value_positions.push(value_index);
-                    sources.push(MergeWitnessSource {
-                        op_id: *op_id,
-                        output_idx: *output_idx as usize,
-                    });
-                }
-            }
             if std::env::var("HEGEMON_AGG_PROFILE")
                 .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
                 .unwrap_or(false)
@@ -369,14 +332,11 @@ fn build_merge_assignment_plan_specs(
                 eprintln!(
                     "aggregation_profile stage=v5_merge_assignment_plan plan_index={} witness_targets={} filtered_targets={}",
                     plan_index,
-                    sources.len(),
-                    total_targets.saturating_sub(sources.len())
+                    targets.len(),
+                    0
                 );
             }
-            Ok(MergeWitnessAssignmentPlanSpec {
-                value_positions,
-                sources,
-            })
+            Ok(MergeWitnessAssignmentPlanSpec { targets })
         })
         .collect()
 }
@@ -397,54 +357,13 @@ fn resolve_merge_assignment_plans(
                 executor,
                 outputs,
                 ..
-            } if *executor.op_type() != NonPrimitiveOpType::WitnessInput => {
+            } if *executor.op_type() != p3_circuit::NonPrimitiveOpType::WitnessInput => {
                 outputs.iter().flatten().copied().collect()
             }
             _ => Vec::new(),
         })
         .collect::<HashSet<_>>();
-    let hint_input_witnesses = circuit
-        .ops
-        .iter()
-        .flat_map(|op| match op {
-            Op::NonPrimitiveOpWithExecutor {
-                executor,
-                inputs,
-                ..
-            } if *executor.op_type() == NonPrimitiveOpType::Unconstrained => {
-                inputs.iter().flatten().copied().collect::<Vec<_>>()
-            }
-            _ => Vec::new(),
-        })
-        .collect::<HashSet<_>>();
-    let unconstrained_outputs = circuit
-        .ops
-        .iter()
-        .filter_map(|op| match op {
-            Op::NonPrimitiveOpWithExecutor {
-                executor,
-                outputs,
-                op_id,
-                ..
-            } if *executor.op_type() == NonPrimitiveOpType::WitnessInput => Some((*op_id, outputs)),
-            _ => None,
-        })
-        .flat_map(|(op_id, outputs)| {
-            outputs
-                .iter()
-                .enumerate()
-                .filter_map(move |(output_idx, output_group)| {
-                    output_group
-                        .first()
-                        .copied()
-                        .map(|witness_id| ((op_id, output_idx), witness_id))
-                })
-        })
-        .collect::<HashMap<_, _>>();
-    let all_unconstrained_witnesses = unconstrained_outputs
-        .values()
-        .copied()
-        .collect::<HashSet<_>>();
+    let witness_input_outputs = collect_witness_input_outputs(circuit);
 
     let plans = specs.iter()
         .enumerate()
@@ -452,28 +371,42 @@ fn resolve_merge_assignment_plans(
             let mut value_positions = Vec::new();
             let mut witness_ids = Vec::new();
             let mut filtered_public = 0usize;
+            let mut filtered_non_witness = 0usize;
+            let mut filtered_preview = Vec::new();
             let mut computed_overlap = 0usize;
             let mut computed_overlap_preview = Vec::new();
-            for (position, source) in spec.value_positions.iter().copied().zip(spec.sources.iter()) {
-                let witness_id = unconstrained_outputs
-                    .get(&(source.op_id, source.output_idx))
+            for (position, target) in spec.targets.iter().copied().enumerate() {
+                let witness_id = circuit
+                    .expr_to_widx
+                    .get(&target)
                     .copied()
                     .ok_or_else(|| {
                         AggregationError::CircuitBuild(
-                            "failed to resolve unconstrained witness source".to_string(),
+                            "failed to resolve private witness target after lowering".to_string(),
                         )
                     })?;
                 if public_rows.contains(&witness_id) {
                     filtered_public += 1;
                     continue;
                 }
-                if computed_outputs.contains(&witness_id) && !hint_input_witnesses.contains(&witness_id) {
+                if !witness_input_outputs.contains(&witness_id) {
+                    filtered_non_witness += 1;
+                    if filtered_preview.len() < 8 {
+                        filtered_preview.push((
+                            position,
+                            target.0,
+                            witness_id.0,
+                            describe_witness_origin(circuit, witness_id),
+                        ));
+                    }
+                    continue;
+                }
+                if computed_outputs.contains(&witness_id) {
                     computed_overlap += 1;
                     if computed_overlap_preview.len() < 8 {
                         computed_overlap_preview.push((
                             position,
-                            source.op_id.0,
-                            source.output_idx,
+                            target.0,
                             witness_id.0,
                             describe_witness_origin(circuit, witness_id),
                         ));
@@ -487,13 +420,14 @@ fn resolve_merge_assignment_plans(
                 .unwrap_or(false)
             {
                 eprintln!(
-                    "aggregation_profile stage=v5_merge_assignment_resolved plan_index={} witness_targets={} filtered_targets={} filtered_public={} computed_overlap={} first_sources={:?} overlap_preview={:?}",
+                    "aggregation_profile stage=v5_merge_assignment_resolved plan_index={} witness_targets={} filtered_targets={} filtered_public={} filtered_non_witness={} computed_overlap={} filtered_preview={:?} overlap_preview={:?}",
                     plan_index,
                     witness_ids.len(),
-                    spec.sources.len().saturating_sub(witness_ids.len()),
+                    spec.targets.len().saturating_sub(witness_ids.len()),
                     filtered_public,
+                    filtered_non_witness,
                     computed_overlap,
-                    spec.sources.iter().take(8).map(|source| (source.op_id.0, source.output_idx)).collect::<Vec<_>>(),
+                    filtered_preview,
                     computed_overlap_preview
                 );
             }
@@ -508,31 +442,20 @@ fn resolve_merge_assignment_plans(
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
     {
-        let all_sources = specs
-            .iter()
-            .flat_map(|spec| spec.sources.iter().map(|source| (source.op_id, source.output_idx)))
-            .collect::<HashSet<_>>();
         let assigned = plans
             .iter()
             .flat_map(|plan| plan.witness_ids.iter().copied())
             .collect::<HashSet<_>>();
-        let missing = all_unconstrained_witnesses
+        let missing = witness_input_outputs
             .difference(&assigned)
             .copied()
             .collect::<Vec<_>>();
-        let missing_source_keys = unconstrained_outputs
-            .keys()
-            .filter(|key| !all_sources.contains(key))
-            .take(16)
-            .cloned()
-            .collect::<Vec<_>>();
         eprintln!(
-            "aggregation_profile stage=v5_merge_assignment_global unconstrained_total={} assigned_total={} missing_total={} missing_preview={:?} missing_source_keys={:?}",
-            all_unconstrained_witnesses.len(),
+            "aggregation_profile stage=v5_merge_assignment_global unconstrained_total={} assigned_total={} missing_total={} missing_preview={:?}",
+            witness_input_outputs.len(),
             assigned.len(),
             missing.len(),
-            missing.iter().take(8).collect::<Vec<_>>(),
-            missing_source_keys
+            missing.iter().take(8).collect::<Vec<_>>()
         );
     }
 
@@ -615,33 +538,16 @@ fn set_merge_verifier_witnesses(
 
 fn child_air_public_counts(
     airs: &[CircuitTableAir<Config, 2>],
-    public_values_len: usize,
+    _public_values_len: usize,
 ) -> Vec<usize> {
-    airs.iter()
-        .map(|air| {
-            if matches!(air, CircuitTableAir::Public(_)) {
-                public_values_len
-            } else {
-                0
-            }
-        })
-        .collect()
+    vec![0; airs.len()]
 }
 
 fn child_air_public_values(
     airs: &[CircuitTableAir<Config, 2>],
-    public_values: &[u64],
+    _public_values: &[u64],
 ) -> Vec<Vec<Val>> {
-    let public_vals = public_values_as_vals(public_values);
-    airs.iter()
-        .map(|air| {
-            if matches!(air, CircuitTableAir::Public(_)) {
-                public_vals.clone()
-            } else {
-                Vec::new()
-            }
-        })
-        .collect()
+    vec![Vec::new(); airs.len()]
 }
 
 fn decode_leaf_child_context(bytes: &[u8]) -> Result<LeafChildContext, AggregationError> {
@@ -760,7 +666,6 @@ fn get_or_build_merge_cache_entry(
     }
 
     let assignment_specs = build_merge_assignment_plan_specs(
-        &circuit_builder,
         &verifier_inputs,
         &representative_outer,
         representative_child.common.as_ref(),

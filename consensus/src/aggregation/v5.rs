@@ -174,17 +174,9 @@ fn batch_verifier_params() -> FriVerifierParams {
 
 fn child_air_public_counts(
     airs: &[CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
-    public_values_len: usize,
+    _public_values_len: usize,
 ) -> Vec<usize> {
-    airs.iter()
-        .map(|air| {
-            if matches!(air, CircuitTableAir::Public(_)) {
-                public_values_len
-            } else {
-                0
-            }
-        })
-        .collect()
+    vec![0; airs.len()]
 }
 
 fn decode_payload(decoded: &[u8]) -> Result<AggregationProofV5Payload, ProofError> {
