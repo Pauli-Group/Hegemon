@@ -675,6 +675,10 @@ pub fn prove_leaf_aggregation(
     tree_levels: u16,
     root_level: u16,
 ) -> Result<Vec<u8>, AggregationError> {
+    let started = Instant::now();
+    let profile = std::env::var("HEGEMON_AGG_PROFILE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     if transaction_proofs.is_empty() {
         return Err(AggregationError::EmptyBatch);
     }
@@ -700,6 +704,7 @@ pub fn prove_leaf_aggregation(
     let mut expected_shape: Option<ProofShape> = None;
     let mut expected_inputs_len: Option<usize> = None;
     let mut expected_log_blowup: Option<usize> = None;
+    let decode_started = Instant::now();
     for (index, proof) in transaction_proofs.iter().enumerate() {
         let pub_inputs =
             stark_public_inputs_p3(proof).map_err(|err| AggregationError::InvalidPublicInputs {
@@ -744,6 +749,16 @@ pub fn prove_leaf_aggregation(
         inner_proofs.push(inner_proof);
         public_inputs.push(pub_inputs_vec);
     }
+    let decode_ms = decode_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_leaf_decode_and_shape tx_count={} active_children={} decode_ms={} total_ms={}",
+            leaf_fan_in(),
+            transaction_proofs.len(),
+            decode_ms,
+            started.elapsed().as_millis()
+        );
+    }
     while inner_proofs.len() < leaf_fan_in() {
         let padded: TransactionProofP3 = postcard::from_bytes(&representative_stark)
             .map_err(|_| AggregationError::InvalidProofFormat { index: 0 })?;
@@ -766,10 +781,24 @@ pub fn prove_leaf_aggregation(
     };
     let representative_inner: TransactionProofP3 = postcard::from_bytes(&representative_stark)
         .map_err(|_| AggregationError::InvalidProofFormat { index: 0 })?;
-    let cache_result = get_or_build_aggregation_prover_cache_entry(cache_key, &representative_inner)?;
+    let cache_lookup_started = Instant::now();
+    let cache_result =
+        get_or_build_aggregation_prover_cache_entry(cache_key, &representative_inner)?;
+    let cache_lookup_ms = cache_lookup_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_leaf_cache_lookup tx_count={} cache_hit={} cache_build_ms={} cache_lookup_ms={} total_ms={}",
+            leaf_fan_in(),
+            cache_result.cache_hit,
+            cache_result.cache_build_ms,
+            cache_lookup_ms,
+            started.elapsed().as_millis()
+        );
+    }
     let inner_config = config_with_fri(log_blowup, expected_shape.query_count);
     let log_height_max = expected_shape.final_poly_len.ilog2() as usize + log_blowup;
     let mut recursion_public_inputs = Vec::new();
+    let challenge_started = Instant::now();
     for (index, (proof, pub_inputs_vec)) in inner_proofs.iter().zip(public_inputs.iter()).enumerate()
     {
         let challenges = generate_challenges(
@@ -792,19 +821,52 @@ pub fn prove_leaf_aggregation(
         );
         recursion_public_inputs.extend(packed);
     }
+    let challenge_ms = challenge_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_leaf_challenges_and_pack tx_count={} challenge_pack_ms={} total_ms={}",
+            leaf_fan_in(),
+            challenge_ms,
+            started.elapsed().as_millis()
+        );
+    }
     let mut runner = cache_result.entry.circuit.clone().runner();
+    let set_public_started = Instant::now();
     runner
         .set_public_inputs(&recursion_public_inputs)
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
+    let set_public_ms = set_public_started.elapsed().as_millis();
+    let set_witness_started = Instant::now();
     set_stark_verifier_witnesses_with_plans(
         &mut runner,
         &cache_result.entry.witness_assignment_plans,
         &inner_proofs,
     )
     .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
+    let set_witness_ms = set_witness_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_leaf_set_targets tx_count={} set_public_ms={} set_witness_ms={} total_ms={}",
+            leaf_fan_in(),
+            set_public_ms,
+            set_witness_ms,
+            started.elapsed().as_millis()
+        );
+    }
+    let run_started = Instant::now();
     let traces = runner
         .run()
         .map_err(|err| AggregationError::CircuitRun(format!("{err:?}")))?;
+    let run_ms = run_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_leaf_runner_run tx_count={} run_ms={} total_ms={}",
+            leaf_fan_in(),
+            run_ms,
+            started.elapsed().as_millis()
+        );
+    }
+    let outer_prove_started = Instant::now();
     let outer_proof = BatchStarkProver::new(circuit_config::goldilocks().build())
         .with_table_packing(TablePacking::new(4, 4, 1))
         .prove_all_tables(
@@ -813,6 +875,16 @@ pub fn prove_leaf_aggregation(
             cache_result.entry.witness_multiplicities.clone(),
         )
         .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))?;
+    let outer_prove_ms = outer_prove_started.elapsed().as_millis();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_leaf_outer_prove tx_count={} outer_prove_ms={} total_ms={}",
+            leaf_fan_in(),
+            outer_prove_ms,
+            started.elapsed().as_millis()
+        );
+    }
+    let serialize_started = Instant::now();
     let packed_public_values = pack_recursion_public_values_v1(&recursion_public_inputs);
     let tx_statements_commitment = commitment_from_statement_hashes(statement_hashes)?;
     let payload = AggregationProofV5Payload {
@@ -835,7 +907,32 @@ pub fn prove_leaf_aggregation(
         outer_proof: postcard::to_allocvec(&outer_proof.proof)
             .map_err(|_| AggregationError::SerializeFailed)?,
     };
-    postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)
+    let encoded = postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)?;
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=v5_leaf_serialize tx_count={} serialize_ms={} total_ms={}",
+            leaf_fan_in(),
+            serialize_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+    }
+    tracing::info!(
+        target: "aggregation::metrics",
+        active_children = transaction_proofs.len(),
+        leaf_fan_in = leaf_fan_in(),
+        cache_hit = cache_result.cache_hit,
+        cache_build_ms = cache_result.cache_build_ms,
+        cache_lookup_ms,
+        decode_ms,
+        challenge_ms,
+        set_public_ms,
+        set_witness_ms,
+        run_ms,
+        outer_prove_ms,
+        total_ms = started.elapsed().as_millis(),
+        "prove_leaf_aggregation completed"
+    );
+    Ok(encoded)
 }
 
 pub fn prove_merge_aggregation(

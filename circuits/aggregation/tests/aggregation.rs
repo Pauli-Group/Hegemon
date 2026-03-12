@@ -1,11 +1,12 @@
 use aggregation_circuit::{
     AggregationNodeKind, AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
-    AGGREGATION_PUBLIC_VALUES_ENCODING_V2, prove_aggregation,
+    AGGREGATION_PUBLIC_VALUES_ENCODING_V2, prove_aggregation, prove_leaf_aggregation,
 };
 use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
 use crypto::hashes::blake3_384;
 use p3_field::PrimeCharacteristicRing;
+use std::time::Instant;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
@@ -172,6 +173,10 @@ fn tx_statements_commitment_from_proofs(proofs: &[TransactionProof]) -> [u8; 48]
         .expect("statement commitment")
 }
 
+fn statement_hashes_from_proofs(proofs: &[TransactionProof]) -> Vec<[u8; 48]> {
+    proofs.iter().map(statement_hash_from_proof).collect()
+}
+
 #[test]
 #[ignore = "expensive end-to-end aggregation proof generation; run manually"]
 fn aggregation_v5_leaf_roundtrip() {
@@ -230,4 +235,49 @@ fn aggregation_v5_payload_validation_rejects_invalid_encodings() {
         consensus::ProofError::AggregationProofV5Decode(_)
             | consensus::ProofError::AggregationProofV5Binding(_)
     ));
+}
+
+#[test]
+#[ignore = "expensive leaf-only profiling run; use HEGEMON_AGG_PROFILE=1 on target hardware"]
+fn aggregation_v5_leaf_fanin8_profile_roundtrip() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove(&witness, &proving_key)
+        .expect("generate transaction proof");
+    let proofs = vec![proof; 8];
+    let statement_hashes = statement_hashes_from_proofs(&proofs);
+    let commitment = tx_statements_commitment_from_proofs(&proofs);
+
+    let leaf_bytes =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("generate leaf proof");
+    verify_aggregation_proof(&leaf_bytes, proofs.len(), &commitment).expect("verify leaf proof");
+}
+
+#[test]
+#[ignore = "expensive leaf cold/warm profiling run; use HEGEMON_AGG_PROFILE=1 on target hardware"]
+fn aggregation_v5_leaf_fanin8_cold_warm_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove(&witness, &proving_key)
+        .expect("generate transaction proof");
+    let proofs = vec![proof; 8];
+    let statement_hashes = statement_hashes_from_proofs(&proofs);
+    let commitment = tx_statements_commitment_from_proofs(&proofs);
+
+    let cold_started = Instant::now();
+    let cold_leaf =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("cold leaf proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+    verify_aggregation_proof(&cold_leaf, proofs.len(), &commitment).expect("verify cold leaf");
+
+    let warm_started = Instant::now();
+    let warm_leaf =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("warm leaf proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+    verify_aggregation_proof(&warm_leaf, proofs.len(), &commitment).expect("verify warm leaf");
+
+    eprintln!(
+        "leaf_cold_warm_profile fan_in=8 cold_ms={} warm_ms={}",
+        cold_ms, warm_ms
+    );
 }

@@ -3112,7 +3112,16 @@ fn compare_prepared_bundles(left: &PreparedBundle, right: &PreparedBundle) -> st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use block_circuit::CommitmentBlockProver;
+    use p3_field::PrimeCharacteristicRing;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
+    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
+    use transaction_circuit::keys::generate_keys;
+    use transaction_circuit::note::{MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::{
+        InputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
+    };
 
     fn test_config() -> ProverCoordinatorConfig {
         ProverCoordinatorConfig {
@@ -3153,6 +3162,290 @@ mod tests {
             merge_root: None,
             artifact_claim: None,
         }
+    }
+
+    fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
+        let mut current = leaf;
+        let mut pos = position;
+        for sibling in path.iter().take(CIRCUIT_MERKLE_DEPTH) {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        current
+    }
+
+    fn build_two_leaf_merkle_tree(
+        leaf0: HashFelt,
+        leaf1: HashFelt,
+    ) -> (MerklePath, MerklePath, HashFelt) {
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+
+        for _ in 1..CIRCUIT_MERKLE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+
+        (
+            MerklePath { siblings: siblings0 },
+            MerklePath { siblings: siblings1 },
+            current,
+        )
+    }
+
+    fn sample_witness() -> TransactionWitness {
+        let sk_spend = [42u8; 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+            pk_recipient: [2u8; 32],
+            pk_auth,
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: 1,
+            pk_recipient: [5u8; 32],
+            pk_auth,
+            rho: [6u8; 32],
+            r: [7u8; 32],
+        };
+
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+        assert_eq!(
+            compute_merkle_root(leaf0, 0, &merkle_path0.siblings),
+            merkle_root
+        );
+        assert_eq!(
+            compute_merkle_root(leaf1, 1, &merkle_path1.siblings),
+            merkle_root
+        );
+
+        let output_native = OutputNoteWitness {
+            note: NoteData {
+                value: 3,
+                asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+                pk_recipient: [11u8; 32],
+                pk_auth: [111u8; 32],
+                rho: [12u8; 32],
+                r: [13u8; 32],
+            },
+        };
+        let output_asset = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: 1,
+                pk_recipient: [21u8; 32],
+                pk_auth: [121u8; 32],
+                rho: [22u8; 32],
+                r: [23u8; 32],
+            },
+        };
+
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [9u8; 32],
+                    merkle_path: merkle_path0,
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [8u8; 32],
+                    merkle_path: merkle_path1,
+                },
+            ],
+            outputs: vec![output_native, output_asset],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&merkle_root),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn sample_transaction_proof() -> TransactionProof {
+        use std::sync::OnceLock;
+        static SAMPLE_TX_PROOF: OnceLock<TransactionProof> = OnceLock::new();
+        SAMPLE_TX_PROOF
+            .get_or_init(|| {
+                let witness = sample_witness();
+                let (proving_key, _) = generate_keys();
+                transaction_circuit::proof::prove(&witness, &proving_key)
+                    .expect("sample tx proof")
+            })
+            .clone()
+    }
+
+    fn statement_hash_from_proof(proof: &TransactionProof) -> [u8; 48] {
+        let public = &proof.public_inputs;
+        let mut message = Vec::new();
+        message.extend_from_slice(b"tx-statement-v1");
+        message.extend_from_slice(&public.merkle_root);
+        for nf in &public.nullifiers {
+            message.extend_from_slice(nf);
+        }
+        for cm in &public.commitments {
+            message.extend_from_slice(cm);
+        }
+        for ct in &public.ciphertext_hashes {
+            message.extend_from_slice(ct);
+        }
+        message.extend_from_slice(&public.native_fee.to_le_bytes());
+        message.extend_from_slice(&public.value_balance.to_le_bytes());
+        message.extend_from_slice(&public.balance_tag);
+        message.extend_from_slice(&public.circuit_version.to_le_bytes());
+        message.extend_from_slice(&public.crypto_suite.to_le_bytes());
+        message.push(public.stablecoin.enabled as u8);
+        message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
+        message.extend_from_slice(&public.stablecoin.policy_hash);
+        message.extend_from_slice(&public.stablecoin.oracle_commitment);
+        message.extend_from_slice(&public.stablecoin.attestation_commitment);
+        message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
+        message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
+        crypto::hashes::blake3_384(&message)
+    }
+
+    fn synthetic_root_finalize_work_data(tx_count: usize) -> RootFinalizeWorkData {
+        let proof = sample_transaction_proof();
+        let statement_hash = statement_hash_from_proof(&proof);
+        let tx_proofs = vec![proof; tx_count];
+        let statement_hashes = vec![statement_hash; tx_count];
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .expect("statement commitment");
+        let mut nullifiers = Vec::new();
+        for proof in &tx_proofs {
+            nullifiers.extend_from_slice(&proof.nullifiers);
+        }
+        let mut sorted_nullifiers = nullifiers.clone();
+        sorted_nullifiers.sort_unstable();
+        RootFinalizeWorkData {
+            statement_hashes,
+            tx_proofs,
+            tx_statements_commitment,
+            da_root: [0u8; 48],
+            da_chunk_count: 1,
+            starting_state_root: [0u8; 48],
+            ending_state_root: [1u8; 48],
+            starting_kernel_root: [2u8; 48],
+            ending_kernel_root: [3u8; 48],
+            nullifier_root: [4u8; 48],
+            nullifiers,
+            sorted_nullifiers,
+        }
+    }
+
+    async fn measure_recursive_prepared_latency(
+        tx_count: usize,
+        workers: usize,
+    ) -> Result<u128, u128> {
+        unsafe {
+            std::env::set_var("HEGEMON_AGG_PREWARM_BLOCKING", "0");
+            std::env::set_var("HEGEMON_AGG_PREWARM_MAX_TXS", "0");
+            std::env::set_var("HEGEMON_AGG_LEAF_FANIN", "8");
+            std::env::set_var("HEGEMON_AGG_MERGE_FANIN", "8");
+            std::env::set_var("HEGEMON_AGG_PROVER_THREADS", "1");
+            std::env::set_var("HEGEMON_AGG_LEVEL_PARALLELISM", "1");
+            std::env::set_var("HEGEMON_AGG_COMMON_LOOKUP_THREADS", "1");
+        }
+
+        let parent_hash = H256::repeat_byte((tx_count as u8).wrapping_add(workers as u8));
+        let txs = (0..tx_count)
+            .map(|idx| vec![idx as u8, (idx >> 8) as u8])
+            .collect::<Vec<_>>();
+        let work_data = Arc::new(synthetic_root_finalize_work_data(tx_count));
+        let expected_commitment = work_data.tx_statements_commitment;
+
+        let config = ProverCoordinatorConfig {
+            workers,
+            target_txs: tx_count,
+            queue_capacity: 1,
+            max_inflight_per_level: workers.max(1),
+            liveness_lane: false,
+            adaptive_liveness_timeout: Duration::from_millis(0),
+            incremental_upsizing: false,
+            poll_interval: Duration::from_millis(10),
+            job_timeout: Duration::from_secs(1800),
+            work_package_ttl: Duration::from_secs(1800),
+            max_submissions_per_package: 8,
+            max_submissions_per_source: 8,
+            max_payload_bytes: 64 * 1024 * 1024,
+        };
+        let best = Arc::new(move || (parent_hash, 42u64));
+        let pending_txs = txs.clone();
+        let pending = Arc::new(move |_max_txs: usize| pending_txs.clone());
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("legacy local bundle builder disabled in recursive benchmark".to_string())
+            },
+        );
+        let root_finalize = {
+            let work_data = Arc::clone(&work_data);
+            Arc::new(
+                move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                    Ok(Some((*work_data).clone()))
+                },
+            )
+        };
+
+        let coordinator = ProverCoordinator::new_with_root_finalize_builder(
+            config,
+            best,
+            pending,
+            build,
+            Some(root_finalize),
+        );
+        coordinator.start();
+
+        let started = Instant::now();
+        let mut last_report = Instant::now();
+        let timeout_secs = std::env::var("HEGEMON_RECURSIVE_BENCH_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(900)
+            .max(1);
+        loop {
+            if coordinator
+                .lookup_prepared_bundle(parent_hash, expected_commitment, tx_count as u32)
+                .is_some()
+            {
+                break;
+            }
+            if last_report.elapsed() >= Duration::from_secs(10) {
+                let status = coordinator.stage_plan_status();
+                eprintln!(
+                    "recursive_scaling_progress tx_count={} workers={} queued={} inflight={} prepared={} latest_stage={:?}",
+                    tx_count,
+                    workers,
+                    status.queued_jobs,
+                    status.inflight_jobs,
+                    status.prepared_bundles,
+                    status.latest_work_package,
+                );
+                last_report = Instant::now();
+            }
+            if started.elapsed() >= Duration::from_secs(timeout_secs) {
+                return Err(started.elapsed().as_millis());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        Ok(started.elapsed().as_millis())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3671,6 +3964,69 @@ mod tests {
             .get_work_package()
             .expect("target-sized work package should exist");
         assert_eq!(package.tx_count, 4);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "expensive recursive aggregation throughput benchmark; run manually"]
+    async fn recursive_parallelism_scaling_smoke() {
+        let worker_counts = [1usize, 2, 4];
+        for tx_count in [32usize, 64usize] {
+            let mut results = Vec::new();
+            for workers in worker_counts {
+                eprintln!(
+                    "recursive_scaling_start tx_count={} workers={}",
+                    tx_count, workers
+                );
+                match measure_recursive_prepared_latency(tx_count, workers).await {
+                    Ok(elapsed_ms) => {
+                        eprintln!(
+                            "recursive_scaling tx_count={} workers={} prepared_ms={}",
+                            tx_count, workers, elapsed_ms
+                        );
+                        results.push((workers, elapsed_ms));
+                    }
+                    Err(elapsed_ms) => {
+                        eprintln!(
+                            "recursive_scaling_timeout tx_count={} workers={} elapsed_ms={}",
+                            tx_count, workers, elapsed_ms
+                        );
+                        results.push((workers, elapsed_ms));
+                    }
+                }
+            }
+            eprintln!("recursive_scaling_summary tx_count={} results={:?}", tx_count, results);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "single-case recursive aggregation benchmark; run manually"]
+    async fn recursive_parallelism_single_case() {
+        let tx_count = std::env::var("HEGEMON_RECURSIVE_BENCH_TX_COUNT")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(32);
+        let workers = std::env::var("HEGEMON_RECURSIVE_BENCH_WORKERS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(1);
+        eprintln!(
+            "recursive_single_start tx_count={} workers={}",
+            tx_count, workers
+        );
+        match measure_recursive_prepared_latency(tx_count, workers).await {
+            Ok(elapsed_ms) => {
+                eprintln!(
+                    "recursive_single_result tx_count={} workers={} prepared_ms={}",
+                    tx_count, workers, elapsed_ms
+                );
+            }
+            Err(elapsed_ms) => {
+                eprintln!(
+                    "recursive_single_timeout tx_count={} workers={} elapsed_ms={}",
+                    tx_count, workers, elapsed_ms
+                );
+            }
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
