@@ -370,7 +370,7 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
             .expect("output buffer should be non-empty after duplex")
     }
 
-    fn sample_algebra_public<BF: PrimeField64, F: ExtensionField<BF>>(
+    fn sample_algebra_internal<BF: PrimeField64, F: ExtensionField<BF>>(
         &mut self,
         circuit: &mut CircuitBuilder<F>,
     ) -> Target {
@@ -378,23 +378,17 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
         for _ in 0..self.extension_degree {
             coeffs.push(self.sample_base_value::<BF, F>(circuit));
         }
-        let expected = self.compose_from_base_coeffs::<BF, F>(circuit, &coeffs);
-        let sampled = circuit.alloc_public_input("sampled challenge");
-        circuit.connect(sampled, expected);
-        sampled
+        self.compose_from_base_coeffs::<BF, F>(circuit, &coeffs)
     }
 
-    fn sample_base_public<BF: PrimeField64, F: ExtensionField<BF>>(
+    fn sample_base_internal<BF: PrimeField64, F: ExtensionField<BF>>(
         &mut self,
         circuit: &mut CircuitBuilder<F>,
     ) -> Target {
-        let expected = self.sample_base_value::<BF, F>(circuit);
-        let sampled = circuit.alloc_public_input("sampled base challenge");
-        circuit.connect(sampled, expected);
-        sampled
+        self.sample_base_value::<BF, F>(circuit)
     }
 
-    /// Sample a `bits`-bit value using native `sample_bits` semantics and expose it as one target.
+    /// Sample a `bits`-bit value using native `sample_bits` semantics and return it as an internal target.
     pub fn sample_bits_public<BF: PrimeField64, F: ExtensionField<BF>>(
         &mut self,
         circuit: &mut CircuitBuilder<F>,
@@ -409,10 +403,7 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
         }
         let sampled_base = self.sample_base_value::<BF, F>(circuit);
         let sampled_bits = circuit.decompose_to_bits::<BF>(sampled_base, self.base_field_bits)?;
-        let truncated = circuit.reconstruct_index_from_bits::<BF>(&sampled_bits[..bits])?;
-        let sampled = circuit.alloc_public_input("sampled challenge bits");
-        circuit.connect(sampled, truncated);
-        Ok(sampled)
+        circuit.reconstruct_index_from_bits::<BF>(&sampled_bits[..bits])
     }
 
     /// Check PoW witness bits using native base-field sampling semantics.
@@ -423,7 +414,7 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
         witness: Target,
     ) -> Result<(), CircuitBuilderError> {
         self.observe_base::<BF, F>(circuit, witness)?;
-        let sampled_base = self.sample_base_public::<BF, F>(circuit);
+        let sampled_base = self.sample_base_internal::<BF, F>(circuit);
         let sampled_bits = circuit.decompose_to_bits::<BF>(sampled_base, self.base_field_bits)?;
         for bit in sampled_bits.into_iter().take(witness_bits) {
             circuit.assert_zero(bit);
@@ -597,7 +588,7 @@ where
     }
 
     fn sample(&mut self, circuit: &mut CircuitBuilder<F>) -> Target {
-        self.sample_algebra_public::<<F as ChallengerField>::Base, F>(circuit)
+        self.sample_algebra_internal::<<F as ChallengerField>::Base, F>(circuit)
     }
 
     fn clear(&mut self) {

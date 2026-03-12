@@ -428,9 +428,7 @@ where
             .partition(|(a, b)| {
                 let a_witness = is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *a);
                 let b_witness = is_unconstrained_output_expr(self.graph, self.non_primitive_ops, *b);
-                let a_public = is_public_expr(self.graph, *a);
-                let b_public = is_public_expr(self.graph, *b);
-                !((a_witness && !b_witness && !b_public) || (b_witness && !a_witness && !a_public))
+                !(a_witness ^ b_witness)
             });
 
         // Build DSU over expression IDs to honor connect(a, b), except when an

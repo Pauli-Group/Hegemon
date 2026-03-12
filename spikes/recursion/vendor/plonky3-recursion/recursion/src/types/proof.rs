@@ -188,6 +188,22 @@ where
         // Lookups are given symbolically, so we don't need to extract concrete values here.
         values
     }
+
+    fn get_private_values(input: &Self::Input) -> Vec<SC::Challenge> {
+        let mut values = vec![];
+        if let Some(prep) = &input.preprocessed {
+            values.extend(Comm::get_private_values(&prep.commitment));
+        }
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        let mut targets = vec![];
+        if let Some(prep) = &self.preprocessed {
+            targets.extend(prep.commitment.get_private_targets());
+        }
+        targets
+    }
 }
 
 impl<SC: StarkGenericConfig> OpenedValuesTargetsWithLookups<SC> {
@@ -308,6 +324,36 @@ impl<
             .chain(OpeningProof::get_values(opening_proof))
             .collect()
     }
+
+    fn get_private_values(input: &Self::Input) -> Vec<SC::Challenge> {
+        let Proof {
+            commitments,
+            opened_values,
+            opening_proof,
+            degree_bits: _,
+        } = input;
+
+        let commitments_no_lookups = BatchCommitments {
+            main: commitments.trace.clone(),
+            permutation: None,
+            quotient_chunks: commitments.quotient_chunks.clone(),
+            random: commitments.random.clone(),
+        };
+        CommitmentTargets::<SC::Challenge, Comm>::get_private_values(&commitments_no_lookups)
+            .into_iter()
+            .chain(OpenedValuesTargets::<SC>::get_private_values(opened_values))
+            .chain(OpeningProof::get_private_values(opening_proof))
+            .collect()
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        self.commitments_targets
+            .get_private_targets()
+            .into_iter()
+            .chain(self.opened_values_targets.get_private_targets())
+            .chain(self.opening_proof.get_private_targets())
+            .collect()
+    }
 }
 
 impl<
@@ -423,6 +469,31 @@ impl<
             )
             .collect()
     }
+
+    fn get_private_values(input: &Self::Input) -> Vec<SC::Challenge> {
+        let BatchProof {
+            commitments,
+            opened_values,
+            opening_proof,
+            global_lookup_data: _,
+            degree_bits: _,
+        } = input;
+
+        CommitmentTargets::<SC::Challenge, Comm>::get_private_values(commitments)
+            .into_iter()
+            .chain(BatchOpenedValuesTargets::<SC>::get_private_values(opened_values))
+            .chain(OpeningProof::get_private_values(opening_proof))
+            .collect()
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        self.commitments_targets
+            .get_private_targets()
+            .into_iter()
+            .chain(self.opened_values_targets.get_private_targets())
+            .chain(self.opening_proof.get_private_targets())
+            .collect()
+    }
 }
 
 impl<F: Field, Comm> Recursive<F> for CommitmentTargets<F, Comm>
@@ -469,6 +540,40 @@ where
 
         values
     }
+
+    fn get_private_values(input: &Self::Input) -> Vec<F> {
+        let BatchCommitments {
+            main,
+            permutation,
+            quotient_chunks,
+            random,
+        } = input;
+
+        let mut values = vec![];
+        values.extend(Comm::get_private_values(main));
+        if let Some(permutation) = permutation {
+            values.extend(Comm::get_private_values(permutation));
+        }
+        values.extend(Comm::get_private_values(quotient_chunks));
+
+        if let Some(random) = random {
+            values.extend(Comm::get_private_values(random));
+        }
+
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        let mut targets = self.trace_targets.get_private_targets();
+        if let Some(permutation) = &self.permutation_targets {
+            targets.extend(permutation.get_private_targets());
+        }
+        targets.extend(self.quotient_chunks_targets.get_private_targets());
+        if let Some(random) = &self.random_commit {
+            targets.extend(random.get_private_targets());
+        }
+        targets
+    }
 }
 
 impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargets<SC> {
@@ -476,33 +581,33 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargets<SC
 
     fn new(circuit: &mut CircuitBuilder<SC::Challenge>, input: &Self::Input) -> Self {
         let trace_local_len = input.trace_local.len();
-        let trace_local_targets = circuit.alloc_witness_inputs(
+        let trace_local_targets = circuit.alloc_proof_inputs(
             trace_local_len,
             "trace local opened values (witness)",
         );
 
         let trace_next_len = input.trace_next.len();
         let trace_next_targets =
-            circuit.alloc_witness_inputs(trace_next_len, "trace next opened values (witness)");
+            circuit.alloc_proof_inputs(trace_next_len, "trace next opened values (witness)");
 
         let preprocessed_local_targets = input
             .preprocessed_local
             .as_ref()
             .map(|prep| {
-                circuit.alloc_witness_inputs(prep.len(), "local preprocessed opened values (witness)")
+                circuit.alloc_proof_inputs(prep.len(), "local preprocessed opened values (witness)")
             });
         let preprocessed_next_targets = input
             .preprocessed_next
             .as_ref()
             .map(|prep| {
-                circuit.alloc_witness_inputs(prep.len(), "next preprocessed opened values (witness)")
+                circuit.alloc_proof_inputs(prep.len(), "next preprocessed opened values (witness)")
             });
 
         let quotient_chunks_len = input.quotient_chunks.len();
         let mut quotient_chunks_targets = Vec::with_capacity(quotient_chunks_len);
         for quotient_chunk in input.quotient_chunks.iter() {
             let quotient_chunks_cols_len = quotient_chunk.len();
-            let quotient_col = circuit.alloc_witness_inputs(
+            let quotient_col = circuit.alloc_proof_inputs(
                 quotient_chunks_cols_len,
                 "quotient chunk opened values (witness)",
             );
@@ -512,7 +617,7 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargets<SC
         let random_targets = input
             .random
             .as_ref()
-            .map(|random| circuit.alloc_witness_inputs(random.len(), "random opened values (witness, ZK mode)"));
+            .map(|random| circuit.alloc_proof_inputs(random.len(), "random opened values (witness, ZK mode)"));
 
         Self {
             trace_local_targets,
@@ -530,6 +635,44 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargets<SC
         let _ = input;
         Vec::new()
     }
+
+    fn get_private_values(input: &Self::Input) -> Vec<SC::Challenge> {
+        let mut values = Vec::new();
+        values.extend(input.trace_local.iter().copied());
+        values.extend(input.trace_next.iter().copied());
+        if let Some(prep) = &input.preprocessed_local {
+            values.extend(prep.iter().copied());
+        }
+        if let Some(prep) = &input.preprocessed_next {
+            values.extend(prep.iter().copied());
+        }
+        for chunk in &input.quotient_chunks {
+            values.extend(chunk.iter().copied());
+        }
+        if let Some(random) = &input.random {
+            values.extend(random.iter().copied());
+        }
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        let mut targets = Vec::new();
+        targets.extend(self.trace_local_targets.iter().copied());
+        targets.extend(self.trace_next_targets.iter().copied());
+        if let Some(prep) = &self.preprocessed_local_targets {
+            targets.extend(prep.iter().copied());
+        }
+        if let Some(prep) = &self.preprocessed_next_targets {
+            targets.extend(prep.iter().copied());
+        }
+        for chunk in &self.quotient_chunks_targets {
+            targets.extend(chunk.iter().copied());
+        }
+        if let Some(random) = &self.random_targets {
+            targets.extend(random.iter().copied());
+        }
+        targets
+    }
 }
 
 impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargetsWithLookups<SC> {
@@ -538,11 +681,11 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargetsWit
     fn new(circuit: &mut CircuitBuilder<SC::Challenge>, input: &Self::Input) -> Self {
         let opened_values_no_lookups = OpenedValuesTargets::new(circuit, &input.base_opened_values);
 
-        let permutation_local_targets = circuit.alloc_witness_inputs(
+        let permutation_local_targets = circuit.alloc_proof_inputs(
             input.permutation_local.len(),
             "permutation local opened values (witness)",
         );
-        let permutation_next_targets = circuit.alloc_witness_inputs(
+        let permutation_next_targets = circuit.alloc_proof_inputs(
             input.permutation_next.len(),
             "permutation next opened values (witness)",
         );
@@ -558,6 +701,23 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for OpenedValuesTargetsWit
         // Lookup opened values are witness-only in recursion circuits.
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<SC::Challenge> {
+        let mut values =
+            OpenedValuesTargets::<SC>::get_private_values(&input.base_opened_values);
+        values.extend(input.permutation_local.iter().copied());
+        values.extend(input.permutation_next.iter().copied());
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        self.opened_values_no_lookups
+            .get_private_targets()
+            .into_iter()
+            .chain(self.permutation_local_targets.iter().copied())
+            .chain(self.permutation_next_targets.iter().copied())
+            .collect()
     }
 }
 
@@ -580,5 +740,22 @@ impl<SC: StarkGenericConfig> Recursive<SC::Challenge> for BatchOpenedValuesTarge
             values.extend(OpenedValuesTargetsWithLookups::<SC>::get_values(instance));
         }
         values
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<SC::Challenge> {
+        let mut values = vec![];
+        for instance in &input.instances {
+            values.extend(OpenedValuesTargetsWithLookups::<SC>::get_private_values(
+                instance,
+            ));
+        }
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        self.instances
+            .iter()
+            .flat_map(OpenedValuesTargetsWithLookups::<SC>::get_private_targets)
+            .collect()
     }
 }

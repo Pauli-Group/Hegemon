@@ -37,6 +37,16 @@ pub trait Recursive<F: Field> {
         vec![]
     }
 
+    /// Extracts private circuit targets in the same order as `get_private_values`.
+    ///
+    /// These targets are the witness-only inputs allocated by `new()`. The order
+    /// returned here must match the order of field elements returned by
+    /// `get_private_values()` so callers can assign witness values without
+    /// reimplementing target layout logic.
+    fn get_private_targets(&self) -> Vec<Target> {
+        vec![]
+    }
+
     /// Extracts public field element values from the input.
     ///
     /// Values returned here will be used to populate public inputs during execution.

@@ -37,12 +37,45 @@ impl<F: Field + Send + Sync + 'static> NonPrimitiveExecutor<F> for WitnessInputE
     fn execute(
         &self,
         _inputs: &[Vec<WitnessId>],
-        outputs: &[Vec<WitnessId>],
-        ctx: &mut ExecutionContext<'_, F>,
+        _outputs: &[Vec<WitnessId>],
+        _ctx: &mut ExecutionContext<'_, F>,
     ) -> Result<(), CircuitError> {
-        for out in outputs.iter().flatten() {
-            ctx.get_witness(*out)?;
+        Ok(())
+    }
+
+    fn op_type(&self) -> &NonPrimitiveOpType {
+        &self.op_type
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn boxed(&self) -> Box<dyn NonPrimitiveExecutor<F>> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct UnconstrainedInputExecutor {
+    op_type: NonPrimitiveOpType,
+}
+
+impl UnconstrainedInputExecutor {
+    pub const fn new() -> Self {
+        Self {
+            op_type: NonPrimitiveOpType::Unconstrained,
         }
+    }
+}
+
+impl<F: Field + Send + Sync + 'static> NonPrimitiveExecutor<F> for UnconstrainedInputExecutor {
+    fn execute(
+        &self,
+        _inputs: &[Vec<WitnessId>],
+        _outputs: &[Vec<WitnessId>],
+        _ctx: &mut ExecutionContext<'_, F>,
+    ) -> Result<(), CircuitError> {
         Ok(())
     }
 
@@ -283,7 +316,7 @@ where
     /// The prover must populate these witness slots before executing the circuit runner.
     pub fn alloc_witness_inputs(&mut self, count: usize, label: &'static str) -> Vec<ExprId> {
         let (_op_id, _call_expr_id, outputs) =
-            self.push_unconstrained_op(vec![Vec::new()], count, WitnessInputExecutor::new(), label);
+            self.push_unconstrained_op(vec![Vec::new()], count, UnconstrainedInputExecutor::new(), label);
         outputs
             .into_iter()
             .map(|expr| expr.expect("witness inputs must allocate output ExprIds"))
@@ -304,6 +337,30 @@ where
         inputs
             .try_into()
             .unwrap_or_else(|_| panic!("expected {N} witness inputs"))
+    }
+
+    /// Allocates prover-fed proof inputs that must survive lowering as distinct witness slots.
+    pub fn alloc_proof_inputs(&mut self, count: usize, label: &'static str) -> Vec<ExprId> {
+        let (_op_id, _call_expr_id, outputs) =
+            self.push_witness_input_op(vec![Vec::new()], count, WitnessInputExecutor::new(), label);
+        outputs
+            .into_iter()
+            .map(|expr| expr.expect("proof inputs must allocate output ExprIds"))
+            .collect()
+    }
+
+    pub fn alloc_proof_input(&mut self, label: &'static str) -> ExprId {
+        self.alloc_proof_inputs(1, label)
+            .into_iter()
+            .next()
+            .expect("proof input allocation returned no ExprIds")
+    }
+
+    pub fn alloc_proof_input_array<const N: usize>(&mut self, label: &'static str) -> [ExprId; N] {
+        let inputs = self.alloc_proof_inputs(N, label);
+        inputs
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected {N} proof inputs"))
     }
 
     /// Allocates a fixed-size array of public inputs with a descriptive label.
@@ -552,7 +609,7 @@ where
     /// This is used for creating new unconstrained wires assigned to a non-deterministic values
     /// computed by `hint`.
     #[allow(dead_code)]
-    pub(crate) fn push_unconstrained_op<H: NonPrimitiveExecutor<F> + 'static>(
+    pub(crate) fn push_witness_input_op<H: NonPrimitiveExecutor<F> + 'static>(
         &mut self,
         input_exprs: Vec<Vec<ExprId>>,
         n_outputs: usize,
@@ -561,6 +618,25 @@ where
     ) -> (NonPrimitiveOpId, ExprId, Vec<Option<ExprId>>) {
         self.push_non_primitive_op_with_outputs(
             NonPrimitiveOpType::WitnessInput,
+            input_exprs,
+            (0..n_outputs).map(|_| Some(label)).collect(),
+            Some(NonPrimitiveOpParams::Unconstrained {
+                executor: Box::new(hint),
+            }),
+            label,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn push_unconstrained_op<H: NonPrimitiveExecutor<F> + 'static>(
+        &mut self,
+        input_exprs: Vec<Vec<ExprId>>,
+        n_outputs: usize,
+        hint: H,
+        label: &'static str,
+    ) -> (NonPrimitiveOpId, ExprId, Vec<Option<ExprId>>) {
+        self.push_non_primitive_op_with_outputs(
+            NonPrimitiveOpType::Unconstrained,
             input_exprs,
             (0..n_outputs).map(|_| Some(label)).collect(),
             Some(NonPrimitiveOpParams::Unconstrained {

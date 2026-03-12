@@ -8,7 +8,7 @@ use p3_lookup::logup::LogUpGadget;
 use p3_recursion::pcs::{
     FriProofTargets, InputProofTargets, RecExtensionValMmcs, RecValMmcs, Witness,
 };
-use p3_recursion::{BatchStarkVerifierInputsBuilder, generate_batch_challenges};
+use p3_recursion::{BatchStarkVerifierInputsBuilder, Recursive, generate_batch_challenges};
 use p3_symmetric::Hash as MerkleDigest;
 use serde::{Deserialize, Serialize};
 
@@ -305,127 +305,15 @@ fn outer_fri_targets(fri: &OuterBatchFri) -> Vec<p3_recursion::Target> {
     targets
 }
 
-fn collect_merge_assignment_targets(
-    inputs: &BatchStarkVerifierInputsBuilder<
-        Config,
-        OuterBatchHashTargets,
-        OuterBatchFri,
-    >,
-) -> Vec<p3_recursion::Target> {
-    let mut targets = Vec::new();
-    let proof_targets = &inputs.proof_targets;
-    targets.extend(proof_targets.commitments_targets.trace_targets.hash_targets.iter().copied());
-    if let Some(permutation) = proof_targets.commitments_targets.permutation_targets.as_ref() {
-        targets.extend(permutation.hash_targets.iter().copied());
-    }
-    targets.extend(
-        proof_targets
-            .commitments_targets
-            .quotient_chunks_targets
-            .hash_targets
-            .iter()
-            .copied(),
-    );
-    if let Some(random) = proof_targets.commitments_targets.random_commit.as_ref() {
-        targets.extend(random.hash_targets.iter().copied());
-    }
-    if let Some(preprocessed) = inputs.common_data.preprocessed.as_ref() {
-        targets.extend(preprocessed.commitment.hash_targets.iter().copied());
-    }
-    for instance in &proof_targets.opened_values_targets.instances {
-        let opened = &instance.opened_values_no_lookups;
-        targets.extend(opened.trace_local_targets.iter().copied());
-        targets.extend(opened.trace_next_targets.iter().copied());
-        if let Some(prep) = opened.preprocessed_local_targets.as_ref() {
-            targets.extend(prep.iter().copied());
-        }
-        if let Some(prep) = opened.preprocessed_next_targets.as_ref() {
-            targets.extend(prep.iter().copied());
-        }
-        for chunk in &opened.quotient_chunks_targets {
-            targets.extend(chunk.iter().copied());
-        }
-        if let Some(random) = opened.random_targets.as_ref() {
-            targets.extend(random.iter().copied());
-        }
-        targets.extend(instance.permutation_local_targets.iter().copied());
-        targets.extend(instance.permutation_next_targets.iter().copied());
-    }
-    targets.extend(outer_fri_targets(&proof_targets.opening_proof));
-    targets
-}
-
-fn hash_targets_values<const N: usize>(
-    hash: &MerkleDigest<Goldilocks, Goldilocks, N>,
-) -> Vec<Challenge> {
-    hash.as_ref().iter().copied().map(Challenge::from).collect()
-}
-
 fn collect_merge_assignment_values(
     proof: &OuterBatchProof,
     common: &CommonData<Config>,
 ) -> Vec<Challenge> {
-    let mut values = Vec::new();
-    values.extend(hash_targets_values(&proof.commitments.main));
-    if let Some(permutation) = proof.commitments.permutation.as_ref() {
-        values.extend(hash_targets_values(permutation));
-    }
-    values.extend(hash_targets_values(&proof.commitments.quotient_chunks));
-    if let Some(random) = proof.commitments.random.as_ref() {
-        values.extend(hash_targets_values(random));
-    }
-    if let Some(preprocessed) = common.preprocessed.as_ref() {
-        values.extend(hash_targets_values(&preprocessed.commitment));
-    }
-    for instance in &proof.opened_values.instances {
-        let opened = &instance.base_opened_values;
-        values.extend(opened.trace_local.iter().copied());
-        values.extend(opened.trace_next.iter().copied());
-        if let Some(prep) = opened.preprocessed_local.as_ref() {
-            values.extend(prep.iter().copied());
-        }
-        if let Some(prep) = opened.preprocessed_next.as_ref() {
-            values.extend(prep.iter().copied());
-        }
-        for chunk in &opened.quotient_chunks {
-            values.extend(chunk.iter().copied());
-        }
-        if let Some(random) = opened.random.as_ref() {
-            values.extend(random.iter().copied());
-        }
-        values.extend(instance.permutation_local.iter().copied());
-        values.extend(instance.permutation_next.iter().copied());
-    }
-    let fri_proof = &proof.opening_proof;
-    for commit_values in &fri_proof.commit_phase_commits {
-        values.extend(commit_values.as_ref().iter().copied().map(Challenge::from));
-    }
+    let mut values =
+        p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_private_values(proof);
     values.extend(
-        fri_proof
-            .commit_pow_witnesses
-            .iter()
-            .copied()
-            .map(Challenge::from),
+        p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(common),
     );
-    values.extend(fri_proof.final_poly.iter().copied());
-    values.push(Challenge::from(fri_proof.query_pow_witness));
-
-    for query_proof in &fri_proof.query_proofs {
-        for batch_proof in &query_proof.input_proof {
-            for row_values in &batch_proof.opened_values {
-                values.extend(row_values.iter().copied().map(Challenge::from));
-            }
-            for hash_values in &batch_proof.opening_proof {
-                values.extend(hash_values.iter().copied().map(Challenge::from));
-            }
-        }
-        for step_proof in &query_proof.commit_phase_openings {
-            values.push(step_proof.sibling_value);
-            for hash_values in &step_proof.opening_proof {
-                values.extend(hash_values.iter().copied().map(Challenge::from));
-            }
-        }
-    }
     values
 }
 
@@ -436,6 +324,8 @@ fn build_merge_assignment_plan_specs(
         OuterBatchHashTargets,
         OuterBatchFri,
     >],
+    representative_outer: &OuterBatchProof,
+    representative_common: &CommonData<Config>,
 ) -> Result<Vec<MergeWitnessAssignmentPlanSpec>, AggregationError> {
     let graph = circuit_builder.graph();
     let non_primitive_ops = circuit_builder.non_primitive_ops();
@@ -443,7 +333,8 @@ fn build_merge_assignment_plan_specs(
         .iter()
         .enumerate()
         .map(|(plan_index, inputs)| {
-            let targets = collect_merge_assignment_targets(inputs);
+            let (targets, _values) =
+                inputs.private_witness_inputs(representative_outer, representative_common);
             let total_targets = targets.len();
             let mut value_positions = Vec::new();
             let mut sources = Vec::with_capacity(targets.len());
@@ -512,6 +403,20 @@ fn resolve_merge_assignment_plans(
             _ => Vec::new(),
         })
         .collect::<HashSet<_>>();
+    let hint_input_witnesses = circuit
+        .ops
+        .iter()
+        .flat_map(|op| match op {
+            Op::NonPrimitiveOpWithExecutor {
+                executor,
+                inputs,
+                ..
+            } if *executor.op_type() == NonPrimitiveOpType::Unconstrained => {
+                inputs.iter().flatten().copied().collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        })
+        .collect::<HashSet<_>>();
     let unconstrained_outputs = circuit
         .ops
         .iter()
@@ -548,6 +453,7 @@ fn resolve_merge_assignment_plans(
             let mut witness_ids = Vec::new();
             let mut filtered_public = 0usize;
             let mut computed_overlap = 0usize;
+            let mut computed_overlap_preview = Vec::new();
             for (position, source) in spec.value_positions.iter().copied().zip(spec.sources.iter()) {
                 let witness_id = unconstrained_outputs
                     .get(&(source.op_id, source.output_idx))
@@ -561,8 +467,17 @@ fn resolve_merge_assignment_plans(
                     filtered_public += 1;
                     continue;
                 }
-                if computed_outputs.contains(&witness_id) {
+                if computed_outputs.contains(&witness_id) && !hint_input_witnesses.contains(&witness_id) {
                     computed_overlap += 1;
+                    if computed_overlap_preview.len() < 8 {
+                        computed_overlap_preview.push((
+                            position,
+                            source.op_id.0,
+                            source.output_idx,
+                            witness_id.0,
+                            describe_witness_origin(circuit, witness_id),
+                        ));
+                    }
                 }
                 value_positions.push(position);
                 witness_ids.push(witness_id);
@@ -572,13 +487,14 @@ fn resolve_merge_assignment_plans(
                 .unwrap_or(false)
             {
                 eprintln!(
-                    "aggregation_profile stage=v5_merge_assignment_resolved plan_index={} witness_targets={} filtered_targets={} filtered_public={} computed_overlap={} first_sources={:?}",
+                    "aggregation_profile stage=v5_merge_assignment_resolved plan_index={} witness_targets={} filtered_targets={} filtered_public={} computed_overlap={} first_sources={:?} overlap_preview={:?}",
                     plan_index,
                     witness_ids.len(),
                     spec.sources.len().saturating_sub(witness_ids.len()),
                     filtered_public,
                     computed_overlap,
-                    spec.sources.iter().take(8).map(|source| (source.op_id.0, source.output_idx)).collect::<Vec<_>>()
+                    spec.sources.iter().take(8).map(|source| (source.op_id.0, source.output_idx)).collect::<Vec<_>>(),
+                    computed_overlap_preview
                 );
             }
             Ok(MergeWitnessAssignmentPlan {
@@ -592,6 +508,10 @@ fn resolve_merge_assignment_plans(
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
     {
+        let all_sources = specs
+            .iter()
+            .flat_map(|spec| spec.sources.iter().map(|source| (source.op_id, source.output_idx)))
+            .collect::<HashSet<_>>();
         let assigned = plans
             .iter()
             .flat_map(|plan| plan.witness_ids.iter().copied())
@@ -600,12 +520,19 @@ fn resolve_merge_assignment_plans(
             .difference(&assigned)
             .copied()
             .collect::<Vec<_>>();
+        let missing_source_keys = unconstrained_outputs
+            .keys()
+            .filter(|key| !all_sources.contains(key))
+            .take(16)
+            .cloned()
+            .collect::<Vec<_>>();
         eprintln!(
-            "aggregation_profile stage=v5_merge_assignment_global unconstrained_total={} assigned_total={} missing_total={} missing_preview={:?}",
+            "aggregation_profile stage=v5_merge_assignment_global unconstrained_total={} assigned_total={} missing_total={} missing_preview={:?} missing_source_keys={:?}",
             all_unconstrained_witnesses.len(),
             assigned.len(),
             missing.len(),
-            missing.iter().take(8).collect::<Vec<_>>()
+            missing.iter().take(8).collect::<Vec<_>>(),
+            missing_source_keys
         );
     }
 
@@ -832,8 +759,12 @@ fn get_or_build_merge_cache_entry(
         verifier_inputs.push(inputs);
     }
 
-    let assignment_specs =
-        build_merge_assignment_plan_specs(&circuit_builder, &verifier_inputs)?;
+    let assignment_specs = build_merge_assignment_plan_specs(
+        &circuit_builder,
+        &verifier_inputs,
+        &representative_outer,
+        representative_child.common.as_ref(),
+    )?;
     let circuit = circuit_builder
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
@@ -1125,6 +1056,22 @@ pub fn prove_leaf_aggregation(
                     &cache_result.entry.circuit,
                     WitnessId(*index as u32),
                 ),
+                CircuitError::NonPrimitiveExecutionFailed { message, .. } => {
+                    if let Some(start) = message.find("WitnessNotSet { witness_id: WitnessId(") {
+                        let suffix = &message[start + "WitnessNotSet { witness_id: WitnessId(".len()..];
+                        if let Some(end) = suffix.find(')') {
+                            if let Ok(index) = suffix[..end].parse::<u32>() {
+                                describe_witness_origin(&cache_result.entry.circuit, WitnessId(index))
+                            } else {
+                                "n/a".to_string()
+                            }
+                        } else {
+                            "n/a".to_string()
+                        }
+                    } else {
+                        "n/a".to_string()
+                    }
+                }
                 CircuitError::WitnessConflict { witness_id, .. } => {
                     describe_witness_origin(&cache_result.entry.circuit, *witness_id)
                 }
@@ -1313,10 +1260,31 @@ pub fn prove_merge_aggregation(
         );
         if profile {
             let air_public_len = air_public_values.iter().map(Vec::len).sum::<usize>();
+            let proof_value_len =
+                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_values(&outer_proof).len();
+            let common_value_len =
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(child.common.as_ref()).len();
+            let total_private_len =
+                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_private_values(&outer_proof).len();
+            let commitments_private_len =
+                p3_recursion::CommitmentTargets::<Challenge, OuterBatchHashTargets>::get_private_values(&outer_proof.commitments).len();
+            let fri_private_len = <OuterBatchFri as Recursive<Challenge>>::get_private_values(&outer_proof.opening_proof).len();
+            let common_private_len =
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(child.common.as_ref()).len();
+            let opened_private_len = total_private_len
+                .saturating_sub(commitments_private_len)
+                .saturating_sub(fri_private_len);
             eprintln!(
-                "aggregation_profile stage=v5_merge_pack_child child_index={} air_public_len={} challenge_len={} packed_len={} cumulative_len_before={}",
+                "aggregation_profile stage=v5_merge_pack_child child_index={} air_public_len={} proof_value_len={} common_value_len={} total_private_len={} commitments_private_len={} opened_private_len={} fri_private_len={} common_private_len={} challenge_len={} packed_len={} cumulative_len_before={}",
                 index,
                 air_public_len,
+                proof_value_len,
+                common_value_len,
+                total_private_len,
+                commitments_private_len,
+                opened_private_len,
+                fri_private_len,
+                common_private_len,
                 challenges.len(),
                 packed.len(),
                 recursion_public_inputs.len()
@@ -1355,10 +1323,31 @@ pub fn prove_merge_aggregation(
         );
         if profile {
             let air_public_len = air_public_values.iter().map(Vec::len).sum::<usize>();
+            let proof_value_len =
+                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_values(&padded).len();
+            let common_value_len =
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(representative_child.common.as_ref()).len();
+            let total_private_len =
+                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_private_values(&padded).len();
+            let commitments_private_len =
+                p3_recursion::CommitmentTargets::<Challenge, OuterBatchHashTargets>::get_private_values(&padded.commitments).len();
+            let fri_private_len = <OuterBatchFri as Recursive<Challenge>>::get_private_values(&padded.opening_proof).len();
+            let common_private_len =
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(representative_child.common.as_ref()).len();
+            let opened_private_len = total_private_len
+                .saturating_sub(commitments_private_len)
+                .saturating_sub(fri_private_len);
             eprintln!(
-                "aggregation_profile stage=v5_merge_pack_child child_index={} air_public_len={} challenge_len={} packed_len={} cumulative_len_before={}",
+                "aggregation_profile stage=v5_merge_pack_child child_index={} air_public_len={} proof_value_len={} common_value_len={} total_private_len={} commitments_private_len={} opened_private_len={} fri_private_len={} common_private_len={} challenge_len={} packed_len={} cumulative_len_before={}",
                 proofs.len(),
                 air_public_len,
+                proof_value_len,
+                common_value_len,
+                total_private_len,
+                commitments_private_len,
+                opened_private_len,
+                fri_private_len,
+                common_private_len,
                 challenges.len(),
                 packed.len(),
                 recursion_public_inputs.len()
@@ -1421,6 +1410,22 @@ pub fn prove_merge_aggregation(
                     &cache_result.entry.circuit,
                     WitnessId(*index as u32),
                 ),
+                CircuitError::NonPrimitiveExecutionFailed { message, .. } => {
+                    if let Some(start) = message.find("WitnessNotSet { witness_id: WitnessId(") {
+                        let suffix = &message[start + "WitnessNotSet { witness_id: WitnessId(".len()..];
+                        if let Some(end) = suffix.find(')') {
+                            if let Ok(index) = suffix[..end].parse::<u32>() {
+                                describe_witness_origin(&cache_result.entry.circuit, WitnessId(index))
+                            } else {
+                                "n/a".to_string()
+                            }
+                        } else {
+                            "n/a".to_string()
+                        }
+                    } else {
+                        "n/a".to_string()
+                    }
+                }
                 CircuitError::WitnessConflict { witness_id, .. } => {
                     describe_witness_origin(&cache_result.entry.circuit, *witness_id)
                 }

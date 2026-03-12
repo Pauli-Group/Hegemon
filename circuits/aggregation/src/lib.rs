@@ -21,7 +21,7 @@ use p3_matrix::Matrix;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
-use p3_recursion::{generate_challenges, verify_circuit};
+use p3_recursion::{Recursive, generate_challenges, verify_circuit};
 use p3_uni_stark::verify as verify_stark;
 use p3_uni_stark::SymbolicAirBuilder;
 use p3_uni_stark::Val as StarkVal;
@@ -453,83 +453,17 @@ fn infer_log_blowup_from_proof_shape(proof: &TransactionProofP3) -> Option<usize
     observed_log_max_height?.checked_sub(baseline)
 }
 
-fn collect_verifier_witness_targets(inputs: &InnerVerifierInputs) -> Vec<p3_recursion::Target> {
-    let mut targets = Vec::new();
-    let commitment_targets = &inputs.proof_targets.commitments_targets;
-    targets.extend(
-        commitment_targets
-            .trace_targets
-            .hash_targets
-            .iter()
-            .copied(),
-    );
-    targets.extend(
-        commitment_targets
-            .quotient_chunks_targets
-            .hash_targets
-            .iter()
-            .copied(),
-    );
-    if let Some(commit_targets) = commitment_targets.random_commit.as_ref() {
-        targets.extend(commit_targets.hash_targets.iter().copied());
-    }
-
-    let opened_targets = &inputs.proof_targets.opened_values_targets;
-    targets.extend(opened_targets.trace_local_targets.iter().copied());
-    targets.extend(opened_targets.trace_next_targets.iter().copied());
-    if let Some(preprocessed_targets) = opened_targets.preprocessed_local_targets.as_ref() {
-        targets.extend(preprocessed_targets.iter().copied());
-    }
-    if let Some(preprocessed_targets) = opened_targets.preprocessed_next_targets.as_ref() {
-        targets.extend(preprocessed_targets.iter().copied());
-    }
-    for chunk_targets in &opened_targets.quotient_chunks_targets {
-        targets.extend(chunk_targets.iter().copied());
-    }
-    if let Some(random_targets) = opened_targets.random_targets.as_ref() {
-        targets.extend(random_targets.iter().copied());
-    }
-
-    let fri_targets = &inputs.proof_targets.opening_proof;
-    for commit_targets in &fri_targets.commit_phase_commits {
-        targets.extend(commit_targets.hash_targets.iter().copied());
-    }
-    for pow_target in &fri_targets.commit_pow_witnesses {
-        targets.push(pow_target.witness);
-    }
-    targets.extend(fri_targets.final_poly.iter().copied());
-    targets.push(fri_targets.pow_witness.witness);
-
-    for query_targets in &fri_targets.query_proofs {
-        for batch_targets in &query_targets.input_proof {
-            for row_targets in &batch_targets.opened_values {
-                targets.extend(row_targets.iter().copied());
-            }
-            for hash_targets in &batch_targets.opening_proof.hash_proof_targets {
-                targets.extend(hash_targets.iter().copied());
-            }
-        }
-
-        for step_targets in &query_targets.commit_phase_openings {
-            targets.push(step_targets.sibling_value);
-            for hash_targets in &step_targets.opening_proof.hash_proof_targets {
-                targets.extend(hash_targets.iter().copied());
-            }
-        }
-    }
-    targets
-}
-
 fn build_witness_assignment_plan_specs(
     circuit_builder: &CircuitBuilder<Challenge>,
     verifier_inputs: &[InnerVerifierInputs],
+    representative_proof: &TransactionProofP3,
 ) -> Result<Vec<ProofWitnessAssignmentPlanSpec>, AggregationError> {
     let graph = circuit_builder.graph();
     let non_primitive_ops = circuit_builder.non_primitive_ops();
     verifier_inputs
         .iter()
         .map(|inputs| {
-            let targets = collect_verifier_witness_targets(inputs);
+            let (targets, _values) = inputs.private_witness_inputs(representative_proof, &None);
             let mut value_positions = Vec::new();
             let mut sources = Vec::new();
             for (value_index, target) in targets.into_iter().enumerate() {
@@ -643,81 +577,7 @@ fn resolve_witness_assignment_plans(
 }
 
 fn collect_proof_witness_values(proof: &TransactionProofP3) -> Vec<Challenge> {
-    let mut values = Vec::new();
-    let proof_commitments = &proof.commitments;
-    values.extend(
-        proof_commitments
-            .trace
-            .as_ref()
-            .iter()
-            .copied()
-            .map(Challenge::from),
-    );
-    values.extend(
-        proof_commitments
-            .quotient_chunks
-            .as_ref()
-            .iter()
-            .copied()
-            .map(Challenge::from),
-    );
-    if let Some(random_commitment) = proof_commitments.random.as_ref() {
-        values.extend(
-            random_commitment
-                .as_ref()
-                .iter()
-                .copied()
-                .map(Challenge::from),
-        );
-    }
-
-    let opened_values = &proof.opened_values;
-    values.extend(opened_values.trace_local.iter().copied());
-    values.extend(opened_values.trace_next.iter().copied());
-    if let Some(preprocessed_values) = opened_values.preprocessed_local.as_ref() {
-        values.extend(preprocessed_values.iter().copied());
-    }
-    if let Some(preprocessed_values) = opened_values.preprocessed_next.as_ref() {
-        values.extend(preprocessed_values.iter().copied());
-    }
-    for chunk_values in &opened_values.quotient_chunks {
-        values.extend(chunk_values.iter().copied());
-    }
-    if let Some(random_values) = opened_values.random.as_ref() {
-        values.extend(random_values.iter().copied());
-    }
-
-    let fri_proof = &proof.opening_proof;
-    for commit_values in &fri_proof.commit_phase_commits {
-        values.extend(commit_values.as_ref().iter().copied().map(Challenge::from));
-    }
-    values.extend(
-        fri_proof
-            .commit_pow_witnesses
-            .iter()
-            .copied()
-            .map(Challenge::from),
-    );
-    values.extend(fri_proof.final_poly.iter().copied());
-    values.push(Challenge::from(fri_proof.query_pow_witness));
-
-    for query_proof in &fri_proof.query_proofs {
-        for batch_proof in &query_proof.input_proof {
-            for row_values in &batch_proof.opened_values {
-                values.extend(row_values.iter().copied().map(Challenge::from));
-            }
-            for hash_values in &batch_proof.opening_proof {
-                values.extend(hash_values.iter().copied().map(Challenge::from));
-            }
-        }
-        for step_proof in &query_proof.commit_phase_openings {
-            values.push(step_proof.sibling_value);
-            for hash_values in &step_proof.opening_proof {
-                values.extend(hash_values.iter().copied().map(Challenge::from));
-            }
-        }
-    }
-    values
+    p3_recursion::ProofTargets::<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>::get_private_values(proof)
 }
 
 fn build_aggregation_prover_cache_entry(
@@ -791,7 +651,7 @@ fn build_aggregation_prover_cache_entry(
         );
     }
     let witness_assignment_specs =
-        build_witness_assignment_plan_specs(&circuit_builder, &verifier_inputs)?;
+        build_witness_assignment_plan_specs(&circuit_builder, &verifier_inputs, representative_proof)?;
     let circuit = circuit_builder
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
@@ -1940,24 +1800,54 @@ fn describe_witness_origin(circuit: &Circuit<Challenge>, witness_id: WitnessId) 
     }
     for (op_index, op) in circuit.ops.iter().enumerate() {
         match op {
-            Op::Const { out, .. } if *out == witness_id => {
-                parts.push(format!("op[{op_index}]=Const"));
+            Op::Const { out, .. } => {
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Const(out)"));
+                }
             }
-            Op::Public { out, public_pos } if *out == witness_id => {
-                parts.push(format!("op[{op_index}]=Public({public_pos})"));
+            Op::Public { out, public_pos } => {
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Public({public_pos})"));
+                }
             }
-            Op::Add { out, .. } if *out == witness_id => {
-                parts.push(format!("op[{op_index}]=Add"));
+            Op::Add { a, b, out } => {
+                if *a == witness_id {
+                    parts.push(format!("op[{op_index}]=Add(lhs)"));
+                }
+                if *b == witness_id {
+                    parts.push(format!("op[{op_index}]=Add(rhs)"));
+                }
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Add(out)"));
+                }
             }
-            Op::Mul { out, .. } if *out == witness_id => {
-                parts.push(format!("op[{op_index}]=Mul"));
+            Op::Mul { a, b, out } => {
+                if *a == witness_id {
+                    parts.push(format!("op[{op_index}]=Mul(lhs)"));
+                }
+                if *b == witness_id {
+                    parts.push(format!("op[{op_index}]=Mul(rhs)"));
+                }
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Mul(out)"));
+                }
             }
             Op::NonPrimitiveOpWithExecutor {
+                inputs,
                 executor,
                 outputs,
                 op_id,
                 ..
             } => {
+                for (input_idx, group) in inputs.iter().enumerate() {
+                    if group.contains(&witness_id) {
+                        parts.push(format!(
+                            "op[{op_index}]=NonPrimitiveInput({:?}, op_id={}, input_idx={input_idx})",
+                            executor.op_type(),
+                            op_id.0
+                        ));
+                    }
+                }
                 for (output_idx, group) in outputs.iter().enumerate() {
                     if group.contains(&witness_id) {
                         parts.push(format!(
