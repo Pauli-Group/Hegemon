@@ -17,6 +17,7 @@ use crate::{
 };
 
 use crate::p3_prover::TransactionProverP3;
+use crate::p3_prover::TransactionProofParams;
 use crate::p3_verifier::verify_transaction_proof_bytes_p3;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
@@ -202,6 +203,14 @@ pub fn prove(
     witness: &TransactionWitness,
     _proving_key: &ProvingKey,
 ) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_with_params(witness, _proving_key, TransactionProofParams::production())
+}
+
+pub fn prove_with_params(
+    witness: &TransactionWitness,
+    _proving_key: &ProvingKey,
+    params: TransactionProofParams,
+) -> Result<TransactionProof, TransactionCircuitError> {
     witness.validate()?;
 
     let trace = TransactionTrace::from_witness(witness)?;
@@ -212,7 +221,7 @@ pub fn prove(
         TransactionCircuitError::ConstraintViolationOwned(format!("Trace building failed: {}", e))
     })?;
     let stark_pub_inputs = prover.public_inputs(witness)?;
-    let stark_proof = prover.prove_bytes(stark_trace, &stark_pub_inputs)?;
+    let stark_proof = prover.prove_bytes_with_params(stark_trace, &stark_pub_inputs, params)?;
 
     let serialized_inputs = serialize_p3_inputs(&stark_pub_inputs);
     let nullifiers = public_inputs.nullifiers.clone();

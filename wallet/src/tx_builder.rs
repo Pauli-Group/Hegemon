@@ -33,7 +33,18 @@ fn build_stark_prover() -> StarkProver {
     let fast = std::env::var("HEGEMON_WALLET_PROVER_FAST")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    if fast {
+    let recursion = std::env::var("HEGEMON_WALLET_PROVER_RECURSION")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        || std::env::var("HEGEMON_WALLET_DA_SIDECAR")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+    if recursion {
+        StarkProver::new(StarkProverConfig::recursion())
+    } else if fast {
         StarkProver::new(StarkProverConfig::fast())
     } else {
         StarkProver::with_defaults()

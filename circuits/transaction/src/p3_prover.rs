@@ -14,7 +14,9 @@ use crate::hashing_pq::{
     bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use crate::p3_config::{config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
+use crate::p3_config::{
+    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
@@ -64,6 +66,36 @@ struct CycleSpec {
 }
 
 pub struct TransactionProverP3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransactionProofParams {
+    pub log_blowup: usize,
+    pub num_queries: usize,
+}
+
+impl TransactionProofParams {
+    pub fn production() -> Self {
+        Self {
+            log_blowup: FRI_LOG_BLOWUP,
+            num_queries: FRI_NUM_QUERIES,
+        }
+    }
+
+    pub fn recursion() -> Self {
+        Self {
+            log_blowup: std::env::var("HEGEMON_TX_RECURSION_LOG_BLOWUP")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(3)
+                .max(1),
+            num_queries: std::env::var("HEGEMON_TX_RECURSION_NUM_QUERIES")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(8)
+                .max(1),
+        }
+    }
+}
 
 impl Default for TransactionProverP3 {
     fn default() -> Self {
@@ -810,11 +842,20 @@ impl TransactionProverP3 {
         trace: RowMajorMatrix<Val>,
         pub_inputs: &TransactionPublicInputsP3,
     ) -> TransactionProofP3 {
+        self.prove_with_params(trace, pub_inputs, TransactionProofParams::production())
+    }
+
+    pub fn prove_with_params(
+        &self,
+        trace: RowMajorMatrix<Val>,
+        pub_inputs: &TransactionPublicInputsP3,
+        params: TransactionProofParams,
+    ) -> TransactionProofP3 {
         let pub_inputs_vec = pub_inputs.to_vec();
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let log_blowup = params.log_blowup.max(log_chunks);
+        let config = config_with_fri(log_blowup, params.num_queries);
         prove(&config.config, &TransactionAirP3, trace, &pub_inputs_vec)
     }
 
@@ -823,7 +864,16 @@ impl TransactionProverP3 {
         trace: RowMajorMatrix<Val>,
         pub_inputs: &TransactionPublicInputsP3,
     ) -> Result<Vec<u8>, TransactionCircuitError> {
-        let proof = self.prove(trace, pub_inputs);
+        self.prove_bytes_with_params(trace, pub_inputs, TransactionProofParams::production())
+    }
+
+    pub fn prove_bytes_with_params(
+        &self,
+        trace: RowMajorMatrix<Val>,
+        pub_inputs: &TransactionPublicInputsP3,
+        params: TransactionProofParams,
+    ) -> Result<Vec<u8>, TransactionCircuitError> {
+        let proof = self.prove_with_params(trace, pub_inputs, params);
         postcard::to_allocvec(&proof).map_err(|_| {
             TransactionCircuitError::ConstraintViolation("failed to serialize Plonky3 proof")
         })
