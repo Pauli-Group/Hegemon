@@ -97,6 +97,13 @@ struct LeafChildContext {
     representative_inner: TransactionProofP3,
 }
 
+struct LeafRepresentativeTxContext {
+    pub_inputs_vec: Vec<Val>,
+    inner_proof: TransactionProofP3,
+    shape: ProofShape,
+    log_blowup: usize,
+}
+
 fn merge_cache() -> &'static MergeAggregationVerifierCache {
     MERGE_AGGREGATION_VERIFIER_CACHE.get_or_init(MergeAggregationVerifierCache::default)
 }
@@ -203,6 +210,66 @@ fn decode_payload(decoded: &[u8]) -> Result<AggregationProofV5Payload, ProofErro
     })
 }
 
+fn map_packed_public_values_error(err: ProofError) -> ProofError {
+    match err {
+        ProofError::AggregationProofV4Decode(message) => {
+            ProofError::AggregationProofV5Decode(message)
+        }
+        ProofError::AggregationProofV4Binding(message) => {
+            ProofError::AggregationProofV5Binding(message)
+        }
+        other => other,
+    }
+}
+
+fn is_singleton_root_leaf_payload(payload: &AggregationProofV5Payload, tx_count: usize) -> bool {
+    payload.node_kind == AggregationNodeKind::Leaf
+        && payload.outer_proof.is_empty()
+        && tx_count == 1
+        && payload.child_count == 1
+        && payload.subtree_tx_count == 1
+        && payload.fan_in == 1
+        && payload.tree_levels == 1
+        && payload.root_level == 0
+}
+
+fn decode_leaf_representative_tx(
+    payload: &AggregationProofV5Payload,
+) -> Result<LeafRepresentativeTxContext, ProofError> {
+    let representative_tx: TransactionProof =
+        postcard::from_bytes(&payload.representative_child_proof).map_err(|_| {
+            ProofError::AggregationProofV5Decode(
+                "leaf representative transaction encoding invalid".to_string(),
+            )
+        })?;
+    let pub_inputs = stark_public_inputs_p3(&representative_tx).map_err(|err| {
+        ProofError::AggregationProofV5Binding(format!(
+            "representative transaction public inputs invalid: {err}"
+        ))
+    })?;
+    let pub_inputs_vec = pub_inputs.to_vec();
+    let inner_proof: TransactionProofP3 = postcard::from_bytes(&representative_tx.stark_proof)
+        .map_err(|_| {
+            ProofError::AggregationProofV5Decode(
+                "representative transaction proof encoding invalid".to_string(),
+            )
+        })?;
+    let shape = ProofShape {
+        degree_bits: inner_proof.degree_bits,
+        commit_phase_len: inner_proof.opening_proof.commit_phase_commits.len(),
+        final_poly_len: inner_proof.opening_proof.final_poly.len(),
+        query_count: inner_proof.opening_proof.query_proofs.len(),
+    };
+    let log_blowup = resolve_log_blowup(&inner_proof, &pub_inputs_vec, shape.query_count)
+        .map_err(ProofError::AggregationProofInputsMismatch)?;
+    Ok(LeafRepresentativeTxContext {
+        pub_inputs_vec,
+        inner_proof,
+        shape,
+        log_blowup,
+    })
+}
+
 fn validate_header(
     payload: &AggregationProofV5Payload,
     tx_count: usize,
@@ -264,6 +331,32 @@ fn validate_header(
             "fan_in must be non-zero".to_string(),
         ));
     }
+    match payload.node_kind {
+        AggregationNodeKind::Leaf => {
+            let configured_leaf_fan_in = leaf_fan_in() as u16;
+            if payload.fan_in > configured_leaf_fan_in {
+                return Err(ProofError::AggregationProofV5Binding(format!(
+                    "leaf fan_in {} exceeds configured leaf fan-in {}",
+                    payload.fan_in, configured_leaf_fan_in
+                )));
+            }
+            if payload.tree_levels > 1 && payload.fan_in != configured_leaf_fan_in {
+                return Err(ProofError::AggregationProofV5Binding(format!(
+                    "multi-level leaf fan_in mismatch (payload {}, expected {})",
+                    payload.fan_in, configured_leaf_fan_in
+                )));
+            }
+        }
+        AggregationNodeKind::Merge => {
+            let configured_merge_fan_in = merge_fan_in() as u16;
+            if payload.fan_in != configured_merge_fan_in {
+                return Err(ProofError::AggregationProofV5Binding(format!(
+                    "merge fan_in mismatch (payload {}, expected {})",
+                    payload.fan_in, configured_merge_fan_in
+                )));
+            }
+        }
+    }
     if payload.inner_public_inputs_len as usize != payload.packed_public_values.len() {
         return Err(ProofError::AggregationProofV5Binding(
             "inner_public_inputs_len does not match packed_public_values length".to_string(),
@@ -279,48 +372,33 @@ fn decode_leaf_child_context(bytes: &[u8]) -> Result<LeafChildContext, ProofErro
             "merge nodes currently require leaf children".to_string(),
         ));
     }
-    let representative_tx: TransactionProof =
-        postcard::from_bytes(&payload.representative_child_proof).map_err(|_| {
-            ProofError::AggregationProofV5Decode(
-                "leaf representative transaction encoding invalid".to_string(),
-            )
-        })?;
-    let pub_inputs = stark_public_inputs_p3(&representative_tx).map_err(|err| {
-        ProofError::AggregationProofV5Binding(format!(
-            "representative transaction public inputs invalid: {err}"
-        ))
-    })?;
-    let pub_inputs_vec = pub_inputs.to_vec();
-    let inner_proof: TransactionProofP3 = postcard::from_bytes(&representative_tx.stark_proof)
-        .map_err(|_| {
-            ProofError::AggregationProofV5Decode(
-                "representative transaction proof encoding invalid".to_string(),
-            )
-        })?;
-    let shape = ProofShape {
-        degree_bits: inner_proof.degree_bits,
-        commit_phase_len: inner_proof.opening_proof.commit_phase_commits.len(),
-        final_poly_len: inner_proof.opening_proof.final_poly.len(),
-        query_count: inner_proof.opening_proof.query_proofs.len(),
-    };
-    let log_blowup = resolve_log_blowup(&inner_proof, &pub_inputs_vec, shape.query_count)
-        .map_err(ProofError::AggregationProofInputsMismatch)?;
-    let expected_shape_id = leaf_shape_id(leaf_fan_in(), pub_inputs_vec.len(), log_blowup, shape);
+    if payload.outer_proof.is_empty() {
+        return Err(ProofError::AggregationProofV5Decode(
+            "leaf child outer proof missing".to_string(),
+        ));
+    }
+    let representative = decode_leaf_representative_tx(&payload)?;
+    let expected_shape_id = leaf_shape_id(
+        payload.fan_in as usize,
+        representative.pub_inputs_vec.len(),
+        representative.log_blowup,
+        representative.shape,
+    );
     if payload.shape_id != expected_shape_id {
         return Err(ProofError::AggregationProofV5Binding(
             "leaf shape_id mismatch".to_string(),
         ));
     }
     let cache_key = AggregationVerifierKey {
-        tx_count: leaf_fan_in(),
-        pub_inputs_len: pub_inputs_vec.len(),
-        log_blowup,
-        shape,
+        tx_count: payload.fan_in as usize,
+        pub_inputs_len: representative.pub_inputs_vec.len(),
+        log_blowup: representative.log_blowup,
+        shape: representative.shape,
     };
     Ok(LeafChildContext {
         payload,
         cache_key,
-        representative_inner: inner_proof,
+        representative_inner: representative.inner_proof,
     })
 }
 
@@ -442,13 +520,30 @@ pub(crate) fn warm_aggregation_cache_from_payload(
     validate_header(payload, tx_count, expected_statement_commitment)?;
     match payload.node_kind {
         AggregationNodeKind::Leaf => {
-            let _child =
-                decode_leaf_child_context(&postcard::to_allocvec(payload).map_err(|_| {
-                    ProofError::AggregationProofV5Decode("payload serialization failed".to_string())
-                })?)?;
+            if is_singleton_root_leaf_payload(payload, tx_count) {
+                return Ok(AggregationCacheWarmup {
+                    cache_hit: false,
+                    cache_build_ms: 0,
+                });
+            }
+            if payload.outer_proof.is_empty() {
+                return Err(ProofError::AggregationProofV5Decode(
+                    "leaf outer proof missing".to_string(),
+                ));
+            }
+            let representative = decode_leaf_representative_tx(payload)?;
+            let cache = get_or_build_aggregation_verifier_cache_entry(
+                AggregationVerifierKey {
+                    tx_count: payload.fan_in as usize,
+                    pub_inputs_len: representative.pub_inputs_vec.len(),
+                    log_blowup: representative.log_blowup,
+                    shape: representative.shape,
+                },
+                &representative.inner_proof,
+            )?;
             Ok(AggregationCacheWarmup {
-                cache_hit: false,
-                cache_build_ms: 0,
+                cache_hit: cache.cache_hit,
+                cache_build_ms: cache.cache_build_ms,
             })
         }
         AggregationNodeKind::Merge => {
@@ -474,60 +569,87 @@ pub(crate) fn verify_with_metrics(
     tx_count: usize,
     expected_statement_commitment: &[u8; 48],
 ) -> Result<AggregationVerifyMetrics, ProofError> {
+    let started = Instant::now();
     validate_header(payload, tx_count, expected_statement_commitment)?;
     let public_values = unpack_recursion_public_values(&payload.packed_public_values);
     match payload.node_kind {
         AggregationNodeKind::Leaf => {
-            let _child =
-                decode_leaf_child_context(&postcard::to_allocvec(payload).map_err(|_| {
-                    ProofError::AggregationProofV5Decode("payload serialization failed".to_string())
-                })?)?;
+            let representative = decode_leaf_representative_tx(payload)?;
+            let expected_shape_id = leaf_shape_id(
+                payload.fan_in as usize,
+                representative.pub_inputs_vec.len(),
+                representative.log_blowup,
+                representative.shape,
+            );
+            if payload.shape_id != expected_shape_id {
+                return Err(ProofError::AggregationProofV5Binding(
+                    "leaf shape_id mismatch".to_string(),
+                ));
+            }
+            if payload.outer_proof.is_empty() {
+                if !is_singleton_root_leaf_payload(payload, tx_count) {
+                    return Err(ProofError::AggregationProofV5Decode(
+                        "leaf outer proof missing".to_string(),
+                    ));
+                }
+                let tx_public_inputs = decode_public_inputs_from_packed_public_values(
+                    &payload.packed_public_values,
+                    1,
+                    representative.pub_inputs_vec.len(),
+                )
+                .map_err(map_packed_public_values_error)?;
+                let singleton_public_inputs = tx_public_inputs
+                    .first()
+                    .ok_or_else(|| {
+                        ProofError::AggregationProofV5Decode(
+                            "singleton aggregation payload missing public inputs".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                if tx_public_inputs.len() != 1
+                    || singleton_public_inputs != representative.pub_inputs_vec
+                {
+                    return Err(ProofError::AggregationProofV5Binding(
+                        "singleton packed public inputs mismatch representative transaction"
+                            .to_string(),
+                    ));
+                }
+                verify_transaction_proof_p3(
+                    &representative.inner_proof,
+                    tx_public_inputs.first().ok_or_else(|| {
+                        ProofError::AggregationProofV5Decode(
+                            "singleton aggregation payload missing public inputs".to_string(),
+                        )
+                    })?,
+                )
+                .map_err(|err| {
+                    ProofError::AggregationProofVerification(format!(
+                        "singleton representative proof verification failed: {err}"
+                    ))
+                })?;
+                return Ok(AggregationVerifyMetrics {
+                    cache_hit: false,
+                    cache_build_ms: 0,
+                    verify_batch_ms: 0,
+                    total_ms: started.elapsed().as_millis(),
+                });
+            }
             let outer_proof: OuterBatchProof =
                 postcard::from_bytes(&payload.outer_proof).map_err(|_| {
                     ProofError::AggregationProofV5Decode(
                         "leaf outer proof encoding invalid".to_string(),
                     )
                 })?;
-            let child_tx: TransactionProof =
-                postcard::from_bytes(&payload.representative_child_proof).map_err(|_| {
-                    ProofError::AggregationProofV5Decode(
-                        "leaf representative transaction encoding invalid".to_string(),
-                    )
-                })?;
-            let pub_inputs = stark_public_inputs_p3(&child_tx).map_err(|err| {
-                ProofError::AggregationProofV5Binding(format!(
-                    "representative transaction public inputs invalid: {err}"
-                ))
-            })?;
-            let inner_proof: TransactionProofP3 = postcard::from_bytes(&child_tx.stark_proof)
-                .map_err(|_| {
-                    ProofError::AggregationProofV5Decode(
-                        "representative transaction proof encoding invalid".to_string(),
-                    )
-                })?;
-            let shape = ProofShape {
-                degree_bits: inner_proof.degree_bits,
-                commit_phase_len: inner_proof.opening_proof.commit_phase_commits.len(),
-                final_poly_len: inner_proof.opening_proof.final_poly.len(),
-                query_count: inner_proof.opening_proof.query_proofs.len(),
-            };
-            let pub_inputs_vec = pub_inputs.to_vec();
-            let log_blowup = resolve_log_blowup(&inner_proof, &pub_inputs_vec, shape.query_count)
-                .map_err(ProofError::AggregationProofInputsMismatch)?;
-            let expected_shape_id =
-                leaf_shape_id(leaf_fan_in(), pub_inputs_vec.len(), log_blowup, shape);
-            if payload.shape_id != expected_shape_id {
-                return Err(ProofError::AggregationProofV5Binding(
-                    "leaf shape_id mismatch".to_string(),
-                ));
-            }
             let cache_key = AggregationVerifierKey {
-                tx_count: leaf_fan_in(),
-                pub_inputs_len: pub_inputs_vec.len(),
-                log_blowup,
-                shape,
+                tx_count: payload.fan_in as usize,
+                pub_inputs_len: representative.pub_inputs_vec.len(),
+                log_blowup: representative.log_blowup,
+                shape: representative.shape,
             };
-            let cache = get_or_build_aggregation_verifier_cache_entry(cache_key, &inner_proof)?;
+            let cache = get_or_build_aggregation_verifier_cache_entry(
+                cache_key,
+                &representative.inner_proof,
+            )?;
             let mut public_values_by_air = vec![Vec::new(); cache.entry.airs.len()];
             for idx in cache.entry.public_table_indices.iter().copied() {
                 public_values_by_air[idx] = public_values.clone();
@@ -545,7 +667,7 @@ pub(crate) fn verify_with_metrics(
                 cache_hit: cache.cache_hit,
                 cache_build_ms: cache.cache_build_ms,
                 verify_batch_ms: start.elapsed().as_millis(),
-                total_ms: start.elapsed().as_millis(),
+                total_ms: started.elapsed().as_millis(),
             })
         }
         AggregationNodeKind::Merge => {
@@ -591,7 +713,7 @@ pub(crate) fn verify_with_metrics(
                 cache_hit: false,
                 cache_build_ms: 0,
                 verify_batch_ms: start.elapsed().as_millis(),
-                total_ms: start.elapsed().as_millis(),
+                total_ms: started.elapsed().as_millis(),
             })
         }
     }

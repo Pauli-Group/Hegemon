@@ -1794,94 +1794,41 @@ impl ProverCoordinator {
                     Ok(Some(root_payload)) => {
                         handled_recursive = true;
                         candidate_variants.pop_back();
-                        let tree_levels =
-                            Self::recursive_tree_levels_for_tx_count(primary_candidate.len());
-                        let leaf_fan_in = Self::leaf_fan_in();
-                        let expected_chunks = primary_candidate
-                            .len()
-                            .div_ceil(leaf_fan_in)
-                            .min(u16::MAX as usize)
-                            as u16;
-                        let mut chunk_plans = Vec::new();
-                        for (chunk_index, (proof_chunk, hash_chunk)) in root_payload
-                            .tx_proofs
-                            .chunks(leaf_fan_in)
-                            .zip(root_payload.statement_hashes.chunks(leaf_fan_in))
-                            .enumerate()
-                        {
-                            let start = (chunk_index * leaf_fan_in) as u32;
-                            let end =
-                                (start as usize + proof_chunk.len()).min(primary_candidate.len());
-                            let leaf_payload = LeafBatchWorkData {
-                                statement_hashes: hash_chunk.to_vec(),
-                                tx_proofs: proof_chunk.to_vec(),
-                                tx_statements_commitment: root_payload.tx_statements_commitment,
-                                tree_levels,
-                                root_level: 0,
-                            };
-                            let package = Self::build_leaf_stage_work_package(
-                                parent_hash,
-                                block_number,
-                                candidate_set_id.clone(),
-                                primary_candidate[start as usize..end].to_vec(),
-                                start,
-                                expected_chunks,
-                                primary_candidate.len(),
-                                self.config.work_package_ttl,
-                                leaf_payload.clone(),
-                            );
-                            let package_id = package.package_id.clone();
-                            chunk_plans.push(ChunkPlan {
-                                package_id: package_id.clone(),
-                                start_tx_index: package.chunk_start_tx_index,
-                                tx_count: package.chunk_tx_count,
-                            });
-                            state.latest_stage_work_package = Some(package_id.clone());
-                            state.stage_work_package_queue.push_back(package_id.clone());
-                            state.work_packages.insert(
-                                package_id.clone(),
-                                WorkPackageRecord {
-                                    package: package.clone(),
-                                    submissions: 0,
-                                },
-                            );
-                            state
-                                .work_status
-                                .insert(package_id.clone(), WorkStatus::Pending);
-                            if self.worker_pool.worker_count() > 0 {
-                                let job = QueuedJob {
-                                    id: state.next_job_id,
-                                    package_id: package_id.clone(),
-                                    candidate_set_id: candidate_set_id.clone(),
-                                    generation: state.generation,
-                                    parent_hash,
-                                    block_number,
-                                    stage_type: "leaf_batch_prove".to_string(),
-                                    level: 0,
-                                    arity: Self::merge_fan_in() as u16,
-                                    shape_id: package.shape_id,
-                                    dependencies: Vec::new(),
-                                    enqueued_at: Instant::now(),
-                                    candidate_txs: package.candidate_txs.clone(),
-                                    leaf_batch_payload: Some(leaf_payload),
-                                    merge_node_payload: None,
-                                };
-                                state.next_job_id = state.next_job_id.wrapping_add(1);
-                                state.pending_jobs.push_back(job);
+                        self.publish_recursive_candidate_variant_locked(
+                            &mut state,
+                            parent_hash,
+                            block_number,
+                            primary_candidate.clone(),
+                            root_payload,
+                            false,
+                        );
+
+                        if let Some(liveness_candidate) = candidate_variants.front().cloned() {
+                            if liveness_candidate.len() < primary_candidate.len() {
+                                match builder(parent_hash, block_number, liveness_candidate.clone())
+                                {
+                                    Ok(Some(liveness_root_payload)) => {
+                                        self.publish_recursive_candidate_variant_locked(
+                                            &mut state,
+                                            parent_hash,
+                                            block_number,
+                                            liveness_candidate.clone(),
+                                            liveness_root_payload,
+                                            true,
+                                        );
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            block_number,
+                                            tx_count = liveness_candidate.len(),
+                                            error = %error,
+                                            "Failed to publish recursive liveness lane for external workers"
+                                        );
+                                    }
+                                }
                             }
                         }
-                        state.recursive_assemblies.insert(
-                            candidate_set_id.clone(),
-                            RecursiveTreeAssemblyState {
-                                parent_hash,
-                                block_number,
-                                candidate_txs: primary_candidate.clone(),
-                                root_finalize_payload: root_payload,
-                                leaf_chunks: chunk_plans,
-                                leaf_results: HashMap::new(),
-                                merge_package_id: None,
-                            },
-                        );
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -2015,6 +1962,119 @@ impl ProverCoordinator {
             state.next_job_id = state.next_job_id.wrapping_add(1);
             state.pending_jobs.push_back(job);
         }
+    }
+
+    fn publish_recursive_candidate_variant_locked(
+        &self,
+        state: &mut CoordinatorState,
+        parent_hash: H256,
+        block_number: u64,
+        candidate_txs: Vec<Vec<u8>>,
+        root_payload: RootFinalizeWorkData,
+        high_priority: bool,
+    ) {
+        let candidate_set_id = Self::work_package_id(parent_hash, block_number, &candidate_txs);
+        if state.recursive_assemblies.contains_key(&candidate_set_id) {
+            return;
+        }
+
+        let tree_levels = Self::recursive_tree_levels_for_tx_count(candidate_txs.len());
+        let leaf_fan_in = Self::leaf_fan_in();
+        let expected_chunks = candidate_txs
+            .len()
+            .div_ceil(leaf_fan_in)
+            .min(u16::MAX as usize) as u16;
+        let mut chunk_plans = Vec::new();
+
+        for (chunk_index, (proof_chunk, hash_chunk)) in root_payload
+            .tx_proofs
+            .chunks(leaf_fan_in)
+            .zip(root_payload.statement_hashes.chunks(leaf_fan_in))
+            .enumerate()
+        {
+            let start = (chunk_index * leaf_fan_in) as u32;
+            let end = (start as usize + proof_chunk.len()).min(candidate_txs.len());
+            let leaf_payload = LeafBatchWorkData {
+                statement_hashes: hash_chunk.to_vec(),
+                tx_proofs: proof_chunk.to_vec(),
+                tx_statements_commitment: root_payload.tx_statements_commitment,
+                tree_levels,
+                root_level: 0,
+            };
+            let package = Self::build_leaf_stage_work_package(
+                parent_hash,
+                block_number,
+                candidate_set_id.clone(),
+                candidate_txs[start as usize..end].to_vec(),
+                start,
+                expected_chunks,
+                candidate_txs.len(),
+                self.config.work_package_ttl,
+                leaf_payload.clone(),
+            );
+            let package_id = package.package_id.clone();
+            chunk_plans.push(ChunkPlan {
+                package_id: package_id.clone(),
+                start_tx_index: package.chunk_start_tx_index,
+                tx_count: package.chunk_tx_count,
+            });
+            state.latest_stage_work_package = Some(package_id.clone());
+            if high_priority {
+                state
+                    .stage_work_package_queue
+                    .push_front(package_id.clone());
+            } else {
+                state.stage_work_package_queue.push_back(package_id.clone());
+            }
+            state.work_packages.insert(
+                package_id.clone(),
+                WorkPackageRecord {
+                    package: package.clone(),
+                    submissions: 0,
+                },
+            );
+            state
+                .work_status
+                .insert(package_id.clone(), WorkStatus::Pending);
+            if self.worker_pool.worker_count() > 0 {
+                let job = QueuedJob {
+                    id: state.next_job_id,
+                    package_id: package_id.clone(),
+                    candidate_set_id: candidate_set_id.clone(),
+                    generation: state.generation,
+                    parent_hash,
+                    block_number,
+                    stage_type: "leaf_batch_prove".to_string(),
+                    level: 0,
+                    arity: Self::merge_fan_in() as u16,
+                    shape_id: package.shape_id,
+                    dependencies: Vec::new(),
+                    enqueued_at: Instant::now(),
+                    candidate_txs: package.candidate_txs.clone(),
+                    leaf_batch_payload: Some(leaf_payload),
+                    merge_node_payload: None,
+                };
+                state.next_job_id = state.next_job_id.wrapping_add(1);
+                if high_priority {
+                    state.pending_jobs.push_front(job);
+                } else {
+                    state.pending_jobs.push_back(job);
+                }
+            }
+        }
+
+        state.recursive_assemblies.insert(
+            candidate_set_id,
+            RecursiveTreeAssemblyState {
+                parent_hash,
+                block_number,
+                candidate_txs,
+                root_finalize_payload: root_payload,
+                leaf_chunks: chunk_plans,
+                leaf_results: HashMap::new(),
+                merge_package_id: None,
+            },
+        );
     }
 
     fn maybe_schedule_adaptive_liveness_lane(
@@ -3756,6 +3816,52 @@ mod tests {
         assert_eq!(assembled.payload.flat_batches[0].tx_count, 16);
         assert_eq!(assembled.payload.flat_batches[1].start_tx_index, 16);
         assert_eq!(assembled.payload.flat_batches[1].tx_count, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn external_stage_work_packages_prioritize_recursive_singleton_liveness_lane() {
+        let parent_hash = H256::repeat_byte(43);
+        let mut config = test_config();
+        config.target_txs = 4;
+        config.queue_capacity = 2;
+        config.workers = 0;
+        config.poll_interval = Duration::from_millis(10);
+        let best = Arc::new(move || (parent_hash, 9u64));
+        let pending =
+            Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8], vec![3u8], vec![4u8]]);
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("legacy local bundle builder disabled for recursive stage test".to_string())
+            },
+        );
+        let root_finalize = Arc::new(
+            move |_parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                Ok(Some(synthetic_root_finalize_work_data(candidate_txs.len())))
+            },
+        );
+
+        let coordinator = ProverCoordinator::new_with_root_finalize_builder(
+            config,
+            best,
+            pending,
+            build,
+            Some(root_finalize),
+        );
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        let first = coordinator
+            .get_stage_work_package()
+            .expect("singleton liveness stage package should be published first");
+        let second = coordinator
+            .get_stage_work_package()
+            .expect("full recursive stage package should also be published");
+
+        assert_eq!(first.stage_type, "leaf_batch_prove");
+        assert_eq!(first.tx_count, 1);
+        assert_eq!(second.stage_type, "leaf_batch_prove");
+        assert_eq!(second.tx_count, 4);
+        assert_ne!(first.candidate_set_id, second.candidate_set_id);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

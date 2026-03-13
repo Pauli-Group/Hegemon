@@ -195,6 +195,47 @@ fn configured_merge_fanin() -> usize {
         .max(1)
 }
 
+fn configured_active_children() -> usize {
+    std::env::var("HEGEMON_AGG_ACTIVE_CHILDREN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
+#[test]
+#[ignore = "expensive transaction proof profiling run; use on target hardware"]
+fn transaction_recursion_cold_warm_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+
+    let cold_started = Instant::now();
+    let cold = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("cold transaction proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+
+    let warm_started = Instant::now();
+    let warm = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("warm transaction proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+
+    eprintln!(
+        "transaction_recursion_cold_warm_profile cold_ms={} warm_ms={} cold_bytes={} warm_bytes={}",
+        cold_ms,
+        warm_ms,
+        cold.stark_proof.len(),
+        warm.stark_proof.len()
+    );
+}
+
 #[test]
 #[ignore = "expensive end-to-end aggregation proof generation; run manually"]
 fn aggregation_v5_leaf_roundtrip() {
@@ -260,6 +301,33 @@ fn aggregation_v5_payload_validation_rejects_invalid_encodings() {
 }
 
 #[test]
+fn aggregation_v5_singleton_root_skips_outer_proof() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+    let proofs = vec![proof];
+    let tx_statements_commitment = tx_statements_commitment_from_proofs(&proofs);
+
+    let aggregation_bytes =
+        prove_aggregation(&proofs, tx_statements_commitment).expect("generate aggregation proof");
+    let payload: AggregationProofV5Payload =
+        postcard::from_bytes(&aggregation_bytes).expect("decode payload");
+
+    assert_eq!(payload.node_kind, AggregationNodeKind::Leaf);
+    assert_eq!(payload.fan_in, 1);
+    assert_eq!(payload.child_count, 1);
+    assert!(payload.outer_proof.is_empty());
+
+    verify_aggregation_proof(&aggregation_bytes, proofs.len(), &tx_statements_commitment)
+        .expect("verify singleton aggregation proof");
+}
+
+#[test]
 #[ignore = "expensive leaf-only profiling run; use HEGEMON_AGG_PROFILE=1 on target hardware"]
 fn aggregation_v5_leaf_fanin8_profile_roundtrip() {
     let witness = sample_witness();
@@ -306,6 +374,48 @@ fn aggregation_v5_leaf_fanin8_cold_warm_profile() {
     eprintln!(
         "leaf_cold_warm_profile fan_in={} cold_ms={} warm_ms={}",
         fan_in, cold_ms, warm_ms
+    );
+}
+
+#[test]
+#[ignore = "expensive partial leaf profiling run; use HEGEMON_AGG_ACTIVE_CHILDREN on target hardware"]
+fn aggregation_v5_leaf_partial_cold_warm_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+
+    let fan_in = configured_leaf_fanin();
+    let active_children = configured_active_children().min(fan_in);
+    let proofs = vec![proof; active_children];
+    let statement_hashes = statement_hashes_from_proofs(&proofs);
+
+    let cold_started = Instant::now();
+    let cold =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("cold partial leaf proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+
+    let warm_started = Instant::now();
+    let warm =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("warm partial leaf proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+
+    let commitment = tx_statements_commitment_from_proofs(&proofs);
+    verify_aggregation_proof(&cold, proofs.len(), &commitment).expect("verify cold partial leaf");
+    verify_aggregation_proof(&warm, proofs.len(), &commitment).expect("verify warm partial leaf");
+
+    eprintln!(
+        "leaf_partial_cold_warm_profile fan_in={} active_children={} cold_ms={} warm_ms={} cold_bytes={} warm_bytes={}",
+        fan_in,
+        active_children,
+        cold_ms,
+        warm_ms,
+        cold.len(),
+        warm.len()
     );
 }
 

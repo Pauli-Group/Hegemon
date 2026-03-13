@@ -171,6 +171,18 @@ fn merge_fan_in() -> usize {
         .max(1)
 }
 
+fn effective_leaf_fan_in(active_children: usize, tree_levels: u16, root_level: u16) -> usize {
+    if tree_levels == 1 && root_level == 0 {
+        active_children.max(1)
+    } else {
+        leaf_fan_in()
+    }
+}
+
+fn is_singleton_root_leaf(active_children: usize, tree_levels: u16, root_level: u16) -> bool {
+    tree_levels == 1 && root_level == 0 && active_children == 1
+}
+
 fn max_recursive_txs() -> usize {
     leaf_fan_in().saturating_mul(merge_fan_in())
 }
@@ -882,13 +894,15 @@ pub fn prove_leaf_aggregation(
         )));
     }
 
+    let active_children = transaction_proofs.len();
+    let effective_fan_in = effective_leaf_fan_in(active_children, tree_levels, root_level);
     let representative_tx = transaction_proofs
         .first()
         .cloned()
         .ok_or(AggregationError::EmptyBatch)?;
     let representative_stark = representative_tx.stark_proof.clone();
-    let mut inner_proofs = Vec::with_capacity(leaf_fan_in());
-    let mut public_inputs = Vec::with_capacity(leaf_fan_in());
+    let mut inner_proofs = Vec::with_capacity(effective_fan_in);
+    let mut public_inputs = Vec::with_capacity(effective_fan_in);
     let mut expected_shape: Option<ProofShape> = None;
     let mut expected_inputs_len: Option<usize> = None;
     let mut expected_log_blowup: Option<usize> = None;
@@ -940,13 +954,50 @@ pub fn prove_leaf_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_decode_and_shape tx_count={} active_children={} decode_ms={} total_ms={}",
-            leaf_fan_in(),
-            transaction_proofs.len(),
+            effective_fan_in,
+            active_children,
             decode_ms,
             started.elapsed().as_millis()
         );
     }
-    while inner_proofs.len() < leaf_fan_in() {
+    let pub_inputs_len = expected_inputs_len.ok_or(AggregationError::EmptyBatch)?;
+    let expected_shape = expected_shape.ok_or(AggregationError::EmptyBatch)?;
+    let log_blowup = expected_log_blowup.ok_or(AggregationError::EmptyBatch)?;
+    let tx_statements_commitment = commitment_from_statement_hashes(statement_hashes)?;
+
+    if is_singleton_root_leaf(active_children, tree_levels, root_level) {
+        let singleton_public_values = public_inputs
+            .first()
+            .ok_or(AggregationError::EmptyBatch)?
+            .iter()
+            .copied()
+            .map(Challenge::from)
+            .collect::<Vec<_>>();
+        let packed_public_values = pack_recursion_public_values_v1(&singleton_public_values);
+        let payload = AggregationProofV5Payload {
+            version: AGGREGATION_PROOF_FORMAT_ID_V5,
+            proof_format: AGGREGATION_PROOF_FORMAT_ID_V5,
+            node_kind: AggregationNodeKind::Leaf,
+            fan_in: 1,
+            child_count: 1,
+            subtree_tx_count: 1,
+            tree_arity: merge_fan_in() as u16,
+            tree_levels,
+            root_level,
+            shape_id: leaf_shape_id(1, pub_inputs_len, log_blowup, expected_shape),
+            tx_statements_commitment: tx_statements_commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
+            inner_public_inputs_len: packed_public_values.len() as u32,
+            representative_child_proof: postcard::to_allocvec(&representative_tx)
+                .map_err(|_| AggregationError::PayloadSerializeFailed)?,
+            packed_public_values,
+            outer_proof: Vec::new(),
+        };
+        return postcard::to_allocvec(&payload)
+            .map_err(|_| AggregationError::PayloadSerializeFailed);
+    }
+
+    while inner_proofs.len() < effective_fan_in {
         let padded: TransactionProofP3 = postcard::from_bytes(&representative_stark)
             .map_err(|_| AggregationError::InvalidProofFormat { index: 0 })?;
         let public = public_inputs
@@ -956,12 +1007,8 @@ pub fn prove_leaf_aggregation(
         inner_proofs.push(padded);
         public_inputs.push(public);
     }
-
-    let pub_inputs_len = expected_inputs_len.ok_or(AggregationError::EmptyBatch)?;
-    let expected_shape = expected_shape.ok_or(AggregationError::EmptyBatch)?;
-    let log_blowup = expected_log_blowup.ok_or(AggregationError::EmptyBatch)?;
     let cache_key = AggregationProverKey {
-        tx_count: leaf_fan_in(),
+        tx_count: effective_fan_in,
         pub_inputs_len,
         log_blowup,
         shape: expected_shape,
@@ -975,7 +1022,7 @@ pub fn prove_leaf_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_cache_lookup tx_count={} cache_hit={} cache_build_ms={} cache_lookup_ms={} total_ms={}",
-            leaf_fan_in(),
+            effective_fan_in,
             cache_result.cache_hit,
             cache_result.cache_build_ms,
             cache_lookup_ms,
@@ -1013,7 +1060,7 @@ pub fn prove_leaf_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_challenges_and_pack tx_count={} challenge_pack_ms={} total_ms={}",
-            leaf_fan_in(),
+            effective_fan_in,
             challenge_ms,
             started.elapsed().as_millis()
         );
@@ -1035,7 +1082,7 @@ pub fn prove_leaf_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_set_targets tx_count={} set_public_ms={} set_witness_ms={} total_ms={}",
-            leaf_fan_in(),
+            effective_fan_in,
             set_public_ms,
             set_witness_ms,
             started.elapsed().as_millis()
@@ -1074,7 +1121,7 @@ pub fn prove_leaf_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_runner_run tx_count={} run_ms={} total_ms={}",
-            leaf_fan_in(),
+            effective_fan_in,
             run_ms,
             started.elapsed().as_millis()
         );
@@ -1089,25 +1136,24 @@ pub fn prove_leaf_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_outer_prove tx_count={} outer_prove_ms={} total_ms={}",
-            leaf_fan_in(),
+            effective_fan_in,
             outer_prove_ms,
             started.elapsed().as_millis()
         );
     }
     let serialize_started = Instant::now();
     let packed_public_values = pack_recursion_public_values_v1(&recursion_public_inputs);
-    let tx_statements_commitment = commitment_from_statement_hashes(statement_hashes)?;
     let payload = AggregationProofV5Payload {
         version: AGGREGATION_PROOF_FORMAT_ID_V5,
         proof_format: AGGREGATION_PROOF_FORMAT_ID_V5,
         node_kind: AggregationNodeKind::Leaf,
-        fan_in: leaf_fan_in() as u16,
-        child_count: transaction_proofs.len() as u16,
-        subtree_tx_count: transaction_proofs.len() as u32,
+        fan_in: effective_fan_in as u16,
+        child_count: active_children as u16,
+        subtree_tx_count: active_children as u32,
         tree_arity: merge_fan_in() as u16,
         tree_levels,
         root_level,
-        shape_id: leaf_shape_id(leaf_fan_in(), pub_inputs_len, log_blowup, expected_shape),
+        shape_id: leaf_shape_id(effective_fan_in, pub_inputs_len, log_blowup, expected_shape),
         tx_statements_commitment: tx_statements_commitment.to_vec(),
         public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
         inner_public_inputs_len: packed_public_values.len() as u32,
@@ -1122,15 +1168,15 @@ pub fn prove_leaf_aggregation(
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_serialize tx_count={} serialize_ms={} total_ms={}",
-            leaf_fan_in(),
+            effective_fan_in,
             serialize_started.elapsed().as_millis(),
             started.elapsed().as_millis()
         );
     }
     tracing::info!(
         target: "aggregation::metrics",
-        active_children = transaction_proofs.len(),
-        leaf_fan_in = leaf_fan_in(),
+        active_children,
+        leaf_fan_in = effective_fan_in,
         cache_hit = cache_result.cache_hit,
         cache_build_ms = cache_result.cache_build_ms,
         cache_lookup_ms,
