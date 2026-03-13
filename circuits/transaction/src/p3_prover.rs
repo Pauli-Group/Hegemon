@@ -25,17 +25,16 @@ use transaction_core::p3_air::{
     COL_AUTH_DERIVED0, COL_AUTH_DERIVED1, COL_AUTH_DERIVED2, COL_AUTH_DERIVED3, COL_CT0_0,
     COL_CT0_1, COL_CT0_2, COL_CT0_3, COL_CT0_4, COL_CT0_5, COL_CT1_0, COL_CT1_1, COL_CT1_2,
     COL_CT1_3, COL_CT1_4, COL_CT1_5, COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET,
-    COL_IN0_RHO0, COL_IN0_RHO1, COL_IN0_RHO2, COL_IN0_RHO3, COL_IN0_SLOT_BIT0, COL_IN0_SLOT_BIT1,
-    COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_RHO0, COL_IN1_RHO1, COL_IN1_RHO2, COL_IN1_RHO3,
-    COL_IN1_SLOT_BIT0, COL_IN1_SLOT_BIT1, COL_IN1_VALUE, COL_IN2, COL_IN3, COL_IN4, COL_IN5,
-    COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET,
+    COL_IN0_SLOT_BIT0, COL_IN0_SLOT_BIT1, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_SLOT_BIT0,
+    COL_IN1_SLOT_BIT1, COL_IN1_VALUE, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0,
+    COL_IN_ACTIVE1, COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET,
     COL_OUT0_SLOT_BIT0, COL_OUT0_SLOT_BIT1, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET,
     COL_OUT1_SLOT_BIT0, COL_OUT1_SLOT_BIT1, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5,
-    COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED, COL_RANGE_LIMBS_START, COL_RESET, COL_S0,
-    COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9,
-    COL_SCHEDULE_START, COL_SK0, COL_SK1, COL_SK2, COL_SK3, COL_SLOT0_ASSET, COL_SLOT0_IN,
-    COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
-    COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_SLOT_BIT0,
+    COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED, COL_RANGE_LIMBS_START, COL_RESET, COL_RHO0,
+    COL_RHO1, COL_RHO2, COL_RHO3, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5,
+    COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SLOT0_IN, COL_SLOT0_OUT,
+    COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT,
+    COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_SLOT_BIT0,
     COL_STABLECOIN_SLOT_BIT1, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
     COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH,
     NULLIFIER_ABSORB_CYCLES, PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES,
@@ -158,14 +157,14 @@ impl TransactionProverP3 {
         }
 
         let sentinel_row = 0;
-        let slot_asset_cols = [
-            COL_SLOT0_ASSET,
-            COL_SLOT1_ASSET,
-            COL_SLOT2_ASSET,
-            COL_SLOT3_ASSET,
-        ];
-        let mut slot_asset_vals = [Val::ZERO; 4];
-        for (idx, asset_id) in slot_assets.iter().take(slot_asset_vals.len()).enumerate() {
+        let slot_asset_cols = [COL_SLOT1_ASSET, COL_SLOT2_ASSET, COL_SLOT3_ASSET];
+        let mut slot_asset_vals = [Val::from_u64(u64::MAX); 3];
+        for (idx, asset_id) in slot_assets
+            .iter()
+            .skip(1)
+            .take(slot_asset_vals.len())
+            .enumerate()
+        {
             slot_asset_vals[idx] = Val::from_u64(*asset_id);
         }
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
@@ -211,23 +210,28 @@ impl TransactionProverP3 {
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
-            row_slice[COL_SK0] = sk_words[0];
-            row_slice[COL_SK1] = sk_words[1];
-            row_slice[COL_SK2] = sk_words[2];
-            row_slice[COL_SK3] = sk_words[3];
             row_slice[COL_PRF_DERIVED] = derived_prf;
             row_slice[COL_AUTH_DERIVED0] = derived_auth[0];
             row_slice[COL_AUTH_DERIVED1] = derived_auth[1];
             row_slice[COL_AUTH_DERIVED2] = derived_auth[2];
             row_slice[COL_AUTH_DERIVED3] = derived_auth[3];
-            row_slice[COL_IN0_RHO0] = in0_rho_words[0];
-            row_slice[COL_IN0_RHO1] = in0_rho_words[1];
-            row_slice[COL_IN0_RHO2] = in0_rho_words[2];
-            row_slice[COL_IN0_RHO3] = in0_rho_words[3];
-            row_slice[COL_IN1_RHO0] = in1_rho_words[0];
-            row_slice[COL_IN1_RHO1] = in1_rho_words[1];
-            row_slice[COL_IN1_RHO2] = in1_rho_words[2];
-            row_slice[COL_IN1_RHO3] = in1_rho_words[3];
+        }
+
+        let rho0_start = transaction_core::p3_air::commitment_rho_row(0);
+        let rho1_start = transaction_core::p3_air::commitment_rho_row(1);
+        for row in rho0_start..trace_len.min(rho1_start) {
+            let row_slice = trace.row_mut(row);
+            row_slice[COL_RHO0] = in0_rho_words[0];
+            row_slice[COL_RHO1] = in0_rho_words[1];
+            row_slice[COL_RHO2] = in0_rho_words[2];
+            row_slice[COL_RHO3] = in0_rho_words[3];
+        }
+        for row in rho1_start..trace_len {
+            let row_slice = trace.row_mut(row);
+            row_slice[COL_RHO0] = in1_rho_words[0];
+            row_slice[COL_RHO1] = in1_rho_words[1];
+            row_slice[COL_RHO2] = in1_rho_words[2];
+            row_slice[COL_RHO3] = in1_rho_words[3];
         }
 
         let set_range_limbs = |row_slice: &mut [Val],
@@ -256,9 +260,6 @@ impl TransactionProverP3 {
             set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[0].note.value)?;
             row_slice[selector_bit_cols[0][0]] = selector_bits[0][0];
             row_slice[selector_bit_cols[0][1]] = selector_bits[0][1];
-            for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = slot_asset_vals[idx];
-            }
         }
         if start_row_in1 < trace_len {
             let row_slice = trace.row_mut(start_row_in1);
@@ -268,9 +269,6 @@ impl TransactionProverP3 {
             set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[1].note.value)?;
             row_slice[selector_bit_cols[1][0]] = selector_bits[1][0];
             row_slice[selector_bit_cols[1][1]] = selector_bits[1][1];
-            for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = slot_asset_vals[idx];
-            }
         }
         if start_row_out0 < trace_len {
             let row_slice = trace.row_mut(start_row_out0);
@@ -280,9 +278,6 @@ impl TransactionProverP3 {
             set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[0].note.value)?;
             row_slice[selector_bit_cols[2][0]] = selector_bits[2][0];
             row_slice[selector_bit_cols[2][1]] = selector_bits[2][1];
-            for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = slot_asset_vals[idx];
-            }
         }
         if start_row_out1 < trace_len {
             let row_slice = trace.row_mut(start_row_out1);
@@ -292,9 +287,6 @@ impl TransactionProverP3 {
             set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[1].note.value)?;
             row_slice[selector_bit_cols[3][0]] = selector_bits[3][0];
             row_slice[selector_bit_cols[3][1]] = selector_bits[3][1];
-            for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = slot_asset_vals[idx];
-            }
         }
 
         let final_row = trace_len.saturating_sub(2);
@@ -306,9 +298,6 @@ impl TransactionProverP3 {
             row_slice[COL_VALUE_BALANCE_SIGN] = vb_sign;
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
             set_range_limbs(row_slice, COL_RANGE_LIMBS_START, witness.fee)?;
-            for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = slot_asset_vals[idx];
-            }
             row_slice[COL_CT0_0] = ciphertext_hashes[0][0];
             row_slice[COL_CT0_1] = ciphertext_hashes[0][1];
             row_slice[COL_CT0_2] = ciphertext_hashes[0][2];
@@ -1264,7 +1253,6 @@ mod tests {
         let mut trace = prover.build_trace(&witness).expect("trace build");
         let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
 
-        // Tamper a non-note row so only slot-asset continuity constraints catch it.
         let row = 2;
         let col = COL_SLOT1_ASSET;
         let idx = row * trace.width + col;

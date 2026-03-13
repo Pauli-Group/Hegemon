@@ -70,10 +70,10 @@ pub const CIRCUIT_MERKLE_DEPTH: usize = 32;
 // ================================================================================================
 
 /// Current circuit version. Increment when constraint logic changes.
-pub const CIRCUIT_VERSION: u32 = 8;
+pub const CIRCUIT_VERSION: u32 = 9;
 
 /// AIR constraint domain separator for hashing.
-pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V8";
+pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V9";
 
 /// Compute the AIR hash that uniquely identifies this circuit's constraints.
 /// This hash commits to:

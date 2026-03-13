@@ -32,9 +32,12 @@ The success condition is observable, not rhetorical. A novice should be able to 
 - [x] (2026-03-13T11:05Z) Compacted the fixed-slot note selectors from 16 one-hot selector columns to 8 selector-bit columns, cutting transaction trace width from `191` to `183` and improving the release smoke benchmark again.
 - [x] (2026-03-13T15:30Z) Removed the mirrored stablecoin binding payload columns from the transaction witness trace and kept only a reserved 2-bit non-native slot selector, cutting transaction trace width from `183` to `158` and improving the release smoke benchmark again.
 - [x] (2026-03-13T15:30Z) Re-ran full release validation after the stablecoin/constant-column change: the full `transaction-circuit` `plonky3-e2e` suite passes, the smoke benchmarks improved again, `security-tests` `stark_soundness` still reports `128` estimated bits, and `DESIGN.md` / `METHODS.md` now describe the slimmer transaction AIR.
+- [x] (2026-03-13T19:10Z) Removed the duplicated `sk` witness columns entirely, collapsed the two input-note rho carry lanes into one shared four-limb lane, and benchmarked the production-safe slot-bookkeeping variant with an implicit native slot plus three explicit non-native slot-asset columns.
+- [x] (2026-03-13T19:10Z) Tried a more aggressive slot-bookkeeping variant that moved slot asset ids into STARK public inputs, benchmarked it, and rejected it for now because the runtime verifier API does not carry those asset ids.
+- [x] (2026-03-13T19:10Z) Ran an isolated `p3-circle` / M31 backend spike under `spikes/circle-transaction-shape/` and captured a synthetic shape-proxy benchmark plus caveats.
 - [ ] Collapse additional columns that are constant across the whole trace and compact any remaining fixed one-hot bookkeeping, especially outside the main note-selector path.
 - [x] (2026-03-13T15:30Z) Ran the full validation matrix for the currently landed changes, captured the post-change metrics, and updated `DESIGN.md` and `METHODS.md` to match the current transaction AIR layout and bounded-value method.
-- [ ] Optional only after the earlier milestones are green: run a small isolated backend spike for a Circle/M31-style prover on the slimmed transaction shape and record whether a migration is still justified.
+- [x] (2026-03-13T19:10Z) Optional backend spike completed with an isolated command and JSON report; the result is recorded as a shape proxy only, not an apples-to-apples migration case.
 
 ## Surprises & Discoveries
 
@@ -76,6 +79,18 @@ The success condition is observable, not rhetorical. A novice should be able to 
 
 - Observation: a compact stablecoin selector needs an explicit “disabled” encoding; otherwise the zero bit-pattern aliases the native slot and breaks the non-native issuance semantics.
   Evidence: the first naive 2-bit stablecoin selector prototype produced `OodEvaluationMismatch` until the AIR was changed to reserve `00` as “no stablecoin binding” and only allow enabled bindings to target non-native slots `1..=3`.
+
+- Observation: the four `sk` witness columns were pure duplication, but the rho binding could only be partially collapsed because the two input notes need the same four words at different times, not zero words.
+  Evidence: removing the `sk` columns and sharing one four-limb rho carry lane across input 0 then input 1 reduced the production-safe transaction trace width from `158` to `149`, and the production roundtrip still passed at `bytes=354777`.
+
+- Observation: moving slot asset ids into STARK public inputs produced the best local benchmark, but it is not a drop-in production change because the runtime verifier path reconstructs STARK public inputs from `ShieldedTransferInputs`, which do not carry balance-slot asset ids today.
+  Evidence: the public-input slot-asset prototype reached `tx_trace_width = 146`, `tx_proof_bytes_avg = 354156`, `tx_prove_ns_per_tx = 1064799489`, `transactions_per_second = 0.932376...`, and `batch_transactions_per_second = 0.406874...`, but `pallets/shielded-pool/src/verifier.rs` could not reconstruct the new public inputs without widening the call surface.
+
+- Observation: the production-safe slot-bookkeeping compaction is a low-ROI change: it reduces trace width and proof bytes a little, but warmed single-tx throughput is roughly flat to slightly worse than the prior `158`-column checkpoint.
+  Evidence: the final production-safe variant reports `tx_trace_width = 149`, `tx_proof_bytes_avg = 355252`, `tx_prove_ns_per_tx = 1143941770`, `transactions_per_second = 0.868175...`, and `batch_transactions_per_second = 0.371894...`; compared with the previous `158`-column checkpoint, proofs are smaller but single-tx throughput is slightly lower while the batch path is roughly flat.
+
+- Observation: a Circle/M31 shape proxy is dramatically faster and smaller on the same machine, but the current spike is intentionally synthetic and cannot be used as an apples-to-apples migration claim.
+  Evidence: `cargo run --manifest-path spikes/circle-transaction-shape/Cargo.toml --release` prints a JSON report for an `8192 x 146` synthetic AIR with `76` public values: `proof_bytes = 214080`, `prove_ns = 135433125`, `verify_ns = 2803875`, with an explicit note that it is not Hegemon’s real transaction AIR or security profile.
 
 ## Decision Log
 
@@ -119,6 +134,10 @@ The success condition is observable, not rhetorical. A novice should be able to 
   Rationale: a 2-bit selector always decodes to some slot; reserving `00` avoids aliasing a disabled binding to the native slot and preserves the stablecoin rule that only one non-native asset may carry a policy-bound non-zero delta.
   Date/Author: 2026-03-13 / Codex
 
+- Decision: keep the production-safe slot-bookkeeping variant in-trace for now and reject the public-input slot-asset variant until the runtime verifier/input API can carry balance-slot asset ids explicitly.
+  Rationale: the public-input variant benchmarked better, but it is not deployable without widening the pallet verifier/extrinsic surface. The in-trace variant keeps the current runtime interface intact while still shrinking the witness.
+  Date/Author: 2026-03-13 / Codex
+
 ## Outcomes & Retrospective
 
 2026-03-13 partial execution update: one draft milestone failed, and one landed optimization succeeded.
@@ -130,6 +149,10 @@ The first landed win was the shared range-scratch change. It cut the transaction
 The second landed win was the full radix-limb plus selector-compaction pass. It pushed the transaction trace width down again from `231` to `183`, reduced release smoke proof size to about `366 KB`, and improved release smoke throughput again to about `0.76 tx/s`, still with the same `128`-bit soundness report. That is exactly the kind of change this plan is meant to deliver: smaller, faster, same security target.
 
 The third landed win was collapsing the stablecoin binding payload out of the witness trace and keeping only a reserved 2-bit selector for the chosen non-native slot. That pushed the transaction trace width down again from `183` to `158`, reduced release smoke proof size to about `356 KB`, and improved release smoke throughput again to about `0.88 tx/s`, still with the same `128`-bit soundness report. The batch-4 slot-copy path also improved again to about `0.37 tx/s`, although it remains slower than the single-proof lane and still is not the system’s public throughput story.
+
+The next experiment split into two outcomes. The shippable part was worthwhile: removing the duplicated `sk` columns and sharing one rho carry lane across the two input-note phases reduced the trace again. The more aggressive part, moving slot asset ids into STARK public inputs, benchmarked even better but was rejected because the runtime verifier cannot reconstruct those inputs today without an API change. The final production-safe variant therefore keeps an implicit native slot plus three explicit non-native slot-asset columns. That leaves the trace thinner and proofs slightly smaller, but the warmed single-tx benchmark is roughly flat-to-slightly-worse than the earlier `158`-column checkpoint, so this part should be treated as a low-ROI structural cleanup rather than a dramatic performance win.
+
+The optional backend spike is useful, but only in the narrow way it was intended. The isolated `p3-circle` / M31 shape proxy under `spikes/circle-transaction-shape/` showed much smaller/faster proofs on a synthetic `8192 x 146` envelope. That is enough evidence to justify a future real backend study, but not enough to justify a migration claim on its own because the spike is not Hegemon’s real transaction AIR and does not preserve the exact production security profile.
 
 ## Context and Orientation
 
@@ -165,11 +188,11 @@ The original baseline, measured on this machine on 2026-03-13 before any changes
 - Batch-only smoke benchmark at `batch_size = 4`: about `0.240 tx/s`, which is worse than the single-transaction path on the same machine.
 - Production-parameter transaction roundtrip: `bytes=376812`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
 
-The current post-change state after the latest landed optimizations is:
+The current post-change state after the latest landed production optimizations is:
 
-- Single transaction smoke benchmark: about `356 KB` proofs, about `0.883 tx/s`, and about `1.12 s` of proving time per transaction.
-- Batch-only smoke benchmark at `batch_size = 4`: about `0.371 tx/s`, still worse than the single-transaction path, but materially better than the original batch baseline.
-- Production-parameter transaction roundtrip: `bytes=356577`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
+- Single transaction smoke benchmark: about `355 KB` proofs, about `0.868 tx/s`, and about `1.14 s` of proving time per transaction on warmed runs.
+- Batch-only smoke benchmark at `batch_size = 4`: about `0.372 tx/s`, still worse than the single-transaction path, but materially better than the original batch baseline.
+- Production-parameter transaction roundtrip: `bytes=354777`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
 
 This plan keeps the protocol statement fixed. It does not change the `2-in/2-out` join-split shape, the `32`-level Merkle path, the 48-byte encoding, or the current production FRI target. The work is entirely about how efficiently the existing statement is represented and proven.
 

@@ -806,7 +806,7 @@ For each input `i`:
    \]
 
    and constrain `nf_calc[i] == nf_in[i]`.
-   * The AIR now binds `rho_in[i]` across phases: the four rho limbs absorbed in the commitment cycle are copied into dedicated trace columns and must match the rho limbs absorbed in the nullifier cycle.
+   * The AIR now binds `rho_in[i]` across phases with a shared four-limb carry lane: it holds input 0's rho until input 0's nullifier phase finishes, then reuses the same lane for input 1's rho.
    * The AIR also derives `nk` in-circuit from `sk_spend` (first cycle) and constrains each nullifier absorb row to use that derived key.
    * The AIR derives `pk_auth` from the same `sk_spend` derivation state and constrains each active input commitment to absorb that exact `pk_auth`.
 
@@ -836,7 +836,7 @@ Assume each transaction can involve at most `K` distinct assets (e.g., `K = 4`).
 
 Witness for MASP:
 
-* For `k = 0 .. K-1`: `asset_slot[k]` (one 64-bit field element) and running `sum_in[k]`, `sum_out[k]` (field elements representing 64-bit totals).
+* Slot 0 is an implicit native-asset slot; the trace stores running `sum_in[k]`, `sum_out[k]` for all `k = 0 .. K-1`, and stores explicit `asset_slot[k]` values only for the non-native slots `k = 1 .. K-1`.
 * For each fixed note slot, two selector bits encode the chosen balance slot (`00`, `01`, `10`, `11`).
 
 Constraints:
