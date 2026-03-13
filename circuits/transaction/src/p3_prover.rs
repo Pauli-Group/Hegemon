@@ -14,9 +14,7 @@ use crate::hashing_pq::{
     bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use crate::p3_config::{
-    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
-};
+use crate::p3_config::{config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
@@ -32,8 +30,7 @@ use transaction_core::p3_air::{
     COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0,
     COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3,
     COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED,
-    COL_RANGE_FEE_BITS_START, COL_RANGE_ISSUANCE_BITS_START, COL_RANGE_NOTE_BITS_START,
-    COL_RANGE_VB_BITS_START, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4,
+    COL_RANGE_NOTE_BITS_START, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4,
     COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0,
     COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1,
     COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1,
@@ -95,6 +92,12 @@ impl TransactionProofParams {
                 .max(1),
         }
     }
+}
+
+pub fn prewarm_transaction_prover_cache_p3(
+    _params: TransactionProofParams,
+) -> Result<(), TransactionCircuitError> {
+    Ok(())
 }
 
 impl Default for TransactionProverP3 {
@@ -339,14 +342,14 @@ impl TransactionProverP3 {
         }
 
         let final_row = trace_len.saturating_sub(2);
+        let value_balance_row = trace_len.saturating_sub(3);
+        let issuance_row = trace_len.saturating_sub(4);
         if final_row < trace_len {
             let row_slice = trace.row_mut(final_row);
             row_slice[COL_FEE] = fee;
             row_slice[COL_VALUE_BALANCE_SIGN] = vb_sign;
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
-            set_range_bits(row_slice, COL_RANGE_FEE_BITS_START, witness.fee);
-            set_range_bits(row_slice, COL_RANGE_VB_BITS_START, vb_mag_u64);
-            set_range_bits(row_slice, COL_RANGE_ISSUANCE_BITS_START, issuance_mag_u64);
+            set_range_bits(row_slice, COL_RANGE_NOTE_BITS_START, witness.fee);
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
@@ -448,6 +451,18 @@ impl TransactionProverP3 {
                         stablecoin_inputs.attestation_commitment[5] + one;
                 }
             }
+        }
+
+        if value_balance_row < trace_len {
+            let row_slice = trace.row_mut(value_balance_row);
+            row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
+            set_range_bits(row_slice, COL_RANGE_NOTE_BITS_START, vb_mag_u64);
+        }
+
+        if issuance_row < trace_len {
+            let row_slice = trace.row_mut(issuance_row);
+            row_slice[COL_STABLECOIN_ISSUANCE_MAG] = stablecoin_inputs.issuance_mag;
+            set_range_bits(row_slice, COL_RANGE_NOTE_BITS_START, issuance_mag_u64);
         }
 
         let mut slot_in_acc = [0u64; 4];

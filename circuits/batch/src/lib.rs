@@ -1,8 +1,13 @@
-//! Batch transaction circuit for STARK proof aggregation.
+//! Slot-copy batch transaction circuit.
 //!
 //! This crate provides batch proving capabilities that allow multiple
-//! transactions to be proven in a single Plonky3 STARK proof, reducing
-//! verification costs from O(N) to O(1).
+//! transactions to be proven in a single Plonky3 STARK proof by copying
+//! single-transaction traces into fixed slots inside a larger AIR.
+//!
+//! This is a bounded utility path for wallet-side batching, consolidation,
+//! and verification amortization experiments. It is not the primary
+//! world-commerce throughput lane. For public scaling, use the recursion /
+//! aggregation path in `circuits/aggregation`.
 //!
 //! ## Key Components
 //!
@@ -31,10 +36,10 @@
 //!
 //! ## Performance
 //!
-//! Batch proofs provide significant efficiency gains:
-//! - 16 transactions: ~12x proof size reduction
-//! - Verification time: O(1) instead of O(N)
-//! - Prover time: Approximately linear in batch size
+//! This circuit can reduce verifier work for some bounded workloads, but it
+//! still pays to build a larger monolithic trace. Measure it against the
+//! single-transaction prover and the recursion lane before treating it as a
+//! throughput improvement.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 

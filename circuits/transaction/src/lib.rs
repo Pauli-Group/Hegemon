@@ -43,8 +43,11 @@ pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use witness::TransactionWitness;
 
 // Plonky3 exports (default)
-pub use p3_prover::TransactionProverP3;
-pub use p3_verifier::{verify_transaction_proof_bytes_p3, TransactionVerifyErrorP3};
+pub use p3_prover::{prewarm_transaction_prover_cache_p3, TransactionProverP3};
+pub use p3_verifier::{
+    prewarm_transaction_verifier_cache_p3, verify_transaction_proof_bytes_p3,
+    TransactionVerifyErrorP3,
+};
 pub use transaction_core::p3_air::{
     TransactionAirP3, TransactionPublicInputsP3, MIN_TRACE_LENGTH as P3_MIN_TRACE_LENGTH,
     TRACE_WIDTH as P3_TRACE_WIDTH,

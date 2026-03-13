@@ -16,8 +16,8 @@ use crate::{
     witness::TransactionWitness,
 };
 
-use crate::p3_prover::TransactionProverP3;
 use crate::p3_prover::TransactionProofParams;
+use crate::p3_prover::TransactionProverP3;
 use crate::p3_verifier::verify_transaction_proof_bytes_p3;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;

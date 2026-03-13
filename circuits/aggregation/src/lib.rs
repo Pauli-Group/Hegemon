@@ -18,7 +18,7 @@ use p3_matrix::Matrix;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
-use p3_recursion::{Recursive, generate_challenges, verify_circuit};
+use p3_recursion::{generate_challenges, verify_circuit, Recursive};
 use p3_uni_stark::verify as verify_stark;
 use p3_uni_stark::SymbolicAirBuilder;
 use p3_uni_stark::Val as StarkVal;
@@ -48,10 +48,9 @@ use transaction_circuit::{
 };
 
 pub use v5::{
-    AggregationNodeKind, AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
-    AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
-    prove_aggregation, prove_leaf_aggregation, prove_merge_aggregation,
-    prewarm_thread_local_aggregation_cache_from_env,
+    prewarm_thread_local_aggregation_cache_from_env, prove_aggregation, prove_leaf_aggregation,
+    prove_merge_aggregation, AggregationNodeKind, AggregationProofV5Payload,
+    AGGREGATION_PROOF_FORMAT_ID_V5, AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
 };
 
 type InnerFri = FriProofTargets<
@@ -575,7 +574,10 @@ fn collect_witness_input_outputs(circuit: &Circuit<Challenge>) -> HashSet<Witnes
                 executor, outputs, ..
             } if executor
                 .op_type()
-                .eq(&p3_circuit::NonPrimitiveOpType::WitnessInput) => Some(outputs),
+                .eq(&p3_circuit::NonPrimitiveOpType::WitnessInput) =>
+            {
+                Some(outputs)
+            }
             _ => None,
         })
         .flat_map(|outputs| outputs.iter().flatten().copied())
@@ -1690,8 +1692,8 @@ fn legacy_v4_prove_aggregation(
         );
     }
 
-    let outer_prover =
-        BatchStarkProver::new(aggregation_outer_config()).with_table_packing(aggregation_table_packing());
+    let outer_prover = BatchStarkProver::new(aggregation_outer_config())
+        .with_table_packing(aggregation_table_packing());
     let prove_started = Instant::now();
     let configured_threads = std::env::var("HEGEMON_AGG_PROVER_THREADS")
         .ok()
@@ -1818,7 +1820,11 @@ fn pack_recursion_public_values_v1(values: &[Challenge]) -> Vec<u64> {
 
 fn describe_witness_origin(circuit: &Circuit<Challenge>, witness_id: WitnessId) -> String {
     let mut parts = Vec::new();
-    if let Some(public_pos) = circuit.public_rows.iter().position(|row| *row == witness_id) {
+    if let Some(public_pos) = circuit
+        .public_rows
+        .iter()
+        .position(|row| *row == witness_id)
+    {
         parts.push(format!("public_row[{public_pos}]"));
     }
     for (op_index, op) in circuit.ops.iter().enumerate() {
@@ -1895,7 +1901,10 @@ fn collect_owned_witnesses(circuit: &Circuit<Challenge>) -> HashSet<WitnessId> {
     let mut owned = circuit.public_rows.iter().copied().collect::<HashSet<_>>();
     for op in &circuit.ops {
         match op {
-            Op::Const { out, .. } | Op::Public { out, .. } | Op::Add { out, .. } | Op::Mul { out, .. } => {
+            Op::Const { out, .. }
+            | Op::Public { out, .. }
+            | Op::Add { out, .. }
+            | Op::Mul { out, .. } => {
                 owned.insert(*out);
             }
             Op::NonPrimitiveOpWithExecutor { outputs, .. } => {
@@ -1930,10 +1939,12 @@ fn set_stark_verifier_witnesses_with_plans(
             .iter()
             .zip(assignment_plan.witness_ids.iter().copied())
         {
-            let value = *values.get(position).ok_or(CircuitError::PublicInputLengthMismatch {
-                expected: position + 1,
-                got: values.len(),
-            })?;
+            let value = *values
+                .get(position)
+                .ok_or(CircuitError::PublicInputLengthMismatch {
+                    expected: position + 1,
+                    got: values.len(),
+                })?;
             runner.set_witness_value(witness_id, value)?;
         }
     }

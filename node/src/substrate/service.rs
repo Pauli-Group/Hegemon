@@ -2472,9 +2472,7 @@ fn merge_root_tree_levels_for_tx_count(tx_count: usize) -> u16 {
     }
 }
 
-fn merge_root_leaf_manifest_commitment(
-    statement_hashes: &[[u8; 48]],
-) -> Result<[u8; 48], String> {
+fn merge_root_leaf_manifest_commitment(statement_hashes: &[[u8; 48]]) -> Result<[u8; 48], String> {
     let leaf_fan_in = merge_root_leaf_fan_in_from_env();
     let mut manifest_material = Vec::new();
     manifest_material.extend_from_slice(b"agg-leaf-manifest-v1");

@@ -21,9 +21,14 @@ use transaction_circuit::{
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     p3_config::{DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS},
+    p3_prover::prewarm_transaction_prover_cache_p3,
+    p3_verifier::{prewarm_transaction_verifier_cache_p3, InferredFriProfileP3},
     proof, StablecoinPolicyBinding, TransactionProverP3, TransactionWitness,
 };
 use transaction_circuit::{TransactionAirP3, TransactionPublicInputsP3};
+use transaction_core::p3_air::{
+    PREPROCESSED_WIDTH as TX_PREPROCESSED_WIDTH, TRACE_WIDTH as TX_TRACE_WIDTH,
+};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
@@ -77,6 +82,11 @@ struct BenchReport {
     fri_num_queries: usize,
     fri_query_pow_bits: usize,
     fri_conjectured_soundness_bits: usize,
+    tx_trace_rows: usize,
+    tx_trace_width: usize,
+    tx_schedule_width: usize,
+    tx_prove_ns_per_tx: u128,
+    tx_verify_ns_per_tx: u128,
     digest_bytes: usize,
     poseidon2_width: usize,
     poseidon2_rate: usize,
@@ -89,6 +99,8 @@ struct BenchReport {
     batch_witness_ns: u128,
     batch_prove_ns: u128,
     batch_verify_ns: u128,
+    batch_prove_ns_per_tx: u128,
+    batch_verify_ns_per_tx: u128,
     batch_transactions_per_second: f64,
 }
 
@@ -112,9 +124,14 @@ fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "circuits-bench: iterations={iterations} tx_proof_avg={}B tx_proof_max={}B witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2} batch_size={} batch_witness_ns={} batch_prove_ns={} batch_verify_ns={} batch_tx/s={:.2}",
+            "circuits-bench: iterations={iterations} tx_proof_avg={}B tx_proof_max={}B tx_rows={} tx_width={} tx_schedule_width={} tx_prove_ns_per_tx={} tx_verify_ns_per_tx={} witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2} batch_size={} batch_witness_ns={} batch_prove_ns={} batch_verify_ns={} batch_prove_ns_per_tx={} batch_verify_ns_per_tx={} batch_tx/s={:.2}",
             report.tx_proof_bytes_avg,
             report.tx_proof_bytes_max,
+            report.tx_trace_rows,
+            report.tx_trace_width,
+            report.tx_schedule_width,
+            report.tx_prove_ns_per_tx,
+            report.tx_verify_ns_per_tx,
             report.witness_ns,
             report.prove_ns,
             report.verify_ns,
@@ -127,6 +144,8 @@ fn main() -> Result<()> {
             report.batch_witness_ns,
             report.batch_prove_ns,
             report.batch_verify_ns,
+            report.batch_prove_ns_per_tx,
+            report.batch_verify_ns_per_tx,
             report.batch_transactions_per_second
         );
     }
@@ -160,6 +179,7 @@ fn run_benchmark(
     let mut tx_proof_bytes_min: usize = usize::MAX;
     let mut tx_proof_bytes_max: usize = 0;
     let mut tx_log_chunks: Option<usize> = None;
+    let mut tx_prewarmed = false;
     let mut rng = ChaCha20Rng::seed_from_u64(0xC1C01E75);
 
     let mut commitment_tree = if !batch_only {
@@ -199,6 +219,21 @@ fn run_benchmark(
                     pub_inputs_vec.len(),
                     0,
                 ));
+            }
+
+            if !tx_prewarmed {
+                let log_chunks = tx_log_chunks.expect("tx log chunks computed");
+                let fri_profile = InferredFriProfileP3 {
+                    log_blowup: FRI_LOG_BLOWUP.max(log_chunks),
+                    num_queries: FRI_NUM_QUERIES,
+                };
+                prewarm_transaction_prover_cache_p3(
+                    transaction_circuit::p3_prover::TransactionProofParams::production(),
+                )
+                .context("prewarm transaction prover cache")?;
+                prewarm_transaction_verifier_cache_p3(fri_profile)
+                    .map_err(|err| anyhow!("prewarm transaction verifier cache: {err}"))?;
+                tx_prewarmed = true;
             }
 
             let prove_start = Instant::now();
@@ -321,8 +356,9 @@ fn run_benchmark(
     }
 
     let batch_total = batch_witness_time + batch_prove_time + batch_verify_time;
+    let batch_tx_count = iterations.saturating_mul(batch_size);
     let batch_transactions_per_second = if batch_size > 0 && batch_total.as_secs_f64() > 0.0 {
-        (iterations * batch_size) as f64 / batch_total.as_secs_f64()
+        batch_tx_count as f64 / batch_total.as_secs_f64()
     } else {
         0.0
     };
@@ -330,6 +366,29 @@ fn run_benchmark(
     let tx_log_num_quotient_chunks = tx_log_chunks.unwrap_or(0);
     let tx_log_blowup_used = FRI_LOG_BLOWUP.max(tx_log_num_quotient_chunks);
     let fri_conjectured_soundness_bits = tx_log_blowup_used * FRI_NUM_QUERIES + FRI_POW_BITS;
+    let tx_trace_rows = transaction_circuit::P3_MIN_TRACE_LENGTH;
+    let tx_trace_width = TX_TRACE_WIDTH;
+    let tx_schedule_width = TX_PREPROCESSED_WIDTH;
+    let tx_prove_ns_per_tx = if iterations > 0 {
+        prove_time.as_nanos() / iterations as u128
+    } else {
+        0
+    };
+    let tx_verify_ns_per_tx = if iterations > 0 {
+        verify_time.as_nanos() / iterations as u128
+    } else {
+        0
+    };
+    let batch_prove_ns_per_tx = if batch_tx_count > 0 {
+        batch_prove_time.as_nanos() / batch_tx_count as u128
+    } else {
+        0
+    };
+    let batch_verify_ns_per_tx = if batch_tx_count > 0 {
+        batch_verify_time.as_nanos() / batch_tx_count as u128
+    } else {
+        0
+    };
 
     let poseidon2_width = transaction_circuit::constants::POSEIDON2_WIDTH;
     let poseidon2_rate = transaction_circuit::constants::POSEIDON2_RATE;
@@ -365,6 +424,11 @@ fn run_benchmark(
         fri_num_queries: FRI_NUM_QUERIES,
         fri_query_pow_bits: FRI_POW_BITS,
         fri_conjectured_soundness_bits,
+        tx_trace_rows,
+        tx_trace_width,
+        tx_schedule_width,
+        tx_prove_ns_per_tx,
+        tx_verify_ns_per_tx,
         digest_bytes: DIGEST_ELEMS * 8,
         poseidon2_width,
         poseidon2_rate,
@@ -377,6 +441,8 @@ fn run_benchmark(
         batch_witness_ns: batch_witness_time.as_nanos(),
         batch_prove_ns: batch_prove_time.as_nanos(),
         batch_verify_ns: batch_verify_time.as_nanos(),
+        batch_prove_ns_per_tx,
+        batch_verify_ns_per_tx,
         batch_transactions_per_second,
     })
 }

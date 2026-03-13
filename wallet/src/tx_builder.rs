@@ -864,7 +864,9 @@ mod tests {
             let ciphertext = NoteCiphertext::encrypt(&sender_addr, &note, &mut rng).unwrap();
             let recovered = sender_ivk.decrypt_note(&ciphertext).unwrap();
             let commitment = felts_to_bytes48(&recovered.note_data.commitment());
-            sender.append_commitments(&[(position, commitment)]).unwrap();
+            sender
+                .append_commitments(&[(position, commitment)])
+                .unwrap();
             sender.register_ciphertext_index(position).unwrap();
             sender
                 .record_recovered_note(recovered, position, position)
@@ -921,17 +923,14 @@ mod tests {
         let anchor = sender.commitment_tree().unwrap().root();
         let ciphertext_hashes = ciphertexts
             .iter()
-            .map(|note| note.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+            .map(|note| {
+                note.to_da_bytes()
+                    .map(|bytes| ciphertext_hash_bytes(&bytes))
+            })
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let binding_hash = compute_binding_hash(
-            &anchor,
-            &nullifiers,
-            &commitments,
-            &ciphertext_hashes,
-            0,
-            0,
-        );
+        let binding_hash =
+            compute_binding_hash(&anchor, &nullifiers, &commitments, &ciphertext_hashes, 0, 0);
         let bundle = TransactionBundle::new(
             Vec::new(),
             nullifiers.clone(),
@@ -947,7 +946,10 @@ mod tests {
         let decoded = bundle.decode_notes().unwrap();
         let decoded_hashes = decoded
             .iter()
-            .map(|note| note.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+            .map(|note| {
+                note.to_da_bytes()
+                    .map(|bytes| ciphertext_hash_bytes(&bytes))
+            })
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 

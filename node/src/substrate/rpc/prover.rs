@@ -248,8 +248,8 @@ impl ProverRpc {
     }
 
     fn map_merge_node_payload(payload: MergeNodeWorkData) -> RpcResult<MergeNodePayloadResponse> {
-        let child_proof_payloads_bincode =
-            bincode::serialize(&payload.child_proof_payloads).map_err(|err| {
+        let child_proof_payloads_bincode = bincode::serialize(&payload.child_proof_payloads)
+            .map_err(|err| {
                 ErrorObjectOwned::owned(
                     INVALID_PARAMS_CODE,
                     format!("failed to serialize child proof payloads: {err}"),
@@ -544,7 +544,7 @@ mod tests {
     use sp_core::H256;
     use std::sync::Arc;
     use std::time::Duration;
-    use transaction_circuit::{public_inputs::TransactionPublicInputs, proof::TransactionProof};
+    use transaction_circuit::{proof::TransactionProof, public_inputs::TransactionPublicInputs};
 
     fn payload(tx_count: u32) -> pallet_shielded_pool::types::CandidateArtifact {
         pallet_shielded_pool::types::CandidateArtifact {
@@ -666,7 +666,9 @@ mod tests {
             .expect("status call should succeed")
             .expect("status should exist");
         assert!(
-            status.status == "pending" || status.status == "rejected" || status.status == "accepted",
+            status.status == "pending"
+                || status.status == "rejected"
+                || status.status == "accepted",
             "status should reflect the latest submission outcome"
         );
 

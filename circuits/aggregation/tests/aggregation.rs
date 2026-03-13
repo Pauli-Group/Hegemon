@@ -1,18 +1,18 @@
 use aggregation_circuit::{
-    AggregationNodeKind, AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
-    AGGREGATION_PUBLIC_VALUES_ENCODING_V2, prove_aggregation, prove_leaf_aggregation,
-    prove_merge_aggregation,
+    prove_aggregation, prove_leaf_aggregation, prove_merge_aggregation, AggregationNodeKind,
+    AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
+    AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
 };
 use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
 use crypto::hashes::blake3_384;
 use p3_field::PrimeCharacteristicRing;
 use std::time::Instant;
-use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
+use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionProof,
     TransactionWitness,
@@ -205,7 +205,7 @@ fn aggregation_v5_leaf_roundtrip() {
         &proving_key,
         TransactionProofParams::recursion(),
     )
-        .expect("generate transaction proof");
+    .expect("generate transaction proof");
 
     let proofs = vec![proof];
     let tx_statements_commitment = tx_statements_commitment_from_proofs(&proofs);
@@ -269,7 +269,7 @@ fn aggregation_v5_leaf_fanin8_profile_roundtrip() {
         &proving_key,
         TransactionProofParams::recursion(),
     )
-        .expect("generate transaction proof");
+    .expect("generate transaction proof");
     let proofs = vec![proof; configured_leaf_fanin()];
     let statement_hashes = statement_hashes_from_proofs(&proofs);
     let commitment = tx_statements_commitment_from_proofs(&proofs);
@@ -289,7 +289,7 @@ fn aggregation_v5_leaf_fanin8_cold_warm_profile() {
         &proving_key,
         TransactionProofParams::recursion(),
     )
-        .expect("generate transaction proof");
+    .expect("generate transaction proof");
     let fan_in = configured_leaf_fanin();
     let proofs = vec![proof; fan_in];
     let statement_hashes = statement_hashes_from_proofs(&proofs);
@@ -333,7 +333,11 @@ fn aggregation_v5_merge_cold_warm_profile() {
         .collect::<Vec<_>>();
     let commitment = tx_statements_commitment_from_proofs(&all_proofs);
     let tx_count = all_proofs.len();
-    let tree_levels: usize = if tx_count <= configured_leaf_fanin() { 1 } else { 2 };
+    let tree_levels: usize = if tx_count <= configured_leaf_fanin() {
+        1
+    } else {
+        2
+    };
     let root_level: usize = tree_levels.saturating_sub(1);
 
     let cold_started = Instant::now();

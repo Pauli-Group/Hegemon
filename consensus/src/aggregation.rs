@@ -235,17 +235,14 @@ fn build_aggregation_verifier_cache_entry(
     })?;
 
     let table_packing = TablePacking::new(4, 4, 1);
-    let (airs_degrees, _) =
-        get_airs_and_degrees_with_prep::<Config, _, 2>(
-            &circuit,
-            table_packing,
-            None,
-        )
-        .map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "aggregation AIR setup failed: {err:?}"
-            ))
-        })?;
+    let (airs_degrees, _) = get_airs_and_degrees_with_prep::<Config, _, 2>(
+        &circuit,
+        table_packing,
+        None,
+    )
+    .map_err(|err| {
+        ProofError::AggregationProofVerification(format!("aggregation AIR setup failed: {err:?}"))
+    })?;
     let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
 
     let outer_config = outer_batch_config();

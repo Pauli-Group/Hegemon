@@ -450,8 +450,10 @@ impl ProofVerifier for ParallelProofVerifier {
                         .iter()
                         .map(|binding| binding.statement_hash)
                         .collect::<Vec<_>>();
-                    let expected_leaf_count =
-                        statement_hashes.len().div_ceil(merge_root_leaf_fan_in_from_env()) as u32;
+                    let expected_leaf_count = statement_hashes
+                        .len()
+                        .div_ceil(merge_root_leaf_fan_in_from_env())
+                        as u32;
                     if merge_root.metadata.leaf_count != expected_leaf_count {
                         return Err(ProofError::ProvenBatchBindingMismatch(format!(
                             "merge-root leaf_count mismatch (payload {}, expected {})",

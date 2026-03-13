@@ -1,3 +1,6 @@
+use block_circuit::CommitmentBlockProver;
+use consensus::encode_aggregation_proof_bytes;
+use crypto::hashes::blake3_384;
 use parking_lot::Mutex;
 use sp_core::H256;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -6,9 +9,6 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use transaction_circuit::proof::TransactionProof;
-use block_circuit::CommitmentBlockProver;
-use consensus::encode_aggregation_proof_bytes;
-use crypto::hashes::blake3_384;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BundleMatchKey {
@@ -331,7 +331,11 @@ impl WorkerPool {
                                 let block_number = job.block_number;
                                 let candidate_txs = job.candidate_txs.clone();
                                 match panic::catch_unwind(AssertUnwindSafe(|| {
-                                    worker_prepare_bundle_fn(parent_hash, block_number, candidate_txs)
+                                    worker_prepare_bundle_fn(
+                                        parent_hash,
+                                        block_number,
+                                        candidate_txs,
+                                    )
                                 })) {
                                     Ok(result) => WorkerOutcome::Bundle(Box::new(result)),
                                     Err(panic_payload) => {
@@ -1793,9 +1797,11 @@ impl ProverCoordinator {
                         let tree_levels =
                             Self::recursive_tree_levels_for_tx_count(primary_candidate.len());
                         let leaf_fan_in = Self::leaf_fan_in();
-                        let expected_chunks =
-                            primary_candidate.len().div_ceil(leaf_fan_in).min(u16::MAX as usize)
-                                as u16;
+                        let expected_chunks = primary_candidate
+                            .len()
+                            .div_ceil(leaf_fan_in)
+                            .min(u16::MAX as usize)
+                            as u16;
                         let mut chunk_plans = Vec::new();
                         for (chunk_index, (proof_chunk, hash_chunk)) in root_payload
                             .tx_proofs
@@ -1804,7 +1810,8 @@ impl ProverCoordinator {
                             .enumerate()
                         {
                             let start = (chunk_index * leaf_fan_in) as u32;
-                            let end = (start as usize + proof_chunk.len()).min(primary_candidate.len());
+                            let end =
+                                (start as usize + proof_chunk.len()).min(primary_candidate.len());
                             let leaf_payload = LeafBatchWorkData {
                                 statement_hashes: hash_chunk.to_vec(),
                                 tx_proofs: proof_chunk.to_vec(),
@@ -1838,7 +1845,9 @@ impl ProverCoordinator {
                                     submissions: 0,
                                 },
                             );
-                            state.work_status.insert(package_id.clone(), WorkStatus::Pending);
+                            state
+                                .work_status
+                                .insert(package_id.clone(), WorkStatus::Pending);
                             if self.worker_pool.worker_count() > 0 {
                                 let job = QueuedJob {
                                     id: state.next_job_id,
@@ -2528,7 +2537,8 @@ impl ProverCoordinator {
             .map_err(|err| format!("commitment proof generation failed: {err}"))?;
         let tree_levels = Self::recursive_tree_levels_for_tx_count(candidate_txs.len());
         let leaf_count = candidate_txs.len().div_ceil(Self::leaf_fan_in()) as u32;
-        let leaf_manifest_commitment = Self::leaf_manifest_commitment(&root_payload.statement_hashes)?;
+        let leaf_manifest_commitment =
+            Self::leaf_manifest_commitment(&root_payload.statement_hashes)?;
         let merge_root = pallet_shielded_pool::types::MergeRootProofPayload {
             root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
                 encode_aggregation_proof_bytes(root_aggregation_proof),
@@ -2644,7 +2654,9 @@ impl ProverCoordinator {
                 .iter()
                 .any(|chunk| chunk.package_id == package_id)
             {
-                assembly.leaf_results.insert(package_id.to_string(), proof_bytes);
+                assembly
+                    .leaf_results
+                    .insert(package_id.to_string(), proof_bytes);
                 if assembly.leaf_results.len() < assembly.leaf_chunks.len() {
                     return Ok(None);
                 }
@@ -2702,7 +2714,9 @@ impl ProverCoordinator {
                     );
                     let merge_package_id = package.package_id.clone();
                     state.latest_stage_work_package = Some(merge_package_id.clone());
-                    state.stage_work_package_queue.push_back(merge_package_id.clone());
+                    state
+                        .stage_work_package_queue
+                        .push_back(merge_package_id.clone());
                     state.work_packages.insert(
                         merge_package_id.clone(),
                         WorkPackageRecord {
@@ -3154,9 +3168,7 @@ mod tests {
     use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{MerklePath, NoteData, OutputNoteWitness};
-    use transaction_circuit::{
-        InputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
-    };
+    use transaction_circuit::{InputNoteWitness, StablecoinPolicyBinding, TransactionWitness};
 
     fn test_config() -> ProverCoordinatorConfig {
         ProverCoordinatorConfig {
@@ -3229,8 +3241,12 @@ mod tests {
         }
 
         (
-            MerklePath { siblings: siblings0 },
-            MerklePath { siblings: siblings1 },
+            MerklePath {
+                siblings: siblings0,
+            },
+            MerklePath {
+                siblings: siblings1,
+            },
             current,
         )
     }
@@ -3321,8 +3337,7 @@ mod tests {
             .get_or_init(|| {
                 let witness = sample_witness();
                 let (proving_key, _) = generate_keys();
-                transaction_circuit::proof::prove(&witness, &proving_key)
-                    .expect("sample tx proof")
+                transaction_circuit::proof::prove(&witness, &proving_key).expect("sample tx proof")
             })
             .clone()
     }
@@ -4029,7 +4044,10 @@ mod tests {
                     }
                 }
             }
-            eprintln!("recursive_scaling_summary tx_count={} results={:?}", tx_count, results);
+            eprintln!(
+                "recursive_scaling_summary tx_count={} results={:?}",
+                tx_count, results
+            );
         }
     }
 

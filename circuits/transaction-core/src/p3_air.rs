@@ -196,16 +196,10 @@ pub const COL_CT1_5: usize = 127;
 /// Bit-length used for in-circuit monetary range checks.
 pub const VALUE_RANGE_BITS: usize = 61;
 
-/// Shared range-check scratch bits (note values).
+/// Shared range-check scratch bits reused across note, fee, value-balance, and issuance rows.
 pub const COL_RANGE_NOTE_BITS_START: usize = COL_CT1_5 + 1;
-/// Shared range-check scratch bits (fee).
-pub const COL_RANGE_FEE_BITS_START: usize = COL_RANGE_NOTE_BITS_START + VALUE_RANGE_BITS;
-/// Shared range-check scratch bits (value balance magnitude).
-pub const COL_RANGE_VB_BITS_START: usize = COL_RANGE_FEE_BITS_START + VALUE_RANGE_BITS;
-/// Shared range-check scratch bits (stablecoin issuance magnitude).
-pub const COL_RANGE_ISSUANCE_BITS_START: usize = COL_RANGE_VB_BITS_START + VALUE_RANGE_BITS;
 /// Base trace width (columns) for the transaction circuit.
-pub const BASE_TRACE_WIDTH: usize = COL_RANGE_ISSUANCE_BITS_START + VALUE_RANGE_BITS;
+pub const BASE_TRACE_WIDTH: usize = COL_RANGE_NOTE_BITS_START + VALUE_RANGE_BITS;
 
 // ================================================================================================
 // SCHEDULE COLUMNS (fixed schedule stored in main trace)
@@ -245,7 +239,9 @@ pub const PREP_NOTE_START_OUT0: usize = PREP_NOTE_START_IN1 + 1;
 pub const PREP_NOTE_START_OUT1: usize = PREP_NOTE_START_OUT0 + 1;
 /// Row selector flags for public input assertions.
 pub const PREP_FINAL_ROW: usize = PREP_NOTE_START_OUT1 + 1;
-pub const PREP_NF0_ROW: usize = PREP_FINAL_ROW + 1;
+pub const PREP_VALUE_BALANCE_ROW: usize = PREP_FINAL_ROW + 1;
+pub const PREP_ISSUANCE_ROW: usize = PREP_VALUE_BALANCE_ROW + 1;
+pub const PREP_NF0_ROW: usize = PREP_ISSUANCE_ROW + 1;
 pub const PREP_NF1_ROW: usize = PREP_NF0_ROW + 1;
 pub const PREP_MR0_ROW: usize = PREP_NF1_ROW + 1;
 pub const PREP_MR1_ROW: usize = PREP_MR0_ROW + 1;
@@ -733,6 +729,14 @@ pub fn note_start_row_output(output_index: usize) -> usize {
     (output_commitment_start_cycle(output_index) - 1) * CYCLE_LENGTH + (CYCLE_LENGTH - 1)
 }
 
+pub const fn value_balance_range_row() -> usize {
+    MIN_TRACE_LENGTH - 3
+}
+
+pub const fn issuance_range_row() -> usize {
+    MIN_TRACE_LENGTH - 4
+}
+
 pub fn build_schedule_trace() -> RowMajorMatrix<Felt> {
     let trace_len = MIN_TRACE_LENGTH;
     let mut values = vec![Felt::ZERO; trace_len * PREPROCESSED_WIDTH];
@@ -806,6 +810,8 @@ pub fn build_schedule_trace() -> RowMajorMatrix<Felt> {
         row_slice[PREP_NOTE_START_OUT1] = Felt::from_bool(row == note_start_row_output(1));
 
         row_slice[PREP_FINAL_ROW] = Felt::from_bool(row == MIN_TRACE_LENGTH - 2);
+        row_slice[PREP_VALUE_BALANCE_ROW] = Felt::from_bool(row == value_balance_range_row());
+        row_slice[PREP_ISSUANCE_ROW] = Felt::from_bool(row == issuance_range_row());
         row_slice[PREP_NF0_ROW] = Felt::from_bool(row == nullifier_output_row(0));
         row_slice[PREP_NF1_ROW] = Felt::from_bool(row == nullifier_output_row(1));
         row_slice[PREP_MR0_ROW] = Felt::from_bool(row == merkle_root_output_row(0));
@@ -853,7 +859,6 @@ where
         let first_row = is_first_row.clone() * AB::Expr::from_u64(trace_len_inv.as_canonical_u64());
         let not_first_row = one.clone() - first_row;
         let schedule_base = COL_SCHEDULE_START;
-
         let hash_flag: AB::Expr = current[schedule_base + PREP_HASH_FLAG].clone().into();
         let absorb_flag: AB::Expr = current[schedule_base + PREP_ABSORB_FLAG].clone().into();
         let init_round: AB::Expr = current[schedule_base + PREP_INIT_ROUND].clone().into();
@@ -888,6 +893,10 @@ where
             current[schedule_base + PREP_NOTE_START_OUT1].clone().into();
 
         let final_row_mask: AB::Expr = current[schedule_base + PREP_FINAL_ROW].clone().into();
+        let value_balance_row: AB::Expr = current[schedule_base + PREP_VALUE_BALANCE_ROW]
+            .clone()
+            .into();
+        let issuance_row: AB::Expr = current[schedule_base + PREP_ISSUANCE_ROW].clone().into();
         let nf0_row: AB::Expr = current[schedule_base + PREP_NF0_ROW].clone().into();
         let nf1_row: AB::Expr = current[schedule_base + PREP_NF1_ROW].clone().into();
         let mr0_row: AB::Expr = current[schedule_base + PREP_MR0_ROW].clone().into();
@@ -1604,31 +1613,25 @@ where
 
         let mut fee_range = AB::Expr::ZERO;
         for bit in 0..VALUE_RANGE_BITS {
-            let bit_col = current[COL_RANGE_FEE_BITS_START + bit].clone();
-            when.assert_bool(bit_col.clone());
-            fee_range += bit_col * AB::Expr::from_u64(1u64 << bit);
+            fee_range +=
+                current[COL_RANGE_NOTE_BITS_START + bit].clone() * AB::Expr::from_u64(1u64 << bit);
         }
         when.assert_zero(final_row_mask.clone() * (current[COL_FEE].clone() - fee_range));
 
         let mut vb_range = AB::Expr::ZERO;
         for bit in 0..VALUE_RANGE_BITS {
-            let bit_col = current[COL_RANGE_VB_BITS_START + bit].clone();
-            when.assert_bool(bit_col.clone());
-            vb_range += bit_col * AB::Expr::from_u64(1u64 << bit);
+            vb_range +=
+                current[COL_RANGE_NOTE_BITS_START + bit].clone() * AB::Expr::from_u64(1u64 << bit);
         }
-        when.assert_zero(
-            final_row_mask.clone() * (current[COL_VALUE_BALANCE_MAG].clone() - vb_range),
-        );
+        when.assert_zero(value_balance_row * (current[COL_VALUE_BALANCE_MAG].clone() - vb_range));
 
         let mut issuance_range = AB::Expr::ZERO;
         for bit in 0..VALUE_RANGE_BITS {
-            let bit_col = current[COL_RANGE_ISSUANCE_BITS_START + bit].clone();
-            when.assert_bool(bit_col.clone());
-            issuance_range += bit_col * AB::Expr::from_u64(1u64 << bit);
+            issuance_range +=
+                current[COL_RANGE_NOTE_BITS_START + bit].clone() * AB::Expr::from_u64(1u64 << bit);
         }
         when.assert_zero(
-            final_row_mask.clone()
-                * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - issuance_range),
+            issuance_row * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - issuance_range),
         );
 
         for (gate, in_offset, rho_word) in [

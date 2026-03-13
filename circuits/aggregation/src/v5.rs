@@ -8,7 +8,7 @@ use p3_lookup::logup::LogUpGadget;
 use p3_recursion::pcs::{
     FriProofTargets, InputProofTargets, RecExtensionValMmcs, RecValMmcs, Witness,
 };
-use p3_recursion::{BatchStarkVerifierInputsBuilder, Recursive, generate_batch_challenges};
+use p3_recursion::{generate_batch_challenges, BatchStarkVerifierInputsBuilder, Recursive};
 use p3_symmetric::Hash as MerkleDigest;
 use serde::{Deserialize, Serialize};
 
@@ -83,13 +83,8 @@ struct MergeWitnessAssignmentPlanSpec {
 
 struct MergeAggregationProverCacheEntry {
     circuit: Circuit<Challenge>,
-    verifier_inputs: Vec<
-        BatchStarkVerifierInputsBuilder<
-            Config,
-            OuterBatchHashTargets,
-            OuterBatchFri,
-        >,
-    >,
+    verifier_inputs:
+        Vec<BatchStarkVerifierInputsBuilder<Config, OuterBatchHashTargets, OuterBatchFri>>,
     witness_assignment_plans: Vec<MergeWitnessAssignmentPlan>,
     common: Arc<CommonData<Config>>,
     witness_multiplicities: OuterWitnessMultiplicities,
@@ -139,8 +134,8 @@ fn prove_outer_tables(
     common: Arc<CommonData<Config>>,
     witness_multiplicities: OuterWitnessMultiplicities,
 ) -> Result<OuterBatchStarkProof, AggregationError> {
-    let outer_prover = BatchStarkProver::new(outer_batch_config())
-        .with_table_packing(aggregation_table_packing());
+    let outer_prover =
+        BatchStarkProver::new(outer_batch_config()).with_table_packing(aggregation_table_packing());
     let configured_threads = outer_prover_threads();
     let prove_tables =
         move || outer_prover.prove_all_tables(traces, common.as_ref(), witness_multiplicities);
@@ -302,7 +297,10 @@ fn batch_verifier_params() -> FriVerifierParams {
 }
 
 fn batch_extra_params() -> [usize; 2] {
-    [FRI_POW_BITS, outer_batch_log_blowup() + BATCH_PROOF_LOG_FINAL_POLY_LEN]
+    [
+        FRI_POW_BITS,
+        outer_batch_log_blowup() + BATCH_PROOF_LOG_FINAL_POLY_LEN,
+    ]
 }
 
 fn outer_fri_targets(fri: &OuterBatchFri) -> Vec<p3_recursion::Target> {
@@ -340,9 +338,10 @@ fn collect_merge_assignment_values(
 ) -> Vec<Challenge> {
     let mut values =
         p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_private_values(proof);
-    values.extend(
-        p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(common),
-    );
+    values.extend(p3_recursion::CommonDataTargets::<
+        Config,
+        OuterBatchHashTargets,
+    >::get_private_values(common));
     values
 }
 
@@ -386,13 +385,14 @@ fn resolve_merge_assignment_plans(
         .ops
         .iter()
         .flat_map(|op| match op {
-            Op::Const { out, .. } | Op::Public { out, .. } | Op::Add { out, .. } | Op::Mul { out, .. } => {
+            Op::Const { out, .. }
+            | Op::Public { out, .. }
+            | Op::Add { out, .. }
+            | Op::Mul { out, .. } => {
                 vec![*out]
             }
             Op::NonPrimitiveOpWithExecutor {
-                executor,
-                outputs,
-                ..
+                executor, outputs, ..
             } if *executor.op_type() != p3_circuit::NonPrimitiveOpType::WitnessInput => {
                 outputs.iter().flatten().copied().collect()
             }
@@ -530,10 +530,12 @@ fn set_merge_verifier_witnesses(
             .iter()
             .zip(plan.witness_ids.iter().copied())
         {
-            let value = *values.get(position).ok_or(CircuitError::PublicInputLengthMismatch {
-                expected: position + 1,
-                got: values.len(),
-            })?;
+            let value = *values
+                .get(position)
+                .ok_or(CircuitError::PublicInputLengthMismatch {
+                    expected: position + 1,
+                    got: values.len(),
+                })?;
             let value_index = position;
             if let Some((first_index, first_value)) = assigned.get(&witness_id) {
                 if *first_value != value {
@@ -549,7 +551,8 @@ fn set_merge_verifier_witnesses(
             } else {
                 assigned.insert(witness_id, (value_index, value));
             }
-            if let Some((first_child, first_index, first_value)) = global_assigned.get(&witness_id) {
+            if let Some((first_child, first_index, first_value)) = global_assigned.get(&witness_id)
+            {
                 if *first_value != value {
                     return Err(CircuitError::WitnessConflict {
                         witness_id,
@@ -630,13 +633,13 @@ fn decode_leaf_child_context(bytes: &[u8]) -> Result<LeafChildContext, Aggregati
     let pub_inputs_vec = pub_inputs.to_vec();
     let query_count = representative_inner.opening_proof.query_proofs.len();
     let log_blowup = resolve_log_blowup(&representative_inner, &pub_inputs_vec, query_count)
-        .map_err(|message| AggregationError::InvalidProofShape {
-            index: 0,
-            message,
-        })?;
+        .map_err(|message| AggregationError::InvalidProofShape { index: 0, message })?;
     let shape = ProofShape {
         degree_bits: representative_inner.degree_bits,
-        commit_phase_len: representative_inner.opening_proof.commit_phase_commits.len(),
+        commit_phase_len: representative_inner
+            .opening_proof
+            .commit_phase_commits
+            .len(),
         final_poly_len: representative_inner.opening_proof.final_poly.len(),
         query_count,
     };
@@ -790,7 +793,10 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
     .map_err(|message| AggregationError::InvalidProofShape { index: 0, message })?;
     let shape = ProofShape {
         degree_bits: representative_inner.degree_bits,
-        commit_phase_len: representative_inner.opening_proof.commit_phase_commits.len(),
+        commit_phase_len: representative_inner
+            .opening_proof
+            .commit_phase_commits
+            .len(),
         final_poly_len: representative_inner.opening_proof.final_poly.len(),
         query_count,
     };
@@ -888,9 +894,8 @@ pub fn prove_leaf_aggregation(
         let query_count = inner_proof.opening_proof.query_proofs.len();
         if expected_log_blowup.is_none() {
             expected_log_blowup = Some(
-                resolve_log_blowup(&inner_proof, &pub_inputs_vec, query_count).map_err(
-                    |message| AggregationError::InvalidProofShape { index, message },
-                )?,
+                resolve_log_blowup(&inner_proof, &pub_inputs_vec, query_count)
+                    .map_err(|message| AggregationError::InvalidProofShape { index, message })?,
             );
         }
         let shape = ProofShape {
@@ -959,7 +964,8 @@ pub fn prove_leaf_aggregation(
     let log_height_max = expected_shape.final_poly_len.ilog2() as usize + log_blowup;
     let mut recursion_public_inputs = Vec::new();
     let challenge_started = Instant::now();
-    for (index, (proof, pub_inputs_vec)) in inner_proofs.iter().zip(public_inputs.iter()).enumerate()
+    for (index, (proof, pub_inputs_vec)) in
+        inner_proofs.iter().zip(public_inputs.iter()).enumerate()
     {
         let challenges = generate_challenges(
             &TransactionAirP3,
@@ -1014,37 +1020,34 @@ pub fn prove_leaf_aggregation(
         );
     }
     let run_started = Instant::now();
-    let traces = runner
-        .run()
-        .map_err(|err| {
-            let detail = match &err {
-                CircuitError::WitnessNotSetForIndex { index } => describe_witness_origin(
-                    &cache_result.entry.circuit,
-                    WitnessId(*index as u32),
-                ),
-                CircuitError::NonPrimitiveExecutionFailed { message, .. } => {
-                    if let Some(start) = message.find("WitnessNotSet { witness_id: WitnessId(") {
-                        let suffix = &message[start + "WitnessNotSet { witness_id: WitnessId(".len()..];
-                        if let Some(end) = suffix.find(')') {
-                            if let Ok(index) = suffix[..end].parse::<u32>() {
-                                describe_witness_origin(&cache_result.entry.circuit, WitnessId(index))
-                            } else {
-                                "n/a".to_string()
-                            }
+    let traces = runner.run().map_err(|err| {
+        let detail = match &err {
+            CircuitError::WitnessNotSetForIndex { index } => {
+                describe_witness_origin(&cache_result.entry.circuit, WitnessId(*index as u32))
+            }
+            CircuitError::NonPrimitiveExecutionFailed { message, .. } => {
+                if let Some(start) = message.find("WitnessNotSet { witness_id: WitnessId(") {
+                    let suffix = &message[start + "WitnessNotSet { witness_id: WitnessId(".len()..];
+                    if let Some(end) = suffix.find(')') {
+                        if let Ok(index) = suffix[..end].parse::<u32>() {
+                            describe_witness_origin(&cache_result.entry.circuit, WitnessId(index))
                         } else {
                             "n/a".to_string()
                         }
                     } else {
                         "n/a".to_string()
                     }
+                } else {
+                    "n/a".to_string()
                 }
-                CircuitError::WitnessConflict { witness_id, .. } => {
-                    describe_witness_origin(&cache_result.entry.circuit, *witness_id)
-                }
-                _ => "n/a".to_string(),
-            };
-            AggregationError::CircuitRun(format!("{err:?}; origin={detail}"))
-        })?;
+            }
+            CircuitError::WitnessConflict { witness_id, .. } => {
+                describe_witness_origin(&cache_result.entry.circuit, *witness_id)
+            }
+            _ => "n/a".to_string(),
+        };
+        AggregationError::CircuitRun(format!("{err:?}; origin={detail}"))
+    })?;
     let run_ms = run_started.elapsed().as_millis();
     if profile {
         eprintln!(
@@ -1092,7 +1095,8 @@ pub fn prove_leaf_aggregation(
         outer_proof: postcard::to_allocvec(&outer_proof.proof)
             .map_err(|_| AggregationError::SerializeFailed)?,
     };
-    let encoded = postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)?;
+    let encoded =
+        postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)?;
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_leaf_serialize tx_count={} serialize_ms={} total_ms={}",
@@ -1154,9 +1158,7 @@ pub fn prove_merge_aggregation(
             started.elapsed().as_millis()
         );
     }
-    let representative_child = child_contexts
-        .first()
-        .ok_or(AggregationError::EmptyBatch)?;
+    let representative_child = child_contexts.first().ok_or(AggregationError::EmptyBatch)?;
     for (index, child) in child_contexts.iter().enumerate() {
         if child.payload.shape_id != representative_child.payload.shape_id {
             return Err(AggregationError::ChildProofShapeMismatch {
@@ -1164,7 +1166,9 @@ pub fn prove_merge_aggregation(
                 message: "child shape_id mismatch".to_string(),
             });
         }
-        if child.payload.inner_public_inputs_len != representative_child.payload.inner_public_inputs_len {
+        if child.payload.inner_public_inputs_len
+            != representative_child.payload.inner_public_inputs_len
+        {
             return Err(AggregationError::ChildProofShapeMismatch {
                 index,
                 message: "child public-input length mismatch".to_string(),
@@ -1195,13 +1199,15 @@ pub fn prove_merge_aggregation(
     let mut proofs = Vec::with_capacity(merge_fan_in());
     let challenge_started = Instant::now();
     for (index, child) in child_contexts.iter().enumerate() {
-        let outer_proof: OuterBatchProof = postcard::from_bytes(&child.outer_proof_bytes).map_err(|_| {
-            AggregationError::InvalidChildProof {
-                index,
-                message: "child outer proof encoding invalid".to_string(),
-            }
-        })?;
-        let air_public_values = child_air_public_values(&child.airs, &child.payload.packed_public_values);
+        let outer_proof: OuterBatchProof =
+            postcard::from_bytes(&child.outer_proof_bytes).map_err(|_| {
+                AggregationError::InvalidChildProof {
+                    index,
+                    message: "child outer proof encoding invalid".to_string(),
+                }
+            })?;
+        let air_public_values =
+            child_air_public_values(&child.airs, &child.payload.packed_public_values);
         let challenges = generate_batch_challenges(
             &child.airs,
             &outer_config,
@@ -1223,15 +1229,34 @@ pub fn prove_merge_aggregation(
         );
         if profile {
             let air_public_len = air_public_values.iter().map(Vec::len).sum::<usize>();
-            let proof_value_len =
-                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_values(&outer_proof).len();
+            let proof_value_len = p3_recursion::BatchProofTargets::<
+                Config,
+                OuterBatchHashTargets,
+                OuterBatchFri,
+            >::get_values(&outer_proof)
+            .len();
             let common_value_len =
-                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(child.common.as_ref()).len();
-            let total_private_len =
-                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_private_values(&outer_proof).len();
-            let commitments_private_len =
-                p3_recursion::CommitmentTargets::<Challenge, OuterBatchHashTargets>::get_private_values(&outer_proof.commitments).len();
-            let fri_private_len = <OuterBatchFri as Recursive<Challenge>>::get_private_values(&outer_proof.opening_proof).len();
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(
+                    child.common.as_ref(),
+                )
+                .len();
+            let total_private_len = p3_recursion::BatchProofTargets::<
+                Config,
+                OuterBatchHashTargets,
+                OuterBatchFri,
+            >::get_private_values(&outer_proof)
+            .len();
+            let commitments_private_len = p3_recursion::CommitmentTargets::<
+                Challenge,
+                OuterBatchHashTargets,
+            >::get_private_values(
+                &outer_proof.commitments
+            )
+            .len();
+            let fri_private_len = <OuterBatchFri as Recursive<Challenge>>::get_private_values(
+                &outer_proof.opening_proof,
+            )
+            .len();
             let common_private_len =
                 p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(child.common.as_ref()).len();
             let opened_private_len = total_private_len
@@ -1258,9 +1283,11 @@ pub fn prove_merge_aggregation(
     }
     while proofs.len() < merge_fan_in() {
         let padded: OuterBatchProof = postcard::from_bytes(&representative_child.outer_proof_bytes)
-            .map_err(|_| AggregationError::InvalidAggregationPayload(
-                "representative child outer proof encoding invalid".to_string(),
-            ))?;
+            .map_err(|_| {
+                AggregationError::InvalidAggregationPayload(
+                    "representative child outer proof encoding invalid".to_string(),
+                )
+            })?;
         let air_public_values = child_air_public_values(
             &representative_child.airs,
             &representative_child.payload.packed_public_values,
@@ -1286,15 +1313,31 @@ pub fn prove_merge_aggregation(
         );
         if profile {
             let air_public_len = air_public_values.iter().map(Vec::len).sum::<usize>();
-            let proof_value_len =
-                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_values(&padded).len();
+            let proof_value_len = p3_recursion::BatchProofTargets::<
+                Config,
+                OuterBatchHashTargets,
+                OuterBatchFri,
+            >::get_values(&padded)
+            .len();
             let common_value_len =
-                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(representative_child.common.as_ref()).len();
-            let total_private_len =
-                p3_recursion::BatchProofTargets::<Config, OuterBatchHashTargets, OuterBatchFri>::get_private_values(&padded).len();
-            let commitments_private_len =
-                p3_recursion::CommitmentTargets::<Challenge, OuterBatchHashTargets>::get_private_values(&padded.commitments).len();
-            let fri_private_len = <OuterBatchFri as Recursive<Challenge>>::get_private_values(&padded.opening_proof).len();
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(
+                    representative_child.common.as_ref(),
+                )
+                .len();
+            let total_private_len = p3_recursion::BatchProofTargets::<
+                Config,
+                OuterBatchHashTargets,
+                OuterBatchFri,
+            >::get_private_values(&padded)
+            .len();
+            let commitments_private_len = p3_recursion::CommitmentTargets::<
+                Challenge,
+                OuterBatchHashTargets,
+            >::get_private_values(&padded.commitments)
+            .len();
+            let fri_private_len =
+                <OuterBatchFri as Recursive<Challenge>>::get_private_values(&padded.opening_proof)
+                    .len();
             let common_private_len =
                 p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(representative_child.common.as_ref()).len();
             let opened_private_len = total_private_len
@@ -1365,37 +1408,34 @@ pub fn prove_merge_aggregation(
         );
     }
     let run_started = Instant::now();
-    let traces = runner
-        .run()
-        .map_err(|err| {
-            let detail = match &err {
-                CircuitError::WitnessNotSetForIndex { index } => describe_witness_origin(
-                    &cache_result.entry.circuit,
-                    WitnessId(*index as u32),
-                ),
-                CircuitError::NonPrimitiveExecutionFailed { message, .. } => {
-                    if let Some(start) = message.find("WitnessNotSet { witness_id: WitnessId(") {
-                        let suffix = &message[start + "WitnessNotSet { witness_id: WitnessId(".len()..];
-                        if let Some(end) = suffix.find(')') {
-                            if let Ok(index) = suffix[..end].parse::<u32>() {
-                                describe_witness_origin(&cache_result.entry.circuit, WitnessId(index))
-                            } else {
-                                "n/a".to_string()
-                            }
+    let traces = runner.run().map_err(|err| {
+        let detail = match &err {
+            CircuitError::WitnessNotSetForIndex { index } => {
+                describe_witness_origin(&cache_result.entry.circuit, WitnessId(*index as u32))
+            }
+            CircuitError::NonPrimitiveExecutionFailed { message, .. } => {
+                if let Some(start) = message.find("WitnessNotSet { witness_id: WitnessId(") {
+                    let suffix = &message[start + "WitnessNotSet { witness_id: WitnessId(".len()..];
+                    if let Some(end) = suffix.find(')') {
+                        if let Ok(index) = suffix[..end].parse::<u32>() {
+                            describe_witness_origin(&cache_result.entry.circuit, WitnessId(index))
                         } else {
                             "n/a".to_string()
                         }
                     } else {
                         "n/a".to_string()
                     }
+                } else {
+                    "n/a".to_string()
                 }
-                CircuitError::WitnessConflict { witness_id, .. } => {
-                    describe_witness_origin(&cache_result.entry.circuit, *witness_id)
-                }
-                _ => "n/a".to_string(),
-            };
-            AggregationError::CircuitRun(format!("{err:?}; origin={detail}"))
-        })?;
+            }
+            CircuitError::WitnessConflict { witness_id, .. } => {
+                describe_witness_origin(&cache_result.entry.circuit, *witness_id)
+            }
+            _ => "n/a".to_string(),
+        };
+        AggregationError::CircuitRun(format!("{err:?}; origin={detail}"))
+    })?;
     let run_ms = run_started.elapsed().as_millis();
     if profile {
         eprintln!(
@@ -1452,7 +1492,8 @@ pub fn prove_merge_aggregation(
         outer_proof: postcard::to_allocvec(&outer_proof.proof)
             .map_err(|_| AggregationError::SerializeFailed)?,
     };
-    let encoded = postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)?;
+    let encoded =
+        postcard::to_allocvec(&payload).map_err(|_| AggregationError::PayloadSerializeFailed)?;
     if profile {
         eprintln!(
             "aggregation_profile stage=v5_merge_serialize tx_count={} serialize_ms={} total_ms={}",
