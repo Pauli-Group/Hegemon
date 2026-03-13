@@ -485,6 +485,8 @@ pub struct ProductionChainStateProvider {
             >,
         >,
     >,
+    /// Callback that can temporarily hold local mining while a ready proven batch is pending.
+    mining_pause_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> Option<String> + Send + Sync>>>,
     /// Fallback state for when callbacks aren't set
     pub fallback_state: SubstrateChainStateProvider,
     /// Configuration
@@ -528,6 +530,10 @@ impl std::fmt::Debug for ProductionChainStateProvider {
                 "has_execute_extrinsics_fn",
                 &self.execute_extrinsics_fn.read().is_some(),
             )
+            .field(
+                "has_mining_pause_fn",
+                &self.mining_pause_fn.read().is_some(),
+            )
             .field("fallback_state", &"<SubstrateChainStateProvider>")
             .field("config", &self.config)
             .finish()
@@ -544,6 +550,7 @@ impl ProductionChainStateProvider {
             import_fn: parking_lot::RwLock::new(None),
             on_import_success_fn: parking_lot::RwLock::new(None),
             execute_extrinsics_fn: parking_lot::RwLock::new(None),
+            mining_pause_fn: parking_lot::RwLock::new(None),
             fallback_state: SubstrateChainStateProvider::new(),
             config,
         }
@@ -653,6 +660,14 @@ impl ProductionChainStateProvider {
             + 'static,
     {
         *self.execute_extrinsics_fn.write() = Some(Box::new(f));
+    }
+
+    /// Set the callback for temporarily pausing local mining.
+    pub fn set_mining_pause_fn<F>(&self, f: F)
+    where
+        F: Fn() -> Option<String> + Send + Sync + 'static,
+    {
+        *self.mining_pause_fn.write() = Some(Box::new(f));
     }
 
     /// Execute extrinsics and get state root (Task 11.4)
@@ -769,6 +784,10 @@ impl ChainStateProvider for ProductionChainStateProvider {
         } else {
             self.fallback_state.pending_transactions()
         }
+    }
+
+    fn mining_pause_reason(&self) -> Option<String> {
+        self.mining_pause_fn.read().as_ref().and_then(|f| f())
     }
 
     fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String> {
@@ -1233,6 +1252,16 @@ mod tests {
 
         let txs = provider.pending_transactions();
         assert_eq!(txs.len(), 2); // Limited by config
+    }
+
+    #[test]
+    fn test_production_provider_mining_pause_callback() {
+        let provider = ProductionChainStateProvider::with_defaults();
+        provider.set_mining_pause_fn(|| Some("waiting for ready proven batch".to_string()));
+        assert_eq!(
+            provider.mining_pause_reason(),
+            Some("waiting for ready proven batch".to_string())
+        );
     }
 
     #[test]

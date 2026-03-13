@@ -26,9 +26,10 @@ server.
 > `prover_*` RPC methods for external work packages. The repo now also ships
 > a standalone private prover worker binary (`hegemon-prover-worker`) plus a
 > pooled hash-worker client in the desktop app. Pool share accounting is still
-> process-local and the prover worker currently targets the `MergeRoot`
-> root-finalize path, but the core topology is now runnable rather than
-> aspirational.
+> process-local. The prover worker handles recursive `leaf_batch_prove` and
+> `merge_node_prove` stage packages, prewarms its aggregation cache on startup,
+> and logs stage start/completion timing, so the core topology is runnable
+> rather than aspirational.
 
 ## 1. Target topology
 
@@ -118,6 +119,10 @@ The public authoring node should run:
 
 - the public `hegemon-node`
 - prove-ahead coordinator
+- `HEGEMON_AGGREGATION_PROOFS=1`
+- `HEGEMON_BATCH_JOB_TIMEOUT_MS=3600000`
+- `HEGEMON_PROVER_WORK_PACKAGE_TTL_MS=3600000`
+- `HEGEMON_AGG_HOLD_MINING_WHILE_PROVING=1`
 - local proving disabled via:
 
   ```bash
@@ -135,6 +140,11 @@ The public authoring node should run:
 
 The public authoring node is the only host that should construct public templates and
 broadcast blocks in this phase.
+
+Those four aggregation env vars are not optional for the current external-prover
+cutover. Without them, proof-sidecar transfers are either skipped immediately or
+allowed to churn forever against stale parents while the local miner keeps
+authoring empty PoW blocks.
 
 ### Private prover backend
 
@@ -157,9 +167,13 @@ HEGEMON_PROVER_SOURCE=private-prover-01 \
 
 Notes:
 
-- this worker currently consumes `root_finalize` stage packages
-- it is intended for the `MergeRoot` proof mode
+- this worker consumes recursive `leaf_batch_prove` and `merge_node_prove`
+  stage packages
+- it prewarms aggregation cache state on startup unless
+  `HEGEMON_AGG_DISABLE_WORKER_PREWARM=1`
 - it expects the private tunnel to expose the authoring node RPC securely
+- for the current remote deployment, the authoring node should expose
+  `package_ttl_ms=3600000` through `HEGEMON_PROVER_WORK_PACKAGE_TTL_MS`
 
 ### Laptop / app users
 
@@ -274,7 +288,11 @@ Do not recruit second pool operators until:
 ### Step 2: move proving behind the tunnel
 
 - configure the tunnel from the private prover backend to the public authoring node
+- set `HEGEMON_AGGREGATION_PROOFS=1` on the public authoring node
 - set `HEGEMON_PROVER_WORKERS=0` on the public authoring node
+- set `HEGEMON_BATCH_JOB_TIMEOUT_MS=3600000` and
+  `HEGEMON_PROVER_WORK_PACKAGE_TTL_MS=3600000` on the public authoring node
+- keep `HEGEMON_AGG_HOLD_MINING_WHILE_PROVING=1` on the public authoring node
 - verify the coordinator on the public authoring node still publishes `prover_*` work
   packages over the private path
 - launch `hegemon-prover-worker` on the private prover backend and verify it
@@ -308,6 +326,8 @@ Before declaring the cutover complete, verify:
   the public authoring node
 - the private prover backend can complete external work packages through
   `hegemon-prover-worker`
+- the public authoring node pauses local mining while a strict proofless batch
+  waits for a ready proven bundle, then resumes mining after the bundle is ready
 - pooled hash workers can fetch author work and submit shares without local
   proving hardware
 - pooled miners can hash without local proving

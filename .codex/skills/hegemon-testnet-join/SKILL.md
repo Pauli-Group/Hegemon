@@ -45,6 +45,12 @@ Connect a new node to the Hegemon testnet, verify it is on the canonical chain, 
        --rpc-external \
        --rpc-methods safe \
        --name "TestnetNode"
+   - If this host is the public authoring node for proof-sidecar / aggregation traffic, also set:
+     HEGEMON_AGGREGATION_PROOFS=1
+     HEGEMON_BATCH_JOB_TIMEOUT_MS=3600000
+     HEGEMON_PROVER_WORK_PACKAGE_TTL_MS=3600000
+     HEGEMON_AGG_HOLD_MINING_WHILE_PROVING=1
+     HEGEMON_PROVER_WORKERS=0
 5. Monitor sync status and height. Mining pauses while syncing and resumes once caught up.
    - curl -s -H "Content-Type: application/json" \
      -d '{"id":1,"jsonrpc":"2.0","method":"system_health"}' \
@@ -66,5 +72,6 @@ Connect a new node to the Hegemon testnet, verify it is on the canonical chain, 
 # Notes
 - All miners should use the exact same `HEGEMON_SEEDS` list to avoid accidental forks/partitions. Keep private peer IPs out of public docs.
 - Keep host clock sync enabled (NTP/chrony). PoW import rejects future-skewed timestamps.
+- Public authors using an external prover must leave `HEGEMON_AGG_HOLD_MINING_WHILE_PROVING=1` so long recursive proofs do not get invalidated by self-mined empty blocks on new parents.
 - If the genesis hash or chainspec differ, stop the node and wipe the base path before restarting.
 - Keep RPC access locked down if you expose it beyond localhost.

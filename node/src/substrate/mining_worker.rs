@@ -489,6 +489,11 @@ pub trait ChainStateProvider: Send + Sync {
     /// Get pending transactions from the pool
     fn pending_transactions(&self) -> Vec<Vec<u8>>;
 
+    /// Return a short reason when local mining should temporarily pause.
+    fn mining_pause_reason(&self) -> Option<String> {
+        None
+    }
+
     /// Import a mined block
     fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String>;
 
@@ -746,6 +751,7 @@ where
         let mut last_pending_root = H256::zero();
         let mut was_syncing = false;
         let mut was_mining = false;
+        let mut last_pause_reason: Option<String> = None;
 
         loop {
             // Check if mining is enabled
@@ -756,6 +762,7 @@ where
                     last_pending_root = H256::zero();
                     was_mining = false;
                 }
+                last_pause_reason = None;
                 tokio::time::sleep(check_interval).await;
                 continue;
             }
@@ -780,6 +787,27 @@ where
             if was_syncing {
                 tracing::info!("Sync complete; resuming mining");
                 was_syncing = false;
+            }
+
+            if let Some(reason) = self.chain_state.mining_pause_reason() {
+                if last_pause_reason.as_deref() != Some(reason.as_str()) {
+                    tracing::info!(
+                        reason = %reason,
+                        "Mining paused while waiting for a ready proven batch"
+                    );
+                }
+                last_pause_reason = Some(reason);
+                self.pow_handle.clear_work();
+                current_template = None;
+                last_pending_root = H256::zero();
+                tokio::time::sleep(check_interval).await;
+                continue;
+            }
+            if let Some(reason) = last_pause_reason.take() {
+                tracing::info!(
+                    previous_reason = %reason,
+                    "Mining pause cleared; resuming block production"
+                );
             }
 
             // Check for new work (best block changed)

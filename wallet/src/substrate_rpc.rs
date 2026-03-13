@@ -1944,9 +1944,10 @@ mod tests {
         let public_args = base64::engine::general_purpose::STANDARD
             .decode(request.public_args)
             .expect("public args decode");
-        let decoded =
-            pallet_shielded_pool::family::ShieldedTransferSidecarArgs::decode(&mut &public_args[..])
-                .expect("sidecar args decode");
+        let decoded = pallet_shielded_pool::family::ShieldedTransferSidecarArgs::decode(
+            &mut &public_args[..],
+        )
+        .expect("sidecar args decode");
         assert_eq!(decoded, args);
     }
 }
