@@ -17,6 +17,7 @@ tmp/
 keys/
 config/testnet-*.json
 config/testnet-*.md
+config/testnet-config
 
 # Wallet artifacts and keys
 export.json
@@ -60,3 +61,5 @@ PROVER_ARCHITECTURE_CONSTRAINTS.log
 PROVER_ARCHITECTURE_CONSTRAINTS.out
 PROVER_ARCHITECTURE_CONSTRAINTS.toc
 PROVER_ARCHITECTURE_CONSTRAINTS.synctex.gz
+config/testnet-config
+config/testnet-config

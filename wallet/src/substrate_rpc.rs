@@ -1877,6 +1877,8 @@ fn blake2_128(data: &[u8]) -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use codec::{Decode, Encode};
 
     #[test]
     fn test_config_defaults() {
@@ -1917,5 +1919,34 @@ mod tests {
         let hex = "gg00";
         let result = hex_to_array(hex);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sidecar_submit_action_request_roundtrip() {
+        let args = pallet_shielded_pool::family::ShieldedTransferSidecarArgs {
+            proof: Vec::new(),
+            commitments: vec![[0x11u8; 48]],
+            ciphertext_hashes: vec![[0x22u8; 48]],
+            ciphertext_sizes: vec![1234],
+            anchor: [0x33u8; 48],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+            binding_hash: [0x44u8; 64],
+            stablecoin: None,
+            fee: 7,
+        };
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+            vec![[0x55u8; 48]],
+            args.encode(),
+        );
+        let request = SubmitActionRequest::from_envelope(&envelope).expect("request");
+        let public_args = base64::engine::general_purpose::STANDARD
+            .decode(request.public_args)
+            .expect("public args decode");
+        let decoded =
+            pallet_shielded_pool::family::ShieldedTransferSidecarArgs::decode(&mut &public_args[..])
+                .expect("sidecar args decode");
+        assert_eq!(decoded, args);
     }
 }

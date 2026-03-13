@@ -121,7 +121,15 @@ impl ShieldedFamilyAction {
             }
             ACTION_SHIELDED_TRANSFER_SIDECAR => {
                 let args = ShieldedTransferSidecarArgs::decode(&mut &envelope.public_args[..])
-                    .map_err(|_| DispatchError::Other("bad-sidecar-args"))?;
+                    .map_err(|err| {
+                        log::warn!(
+                            target: "shielded-pool",
+                            "failed to decode sidecar args: public_args_len={} err={:?}",
+                            envelope.public_args.len(),
+                            err,
+                        );
+                        DispatchError::Other("bad-sidecar-args")
+                    })?;
                 Ok(Self::TransferSidecar {
                     nullifiers: envelope.new_nullifiers.clone(),
                     args,

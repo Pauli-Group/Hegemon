@@ -175,6 +175,18 @@ fn max_recursive_txs() -> usize {
     leaf_fan_in().saturating_mul(merge_fan_in())
 }
 
+fn prewarm_merge_enabled() -> bool {
+    std::env::var("HEGEMON_AGG_PREWARM_INCLUDE_MERGE")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(true)
+}
+
 fn tree_levels_for_tx_count(tx_count: usize) -> u16 {
     if tx_count <= leaf_fan_in() {
         1
@@ -807,7 +819,16 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
         shape,
     };
     let _ = get_or_build_aggregation_prover_cache_entry(leaf_key, &representative_inner)?;
-    if target_max_txs <= leaf_fan_in() {
+    let include_merge = prewarm_merge_enabled();
+    if target_max_txs <= leaf_fan_in() || !include_merge {
+        tracing::info!(
+            target_max_txs,
+            leaf_fan_in = leaf_fan_in(),
+            merge_fan_in = merge_fan_in(),
+            include_merge,
+            total_ms = started.elapsed().as_millis(),
+            "aggregation v5 thread-local cache prewarm complete"
+        );
         return Ok(());
     }
     let statement_hash = statement_hash_from_tx_proof(&representative);
@@ -829,6 +850,7 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
         target_max_txs,
         leaf_fan_in = leaf_fan_in(),
         merge_fan_in = merge_fan_in(),
+        include_merge,
         total_ms = started.elapsed().as_millis(),
         "aggregation v5 thread-local cache prewarm complete"
     );

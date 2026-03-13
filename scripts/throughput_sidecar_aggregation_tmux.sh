@@ -178,6 +178,10 @@ if [ -z "$AGG_PREPARE_THREADS" ]; then
   AGG_PREPARE_THREADS_AUTO=1
   AGG_PREPARE_THREADS="$NODE_RAYON_THREADS"
 fi
+AGG_WITNESS_LANES="${HEGEMON_TP_AGG_WITNESS_LANES:-}"
+AGG_ADD_LANES="${HEGEMON_TP_AGG_ADD_LANES:-}"
+AGG_MUL_LANES="${HEGEMON_TP_AGG_MUL_LANES:-}"
+AGG_PREWARM_INCLUDE_MERGE="${HEGEMON_TP_AGG_PREWARM_INCLUDE_MERGE:-}"
 AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-}"
 PREWARM_ONLY="${HEGEMON_TP_PREWARM_ONLY:-0}" # 1 = stop after prepared batch is available
 
@@ -195,6 +199,22 @@ if ! [[ "$AGG_PROVER_THREADS" =~ ^[0-9]+$ ]]; then
 fi
 if ! [[ "$AGG_PREPARE_THREADS" =~ ^[0-9]+$ ]] || [ "$AGG_PREPARE_THREADS" -lt 1 ]; then
   echo "HEGEMON_TP_AGG_PREPARE_THREADS must be a positive integer (got '$AGG_PREPARE_THREADS')." >&2
+  exit 1
+fi
+if [ -n "$AGG_WITNESS_LANES" ] && { ! [[ "$AGG_WITNESS_LANES" =~ ^[0-9]+$ ]] || [ "$AGG_WITNESS_LANES" -lt 1 ]; }; then
+  echo "HEGEMON_TP_AGG_WITNESS_LANES must be a positive integer when set (got '$AGG_WITNESS_LANES')." >&2
+  exit 1
+fi
+if [ -n "$AGG_ADD_LANES" ] && { ! [[ "$AGG_ADD_LANES" =~ ^[0-9]+$ ]] || [ "$AGG_ADD_LANES" -lt 1 ]; }; then
+  echo "HEGEMON_TP_AGG_ADD_LANES must be a positive integer when set (got '$AGG_ADD_LANES')." >&2
+  exit 1
+fi
+if [ -n "$AGG_MUL_LANES" ] && { ! [[ "$AGG_MUL_LANES" =~ ^[0-9]+$ ]] || [ "$AGG_MUL_LANES" -lt 1 ]; }; then
+  echo "HEGEMON_TP_AGG_MUL_LANES must be a positive integer when set (got '$AGG_MUL_LANES')." >&2
+  exit 1
+fi
+if [ -n "$AGG_PREWARM_INCLUDE_MERGE" ] && ! [[ "$AGG_PREWARM_INCLUDE_MERGE" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_AGG_PREWARM_INCLUDE_MERGE must be 0 or 1 when set (got '$AGG_PREWARM_INCLUDE_MERGE')." >&2
   exit 1
 fi
 if [ -n "$AGG_PREWARM_MAX_TXS" ] && ! [[ "$AGG_PREWARM_MAX_TXS" =~ ^[0-9]+$ ]]; then
@@ -425,6 +445,32 @@ current_block_number() {
       "$RPC_HTTP" || true
   )"
   python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; num=(obj.get("result") or {}).get("number"); print(int(num,16) if isinstance(num,str) else 0)' <<<"$header_json"
+}
+
+wait_for_tip_quiescence() {
+  local max_wait_secs="${1:-30}"
+  local settle_polls="${2:-3}"
+  local prev
+  local current
+  local stable_polls=0
+
+  prev="$(current_block_number)"
+  for _ in $(seq 1 "$max_wait_secs"); do
+    sleep 1
+    current="$(current_block_number)"
+    if [ "$current" -eq "$prev" ]; then
+      stable_polls=$((stable_polls + 1))
+      if [ "$stable_polls" -ge "$settle_polls" ]; then
+        return 0
+      fi
+    else
+      prev="$current"
+      stable_polls=0
+    fi
+  done
+
+  echo "WARNING: chain tip did not quiesce after ${max_wait_secs}s; proceeding anyway." >&2
+  return 0
 }
 
 now_ms() {
@@ -901,12 +947,9 @@ echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$
 echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
 echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
 echo "Aggregation recursion config: leaf_fanin=$AGG_LEAF_FANIN merge_fanin=$AGG_MERGE_FANIN tx_recursion_queries=$TX_RECURSION_NUM_QUERIES tx_recursion_log_blowup=$TX_RECURSION_LOG_BLOWUP outer_queries=$AGG_OUTER_NUM_QUERIES outer_log_blowup=$AGG_OUTER_LOG_BLOWUP prover_workers=$PROVER_WORKERS" >&2
+echo "Aggregation packing config: witness_lanes=${AGG_WITNESS_LANES:-default} add_lanes=${AGG_ADD_LANES:-default} mul_lanes=${AGG_MUL_LANES:-default}" >&2
+echo "Aggregation prewarm config: include_merge=${AGG_PREWARM_INCLUDE_MERGE:-default} max_txs=${AGG_PREWARM_MAX_TXS:-default(target_txs)}" >&2
 echo "Aggregation timeout budget: strict_prepare_timeout_secs=$STRICT_PREPARE_TIMEOUT_SECS batch_job_timeout_ms=$PROVER_BATCH_JOB_TIMEOUT_MS work_package_ttl_ms=$PROVER_WORK_PACKAGE_TTL_MS leaf_jobs=${AGG_LEAF_JOBS:-0}" >&2
-if [ -n "$AGG_PREWARM_MAX_TXS" ]; then
-  echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
-else
-  echo "Aggregation cache config: prewarm_max_txs=default(target_txs)" >&2
-fi
 if [ -n "$NODE_PREWARM_BLOCKING_ENV" ]; then
   echo "Aggregation cache startup: worker_prewarm_blocking=1" >&2
 fi
@@ -1015,6 +1058,10 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_TX_RECURSION_LOG_BLOWUP='${TX_RECURSION_LOG_BLOWUP}' \
      HEGEMON_AGG_OUTER_NUM_QUERIES='${AGG_OUTER_NUM_QUERIES}' \
      HEGEMON_AGG_OUTER_LOG_BLOWUP='${AGG_OUTER_LOG_BLOWUP}' \
+     HEGEMON_AGG_WITNESS_LANES='${AGG_WITNESS_LANES}' \
+     HEGEMON_AGG_ADD_LANES='${AGG_ADD_LANES}' \
+     HEGEMON_AGG_MUL_LANES='${AGG_MUL_LANES}' \
+     HEGEMON_AGG_PREWARM_INCLUDE_MERGE='${AGG_PREWARM_INCLUDE_MERGE}' \
      HEGEMON_AGG_PREPARE_THREADS='${AGG_PREPARE_THREADS}' \
      HEGEMON_AGG_PROVER_THREADS='${AGG_PROVER_THREADS}' \
      HEGEMON_AGG_STAGE_LOCAL_PARALLELISM='${PROVER_WORKERS}' \
@@ -1048,6 +1095,7 @@ if [ "$REUSE_EXISTING_STATE" = "1" ]; then
   curl -s -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
     "$RPC_HTTP" >/dev/null || true
+  wait_for_tip_quiescence 30 3
 fi
 
 if [ "$REUSE_EXISTING_STATE" != "1" ]; then
@@ -1077,6 +1125,7 @@ if [ "$REUSE_EXISTING_STATE" != "1" ]; then
   curl -s -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
     "$RPC_HTTP" >/dev/null
+  wait_for_tip_quiescence 30 3
 
   echo "Syncing miner wallet..." >&2
   wallet_sync "$WALLET_A" "$PASS_A"
@@ -1131,6 +1180,7 @@ EOF
         curl -s -H "Content-Type: application/json" \
           -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
           "$RPC_HTTP" >/dev/null
+        wait_for_tip_quiescence 30 3
 
         wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
       done
@@ -1177,12 +1227,12 @@ else
     if [ "$worker_tx_count" -le 0 ]; then
       continue
     fi
-    (
+    {
       for j in $(seq 1 "$worker_tx_count"); do
         echo "  worker ${worker_id} sending ${j}/${worker_tx_count}..." >&2
         wallet_send_with_retry "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT"
       done
-    ) &
+    } &
     pids+=("$!")
   done
 

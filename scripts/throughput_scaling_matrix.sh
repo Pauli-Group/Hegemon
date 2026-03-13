@@ -14,6 +14,10 @@ PROFILE="${HEGEMON_SCALE_PROFILE:-safe}"
 NODE_RAYON_THREADS="${HEGEMON_SCALE_NODE_RAYON_THREADS:-0}"
 AGG_PREPARE_THREADS="${HEGEMON_SCALE_AGG_PREPARE_THREADS:-0}"
 AGG_PROVER_THREADS="${HEGEMON_SCALE_AGG_PROVER_THREADS:-1}"
+AGG_WITNESS_LANES="${HEGEMON_SCALE_AGG_WITNESS_LANES:-}"
+AGG_ADD_LANES="${HEGEMON_SCALE_AGG_ADD_LANES:-}"
+AGG_MUL_LANES="${HEGEMON_SCALE_AGG_MUL_LANES:-}"
+AGG_PREWARM_INCLUDE_MERGE="${HEGEMON_SCALE_AGG_PREWARM_INCLUDE_MERGE:-0}"
 LEAF_FANIN="${HEGEMON_SCALE_AGG_LEAF_FANIN:-4}"
 AGG_PREWARM_MAX_TXS="${HEGEMON_SCALE_AGG_PREWARM_MAX_TXS:-}"
 RPC_WAIT_SECS="${HEGEMON_SCALE_RPC_WAIT_SECS:-1800}"
@@ -25,7 +29,7 @@ MINE_THREADS="${HEGEMON_SCALE_MINE_THREADS:-1}"
 SNAPSHOT_ROOT="${HEGEMON_SCALE_SNAPSHOT_ROOT:-${ARTIFACTS_DIR}/snapshots}"
 REBUILD_SNAPSHOTS="${HEGEMON_SCALE_REBUILD_SNAPSHOTS:-0}"
 THREADS_PER_PROVER="${HEGEMON_SCALE_THREADS_PER_PROVER:-4}"
-DISABLE_WORKER_PREWARM="${HEGEMON_SCALE_DISABLE_WORKER_PREWARM:-1}"
+DISABLE_WORKER_PREWARM="${HEGEMON_SCALE_DISABLE_WORKER_PREWARM:-0}"
 
 HOST_THREADS="$(
   getconf _NPROCESSORS_ONLN 2>/dev/null \
@@ -40,7 +44,13 @@ printf "tx_count\tprover_workers\tincluded_tx_count\tstrict_wait_ms\tinclusion_t
 MATRIX_CHAIN_SPEC="$CHAIN_SPEC"
 if [ "$EASY_CHAIN" = "1" ]; then
   MATRIX_CHAIN_SPEC="${ARTIFACTS_DIR}/easy-chainspec.json"
-  python3 - "$CHAIN_SPEC" "$MATRIX_CHAIN_SPEC" <<'PY'
+  BASE_CHAIN_SPEC="${ARTIFACTS_DIR}/base-chainspec.raw.json"
+  if [ "${HEGEMON_SCALE_USE_CURRENT_BUILD_SPEC:-1}" = "1" ] && [ "$CHAIN_SPEC" = "config/dev-chainspec.json" ]; then
+    ./target/release/hegemon-node build-spec --raw --disable-default-bootnode > "$BASE_CHAIN_SPEC"
+  else
+    cp "$CHAIN_SPEC" "$BASE_CHAIN_SPEC"
+  fi
+  python3 - "$BASE_CHAIN_SPEC" "$MATRIX_CHAIN_SPEC" <<'PY'
 import json
 import pathlib
 import sys
@@ -81,10 +91,11 @@ for tx_count in $TX_COUNTS; do
   snapshot_wallet_a="${snapshot_dir}/wallet-a"
   snapshot_wallet_b="${snapshot_dir}/wallet-b"
   snapshot_recipients="${snapshot_dir}/recipients.json"
+  snapshot_ready="${snapshot_dir}/.ready"
   snapshot_session="scale-snapshot-tx${tx_count}"
   snapshot_log="/tmp/${snapshot_session}.log"
 
-  if [ "$REBUILD_SNAPSHOTS" = "1" ] || [ ! -d "$snapshot_base" ] || [ ! -e "$snapshot_wallet_a" ] || [ ! -e "$snapshot_wallet_b" ]; then
+  if [ "$REBUILD_SNAPSHOTS" = "1" ] || [ ! -f "$snapshot_ready" ] || [ ! -d "$snapshot_base" ] || [ ! -e "$snapshot_wallet_a" ] || [ ! -e "$snapshot_wallet_b" ]; then
     rm -rf "$snapshot_dir" "$snapshot_log"
     mkdir -p "$snapshot_dir"
     tmux kill-session -t "$snapshot_session" 2>/dev/null || true
@@ -102,12 +113,16 @@ for tx_count in $TX_COUNTS; do
       HEGEMON_TP_NODE_RAYON_THREADS="$snapshot_node_rayon_threads" \
       HEGEMON_TP_AGG_PREPARE_THREADS="$snapshot_agg_prepare_threads" \
       HEGEMON_TP_AGG_PROVER_THREADS="$AGG_PROVER_THREADS" \
+      HEGEMON_TP_AGG_WITNESS_LANES="$AGG_WITNESS_LANES" \
+      HEGEMON_TP_AGG_ADD_LANES="$AGG_ADD_LANES" \
+      HEGEMON_TP_AGG_MUL_LANES="$AGG_MUL_LANES" \
+      HEGEMON_TP_AGG_PREWARM_INCLUDE_MERGE=0 \
       HEGEMON_TP_AGG_LEAF_FANIN="$LEAF_FANIN" \
       HEGEMON_TP_RPC_WAIT_SECS="$RPC_WAIT_SECS" \
       HEGEMON_TP_MAX_BLOCK_WAIT_SECS=7200 \
       HEGEMON_TP_PREPARE_SNAPSHOT_ONLY=1 \
       HEGEMON_TP_SKIP_BUILD="$SKIP_BUILD" \
-      HEGEMON_AGG_DISABLE_WORKER_PREWARM="$DISABLE_WORKER_PREWARM" \
+      HEGEMON_AGG_DISABLE_WORKER_PREWARM=1 \
       HEGEMON_TP_MINE_THREADS="$MINE_THREADS" \
       HEGEMON_TP_NODE_BASE_PATH="$snapshot_base" \
       HEGEMON_TP_WALLET_A="$snapshot_wallet_a" \
@@ -120,6 +135,7 @@ for tx_count in $TX_COUNTS; do
     fi
 
     tmux kill-session -t "$snapshot_session" 2>/dev/null || true
+    touch "$snapshot_ready"
   fi
 
   for prover_workers in $PROVER_COUNTS; do
@@ -140,9 +156,13 @@ for tx_count in $TX_COUNTS; do
     cp -a "$snapshot_wallet_b" "$wallet_b"
     cp -a "$snapshot_recipients" "$recipients_json"
 
+    run_prewarm_max_txs="$AGG_PREWARM_MAX_TXS"
+    if [ -z "$run_prewarm_max_txs" ] && [ "$DISABLE_WORKER_PREWARM" != "1" ]; then
+      run_prewarm_max_txs="$tx_count"
+    fi
     prewarm_env=()
-    if [ -n "$AGG_PREWARM_MAX_TXS" ]; then
-      prewarm_env+=(HEGEMON_TP_AGG_PREWARM_MAX_TXS="$AGG_PREWARM_MAX_TXS")
+    if [ -n "$run_prewarm_max_txs" ]; then
+      prewarm_env+=(HEGEMON_TP_AGG_PREWARM_MAX_TXS="$run_prewarm_max_txs")
     fi
     run_timeout_env=()
     if [ -n "$STRICT_PREPARE_TIMEOUT_SECS" ]; then
@@ -181,6 +201,10 @@ for tx_count in $TX_COUNTS; do
       HEGEMON_TP_NODE_RAYON_THREADS="$run_node_rayon_threads" \
       HEGEMON_TP_AGG_PREPARE_THREADS="$run_agg_prepare_threads" \
       HEGEMON_TP_AGG_PROVER_THREADS="$AGG_PROVER_THREADS" \
+      HEGEMON_TP_AGG_WITNESS_LANES="$AGG_WITNESS_LANES" \
+      HEGEMON_TP_AGG_ADD_LANES="$AGG_ADD_LANES" \
+      HEGEMON_TP_AGG_MUL_LANES="$AGG_MUL_LANES" \
+      HEGEMON_TP_AGG_PREWARM_INCLUDE_MERGE="$AGG_PREWARM_INCLUDE_MERGE" \
       HEGEMON_TP_AGG_LEAF_FANIN="$LEAF_FANIN" \
       HEGEMON_TP_RPC_WAIT_SECS="$RPC_WAIT_SECS" \
       HEGEMON_TP_SKIP_BUILD="$SKIP_BUILD" \
@@ -191,8 +215,8 @@ for tx_count in $TX_COUNTS; do
       HEGEMON_TP_WALLET_A="$wallet_a" \
       HEGEMON_TP_WALLET_B="$wallet_b" \
       HEGEMON_TP_RECIPIENTS_JSON="$recipients_json" \
-      "${run_timeout_env[@]}" \
-      "${prewarm_env[@]}" \
+      ${run_timeout_env[@]+"${run_timeout_env[@]}"} \
+      ${prewarm_env[@]+"${prewarm_env[@]}"} \
       bash scripts/throughput_sidecar_aggregation_tmux.sh
     then
       run_status="failed"
