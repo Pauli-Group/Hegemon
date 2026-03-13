@@ -39,6 +39,7 @@ pub struct ShieldedTransferInlineArgs {
     pub commitments: Vec<[u8; 48]>,
     pub ciphertexts: Vec<EncryptedNote>,
     pub anchor: [u8; 48],
+    pub balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
     pub binding_hash: [u8; 64],
     pub stablecoin: Option<StablecoinPolicyBinding>,
     pub fee: u64,
@@ -51,6 +52,7 @@ pub struct ShieldedTransferSidecarArgs {
     pub ciphertext_hashes: Vec<[u8; 48]>,
     pub ciphertext_sizes: Vec<u32>,
     pub anchor: [u8; 48],
+    pub balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
     pub binding_hash: [u8; 64],
     pub stablecoin: Option<StablecoinPolicyBinding>,
     pub fee: u64,
@@ -165,6 +167,7 @@ impl ShieldedFamilyAction {
                         ciphertext_hash_bytes(&bytes)
                     })
                     .collect::<Vec<_>>(),
+                &args.balance_slot_asset_ids,
                 args.fee,
                 0,
                 binding,
@@ -175,6 +178,7 @@ impl ShieldedFamilyAction {
                 nullifiers,
                 &args.commitments,
                 &args.ciphertext_hashes,
+                &args.balance_slot_asset_ids,
                 args.fee,
                 0,
                 binding,
@@ -240,6 +244,7 @@ pub fn validate_action<T: Config>(
                 &to_bounded_commitments::<T>(&args.commitments)?,
                 &to_bounded_ciphertexts::<T>(&args.ciphertexts)?,
                 &args.anchor,
+                &args.balance_slot_asset_ids,
                 &crate::types::BindingHash {
                     data: args.binding_hash,
                 },
@@ -268,6 +273,7 @@ pub fn validate_action<T: Config>(
                 &to_bounded_commitments::<T>(&args.ciphertext_hashes)?,
                 &to_bounded_ciphertext_sizes::<T>(&args.ciphertext_sizes)?,
                 &args.anchor,
+                &args.balance_slot_asset_ids,
                 &crate::types::BindingHash {
                     data: args.binding_hash,
                 },
@@ -341,6 +347,7 @@ pub fn apply_action<T: Config>(
                 to_bounded_commitments::<T>(&args.commitments)?,
                 to_bounded_ciphertexts::<T>(&args.ciphertexts)?,
                 args.anchor,
+                args.balance_slot_asset_ids,
                 crate::types::BindingHash {
                     data: args.binding_hash,
                 },
@@ -357,6 +364,7 @@ pub fn apply_action<T: Config>(
                 to_bounded_commitments::<T>(&args.ciphertext_hashes)?,
                 to_bounded_ciphertext_sizes::<T>(&args.ciphertext_sizes)?,
                 args.anchor,
+                args.balance_slot_asset_ids,
                 crate::types::BindingHash {
                     data: args.binding_hash,
                 },
@@ -471,6 +479,7 @@ fn transfer_statement_hash(
     nullifiers: &[[u8; 48]],
     commitments: &[[u8; 48]],
     ciphertext_hashes: &[[u8; 48]],
+    balance_slot_asset_ids: &[u64; transaction_core::constants::BALANCE_SLOTS],
     fee: u64,
     value_balance: i128,
     version: KernelVersionBinding,
@@ -501,6 +510,9 @@ fn transfer_statement_hash(
         message.extend_from_slice(&[0u8; 48]);
     }
 
+    for asset_id in balance_slot_asset_ids {
+        message.extend_from_slice(&asset_id.to_le_bytes());
+    }
     message.extend_from_slice(&fee.to_le_bytes());
     message.extend_from_slice(&value_balance.to_le_bytes());
     message.extend_from_slice(&version.circuit.to_le_bytes());

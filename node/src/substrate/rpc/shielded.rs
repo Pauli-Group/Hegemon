@@ -41,6 +41,8 @@ pub struct ShieldedTransferRequest {
     pub encrypted_notes: Vec<String>,
     /// Merkle root anchor (hex encoded)
     pub anchor: String,
+    /// Asset ids for the four fixed balance slots.
+    pub balance_slot_asset_ids: [u64; 4],
     /// Binding hash (hex encoded)
     pub binding_hash: String,
     /// Native fee encoded in the proof
@@ -283,6 +285,7 @@ pub trait ShieldedPoolService: Send + Sync {
         commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 48],
+        balance_slot_asset_ids: [u64; 4],
         binding_hash: [u8; 64],
         stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
@@ -533,6 +536,7 @@ where
                 commitments,
                 encrypted_notes,
                 anchor,
+                request.balance_slot_asset_ids,
                 binding_hash,
                 stablecoin,
                 request.fee,
@@ -731,6 +735,7 @@ mod tests {
             _commitments: Vec<[u8; 48]>,
             _encrypted_notes: Vec<Vec<u8>>,
             _anchor: [u8; 48],
+            _balance_slot_asset_ids: [u64; 4],
             _binding_hash: [u8; 64],
             _stablecoin: Option<StablecoinPolicyBinding>,
             _fee: u64,
@@ -896,6 +901,7 @@ mod tests {
                 &[1, 2, 3, 4],
             )],
             anchor: hex::encode([0x33u8; 48]),
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -921,6 +927,7 @@ mod tests {
             commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 48]),
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -949,6 +956,7 @@ mod tests {
             commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 48]),
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,

@@ -284,6 +284,10 @@ mod legacy_tests {
         BindingHash { data: [1u8; 64] }
     }
 
+    fn default_balance_slot_asset_ids() -> [u64; transaction_core::constants::BALANCE_SLOTS] {
+        [0, u64::MAX, u64::MAX, u64::MAX]
+    }
+
     fn valid_encrypted_note() -> EncryptedNote {
         let mut note = EncryptedNote::default();
         note.ciphertext[0] = NOTE_ENCRYPTION_VERSION;
@@ -430,6 +434,7 @@ mod legacy_tests {
                 commitments,
                 ciphertexts,
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: valid_binding_hash(),
                 stablecoin: None,
                 fee: 0,
@@ -466,6 +471,7 @@ mod legacy_tests {
                     commitments,
                     ciphertexts,
                     anchor,
+                    default_balance_slot_asset_ids(),
                     valid_binding_hash(),
                     None,
                     u64::MAX,
@@ -715,6 +721,7 @@ mod legacy_tests {
                 commitments: commitments.clone(),
                 ciphertexts: ciphertexts.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 0,
@@ -741,6 +748,7 @@ mod legacy_tests {
                 commitments,
                 ciphertexts,
                 anchor,
+                default_balance_slot_asset_ids(),
                 binding_hash,
                 None,
                 0,
@@ -795,6 +803,7 @@ mod legacy_tests {
                 commitments,
                 ciphertexts,
                 anchor,
+                default_balance_slot_asset_ids(),
                 valid_binding_hash(),
                 None,
                 0,
@@ -1986,6 +1995,7 @@ mod legacy_tests {
                 ciphertext_hashes: ciphertext_hashes.clone(),
                 ciphertext_sizes: ciphertext_sizes.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 1_000_000,
@@ -2003,6 +2013,7 @@ mod legacy_tests {
                     ciphertext_hashes,
                     ciphertext_sizes,
                     anchor,
+                    default_balance_slot_asset_ids(),
                     binding_hash,
                     None,
                     1_000_000,
@@ -2040,6 +2051,7 @@ mod legacy_tests {
                 ciphertext_hashes: ciphertext_hashes.clone(),
                 ciphertext_sizes: ciphertext_sizes.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 0,
@@ -2062,6 +2074,7 @@ mod legacy_tests {
                     ciphertext_hashes,
                     ciphertext_sizes,
                     anchor,
+                    default_balance_slot_asset_ids(),
                     binding_hash,
                     None,
                     0,
@@ -2103,6 +2116,7 @@ mod legacy_tests {
                 ciphertext_hashes: ciphertext_hashes.clone(),
                 ciphertext_sizes: ciphertext_sizes.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 0,
@@ -2119,6 +2133,7 @@ mod legacy_tests {
                 ciphertext_hashes,
                 ciphertext_sizes,
                 anchor,
+                default_balance_slot_asset_ids(),
                 binding_hash,
                 None,
                 0,

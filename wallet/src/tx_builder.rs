@@ -1,3 +1,4 @@
+use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::rngs::OsRng;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{
@@ -324,8 +325,10 @@ pub fn build_transaction_with_binding(
         &proof_result.nullifiers,
         &proof_result.commitments,
         &ciphertext_hashes,
+        proof_result.balance_slot_asset_ids,
         proof_result.fee,
         proof_result.value_balance,
+        to_pallet_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
@@ -334,6 +337,7 @@ pub fn build_transaction_with_binding(
         &ciphertexts,
         proof_result.anchor,
         binding_hash,
+        proof_result.balance_slot_asset_ids,
         proof_result.fee,
         proof_result.value_balance,
         witness.stablecoin.clone(),
@@ -529,8 +533,10 @@ pub fn build_stablecoin_burn(
         &proof_result.nullifiers,
         &proof_result.commitments,
         &ciphertext_hashes,
+        proof_result.balance_slot_asset_ids,
         proof_result.fee,
         proof_result.value_balance,
+        to_pallet_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
@@ -539,6 +545,7 @@ pub fn build_stablecoin_burn(
         &ciphertexts,
         proof_result.anchor,
         binding_hash,
+        proof_result.balance_slot_asset_ids,
         proof_result.fee,
         proof_result.value_balance,
         witness.stablecoin.clone(),
@@ -704,8 +711,10 @@ pub fn build_consolidation_transaction(
         &proof_result.nullifiers,
         &proof_result.commitments,
         &ciphertext_hashes,
+        proof_result.balance_slot_asset_ids,
         proof_result.fee,
         proof_result.value_balance,
+        to_pallet_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
@@ -714,6 +723,7 @@ pub fn build_consolidation_transaction(
         &[ciphertext],
         proof_result.anchor,
         binding_hash,
+        proof_result.balance_slot_asset_ids,
         proof_result.fee,
         proof_result.value_balance,
         witness.stablecoin.clone(),
@@ -736,53 +746,37 @@ fn compute_binding_hash(
     nullifiers: &[[u8; 48]],
     commitments: &[[u8; 48]],
     ciphertext_hashes: &[[u8; 48]],
+    balance_slot_asset_ids: [u64; 4],
     fee: u64,
     value_balance: i128,
+    stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
 ) -> [u8; 64] {
-    // Debug: print binding hash inputs
-    // eprintln!("DEBUG binding: anchor = {}", hex::encode(anchor));
-    // eprintln!("DEBUG binding: nullifiers.len = {}", nullifiers.len());
-    // for (i, nf) in nullifiers.iter().enumerate() {
-    //     eprintln!("DEBUG binding: nullifiers[{}] = {}", i, hex::encode(nf));
-    // }
-    // eprintln!("DEBUG binding: commitments.len = {}", commitments.len());
-    // for (i, cm) in commitments.iter().enumerate() {
-    //     eprintln!("DEBUG binding: commitments[{}] = {}", i, hex::encode(cm));
-    // }
-    // eprintln!("DEBUG binding: value_balance = {}", value_balance);
+    let inputs = ShieldedTransferInputs {
+        anchor: *anchor,
+        nullifiers: nullifiers.to_vec(),
+        commitments: commitments.to_vec(),
+        ciphertext_hashes: ciphertext_hashes.to_vec(),
+        balance_slot_asset_ids,
+        fee,
+        value_balance,
+        stablecoin,
+    };
+    StarkVerifier::compute_binding_hash(&inputs).data
+}
 
-    let mut data = Vec::new();
-    data.extend_from_slice(anchor);
-    for nf in nullifiers {
-        data.extend_from_slice(nf);
-    }
-    for cm in commitments {
-        data.extend_from_slice(cm);
-    }
-    for ct in ciphertext_hashes {
-        data.extend_from_slice(ct);
-    }
-    data.extend_from_slice(&fee.to_le_bytes());
-    data.extend_from_slice(&value_balance.to_le_bytes());
-
-    // eprintln!("DEBUG binding: data.len = {}", data.len());
-    const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
-    let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
-    msg0.extend_from_slice(BINDING_HASH_DOMAIN);
-    msg0.push(0);
-    msg0.extend_from_slice(&data);
-    let hash0 = synthetic_crypto::hashes::blake2_256(&msg0);
-
-    let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
-    msg1.extend_from_slice(BINDING_HASH_DOMAIN);
-    msg1.push(1);
-    msg1.extend_from_slice(&data);
-    let hash1 = synthetic_crypto::hashes::blake2_256(&msg1);
-
-    let mut out = [0u8; 64];
-    out[..32].copy_from_slice(&hash0);
-    out[32..].copy_from_slice(&hash1);
-    out
+fn to_pallet_stablecoin_binding(
+    binding: &StablecoinPolicyBinding,
+) -> Option<pallet_shielded_pool::types::StablecoinPolicyBinding> {
+    binding
+        .enabled
+        .then_some(pallet_shielded_pool::types::StablecoinPolicyBinding {
+            asset_id: binding.asset_id,
+            policy_hash: binding.policy_hash,
+            oracle_commitment: binding.oracle_commitment,
+            attestation_commitment: binding.attestation_commitment,
+            issuance_delta: binding.issuance_delta,
+            policy_version: binding.policy_version,
+        })
 }
 
 struct Selection {
@@ -929,8 +923,17 @@ mod tests {
             })
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let binding_hash =
-            compute_binding_hash(&anchor, &nullifiers, &commitments, &ciphertext_hashes, 0, 0);
+        let balance_slot_asset_ids = [0u64, u64::MAX, u64::MAX, u64::MAX];
+        let binding_hash = compute_binding_hash(
+            &anchor,
+            &nullifiers,
+            &commitments,
+            &ciphertext_hashes,
+            balance_slot_asset_ids,
+            0,
+            0,
+            to_pallet_stablecoin_binding(&stablecoin),
+        );
         let bundle = TransactionBundle::new(
             Vec::new(),
             nullifiers.clone(),
@@ -938,6 +941,7 @@ mod tests {
             &ciphertexts,
             anchor,
             binding_hash,
+            balance_slot_asset_ids,
             0,
             0,
             stablecoin.clone(),
@@ -968,6 +972,7 @@ mod tests {
             nullifiers: bundle.nullifiers.clone(),
             commitments: bundle.commitments.clone(),
             ciphertext_hashes: decoded_hashes.clone(),
+            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
             fee: bundle.fee,
             value_balance: bundle.value_balance,
             stablecoin,

@@ -1236,6 +1236,7 @@ impl SubstrateRpcClient {
             ciphertext_hashes,
             ciphertext_sizes,
             anchor: bundle.anchor,
+            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
             binding_hash: bundle.binding_hash,
             stablecoin: if bundle.stablecoin.enabled {
                 Some(pallet_shielded_pool::types::StablecoinPolicyBinding {
@@ -1493,6 +1494,7 @@ impl SubmitActionRequest {
             commitments: bundle.commitments.clone(),
             ciphertexts,
             anchor: bundle.anchor,
+            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
             binding_hash: bundle.binding_hash,
             stablecoin: if bundle.stablecoin.enabled {
                 Some(pallet_shielded_pool::types::StablecoinPolicyBinding {

@@ -19,9 +19,10 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 
 use crate::constants::{
-    CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NATIVE_ASSET_ID,
-    NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS,
-    POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH, POSEIDON_ROUNDS, POSEIDON_WIDTH,
+    BALANCE_SLOTS, CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG,
+    NATIVE_ASSET_ID, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_EXTERNAL_ROUNDS,
+    POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH, POSEIDON_ROUNDS,
+    POSEIDON_WIDTH,
 };
 use crate::range::{RANGE_LIMB_BITS, RANGE_LIMB_COUNT};
 use crate::{poseidon2_constants, poseidon_constants};
@@ -79,72 +80,69 @@ pub const COL_OUT0_ASSET: usize = 32;
 pub const COL_OUT1_VALUE: usize = 33;
 pub const COL_OUT1_ASSET: usize = 34;
 
-/// Balance slots (native slot 0 is implicit; non-native asset ids remain in-trace).
+/// Balance slot running sums (asset ids are public inputs).
 pub const COL_SLOT0_IN: usize = 35;
 pub const COL_SLOT0_OUT: usize = 36;
-pub const COL_SLOT1_ASSET: usize = 37;
-pub const COL_SLOT1_IN: usize = 38;
-pub const COL_SLOT1_OUT: usize = 39;
-pub const COL_SLOT2_ASSET: usize = 40;
-pub const COL_SLOT2_IN: usize = 41;
-pub const COL_SLOT2_OUT: usize = 42;
-pub const COL_SLOT3_ASSET: usize = 43;
-pub const COL_SLOT3_IN: usize = 44;
-pub const COL_SLOT3_OUT: usize = 45;
+pub const COL_SLOT1_IN: usize = 37;
+pub const COL_SLOT1_OUT: usize = 38;
+pub const COL_SLOT2_IN: usize = 39;
+pub const COL_SLOT2_OUT: usize = 40;
+pub const COL_SLOT3_IN: usize = 41;
+pub const COL_SLOT3_OUT: usize = 42;
 
 /// Compact 2-bit slot selectors for each fixed note slot.
-pub const COL_IN0_SLOT_BIT0: usize = 46;
-pub const COL_IN0_SLOT_BIT1: usize = 47;
-pub const COL_IN1_SLOT_BIT0: usize = 48;
-pub const COL_IN1_SLOT_BIT1: usize = 49;
-pub const COL_OUT0_SLOT_BIT0: usize = 50;
-pub const COL_OUT0_SLOT_BIT1: usize = 51;
-pub const COL_OUT1_SLOT_BIT0: usize = 52;
-pub const COL_OUT1_SLOT_BIT1: usize = 53;
+pub const COL_IN0_SLOT_BIT0: usize = 43;
+pub const COL_IN0_SLOT_BIT1: usize = 44;
+pub const COL_IN1_SLOT_BIT0: usize = 45;
+pub const COL_IN1_SLOT_BIT1: usize = 46;
+pub const COL_OUT0_SLOT_BIT0: usize = 47;
+pub const COL_OUT0_SLOT_BIT1: usize = 48;
+pub const COL_OUT1_SLOT_BIT0: usize = 49;
+pub const COL_OUT1_SLOT_BIT1: usize = 50;
 
 /// Fee and value balance (sign + magnitude).
-pub const COL_FEE: usize = 54;
-pub const COL_VALUE_BALANCE_SIGN: usize = 55;
-pub const COL_VALUE_BALANCE_MAG: usize = 56;
+pub const COL_FEE: usize = 51;
+pub const COL_VALUE_BALANCE_SIGN: usize = 52;
+pub const COL_VALUE_BALANCE_MAG: usize = 53;
 
 /// Captured hash limbs (rate = 6).
-pub const COL_OUT0: usize = 57;
-pub const COL_OUT1: usize = 58;
-pub const COL_OUT2: usize = 59;
-pub const COL_OUT3: usize = 60;
-pub const COL_OUT4: usize = 61;
-pub const COL_OUT5: usize = 62;
+pub const COL_OUT0: usize = 54;
+pub const COL_OUT1: usize = 55;
+pub const COL_OUT2: usize = 56;
+pub const COL_OUT3: usize = 57;
+pub const COL_OUT4: usize = 58;
+pub const COL_OUT5: usize = 59;
 
 /// Compact 2-bit stablecoin slot selector written on the final row.
-pub const COL_STABLECOIN_SLOT_BIT0: usize = 63;
-pub const COL_STABLECOIN_SLOT_BIT1: usize = 64;
+pub const COL_STABLECOIN_SLOT_BIT0: usize = 60;
+pub const COL_STABLECOIN_SLOT_BIT1: usize = 61;
 
 /// Shared rho carry lane reused across the two input-note phases.
-pub const COL_RHO0: usize = 65;
-pub const COL_RHO1: usize = 66;
-pub const COL_RHO2: usize = 67;
-pub const COL_RHO3: usize = 68;
+pub const COL_RHO0: usize = 62;
+pub const COL_RHO1: usize = 63;
+pub const COL_RHO2: usize = 64;
+pub const COL_RHO3: usize = 65;
 
 /// In-circuit derived PRF key and spend-auth key limbs.
-pub const COL_PRF_DERIVED: usize = 69;
-pub const COL_AUTH_DERIVED0: usize = 70;
-pub const COL_AUTH_DERIVED1: usize = 71;
-pub const COL_AUTH_DERIVED2: usize = 72;
-pub const COL_AUTH_DERIVED3: usize = 73;
+pub const COL_PRF_DERIVED: usize = 66;
+pub const COL_AUTH_DERIVED0: usize = 67;
+pub const COL_AUTH_DERIVED1: usize = 68;
+pub const COL_AUTH_DERIVED2: usize = 69;
+pub const COL_AUTH_DERIVED3: usize = 70;
 
 /// Ciphertext hashes mirrored into the witness trace and bound at the final row.
-pub const COL_CT0_0: usize = 74;
-pub const COL_CT0_1: usize = 75;
-pub const COL_CT0_2: usize = 76;
-pub const COL_CT0_3: usize = 77;
-pub const COL_CT0_4: usize = 78;
-pub const COL_CT0_5: usize = 79;
-pub const COL_CT1_0: usize = 80;
-pub const COL_CT1_1: usize = 81;
-pub const COL_CT1_2: usize = 82;
-pub const COL_CT1_3: usize = 83;
-pub const COL_CT1_4: usize = 84;
-pub const COL_CT1_5: usize = 85;
+pub const COL_CT0_0: usize = 71;
+pub const COL_CT0_1: usize = 72;
+pub const COL_CT0_2: usize = 73;
+pub const COL_CT0_3: usize = 74;
+pub const COL_CT0_4: usize = 75;
+pub const COL_CT0_5: usize = 76;
+pub const COL_CT1_0: usize = 77;
+pub const COL_CT1_1: usize = 78;
+pub const COL_CT1_2: usize = 79;
+pub const COL_CT1_3: usize = 80;
+pub const COL_CT1_4: usize = 81;
+pub const COL_CT1_5: usize = 82;
 
 /// Bit-length used for in-circuit monetary range checks.
 pub const VALUE_RANGE_BITS: usize = 61;
@@ -287,6 +285,7 @@ pub struct TransactionPublicInputsP3 {
     pub value_balance_sign: Felt,
     pub value_balance_magnitude: Felt,
     pub merkle_root: [Felt; 6],
+    pub balance_slot_assets: [Felt; BALANCE_SLOTS],
     pub stablecoin_enabled: Felt,
     pub stablecoin_asset: Felt,
     pub stablecoin_policy_version: Felt,
@@ -310,6 +309,12 @@ impl Default for TransactionPublicInputsP3 {
             value_balance_sign: Felt::ZERO,
             value_balance_magnitude: Felt::ZERO,
             merkle_root: zero6,
+            balance_slot_assets: [
+                Felt::from_u64(NATIVE_ASSET_ID),
+                Felt::from_u64(u64::MAX),
+                Felt::from_u64(u64::MAX),
+                Felt::from_u64(u64::MAX),
+            ],
             stablecoin_enabled: Felt::ZERO,
             stablecoin_asset: Felt::ZERO,
             stablecoin_policy_version: Felt::ZERO,
@@ -329,6 +334,7 @@ impl TransactionPublicInputsP3 {
             + (MAX_INPUTS * POSEIDON2_RATE)
             + (MAX_OUTPUTS * POSEIDON2_RATE * 2)
             + 32
+            + BALANCE_SLOTS
     }
 
     pub fn to_vec(&self) -> Vec<Felt> {
@@ -348,6 +354,7 @@ impl TransactionPublicInputsP3 {
         elements.push(self.value_balance_sign);
         elements.push(self.value_balance_magnitude);
         elements.extend_from_slice(&self.merkle_root);
+        elements.extend_from_slice(&self.balance_slot_assets);
         elements.push(self.stablecoin_enabled);
         elements.push(self.stablecoin_asset);
         elements.push(self.stablecoin_policy_version);
@@ -409,6 +416,11 @@ impl TransactionPublicInputsP3 {
             [root[0], root[1], root[2], root[3], root[4], root[5]]
         };
 
+        let balance_slot_assets = {
+            let assets = take(elements, &mut idx, BALANCE_SLOTS);
+            [assets[0], assets[1], assets[2], assets[3]]
+        };
+
         let stablecoin_enabled = elements[idx];
         idx += 1;
         let stablecoin_asset = elements[idx];
@@ -443,6 +455,7 @@ impl TransactionPublicInputsP3 {
             value_balance_sign,
             value_balance_magnitude,
             merkle_root,
+            balance_slot_assets,
             stablecoin_enabled,
             stablecoin_asset,
             stablecoin_policy_version,
@@ -469,6 +482,27 @@ impl TransactionPublicInputsP3 {
         }
         if self.ciphertext_hashes.len() != MAX_OUTPUTS {
             return Err("ciphertext hash length mismatch".into());
+        }
+        if self.balance_slot_assets[0] != Felt::from_u64(NATIVE_ASSET_ID) {
+            return Err("slot 0 asset must be native asset".into());
+        }
+        let padding = Felt::from_u64(u64::MAX);
+        let native = Felt::from_u64(NATIVE_ASSET_ID);
+        let mut saw_padding = false;
+        let mut prev_asset = NATIVE_ASSET_ID;
+        for asset in self.balance_slot_assets.iter().skip(1) {
+            if *asset == padding {
+                saw_padding = true;
+                continue;
+            }
+            if saw_padding {
+                return Err("balance slot padding must be a suffix".into());
+            }
+            let asset_id = asset.as_canonical_u64();
+            if *asset == native || asset_id <= prev_asset {
+                return Err("balance slot assets must be strictly increasing after slot 0".into());
+            }
+            prev_asset = asset_id;
         }
 
         let zero = Felt::ZERO;
@@ -519,6 +553,15 @@ impl TransactionPublicInputsP3 {
         }
         if self.stablecoin_issuance_sign != zero && self.stablecoin_issuance_sign != one {
             return Err("Stablecoin issuance sign must be 0 or 1".into());
+        }
+        if self.stablecoin_enabled == one
+            && !self
+                .balance_slot_assets
+                .iter()
+                .skip(1)
+                .any(|asset| *asset == self.stablecoin_asset)
+        {
+            return Err("stablecoin asset must appear in a non-native balance slot".into());
         }
         Ok(())
     }
@@ -933,6 +976,9 @@ where
         ];
         idx += 6;
 
+        let balance_slot_assets = [pv(idx), pv(idx + 1), pv(idx + 2), pv(idx + 3)];
+        idx += BALANCE_SLOTS;
+
         let stablecoin_enabled = pv(idx);
         idx += 1;
         let stablecoin_asset = pv(idx);
@@ -1203,12 +1249,7 @@ where
         when.assert_bool(current[COL_STABLECOIN_SLOT_BIT0].clone());
         when.assert_bool(current[COL_STABLECOIN_SLOT_BIT1].clone());
 
-        let slot_assets = [
-            AB::Expr::from_u64(NATIVE_ASSET_ID),
-            current[COL_SLOT1_ASSET].clone().into(),
-            current[COL_SLOT2_ASSET].clone().into(),
-            current[COL_SLOT3_ASSET].clone().into(),
-        ];
+        let slot_assets = balance_slot_assets.clone();
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
 
@@ -1437,16 +1478,6 @@ where
                     * (next[slot_out_cols[slot]].clone()
                         - (current[slot_out_cols[slot]].clone() + add_out)),
             );
-            if slot > 0 {
-                let asset_col = match slot {
-                    1 => COL_SLOT1_ASSET,
-                    2 => COL_SLOT2_ASSET,
-                    _ => COL_SLOT3_ASSET,
-                };
-                when.assert_zero(
-                    not_first_row.clone() * (next[asset_col].clone() - current[asset_col].clone()),
-                );
-            }
         }
 
         let note_start_any = note_start_in0 + note_start_in1 + note_start_out0 + note_start_out1;

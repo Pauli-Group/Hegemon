@@ -175,7 +175,7 @@ Stablecoin issuance and burn are handled as a controlled exception to the per-as
 * `attestation_commitment`
 * `policy_version`
 
-Inside the AIR, the stablecoin binding payload stays in the public inputs. The witness trace carries only a compact 2-bit selector for the chosen non-native balance slot: `00` means “no stablecoin binding,” while `01`, `10`, and `11` select non-native slots `1`, `2`, and `3` respectively. When the binding is enabled, that selected slot must match `stablecoin_asset_id` and its net delta must equal `issuance_delta`. All other non-native slots are still constrained to zero. The runtime then enforces that the binding matches the active `StablecoinPolicy` hash and version, the oracle commitment is fresh, and the attestation is not disputed. This keeps issuance fully shielded while still tethering it to protocol-approved policy inputs.
+Inside the AIR, the stablecoin binding payload stays in the public inputs. The fixed four balance-slot asset ids are also public inputs, with a canonical encoding enforced by the runtime and wallet: slot `0` is always the native asset, non-native asset ids are strictly increasing, and any `u64::MAX` padding must appear only as a suffix. The witness trace carries only the running in/out sums for those four slots plus a compact 2-bit selector for the chosen non-native balance slot: `00` means “no stablecoin binding,” while `01`, `10`, and `11` select non-native slots `1`, `2`, and `3` respectively. When the binding is enabled, that selected slot must match `stablecoin_asset_id` and its net delta must equal `issuance_delta`. All other non-native slots are still constrained to zero. The runtime then enforces that the binding matches the active `StablecoinPolicy` hash and version, the oracle commitment is fresh, and the attestation is not disputed. This keeps issuance fully shielded while still tethering it to protocol-approved policy inputs.
 
 Consensus stitches this MASP output into PoW validation by requiring a coinbase commitment on every block. The `ConsensusBlock`
 type now carries `CoinbaseData` that either references a concrete transaction (by index) or supplies an explicit `balance_tag`.
@@ -740,16 +740,18 @@ The circuit's public inputs (fed into its transcript) are:
 * For each output `j`: `ct_hash[j]` as a 6-limb ciphertext hash (padded with zeros for inactive outputs).
 * `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 61-bit magnitude.
   In production, `value_balance` is required to be zero because there is no transparent pool.
+* `balance_slot_asset_ids[0..3]`, where slot `0` is the native asset, active non-native asset ids are strictly increasing, and padding uses `u64::MAX` only as a suffix.
 
 The AIR now binds `ct_hash[j]` at the final-row gate (the hash value itself is still computed outside the circuit from ciphertext bytes).
 
-The transaction envelope also carries `balance_slots` and a `balance_tag`, which are validated outside the STARK for now.
+The transaction envelope still carries the full `balance_slots` vector and a `balance_tag`, which are validated outside the STARK for now.
 `root_after` and any `txid` binding are handled at the block circuit layer (or a future transaction-circuit revision).
 
 As an additional integrity check outside the STARK, the runtime and wallet compute a 64-byte binding hash over the public inputs:
 
 ```
-message = anchor || nullifiers || commitments || ciphertext_hashes || fee || value_balance
+message = anchor || nullifiers || commitments || ciphertext_hashes
+       || balance_slot_asset_ids || fee || value_balance
 binding_hash = Blake2_256("binding-hash-v1" || 0 || message)
              || Blake2_256("binding-hash-v1" || 1 || message)
 ```

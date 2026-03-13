@@ -194,7 +194,7 @@ use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
-use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
+use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::dimensions::ROWS_PER_TX;
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
@@ -202,7 +202,9 @@ use transaction_circuit::hashing_pq::{
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
-use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+use transaction_circuit::public_inputs::{
+    BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs,
+};
 use transaction_circuit::witness::TransactionWitness;
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
@@ -1125,6 +1127,7 @@ fn build_stark_inputs(
     input_count: usize,
     output_count: usize,
     anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
     fee: u64,
     value_balance: i128,
     stablecoin: Option<&StablecoinPolicyBinding>,
@@ -1179,6 +1182,7 @@ fn build_stark_inputs(
         value_balance_sign,
         value_balance_magnitude,
         merkle_root: anchor,
+        balance_slot_asset_ids: balance_slot_asset_ids.to_vec(),
         stablecoin_enabled,
         stablecoin_asset_id,
         stablecoin_policy_version,
@@ -1190,12 +1194,61 @@ fn build_stark_inputs(
     })
 }
 
+fn canonical_balance_slots(
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
+    fee: u64,
+    value_balance: i128,
+    stablecoin: &StablecoinPolicyBinding,
+) -> Result<Vec<BalanceSlot>, String> {
+    if balance_slot_asset_ids[0] != NATIVE_ASSET_ID {
+        return Err("balance slot 0 must be the native asset".to_string());
+    }
+
+    let mut saw_padding = false;
+    let mut prev_asset = NATIVE_ASSET_ID;
+    for asset_id in balance_slot_asset_ids.iter().skip(1) {
+        if *asset_id == u64::MAX {
+            saw_padding = true;
+            continue;
+        }
+        if saw_padding {
+            return Err("balance slot asset ids must place padding at the end".to_string());
+        }
+        if *asset_id == NATIVE_ASSET_ID || *asset_id <= prev_asset {
+            return Err(
+                "balance slot asset ids must be strictly increasing after slot 0".to_string(),
+            );
+        }
+        prev_asset = *asset_id;
+    }
+
+    if stablecoin.enabled && !balance_slot_asset_ids[1..].contains(&stablecoin.asset_id) {
+        return Err("stablecoin asset must appear in a non-native balance slot".to_string());
+    }
+
+    let native_delta = i128::from(fee) - value_balance;
+    Ok(balance_slot_asset_ids
+        .into_iter()
+        .map(|asset_id| {
+            let delta = if asset_id == NATIVE_ASSET_ID {
+                native_delta
+            } else if stablecoin.enabled && asset_id == stablecoin.asset_id {
+                stablecoin.issuance_delta
+            } else {
+                0
+            };
+            BalanceSlot { asset_id, delta }
+        })
+        .collect())
+}
+
 fn build_transaction_proof(
     proof_bytes: Vec<u8>,
     nullifiers: Vec<[u8; 48]>,
     commitments: Vec<[u8; 48]>,
     ciphertexts: &[Vec<u8>],
     anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
@@ -1222,31 +1275,39 @@ fn build_transaction_proof(
         .as_ref()
         .map(convert_stablecoin_binding)
         .unwrap_or_default();
+    let balance_slots = canonical_balance_slots(
+        balance_slot_asset_ids,
+        fee,
+        value_balance,
+        &stablecoin_binding,
+    )?;
     let stark_public_inputs = build_stark_inputs(
         input_count,
         output_count,
         anchor,
+        balance_slot_asset_ids,
         fee,
         value_balance,
         stablecoin.as_ref().map(|_| &stablecoin_binding),
     )?;
-
-    let mut public_inputs = TransactionPublicInputs::default();
-    public_inputs.merkle_root = anchor;
-    public_inputs.nullifiers = padded_nullifiers.clone();
-    public_inputs.commitments = padded_commitments.clone();
-    public_inputs.ciphertext_hashes = padded_ciphertext_hashes.clone();
-    public_inputs.native_fee = fee;
-    public_inputs.value_balance = value_balance;
-    public_inputs.stablecoin = stablecoin_binding;
-    public_inputs.circuit_version = DEFAULT_VERSION_BINDING.circuit;
-    public_inputs.crypto_suite = DEFAULT_VERSION_BINDING.crypto;
+    let public_inputs = TransactionPublicInputs::new(
+        anchor,
+        padded_nullifiers.clone(),
+        padded_commitments.clone(),
+        padded_ciphertext_hashes.clone(),
+        balance_slots.clone(),
+        fee,
+        value_balance,
+        stablecoin_binding,
+        DEFAULT_VERSION_BINDING,
+    )
+    .map_err(|err| err.to_string())?;
 
     Ok(TransactionProof {
-        public_inputs: public_inputs.clone(),
+        public_inputs,
         nullifiers: padded_nullifiers,
         commitments: padded_commitments,
-        balance_slots: public_inputs.balance_slots.clone(),
+        balance_slots,
         stark_proof: proof_bytes,
         stark_public_inputs: Some(stark_public_inputs),
     })
@@ -1258,6 +1319,7 @@ fn build_transaction_proof_with_hashes(
     commitments: Vec<[u8; 48]>,
     ciphertext_hashes: &[[u8; 48]],
     anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
@@ -1280,31 +1342,39 @@ fn build_transaction_proof_with_hashes(
         .as_ref()
         .map(convert_stablecoin_binding)
         .unwrap_or_default();
+    let balance_slots = canonical_balance_slots(
+        balance_slot_asset_ids,
+        fee,
+        value_balance,
+        &stablecoin_binding,
+    )?;
     let stark_public_inputs = build_stark_inputs(
         input_count,
         output_count,
         anchor,
+        balance_slot_asset_ids,
         fee,
         value_balance,
         stablecoin.as_ref().map(|_| &stablecoin_binding),
     )?;
-
-    let mut public_inputs = TransactionPublicInputs::default();
-    public_inputs.merkle_root = anchor;
-    public_inputs.nullifiers = padded_nullifiers.clone();
-    public_inputs.commitments = padded_commitments.clone();
-    public_inputs.ciphertext_hashes = padded_ciphertext_hashes.clone();
-    public_inputs.native_fee = fee;
-    public_inputs.value_balance = value_balance;
-    public_inputs.stablecoin = stablecoin_binding;
-    public_inputs.circuit_version = DEFAULT_VERSION_BINDING.circuit;
-    public_inputs.crypto_suite = DEFAULT_VERSION_BINDING.crypto;
+    let public_inputs = TransactionPublicInputs::new(
+        anchor,
+        padded_nullifiers.clone(),
+        padded_commitments.clone(),
+        padded_ciphertext_hashes.clone(),
+        balance_slots.clone(),
+        fee,
+        value_balance,
+        stablecoin_binding,
+        DEFAULT_VERSION_BINDING,
+    )
+    .map_err(|err| err.to_string())?;
 
     Ok(TransactionProof {
-        public_inputs: public_inputs.clone(),
+        public_inputs,
         nullifiers: padded_nullifiers,
         commitments: padded_commitments,
-        balance_slots: public_inputs.balance_slots.clone(),
+        balance_slots,
         stark_proof: proof_bytes,
         stark_public_inputs: Some(stark_public_inputs),
     })
@@ -1766,6 +1836,7 @@ fn statement_hash_from_materialized_call(
     nullifiers: &[[u8; 48]],
     commitments: &[[u8; 48]],
     ciphertext_hashes: &[[u8; 48]],
+    balance_slot_asset_ids: &[u64; BALANCE_SLOTS],
     fee: u64,
     value_balance: i128,
     version: protocol_versioning::VersionBinding,
@@ -1796,6 +1867,9 @@ fn statement_hash_from_materialized_call(
         message.extend_from_slice(&[0u8; 48]);
     }
 
+    for asset_id in balance_slot_asset_ids {
+        message.extend_from_slice(&asset_id.to_le_bytes());
+    }
     message.extend_from_slice(&fee.to_le_bytes());
     message.extend_from_slice(&value_balance.to_le_bytes());
     message.extend_from_slice(&version.circuit.to_le_bytes());
@@ -1847,6 +1921,7 @@ fn statement_bindings_from_extrinsics(
                         nullifiers.as_slice(),
                         args.commitments.as_slice(),
                         &ciphertext_hashes,
+                        &args.balance_slot_asset_ids,
                         args.fee,
                         0,
                         version,
@@ -1864,6 +1939,7 @@ fn statement_bindings_from_extrinsics(
                         nullifiers.as_slice(),
                         args.commitments.as_slice(),
                         args.ciphertext_hashes.as_slice(),
+                        &args.balance_slot_asset_ids,
                         args.fee,
                         0,
                         version,
@@ -3319,6 +3395,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                     args.commitments.clone(),
                     &ciphertexts,
                     args.anchor,
+                    args.balance_slot_asset_ids,
                     args.stablecoin.clone(),
                     args.fee,
                     0,
@@ -3366,6 +3443,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                             commitments_vec.clone(),
                             ciphertexts,
                             args.anchor,
+                            args.balance_slot_asset_ids,
                             args.stablecoin.clone(),
                             args.fee,
                             0,
@@ -3377,6 +3455,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                         commitments_vec.clone(),
                         &hash_vec,
                         args.anchor,
+                        args.balance_slot_asset_ids,
                         args.stablecoin.clone(),
                         args.fee,
                         0,
@@ -10172,6 +10251,7 @@ mod tests {
                 ciphertext_hashes: vec![[binding_byte; 48]],
                 ciphertext_sizes: vec![32u32],
                 anchor: [7u8; 48],
+                balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
                 binding_hash: [binding_byte; 64],
                 stablecoin: None,
                 fee: 0,

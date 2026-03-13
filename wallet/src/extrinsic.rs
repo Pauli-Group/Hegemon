@@ -89,6 +89,8 @@ pub struct ShieldedTransferCall {
     pub anchor: [u8; 48],
     /// Binding signature
     pub binding_hash: [u8; 64],
+    /// Asset ids for the four fixed balance slots used by the transaction proof.
+    pub balance_slot_asset_ids: [u64; 4],
     /// Optional stablecoin policy binding
     pub stablecoin: Option<StablecoinPolicyBinding>,
     /// Native fee encoded in the proof.
@@ -112,6 +114,7 @@ impl ShieldedTransferCall {
             encrypted_notes: bundle.ciphertexts.clone(),
             anchor: bundle.anchor,
             binding_hash: bundle.binding_hash,
+            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
             stablecoin,
             fee: bundle.fee,
             value_balance: bundle.value_balance,
@@ -136,6 +139,8 @@ pub struct ShieldedTransferSidecarCall {
     pub anchor: [u8; 48],
     /// Binding signature
     pub binding_hash: [u8; 64],
+    /// Asset ids for the four fixed balance slots used by the transaction proof.
+    pub balance_slot_asset_ids: [u64; 4],
     /// Optional stablecoin policy binding (must be None for unsigned calls)
     pub stablecoin: Option<StablecoinPolicyBinding>,
     /// Native fee encoded in the proof.
@@ -859,6 +864,7 @@ mod tests {
             encrypted_notes: vec![note],
             anchor,
             binding_hash,
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             stablecoin: None,
             fee: 42,
             value_balance: 0,
@@ -887,6 +893,7 @@ mod tests {
             ciphertext_sizes: vec![1234],
             anchor,
             binding_hash,
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             stablecoin: None,
             fee: 77,
         };

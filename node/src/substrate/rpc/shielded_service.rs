@@ -109,6 +109,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 48],
+        _balance_slot_asset_ids: [u64; 4],
         _binding_hash: [u8; 64],
         _stablecoin: Option<StablecoinPolicyBinding>,
         _fee: u64,
@@ -320,6 +321,7 @@ where
         _commitments: Vec<[u8; 48]>,
         _encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 48],
+        _balance_slot_asset_ids: [u64; 4],
         _binding_hash: [u8; 64],
         _stablecoin: Option<StablecoinPolicyBinding>,
         _fee: u64,
@@ -487,6 +489,7 @@ mod tests {
             vec![],
             vec![],
             [0; 48], // Use valid anchor
+            [0, u64::MAX, u64::MAX, u64::MAX],
             [0; 64],
             None,
             0,

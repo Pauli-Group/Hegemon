@@ -27,6 +27,8 @@ pub struct TransactionBundle {
     /// Binding hash commitment.
     #[serde(with = "serde_bytes_64")]
     pub binding_hash: [u8; 64],
+    /// Asset ids for the fixed four balance slots used by the transaction proof.
+    pub balance_slot_asset_ids: [u64; 4],
     /// Native fee encoded in the proof.
     pub fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled).
@@ -45,6 +47,7 @@ impl TransactionBundle {
         ciphertexts: &[NoteCiphertext],
         anchor: [u8; 48],
         binding_hash: [u8; 64],
+        balance_slot_asset_ids: [u64; 4],
         fee: u64,
         value_balance: i128,
         stablecoin: StablecoinPolicyBinding,
@@ -66,6 +69,7 @@ impl TransactionBundle {
             ciphertexts: encoded,
             anchor,
             binding_hash,
+            balance_slot_asset_ids,
             fee,
             value_balance,
             stablecoin,

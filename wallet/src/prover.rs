@@ -275,6 +275,12 @@ impl StarkProver {
             nullifiers,
             commitments,
             anchor: proof.public_inputs.merkle_root,
+            balance_slot_asset_ids: [
+                proof.public_inputs.balance_slots[0].asset_id,
+                proof.public_inputs.balance_slots[1].asset_id,
+                proof.public_inputs.balance_slots[2].asset_id,
+                proof.public_inputs.balance_slots[3].asset_id,
+            ],
             proving_time,
             fee: proof.public_inputs.native_fee,
             value_balance: proof.public_inputs.value_balance,
@@ -328,6 +334,8 @@ pub struct ProofResult {
     pub commitments: Vec<[u8; 48]>,
     /// Merkle root anchor (48-byte array).
     pub anchor: [u8; 48],
+    /// Asset ids for the fixed four balance slots.
+    pub balance_slot_asset_ids: [u64; 4],
     /// Time taken to generate the proof.
     pub proving_time: Duration,
     /// Native fee encoded in the proof.
@@ -425,6 +433,7 @@ mod tests {
             nullifiers: vec![],
             commitments: vec![],
             anchor: [0u8; 48],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             proving_time: Duration::from_millis(500),
             fee: 0,
             value_balance: 0,

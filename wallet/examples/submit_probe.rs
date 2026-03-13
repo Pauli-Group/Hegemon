@@ -40,6 +40,7 @@ async fn main() {
         ciphertexts: vec![],
         anchor,
         binding_hash: [3u8; 64],
+        balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
         fee: 1_000_000_000,
         value_balance: 0,
         stablecoin: transaction_circuit::StablecoinPolicyBinding::default(),

@@ -1,6 +1,6 @@
 //! Plonky3 prover for the transaction circuit.
 
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
@@ -32,13 +32,12 @@ use transaction_core::p3_air::{
     COL_OUT1_SLOT_BIT0, COL_OUT1_SLOT_BIT1, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5,
     COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED, COL_RANGE_LIMBS_START, COL_RESET, COL_RHO0,
     COL_RHO1, COL_RHO2, COL_RHO3, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5,
-    COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SLOT0_IN, COL_SLOT0_OUT,
-    COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT,
-    COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_SLOT_BIT0,
-    COL_STABLECOIN_SLOT_BIT1, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
-    COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH,
-    NULLIFIER_ABSORB_CYCLES, PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES,
-    TRACE_WIDTH,
+    COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_IN,
+    COL_SLOT1_OUT, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_IN, COL_SLOT3_OUT,
+    COL_STABLECOIN_SLOT_BIT0, COL_STABLECOIN_SLOT_BIT1, COL_VALUE_BALANCE_MAG,
+    COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
+    MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, PREPROCESSED_WIDTH,
+    TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
 };
 use transaction_core::poseidon2::poseidon2_step;
 use transaction_core::range::{decompose_bounded_value, RANGE_LIMB_COUNT};
@@ -157,16 +156,6 @@ impl TransactionProverP3 {
         }
 
         let sentinel_row = 0;
-        let slot_asset_cols = [COL_SLOT1_ASSET, COL_SLOT2_ASSET, COL_SLOT3_ASSET];
-        let mut slot_asset_vals = [Val::from_u64(u64::MAX); 3];
-        for (idx, asset_id) in slot_assets
-            .iter()
-            .skip(1)
-            .take(slot_asset_vals.len())
-            .enumerate()
-        {
-            slot_asset_vals[idx] = Val::from_u64(*asset_id);
-        }
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
         let selector_bit_cols = [
@@ -207,9 +196,6 @@ impl TransactionProverP3 {
 
         for row in 0..trace_len {
             let row_slice = trace.row_mut(row);
-            for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = slot_asset_vals[idx];
-            }
             row_slice[COL_PRF_DERIVED] = derived_prf;
             row_slice[COL_AUTH_DERIVED0] = derived_auth[0];
             row_slice[COL_AUTH_DERIVED1] = derived_auth[1];
@@ -547,6 +533,15 @@ impl TransactionProverP3 {
         )?;
         let slots = witness.balance_slots()?;
         let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
+        let mut balance_slot_assets = [Val::from_u64(u64::MAX); 4];
+        balance_slot_assets[0] = Val::ZERO;
+        for (idx, asset_id) in slot_assets
+            .iter()
+            .take(balance_slot_assets.len())
+            .enumerate()
+        {
+            balance_slot_assets[idx] = Val::from_u64(*asset_id);
+        }
         let stablecoin_inputs = stablecoin_binding_inputs(witness, &slot_assets)?;
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
 
@@ -560,6 +555,7 @@ impl TransactionProverP3 {
             value_balance_sign: vb_sign,
             value_balance_magnitude: vb_mag,
             merkle_root,
+            balance_slot_assets,
             stablecoin_enabled: stablecoin_inputs.enabled,
             stablecoin_asset: stablecoin_inputs.asset,
             stablecoin_policy_version: stablecoin_inputs.policy_version,
@@ -642,6 +638,8 @@ impl TransactionProverP3 {
         };
 
         let final_row = trace_len.saturating_sub(2);
+        let balance_slot_assets =
+            infer_balance_slot_assets_from_trace(trace, &input_flags, &output_flags);
         let ciphertext_hashes = if final_row < trace_len {
             vec![
                 [
@@ -674,6 +672,7 @@ impl TransactionProverP3 {
             value_balance_sign: get_trace(trace, COL_VALUE_BALANCE_SIGN, final_row),
             value_balance_magnitude: get_trace(trace, COL_VALUE_BALANCE_MAG, final_row),
             merkle_root,
+            balance_slot_assets,
             // Stablecoin binding payload now lives only in public inputs, not the witness trace.
             stablecoin_enabled: Val::ZERO,
             stablecoin_asset: Val::ZERO,
@@ -745,6 +744,57 @@ fn flag_to_felt(active: bool) -> Val {
 
 fn get_trace(trace: &RowMajorMatrix<Val>, col: usize, row: usize) -> Val {
     trace.values[row * trace.width + col]
+}
+
+fn infer_balance_slot_assets_from_trace(
+    trace: &RowMajorMatrix<Val>,
+    input_flags: &[Val],
+    output_flags: &[Val],
+) -> [Val; 4] {
+    let mut assets = vec![transaction_core::constants::NATIVE_ASSET_ID];
+    for (idx, flag) in input_flags.iter().enumerate() {
+        let row = note_start_row_input(idx);
+        if *flag == Val::ONE && row < trace.height() {
+            assets.push(
+                get_trace(
+                    trace,
+                    if idx == 0 {
+                        COL_IN0_ASSET
+                    } else {
+                        COL_IN1_ASSET
+                    },
+                    row,
+                )
+                .as_canonical_u64(),
+            );
+        }
+    }
+    for (idx, flag) in output_flags.iter().enumerate() {
+        let row = note_start_row_output(idx);
+        if *flag == Val::ONE && row < trace.height() {
+            assets.push(
+                get_trace(
+                    trace,
+                    if idx == 0 {
+                        COL_OUT0_ASSET
+                    } else {
+                        COL_OUT1_ASSET
+                    },
+                    row,
+                )
+                .as_canonical_u64(),
+            );
+        }
+    }
+    assets.sort_unstable();
+    assets.dedup();
+
+    let mut slot_assets = [Val::from_u64(u64::MAX); 4];
+    slot_assets[0] = Val::ZERO;
+    for (idx, asset_id) in assets.into_iter().take(slot_assets.len()).enumerate() {
+        slot_assets[idx] = Val::from_u64(asset_id);
+    }
+    slot_assets
 }
 
 fn bytes_to_vals(bytes: &[u8]) -> Vec<Val> {
@@ -1250,21 +1300,16 @@ mod tests {
         let witness = sample_witness();
         witness.validate().expect("witness valid");
         let prover = TransactionProverP3::new();
-        let mut trace = prover.build_trace(&witness).expect("trace build");
+        let trace = prover.build_trace(&witness).expect("trace build");
         let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+        let proof = prover.prove(trace, &pub_inputs);
 
-        let row = 2;
-        let col = COL_SLOT1_ASSET;
-        let idx = row * trace.width + col;
-        trace.values[idx] += Val::ONE;
-
-        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
-        if let Ok(proof) = result {
-            assert!(
-                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
-                "verification should fail for slot asset relabeling across rows"
-            );
-        }
+        let mut tampered = pub_inputs.clone();
+        tampered.balance_slot_assets[1] += Val::ONE;
+        assert!(
+            verify_transaction_proof_p3(&proof, &tampered).is_err(),
+            "verification should fail for slot asset relabeling across rows"
+        );
     }
 
     #[test]
