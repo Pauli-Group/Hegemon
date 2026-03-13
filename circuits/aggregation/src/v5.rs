@@ -19,6 +19,8 @@ const BATCH_PROOF_LOG_FINAL_POLY_LEN: usize = 0;
 const BATCH_PROOF_COMMIT_POW_BITS: usize = 0;
 const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
 const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
+const DEFAULT_LEAF_FAN_IN: usize = 4;
+const DEFAULT_MERGE_FAN_IN: usize = 8;
 
 type OuterBatchFri = FriProofTargets<
     Val,
@@ -128,7 +130,7 @@ fn leaf_fan_in() -> usize {
     std::env::var("HEGEMON_AGG_LEAF_FANIN")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(8)
+        .unwrap_or(DEFAULT_LEAF_FAN_IN)
         .max(1)
 }
 
@@ -136,7 +138,7 @@ fn merge_fan_in() -> usize {
     std::env::var("HEGEMON_AGG_MERGE_FANIN")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(8)
+        .unwrap_or(DEFAULT_MERGE_FAN_IN)
         .max(1)
 }
 

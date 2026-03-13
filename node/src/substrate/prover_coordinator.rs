@@ -639,6 +639,9 @@ struct CoordinatorState {
 }
 
 impl ProverCoordinator {
+    const DEFAULT_LEAF_FAN_IN: usize = 4;
+    const DEFAULT_MERGE_FAN_IN: usize = 8;
+
     fn aggregation_tree_arity() -> u16 {
         std::env::var("HEGEMON_AGG_TREE_ARITY")
             .ok()
@@ -2161,7 +2164,7 @@ impl ProverCoordinator {
         std::env::var("HEGEMON_AGG_LEAF_FANIN")
             .ok()
             .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(8)
+            .unwrap_or(Self::DEFAULT_LEAF_FAN_IN)
             .max(1)
     }
 
@@ -2169,7 +2172,7 @@ impl ProverCoordinator {
         std::env::var("HEGEMON_AGG_MERGE_FANIN")
             .ok()
             .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(8)
+            .unwrap_or(Self::DEFAULT_MERGE_FAN_IN)
             .max(1)
     }
 

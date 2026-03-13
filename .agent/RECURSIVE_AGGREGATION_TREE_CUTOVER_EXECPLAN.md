@@ -43,6 +43,9 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - [x] (2026-03-13 00:19Z) Identified the node-level `BadProof` cause on the easy local harness: the repository’s `config/dev-chainspec.json` was stale relative to the current node binary. Compared to `./target/release/hegemon-node build-spec --raw --disable-default-bootnode`, it still carried the old runtime WASM and the old proof-availability storage value (`InlineRequired` instead of `SelfContained`).
 - [x] (2026-03-13 00:19Z) Refreshed `config/dev-chainspec.json` from the current node binary’s raw build-spec output so the shared local/testnet bootstrap spec now matches the live runtime and default self-contained aggregation policy.
 - [x] (2026-03-13 00:19Z) Reproduced the exact proofless sidecar submission manually on a low-difficulty chainspec derived from the refreshed spec. The same `HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROOF_SIDECAR=1` submission that previously failed as `Pool(InvalidTransaction(InvalidTransaction::BadProof))` is now accepted by the node, and `shielded-pool` trace logs show `verify_binding_hash ... result=true` on the proofless path.
+- [x] (2026-03-13 00:49Z) Shifted the default recursion throughput lane to the best measured two-level profile in code and ops: `leaf_fanin=4`, `merge_fanin=8`, tx recursion `queries=2`, tx recursion `log_blowup=2`, and outer aggregation `queries/log_blowup=2/2`.
+- [x] (2026-03-13 00:49Z) Fixed the throughput harness so it actually exports aggregation-shape and recursion-profile env vars to the node and wallet, widened the default RPC wait for custom chainspec runs, and stopped defaulting aggregation mode to a single local prover worker.
+- [x] (2026-03-13 00:49Z) Re-ran the strict wrapper probe on the refreshed easy chainspec with the tuned defaults. `scripts/throughput_sidecar_aggregation_tmux.sh` now reaches `Send stage complete` and `Strict mode: waiting for local proven batch candidate...` under the new lane instead of failing before proofless submission or running the stale `8 x 8` fallback.
 - [ ] (2026-03-13 00:19Z) Finish the strict wrapper run after proofless submission succeeds. Current state: `scripts/throughput_sidecar_aggregation_tmux.sh` with `tx_count=1`, the refreshed easy chainspec, and strict aggregation now gets past funding, sync, and the first proofless sidecar submission, then waits for a local prepared batch instead of failing at pool admission.
 
 ## Surprises & Discoveries
@@ -113,6 +116,9 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - Observation: that local-harness `BadProof` was not a runtime logic bug in the proofless path; it was a stale chainspec artifact.
   Evidence: diffing `config/dev-chainspec.json` against the current `build-spec --raw` output showed exactly two mismatches: the runtime WASM blob and one shielded-pool storage value, which flipped from `0x00` to `0x01`. The changed shielded-pool key corresponds to `ProofAvailabilityPolicyStorage`, and after refreshing the chainspec the same proofless sidecar submission is accepted.
 
+- Observation: the throughput harness had also been silently leaving throughput on the table even after the chainspec fix.
+  Evidence: before this pass, `scripts/throughput_sidecar_aggregation_tmux.sh` accepted `HEGEMON_TP_AGG_LEAF_FANIN`-style knobs but did not export the corresponding `HEGEMON_AGG_*` / `HEGEMON_TX_RECURSION_*` variables to the node or wallet. It also defaulted aggregation mode to one local prover worker. After wiring those envs through and moving the default lane to `4 x 8` with `2/2` recursion FRI params, the wrapper reports the tuned config explicitly and still reaches strict prepared-batch waiting.
+
 ## Decision Log
 
 - Decision: create a dedicated ExecPlan for this cutover instead of extending the broader permissionless-scaling plan.
@@ -154,6 +160,10 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - Decision: keep the new generic Goldilocks D2 recursive batch-verifier repro as a normal unit test now that it passes.
   Rationale: that test is the shortest high-signal regression guard for the bug that previously blocked `merge(2 leaves)`, and it now completes in seconds rather than minutes.
   Date/Author: 2026-03-12 / Codex
+
+- Decision: move the default two-level recursion lane to `leaf_fanin=4`, `merge_fanin=8`, tx recursion `queries/log_blowup=2/2`, and outer aggregation `queries/log_blowup=2/2`.
+  Rationale: the direct `hegemon-prover` leaf sweep showed `fan_in=4`, `queries=2`, `log_blowup=2` is the best current leaf profile that still supports the intended two-level throughput target, while the old `8 x 8` fallback was both slower and, in the harness, often not actually the configured shape.
+  Date/Author: 2026-03-13 / Codex
 
 ## Outcomes & Retrospective
 

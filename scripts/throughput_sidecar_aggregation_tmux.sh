@@ -169,7 +169,12 @@ else
     AGG_PROVER_THREADS="$HOST_THREADS"
   fi
 fi
-AGG_PREPARE_THREADS="${HEGEMON_TP_AGG_PREPARE_THREADS:-$NODE_RAYON_THREADS}"
+AGG_PREPARE_THREADS="${HEGEMON_TP_AGG_PREPARE_THREADS:-}"
+AGG_PREPARE_THREADS_AUTO=0
+if [ -z "$AGG_PREPARE_THREADS" ]; then
+  AGG_PREPARE_THREADS_AUTO=1
+  AGG_PREPARE_THREADS="$NODE_RAYON_THREADS"
+fi
 AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-0}"
 PREWARM_ONLY="${HEGEMON_TP_PREWARM_ONLY:-0}" # 1 = stop after prepared batch is available
 
@@ -268,8 +273,26 @@ if [ -n "${HEGEMON_TP_PROVER_WORKERS:-}" ]; then
   PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS}"
 elif [ "$PROOF_MODE" = "single" ]; then
   PROVER_WORKERS=0
+elif [ "$TP_PROFILE" = "safe" ]; then
+  if [ "$HOST_THREADS" -ge 2 ]; then
+    PROVER_WORKERS=2
+  else
+    PROVER_WORKERS=1
+  fi
+elif [ "$HOST_MEM_GIB" -ge 128 ]; then
+  if [ "$HOST_THREADS" -ge 4 ]; then
+    PROVER_WORKERS=4
+  else
+    PROVER_WORKERS="$HOST_THREADS"
+  fi
 else
-  PROVER_WORKERS=1
+  if [ "$HOST_THREADS" -ge 4 ]; then
+    PROVER_WORKERS=4
+  elif [ "$HOST_THREADS" -ge 2 ]; then
+    PROVER_WORKERS=2
+  else
+    PROVER_WORKERS=1
+  fi
 fi
 if [ -n "${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-}" ]; then
   PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS}"
@@ -287,6 +310,8 @@ WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
 WALLET_RPC_REQUEST_TIMEOUT_SECS="${HEGEMON_TP_WALLET_RPC_REQUEST_TIMEOUT_SECS:-180}"
 if [ -n "${HEGEMON_TP_RPC_WAIT_SECS:-}" ]; then
   RPC_WAIT_SECS="${HEGEMON_TP_RPC_WAIT_SECS}"
+elif [ -n "$CHAIN_SPEC" ]; then
+  RPC_WAIT_SECS=180
 elif [ "$AGG_PREWARM_MAX_TXS" -gt 0 ]; then
   RPC_WAIT_SECS=300
 else
@@ -493,14 +518,6 @@ GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 RUN_TIMESTAMP_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 GENESIS_HASH=""
 
-echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
-echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
-echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
-echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
-echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
-echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
-echo "Artifacts: run_id=${RUN_ID} json=${ARTIFACT_JSON}" >&2
-
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   if [ "${HEGEMON_TP_FORCE:-0}" = "1" ]; then
     tmux kill-session -t "$SESSION"
@@ -703,14 +720,58 @@ if [ -n "$ADAPTIVE_LIVENESS_MS" ]; then
   NODE_ADAPTIVE_LIVENESS_ENV="HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS=${ADAPTIVE_LIVENESS_MS}"
 fi
 NODE_PREWARM_BLOCKING_ENV=""
-AGG_LEAF_FANIN="${HEGEMON_TP_AGG_LEAF_FANIN:-8}"
+AGG_LEAF_FANIN="${HEGEMON_TP_AGG_LEAF_FANIN:-4}"
 if ! [[ "$AGG_LEAF_FANIN" =~ ^[0-9]+$ ]] || [ "$AGG_LEAF_FANIN" -lt 1 ]; then
   echo "HEGEMON_TP_AGG_LEAF_FANIN must be a positive integer (got '$AGG_LEAF_FANIN')." >&2
+  exit 1
+fi
+AGG_MERGE_FANIN="${HEGEMON_TP_AGG_MERGE_FANIN:-8}"
+if ! [[ "$AGG_MERGE_FANIN" =~ ^[0-9]+$ ]] || [ "$AGG_MERGE_FANIN" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_MERGE_FANIN must be a positive integer (got '$AGG_MERGE_FANIN')." >&2
+  exit 1
+fi
+TX_RECURSION_NUM_QUERIES="${HEGEMON_TP_TX_RECURSION_NUM_QUERIES:-2}"
+if ! [[ "$TX_RECURSION_NUM_QUERIES" =~ ^[0-9]+$ ]] || [ "$TX_RECURSION_NUM_QUERIES" -lt 1 ]; then
+  echo "HEGEMON_TP_TX_RECURSION_NUM_QUERIES must be a positive integer (got '$TX_RECURSION_NUM_QUERIES')." >&2
+  exit 1
+fi
+TX_RECURSION_LOG_BLOWUP="${HEGEMON_TP_TX_RECURSION_LOG_BLOWUP:-2}"
+if ! [[ "$TX_RECURSION_LOG_BLOWUP" =~ ^[0-9]+$ ]] || [ "$TX_RECURSION_LOG_BLOWUP" -lt 1 ]; then
+  echo "HEGEMON_TP_TX_RECURSION_LOG_BLOWUP must be a positive integer (got '$TX_RECURSION_LOG_BLOWUP')." >&2
+  exit 1
+fi
+AGG_OUTER_NUM_QUERIES="${HEGEMON_TP_AGG_OUTER_NUM_QUERIES:-2}"
+if ! [[ "$AGG_OUTER_NUM_QUERIES" =~ ^[0-9]+$ ]] || [ "$AGG_OUTER_NUM_QUERIES" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_OUTER_NUM_QUERIES must be a positive integer (got '$AGG_OUTER_NUM_QUERIES')." >&2
+  exit 1
+fi
+AGG_OUTER_LOG_BLOWUP="${HEGEMON_TP_AGG_OUTER_LOG_BLOWUP:-2}"
+if ! [[ "$AGG_OUTER_LOG_BLOWUP" =~ ^[0-9]+$ ]] || [ "$AGG_OUTER_LOG_BLOWUP" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_OUTER_LOG_BLOWUP must be a positive integer (got '$AGG_OUTER_LOG_BLOWUP')." >&2
   exit 1
 fi
 if [ "$AGG_PREWARM_MAX_TXS" -gt "$AGG_LEAF_FANIN" ]; then
   NODE_PREWARM_BLOCKING_ENV="HEGEMON_AGG_PREWARM_BLOCKING=1"
 fi
+if [ "$PROOF_MODE" = "aggregation" ] && [ "$PROVER_WORKERS" -gt "$AGG_LEAF_FANIN" ]; then
+  PROVER_WORKERS="$AGG_LEAF_FANIN"
+fi
+if [ "$AGG_PREPARE_THREADS_AUTO" = "1" ]; then
+  if [ "$PROVER_WORKERS" -gt "$NODE_RAYON_THREADS" ]; then
+    AGG_PREPARE_THREADS="$PROVER_WORKERS"
+  else
+    AGG_PREPARE_THREADS="$NODE_RAYON_THREADS"
+  fi
+fi
+
+echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
+echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
+echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
+echo "Aggregation recursion config: leaf_fanin=$AGG_LEAF_FANIN merge_fanin=$AGG_MERGE_FANIN tx_recursion_queries=$TX_RECURSION_NUM_QUERIES tx_recursion_log_blowup=$TX_RECURSION_LOG_BLOWUP outer_queries=$AGG_OUTER_NUM_QUERIES outer_log_blowup=$AGG_OUTER_LOG_BLOWUP prover_workers=$PROVER_WORKERS" >&2
+echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
+echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
+echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
+echo "Artifacts: run_id=${RUN_ID} json=${ARTIFACT_JSON}" >&2
 
 wallet_sync() {
   local store="$1"
@@ -738,6 +799,8 @@ wallet_send_once() {
   env \
     HEGEMON_WALLET_DA_SIDECAR=1 \
     HEGEMON_WALLET_PROOF_SIDECAR="$proof_sidecar" \
+    HEGEMON_TX_RECURSION_NUM_QUERIES="$TX_RECURSION_NUM_QUERIES" \
+    HEGEMON_TX_RECURSION_LOG_BLOWUP="$TX_RECURSION_LOG_BLOWUP" \
     HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS="$WALLET_RPC_REQUEST_TIMEOUT_SECS" \
     RAYON_NUM_THREADS="$WALLET_RAYON_THREADS" \
     HEGEMON_RAYON_THREADS="$WALLET_RAYON_THREADS" \
@@ -804,8 +867,15 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_FULL_IMPORT=1 \
      HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK='${TX_COUNT}' \
      HEGEMON_AGG_PROFILE='${AGG_PROFILE}' \
+     HEGEMON_AGG_LEAF_FANIN='${AGG_LEAF_FANIN}' \
+     HEGEMON_AGG_MERGE_FANIN='${AGG_MERGE_FANIN}' \
+     HEGEMON_TX_RECURSION_NUM_QUERIES='${TX_RECURSION_NUM_QUERIES}' \
+     HEGEMON_TX_RECURSION_LOG_BLOWUP='${TX_RECURSION_LOG_BLOWUP}' \
+     HEGEMON_AGG_OUTER_NUM_QUERIES='${AGG_OUTER_NUM_QUERIES}' \
+     HEGEMON_AGG_OUTER_LOG_BLOWUP='${AGG_OUTER_LOG_BLOWUP}' \
      HEGEMON_AGG_PREPARE_THREADS='${AGG_PREPARE_THREADS}' \
      HEGEMON_AGG_PROVER_THREADS='${AGG_PROVER_THREADS}' \
+     HEGEMON_AGG_STAGE_LOCAL_PARALLELISM='${PROVER_WORKERS}' \
      HEGEMON_AGG_PREWARM_MAX_TXS='${AGG_PREWARM_MAX_TXS}' \
      HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
      ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
