@@ -116,69 +116,44 @@ pub const COL_OUT3: usize = 61;
 pub const COL_OUT4: usize = 62;
 pub const COL_OUT5: usize = 63;
 
-/// Stablecoin policy binding and issuance fields (final row only).
-pub const COL_STABLECOIN_ENABLED: usize = 64;
-pub const COL_STABLECOIN_ASSET: usize = 65;
-pub const COL_STABLECOIN_POLICY_VERSION: usize = 66;
-pub const COL_STABLECOIN_ISSUANCE_SIGN: usize = 67;
-pub const COL_STABLECOIN_ISSUANCE_MAG: usize = 68;
-pub const COL_STABLECOIN_POLICY_HASH0: usize = 69;
-pub const COL_STABLECOIN_POLICY_HASH1: usize = 70;
-pub const COL_STABLECOIN_POLICY_HASH2: usize = 71;
-pub const COL_STABLECOIN_POLICY_HASH3: usize = 72;
-pub const COL_STABLECOIN_POLICY_HASH4: usize = 73;
-pub const COL_STABLECOIN_POLICY_HASH5: usize = 74;
-pub const COL_STABLECOIN_ORACLE0: usize = 75;
-pub const COL_STABLECOIN_ORACLE1: usize = 76;
-pub const COL_STABLECOIN_ORACLE2: usize = 77;
-pub const COL_STABLECOIN_ORACLE3: usize = 78;
-pub const COL_STABLECOIN_ORACLE4: usize = 79;
-pub const COL_STABLECOIN_ORACLE5: usize = 80;
-pub const COL_STABLECOIN_ATTEST0: usize = 81;
-pub const COL_STABLECOIN_ATTEST1: usize = 82;
-pub const COL_STABLECOIN_ATTEST2: usize = 83;
-pub const COL_STABLECOIN_ATTEST3: usize = 84;
-pub const COL_STABLECOIN_ATTEST4: usize = 85;
-pub const COL_STABLECOIN_ATTEST5: usize = 86;
-pub const COL_STABLECOIN_SLOT_SEL0: usize = 87;
-pub const COL_STABLECOIN_SLOT_SEL1: usize = 88;
-pub const COL_STABLECOIN_SLOT_SEL2: usize = 89;
-pub const COL_STABLECOIN_SLOT_SEL3: usize = 90;
+/// Compact 2-bit stablecoin slot selector written on the final row.
+pub const COL_STABLECOIN_SLOT_BIT0: usize = 64;
+pub const COL_STABLECOIN_SLOT_BIT1: usize = 65;
 
 /// Captured rho limbs (input notes only) used to bind commitment and nullifier phases.
-pub const COL_IN0_RHO0: usize = 91;
-pub const COL_IN0_RHO1: usize = 92;
-pub const COL_IN0_RHO2: usize = 93;
-pub const COL_IN0_RHO3: usize = 94;
-pub const COL_IN1_RHO0: usize = 95;
-pub const COL_IN1_RHO1: usize = 96;
-pub const COL_IN1_RHO2: usize = 97;
-pub const COL_IN1_RHO3: usize = 98;
+pub const COL_IN0_RHO0: usize = 66;
+pub const COL_IN0_RHO1: usize = 67;
+pub const COL_IN0_RHO2: usize = 68;
+pub const COL_IN0_RHO3: usize = 69;
+pub const COL_IN1_RHO0: usize = 70;
+pub const COL_IN1_RHO1: usize = 71;
+pub const COL_IN1_RHO2: usize = 72;
+pub const COL_IN1_RHO3: usize = 73;
 
 /// Secret-key limbs, in-circuit derived PRF key, and spend-auth key limbs.
-pub const COL_SK0: usize = 99;
-pub const COL_SK1: usize = 100;
-pub const COL_SK2: usize = 101;
-pub const COL_SK3: usize = 102;
-pub const COL_PRF_DERIVED: usize = 103;
-pub const COL_AUTH_DERIVED0: usize = 104;
-pub const COL_AUTH_DERIVED1: usize = 105;
-pub const COL_AUTH_DERIVED2: usize = 106;
-pub const COL_AUTH_DERIVED3: usize = 107;
+pub const COL_SK0: usize = 74;
+pub const COL_SK1: usize = 75;
+pub const COL_SK2: usize = 76;
+pub const COL_SK3: usize = 77;
+pub const COL_PRF_DERIVED: usize = 78;
+pub const COL_AUTH_DERIVED0: usize = 79;
+pub const COL_AUTH_DERIVED1: usize = 80;
+pub const COL_AUTH_DERIVED2: usize = 81;
+pub const COL_AUTH_DERIVED3: usize = 82;
 
 /// Ciphertext hashes mirrored into the witness trace and bound at the final row.
-pub const COL_CT0_0: usize = 108;
-pub const COL_CT0_1: usize = 109;
-pub const COL_CT0_2: usize = 110;
-pub const COL_CT0_3: usize = 111;
-pub const COL_CT0_4: usize = 112;
-pub const COL_CT0_5: usize = 113;
-pub const COL_CT1_0: usize = 114;
-pub const COL_CT1_1: usize = 115;
-pub const COL_CT1_2: usize = 116;
-pub const COL_CT1_3: usize = 117;
-pub const COL_CT1_4: usize = 118;
-pub const COL_CT1_5: usize = 119;
+pub const COL_CT0_0: usize = 83;
+pub const COL_CT0_1: usize = 84;
+pub const COL_CT0_2: usize = 85;
+pub const COL_CT0_3: usize = 86;
+pub const COL_CT0_4: usize = 87;
+pub const COL_CT0_5: usize = 88;
+pub const COL_CT1_0: usize = 89;
+pub const COL_CT1_1: usize = 90;
+pub const COL_CT1_2: usize = 91;
+pub const COL_CT1_3: usize = 92;
+pub const COL_CT1_4: usize = 93;
+pub const COL_CT1_5: usize = 94;
 
 /// Bit-length used for in-circuit monetary range checks.
 pub const VALUE_RANGE_BITS: usize = 61;
@@ -1252,16 +1227,8 @@ where
         when.assert_bool(stablecoin_enabled.clone());
         when.assert_bool(stablecoin_issuance_sign.clone());
 
-        let stablecoin_sel_cols = [
-            COL_STABLECOIN_SLOT_SEL0,
-            COL_STABLECOIN_SLOT_SEL1,
-            COL_STABLECOIN_SLOT_SEL2,
-            COL_STABLECOIN_SLOT_SEL3,
-        ];
-        for &col in stablecoin_sel_cols.iter() {
-            let sel = current[col].clone();
-            when.assert_bool(sel);
-        }
+        when.assert_bool(current[COL_STABLECOIN_SLOT_BIT0].clone());
+        when.assert_bool(current[COL_STABLECOIN_SLOT_BIT1].clone());
 
         let slot_asset_cols = [
             COL_SLOT0_ASSET,
@@ -1278,17 +1245,33 @@ where
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
 
-        let stablecoin_sel_sum = stablecoin_sel_cols
+        let selector_weights = |bit0: AB::Expr, bit1: AB::Expr| -> [AB::Expr; 4] {
+            let not_bit0 = one.clone() - bit0.clone();
+            let not_bit1 = one.clone() - bit1.clone();
+            [
+                not_bit0.clone() * not_bit1.clone(),
+                bit0.clone() * not_bit1.clone(),
+                not_bit0 * bit1.clone(),
+                bit0 * bit1,
+            ]
+        };
+
+        let stablecoin_weights = selector_weights(
+            current[COL_STABLECOIN_SLOT_BIT0].clone().into(),
+            current[COL_STABLECOIN_SLOT_BIT1].clone().into(),
+        );
+
+        let stablecoin_sel_sum = stablecoin_weights[1..]
             .iter()
-            .fold(AB::Expr::ZERO, |acc, col| acc + current[*col].clone());
+            .fold(AB::Expr::ZERO, |acc, weight| acc + weight.clone());
         when.assert_zero(
             final_row_mask.clone() * (stablecoin_sel_sum - stablecoin_enabled.clone()),
         );
 
-        for slot in 0..4 {
+        for slot in 1..4 {
             when.assert_zero(
                 final_row_mask.clone()
-                    * current[stablecoin_sel_cols[slot]].clone()
+                    * stablecoin_weights[slot].clone()
                     * (slot_assets[slot].clone() - stablecoin_asset.clone()),
             );
         }
@@ -1298,50 +1281,45 @@ where
                 * stablecoin_issuance_magnitude.clone()
                 * two.clone());
         let mut selected_delta = AB::Expr::ZERO;
-        for slot in 0..4 {
+        for slot in 1..4 {
             let delta = current[slot_in_cols[slot]].clone() - current[slot_out_cols[slot]].clone();
-            selected_delta += current[stablecoin_sel_cols[slot]].clone() * delta;
+            selected_delta += stablecoin_weights[slot].clone() * delta;
         }
         when.assert_zero(final_row_mask.clone() * (selected_delta - stablecoin_signed));
 
         for slot in 1..4 {
             let delta = current[slot_in_cols[slot]].clone() - current[slot_out_cols[slot]].clone();
             when.assert_zero(
-                final_row_mask.clone()
-                    * delta
-                    * (one.clone() - current[stablecoin_sel_cols[slot]].clone()),
+                final_row_mask.clone() * delta * (one.clone() - stablecoin_weights[slot].clone()),
             );
         }
 
         let stablecoin_disabled = one.clone() - stablecoin_enabled.clone();
-        let stablecoin_zero_cols = [
-            COL_STABLECOIN_ASSET,
-            COL_STABLECOIN_POLICY_VERSION,
-            COL_STABLECOIN_ISSUANCE_SIGN,
-            COL_STABLECOIN_ISSUANCE_MAG,
-            COL_STABLECOIN_POLICY_HASH0,
-            COL_STABLECOIN_POLICY_HASH1,
-            COL_STABLECOIN_POLICY_HASH2,
-            COL_STABLECOIN_POLICY_HASH3,
-            COL_STABLECOIN_POLICY_HASH4,
-            COL_STABLECOIN_POLICY_HASH5,
-            COL_STABLECOIN_ORACLE0,
-            COL_STABLECOIN_ORACLE1,
-            COL_STABLECOIN_ORACLE2,
-            COL_STABLECOIN_ORACLE3,
-            COL_STABLECOIN_ORACLE4,
-            COL_STABLECOIN_ORACLE5,
-            COL_STABLECOIN_ATTEST0,
-            COL_STABLECOIN_ATTEST1,
-            COL_STABLECOIN_ATTEST2,
-            COL_STABLECOIN_ATTEST3,
-            COL_STABLECOIN_ATTEST4,
-            COL_STABLECOIN_ATTEST5,
-        ];
-        for &col in stablecoin_zero_cols.iter() {
-            when.assert_zero(
-                final_row_mask.clone() * stablecoin_disabled.clone() * current[col].clone(),
-            );
+        for value in [
+            stablecoin_asset.clone(),
+            stablecoin_policy_version.clone(),
+            stablecoin_issuance_sign.clone(),
+            stablecoin_issuance_magnitude.clone(),
+            stablecoin_policy_hash[0].clone(),
+            stablecoin_policy_hash[1].clone(),
+            stablecoin_policy_hash[2].clone(),
+            stablecoin_policy_hash[3].clone(),
+            stablecoin_policy_hash[4].clone(),
+            stablecoin_policy_hash[5].clone(),
+            stablecoin_oracle_commitment[0].clone(),
+            stablecoin_oracle_commitment[1].clone(),
+            stablecoin_oracle_commitment[2].clone(),
+            stablecoin_oracle_commitment[3].clone(),
+            stablecoin_oracle_commitment[4].clone(),
+            stablecoin_oracle_commitment[5].clone(),
+            stablecoin_attestation_commitment[0].clone(),
+            stablecoin_attestation_commitment[1].clone(),
+            stablecoin_attestation_commitment[2].clone(),
+            stablecoin_attestation_commitment[3].clone(),
+            stablecoin_attestation_commitment[4].clone(),
+            stablecoin_attestation_commitment[5].clone(),
+        ] {
+            when.assert_zero(final_row_mask.clone() * stablecoin_disabled.clone() * value);
         }
 
         let active_cols = [
@@ -1370,17 +1348,6 @@ where
         let note_start_in1 = prep_note_start_in1.clone();
         let note_start_out0 = prep_note_start_out0.clone();
         let note_start_out1 = prep_note_start_out1.clone();
-
-        let selector_weights = |bit0: AB::Expr, bit1: AB::Expr| -> [AB::Expr; 4] {
-            let not_bit0 = one.clone() - bit0.clone();
-            let not_bit1 = one.clone() - bit1.clone();
-            [
-                not_bit0.clone() * not_bit1.clone(),
-                bit0.clone() * not_bit1.clone(),
-                not_bit0 * bit1.clone(),
-                bit0 * bit1,
-            ]
-        };
 
         let note_weights = [
             selector_weights(
@@ -1636,9 +1603,7 @@ where
             issuance_range += current[COL_RANGE_LIMBS_START + limb_idx].clone()
                 * AB::Expr::from_u64(1u64 << (limb_idx * RANGE_LIMB_BITS));
         }
-        when.assert_zero(
-            issuance_row * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - issuance_range),
-        );
+        when.assert_zero(issuance_row * (stablecoin_issuance_magnitude.clone() - issuance_range));
 
         for (gate, in_offset, rho_word) in [
             (cm_rho0_row.clone(), COL_IN0, rho_in0[0].clone()),
@@ -1772,101 +1737,6 @@ where
                             - ciphertext_hashes[output][limb].clone()),
                 );
             }
-        }
-        when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_ENABLED].clone() - stablecoin_enabled),
-        );
-        when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_ASSET].clone() - stablecoin_asset),
-        );
-        when.assert_zero(
-            final_row_mask.clone()
-                * (current[COL_STABLECOIN_POLICY_VERSION].clone() - stablecoin_policy_version),
-        );
-        when.assert_zero(
-            final_row_mask.clone()
-                * (current[COL_STABLECOIN_ISSUANCE_SIGN].clone() - stablecoin_issuance_sign),
-        );
-        when.assert_zero(
-            final_row_mask.clone()
-                * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - stablecoin_issuance_magnitude),
-        );
-
-        for (col, value) in [
-            (
-                COL_STABLECOIN_POLICY_HASH0,
-                stablecoin_policy_hash[0].clone(),
-            ),
-            (
-                COL_STABLECOIN_POLICY_HASH1,
-                stablecoin_policy_hash[1].clone(),
-            ),
-            (
-                COL_STABLECOIN_POLICY_HASH2,
-                stablecoin_policy_hash[2].clone(),
-            ),
-            (
-                COL_STABLECOIN_POLICY_HASH3,
-                stablecoin_policy_hash[3].clone(),
-            ),
-            (
-                COL_STABLECOIN_POLICY_HASH4,
-                stablecoin_policy_hash[4].clone(),
-            ),
-            (
-                COL_STABLECOIN_POLICY_HASH5,
-                stablecoin_policy_hash[5].clone(),
-            ),
-            (
-                COL_STABLECOIN_ORACLE0,
-                stablecoin_oracle_commitment[0].clone(),
-            ),
-            (
-                COL_STABLECOIN_ORACLE1,
-                stablecoin_oracle_commitment[1].clone(),
-            ),
-            (
-                COL_STABLECOIN_ORACLE2,
-                stablecoin_oracle_commitment[2].clone(),
-            ),
-            (
-                COL_STABLECOIN_ORACLE3,
-                stablecoin_oracle_commitment[3].clone(),
-            ),
-            (
-                COL_STABLECOIN_ORACLE4,
-                stablecoin_oracle_commitment[4].clone(),
-            ),
-            (
-                COL_STABLECOIN_ORACLE5,
-                stablecoin_oracle_commitment[5].clone(),
-            ),
-            (
-                COL_STABLECOIN_ATTEST0,
-                stablecoin_attestation_commitment[0].clone(),
-            ),
-            (
-                COL_STABLECOIN_ATTEST1,
-                stablecoin_attestation_commitment[1].clone(),
-            ),
-            (
-                COL_STABLECOIN_ATTEST2,
-                stablecoin_attestation_commitment[2].clone(),
-            ),
-            (
-                COL_STABLECOIN_ATTEST3,
-                stablecoin_attestation_commitment[3].clone(),
-            ),
-            (
-                COL_STABLECOIN_ATTEST4,
-                stablecoin_attestation_commitment[4].clone(),
-            ),
-            (
-                COL_STABLECOIN_ATTEST5,
-                stablecoin_attestation_commitment[5].clone(),
-            ),
-        ] {
-            when.assert_zero(final_row_mask.clone() * (current[col].clone() - value));
         }
     }
 }

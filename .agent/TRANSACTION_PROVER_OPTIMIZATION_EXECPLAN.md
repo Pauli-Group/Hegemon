@@ -30,8 +30,10 @@ The success condition is observable, not rhetorical. A novice should be able to 
 - [x] (2026-03-13T09:35Z) Realigned the batch-circuit crate docs so the slot-copy batch path is described as a bounded utility path rather than the public throughput lane.
 - [x] (2026-03-13T11:05Z) Replaced the remaining shared 61-bit scratch with a 21-limb radix-8 decomposition (`3` bits per limb, boolean top limb), cutting transaction trace width from `231` to `191` and improving the release smoke benchmark again.
 - [x] (2026-03-13T11:05Z) Compacted the fixed-slot note selectors from 16 one-hot selector columns to 8 selector-bit columns, cutting transaction trace width from `191` to `183` and improving the release smoke benchmark again.
+- [x] (2026-03-13T15:30Z) Removed the mirrored stablecoin binding payload columns from the transaction witness trace and kept only a reserved 2-bit non-native slot selector, cutting transaction trace width from `183` to `158` and improving the release smoke benchmark again.
+- [x] (2026-03-13T15:30Z) Re-ran full release validation after the stablecoin/constant-column change: the full `transaction-circuit` `plonky3-e2e` suite passes, the smoke benchmarks improved again, `security-tests` `stark_soundness` still reports `128` estimated bits, and `DESIGN.md` / `METHODS.md` now describe the slimmer transaction AIR.
 - [ ] Collapse additional columns that are constant across the whole trace and compact any remaining fixed one-hot bookkeeping, especially outside the main note-selector path.
-- [ ] Run the full validation matrix, capture the post-change metrics, and update `DESIGN.md` and `METHODS.md` if any implementation detail or benchmark claim changes.
+- [x] (2026-03-13T15:30Z) Ran the full validation matrix for the currently landed changes, captured the post-change metrics, and updated `DESIGN.md` and `METHODS.md` to match the current transaction AIR layout and bounded-value method.
 - [ ] Optional only after the earlier milestones are green: run a small isolated backend spike for a Circle/M31-style prover on the slimmed transaction shape and record whether a migration is still justified.
 
 ## Surprises & Discoveries
@@ -68,6 +70,12 @@ The success condition is observable, not rhetorical. A novice should be able to 
 
 - Observation: compacting the fixed note selectors from one-hot columns to 2-bit slot encodings also helps on the current circuit shape.
   Evidence: after selector compaction, the production roundtrip prints `p3 tx proof: bytes=365498, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32`, and the release smoke benchmark reports `tx_trace_width = 183`, `tx_proof_bytes_avg = 365769`, `tx_prove_ns_per_tx = 1302618468`, `transactions_per_second = 0.762993...`.
+
+- Observation: the entire stablecoin binding payload was redundant in the witness trace because the AIR already consumed it as public inputs; only the selected non-native balance slot needed to remain in the trace.
+  Evidence: after dropping the mirrored stablecoin payload columns and keeping a reserved 2-bit selector, the production roundtrip prints `p3 tx proof: bytes=356577, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32`, and the release smoke benchmark reports `tx_trace_width = 158`, `tx_proof_bytes_avg = 356435`, `tx_prove_ns_per_tx = 1124082364`, `transactions_per_second = 0.883370...`; the batch-4 smoke benchmark also improved to `batch_prove_ns_per_tx = 2694242364` and `batch_transactions_per_second = 0.370722...`.
+
+- Observation: a compact stablecoin selector needs an explicit “disabled” encoding; otherwise the zero bit-pattern aliases the native slot and breaks the non-native issuance semantics.
+  Evidence: the first naive 2-bit stablecoin selector prototype produced `OodEvaluationMismatch` until the AIR was changed to reserve `00` as “no stablecoin binding” and only allow enabled bindings to target non-native slots `1..=3`.
 
 ## Decision Log
 
@@ -107,6 +115,10 @@ The success condition is observable, not rhetorical. A novice should be able to 
   Rationale: the 2-bit encoding saves half the selector columns while keeping the selector algebra low-degree and easy to audit. It is less aggressive than a single field-valued selector, but it has lower implementation risk on the current AIR.
   Date/Author: 2026-03-13 / Codex
 
+- Decision: reserve the stablecoin selector encoding `00` as “disabled” and allow enabled stablecoin bindings to target only non-native balance slots `1..=3`.
+  Rationale: a 2-bit selector always decodes to some slot; reserving `00` avoids aliasing a disabled binding to the native slot and preserves the stablecoin rule that only one non-native asset may carry a policy-bound non-zero delta.
+  Date/Author: 2026-03-13 / Codex
+
 ## Outcomes & Retrospective
 
 2026-03-13 partial execution update: one draft milestone failed, and one landed optimization succeeded.
@@ -116,6 +128,8 @@ The failed idea was the transaction preprocessed-schedule path. It looked attrac
 The first landed win was the shared range-scratch change. It cut the transaction trace width from `412` to `231`, reduced release smoke proof size from about `376 KB` to about `370 KB`, and improved release smoke throughput from about `0.41 tx/s` to about `0.68 tx/s` on the same machine while the `stark_soundness` test still reported `128` estimated soundness bits.
 
 The second landed win was the full radix-limb plus selector-compaction pass. It pushed the transaction trace width down again from `231` to `183`, reduced release smoke proof size to about `366 KB`, and improved release smoke throughput again to about `0.76 tx/s`, still with the same `128`-bit soundness report. That is exactly the kind of change this plan is meant to deliver: smaller, faster, same security target.
+
+The third landed win was collapsing the stablecoin binding payload out of the witness trace and keeping only a reserved 2-bit selector for the chosen non-native slot. That pushed the transaction trace width down again from `183` to `158`, reduced release smoke proof size to about `356 KB`, and improved release smoke throughput again to about `0.88 tx/s`, still with the same `128`-bit soundness report. The batch-4 slot-copy path also improved again to about `0.37 tx/s`, although it remains slower than the single-proof lane and still is not the system’s public throughput story.
 
 ## Context and Orientation
 
@@ -151,11 +165,11 @@ The original baseline, measured on this machine on 2026-03-13 before any changes
 - Batch-only smoke benchmark at `batch_size = 4`: about `0.240 tx/s`, which is worse than the single-transaction path on the same machine.
 - Production-parameter transaction roundtrip: `bytes=376812`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
 
-The current post-change state after the first landed optimization is:
+The current post-change state after the latest landed optimizations is:
 
-- Single transaction smoke benchmark: about `366 KB` proofs, about `0.763 tx/s`, and about `1.30 s` of proving time per transaction.
-- Batch-only smoke benchmark at `batch_size = 4`: about `0.341 tx/s`, still worse than the single-transaction path, but materially better than the original batch baseline.
-- Production-parameter transaction roundtrip: `bytes=365498`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
+- Single transaction smoke benchmark: about `356 KB` proofs, about `0.883 tx/s`, and about `1.12 s` of proving time per transaction.
+- Batch-only smoke benchmark at `batch_size = 4`: about `0.371 tx/s`, still worse than the single-transaction path, but materially better than the original batch baseline.
+- Production-parameter transaction roundtrip: `bytes=356577`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
 
 This plan keeps the protocol statement fixed. It does not change the `2-in/2-out` join-split shape, the `32`-level Merkle path, the 48-byte encoding, or the current production FRI target. The work is entirely about how efficiently the existing statement is represented and proven.
 

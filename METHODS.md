@@ -175,7 +175,7 @@ Stablecoin issuance and burn are handled as a controlled exception to the per-as
 * `attestation_commitment`
 * `policy_version`
 
-Inside the AIR, the stablecoin slot selector must sum to 1 when the binding is enabled, the selected balance slot must match `stablecoin_asset_id`, and the selected slot delta must equal `issuance_delta`. All other non-native slots are still constrained to zero. The runtime then enforces that the binding matches the active `StablecoinPolicy` hash and version, the oracle commitment is fresh, and the attestation is not disputed. This keeps issuance fully shielded while still tethering it to protocol-approved policy inputs.
+Inside the AIR, the stablecoin binding payload stays in the public inputs. The witness trace carries only a compact 2-bit selector for the chosen non-native balance slot: `00` means “no stablecoin binding,” while `01`, `10`, and `11` select non-native slots `1`, `2`, and `3` respectively. When the binding is enabled, that selected slot must match `stablecoin_asset_id` and its net delta must equal `issuance_delta`. All other non-native slots are still constrained to zero. The runtime then enforces that the binding matches the active `StablecoinPolicy` hash and version, the oracle commitment is fresh, and the attestation is not disputed. This keeps issuance fully shielded while still tethering it to protocol-approved policy inputs.
 
 Consensus stitches this MASP output into PoW validation by requiring a coinbase commitment on every block. The `ConsensusBlock`
 type now carries `CoinbaseData` that either references a concrete transaction (by index) or supplies an explicit `balance_tag`.
@@ -820,10 +820,11 @@ cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[
 
 #### 5.5 Value range checks
 
-The transaction AIR enforces monetary range bounds in-circuit using bit decomposition columns:
+The transaction AIR enforces monetary range bounds in-circuit using a shared radix-limb region:
 
-* note values (`v_in`, `v_out`) are decomposed into 61 boolean bits at note-start rows,
-* `fee_native`, `|value_balance|`, and `|stablecoin_issuance_delta|` are decomposed into 61 boolean bits at the final row.
+* each bounded value is decomposed into 21 radix-8 limbs (`3` bits each, with a boolean top limb),
+* note values (`v_in`, `v_out`) use that limb region at note-start rows,
+* `fee_native`, `|value_balance|`, and `|stablecoin_issuance_delta|` reuse the same limb region on their dedicated rows near the end of the trace.
 
 This 61-bit cap (`MAX_IN_CIRCUIT_VALUE = 2^61 - 1`) prevents modular-wrap balance equalities under the current 2-input/2-output shape while keeping amounts large enough for practical usage.
 
@@ -836,13 +837,12 @@ Assume each transaction can involve at most `K` distinct assets (e.g., `K = 4`).
 Witness for MASP:
 
 * For `k = 0 .. K-1`: `asset_slot[k]` (one 64-bit field element) and running `sum_in[k]`, `sum_out[k]` (field elements representing 64-bit totals).
-* For each input note `i`, selector flags `sel_in[i][k] ∈ {0,1}` for each slot.
-* For each output note `j`, selector flags `sel_out[j][k] ∈ {0,1}` for each slot.
+* For each fixed note slot, two selector bits encode the chosen balance slot (`00`, `01`, `10`, `11`).
 
 Constraints:
 
-1. **Selector correctness** - each selector flag is boolean, and the selector sum equals `input_active[i]` / `output_active[j]` so padded notes select no slots.
-2. **Asset-id consistency** - enforce that each note's `asset_id` equals the asset stored in its selected slot.
+1. **Selector correctness** - each selector bit is boolean, and inactive padded notes are forced to keep both bits at `0`.
+2. **Asset-id consistency** - decode the selector bits into four low-degree slot weights and enforce that each active note's `asset_id` equals the asset stored in its selected slot.
 3. **Summation** - update `sum_in` and `sum_out` by adding note values at their note-start rows into the selected slot accumulator.
 4. **Conservation per slot** - enforce `net_k = sum_in[k] - sum_out[k]`. For the native asset slot (slot 0 with `asset_id = 0`), constrain `net_0 + value_balance = fee_native`. For other slots, constrain `net_k = 0`. The slot list is derived from witness `balance_slots` and padded with `asset_id = 2^64 - 1` where unused.
 

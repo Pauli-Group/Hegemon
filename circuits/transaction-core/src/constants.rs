@@ -70,10 +70,10 @@ pub const CIRCUIT_MERKLE_DEPTH: usize = 32;
 // ================================================================================================
 
 /// Current circuit version. Increment when constraint logic changes.
-pub const CIRCUIT_VERSION: u32 = 7;
+pub const CIRCUIT_VERSION: u32 = 8;
 
 /// AIR constraint domain separator for hashing.
-pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V7";
+pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V8";
 
 /// Compute the AIR hash that uniquely identifies this circuit's constraints.
 /// This hash commits to:
@@ -115,7 +115,7 @@ pub fn compute_air_hash() -> [u8; 32] {
 
     // Constraint structure: max degree and transition constraint count.
     hasher.update(&(POSEIDON2_SBOX_DEGREE as u32).to_le_bytes()); // Max constraint degree
-    hasher.update(&185u32.to_le_bytes()); // Transition constraint count (update if constraints change)
+    hasher.update(&160u32.to_le_bytes()); // Transition constraint count (update if constraints change)
 
     let hash = hasher.finalize();
     let mut result = [0u8; 32];

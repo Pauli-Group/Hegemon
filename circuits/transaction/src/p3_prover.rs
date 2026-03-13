@@ -35,18 +35,11 @@ use transaction_core::p3_air::{
     COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9,
     COL_SCHEDULE_START, COL_SK0, COL_SK1, COL_SK2, COL_SK3, COL_SLOT0_ASSET, COL_SLOT0_IN,
     COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
-    COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET,
-    COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3,
-    COL_STABLECOIN_ATTEST4, COL_STABLECOIN_ATTEST5, COL_STABLECOIN_ENABLED,
-    COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0,
-    COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_ORACLE4,
-    COL_STABLECOIN_ORACLE5, COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1,
-    COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_HASH4,
-    COL_STABLECOIN_POLICY_HASH5, COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0,
-    COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3,
-    COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH,
-    DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES,
-    PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
+    COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_SLOT_BIT0,
+    COL_STABLECOIN_SLOT_BIT1, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
+    COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH,
+    NULLIFIER_ABSORB_CYCLES, PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES,
+    TRACE_WIDTH,
 };
 use transaction_core::poseidon2::poseidon2_step;
 use transaction_core::range::{decompose_bounded_value, RANGE_LIMB_COUNT};
@@ -237,11 +230,18 @@ impl TransactionProverP3 {
             row_slice[COL_IN1_RHO3] = in1_rho_words[3];
         }
 
-        let set_range_limbs = |row_slice: &mut [Val], limbs_start: usize, value: u64| {
+        let set_range_limbs = |row_slice: &mut [Val],
+                               limbs_start: usize,
+                               value: u64|
+         -> Result<(), TransactionCircuitError> {
+            if u128::from(value) > MAX_NOTE_VALUE {
+                return Err(TransactionCircuitError::ValueOutOfRange(u128::from(value)));
+            }
             let limbs = decompose_bounded_value(value);
             for limb_idx in 0..RANGE_LIMB_COUNT {
                 row_slice[limbs_start + limb_idx] = Val::from_u64(u64::from(limbs[limb_idx]));
             }
+            Ok(())
         };
 
         let start_row_in0 = note_start_row_input(0);
@@ -253,7 +253,7 @@ impl TransactionProverP3 {
             row_slice[COL_IN_ACTIVE0] = flag_to_felt(input_flags[0]);
             row_slice[COL_IN0_VALUE] = Val::from_u64(input_notes[0].note.value);
             row_slice[COL_IN0_ASSET] = Val::from_u64(input_notes[0].note.asset_id);
-            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[0].note.value);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[0].note.value)?;
             row_slice[selector_bit_cols[0][0]] = selector_bits[0][0];
             row_slice[selector_bit_cols[0][1]] = selector_bits[0][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
@@ -265,7 +265,7 @@ impl TransactionProverP3 {
             row_slice[COL_IN_ACTIVE1] = flag_to_felt(input_flags[1]);
             row_slice[COL_IN1_VALUE] = Val::from_u64(input_notes[1].note.value);
             row_slice[COL_IN1_ASSET] = Val::from_u64(input_notes[1].note.asset_id);
-            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[1].note.value);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[1].note.value)?;
             row_slice[selector_bit_cols[1][0]] = selector_bits[1][0];
             row_slice[selector_bit_cols[1][1]] = selector_bits[1][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
@@ -277,7 +277,7 @@ impl TransactionProverP3 {
             row_slice[COL_OUT_ACTIVE0] = flag_to_felt(output_flags[0]);
             row_slice[COL_OUT0_VALUE] = Val::from_u64(output_notes[0].note.value);
             row_slice[COL_OUT0_ASSET] = Val::from_u64(output_notes[0].note.asset_id);
-            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[0].note.value);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[0].note.value)?;
             row_slice[selector_bit_cols[2][0]] = selector_bits[2][0];
             row_slice[selector_bit_cols[2][1]] = selector_bits[2][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
@@ -289,7 +289,7 @@ impl TransactionProverP3 {
             row_slice[COL_OUT_ACTIVE1] = flag_to_felt(output_flags[1]);
             row_slice[COL_OUT1_VALUE] = Val::from_u64(output_notes[1].note.value);
             row_slice[COL_OUT1_ASSET] = Val::from_u64(output_notes[1].note.asset_id);
-            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[1].note.value);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[1].note.value)?;
             row_slice[selector_bit_cols[3][0]] = selector_bits[3][0];
             row_slice[selector_bit_cols[3][1]] = selector_bits[3][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
@@ -305,7 +305,7 @@ impl TransactionProverP3 {
             row_slice[COL_FEE] = fee;
             row_slice[COL_VALUE_BALANCE_SIGN] = vb_sign;
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
-            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, witness.fee);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, witness.fee)?;
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
@@ -321,104 +321,19 @@ impl TransactionProverP3 {
             row_slice[COL_CT1_3] = ciphertext_hashes[1][3];
             row_slice[COL_CT1_4] = ciphertext_hashes[1][4];
             row_slice[COL_CT1_5] = ciphertext_hashes[1][5];
-            row_slice[COL_STABLECOIN_ENABLED] = stablecoin_inputs.enabled;
-            row_slice[COL_STABLECOIN_ASSET] = stablecoin_inputs.asset;
-            row_slice[COL_STABLECOIN_POLICY_VERSION] = stablecoin_inputs.policy_version;
-            row_slice[COL_STABLECOIN_ISSUANCE_SIGN] = stablecoin_inputs.issuance_sign;
-            row_slice[COL_STABLECOIN_ISSUANCE_MAG] = stablecoin_inputs.issuance_mag;
-            row_slice[COL_STABLECOIN_POLICY_HASH0] = stablecoin_inputs.policy_hash[0];
-            row_slice[COL_STABLECOIN_POLICY_HASH1] = stablecoin_inputs.policy_hash[1];
-            row_slice[COL_STABLECOIN_POLICY_HASH2] = stablecoin_inputs.policy_hash[2];
-            row_slice[COL_STABLECOIN_POLICY_HASH3] = stablecoin_inputs.policy_hash[3];
-            row_slice[COL_STABLECOIN_POLICY_HASH4] = stablecoin_inputs.policy_hash[4];
-            row_slice[COL_STABLECOIN_POLICY_HASH5] = stablecoin_inputs.policy_hash[5];
-            row_slice[COL_STABLECOIN_ORACLE0] = stablecoin_inputs.oracle_commitment[0];
-            row_slice[COL_STABLECOIN_ORACLE1] = stablecoin_inputs.oracle_commitment[1];
-            row_slice[COL_STABLECOIN_ORACLE2] = stablecoin_inputs.oracle_commitment[2];
-            row_slice[COL_STABLECOIN_ORACLE3] = stablecoin_inputs.oracle_commitment[3];
-            row_slice[COL_STABLECOIN_ORACLE4] = stablecoin_inputs.oracle_commitment[4];
-            row_slice[COL_STABLECOIN_ORACLE5] = stablecoin_inputs.oracle_commitment[5];
-            row_slice[COL_STABLECOIN_ATTEST0] = stablecoin_inputs.attestation_commitment[0];
-            row_slice[COL_STABLECOIN_ATTEST1] = stablecoin_inputs.attestation_commitment[1];
-            row_slice[COL_STABLECOIN_ATTEST2] = stablecoin_inputs.attestation_commitment[2];
-            row_slice[COL_STABLECOIN_ATTEST3] = stablecoin_inputs.attestation_commitment[3];
-            row_slice[COL_STABLECOIN_ATTEST4] = stablecoin_inputs.attestation_commitment[4];
-            row_slice[COL_STABLECOIN_ATTEST5] = stablecoin_inputs.attestation_commitment[5];
-            row_slice[COL_STABLECOIN_SLOT_SEL0] = stablecoin_inputs.slot_selectors[0];
-            row_slice[COL_STABLECOIN_SLOT_SEL1] = stablecoin_inputs.slot_selectors[1];
-            row_slice[COL_STABLECOIN_SLOT_SEL2] = stablecoin_inputs.slot_selectors[2];
-            row_slice[COL_STABLECOIN_SLOT_SEL3] = stablecoin_inputs.slot_selectors[3];
-        }
-
-        if final_row < trace_len {
-            let one = Val::ONE;
-            let stablecoin_sel_cols = [
-                COL_STABLECOIN_SLOT_SEL0,
-                COL_STABLECOIN_SLOT_SEL1,
-                COL_STABLECOIN_SLOT_SEL2,
-                COL_STABLECOIN_SLOT_SEL3,
-            ];
-            for row in 0..trace_len {
-                let is_final = row == final_row;
-                let enabled = bool_trace_value(stablecoin_inputs.enabled, is_final);
-                let issuance_sign = bool_trace_value(stablecoin_inputs.issuance_sign, is_final);
-                let row_slice = trace.row_mut(row);
-                row_slice[COL_STABLECOIN_ENABLED] = enabled;
-                row_slice[COL_STABLECOIN_ISSUANCE_SIGN] = issuance_sign;
-                for (idx, &col) in stablecoin_sel_cols.iter().enumerate() {
-                    row_slice[col] =
-                        bool_trace_value(stablecoin_inputs.slot_selectors[idx], is_final);
-                }
-
-                if !is_final {
-                    row_slice[COL_STABLECOIN_ASSET] = stablecoin_inputs.asset + one;
-                    row_slice[COL_STABLECOIN_POLICY_VERSION] =
-                        stablecoin_inputs.policy_version + one;
-                    row_slice[COL_STABLECOIN_ISSUANCE_MAG] = stablecoin_inputs.issuance_mag + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH0] = stablecoin_inputs.policy_hash[0] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH1] = stablecoin_inputs.policy_hash[1] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH2] = stablecoin_inputs.policy_hash[2] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH3] = stablecoin_inputs.policy_hash[3] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH4] = stablecoin_inputs.policy_hash[4] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH5] = stablecoin_inputs.policy_hash[5] + one;
-                    row_slice[COL_STABLECOIN_ORACLE0] =
-                        stablecoin_inputs.oracle_commitment[0] + one;
-                    row_slice[COL_STABLECOIN_ORACLE1] =
-                        stablecoin_inputs.oracle_commitment[1] + one;
-                    row_slice[COL_STABLECOIN_ORACLE2] =
-                        stablecoin_inputs.oracle_commitment[2] + one;
-                    row_slice[COL_STABLECOIN_ORACLE3] =
-                        stablecoin_inputs.oracle_commitment[3] + one;
-                    row_slice[COL_STABLECOIN_ORACLE4] =
-                        stablecoin_inputs.oracle_commitment[4] + one;
-                    row_slice[COL_STABLECOIN_ORACLE5] =
-                        stablecoin_inputs.oracle_commitment[5] + one;
-                    row_slice[COL_STABLECOIN_ATTEST0] =
-                        stablecoin_inputs.attestation_commitment[0] + one;
-                    row_slice[COL_STABLECOIN_ATTEST1] =
-                        stablecoin_inputs.attestation_commitment[1] + one;
-                    row_slice[COL_STABLECOIN_ATTEST2] =
-                        stablecoin_inputs.attestation_commitment[2] + one;
-                    row_slice[COL_STABLECOIN_ATTEST3] =
-                        stablecoin_inputs.attestation_commitment[3] + one;
-                    row_slice[COL_STABLECOIN_ATTEST4] =
-                        stablecoin_inputs.attestation_commitment[4] + one;
-                    row_slice[COL_STABLECOIN_ATTEST5] =
-                        stablecoin_inputs.attestation_commitment[5] + one;
-                }
-            }
+            row_slice[COL_STABLECOIN_SLOT_BIT0] = stablecoin_inputs.slot_selector_bits[0];
+            row_slice[COL_STABLECOIN_SLOT_BIT1] = stablecoin_inputs.slot_selector_bits[1];
         }
 
         if value_balance_row < trace_len {
             let row_slice = trace.row_mut(value_balance_row);
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
-            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, vb_mag_u64);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, vb_mag_u64)?;
         }
 
         if issuance_row < trace_len {
             let row_slice = trace.row_mut(issuance_row);
-            row_slice[COL_STABLECOIN_ISSUANCE_MAG] = stablecoin_inputs.issuance_mag;
-            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, issuance_mag_u64);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, issuance_mag_u64)?;
         }
 
         let mut slot_in_acc = [0u64; 4];
@@ -770,35 +685,15 @@ impl TransactionProverP3 {
             value_balance_sign: get_trace(trace, COL_VALUE_BALANCE_SIGN, final_row),
             value_balance_magnitude: get_trace(trace, COL_VALUE_BALANCE_MAG, final_row),
             merkle_root,
-            stablecoin_enabled: get_trace(trace, COL_STABLECOIN_ENABLED, final_row),
-            stablecoin_asset: get_trace(trace, COL_STABLECOIN_ASSET, final_row),
-            stablecoin_policy_version: get_trace(trace, COL_STABLECOIN_POLICY_VERSION, final_row),
-            stablecoin_issuance_sign: get_trace(trace, COL_STABLECOIN_ISSUANCE_SIGN, final_row),
-            stablecoin_issuance_magnitude: get_trace(trace, COL_STABLECOIN_ISSUANCE_MAG, final_row),
-            stablecoin_policy_hash: [
-                get_trace(trace, COL_STABLECOIN_POLICY_HASH0, final_row),
-                get_trace(trace, COL_STABLECOIN_POLICY_HASH1, final_row),
-                get_trace(trace, COL_STABLECOIN_POLICY_HASH2, final_row),
-                get_trace(trace, COL_STABLECOIN_POLICY_HASH3, final_row),
-                get_trace(trace, COL_STABLECOIN_POLICY_HASH4, final_row),
-                get_trace(trace, COL_STABLECOIN_POLICY_HASH5, final_row),
-            ],
-            stablecoin_oracle_commitment: [
-                get_trace(trace, COL_STABLECOIN_ORACLE0, final_row),
-                get_trace(trace, COL_STABLECOIN_ORACLE1, final_row),
-                get_trace(trace, COL_STABLECOIN_ORACLE2, final_row),
-                get_trace(trace, COL_STABLECOIN_ORACLE3, final_row),
-                get_trace(trace, COL_STABLECOIN_ORACLE4, final_row),
-                get_trace(trace, COL_STABLECOIN_ORACLE5, final_row),
-            ],
-            stablecoin_attestation_commitment: [
-                get_trace(trace, COL_STABLECOIN_ATTEST0, final_row),
-                get_trace(trace, COL_STABLECOIN_ATTEST1, final_row),
-                get_trace(trace, COL_STABLECOIN_ATTEST2, final_row),
-                get_trace(trace, COL_STABLECOIN_ATTEST3, final_row),
-                get_trace(trace, COL_STABLECOIN_ATTEST4, final_row),
-                get_trace(trace, COL_STABLECOIN_ATTEST5, final_row),
-            ],
+            // Stablecoin binding payload now lives only in public inputs, not the witness trace.
+            stablecoin_enabled: Val::ZERO,
+            stablecoin_asset: Val::ZERO,
+            stablecoin_policy_version: Val::ZERO,
+            stablecoin_issuance_sign: Val::ZERO,
+            stablecoin_issuance_magnitude: Val::ZERO,
+            stablecoin_policy_hash: [Val::ZERO; 6],
+            stablecoin_oracle_commitment: [Val::ZERO; 6],
+            stablecoin_attestation_commitment: [Val::ZERO; 6],
         }
     }
 
@@ -857,20 +752,6 @@ impl TransactionProverP3 {
 
 fn flag_to_felt(active: bool) -> Val {
     Val::from_bool(active)
-}
-
-fn bool_trace_value(value: Val, is_final: bool) -> Val {
-    if value == Val::ONE {
-        if is_final {
-            Val::ONE
-        } else {
-            Val::ZERO
-        }
-    } else if is_final {
-        Val::ZERO
-    } else {
-        Val::ONE
-    }
 }
 
 fn get_trace(trace: &RowMajorMatrix<Val>, col: usize, row: usize) -> Val {
@@ -1041,7 +922,7 @@ struct StablecoinBindingInputs {
     policy_hash: [Val; 6],
     oracle_commitment: [Val; 6],
     attestation_commitment: [Val; 6],
-    slot_selectors: [Val; 4],
+    slot_selector_bits: [Val; 2],
 }
 
 fn stablecoin_binding_inputs(
@@ -1058,7 +939,7 @@ fn stablecoin_binding_inputs(
             policy_hash: [Val::ZERO; 6],
             oracle_commitment: [Val::ZERO; 6],
             attestation_commitment: [Val::ZERO; 6],
-            slot_selectors: [Val::ZERO; 4],
+            slot_selector_bits: [Val::ZERO; 2],
         });
     }
 
@@ -1067,19 +948,22 @@ fn stablecoin_binding_inputs(
     let attestation_commitment = bytes48_to_vals(&witness.stablecoin.attestation_commitment)?;
 
     let (issuance_sign, issuance_mag) = value_balance_parts(witness.stablecoin.issuance_delta)?;
-    let mut slot_selectors = [Val::ZERO; 4];
     let slot_index = slot_assets
         .iter()
         .position(|asset_id| *asset_id == witness.stablecoin.asset_id)
         .ok_or(TransactionCircuitError::BalanceMismatch(
             witness.stablecoin.asset_id,
         ))?;
-    if slot_index >= slot_selectors.len() {
+    if slot_index == 0 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "stablecoin binding cannot target native asset slot",
+        ));
+    }
+    if slot_index >= 4 {
         return Err(TransactionCircuitError::ConstraintViolation(
             "stablecoin slot index overflow",
         ));
     }
-    slot_selectors[slot_index] = Val::ONE;
 
     Ok(StablecoinBindingInputs {
         enabled: Val::ONE,
@@ -1090,7 +974,7 @@ fn stablecoin_binding_inputs(
         policy_hash,
         oracle_commitment,
         attestation_commitment,
-        slot_selectors,
+        slot_selector_bits: selector_bits_for_slot(slot_index),
     })
 }
 
@@ -1482,15 +1366,9 @@ mod tests {
         witness.outputs[0].note.value = (1u64 << 62) - 20;
 
         let prover = TransactionProverP3::new();
-        let trace = prover.build_trace(&witness).expect("trace build");
-
-        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
-        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
-        if let Ok(proof) = result {
-            assert!(
-                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
-                "verification should fail when note values exceed in-circuit range"
-            );
-        }
+        let err = prover
+            .build_trace(&witness)
+            .expect_err("out-of-range note values should be rejected before proving");
+        assert!(matches!(err, TransactionCircuitError::ValueOutOfRange(_)));
     }
 }
