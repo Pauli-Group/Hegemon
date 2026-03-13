@@ -21,7 +21,7 @@ SKIP_BUILD="${HEGEMON_TP_SKIP_BUILD:-0}" # 1 = reuse existing release binaries
 REUSE_EXISTING_STATE="${HEGEMON_TP_REUSE_EXISTING_STATE:-0}" # 1 = reuse pre-funded base path + wallet stores
 PREPARE_SNAPSHOT_ONLY="${HEGEMON_TP_PREPARE_SNAPSHOT_ONLY:-0}" # 1 = fund/sync then exit before sends
 STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven batch is absent
-STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-600}"
+STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-}"
 MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
 PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}" # aggregation|single
@@ -234,7 +234,7 @@ case "$TPS_EFFECTIVE_MODE" in
     exit 1
     ;;
 esac
-if ! [[ "$STRICT_PREPARE_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [ "$STRICT_PREPARE_TIMEOUT_SECS" -lt 1 ]; then
+if [ -n "$STRICT_PREPARE_TIMEOUT_SECS" ] && { ! [[ "$STRICT_PREPARE_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [ "$STRICT_PREPARE_TIMEOUT_SECS" -lt 1 ]; }; then
   echo "HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS must be a positive integer (got '$STRICT_PREPARE_TIMEOUT_SECS')." >&2
   exit 1
 fi
@@ -317,13 +317,8 @@ else
     PROVER_WORKERS=1
   fi
 fi
-if [ -n "${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-}" ]; then
-  PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS}"
-elif [ "$STRICT_AGGREGATION" = "1" ]; then
-  PROVER_BATCH_JOB_TIMEOUT_MS=900000
-else
-  PROVER_BATCH_JOB_TIMEOUT_MS=180000
-fi
+PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-}"
+PROVER_WORK_PACKAGE_TTL_MS="${HEGEMON_TP_WORK_PACKAGE_TTL_MS:-}"
 if [ -n "${HEGEMON_TP_ADAPTIVE_LIVENESS_MS:-}" ]; then
   ADAPTIVE_LIVENESS_MS="${HEGEMON_TP_ADAPTIVE_LIVENESS_MS}"
 else
@@ -443,6 +438,54 @@ metric_from_line() {
   local line="$1"
   local key="$2"
   python3 -c 'import re,sys; key=re.escape(sys.argv[1]); line=sys.stdin.read(); m=re.search(rf"\b{key}=([0-9]+(?:\.[0-9]+)?)\b", line); print(m.group(1) if m else "")' "$key" <<<"$line"
+}
+
+ceil_div() {
+  local numerator="$1"
+  local denominator="$2"
+  echo $(((numerator + denominator - 1) / denominator))
+}
+
+aggregation_leaf_job_count() {
+  local tx_count="$1"
+  local leaf_fanin="$2"
+  ceil_div "$tx_count" "$leaf_fanin"
+}
+
+derive_aggregation_prepare_budget_ms() {
+  local tx_count="$1"
+  local leaf_fanin="$2"
+  local merge_fanin="$3"
+  local prover_workers="$4"
+  local cold_leaf_ms=900000
+  local warm_leaf_ms=720000
+  local merge_base_ms=2400000
+  local merge_per_child_ms=120000
+  local finalize_ms=300000
+  local safety_ms=900000
+  local leaf_jobs
+  local max_jobs_per_worker
+  local leaf_phase_ms
+  local merge_phase_ms=0
+
+  leaf_jobs="$(aggregation_leaf_job_count "$tx_count" "$leaf_fanin")"
+  if [ "$prover_workers" -lt 1 ]; then
+    prover_workers=1
+  fi
+  if [ "$prover_workers" -gt "$leaf_jobs" ]; then
+    prover_workers="$leaf_jobs"
+  fi
+  max_jobs_per_worker="$(ceil_div "$leaf_jobs" "$prover_workers")"
+  leaf_phase_ms=$((cold_leaf_ms + (max_jobs_per_worker - 1) * warm_leaf_ms))
+
+  if [ "$leaf_jobs" -gt 1 ]; then
+    merge_phase_ms=$((merge_base_ms + leaf_jobs * merge_per_child_ms))
+    if [ "$leaf_jobs" -gt "$merge_fanin" ]; then
+      merge_phase_ms=$((merge_phase_ms + merge_base_ms))
+    fi
+  fi
+
+  echo $((leaf_phase_ms + merge_phase_ms + finalize_ms + safety_ms))
 }
 
 bool_metric_from_line() {
@@ -585,8 +628,12 @@ if ! [[ "$PROVER_WORKERS" =~ ^[0-9]+$ ]]; then
   echo "HEGEMON_TP_PROVER_WORKERS must be an integer >= 0 (got '$PROVER_WORKERS')." >&2
   exit 1
 fi
-if ! [[ "$PROVER_BATCH_JOB_TIMEOUT_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_BATCH_JOB_TIMEOUT_MS" -lt 1 ]; then
+if [ -n "$PROVER_BATCH_JOB_TIMEOUT_MS" ] && { ! [[ "$PROVER_BATCH_JOB_TIMEOUT_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_BATCH_JOB_TIMEOUT_MS" -lt 1 ]; }; then
   echo "HEGEMON_TP_BATCH_JOB_TIMEOUT_MS must be a positive integer (got '$PROVER_BATCH_JOB_TIMEOUT_MS')." >&2
+  exit 1
+fi
+if [ -n "$PROVER_WORK_PACKAGE_TTL_MS" ] && { ! [[ "$PROVER_WORK_PACKAGE_TTL_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_WORK_PACKAGE_TTL_MS" -lt 1 ]; }; then
+  echo "HEGEMON_TP_WORK_PACKAGE_TTL_MS must be a positive integer (got '$PROVER_WORK_PACKAGE_TTL_MS')." >&2
   exit 1
 fi
 if [ -n "$ADAPTIVE_LIVENESS_MS" ] && ! [[ "$ADAPTIVE_LIVENESS_MS" =~ ^[0-9]+$ ]]; then
@@ -819,8 +866,13 @@ fi
 if [ -n "$AGG_PREWARM_MAX_TXS" ]; then
   NODE_PREWARM_MAX_TXS_ENV="HEGEMON_AGG_PREWARM_MAX_TXS=${AGG_PREWARM_MAX_TXS}"
 fi
-if [ "$PROOF_MODE" = "aggregation" ] && [ "$PROVER_WORKERS" -gt "$AGG_LEAF_FANIN" ]; then
-  PROVER_WORKERS="$AGG_LEAF_FANIN"
+AGG_LEAF_JOBS=0
+if [ "$PROOF_MODE" = "aggregation" ]; then
+  AGG_LEAF_JOBS="$(aggregation_leaf_job_count "$TX_COUNT" "$AGG_LEAF_FANIN")"
+  if [ "$PROVER_WORKERS" -gt "$AGG_LEAF_JOBS" ]; then
+    echo "Capping local aggregation prover workers from ${PROVER_WORKERS} to ${AGG_LEAF_JOBS} to match first-level leaf jobs." >&2
+    PROVER_WORKERS="$AGG_LEAF_JOBS"
+  fi
 fi
 if [ "$AGG_PREPARE_THREADS_AUTO" = "1" ]; then
   if [ "$PROVER_WORKERS" -gt "$NODE_RAYON_THREADS" ]; then
@@ -829,11 +881,27 @@ if [ "$AGG_PREPARE_THREADS_AUTO" = "1" ]; then
     AGG_PREPARE_THREADS="$NODE_RAYON_THREADS"
   fi
 fi
+if [ -z "$PROVER_BATCH_JOB_TIMEOUT_MS" ]; then
+  if [ "$PROOF_MODE" = "aggregation" ]; then
+    PROVER_BATCH_JOB_TIMEOUT_MS="$(derive_aggregation_prepare_budget_ms "$TX_COUNT" "$AGG_LEAF_FANIN" "$AGG_MERGE_FANIN" "$PROVER_WORKERS")"
+  elif [ "$STRICT_AGGREGATION" = "1" ]; then
+    PROVER_BATCH_JOB_TIMEOUT_MS=900000
+  else
+    PROVER_BATCH_JOB_TIMEOUT_MS=180000
+  fi
+fi
+if [ -z "$PROVER_WORK_PACKAGE_TTL_MS" ]; then
+  PROVER_WORK_PACKAGE_TTL_MS="$PROVER_BATCH_JOB_TIMEOUT_MS"
+fi
+if [ -z "$STRICT_PREPARE_TIMEOUT_SECS" ]; then
+  STRICT_PREPARE_TIMEOUT_SECS="$(ceil_div "$PROVER_BATCH_JOB_TIMEOUT_MS" 1000)"
+fi
 
 echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
 echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
 echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
 echo "Aggregation recursion config: leaf_fanin=$AGG_LEAF_FANIN merge_fanin=$AGG_MERGE_FANIN tx_recursion_queries=$TX_RECURSION_NUM_QUERIES tx_recursion_log_blowup=$TX_RECURSION_LOG_BLOWUP outer_queries=$AGG_OUTER_NUM_QUERIES outer_log_blowup=$AGG_OUTER_LOG_BLOWUP prover_workers=$PROVER_WORKERS" >&2
+echo "Aggregation timeout budget: strict_prepare_timeout_secs=$STRICT_PREPARE_TIMEOUT_SECS batch_job_timeout_ms=$PROVER_BATCH_JOB_TIMEOUT_MS work_package_ttl_ms=$PROVER_WORK_PACKAGE_TTL_MS leaf_jobs=${AGG_LEAF_JOBS:-0}" >&2
 if [ -n "$AGG_PREWARM_MAX_TXS" ]; then
   echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
 else
@@ -932,6 +1000,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_BATCH_INCREMENTAL_UPSIZE='${BATCH_INCREMENTAL_UPSIZE}' \
      HEGEMON_BATCH_TARGET_TXS='${TX_COUNT}' \
      HEGEMON_BATCH_JOB_TIMEOUT_MS='${PROVER_BATCH_JOB_TIMEOUT_MS}' \
+     HEGEMON_PROVER_WORK_PACKAGE_TTL_MS='${PROVER_WORK_PACKAGE_TTL_MS}' \
      HEGEMON_MIN_READY_PROVEN_BATCH_TXS='${MIN_READY_BATCH_TXS}' \
      HEGEMON_MINE_TEST=1 \
      HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \

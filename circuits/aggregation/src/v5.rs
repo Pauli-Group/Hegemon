@@ -36,6 +36,7 @@ type OuterBatchFri = FriProofTargets<
 >;
 type OuterBatchHashTargets = p3_recursion::pcs::HashTargets<Val, OUTER_DIGEST_ELEMS>;
 type OuterBatchProof = BatchProof<Config>;
+type OuterBatchStarkProof = p3_circuit_prover::BatchStarkProof<Config>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AggregationNodeKind {
@@ -124,6 +125,39 @@ fn outer_batch_num_queries() -> usize {
 
 fn outer_batch_config() -> Config {
     config_with_fri(outer_batch_log_blowup(), outer_batch_num_queries()).config
+}
+
+fn outer_prover_threads() -> usize {
+    std::env::var("HEGEMON_AGG_PROVER_THREADS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn prove_outer_tables(
+    traces: &p3_circuit::Traces<Challenge>,
+    common: Arc<CommonData<Config>>,
+    witness_multiplicities: OuterWitnessMultiplicities,
+) -> Result<OuterBatchStarkProof, AggregationError> {
+    let outer_prover = BatchStarkProver::new(outer_batch_config())
+        .with_table_packing(aggregation_table_packing());
+    let configured_threads = outer_prover_threads();
+    let prove_tables =
+        move || outer_prover.prove_all_tables(traces, common.as_ref(), witness_multiplicities);
+    if configured_threads > 0 {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(configured_threads)
+            .build()
+            .map_err(|err| {
+                AggregationError::ProvingFailed(format!(
+                    "failed to build aggregation prover thread pool: {err}"
+                ))
+            })?;
+        pool.install(prove_tables)
+    } else {
+        prove_tables()
+    }
+    .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))
 }
 
 fn leaf_fan_in() -> usize {
@@ -693,7 +727,7 @@ fn get_or_build_merge_cache_entry(
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
     let witness_assignment_plans = resolve_merge_assignment_plans(&circuit, &assignment_specs)?;
-    let table_packing = TablePacking::new(4, 4, 1);
+    let table_packing = aggregation_table_packing();
     let (airs_degrees, witness_multiplicities) =
         get_airs_and_degrees_with_prep::<Config, _, 2>(&circuit, table_packing, None)
             .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
@@ -1021,14 +1055,11 @@ pub fn prove_leaf_aggregation(
         );
     }
     let outer_prove_started = Instant::now();
-    let outer_proof = BatchStarkProver::new(outer_batch_config())
-        .with_table_packing(TablePacking::new(4, 4, 1))
-        .prove_all_tables(
-            &traces,
-            cache_result.entry.common.as_ref(),
-            cache_result.entry.witness_multiplicities.clone(),
-        )
-        .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))?;
+    let outer_proof = prove_outer_tables(
+        &traces,
+        Arc::clone(&cache_result.entry.common),
+        cache_result.entry.witness_multiplicities.clone(),
+    )?;
     let outer_prove_ms = outer_prove_started.elapsed().as_millis();
     if profile {
         eprintln!(
@@ -1375,14 +1406,11 @@ pub fn prove_merge_aggregation(
         );
     }
     let outer_prove_started = Instant::now();
-    let outer_proof = BatchStarkProver::new(outer_batch_config())
-        .with_table_packing(TablePacking::new(4, 4, 1))
-        .prove_all_tables(
-            &traces,
-            cache_result.entry.common.as_ref(),
-            cache_result.entry.witness_multiplicities.clone(),
-        )
-        .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))?;
+    let outer_proof = prove_outer_tables(
+        &traces,
+        Arc::clone(&cache_result.entry.common),
+        cache_result.entry.witness_multiplicities.clone(),
+    )?;
     let outer_prove_ms = outer_prove_started.elapsed().as_millis();
     if profile {
         eprintln!(

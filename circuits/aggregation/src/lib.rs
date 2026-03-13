@@ -181,6 +181,22 @@ fn aggregation_outer_config() -> Config {
     .config
 }
 
+pub(crate) fn aggregation_table_packing() -> TablePacking {
+    let witness_lanes = std::env::var("HEGEMON_AGG_WITNESS_LANES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(4);
+    let add_lanes = std::env::var("HEGEMON_AGG_ADD_LANES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(4);
+    let mul_lanes = std::env::var("HEGEMON_AGG_MUL_LANES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1);
+    TablePacking::new(witness_lanes, add_lanes, mul_lanes)
+}
+
 fn build_common_data_parallel(
     config: &Config,
     airs: &mut [CircuitTableAir<Config, 2>],
@@ -682,7 +698,7 @@ fn build_aggregation_prover_cache_entry(
         );
     }
 
-    let table_packing = TablePacking::new(4, 4, 1);
+    let table_packing = aggregation_table_packing();
     let airs_setup_started = Instant::now();
     let (airs_degrees, witness_multiplicities) =
         get_airs_and_degrees_with_prep::<Config, _, 2>(&circuit, table_packing, None)
@@ -1674,8 +1690,8 @@ fn legacy_v4_prove_aggregation(
         );
     }
 
-    let outer_prover = BatchStarkProver::new(aggregation_outer_config())
-        .with_table_packing(TablePacking::new(4, 4, 1));
+    let outer_prover =
+        BatchStarkProver::new(aggregation_outer_config()).with_table_packing(aggregation_table_packing());
     let prove_started = Instant::now();
     let configured_threads = std::env::var("HEGEMON_AGG_PROVER_THREADS")
         .ok()
