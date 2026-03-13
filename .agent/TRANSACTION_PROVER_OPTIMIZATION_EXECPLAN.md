@@ -28,8 +28,9 @@ The success condition is observable, not rhetorical. A novice should be able to 
 - [x] (2026-03-13T09:35Z) Landed the first production optimization that actually helps: one shared 61-bit scratch region now serves note, fee, value-balance, and issuance range checks on distinct rows, cutting the transaction trace width from `412` to `231`.
 - [x] (2026-03-13T09:35Z) Re-ran release validation after the shared-range change: transaction roundtrip passes, `security-tests` `stark_soundness` passes under a libclang-aware environment, and the release smoke benchmark shows lower proof size plus higher tx/s.
 - [x] (2026-03-13T09:35Z) Realigned the batch-circuit crate docs so the slot-copy batch path is described as a bounded utility path rather than the public throughput lane.
-- [ ] Replace the remaining raw bounded-value design with a full radix-limb version chosen by a small in-repo prototype, then adopt the winning design in the production AIR.
-- [ ] Collapse additional columns that are constant across the whole trace and compact the fixed-slot MASP bookkeeping so the AIR stops paying permanent width for values that matter only on a few rows.
+- [x] (2026-03-13T11:05Z) Replaced the remaining shared 61-bit scratch with a 21-limb radix-8 decomposition (`3` bits per limb, boolean top limb), cutting transaction trace width from `231` to `191` and improving the release smoke benchmark again.
+- [x] (2026-03-13T11:05Z) Compacted the fixed-slot note selectors from 16 one-hot selector columns to 8 selector-bit columns, cutting transaction trace width from `191` to `183` and improving the release smoke benchmark again.
+- [ ] Collapse additional columns that are constant across the whole trace and compact any remaining fixed one-hot bookkeeping, especially outside the main note-selector path.
 - [ ] Run the full validation matrix, capture the post-change metrics, and update `DESIGN.md` and `METHODS.md` if any implementation detail or benchmark claim changes.
 - [ ] Optional only after the earlier milestones are green: run a small isolated backend spike for a Circle/M31-style prover on the slimmed transaction shape and record whether a migration is still justified.
 
@@ -62,6 +63,12 @@ The success condition is observable, not rhetorical. A novice should be able to 
 - Observation: reusing one 61-bit scratch region for fee, value-balance, and issuance checks delivered a real win while preserving the existing proof statement and security target.
   Evidence: after landing the shared-range change, the release smoke benchmark reports `tx_trace_width = 231`, `tx_proof_bytes_avg = 370065`, `tx_prove_ns_per_tx = 1457625750`, and `transactions_per_second = 0.682101...`; the transaction roundtrip prints `p3 tx proof: bytes=370124`; `cargo test -p security-tests --test stark_soundness --release -- --nocapture` still reports `estimated_soundness_bits=128` and passes.
 
+- Observation: a radix-8 limb redesign works on the current AIR without changing the inferred FRI quotient chunk count.
+  Evidence: after replacing the shared 61-bit scratch with `21` radix limbs, the production roundtrip prints `p3 tx proof: bytes=368423, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32`, and the release smoke benchmark reports `tx_trace_width = 191`, `tx_proof_bytes_avg = 368347`, `tx_prove_ns_per_tx = 1326731406`, `transactions_per_second = 0.749101...`.
+
+- Observation: compacting the fixed note selectors from one-hot columns to 2-bit slot encodings also helps on the current circuit shape.
+  Evidence: after selector compaction, the production roundtrip prints `p3 tx proof: bytes=365498, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32`, and the release smoke benchmark reports `tx_trace_width = 183`, `tx_proof_bytes_avg = 365769`, `tx_prove_ns_per_tx = 1302618468`, `transactions_per_second = 0.762993...`.
+
 ## Decision Log
 
 - Decision: optimize the current Goldilocks/Plonky3 transaction proof before spending engineering time on a backend migration.
@@ -92,13 +99,23 @@ The success condition is observable, not rhetorical. A novice should be able to 
   Rationale: that change removed 183 witness columns without changing the public inputs or the soundness target, and it produced a measurable win immediately.
   Date/Author: 2026-03-13 / Codex
 
+- Decision: use radix-8 limbs (`3` bits each, boolean top limb) for the bounded-value redesign instead of waiting for a heavier lookup system.
+  Rationale: this keeps the limb-range constraint degree within the current engineering envelope, avoids introducing a large lookup table into an `8192`-row trace, and produced an immediate measured win.
+  Date/Author: 2026-03-13 / Codex
+
+- Decision: compact fixed note-slot selectors with two explicit selector bits per note instead of a single 4-valued field element.
+  Rationale: the 2-bit encoding saves half the selector columns while keeping the selector algebra low-degree and easy to audit. It is less aggressive than a single field-valued selector, but it has lower implementation risk on the current AIR.
+  Date/Author: 2026-03-13 / Codex
+
 ## Outcomes & Retrospective
 
 2026-03-13 partial execution update: one draft milestone failed, and one landed optimization succeeded.
 
 The failed idea was the transaction preprocessed-schedule path. It looked attractive in code review and failed in the benchmark. That is useful progress because it removes one of the most obvious but wrong answers from the search space.
 
-The first landed win was the shared range-scratch change. It cut the transaction trace width from `412` to `231`, reduced release smoke proof size from about `376 KB` to about `370 KB`, and improved release smoke throughput from about `0.41 tx/s` to about `0.68 tx/s` on the same machine while the `stark_soundness` test still reported `128` estimated soundness bits. That is exactly the kind of change this plan is meant to deliver: smaller, faster, same security target.
+The first landed win was the shared range-scratch change. It cut the transaction trace width from `412` to `231`, reduced release smoke proof size from about `376 KB` to about `370 KB`, and improved release smoke throughput from about `0.41 tx/s` to about `0.68 tx/s` on the same machine while the `stark_soundness` test still reported `128` estimated soundness bits.
+
+The second landed win was the full radix-limb plus selector-compaction pass. It pushed the transaction trace width down again from `231` to `183`, reduced release smoke proof size to about `366 KB`, and improved release smoke throughput again to about `0.76 tx/s`, still with the same `128`-bit soundness report. That is exactly the kind of change this plan is meant to deliver: smaller, faster, same security target.
 
 ## Context and Orientation
 
@@ -136,9 +153,9 @@ The original baseline, measured on this machine on 2026-03-13 before any changes
 
 The current post-change state after the first landed optimization is:
 
-- Single transaction smoke benchmark: about `370 KB` proofs, about `0.682 tx/s`, and about `1.46 s` of proving time per transaction.
-- Batch-only smoke benchmark at `batch_size = 4`: about `0.337 tx/s`, still worse than the single-transaction path, but materially better than the original batch baseline.
-- Production-parameter transaction roundtrip: `bytes=370124`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
+- Single transaction smoke benchmark: about `366 KB` proofs, about `0.763 tx/s`, and about `1.30 s` of proving time per transaction.
+- Batch-only smoke benchmark at `batch_size = 4`: about `0.341 tx/s`, still worse than the single-transaction path, but materially better than the original batch baseline.
+- Production-parameter transaction roundtrip: `bytes=365498`, `degree_bits=13`, `log_chunks=3`, `log_blowup=4`, `num_queries=32`.
 
 This plan keeps the protocol statement fixed. It does not change the `2-in/2-out` join-split shape, the `32`-level Merkle path, the 48-byte encoding, or the current production FRI target. The work is entirely about how efficiently the existing statement is represented and proven.
 
@@ -174,7 +191,7 @@ The fourth milestone removes columns that are currently duplicated across the en
 
 In `circuits/transaction/src/p3_prover.rs`, rewrite the trace builder so these values are written only where the AIR actually consumes them. If a value needs to persist across a row interval, add a small carry or running-state gadget rather than storing the same field element in all 8,192 rows. In `circuits/transaction-core/src/p3_air.rs`, update the constraints accordingly.
 
-This milestone also compacts the fixed-slot MASP bookkeeping. The current AIR pays 16 one-hot selector columns for four notes and four slots. Because the statement still has a fixed `2-in/2-out` shape, the required implementation in this milestone is a compact slot-index encoding. Replace the `COL_SEL_*` family with one compact slot-index field per note and derive equality masks inside the AIR instead of storing one-hot selectors for every note/slot pair. A future generalized permutation argument is allowed, but it is not required for this milestone. The requirement is to stop paying 16 dedicated selector columns for a four-slot fixed circuit.
+This milestone also compacts the fixed-slot MASP bookkeeping. The current AIR pays 16 one-hot selector columns for four notes and four slots. Because the statement still has a fixed `2-in/2-out` shape, the required implementation in this milestone is a compact slot encoding. The landed version uses two selector bits per note and derives equality masks inside the AIR instead of storing one-hot selectors for every note/slot pair. A future generalized permutation argument is allowed, but it is not required for this milestone. The requirement is to stop paying 16 dedicated selector columns for a four-slot fixed circuit.
 
 This milestone is complete when the trace width drops again, the MASP balance tests still pass, and the AIR no longer stores long-lived constant data or one-hot selector matrices just to preserve convenience in the witness builder.
 
@@ -231,20 +248,20 @@ After Milestone 1 lands, rerun the same benchmark commands and make sure the JSO
 After the currently landed shared-range optimization, the same commands now produce outputs shaped like:
 
     {
-      "tx_proof_bytes_avg": 370065,
-      "tx_trace_width": 231,
+      "tx_proof_bytes_avg": 365769,
+      "tx_trace_width": 183,
       "tx_schedule_width": 42,
-      "tx_prove_ns_per_tx": 1457625750,
-      "transactions_per_second": 0.6821019758097844
+      "tx_prove_ns_per_tx": 1302618468,
+      "transactions_per_second": 0.7629938268841853
     }
 
     {
       "batch_size": 4,
-      "batch_prove_ns_per_tx": 2964712380,
-      "batch_transactions_per_second": 0.33694921226690633
+      "batch_prove_ns_per_tx": 2932277984,
+      "batch_transactions_per_second": 0.34065350036120046
     }
 
-    p3 tx proof: bytes=370124, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32
+    p3 tx proof: bytes=365498, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32
 
 After any future Milestone 2-style preprocessed-schedule experiment, run:
 
@@ -322,15 +339,15 @@ These excerpts capture the old baseline, the rejected preprocessed experiment, a
       transactions_per_second = 0.23553845588893577
 
     current post-change state
-      tx_proof_bytes_avg = 370065
-      tx_trace_width = 231
-      tx_prove_ns_per_tx = 1457625750
-      transactions_per_second = 0.6821019758097844
+      tx_proof_bytes_avg = 365769
+      tx_trace_width = 183
+      tx_prove_ns_per_tx = 1302618468
+      transactions_per_second = 0.7629938268841853
 
-      batch_prove_ns_per_tx = 2964712380
-      batch_transactions_per_second = 0.33694921226690633
+      batch_prove_ns_per_tx = 2932277984
+      batch_transactions_per_second = 0.34065350036120046
 
-      p3 tx proof: bytes=370124, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32
+      p3 tx proof: bytes=365498, degree_bits=13, log_chunks=3, log_blowup=4, num_queries=32
 
       cargo test -p security-tests --test stark_soundness --release -- --nocapture
         FRI params: log_blowup=4, num_queries=32, estimated_soundness_bits=128
@@ -357,7 +374,7 @@ In `circuits/transaction-core/src/range.rs`, define:
 
 This module is the single source of truth for the production bounded-value limb layout.
 
-In `circuits/transaction-core/src/p3_air.rs`, `TransactionAirP3` must keep the current shared-range-scratch optimization: one 61-bit scratch region is reused across note, fee, value-balance, and issuance rows instead of allocating separate fee/value-balance/issuance bit regions again.
+In `circuits/transaction-core/src/p3_air.rs`, `TransactionAirP3` must keep the current shared-range-scratch optimization: one shared 21-limb radix-8 scratch region is reused across note, fee, value-balance, and issuance rows instead of allocating separate fee/value-balance/issuance regions.
 
 In `circuits/transaction/src/p3_prover.rs`, define:
 
@@ -387,6 +404,6 @@ In `circuits/bench/src/main.rs`, extend `BenchReport` so it contains:
 
 These fields are required because the rest of this plan depends on a single command exposing the exact shape and cost of the current transaction proof.
 
-In `circuits/transaction-core/src/p3_air.rs`, replace the one-hot selector family with compact slot-index fields. The end state must not contain the `COL_SEL_IN0_SLOT0` through `COL_SEL_OUT1_SLOT3` family; it must instead encode slot choice compactly and derive equality masks in the AIR.
+In `circuits/transaction-core/src/p3_air.rs`, replace the one-hot selector family with compact selector-bit fields. The end state must not contain the `COL_SEL_IN0_SLOT0` through `COL_SEL_OUT1_SLOT3` family; it must instead encode slot choice compactly and derive equality masks in the AIR.
 
-Revision note: updated on 2026-03-13 after implementing the first optimization slice. The preprocessed-schedule experiment was measured and rejected, the shared range-scratch optimization was measured and kept, and the benchmark/security sections were updated so the plan reflects the real current state rather than the draft assumptions.
+Revision note: updated on 2026-03-13 after implementing the second optimization slice. The preprocessed-schedule experiment was measured and rejected, the shared range-scratch optimization was followed by the radix-limb and selector-compaction pass, and the benchmark/security sections were updated so the plan reflects the real current state rather than the draft assumptions.

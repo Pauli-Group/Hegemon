@@ -23,6 +23,7 @@ use crate::constants::{
     NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS,
     POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH, POSEIDON_ROUNDS, POSEIDON_WIDTH,
 };
+use crate::range::{RANGE_LIMB_BITS, RANGE_LIMB_COUNT};
 use crate::{poseidon2_constants, poseidon_constants};
 
 pub type Felt = Goldilocks;
@@ -92,114 +93,100 @@ pub const COL_SLOT3_ASSET: usize = 44;
 pub const COL_SLOT3_IN: usize = 45;
 pub const COL_SLOT3_OUT: usize = 46;
 
-/// Selector flags: input note 0.
-pub const COL_SEL_IN0_SLOT0: usize = 47;
-pub const COL_SEL_IN0_SLOT1: usize = 48;
-pub const COL_SEL_IN0_SLOT2: usize = 49;
-pub const COL_SEL_IN0_SLOT3: usize = 50;
-
-/// Selector flags: input note 1.
-pub const COL_SEL_IN1_SLOT0: usize = 51;
-pub const COL_SEL_IN1_SLOT1: usize = 52;
-pub const COL_SEL_IN1_SLOT2: usize = 53;
-pub const COL_SEL_IN1_SLOT3: usize = 54;
-
-/// Selector flags: output note 0.
-pub const COL_SEL_OUT0_SLOT0: usize = 55;
-pub const COL_SEL_OUT0_SLOT1: usize = 56;
-pub const COL_SEL_OUT0_SLOT2: usize = 57;
-pub const COL_SEL_OUT0_SLOT3: usize = 58;
-
-/// Selector flags: output note 1.
-pub const COL_SEL_OUT1_SLOT0: usize = 59;
-pub const COL_SEL_OUT1_SLOT1: usize = 60;
-pub const COL_SEL_OUT1_SLOT2: usize = 61;
-pub const COL_SEL_OUT1_SLOT3: usize = 62;
+/// Compact 2-bit slot selectors for each fixed note slot.
+pub const COL_IN0_SLOT_BIT0: usize = 47;
+pub const COL_IN0_SLOT_BIT1: usize = 48;
+pub const COL_IN1_SLOT_BIT0: usize = 49;
+pub const COL_IN1_SLOT_BIT1: usize = 50;
+pub const COL_OUT0_SLOT_BIT0: usize = 51;
+pub const COL_OUT0_SLOT_BIT1: usize = 52;
+pub const COL_OUT1_SLOT_BIT0: usize = 53;
+pub const COL_OUT1_SLOT_BIT1: usize = 54;
 
 /// Fee and value balance (sign + magnitude).
-pub const COL_FEE: usize = 63;
-pub const COL_VALUE_BALANCE_SIGN: usize = 64;
-pub const COL_VALUE_BALANCE_MAG: usize = 65;
+pub const COL_FEE: usize = 55;
+pub const COL_VALUE_BALANCE_SIGN: usize = 56;
+pub const COL_VALUE_BALANCE_MAG: usize = 57;
 
 /// Captured hash limbs (rate = 6).
-pub const COL_OUT0: usize = 66;
-pub const COL_OUT1: usize = 67;
-pub const COL_OUT2: usize = 68;
-pub const COL_OUT3: usize = 69;
-pub const COL_OUT4: usize = 70;
-pub const COL_OUT5: usize = 71;
+pub const COL_OUT0: usize = 58;
+pub const COL_OUT1: usize = 59;
+pub const COL_OUT2: usize = 60;
+pub const COL_OUT3: usize = 61;
+pub const COL_OUT4: usize = 62;
+pub const COL_OUT5: usize = 63;
 
 /// Stablecoin policy binding and issuance fields (final row only).
-pub const COL_STABLECOIN_ENABLED: usize = 72;
-pub const COL_STABLECOIN_ASSET: usize = 73;
-pub const COL_STABLECOIN_POLICY_VERSION: usize = 74;
-pub const COL_STABLECOIN_ISSUANCE_SIGN: usize = 75;
-pub const COL_STABLECOIN_ISSUANCE_MAG: usize = 76;
-pub const COL_STABLECOIN_POLICY_HASH0: usize = 77;
-pub const COL_STABLECOIN_POLICY_HASH1: usize = 78;
-pub const COL_STABLECOIN_POLICY_HASH2: usize = 79;
-pub const COL_STABLECOIN_POLICY_HASH3: usize = 80;
-pub const COL_STABLECOIN_POLICY_HASH4: usize = 81;
-pub const COL_STABLECOIN_POLICY_HASH5: usize = 82;
-pub const COL_STABLECOIN_ORACLE0: usize = 83;
-pub const COL_STABLECOIN_ORACLE1: usize = 84;
-pub const COL_STABLECOIN_ORACLE2: usize = 85;
-pub const COL_STABLECOIN_ORACLE3: usize = 86;
-pub const COL_STABLECOIN_ORACLE4: usize = 87;
-pub const COL_STABLECOIN_ORACLE5: usize = 88;
-pub const COL_STABLECOIN_ATTEST0: usize = 89;
-pub const COL_STABLECOIN_ATTEST1: usize = 90;
-pub const COL_STABLECOIN_ATTEST2: usize = 91;
-pub const COL_STABLECOIN_ATTEST3: usize = 92;
-pub const COL_STABLECOIN_ATTEST4: usize = 93;
-pub const COL_STABLECOIN_ATTEST5: usize = 94;
-pub const COL_STABLECOIN_SLOT_SEL0: usize = 95;
-pub const COL_STABLECOIN_SLOT_SEL1: usize = 96;
-pub const COL_STABLECOIN_SLOT_SEL2: usize = 97;
-pub const COL_STABLECOIN_SLOT_SEL3: usize = 98;
+pub const COL_STABLECOIN_ENABLED: usize = 64;
+pub const COL_STABLECOIN_ASSET: usize = 65;
+pub const COL_STABLECOIN_POLICY_VERSION: usize = 66;
+pub const COL_STABLECOIN_ISSUANCE_SIGN: usize = 67;
+pub const COL_STABLECOIN_ISSUANCE_MAG: usize = 68;
+pub const COL_STABLECOIN_POLICY_HASH0: usize = 69;
+pub const COL_STABLECOIN_POLICY_HASH1: usize = 70;
+pub const COL_STABLECOIN_POLICY_HASH2: usize = 71;
+pub const COL_STABLECOIN_POLICY_HASH3: usize = 72;
+pub const COL_STABLECOIN_POLICY_HASH4: usize = 73;
+pub const COL_STABLECOIN_POLICY_HASH5: usize = 74;
+pub const COL_STABLECOIN_ORACLE0: usize = 75;
+pub const COL_STABLECOIN_ORACLE1: usize = 76;
+pub const COL_STABLECOIN_ORACLE2: usize = 77;
+pub const COL_STABLECOIN_ORACLE3: usize = 78;
+pub const COL_STABLECOIN_ORACLE4: usize = 79;
+pub const COL_STABLECOIN_ORACLE5: usize = 80;
+pub const COL_STABLECOIN_ATTEST0: usize = 81;
+pub const COL_STABLECOIN_ATTEST1: usize = 82;
+pub const COL_STABLECOIN_ATTEST2: usize = 83;
+pub const COL_STABLECOIN_ATTEST3: usize = 84;
+pub const COL_STABLECOIN_ATTEST4: usize = 85;
+pub const COL_STABLECOIN_ATTEST5: usize = 86;
+pub const COL_STABLECOIN_SLOT_SEL0: usize = 87;
+pub const COL_STABLECOIN_SLOT_SEL1: usize = 88;
+pub const COL_STABLECOIN_SLOT_SEL2: usize = 89;
+pub const COL_STABLECOIN_SLOT_SEL3: usize = 90;
 
 /// Captured rho limbs (input notes only) used to bind commitment and nullifier phases.
-pub const COL_IN0_RHO0: usize = 99;
-pub const COL_IN0_RHO1: usize = 100;
-pub const COL_IN0_RHO2: usize = 101;
-pub const COL_IN0_RHO3: usize = 102;
-pub const COL_IN1_RHO0: usize = 103;
-pub const COL_IN1_RHO1: usize = 104;
-pub const COL_IN1_RHO2: usize = 105;
-pub const COL_IN1_RHO3: usize = 106;
+pub const COL_IN0_RHO0: usize = 91;
+pub const COL_IN0_RHO1: usize = 92;
+pub const COL_IN0_RHO2: usize = 93;
+pub const COL_IN0_RHO3: usize = 94;
+pub const COL_IN1_RHO0: usize = 95;
+pub const COL_IN1_RHO1: usize = 96;
+pub const COL_IN1_RHO2: usize = 97;
+pub const COL_IN1_RHO3: usize = 98;
 
 /// Secret-key limbs, in-circuit derived PRF key, and spend-auth key limbs.
-pub const COL_SK0: usize = 107;
-pub const COL_SK1: usize = 108;
-pub const COL_SK2: usize = 109;
-pub const COL_SK3: usize = 110;
-pub const COL_PRF_DERIVED: usize = 111;
-pub const COL_AUTH_DERIVED0: usize = 112;
-pub const COL_AUTH_DERIVED1: usize = 113;
-pub const COL_AUTH_DERIVED2: usize = 114;
-pub const COL_AUTH_DERIVED3: usize = 115;
+pub const COL_SK0: usize = 99;
+pub const COL_SK1: usize = 100;
+pub const COL_SK2: usize = 101;
+pub const COL_SK3: usize = 102;
+pub const COL_PRF_DERIVED: usize = 103;
+pub const COL_AUTH_DERIVED0: usize = 104;
+pub const COL_AUTH_DERIVED1: usize = 105;
+pub const COL_AUTH_DERIVED2: usize = 106;
+pub const COL_AUTH_DERIVED3: usize = 107;
 
 /// Ciphertext hashes mirrored into the witness trace and bound at the final row.
-pub const COL_CT0_0: usize = 116;
-pub const COL_CT0_1: usize = 117;
-pub const COL_CT0_2: usize = 118;
-pub const COL_CT0_3: usize = 119;
-pub const COL_CT0_4: usize = 120;
-pub const COL_CT0_5: usize = 121;
-pub const COL_CT1_0: usize = 122;
-pub const COL_CT1_1: usize = 123;
-pub const COL_CT1_2: usize = 124;
-pub const COL_CT1_3: usize = 125;
-pub const COL_CT1_4: usize = 126;
-pub const COL_CT1_5: usize = 127;
+pub const COL_CT0_0: usize = 108;
+pub const COL_CT0_1: usize = 109;
+pub const COL_CT0_2: usize = 110;
+pub const COL_CT0_3: usize = 111;
+pub const COL_CT0_4: usize = 112;
+pub const COL_CT0_5: usize = 113;
+pub const COL_CT1_0: usize = 114;
+pub const COL_CT1_1: usize = 115;
+pub const COL_CT1_2: usize = 116;
+pub const COL_CT1_3: usize = 117;
+pub const COL_CT1_4: usize = 118;
+pub const COL_CT1_5: usize = 119;
 
 /// Bit-length used for in-circuit monetary range checks.
 pub const VALUE_RANGE_BITS: usize = 61;
 
-/// Shared range-check scratch bits reused across note, fee, value-balance, and issuance rows.
-pub const COL_RANGE_NOTE_BITS_START: usize = COL_CT1_5 + 1;
+/// Shared range-check limbs reused across note, fee, value-balance, and issuance rows.
+pub const COL_RANGE_LIMBS_START: usize = COL_CT1_5 + 1;
 /// Base trace width (columns) for the transaction circuit.
-pub const BASE_TRACE_WIDTH: usize = COL_RANGE_NOTE_BITS_START + VALUE_RANGE_BITS;
+pub const BASE_TRACE_WIDTH: usize = COL_RANGE_LIMBS_START + RANGE_LIMB_COUNT;
 
 // ================================================================================================
 // SCHEDULE COLUMNS (fixed schedule stored in main trace)
@@ -1367,8 +1354,8 @@ where
             when.assert_bool(current[col].clone());
         }
 
-        for &sel_col in SELECTOR_COLUMNS.iter() {
-            when.assert_bool(current[sel_col].clone());
+        for &bit_col in SLOT_BIT_COLUMNS.iter() {
+            when.assert_bool(current[bit_col].clone());
         }
 
         let input_active = [
@@ -1384,64 +1371,101 @@ where
         let note_start_out0 = prep_note_start_out0.clone();
         let note_start_out1 = prep_note_start_out1.clone();
 
-        let in0_sel_sum = current[COL_SEL_IN0_SLOT0].clone()
-            + current[COL_SEL_IN0_SLOT1].clone()
-            + current[COL_SEL_IN0_SLOT2].clone()
-            + current[COL_SEL_IN0_SLOT3].clone();
-        when.assert_zero(note_start_in0.clone() * (in0_sel_sum - input_active[0].clone()));
+        let selector_weights = |bit0: AB::Expr, bit1: AB::Expr| -> [AB::Expr; 4] {
+            let not_bit0 = one.clone() - bit0.clone();
+            let not_bit1 = one.clone() - bit1.clone();
+            [
+                not_bit0.clone() * not_bit1.clone(),
+                bit0.clone() * not_bit1.clone(),
+                not_bit0 * bit1.clone(),
+                bit0 * bit1,
+            ]
+        };
 
-        let in1_sel_sum = current[COL_SEL_IN1_SLOT0].clone()
-            + current[COL_SEL_IN1_SLOT1].clone()
-            + current[COL_SEL_IN1_SLOT2].clone()
-            + current[COL_SEL_IN1_SLOT3].clone();
-        when.assert_zero(note_start_in1.clone() * (in1_sel_sum - input_active[1].clone()));
+        let note_weights = [
+            selector_weights(
+                current[COL_IN0_SLOT_BIT0].clone().into(),
+                current[COL_IN0_SLOT_BIT1].clone().into(),
+            ),
+            selector_weights(
+                current[COL_IN1_SLOT_BIT0].clone().into(),
+                current[COL_IN1_SLOT_BIT1].clone().into(),
+            ),
+            selector_weights(
+                current[COL_OUT0_SLOT_BIT0].clone().into(),
+                current[COL_OUT0_SLOT_BIT1].clone().into(),
+            ),
+            selector_weights(
+                current[COL_OUT1_SLOT_BIT0].clone().into(),
+                current[COL_OUT1_SLOT_BIT1].clone().into(),
+            ),
+        ];
 
-        let out0_sel_sum = current[COL_SEL_OUT0_SLOT0].clone()
-            + current[COL_SEL_OUT0_SLOT1].clone()
-            + current[COL_SEL_OUT0_SLOT2].clone()
-            + current[COL_SEL_OUT0_SLOT3].clone();
-        when.assert_zero(note_start_out0.clone() * (out0_sel_sum - output_active[0].clone()));
+        for (gate, active, bit0_col, bit1_col) in [
+            (
+                note_start_in0.clone(),
+                input_active[0].clone(),
+                COL_IN0_SLOT_BIT0,
+                COL_IN0_SLOT_BIT1,
+            ),
+            (
+                note_start_in1.clone(),
+                input_active[1].clone(),
+                COL_IN1_SLOT_BIT0,
+                COL_IN1_SLOT_BIT1,
+            ),
+            (
+                note_start_out0.clone(),
+                output_active[0].clone(),
+                COL_OUT0_SLOT_BIT0,
+                COL_OUT0_SLOT_BIT1,
+            ),
+            (
+                note_start_out1.clone(),
+                output_active[1].clone(),
+                COL_OUT1_SLOT_BIT0,
+                COL_OUT1_SLOT_BIT1,
+            ),
+        ] {
+            when.assert_zero(
+                gate.clone() * (one.clone() - active.clone()) * current[bit0_col].clone(),
+            );
+            when.assert_zero(gate * (one.clone() - active) * current[bit1_col].clone());
+        }
 
-        let out1_sel_sum = current[COL_SEL_OUT1_SLOT0].clone()
-            + current[COL_SEL_OUT1_SLOT1].clone()
-            + current[COL_SEL_OUT1_SLOT2].clone()
-            + current[COL_SEL_OUT1_SLOT3].clone();
-        when.assert_zero(note_start_out1.clone() * (out1_sel_sum - output_active[1].clone()));
+        let selected_slot_asset = |weights: &[AB::Expr; 4]| -> AB::Expr {
+            weights[0].clone() * slot_assets[0].clone()
+                + weights[1].clone() * slot_assets[1].clone()
+                + weights[2].clone() * slot_assets[2].clone()
+                + weights[3].clone() * slot_assets[3].clone()
+        };
 
         let in0_asset = current[COL_IN0_ASSET].clone();
-        let in0_selected = current[COL_SEL_IN0_SLOT0].clone() * slot_assets[0].clone()
-            + current[COL_SEL_IN0_SLOT1].clone() * slot_assets[1].clone()
-            + current[COL_SEL_IN0_SLOT2].clone() * slot_assets[2].clone()
-            + current[COL_SEL_IN0_SLOT3].clone() * slot_assets[3].clone();
         when.assert_zero(
-            note_start_in0.clone() * (in0_asset * input_active[0].clone() - in0_selected),
+            note_start_in0.clone()
+                * input_active[0].clone()
+                * (in0_asset - selected_slot_asset(&note_weights[0])),
         );
 
         let in1_asset = current[COL_IN1_ASSET].clone();
-        let in1_selected = current[COL_SEL_IN1_SLOT0].clone() * slot_assets[0].clone()
-            + current[COL_SEL_IN1_SLOT1].clone() * slot_assets[1].clone()
-            + current[COL_SEL_IN1_SLOT2].clone() * slot_assets[2].clone()
-            + current[COL_SEL_IN1_SLOT3].clone() * slot_assets[3].clone();
         when.assert_zero(
-            note_start_in1.clone() * (in1_asset * input_active[1].clone() - in1_selected),
+            note_start_in1.clone()
+                * input_active[1].clone()
+                * (in1_asset - selected_slot_asset(&note_weights[1])),
         );
 
         let out0_asset = current[COL_OUT0_ASSET].clone();
-        let out0_selected = current[COL_SEL_OUT0_SLOT0].clone() * slot_assets[0].clone()
-            + current[COL_SEL_OUT0_SLOT1].clone() * slot_assets[1].clone()
-            + current[COL_SEL_OUT0_SLOT2].clone() * slot_assets[2].clone()
-            + current[COL_SEL_OUT0_SLOT3].clone() * slot_assets[3].clone();
         when.assert_zero(
-            note_start_out0.clone() * (out0_asset * output_active[0].clone() - out0_selected),
+            note_start_out0.clone()
+                * output_active[0].clone()
+                * (out0_asset - selected_slot_asset(&note_weights[2])),
         );
 
         let out1_asset = current[COL_OUT1_ASSET].clone();
-        let out1_selected = current[COL_SEL_OUT1_SLOT0].clone() * slot_assets[0].clone()
-            + current[COL_SEL_OUT1_SLOT1].clone() * slot_assets[1].clone()
-            + current[COL_SEL_OUT1_SLOT2].clone() * slot_assets[2].clone()
-            + current[COL_SEL_OUT1_SLOT3].clone() * slot_assets[3].clone();
         when.assert_zero(
-            note_start_out1.clone() * (out1_asset * output_active[1].clone() - out1_selected),
+            note_start_out1.clone()
+                * output_active[1].clone()
+                * (out1_asset - selected_slot_asset(&note_weights[3])),
         );
 
         let in_values = [
@@ -1453,34 +1477,6 @@ where
             current[COL_OUT1_VALUE].clone(),
         ];
 
-        let sel_in = [
-            [
-                COL_SEL_IN0_SLOT0,
-                COL_SEL_IN0_SLOT1,
-                COL_SEL_IN0_SLOT2,
-                COL_SEL_IN0_SLOT3,
-            ],
-            [
-                COL_SEL_IN1_SLOT0,
-                COL_SEL_IN1_SLOT1,
-                COL_SEL_IN1_SLOT2,
-                COL_SEL_IN1_SLOT3,
-            ],
-        ];
-        let sel_out = [
-            [
-                COL_SEL_OUT0_SLOT0,
-                COL_SEL_OUT0_SLOT1,
-                COL_SEL_OUT0_SLOT2,
-                COL_SEL_OUT0_SLOT3,
-            ],
-            [
-                COL_SEL_OUT1_SLOT0,
-                COL_SEL_OUT1_SLOT1,
-                COL_SEL_OUT1_SLOT2,
-                COL_SEL_OUT1_SLOT3,
-            ],
-        ];
         let note_in_flags = [note_start_in0.clone(), note_start_in1.clone()];
         let note_out_flags = [note_start_out0.clone(), note_start_out1.clone()];
 
@@ -1489,10 +1485,12 @@ where
             let mut add_out = AB::Expr::ZERO;
             for note in 0..2 {
                 add_in += note_in_flags[note].clone()
-                    * current[sel_in[note][slot]].clone()
+                    * input_active[note].clone()
+                    * note_weights[note][slot].clone()
                     * in_values[note].clone();
                 add_out += note_out_flags[note].clone()
-                    * current[sel_out[note][slot]].clone()
+                    * output_active[note].clone()
+                    * note_weights[2 + note][slot].clone()
                     * out_values[note].clone();
             }
             when.assert_zero(
@@ -1597,10 +1595,18 @@ where
         }
 
         let mut note_range = AB::Expr::ZERO;
-        for bit in 0..VALUE_RANGE_BITS {
-            let bit_col = current[COL_RANGE_NOTE_BITS_START + bit].clone();
-            when.assert_bool(bit_col.clone());
-            note_range += bit_col * AB::Expr::from_u64(1u64 << bit);
+        for limb_idx in 0..RANGE_LIMB_COUNT {
+            let limb = current[COL_RANGE_LIMBS_START + limb_idx].clone();
+            if limb_idx + 1 == RANGE_LIMB_COUNT {
+                when.assert_bool(limb.clone());
+            } else {
+                let mut limb_range = AB::Expr::ONE;
+                for digit in 0..(1u64 << RANGE_LIMB_BITS) {
+                    limb_range *= limb.clone() - AB::Expr::from_u64(digit);
+                }
+                when.assert_zero(limb_range);
+            }
+            note_range += limb * AB::Expr::from_u64(1u64 << (limb_idx * RANGE_LIMB_BITS));
         }
         for (flag, value_col) in [
             (prep_note_start_in0.clone(), COL_IN0_VALUE),
@@ -1612,23 +1618,23 @@ where
         }
 
         let mut fee_range = AB::Expr::ZERO;
-        for bit in 0..VALUE_RANGE_BITS {
-            fee_range +=
-                current[COL_RANGE_NOTE_BITS_START + bit].clone() * AB::Expr::from_u64(1u64 << bit);
+        for limb_idx in 0..RANGE_LIMB_COUNT {
+            fee_range += current[COL_RANGE_LIMBS_START + limb_idx].clone()
+                * AB::Expr::from_u64(1u64 << (limb_idx * RANGE_LIMB_BITS));
         }
         when.assert_zero(final_row_mask.clone() * (current[COL_FEE].clone() - fee_range));
 
         let mut vb_range = AB::Expr::ZERO;
-        for bit in 0..VALUE_RANGE_BITS {
-            vb_range +=
-                current[COL_RANGE_NOTE_BITS_START + bit].clone() * AB::Expr::from_u64(1u64 << bit);
+        for limb_idx in 0..RANGE_LIMB_COUNT {
+            vb_range += current[COL_RANGE_LIMBS_START + limb_idx].clone()
+                * AB::Expr::from_u64(1u64 << (limb_idx * RANGE_LIMB_BITS));
         }
         when.assert_zero(value_balance_row * (current[COL_VALUE_BALANCE_MAG].clone() - vb_range));
 
         let mut issuance_range = AB::Expr::ZERO;
-        for bit in 0..VALUE_RANGE_BITS {
-            issuance_range +=
-                current[COL_RANGE_NOTE_BITS_START + bit].clone() * AB::Expr::from_u64(1u64 << bit);
+        for limb_idx in 0..RANGE_LIMB_COUNT {
+            issuance_range += current[COL_RANGE_LIMBS_START + limb_idx].clone()
+                * AB::Expr::from_u64(1u64 << (limb_idx * RANGE_LIMB_BITS));
         }
         when.assert_zero(
             issuance_row * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - issuance_range),
@@ -1865,23 +1871,15 @@ where
     }
 }
 
-const SELECTOR_COLUMNS: [usize; 16] = [
-    COL_SEL_IN0_SLOT0,
-    COL_SEL_IN0_SLOT1,
-    COL_SEL_IN0_SLOT2,
-    COL_SEL_IN0_SLOT3,
-    COL_SEL_IN1_SLOT0,
-    COL_SEL_IN1_SLOT1,
-    COL_SEL_IN1_SLOT2,
-    COL_SEL_IN1_SLOT3,
-    COL_SEL_OUT0_SLOT0,
-    COL_SEL_OUT0_SLOT1,
-    COL_SEL_OUT0_SLOT2,
-    COL_SEL_OUT0_SLOT3,
-    COL_SEL_OUT1_SLOT0,
-    COL_SEL_OUT1_SLOT1,
-    COL_SEL_OUT1_SLOT2,
-    COL_SEL_OUT1_SLOT3,
+const SLOT_BIT_COLUMNS: [usize; 8] = [
+    COL_IN0_SLOT_BIT0,
+    COL_IN0_SLOT_BIT1,
+    COL_IN1_SLOT_BIT0,
+    COL_IN1_SLOT_BIT1,
+    COL_OUT0_SLOT_BIT0,
+    COL_OUT0_SLOT_BIT1,
+    COL_OUT1_SLOT_BIT0,
+    COL_OUT1_SLOT_BIT1,
 ];
 
 // ================================================================================================

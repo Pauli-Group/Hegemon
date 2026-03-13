@@ -25,21 +25,19 @@ use transaction_core::p3_air::{
     COL_AUTH_DERIVED0, COL_AUTH_DERIVED1, COL_AUTH_DERIVED2, COL_AUTH_DERIVED3, COL_CT0_0,
     COL_CT0_1, COL_CT0_2, COL_CT0_3, COL_CT0_4, COL_CT0_5, COL_CT1_0, COL_CT1_1, COL_CT1_2,
     COL_CT1_3, COL_CT1_4, COL_CT1_5, COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET,
-    COL_IN0_RHO0, COL_IN0_RHO1, COL_IN0_RHO2, COL_IN0_RHO3, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET,
-    COL_IN1_RHO0, COL_IN1_RHO1, COL_IN1_RHO2, COL_IN1_RHO3, COL_IN1_VALUE, COL_IN2, COL_IN3,
-    COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0,
-    COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3,
-    COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED,
-    COL_RANGE_NOTE_BITS_START, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4,
-    COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0,
-    COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1,
-    COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1,
-    COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1,
-    COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SK0, COL_SK1, COL_SK2, COL_SK3, COL_SLOT0_ASSET,
-    COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET,
-    COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT,
-    COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
-    COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ATTEST4, COL_STABLECOIN_ATTEST5, COL_STABLECOIN_ENABLED,
+    COL_IN0_RHO0, COL_IN0_RHO1, COL_IN0_RHO2, COL_IN0_RHO3, COL_IN0_SLOT_BIT0, COL_IN0_SLOT_BIT1,
+    COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_RHO0, COL_IN1_RHO1, COL_IN1_RHO2, COL_IN1_RHO3,
+    COL_IN1_SLOT_BIT0, COL_IN1_SLOT_BIT1, COL_IN1_VALUE, COL_IN2, COL_IN3, COL_IN4, COL_IN5,
+    COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET,
+    COL_OUT0_SLOT_BIT0, COL_OUT0_SLOT_BIT1, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET,
+    COL_OUT1_SLOT_BIT0, COL_OUT1_SLOT_BIT1, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5,
+    COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_PRF_DERIVED, COL_RANGE_LIMBS_START, COL_RESET, COL_S0,
+    COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9,
+    COL_SCHEDULE_START, COL_SK0, COL_SK1, COL_SK2, COL_SK3, COL_SLOT0_ASSET, COL_SLOT0_IN,
+    COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
+    COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET,
+    COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3,
+    COL_STABLECOIN_ATTEST4, COL_STABLECOIN_ATTEST5, COL_STABLECOIN_ENABLED,
     COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0,
     COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_ORACLE4,
     COL_STABLECOIN_ORACLE5, COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1,
@@ -48,9 +46,10 @@ use transaction_core::p3_air::{
     COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3,
     COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH,
     DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES,
-    PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH, VALUE_RANGE_BITS,
+    PREPROCESSED_WIDTH, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
 };
 use transaction_core::poseidon2::poseidon2_step;
+use transaction_core::range::{decompose_bounded_value, RANGE_LIMB_COUNT};
 
 type Val = Goldilocks;
 
@@ -131,7 +130,7 @@ impl TransactionProverP3 {
 
         let slots = witness.balance_slots()?;
         let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
-        let selectors = build_selectors(
+        let selector_bits = build_selector_bits(
             &input_notes,
             &output_notes,
             &slot_assets,
@@ -178,31 +177,11 @@ impl TransactionProverP3 {
         }
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
-        let selector_cols = [
-            [
-                COL_SEL_IN0_SLOT0,
-                COL_SEL_IN0_SLOT1,
-                COL_SEL_IN0_SLOT2,
-                COL_SEL_IN0_SLOT3,
-            ],
-            [
-                COL_SEL_IN1_SLOT0,
-                COL_SEL_IN1_SLOT1,
-                COL_SEL_IN1_SLOT2,
-                COL_SEL_IN1_SLOT3,
-            ],
-            [
-                COL_SEL_OUT0_SLOT0,
-                COL_SEL_OUT0_SLOT1,
-                COL_SEL_OUT0_SLOT2,
-                COL_SEL_OUT0_SLOT3,
-            ],
-            [
-                COL_SEL_OUT1_SLOT0,
-                COL_SEL_OUT1_SLOT1,
-                COL_SEL_OUT1_SLOT2,
-                COL_SEL_OUT1_SLOT3,
-            ],
+        let selector_bit_cols = [
+            [COL_IN0_SLOT_BIT0, COL_IN0_SLOT_BIT1],
+            [COL_IN1_SLOT_BIT0, COL_IN1_SLOT_BIT1],
+            [COL_OUT0_SLOT_BIT0, COL_OUT0_SLOT_BIT1],
+            [COL_OUT1_SLOT_BIT0, COL_OUT1_SLOT_BIT1],
         ];
         let sentinel_cols = [
             COL_IN_ACTIVE0,
@@ -227,7 +206,7 @@ impl TransactionProverP3 {
             for &col in sentinel_cols.iter() {
                 row_slice[col] = Val::ONE;
             }
-            for cols in selector_cols.iter() {
+            for cols in selector_bit_cols.iter() {
                 for &col in cols.iter() {
                     row_slice[col] = Val::ONE;
                 }
@@ -258,13 +237,10 @@ impl TransactionProverP3 {
             row_slice[COL_IN1_RHO3] = in1_rho_words[3];
         }
 
-        let set_range_bits = |row_slice: &mut [Val], bits_start: usize, value: u64| {
-            for bit in 0..VALUE_RANGE_BITS {
-                row_slice[bits_start + bit] = if (value >> bit) & 1 == 1 {
-                    Val::ONE
-                } else {
-                    Val::ZERO
-                };
+        let set_range_limbs = |row_slice: &mut [Val], limbs_start: usize, value: u64| {
+            let limbs = decompose_bounded_value(value);
+            for limb_idx in 0..RANGE_LIMB_COUNT {
+                row_slice[limbs_start + limb_idx] = Val::from_u64(u64::from(limbs[limb_idx]));
             }
         };
 
@@ -277,14 +253,9 @@ impl TransactionProverP3 {
             row_slice[COL_IN_ACTIVE0] = flag_to_felt(input_flags[0]);
             row_slice[COL_IN0_VALUE] = Val::from_u64(input_notes[0].note.value);
             row_slice[COL_IN0_ASSET] = Val::from_u64(input_notes[0].note.asset_id);
-            set_range_bits(
-                row_slice,
-                COL_RANGE_NOTE_BITS_START,
-                input_notes[0].note.value,
-            );
-            for slot in 0..4 {
-                row_slice[selector_cols[0][slot]] = selectors[0][slot];
-            }
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[0].note.value);
+            row_slice[selector_bit_cols[0][0]] = selector_bits[0][0];
+            row_slice[selector_bit_cols[0][1]] = selector_bits[0][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
@@ -294,14 +265,9 @@ impl TransactionProverP3 {
             row_slice[COL_IN_ACTIVE1] = flag_to_felt(input_flags[1]);
             row_slice[COL_IN1_VALUE] = Val::from_u64(input_notes[1].note.value);
             row_slice[COL_IN1_ASSET] = Val::from_u64(input_notes[1].note.asset_id);
-            set_range_bits(
-                row_slice,
-                COL_RANGE_NOTE_BITS_START,
-                input_notes[1].note.value,
-            );
-            for slot in 0..4 {
-                row_slice[selector_cols[1][slot]] = selectors[1][slot];
-            }
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, input_notes[1].note.value);
+            row_slice[selector_bit_cols[1][0]] = selector_bits[1][0];
+            row_slice[selector_bit_cols[1][1]] = selector_bits[1][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
@@ -311,14 +277,9 @@ impl TransactionProverP3 {
             row_slice[COL_OUT_ACTIVE0] = flag_to_felt(output_flags[0]);
             row_slice[COL_OUT0_VALUE] = Val::from_u64(output_notes[0].note.value);
             row_slice[COL_OUT0_ASSET] = Val::from_u64(output_notes[0].note.asset_id);
-            set_range_bits(
-                row_slice,
-                COL_RANGE_NOTE_BITS_START,
-                output_notes[0].note.value,
-            );
-            for slot in 0..4 {
-                row_slice[selector_cols[2][slot]] = selectors[2][slot];
-            }
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[0].note.value);
+            row_slice[selector_bit_cols[2][0]] = selector_bits[2][0];
+            row_slice[selector_bit_cols[2][1]] = selector_bits[2][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
@@ -328,14 +289,9 @@ impl TransactionProverP3 {
             row_slice[COL_OUT_ACTIVE1] = flag_to_felt(output_flags[1]);
             row_slice[COL_OUT1_VALUE] = Val::from_u64(output_notes[1].note.value);
             row_slice[COL_OUT1_ASSET] = Val::from_u64(output_notes[1].note.asset_id);
-            set_range_bits(
-                row_slice,
-                COL_RANGE_NOTE_BITS_START,
-                output_notes[1].note.value,
-            );
-            for slot in 0..4 {
-                row_slice[selector_cols[3][slot]] = selectors[3][slot];
-            }
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, output_notes[1].note.value);
+            row_slice[selector_bit_cols[3][0]] = selector_bits[3][0];
+            row_slice[selector_bit_cols[3][1]] = selector_bits[3][1];
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
@@ -349,7 +305,7 @@ impl TransactionProverP3 {
             row_slice[COL_FEE] = fee;
             row_slice[COL_VALUE_BALANCE_SIGN] = vb_sign;
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
-            set_range_bits(row_slice, COL_RANGE_NOTE_BITS_START, witness.fee);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, witness.fee);
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
                 row_slice[col] = slot_asset_vals[idx];
             }
@@ -456,13 +412,13 @@ impl TransactionProverP3 {
         if value_balance_row < trace_len {
             let row_slice = trace.row_mut(value_balance_row);
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
-            set_range_bits(row_slice, COL_RANGE_NOTE_BITS_START, vb_mag_u64);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, vb_mag_u64);
         }
 
         if issuance_row < trace_len {
             let row_slice = trace.row_mut(issuance_row);
             row_slice[COL_STABLECOIN_ISSUANCE_MAG] = stablecoin_inputs.issuance_mag;
-            set_range_bits(row_slice, COL_RANGE_NOTE_BITS_START, issuance_mag_u64);
+            set_range_limbs(row_slice, COL_RANGE_LIMBS_START, issuance_mag_u64);
         }
 
         let mut slot_in_acc = [0u64; 4];
@@ -475,35 +431,29 @@ impl TransactionProverP3 {
             }
 
             if row == start_row_in0 && start_row_in0 < trace_len {
-                for slot in 0..4 {
-                    if selectors[0][slot] == Val::ONE {
-                        slot_in_acc[slot] =
-                            slot_in_acc[slot].saturating_add(input_notes[0].note.value);
-                    }
+                if input_flags[0] {
+                    let slot = selector_bits_to_index(selector_bits[0]);
+                    slot_in_acc[slot] = slot_in_acc[slot].saturating_add(input_notes[0].note.value);
                 }
             }
             if row == start_row_in1 && start_row_in1 < trace_len {
-                for slot in 0..4 {
-                    if selectors[1][slot] == Val::ONE {
-                        slot_in_acc[slot] =
-                            slot_in_acc[slot].saturating_add(input_notes[1].note.value);
-                    }
+                if input_flags[1] {
+                    let slot = selector_bits_to_index(selector_bits[1]);
+                    slot_in_acc[slot] = slot_in_acc[slot].saturating_add(input_notes[1].note.value);
                 }
             }
             if row == start_row_out0 && start_row_out0 < trace_len {
-                for slot in 0..4 {
-                    if selectors[2][slot] == Val::ONE {
-                        slot_out_acc[slot] =
-                            slot_out_acc[slot].saturating_add(output_notes[0].note.value);
-                    }
+                if output_flags[0] {
+                    let slot = selector_bits_to_index(selector_bits[2]);
+                    slot_out_acc[slot] =
+                        slot_out_acc[slot].saturating_add(output_notes[0].note.value);
                 }
             }
             if row == start_row_out1 && start_row_out1 < trace_len {
-                for slot in 0..4 {
-                    if selectors[3][slot] == Val::ONE {
-                        slot_out_acc[slot] =
-                            slot_out_acc[slot].saturating_add(output_notes[1].note.value);
-                    }
+                if output_flags[1] {
+                    let slot = selector_bits_to_index(selector_bits[3]);
+                    slot_out_acc[slot] =
+                        slot_out_acc[slot].saturating_add(output_notes[1].note.value);
                 }
             }
         }
@@ -1028,19 +978,30 @@ fn dummy_output() -> OutputNoteWitness {
     }
 }
 
-fn build_selectors(
+fn selector_bits_for_slot(slot_idx: usize) -> [Val; 2] {
+    [
+        Val::from_bool((slot_idx & 1) != 0),
+        Val::from_bool((slot_idx & 2) != 0),
+    ]
+}
+
+fn selector_bits_to_index(bits: [Val; 2]) -> usize {
+    usize::from(bits[0] == Val::ONE) + (usize::from(bits[1] == Val::ONE) << 1)
+}
+
+fn build_selector_bits(
     inputs: &[InputNoteWitness],
     outputs: &[OutputNoteWitness],
     slot_assets: &[u64],
     input_flags: &[bool; MAX_INPUTS],
     output_flags: &[bool; MAX_OUTPUTS],
-) -> [[Val; 4]; 4] {
-    let mut selectors = [[Val::ZERO; 4]; 4];
+) -> [[Val; 2]; 4] {
+    let mut selectors = [[Val::ZERO; 2]; 4];
 
     for (idx, note) in inputs.iter().enumerate() {
         if input_flags[idx] {
             if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id) {
-                selectors[idx][slot_idx] = Val::ONE;
+                selectors[idx] = selector_bits_for_slot(slot_idx);
             }
         }
     }
@@ -1048,7 +1009,7 @@ fn build_selectors(
     for (idx, note) in outputs.iter().enumerate() {
         if output_flags[idx] {
             if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id) {
-                selectors[2 + idx][slot_idx] = Val::ONE;
+                selectors[2 + idx] = selector_bits_for_slot(slot_idx);
             }
         }
     }
