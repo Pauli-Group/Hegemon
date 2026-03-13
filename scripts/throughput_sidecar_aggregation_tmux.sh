@@ -17,6 +17,9 @@ COINBASE_BLOCKS="${HEGEMON_TP_COINBASE_BLOCKS:-$((TX_COUNT + 3))}"
 MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
+SKIP_BUILD="${HEGEMON_TP_SKIP_BUILD:-0}" # 1 = reuse existing release binaries
+REUSE_EXISTING_STATE="${HEGEMON_TP_REUSE_EXISTING_STATE:-0}" # 1 = reuse pre-funded base path + wallet stores
+PREPARE_SNAPSHOT_ONLY="${HEGEMON_TP_PREPARE_SNAPSHOT_ONLY:-0}" # 1 = fund/sync then exit before sends
 STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven batch is absent
 STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-600}"
 MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
@@ -202,6 +205,18 @@ if ! [[ "$PREWARM_ONLY" =~ ^[01]$ ]]; then
   echo "HEGEMON_TP_PREWARM_ONLY must be 0 or 1 (got '$PREWARM_ONLY')." >&2
   exit 1
 fi
+if ! [[ "$SKIP_BUILD" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_SKIP_BUILD must be 0 or 1 (got '$SKIP_BUILD')." >&2
+  exit 1
+fi
+if ! [[ "$REUSE_EXISTING_STATE" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_REUSE_EXISTING_STATE must be 0 or 1 (got '$REUSE_EXISTING_STATE')." >&2
+  exit 1
+fi
+if ! [[ "$PREPARE_SNAPSHOT_ONLY" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_PREPARE_SNAPSHOT_ONLY must be 0 or 1 (got '$PREPARE_SNAPSHOT_ONLY')." >&2
+  exit 1
+fi
 
 export CARGO_BUILD_JOBS="$CARGO_JOBS"
 
@@ -254,6 +269,7 @@ fi
 
 CHAIN_SPEC="${HEGEMON_TP_CHAIN_SPEC:-}"
 NODE_CHAIN_ARGS="--dev"
+NODE_BASE_PATH="${HEGEMON_TP_NODE_BASE_PATH:-}"
 if [ -n "$CHAIN_SPEC" ]; then
   if [ ! -f "$CHAIN_SPEC" ]; then
     echo "HEGEMON_TP_CHAIN_SPEC file not found: $CHAIN_SPEC" >&2
@@ -261,6 +277,13 @@ if [ -n "$CHAIN_SPEC" ]; then
   fi
   CHAIN_SPEC_ABS="$(cd "$(dirname "$CHAIN_SPEC")" && pwd)/$(basename "$CHAIN_SPEC")"
   NODE_CHAIN_ARGS="--dev --chain '${CHAIN_SPEC_ABS}'"
+fi
+if [ -n "$NODE_BASE_PATH" ]; then
+  mkdir -p "$NODE_BASE_PATH"
+  NODE_BASE_PATH_ABS="$(cd "$(dirname "$NODE_BASE_PATH")" && pwd)/$(basename "$NODE_BASE_PATH")"
+  NODE_CHAIN_ARGS="${NODE_CHAIN_ARGS} --base-path '${NODE_BASE_PATH_ABS}'"
+else
+  NODE_CHAIN_ARGS="${NODE_CHAIN_ARGS} --tmp"
 fi
 
 WALLET_A="${HEGEMON_TP_WALLET_A:-/tmp/hegemon-throughput-wallet-a}"
@@ -606,18 +629,29 @@ if [ "$WALLET_RAYON_THREADS" -le 0 ]; then
 fi
 echo "Wallet send config: workers=$WORKERS wallet_rayon=$WALLET_RAYON_THREADS wallet_rpc_timeout_s=$WALLET_RPC_REQUEST_TIMEOUT_SECS send_retries=$SEND_RETRIES" >&2
 
-if [ "$FAST" = "1" ]; then
-  echo "Building node (fast proofs enabled)..." >&2
-  make node-fast
-else
+if [ "$SKIP_BUILD" = "1" ]; then
   if [ ! -x ./target/release/hegemon-node ]; then
-    echo "Building node..." >&2
-    make node
+    echo "HEGEMON_TP_SKIP_BUILD=1 requires ./target/release/hegemon-node to exist." >&2
+    exit 1
   fi
-fi
+  if [ ! -x ./target/release/wallet ]; then
+    echo "HEGEMON_TP_SKIP_BUILD=1 requires ./target/release/wallet to exist." >&2
+    exit 1
+  fi
+else
+  if [ "$FAST" = "1" ]; then
+    echo "Building node (fast proofs enabled)..." >&2
+    make node-fast
+  else
+    if [ ! -x ./target/release/hegemon-node ]; then
+      echo "Building node..." >&2
+      make node
+    fi
+  fi
 
-echo "Building wallet..." >&2
-cargo build --release -p wallet
+  echo "Building wallet..." >&2
+  cargo build --release -p wallet
+fi
 
 WALLET_SEND_SUPPORTS_NO_SYNC=0
 if ./target/release/wallet substrate-send --help 2>&1 | grep -q -- "--no-sync"; then
@@ -636,31 +670,40 @@ if [ "$WORKERS" -gt 1 ]; then
   done
 fi
 
-existing_stores=()
-for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"; do
-  if [ -n "$store" ] && [ -d "$store" ]; then
-    existing_stores+=("$store")
-  fi
-done
-
-if [ "${#existing_stores[@]}" -gt 0 ]; then
-  echo "Wallet stores already exist; delete them or set HEGEMON_TP_FORCE=1:" >&2
-  for store in "${existing_stores[@]}"; do
-    echo "  $store" >&2
+if [ "$REUSE_EXISTING_STATE" != "1" ]; then
+  existing_stores=()
+  for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"; do
+    if [ -n "$store" ] && [ -e "$store" ]; then
+      existing_stores+=("$store")
+    fi
   done
-  if [ "${HEGEMON_TP_FORCE:-0}" != "1" ]; then
-    exit 1
+
+  if [ "${#existing_stores[@]}" -gt 0 ]; then
+    echo "Wallet stores already exist; delete them or set HEGEMON_TP_FORCE=1:" >&2
+    for store in "${existing_stores[@]}"; do
+      echo "  $store" >&2
+    done
+    if [ "${HEGEMON_TP_FORCE:-0}" != "1" ]; then
+      exit 1
+    fi
+    rm -rf "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"
   fi
-  rm -rf "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"
-fi
 
-echo "Initializing wallets..." >&2
-./target/release/wallet init --store "$WALLET_A" --passphrase "$PASS_A"
-./target/release/wallet init --store "$WALLET_B" --passphrase "$PASS_B"
+  echo "Initializing wallets..." >&2
+  ./target/release/wallet init --store "$WALLET_A" --passphrase "$PASS_A"
+  ./target/release/wallet init --store "$WALLET_B" --passphrase "$PASS_B"
 
-if [ "$WORKERS" -gt 1 ]; then
-  for i in "${!WORKER_STORES[@]}"; do
-    ./target/release/wallet init --store "${WORKER_STORES[$i]}" --passphrase "${WORKER_PASSES[$i]}"
+  if [ "$WORKERS" -gt 1 ]; then
+    for i in "${!WORKER_STORES[@]}"; do
+      ./target/release/wallet init --store "${WORKER_STORES[$i]}" --passphrase "${WORKER_PASSES[$i]}"
+    done
+  fi
+else
+  for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"; do
+    if [ -n "$store" ] && [ ! -e "$store" ]; then
+      echo "HEGEMON_TP_REUSE_EXISTING_STATE=1 requires existing wallet store path: $store" >&2
+      exit 1
+    fi
   done
 fi
 
@@ -719,6 +762,7 @@ NODE_ADAPTIVE_LIVENESS_ENV=""
 if [ -n "$ADAPTIVE_LIVENESS_MS" ]; then
   NODE_ADAPTIVE_LIVENESS_ENV="HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS=${ADAPTIVE_LIVENESS_MS}"
 fi
+NODE_MINE_ENV="HEGEMON_MINE=1"
 NODE_PREWARM_BLOCKING_ENV=""
 NODE_PREWARM_MAX_TXS_ENV=""
 AGG_LEAF_FANIN="${HEGEMON_TP_AGG_LEAF_FANIN:-4}"
@@ -727,9 +771,25 @@ if ! [[ "$AGG_LEAF_FANIN" =~ ^[0-9]+$ ]] || [ "$AGG_LEAF_FANIN" -lt 1 ]; then
   exit 1
 fi
 AGG_MERGE_FANIN="${HEGEMON_TP_AGG_MERGE_FANIN:-8}"
+AGG_MERGE_FANIN_EXPLICIT=0
+if [ -n "${HEGEMON_TP_AGG_MERGE_FANIN:-}" ]; then
+  AGG_MERGE_FANIN_EXPLICIT=1
+fi
 if ! [[ "$AGG_MERGE_FANIN" =~ ^[0-9]+$ ]] || [ "$AGG_MERGE_FANIN" -lt 1 ]; then
   echo "HEGEMON_TP_AGG_MERGE_FANIN must be a positive integer (got '$AGG_MERGE_FANIN')." >&2
   exit 1
+fi
+if [ "$PROOF_MODE" = "aggregation" ]; then
+  current_recursive_capacity=$((AGG_LEAF_FANIN * AGG_MERGE_FANIN))
+  if [ "$TX_COUNT" -gt "$current_recursive_capacity" ]; then
+    required_merge_fanin=$(((TX_COUNT + AGG_LEAF_FANIN - 1) / AGG_LEAF_FANIN))
+    if [ "$AGG_MERGE_FANIN_EXPLICIT" = "1" ]; then
+      echo "TX_COUNT=${TX_COUNT} exceeds recursive capacity ${current_recursive_capacity} for leaf_fanin=${AGG_LEAF_FANIN}, merge_fanin=${AGG_MERGE_FANIN}." >&2
+      echo "Set HEGEMON_TP_AGG_MERGE_FANIN >= ${required_merge_fanin} or lower HEGEMON_TP_TX_COUNT." >&2
+      exit 1
+    fi
+    AGG_MERGE_FANIN="$required_merge_fanin"
+  fi
 fi
 TX_RECURSION_NUM_QUERIES="${HEGEMON_TP_TX_RECURSION_NUM_QUERIES:-2}"
 if ! [[ "$TX_RECURSION_NUM_QUERIES" =~ ^[0-9]+$ ]] || [ "$TX_RECURSION_NUM_QUERIES" -lt 1 ]; then
@@ -862,7 +922,7 @@ tmux new-session -d -s "$SESSION" -n node \
      $NODE_STRICT_ENV \
      HEGEMON_SEEDS='${TP_SEEDS}' \
      HEGEMON_MAX_PEERS='${TP_MAX_PEERS}' \
-     HEGEMON_MINE=1 \
+     $NODE_MINE_ENV \
      HEGEMON_MINE_THREADS='${MINE_THREADS}' \
      HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
      HEGEMON_PROVER_LIVENESS_LANE='${PROVER_LIVENESS_LANE}' \
@@ -891,7 +951,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_AGG_STAGE_LOCAL_PARALLELISM='${PROVER_WORKERS}' \
      $NODE_PREWARM_MAX_TXS_ENV \
      HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
-     ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
+     ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
 
 echo "Waiting for RPC to respond..." >&2
 for i in $(seq 1 "$RPC_WAIT_SECS"); do
@@ -914,47 +974,55 @@ GENESIS_HASH="$(
     | python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; print((obj.get("result") or ""))'
 )"
 
-echo "Starting mining to generate coinbase notes..." >&2
-curl -s -H "Content-Type: application/json" \
-  -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
-  "$RPC_HTTP" >/dev/null
-
-echo "Waiting for >= ${COINBASE_BLOCKS} blocks..." >&2
-for i in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
-  HEADER_JSON="$(curl -s -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
-    "$RPC_HTTP" || true)"
-  BLOCK_NUM="$(python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; num=(obj.get("result") or {}).get("number"); print(int(num,16) if isinstance(num,str) else 0)' <<<"$HEADER_JSON")"
-  if [ "$BLOCK_NUM" -ge "$COINBASE_BLOCKS" ]; then
-    break
-  fi
-  sleep 1
-done
-if [ "$BLOCK_NUM" -lt "$COINBASE_BLOCKS" ]; then
-  echo "Timed out waiting for >= ${COINBASE_BLOCKS} blocks after ${MAX_BLOCK_WAIT_SECS}s (got ${BLOCK_NUM})." >&2
-  echo "Hint: increase HEGEMON_TP_MAX_BLOCK_WAIT_SECS or lower HEGEMON_TP_VALUE/HEGEMON_TP_TX_COUNT." >&2
-  exit 1
+if [ "$REUSE_EXISTING_STATE" = "1" ]; then
+  echo "Stopping mining immediately on reused funded state..." >&2
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
+    "$RPC_HTTP" >/dev/null || true
 fi
 
-echo "Stopping mining so transfers accumulate in the pool..." >&2
-curl -s -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
-  "$RPC_HTTP" >/dev/null
+if [ "$REUSE_EXISTING_STATE" != "1" ]; then
+  echo "Starting mining to generate coinbase notes..." >&2
+  curl -s -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
+    "$RPC_HTTP" >/dev/null
 
-echo "Syncing miner wallet..." >&2
-wallet_sync "$WALLET_A" "$PASS_A"
-
-if [ "$WORKERS" -gt 1 ]; then
-  echo "Funding worker wallets from miner..." >&2
-  funding_sends=0
-  for i in "${!WORKER_STORES[@]}"; do
-    worker_tx_count="${WORKER_TX_COUNTS[$i]}"
-    if [ "$worker_tx_count" -le 0 ]; then
-      continue
+  echo "Waiting for >= ${COINBASE_BLOCKS} blocks..." >&2
+  for i in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
+    HEADER_JSON="$(curl -s -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
+      "$RPC_HTTP" || true)"
+    BLOCK_NUM="$(python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; num=(obj.get("result") or {}).get("number"); print(int(num,16) if isinstance(num,str) else 0)' <<<"$HEADER_JSON")"
+    if [ "$BLOCK_NUM" -ge "$COINBASE_BLOCKS" ]; then
+      break
     fi
-    fund_json="/tmp/hegemon-throughput-worker-fund-$((i + 1)).json"
-    fund_note_value=$((VALUE + FEE))
-    cat <<EOF > "$fund_json"
+    sleep 1
+  done
+  if [ "$BLOCK_NUM" -lt "$COINBASE_BLOCKS" ]; then
+    echo "Timed out waiting for >= ${COINBASE_BLOCKS} blocks after ${MAX_BLOCK_WAIT_SECS}s (got ${BLOCK_NUM})." >&2
+    echo "Hint: increase HEGEMON_TP_MAX_BLOCK_WAIT_SECS or lower HEGEMON_TP_VALUE/HEGEMON_TP_TX_COUNT." >&2
+    exit 1
+  fi
+
+  echo "Stopping mining so transfers accumulate in the pool..." >&2
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
+    "$RPC_HTTP" >/dev/null
+
+  echo "Syncing miner wallet..." >&2
+  wallet_sync "$WALLET_A" "$PASS_A"
+
+  if [ "$WORKERS" -gt 1 ]; then
+    echo "Funding worker wallets from miner..." >&2
+    funding_sends=0
+    for i in "${!WORKER_STORES[@]}"; do
+      worker_tx_count="${WORKER_TX_COUNTS[$i]}"
+      if [ "$worker_tx_count" -le 0 ]; then
+        continue
+      fi
+      fund_json="/tmp/hegemon-throughput-worker-fund-$((i + 1)).json"
+      fund_note_value=$((VALUE + FEE))
+      cat <<EOF > "$fund_json"
 [
   {
     "address": "${WORKER_ADDRS[$i]}",
@@ -964,47 +1032,62 @@ if [ "$WORKERS" -gt 1 ]; then
   }
 ]
 EOF
-    echo "  funding worker $((i + 1)) with ${worker_tx_count} note(s) of ${fund_note_value} units..." >&2
-    for j in $(seq 1 "$worker_tx_count"); do
-      # Funding must be mined deterministically before worker send loops begin.
-      # Use inline proof bytes here (proof_sidecar=0) so strict aggregation mode
-      # cannot defer these transfers as proofless sidecar calls.
-      wallet_send_with_retry "$WALLET_A" "$PASS_A" "$fund_json" 0 0
-      funding_sends=$((funding_sends + 1))
+      echo "  funding worker $((i + 1)) with ${worker_tx_count} note(s) of ${fund_note_value} units..." >&2
+      for j in $(seq 1 "$worker_tx_count"); do
+        # Funding must be mined deterministically before worker send loops begin.
+        # Use inline proof bytes here (proof_sidecar=0) so strict aggregation mode
+        # cannot defer these transfers as proofless sidecar calls.
+        wallet_send_with_retry "$WALLET_A" "$PASS_A" "$fund_json" 0 0
+        funding_sends=$((funding_sends + 1))
 
-      # Confirm each funding send before issuing the next one so the miner wallet
-      # never reuses a just-spent nullifier.
-      before_funding_mine="$(current_block_number)"
-      curl -s -H "Content-Type: application/json" \
-        -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
-        "$RPC_HTTP" >/dev/null
-      funding_target=$((before_funding_mine + 1))
-      current="$before_funding_mine"
-      for k in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
-        current="$(current_block_number)"
-        if [ "$current" -ge "$funding_target" ]; then
-          break
+        # Confirm each funding send before issuing the next one so the miner wallet
+        # never reuses a just-spent nullifier.
+        before_funding_mine="$(current_block_number)"
+        curl -s -H "Content-Type: application/json" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
+          "$RPC_HTTP" >/dev/null
+        funding_target=$((before_funding_mine + 1))
+        current="$before_funding_mine"
+        for k in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
+          current="$(current_block_number)"
+          if [ "$current" -ge "$funding_target" ]; then
+            break
+          fi
+          sleep 1
+        done
+        if [ "$current" -lt "$funding_target" ]; then
+          echo "Timed out while confirming worker funding transfer (target block ${funding_target}, got ${current})." >&2
+          exit 1
         fi
-        sleep 1
+        curl -s -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
+          "$RPC_HTTP" >/dev/null
+
+        wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
       done
-      if [ "$current" -lt "$funding_target" ]; then
-        echo "Timed out while confirming worker funding transfer (target block ${funding_target}, got ${current})." >&2
-        exit 1
-      fi
-      curl -s -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
-        "$RPC_HTTP" >/dev/null
-
-      wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
     done
-  done
 
-  echo "Completed worker funding sends: ${funding_sends}" >&2
+    echo "Completed worker funding sends: ${funding_sends}" >&2
 
-  echo "Syncing worker wallets..." >&2
-  for i in "${!WORKER_STORES[@]}"; do
-    wallet_sync "${WORKER_STORES[$i]}" "${WORKER_PASSES[$i]}" >/dev/null
-  done
+    echo "Syncing worker wallets..." >&2
+    for i in "${!WORKER_STORES[@]}"; do
+      wallet_sync "${WORKER_STORES[$i]}" "${WORKER_PASSES[$i]}" >/dev/null
+    done
+  fi
+else
+  echo "Reusing existing funded state; syncing wallets without bootstrap mining..." >&2
+  wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
+  wallet_sync "$WALLET_B" "$PASS_B" >/dev/null
+  if [ "$WORKERS" -gt 1 ]; then
+    for i in "${!WORKER_STORES[@]}"; do
+      wallet_sync "${WORKER_STORES[$i]}" "${WORKER_PASSES[$i]}" >/dev/null
+    done
+  fi
+fi
+
+if [ "$PREPARE_SNAPSHOT_ONLY" = "1" ]; then
+  echo "Snapshot preparation complete; exiting before transfer submission." >&2
+  exit 0
 fi
 
 echo "Submitting ${TX_COUNT} transfers (proof_mode=${PROOF_MODE}, proof_sidecar=${SEND_PROOF_SIDECAR})..." >&2

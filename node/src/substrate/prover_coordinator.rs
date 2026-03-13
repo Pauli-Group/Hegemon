@@ -222,6 +222,7 @@ impl WorkerPool {
     fn new(workers: usize, prepare_bundle_fn: Arc<PrepareBundleFn>) -> Self {
         let (results_tx, results_rx) = mpsc::channel();
         let (prewarm_tx, prewarm_rx) = mpsc::channel();
+        let disable_worker_prewarm = worker_prewarm_disabled();
         let mut senders = Vec::with_capacity(workers);
         for worker_index in 0..workers {
             let (worker_tx, worker_rx) = mpsc::channel();
@@ -232,15 +233,23 @@ impl WorkerPool {
             let _ = std::thread::Builder::new()
                 .name(worker_name)
                 .spawn(move || {
-                    let prewarm_result =
-                        aggregation_circuit::prewarm_thread_local_aggregation_cache_from_env();
+                    let prewarm_result = if disable_worker_prewarm {
+                        Ok(())
+                    } else {
+                        aggregation_circuit::prewarm_thread_local_aggregation_cache_from_env()
+                    };
                     let _ = worker_prewarm_tx.send(
                         prewarm_result
                             .as_ref()
                             .map(|_| ())
                             .map_err(|error| error.to_string()),
                     );
-                    if let Err(error) = prewarm_result {
+                    if disable_worker_prewarm {
+                        tracing::info!(
+                            worker_index,
+                            "Skipping aggregation prover worker prewarm by configuration"
+                        );
+                    } else if let Err(error) = prewarm_result {
                         tracing::warn!(
                             worker_index,
                             error = %error,
@@ -420,6 +429,18 @@ impl WorkerPool {
 
 fn should_block_on_worker_prewarm() -> bool {
     std::env::var("HEGEMON_AGG_PREWARM_BLOCKING")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn worker_prewarm_disabled() -> bool {
+    std::env::var("HEGEMON_AGG_DISABLE_WORKER_PREWARM")
         .ok()
         .map(|value| {
             matches!(
