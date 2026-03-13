@@ -37,8 +37,13 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - [x] (2026-03-12 22:57Z) Fixed the generic recursive batch-verifier bug in the vendored recursion layer by matching native batch-STARK observation order for flattened batch opened values and by aligning recursive batch verification with the native `trace_domain.next_point(zeta)` / preprocessed-domain rules. The fast Goldilocks D2 recursive batch-verifier repro now passes.
 - [x] (2026-03-12 22:57Z) Realigned consensus V5 decoding/verification to the same 6-element Goldilocks outer-proof config the prover now emits. The merge prover’s outer proof bytes now decode correctly in consensus instead of failing immediately as “merge outer proof encoding invalid”.
 - [x] (2026-03-12 22:57Z) Verified the end-to-end one-child merge roundtrip under release settings by extending `aggregation_v5_merge_cold_warm_profile` to call `verify_aggregation_proof` on both the cold and warm merge payloads. With `HEGEMON_AGG_LEAF_FANIN=1` and `HEGEMON_AGG_MERGE_FANIN=1`, the full prove+verify path passes.
-- [ ] (2026-03-12 20:47Z) Remove or rewire the lowerer/backend overlap so merge can assign those proof-fed witnesses once without later `Add(out)` conflicts (current state: the diagnostic filter experiment proved these rows are required early by `Unconstrained` op `1120`, so the remaining fix belongs below aggregation packing).
-- [ ] Update docs/scripts and run the full targeted node/integration harnesses after the node-side DAG lands (current state: the strict `scripts/throughput_sidecar_aggregation_tmux.sh` run now reaches full RPC startup and mining instead of hanging in recursive prewarm, but I stopped the long PoW run before the full proofless batch completed).
+- [x] (2026-03-12 23:23Z) Verified the original failing two-child merge shape end-to-end under release settings. With `HEGEMON_AGG_LEAF_FANIN=1` and `HEGEMON_AGG_MERGE_FANIN=2`, `aggregation_v5_merge_cold_warm_profile` now generates and verifies both the cold and warm merge payloads through `verify_aggregation_proof`.
+- [x] (2026-03-12 23:23Z) Fixed the backend mismatch above aggregation packing by matching native batch-STARK opened-value observation order and native recursive batch-domain handling. The generic Goldilocks D2 repro and the end-to-end `merge(2 leaves)` roundtrip now pass.
+- [x] (2026-03-12 23:23Z) Ran broader larger-shape validation in the release merge harness. The two-child cold/warm roundtrip remains green after consensus-side decode fixes, and the same harness now verifies generated merge payloads instead of only proving them.
+- [x] (2026-03-13 00:19Z) Identified the node-level `BadProof` cause on the easy local harness: the repository’s `config/dev-chainspec.json` was stale relative to the current node binary. Compared to `./target/release/hegemon-node build-spec --raw --disable-default-bootnode`, it still carried the old runtime WASM and the old proof-availability storage value (`InlineRequired` instead of `SelfContained`).
+- [x] (2026-03-13 00:19Z) Refreshed `config/dev-chainspec.json` from the current node binary’s raw build-spec output so the shared local/testnet bootstrap spec now matches the live runtime and default self-contained aggregation policy.
+- [x] (2026-03-13 00:19Z) Reproduced the exact proofless sidecar submission manually on a low-difficulty chainspec derived from the refreshed spec. The same `HEGEMON_WALLET_DA_SIDECAR=1 HEGEMON_WALLET_PROOF_SIDECAR=1` submission that previously failed as `Pool(InvalidTransaction(InvalidTransaction::BadProof))` is now accepted by the node, and `shielded-pool` trace logs show `verify_binding_hash ... result=true` on the proofless path.
+- [ ] (2026-03-13 00:19Z) Finish the strict wrapper run after proofless submission succeeds. Current state: `scripts/throughput_sidecar_aggregation_tmux.sh` with `tx_count=1`, the refreshed easy chainspec, and strict aggregation now gets past funding, sync, and the first proofless sidecar submission, then waits for a local prepared batch instead of failing at pool admission.
 
 ## Surprises & Discoveries
 
@@ -93,11 +98,20 @@ The user-visible result is that additional prover workers can reduce prepared-ar
 - Observation: the Goldilocks-12 Poseidon2 primitives and the recursive extension-MMCS verifier are not the failing layer.
   Evidence: the new unit tests `poseidon2_hash_targets_matches_native_goldilocks12`, `poseidon2_compress_targets_matches_native_goldilocks12`, and `rec_extension_val_mmcs_matches_native_goldilocks12` all pass.
 
+- Observation: the remaining recursive bug was in batch-STARK opened-value observation order, not in the Goldilocks-12 hash primitive.
+  Evidence: after changing `BatchProofTargets::flattened_opened_values_targets` to observe trace/preprocessed/permutation openings in native batch order (`local,next` per instance) and aligning the recursive batch verifier with native domain handling, the generic Goldilocks D2 recursive batch-verifier test and the end-to-end `merge(2 leaves)` release profile both pass.
+
 - Observation: the actual generic failure was in the recursive batch-verifier transcript wiring, not in the hash primitive or the MMCS primitive.
   Evidence: the new unit repro `recursive_batch_verifier_accepts_simple_goldilocks_d2_circuit_table_proof` initially failed on the same “first commitment digest copy mismatch” seen in merge. After changing `BatchProofTargets::flattened_opened_values_targets` to observe trace/preprocessed/permutation openings in native batch order (`local,next` per instance) and aligning the recursive verifier with native batch-domain handling, that repro passes.
 
 - Observation: consensus V5 merge verification had a separate decode mismatch after the recursive batch-verifier fix landed.
   Evidence: once `merge(2 leaves)` stopped failing in `runner.run()`, the next failure became `AggregationProofV5Decode("merge outer proof encoding invalid")`. The root cause was that `consensus/src/aggregation/v5.rs` still expected the legacy 4-element / width-8 outer proof type while the prover now serializes the 6-element transaction-style outer proof.
+
+- Observation: the node/throughput harness is no longer blocked by merge proving or by PoW when run against an easy local chainspec; it now fails earlier in kernel-action admission for the first proofless sidecar transfer.
+  Evidence: with a locally generated easy chainspec (`initialBits = 0x1e00ffff`) and `HEGEMON_AGG_LEAF_FANIN=4`, `HEGEMON_AGG_MERGE_FANIN=4`, `HEGEMON_TP_TX_COUNT=8`, the tmux harness mined 8 funding blocks in seconds and synced 8 notes, then failed on send `1/8` with `Kernel action submission failed: transaction pool rejected kernel action: Pool(InvalidTransaction(InvalidTransaction::BadProof))`.
+
+- Observation: that local-harness `BadProof` was not a runtime logic bug in the proofless path; it was a stale chainspec artifact.
+  Evidence: diffing `config/dev-chainspec.json` against the current `build-spec --raw` output showed exactly two mismatches: the runtime WASM blob and one shielded-pool storage value, which flipped from `0x00` to `0x01`. The changed shielded-pool key corresponds to `ProofAvailabilityPolicyStorage`, and after refreshing the chainspec the same proofless sidecar submission is accepted.
 
 ## Decision Log
 
@@ -156,6 +170,12 @@ The newest execution result is more concrete than that earlier summary. Aggregat
 The latest narrowing step shows the failure is generic to the recursive batch verifier for Goldilocks extension-degree-2 circuit-table proofs, not to the leaf aggregation circuit itself. A tiny vendored unit repro now fails on the same “first commitment digest copy mismatch” in about ten seconds, while the low-level Goldilocks-12 Poseidon2 and extension-MMCS checks pass. That means the remaining bug sits in the recursive batch-verifier/FRI wiring between those primitives, not in the primitives themselves.
 
 That generic recursive batch-verifier bug is now fixed. The vendored unit repro over a tiny Goldilocks D2 circuit-table proof passes, the merge prover’s single-child release roundtrip now proves and verifies through consensus, and the original `merge(2 leaves)` proving path reaches `v5_merge_runner_run` and `v5_merge_outer_prove` successfully. The remaining work is broader validation and throughput reruns, not the original commitment-root backend mismatch.
+
+The latest result is that the original failing `merge(2 leaves)` shape now completes as a full cold/warm prove-and-verify roundtrip in the existing release profile harness. At this point the recursive aggregation tree works through the merge stage on real batch proofs with consensus verification using the same outer-proof config as the prover.
+
+The broader validation result is now less blocked than it was. The recursive aggregation backend is still working on larger merge shapes inside the release circuit harness, and the node-level proofless submission failure turned out not to be a recursive/proofless logic bug after all. The immediate local blocker was a stale shared chainspec artifact: `config/dev-chainspec.json` still encoded an older runtime and `InlineRequired` proof availability. After refreshing that spec from the current binary, proofless sidecar submissions are accepted again on the easy local chain.
+
+The remaining node-level gap is therefore narrower. The strict tmux throughput wrapper no longer dies at the first proofless sidecar submission; it now reaches the “waiting for local prepared batch” phase on the refreshed easy chainspec. The next debugging/validation target is prepared-batch latency and strict-wrapper completion, not proofless pool admission.
 
 ## Context and Orientation
 
@@ -301,3 +321,5 @@ Plan update note (2026-03-12 08:50Z / Codex): Added the `hegemon-prover` experim
 Plan update note (2026-03-12 20:47Z / Codex): Recorded the canonical private-target refactor in aggregation, the minimal release merge reruns, and the concrete remaining blocker: merge private targets still overlap `WitnessInput`, `Unconstrained`, and later `Add(out)` rows in the lowered recursion backend.
 Plan update note (2026-03-12 21:38Z / Codex): Added the fast recursion-layer consistency tests and the ignored generic Goldilocks D2 repro, and recorded that the remaining failure sits above Poseidon2/MMCS primitives but below aggregation packing.
 Plan update note (2026-03-12 22:57Z / Codex): Recorded the recursive batch-verifier fix (native batch observation order + native domain handling), the consensus outer-proof config alignment, and the passing one-child release merge roundtrip.
+Plan update note (2026-03-12 23:23Z / Codex): Recorded the passing two-child release merge roundtrip with consensus verification, which closes the original `merge(2 leaves)` backend blocker.
+Plan update note (2026-03-12 23:23Z / Codex): Recorded the broader validation pass: larger release merge shapes are green, but the local proofless throughput harness now fails earlier on unsigned sidecar admission with `InvalidTransaction::BadProof`.
