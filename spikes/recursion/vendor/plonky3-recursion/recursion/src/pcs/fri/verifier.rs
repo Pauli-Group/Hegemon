@@ -1061,7 +1061,7 @@ mod tests {
             &challenges,
         );
 
-        let mut recursive_runner = recursive_circuit.clone().runner();
+        let mut recursive_runner = recursive_circuit.runner();
         recursive_runner.set_public_inputs(&public_inputs).unwrap();
         let (private_targets, private_values) =
             verifier_inputs.private_witness_inputs(&proof.proof, &common);

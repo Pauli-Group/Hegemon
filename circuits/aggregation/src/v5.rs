@@ -465,7 +465,7 @@ fn resolve_merge_assignment_plans(
 }
 
 fn set_merge_verifier_witnesses(
-    runner: &mut CircuitRunner<Challenge>,
+    runner: &mut CircuitRunner<'_, Challenge>,
     plans: &[MergeWitnessAssignmentPlan],
     proofs: &[OuterBatchProof],
     commons: &[&CommonData<Config>],
@@ -735,7 +735,8 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
     if target_max_txs == 0 {
         return Ok(());
     }
-    let representative = build_sample_representative_proof()?;
+    let started = Instant::now();
+    let representative = build_sample_recursion_representative_proof()?;
     let representative_public = stark_public_inputs_p3(&representative).map_err(|err| {
         AggregationError::InvalidPublicInputs {
             index: 0,
@@ -784,6 +785,13 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
         child_public_values_len: leaf_payload.inner_public_inputs_len as usize,
     };
     let _ = get_or_build_merge_cache_entry(merge_key, &leaf_ctx)?;
+    tracing::info!(
+        target_max_txs,
+        leaf_fan_in = leaf_fan_in(),
+        merge_fan_in = merge_fan_in(),
+        total_ms = started.elapsed().as_millis(),
+        "aggregation v5 thread-local cache prewarm complete"
+    );
     Ok(())
 }
 
@@ -948,7 +956,7 @@ pub fn prove_leaf_aggregation(
             started.elapsed().as_millis()
         );
     }
-    let mut runner = cache_result.entry.circuit.clone().runner();
+    let mut runner = cache_result.entry.circuit.runner();
     let set_public_started = Instant::now();
     runner
         .set_public_inputs(&recursion_public_inputs)
@@ -1296,7 +1304,7 @@ pub fn prove_merge_aggregation(
         );
     }
 
-    let mut runner = cache_result.entry.circuit.clone().runner();
+    let mut runner = cache_result.entry.circuit.runner();
     let set_public_started = Instant::now();
     runner
         .set_public_inputs(&recursion_public_inputs)

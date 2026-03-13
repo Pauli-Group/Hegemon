@@ -19,9 +19,9 @@ use crate::types::{NonPrimitiveOpId, WitnessId};
 use crate::{CircuitError, CircuitField};
 
 /// Circuit execution engine.
-pub struct CircuitRunner<F> {
+pub struct CircuitRunner<'a, F> {
     /// Circuit specification.
-    circuit: Circuit<F>,
+    circuit: &'a Circuit<F>,
     /// Witness values (None = unset, Some = computed).
     witness: Vec<Option<F>>,
     /// Private data for non-primitive operations (not on witness bus)
@@ -32,9 +32,9 @@ pub struct CircuitRunner<F> {
     op_states: OpStateMap,
 }
 
-impl<F: CircuitField> CircuitRunner<F> {
+impl<'a, F: CircuitField> CircuitRunner<'a, F> {
     /// Creates circuit runner with empty witness storage.
-    pub fn new(circuit: Circuit<F>) -> Self {
+    pub fn new(circuit: &'a Circuit<F>) -> Self {
         let witness = vec![None; circuit.witness_count as usize];
         let mut max_op_id: Option<u32> = None;
         for op in &circuit.ops {
@@ -233,7 +233,7 @@ impl<F: CircuitField> CircuitRunner<F> {
             public_trace,
             add_trace,
             mul_trace,
-            tag_to_witness: self.circuit.tag_to_witness,
+            tag_to_witness: self.circuit.tag_to_witness.clone(),
             non_primitive_traces,
         })
     }
@@ -243,44 +243,42 @@ impl<F: CircuitField> CircuitRunner<F> {
     /// The circuit is already lowered into a valid execution order, so this function
     /// can blindly execute from index 0 to end.
     fn execute_all(&mut self) -> Result<(), CircuitError> {
-        // Clone ops to avoid borrowing issues.
-        let ops = self.circuit.ops.clone();
+        let circuit = self.circuit;
+        let witness = &mut self.witness;
+        let non_primitive_op_private_data = &self.non_primitive_op_private_data;
+        let op_states = &mut self.op_states;
 
-        for (op_index, op) in ops.into_iter().enumerate() {
+        for (op_index, op) in circuit.ops.iter().enumerate() {
             let op_debug = format!("{op:?}");
-            let exec_result: Result<(), CircuitError> = (|| match op {
-                Op::Const { out, val } => self.set_witness(out, val),
+            let exec_result: Result<(), CircuitError> = match op {
+                Op::Const { out, val } => set_witness_slot(witness, *out, *val),
                 Op::Public { out, public_pos: _ } => {
-                    // Public inputs should already be set
-                    if self.witness[out.0 as usize].is_none() {
-                        Err(CircuitError::PublicInputNotSet { witness_id: out })
+                    // Public inputs should already be set.
+                    if witness[out.0 as usize].is_none() {
+                        Err(CircuitError::PublicInputNotSet { witness_id: *out })
                     } else {
                         Ok(())
                     }
                 }
                 Op::Add { a, b, out } => {
-                    let a_val = self.get_witness(a)?;
-                    if let Ok(b_val) = self.get_witness(b) {
-                        let result = a_val + b_val;
-                        self.set_witness(out, result)
+                    let a_val = get_witness_slot(witness, *a)?;
+                    if let Ok(b_val) = get_witness_slot(witness, *b) {
+                        set_witness_slot(witness, *out, a_val + b_val)
                     } else {
-                        let out_val = self.get_witness(out)?;
-                        let b_val = out_val - a_val;
-                        self.set_witness(b, b_val)
+                        let out_val = get_witness_slot(witness, *out)?;
+                        set_witness_slot(witness, *b, out_val - a_val)
                     }
                 }
                 Op::Mul { a, b, out } => {
                     // Mul is used to represent either `Mul` or `Div` operations.
                     // We determine which based on which inputs are set.
-                    let a_val = self.get_witness(a)?;
-                    if let Ok(b_val) = self.get_witness(b) {
-                        let result = a_val * b_val;
-                        self.set_witness(out, result)
+                    let a_val = get_witness_slot(witness, *a)?;
+                    if let Ok(b_val) = get_witness_slot(witness, *b) {
+                        set_witness_slot(witness, *out, a_val * b_val)
                     } else {
-                        let result_val = self.get_witness(out)?;
+                        let result_val = get_witness_slot(witness, *out)?;
                         let a_inv = a_val.try_inverse().ok_or(CircuitError::DivisionByZero)?;
-                        let b_val = result_val * a_inv;
-                        self.set_witness(b, b_val)
+                        set_witness_slot(witness, *b, result_val * a_inv)
                     }
                 }
                 Op::NonPrimitiveOpWithExecutor {
@@ -290,22 +288,22 @@ impl<F: CircuitField> CircuitRunner<F> {
                     op_id,
                 } => {
                     let mut ctx = ExecutionContext::new(
-                        &mut self.witness,
-                        &self.non_primitive_op_private_data,
-                        &self.circuit.enabled_ops,
-                        op_id,
-                        &mut self.op_states,
+                        witness,
+                        non_primitive_op_private_data,
+                        &circuit.enabled_ops,
+                        *op_id,
+                        op_states,
                     );
 
-                    executor.execute(&inputs, &outputs, &mut ctx).map_err(|err| {
+                    executor.execute(inputs, outputs, &mut ctx).map_err(|err| {
                         CircuitError::NonPrimitiveExecutionFailed {
-                            operation_index: op_id,
+                            operation_index: *op_id,
                             op: *executor.op_type(),
                             message: format!("{err:?}"),
                         }
                     })
                 }
-            })();
+            };
 
             if let Err(err) = exec_result {
                 return match err {
@@ -351,6 +349,40 @@ impl<F: CircuitField> CircuitRunner<F> {
 
         Ok(())
     }
+}
+
+fn get_witness_slot<F: Clone>(
+    witness: &[Option<F>],
+    widx: WitnessId,
+) -> Result<F, CircuitError> {
+    witness
+        .get(widx.0 as usize)
+        .and_then(|opt| opt.as_ref())
+        .cloned()
+        .ok_or(CircuitError::WitnessNotSet { witness_id: widx })
+}
+
+fn set_witness_slot<F: CircuitField>(
+    witness: &mut [Option<F>],
+    widx: WitnessId,
+    value: F,
+) -> Result<(), CircuitError> {
+    if widx.0 as usize >= witness.len() {
+        return Err(CircuitError::WitnessIdOutOfBounds { witness_id: widx });
+    }
+
+    if let Some(existing_value) = witness[widx.0 as usize]
+        && existing_value != value
+    {
+        return Err(CircuitError::WitnessConflict {
+            witness_id: widx,
+            existing: format!("{existing_value:?}"),
+            new: format!("{value:?}"),
+        });
+    }
+
+    witness[widx.0 as usize] = Some(value);
+    Ok(())
 }
 
 #[cfg(test)]

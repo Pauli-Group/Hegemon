@@ -2815,6 +2815,17 @@ impl ProverCoordinator {
                     match maybe_prepared {
                         Ok(Some(bundle)) => {
                             let key = bundle.key.clone();
+                            tracing::info!(
+                                block_number,
+                                tx_count = bundle.key.tx_count,
+                                proof_mode = ?bundle.key.proof_mode,
+                                artifact_hash = %hex::encode(bundle.key.artifact_hash),
+                                build_ms = bundle.build_ms,
+                                stage_type = %stage_type,
+                                level,
+                                package_id = %job_package_id,
+                                "Prepared recursive proven batch is ready"
+                            );
                             guard.prepared.insert(key, bundle);
                         }
                         Ok(None) => {}

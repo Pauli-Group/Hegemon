@@ -175,7 +175,7 @@ if [ -z "$AGG_PREPARE_THREADS" ]; then
   AGG_PREPARE_THREADS_AUTO=1
   AGG_PREPARE_THREADS="$NODE_RAYON_THREADS"
 fi
-AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-0}"
+AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-}"
 PREWARM_ONLY="${HEGEMON_TP_PREWARM_ONLY:-0}" # 1 = stop after prepared batch is available
 
 if [ "$NODE_RAYON_THREADS" -lt 1 ] || [ "$CARGO_JOBS" -lt 1 ] || [ "$MINE_THREADS" -lt 1 ]; then
@@ -194,7 +194,7 @@ if ! [[ "$AGG_PREPARE_THREADS" =~ ^[0-9]+$ ]] || [ "$AGG_PREPARE_THREADS" -lt 1 
   echo "HEGEMON_TP_AGG_PREPARE_THREADS must be a positive integer (got '$AGG_PREPARE_THREADS')." >&2
   exit 1
 fi
-if ! [[ "$AGG_PREWARM_MAX_TXS" =~ ^[0-9]+$ ]]; then
+if [ -n "$AGG_PREWARM_MAX_TXS" ] && ! [[ "$AGG_PREWARM_MAX_TXS" =~ ^[0-9]+$ ]]; then
   echo "HEGEMON_TP_AGG_PREWARM_MAX_TXS must be an integer >= 0 (got '$AGG_PREWARM_MAX_TXS')." >&2
   exit 1
 fi
@@ -312,7 +312,7 @@ if [ -n "${HEGEMON_TP_RPC_WAIT_SECS:-}" ]; then
   RPC_WAIT_SECS="${HEGEMON_TP_RPC_WAIT_SECS}"
 elif [ -n "$CHAIN_SPEC" ]; then
   RPC_WAIT_SECS=180
-elif [ "$AGG_PREWARM_MAX_TXS" -gt 0 ]; then
+elif [ -n "$AGG_PREWARM_MAX_TXS" ] && [ "$AGG_PREWARM_MAX_TXS" -gt 0 ]; then
   RPC_WAIT_SECS=300
 else
   RPC_WAIT_SECS=60
@@ -720,6 +720,7 @@ if [ -n "$ADAPTIVE_LIVENESS_MS" ]; then
   NODE_ADAPTIVE_LIVENESS_ENV="HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS=${ADAPTIVE_LIVENESS_MS}"
 fi
 NODE_PREWARM_BLOCKING_ENV=""
+NODE_PREWARM_MAX_TXS_ENV=""
 AGG_LEAF_FANIN="${HEGEMON_TP_AGG_LEAF_FANIN:-4}"
 if ! [[ "$AGG_LEAF_FANIN" =~ ^[0-9]+$ ]] || [ "$AGG_LEAF_FANIN" -lt 1 ]; then
   echo "HEGEMON_TP_AGG_LEAF_FANIN must be a positive integer (got '$AGG_LEAF_FANIN')." >&2
@@ -750,8 +751,13 @@ if ! [[ "$AGG_OUTER_LOG_BLOWUP" =~ ^[0-9]+$ ]] || [ "$AGG_OUTER_LOG_BLOWUP" -lt 
   echo "HEGEMON_TP_AGG_OUTER_LOG_BLOWUP must be a positive integer (got '$AGG_OUTER_LOG_BLOWUP')." >&2
   exit 1
 fi
-if [ "$AGG_PREWARM_MAX_TXS" -gt "$AGG_LEAF_FANIN" ]; then
+if [ "$PREWARM_ONLY" = "1" ] && [ "$PROOF_MODE" = "aggregation" ]; then
   NODE_PREWARM_BLOCKING_ENV="HEGEMON_AGG_PREWARM_BLOCKING=1"
+elif [ -n "$AGG_PREWARM_MAX_TXS" ] && [ "$AGG_PREWARM_MAX_TXS" -gt "$AGG_LEAF_FANIN" ]; then
+  NODE_PREWARM_BLOCKING_ENV="HEGEMON_AGG_PREWARM_BLOCKING=1"
+fi
+if [ -n "$AGG_PREWARM_MAX_TXS" ]; then
+  NODE_PREWARM_MAX_TXS_ENV="HEGEMON_AGG_PREWARM_MAX_TXS=${AGG_PREWARM_MAX_TXS}"
 fi
 if [ "$PROOF_MODE" = "aggregation" ] && [ "$PROVER_WORKERS" -gt "$AGG_LEAF_FANIN" ]; then
   PROVER_WORKERS="$AGG_LEAF_FANIN"
@@ -768,7 +774,14 @@ echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$
 echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
 echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
 echo "Aggregation recursion config: leaf_fanin=$AGG_LEAF_FANIN merge_fanin=$AGG_MERGE_FANIN tx_recursion_queries=$TX_RECURSION_NUM_QUERIES tx_recursion_log_blowup=$TX_RECURSION_LOG_BLOWUP outer_queries=$AGG_OUTER_NUM_QUERIES outer_log_blowup=$AGG_OUTER_LOG_BLOWUP prover_workers=$PROVER_WORKERS" >&2
-echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
+if [ -n "$AGG_PREWARM_MAX_TXS" ]; then
+  echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
+else
+  echo "Aggregation cache config: prewarm_max_txs=default(target_txs)" >&2
+fi
+if [ -n "$NODE_PREWARM_BLOCKING_ENV" ]; then
+  echo "Aggregation cache startup: worker_prewarm_blocking=1" >&2
+fi
 echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
 echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
 echo "Artifacts: run_id=${RUN_ID} json=${ARTIFACT_JSON}" >&2
@@ -876,7 +889,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_AGG_PREPARE_THREADS='${AGG_PREPARE_THREADS}' \
      HEGEMON_AGG_PROVER_THREADS='${AGG_PROVER_THREADS}' \
      HEGEMON_AGG_STAGE_LOCAL_PARALLELISM='${PROVER_WORKERS}' \
-     HEGEMON_AGG_PREWARM_MAX_TXS='${AGG_PREWARM_MAX_TXS}' \
+     $NODE_PREWARM_MAX_TXS_ENV \
      HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
      ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
 

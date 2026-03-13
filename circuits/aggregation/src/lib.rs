@@ -42,6 +42,7 @@ use transaction_circuit::{
         config_with_fri, Challenge, Compress, Config, Hash, TransactionProofP3, Val, DIGEST_ELEMS,
         FRI_LOG_BLOWUP_FAST, FRI_LOG_BLOWUP_PROD, FRI_POW_BITS, POSEIDON2_RATE,
     },
+    p3_prover::TransactionProofParams,
     InputNoteWitness, StablecoinPolicyBinding, TransactionAirP3, TransactionProof,
     TransactionWitness,
 };
@@ -840,7 +841,14 @@ fn get_or_build_aggregation_prover_cache_entry(
 }
 
 fn aggregation_prewarm_max_txs() -> usize {
-    std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
+    if let Some(explicit) = std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+    {
+        return explicit;
+    }
+
+    std::env::var("HEGEMON_BATCH_TARGET_TXS")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(0)
@@ -1033,12 +1041,22 @@ fn sample_witness_for_aggregation_cache() -> TransactionWitness {
     }
 }
 
-fn build_sample_representative_proof() -> Result<TransactionProof, AggregationError> {
+fn build_sample_representative_proof_with_params(
+    params: TransactionProofParams,
+) -> Result<TransactionProof, AggregationError> {
     let witness = sample_witness_for_aggregation_cache();
     let (proving_key, _verifying_key) = generate_keys();
-    proof::prove(&witness, &proving_key).map_err(|err| {
+    proof::prove_with_params(&witness, &proving_key, params).map_err(|err| {
         AggregationError::ProvingFailed(format!("sample tx proof generation failed: {err}"))
     })
+}
+
+fn build_sample_representative_proof() -> Result<TransactionProof, AggregationError> {
+    build_sample_representative_proof_with_params(TransactionProofParams::production())
+}
+
+fn build_sample_recursion_representative_proof() -> Result<TransactionProof, AggregationError> {
+    build_sample_representative_proof_with_params(TransactionProofParams::recursion())
 }
 
 #[allow(dead_code)]
@@ -1619,7 +1637,7 @@ fn legacy_v4_prove_aggregation(
         );
     }
 
-    let mut runner = cache_result.entry.circuit.clone().runner();
+    let mut runner = cache_result.entry.circuit.runner();
     let set_public_started = Instant::now();
     runner
         .set_public_inputs(&recursion_public_inputs)
@@ -1873,7 +1891,7 @@ fn collect_owned_witnesses(circuit: &Circuit<Challenge>) -> HashSet<WitnessId> {
 }
 
 fn set_stark_verifier_witnesses_with_plans(
-    runner: &mut CircuitRunner<Challenge>,
+    runner: &mut CircuitRunner<'_, Challenge>,
     witness_assignment_plans: &[ProofWitnessAssignmentPlan],
     proofs: &[TransactionProofP3],
 ) -> Result<(), CircuitError> {
