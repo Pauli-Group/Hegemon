@@ -91,10 +91,41 @@ impl Default for MergeAggregationVerifierCache {
 
 static MERGE_AGGREGATION_VERIFIER_CACHE: OnceLock<MergeAggregationVerifierCache> = OnceLock::new();
 
-struct LeafChildContext {
+enum AggregationChildVerifierCache {
+    Leaf(Arc<AggregationVerifierCacheEntry>),
+    Merge(Arc<MergeAggregationVerifierCacheEntry>),
+}
+
+impl AggregationChildVerifierCache {
+    fn airs(&self) -> &[CircuitTableAir<Config, 2>] {
+        match self {
+            Self::Leaf(entry) => &entry.airs,
+            Self::Merge(entry) => &entry.airs,
+        }
+    }
+
+    fn common(&self) -> &CommonData<Config> {
+        match self {
+            Self::Leaf(entry) => &entry.common,
+            Self::Merge(entry) => &entry.common,
+        }
+    }
+}
+
+struct AggregationChildContext {
     payload: AggregationProofV5Payload,
-    cache_key: AggregationVerifierKey,
-    representative_inner: TransactionProofP3,
+    outer_proof: OuterBatchProof,
+    cache: AggregationChildVerifierCache,
+}
+
+impl AggregationChildContext {
+    fn airs(&self) -> &[CircuitTableAir<Config, 2>] {
+        self.cache.airs()
+    }
+
+    fn common(&self) -> &CommonData<Config> {
+        self.cache.common()
+    }
 }
 
 struct LeafRepresentativeTxContext {
@@ -112,7 +143,7 @@ fn leaf_fan_in() -> usize {
     std::env::var("HEGEMON_AGG_LEAF_FANIN")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(8)
+        .unwrap_or(1)
         .max(1)
 }
 
@@ -120,8 +151,12 @@ fn merge_fan_in() -> usize {
     std::env::var("HEGEMON_AGG_MERGE_FANIN")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(8)
+        .unwrap_or(2)
         .max(1)
+}
+
+fn leaf_count_for_tx_count(tx_count: usize) -> usize {
+    tx_count.div_ceil(leaf_fan_in().max(1))
 }
 
 fn leaf_shape_id(
@@ -157,7 +192,16 @@ fn merge_shape_id(
 }
 
 fn tree_levels_for_tx_count(tx_count: usize) -> u16 {
-    if tx_count <= leaf_fan_in() { 1 } else { 2 }
+    if tx_count <= 1 {
+        return 1;
+    }
+    let mut levels = 1u16;
+    let mut width = leaf_count_for_tx_count(tx_count);
+    while width > 1 {
+        width = width.div_ceil(merge_fan_in().max(1));
+        levels = levels.saturating_add(1);
+    }
+    levels
 }
 
 fn batch_verifier_params() -> FriVerifierParams {
@@ -365,57 +409,90 @@ fn validate_header(
     Ok(())
 }
 
-fn decode_leaf_child_context(bytes: &[u8]) -> Result<LeafChildContext, ProofError> {
+fn decode_child_context(bytes: &[u8]) -> Result<AggregationChildContext, ProofError> {
     let payload = decode_payload(bytes)?;
-    if payload.node_kind != AggregationNodeKind::Leaf {
-        return Err(ProofError::AggregationProofV5Binding(
-            "merge nodes currently require leaf children".to_string(),
-        ));
-    }
     if payload.outer_proof.is_empty() {
         return Err(ProofError::AggregationProofV5Decode(
-            "leaf child outer proof missing".to_string(),
+            "aggregation child outer proof missing".to_string(),
         ));
     }
-    let representative = decode_leaf_representative_tx(&payload)?;
-    let expected_shape_id = leaf_shape_id(
-        payload.fan_in as usize,
-        representative.pub_inputs_vec.len(),
-        representative.log_blowup,
-        representative.shape,
-    );
-    if payload.shape_id != expected_shape_id {
-        return Err(ProofError::AggregationProofV5Binding(
-            "leaf shape_id mismatch".to_string(),
-        ));
+    match payload.node_kind {
+        AggregationNodeKind::Leaf => {
+            let representative = decode_leaf_representative_tx(&payload)?;
+            let expected_shape_id = leaf_shape_id(
+                payload.fan_in as usize,
+                representative.pub_inputs_vec.len(),
+                representative.log_blowup,
+                representative.shape,
+            );
+            if payload.shape_id != expected_shape_id {
+                return Err(ProofError::AggregationProofV5Binding(
+                    "leaf shape_id mismatch".to_string(),
+                ));
+            }
+            let cache = get_or_build_aggregation_verifier_cache_entry(
+                AggregationVerifierKey {
+                    tx_count: payload.fan_in as usize,
+                    pub_inputs_len: representative.pub_inputs_vec.len(),
+                    log_blowup: representative.log_blowup,
+                    shape: representative.shape,
+                },
+                &representative.inner_proof,
+            )?;
+            let outer_proof: OuterBatchProof =
+                postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+                    ProofError::AggregationProofV5Decode(
+                        "leaf outer proof encoding invalid".to_string(),
+                    )
+                })?;
+            Ok(AggregationChildContext {
+                payload,
+                outer_proof,
+                cache: AggregationChildVerifierCache::Leaf(cache.entry),
+            })
+        }
+        AggregationNodeKind::Merge => {
+            let representative_child = decode_child_context(&payload.representative_child_proof)?;
+            let expected_shape_id = merge_shape_id(
+                payload.fan_in as usize,
+                representative_child.payload.shape_id,
+                representative_child.payload.inner_public_inputs_len as usize,
+            );
+            if payload.shape_id != expected_shape_id {
+                return Err(ProofError::AggregationProofV5Binding(
+                    "merge shape_id mismatch".to_string(),
+                ));
+            }
+            let cache = get_or_build_merge_verifier_cache_entry(
+                MergeAggregationVerifierKey {
+                    fan_in: payload.fan_in as usize,
+                    child_shape_id: representative_child.payload.shape_id,
+                    child_public_values_len: representative_child.payload.inner_public_inputs_len
+                        as usize,
+                },
+                &representative_child,
+            )?;
+            let outer_proof: OuterBatchProof =
+                postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+                    ProofError::AggregationProofV5Decode(
+                        "merge outer proof encoding invalid".to_string(),
+                    )
+                })?;
+            Ok(AggregationChildContext {
+                payload,
+                outer_proof,
+                cache: AggregationChildVerifierCache::Merge(cache),
+            })
+        }
     }
-    let cache_key = AggregationVerifierKey {
-        tx_count: payload.fan_in as usize,
-        pub_inputs_len: representative.pub_inputs_vec.len(),
-        log_blowup: representative.log_blowup,
-        shape: representative.shape,
-    };
-    Ok(LeafChildContext {
-        payload,
-        cache_key,
-        representative_inner: representative.inner_proof,
-    })
 }
 
 fn build_merge_verifier_cache_entry(
     key: MergeAggregationVerifierKey,
-    representative_child: &LeafChildContext,
+    representative_child: &AggregationChildContext,
 ) -> Result<MergeAggregationVerifierCacheEntry, ProofError> {
-    let representative_outer: OuterBatchProof =
-        postcard::from_bytes(&representative_child.payload.outer_proof).map_err(|_| {
-            ProofError::AggregationProofV5Decode("leaf outer proof encoding invalid".to_string())
-        })?;
-    let child_cache = get_or_build_aggregation_verifier_cache_entry(
-        representative_child.cache_key,
-        &representative_child.representative_inner,
-    )?;
     let air_public_counts = child_air_public_counts(
-        &child_cache.entry.airs,
+        representative_child.airs(),
         representative_child.payload.inner_public_inputs_len as usize,
     );
     let mut circuit_builder = CircuitBuilder::<Challenge>::new();
@@ -429,8 +506,8 @@ fn build_merge_verifier_cache_entry(
             OuterBatchFri,
         >::allocate(
             &mut circuit_builder,
-            &representative_outer,
-            &child_cache.entry.common,
+            &representative_child.outer_proof,
+            representative_child.common(),
             &air_public_counts,
         );
         p3_recursion::verify_batch_circuit::<
@@ -443,7 +520,7 @@ fn build_merge_verifier_cache_entry(
             POSEIDON2_RATE,
         >(
             &outer_config,
-            &child_cache.entry.airs,
+            representative_child.airs(),
             &mut circuit_builder,
             &inputs.proof_targets,
             &inputs.air_public_targets,
@@ -485,7 +562,7 @@ fn build_merge_verifier_cache_entry(
 
 fn get_or_build_merge_verifier_cache_entry(
     key: MergeAggregationVerifierKey,
-    representative_child: &LeafChildContext,
+    representative_child: &AggregationChildContext,
 ) -> Result<Arc<MergeAggregationVerifierCacheEntry>, ProofError> {
     let cache = merge_cache();
     loop {
@@ -547,10 +624,9 @@ pub(crate) fn warm_aggregation_cache_from_payload(
             })
         }
         AggregationNodeKind::Merge => {
-            let representative_child =
-                decode_leaf_child_context(&payload.representative_child_proof)?;
+            let representative_child = decode_child_context(&payload.representative_child_proof)?;
             let key = MergeAggregationVerifierKey {
-                fan_in: merge_fan_in(),
+                fan_in: payload.fan_in as usize,
                 child_shape_id: representative_child.payload.shape_id,
                 child_public_values_len: representative_child.payload.inner_public_inputs_len
                     as usize,
@@ -671,10 +747,9 @@ pub(crate) fn verify_with_metrics(
             })
         }
         AggregationNodeKind::Merge => {
-            let representative_child =
-                decode_leaf_child_context(&payload.representative_child_proof)?;
+            let representative_child = decode_child_context(&payload.representative_child_proof)?;
             let expected_shape = merge_shape_id(
-                merge_fan_in(),
+                payload.fan_in as usize,
                 representative_child.payload.shape_id,
                 representative_child.payload.inner_public_inputs_len as usize,
             );
@@ -690,7 +765,7 @@ pub(crate) fn verify_with_metrics(
                     )
                 })?;
             let key = MergeAggregationVerifierKey {
-                fan_in: merge_fan_in(),
+                fan_in: payload.fan_in as usize,
                 child_shape_id: representative_child.payload.shape_id,
                 child_public_values_len: representative_child.payload.inner_public_inputs_len
                     as usize,

@@ -3,13 +3,11 @@ use block_circuit::CommitmentBlockProver;
 use crypto::hashes::blake3_384;
 use p3_batch_stark::BatchProof;
 use p3_circuit::{Op, WitnessId};
-use p3_goldilocks::Goldilocks;
 use p3_lookup::logup::LogUpGadget;
 use p3_recursion::pcs::{
     FriProofTargets, InputProofTargets, RecExtensionValMmcs, RecValMmcs, Witness,
 };
 use p3_recursion::{generate_batch_challenges, BatchStarkVerifierInputsBuilder, Recursive};
-use p3_symmetric::Hash as MerkleDigest;
 use serde::{Deserialize, Serialize};
 
 pub const AGGREGATION_PROOF_FORMAT_ID_V5: u8 = 5;
@@ -19,8 +17,8 @@ const BATCH_PROOF_LOG_FINAL_POLY_LEN: usize = 0;
 const BATCH_PROOF_COMMIT_POW_BITS: usize = 0;
 const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
 const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
-const DEFAULT_LEAF_FAN_IN: usize = 4;
-const DEFAULT_MERGE_FAN_IN: usize = 8;
+const DEFAULT_LEAF_FAN_IN: usize = 1;
+const DEFAULT_MERGE_FAN_IN: usize = 2;
 
 type OuterBatchFri = FriProofTargets<
     Val,
@@ -86,6 +84,7 @@ struct MergeAggregationProverCacheEntry {
     verifier_inputs:
         Vec<BatchStarkVerifierInputsBuilder<Config, OuterBatchHashTargets, OuterBatchFri>>,
     witness_assignment_plans: Vec<MergeWitnessAssignmentPlan>,
+    airs: Vec<CircuitTableAir<Config, 2>>,
     common: Arc<CommonData<Config>>,
     witness_multiplicities: OuterWitnessMultiplicities,
 }
@@ -95,11 +94,41 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
-struct LeafChildContext {
+enum AggregationChildCache {
+    Leaf(Rc<AggregationProverCacheEntry>),
+    Merge(Rc<MergeAggregationProverCacheEntry>),
+}
+
+impl AggregationChildCache {
+    fn airs(&self) -> &[CircuitTableAir<Config, 2>] {
+        match self {
+            Self::Leaf(entry) => &entry.airs,
+            Self::Merge(entry) => &entry.airs,
+        }
+    }
+
+    fn common(&self) -> &CommonData<Config> {
+        match self {
+            Self::Leaf(entry) => entry.common.as_ref(),
+            Self::Merge(entry) => entry.common.as_ref(),
+        }
+    }
+}
+
+struct AggregationChildContext {
     payload: AggregationProofV5Payload,
     outer_proof_bytes: Vec<u8>,
-    common: Arc<CommonData<Config>>,
-    airs: Vec<CircuitTableAir<Config, 2>>,
+    cache: AggregationChildCache,
+}
+
+impl AggregationChildContext {
+    fn airs(&self) -> &[CircuitTableAir<Config, 2>] {
+        self.cache.airs()
+    }
+
+    fn common(&self) -> &CommonData<Config> {
+        self.cache.common()
+    }
 }
 
 fn outer_batch_log_blowup() -> usize {
@@ -155,6 +184,32 @@ fn prove_outer_tables(
     .map_err(|err| AggregationError::ProvingFailed(format!("{err:?}")))
 }
 
+fn log_outer_trace_summary(
+    stage: &str,
+    tx_count: usize,
+    traces: &p3_circuit::Traces<Challenge>,
+    total_ms: u128,
+) {
+    let non_primitive_rows = traces
+        .non_primitive_traces
+        .iter()
+        .map(|(op_type, trace)| format!("{op_type:?}:{}", trace.rows()))
+        .collect::<Vec<_>>();
+    eprintln!(
+        "aggregation_profile stage={} tx_count={} witness_rows={} const_rows={} public_rows={} add_rows={} mul_rows={} non_primitive_tables={} non_primitive_rows={:?} total_ms={}",
+        stage,
+        tx_count,
+        traces.witness_trace.num_rows(),
+        traces.const_trace.values.len(),
+        traces.public_trace.values.len(),
+        traces.add_trace.lhs_values.len(),
+        traces.mul_trace.lhs_values.len(),
+        non_primitive_rows.len(),
+        non_primitive_rows,
+        total_ms
+    );
+}
+
 fn leaf_fan_in() -> usize {
     std::env::var("HEGEMON_AGG_LEAF_FANIN")
         .ok()
@@ -184,7 +239,11 @@ fn is_singleton_root_leaf(active_children: usize, tree_levels: u16, root_level: 
 }
 
 fn max_recursive_txs() -> usize {
-    leaf_fan_in().saturating_mul(merge_fan_in())
+    u32::MAX as usize
+}
+
+fn leaf_count_for_tx_count(tx_count: usize) -> usize {
+    tx_count.div_ceil(leaf_fan_in().max(1))
 }
 
 fn prewarm_merge_enabled() -> bool {
@@ -200,11 +259,16 @@ fn prewarm_merge_enabled() -> bool {
 }
 
 fn tree_levels_for_tx_count(tx_count: usize) -> u16 {
-    if tx_count <= leaf_fan_in() {
-        1
-    } else {
-        2
+    if tx_count <= 1 {
+        return 1;
     }
+    let mut levels = 1u16;
+    let mut width = leaf_count_for_tx_count(tx_count);
+    while width > 1 {
+        width = width.div_ceil(merge_fan_in().max(1));
+        levels = levels.saturating_add(1);
+    }
+    levels
 }
 
 fn leaf_shape_id(
@@ -630,61 +694,102 @@ fn child_air_public_values(
         .collect()
 }
 
-fn decode_leaf_child_context(bytes: &[u8]) -> Result<LeafChildContext, AggregationError> {
+fn decode_child_context(bytes: &[u8]) -> Result<AggregationChildContext, AggregationError> {
     let payload = decode_payload(bytes)?;
-    if payload.node_kind != AggregationNodeKind::Leaf {
+    if payload.outer_proof.is_empty() {
         return Err(AggregationError::InvalidAggregationPayload(
-            "merge stage currently expects leaf children".to_string(),
+            "aggregation child outer proof missing".to_string(),
         ));
     }
-    let representative_tx: TransactionProof =
-        postcard::from_bytes(&payload.representative_child_proof).map_err(|_| {
-            AggregationError::InvalidAggregationPayload(
-                "leaf representative transaction encoding invalid".to_string(),
-            )
-        })?;
-    let pub_inputs = stark_public_inputs_p3(&representative_tx).map_err(|err| {
-        AggregationError::InvalidAggregationPayload(format!(
-            "representative transaction public inputs invalid: {err}"
-        ))
-    })?;
-    let representative_inner: TransactionProofP3 =
-        postcard::from_bytes(&representative_tx.stark_proof).map_err(|_| {
-            AggregationError::InvalidAggregationPayload(
-                "representative transaction proof encoding invalid".to_string(),
-            )
-        })?;
-    let pub_inputs_vec = pub_inputs.to_vec();
-    let query_count = representative_inner.opening_proof.query_proofs.len();
-    let log_blowup = resolve_log_blowup(&representative_inner, &pub_inputs_vec, query_count)
-        .map_err(|message| AggregationError::InvalidProofShape { index: 0, message })?;
-    let shape = ProofShape {
-        degree_bits: representative_inner.degree_bits,
-        commit_phase_len: representative_inner
-            .opening_proof
-            .commit_phase_commits
-            .len(),
-        final_poly_len: representative_inner.opening_proof.final_poly.len(),
-        query_count,
-    };
-    let key = AggregationProverKey {
-        tx_count: leaf_fan_in(),
-        pub_inputs_len: pub_inputs_vec.len(),
-        log_blowup,
-        shape,
-    };
-    let cache_entry = get_or_build_aggregation_prover_cache_entry(key, &representative_inner)?;
-    Ok(LeafChildContext {
-        outer_proof_bytes: payload.outer_proof.clone(),
-        payload,
-        common: Arc::clone(&cache_entry.entry.common),
-        airs: cache_entry.entry.airs.clone(),
-    })
+    match payload.node_kind {
+        AggregationNodeKind::Leaf => {
+            let representative_tx: TransactionProof =
+                postcard::from_bytes(&payload.representative_child_proof).map_err(|_| {
+                    AggregationError::InvalidAggregationPayload(
+                        "leaf representative transaction encoding invalid".to_string(),
+                    )
+                })?;
+            let pub_inputs = stark_public_inputs_p3(&representative_tx).map_err(|err| {
+                AggregationError::InvalidAggregationPayload(format!(
+                    "representative transaction public inputs invalid: {err}"
+                ))
+            })?;
+            let representative_inner: TransactionProofP3 =
+                postcard::from_bytes(&representative_tx.stark_proof).map_err(|_| {
+                    AggregationError::InvalidAggregationPayload(
+                        "representative transaction proof encoding invalid".to_string(),
+                    )
+                })?;
+            let pub_inputs_vec = pub_inputs.to_vec();
+            let query_count = representative_inner.opening_proof.query_proofs.len();
+            let log_blowup =
+                resolve_log_blowup(&representative_inner, &pub_inputs_vec, query_count)
+                    .map_err(|message| AggregationError::InvalidProofShape { index: 0, message })?;
+            let shape = ProofShape {
+                degree_bits: representative_inner.degree_bits,
+                commit_phase_len: representative_inner
+                    .opening_proof
+                    .commit_phase_commits
+                    .len(),
+                final_poly_len: representative_inner.opening_proof.final_poly.len(),
+                query_count,
+            };
+            let expected_shape_id = leaf_shape_id(
+                payload.fan_in as usize,
+                pub_inputs_vec.len(),
+                log_blowup,
+                shape,
+            );
+            if payload.shape_id != expected_shape_id {
+                return Err(AggregationError::InvalidAggregationPayload(
+                    "leaf child shape_id mismatch".to_string(),
+                ));
+            }
+            let key = AggregationProverKey {
+                tx_count: payload.fan_in as usize,
+                pub_inputs_len: pub_inputs_vec.len(),
+                log_blowup,
+                shape,
+            };
+            let cache_entry =
+                get_or_build_aggregation_prover_cache_entry(key, &representative_inner)?;
+            Ok(AggregationChildContext {
+                outer_proof_bytes: payload.outer_proof.clone(),
+                payload,
+                cache: AggregationChildCache::Leaf(cache_entry.entry),
+            })
+        }
+        AggregationNodeKind::Merge => {
+            let representative_child = decode_child_context(&payload.representative_child_proof)?;
+            let expected_shape_id = merge_shape_id(
+                payload.fan_in as usize,
+                representative_child.payload.shape_id,
+                representative_child.payload.inner_public_inputs_len as usize,
+            );
+            if payload.shape_id != expected_shape_id {
+                return Err(AggregationError::InvalidAggregationPayload(
+                    "merge child shape_id mismatch".to_string(),
+                ));
+            }
+            let cache_key = MergeAggregationProverKey {
+                fan_in: payload.fan_in as usize,
+                child_shape_id: representative_child.payload.shape_id,
+                child_public_values_len: representative_child.payload.inner_public_inputs_len
+                    as usize,
+            };
+            let cache_entry = get_or_build_merge_cache_entry(cache_key, &representative_child)?;
+            Ok(AggregationChildContext {
+                outer_proof_bytes: payload.outer_proof.clone(),
+                payload,
+                cache: AggregationChildCache::Merge(cache_entry.entry),
+            })
+        }
+    }
 }
 
 fn get_or_build_merge_cache_entry(
     key: MergeAggregationProverKey,
-    representative_child: &LeafChildContext,
+    representative_child: &AggregationChildContext,
 ) -> Result<AggregationProverCacheResultWrapper, AggregationError> {
     if let Some(entry) =
         MERGE_AGGREGATION_PROVER_CACHE.with(|cache| cache.borrow().get(&key).cloned())
@@ -700,11 +805,11 @@ fn get_or_build_merge_cache_entry(
     let representative_outer: OuterBatchProof =
         postcard::from_bytes(&representative_child.outer_proof_bytes).map_err(|_| {
             AggregationError::InvalidAggregationPayload(
-                "leaf outer proof encoding invalid".to_string(),
+                "child outer proof encoding invalid".to_string(),
             )
         })?;
     let air_public_counts = child_air_public_counts(
-        &representative_child.airs,
+        representative_child.airs(),
         representative_child.payload.inner_public_inputs_len as usize,
     );
     let mut circuit_builder = CircuitBuilder::<Challenge>::new();
@@ -720,7 +825,7 @@ fn get_or_build_merge_cache_entry(
         >::allocate(
             &mut circuit_builder,
             &representative_outer,
-            representative_child.common.as_ref(),
+            representative_child.common(),
             &air_public_counts,
         );
         p3_recursion::verify_batch_circuit::<
@@ -733,7 +838,7 @@ fn get_or_build_merge_cache_entry(
             POSEIDON2_RATE,
         >(
             &outer_config,
-            &representative_child.airs,
+            representative_child.airs(),
             &mut circuit_builder,
             &inputs.proof_targets,
             &inputs.air_public_targets,
@@ -748,7 +853,7 @@ fn get_or_build_merge_cache_entry(
     let assignment_specs = build_merge_assignment_plan_specs(
         &verifier_inputs,
         &representative_outer,
-        representative_child.common.as_ref(),
+        representative_child.common(),
     )?;
     let circuit = circuit_builder
         .build()
@@ -768,6 +873,7 @@ fn get_or_build_merge_cache_entry(
         circuit,
         verifier_inputs,
         witness_assignment_plans,
+        airs,
         common,
         witness_multiplicities,
     });
@@ -850,7 +956,7 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
         1,
         0,
     )?;
-    let leaf_ctx = decode_leaf_child_context(&leaf)?;
+    let leaf_ctx = decode_child_context(&leaf)?;
     let leaf_payload = decode_payload(&leaf)?;
     let merge_key = MergeAggregationProverKey {
         fan_in: merge_fan_in(),
@@ -1125,6 +1231,12 @@ pub fn prove_leaf_aggregation(
             run_ms,
             started.elapsed().as_millis()
         );
+        log_outer_trace_summary(
+            "v5_leaf_trace_summary",
+            effective_fan_in,
+            &traces,
+            started.elapsed().as_millis(),
+        );
     }
     let outer_prove_started = Instant::now();
     let outer_proof = prove_outer_tables(
@@ -1214,7 +1326,7 @@ pub fn prove_merge_aggregation(
     let decode_started = Instant::now();
     let child_contexts = child_payloads
         .iter()
-        .map(|payload| decode_leaf_child_context(payload))
+        .map(|payload| decode_child_context(payload))
         .collect::<Result<Vec<_>, _>>()?;
     let decode_ms = decode_started.elapsed().as_millis();
     if profile {
@@ -1275,14 +1387,14 @@ pub fn prove_merge_aggregation(
                 }
             })?;
         let air_public_values =
-            child_air_public_values(&child.airs, &child.payload.packed_public_values);
+            child_air_public_values(child.airs(), &child.payload.packed_public_values);
         let challenges = generate_batch_challenges(
-            &child.airs,
+            child.airs(),
             &outer_config,
             &outer_proof,
             &air_public_values,
             Some(&batch_extra_params()),
-            child.common.as_ref(),
+            child.common(),
             &lookup_gadget,
         )
         .map_err(|err| AggregationError::ChallengeDerivation {
@@ -1292,7 +1404,7 @@ pub fn prove_merge_aggregation(
         let packed = cache_result.entry.verifier_inputs[index].pack_values(
             &air_public_values,
             &outer_proof,
-            child.common.as_ref(),
+            child.common(),
             &challenges,
         );
         if profile {
@@ -1305,7 +1417,7 @@ pub fn prove_merge_aggregation(
             .len();
             let common_value_len =
                 p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(
-                    child.common.as_ref(),
+                    child.common(),
                 )
                 .len();
             let total_private_len = p3_recursion::BatchProofTargets::<
@@ -1326,7 +1438,7 @@ pub fn prove_merge_aggregation(
             )
             .len();
             let common_private_len =
-                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(child.common.as_ref()).len();
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(child.common()).len();
             let opened_private_len = total_private_len
                 .saturating_sub(commitments_private_len)
                 .saturating_sub(fri_private_len);
@@ -1357,16 +1469,16 @@ pub fn prove_merge_aggregation(
                 )
             })?;
         let air_public_values = child_air_public_values(
-            &representative_child.airs,
+            representative_child.airs(),
             &representative_child.payload.packed_public_values,
         );
         let challenges = generate_batch_challenges(
-            &representative_child.airs,
+            representative_child.airs(),
             &outer_config,
             &padded,
             &air_public_values,
             Some(&batch_extra_params()),
-            representative_child.common.as_ref(),
+            representative_child.common(),
             &lookup_gadget,
         )
         .map_err(|err| AggregationError::ChallengeDerivation {
@@ -1376,7 +1488,7 @@ pub fn prove_merge_aggregation(
         let packed = cache_result.entry.verifier_inputs[proofs.len()].pack_values(
             &air_public_values,
             &padded,
-            representative_child.common.as_ref(),
+            representative_child.common(),
             &challenges,
         );
         if profile {
@@ -1389,7 +1501,7 @@ pub fn prove_merge_aggregation(
             .len();
             let common_value_len =
                 p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_values(
-                    representative_child.common.as_ref(),
+                    representative_child.common(),
                 )
                 .len();
             let total_private_len = p3_recursion::BatchProofTargets::<
@@ -1407,7 +1519,7 @@ pub fn prove_merge_aggregation(
                 <OuterBatchFri as Recursive<Challenge>>::get_private_values(&padded.opening_proof)
                     .len();
             let common_private_len =
-                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(representative_child.common.as_ref()).len();
+                p3_recursion::CommonDataTargets::<Config, OuterBatchHashTargets>::get_private_values(representative_child.common()).len();
             let opened_private_len = total_private_len
                 .saturating_sub(commitments_private_len)
                 .saturating_sub(fri_private_len);
@@ -1459,8 +1571,8 @@ pub fn prove_merge_aggregation(
         &proofs,
         &child_contexts
             .iter()
-            .map(|child| child.common.as_ref())
-            .chain(std::iter::repeat(representative_child.common.as_ref()))
+            .map(|child| child.common())
+            .chain(std::iter::repeat(representative_child.common()))
             .take(proofs.len())
             .collect::<Vec<_>>(),
     )
@@ -1511,6 +1623,12 @@ pub fn prove_merge_aggregation(
             merge_fan_in(),
             run_ms,
             started.elapsed().as_millis()
+        );
+        log_outer_trace_summary(
+            "v5_merge_trace_summary",
+            merge_fan_in(),
+            &traces,
+            started.elapsed().as_millis(),
         );
     }
     let outer_prove_started = Instant::now();
@@ -1616,11 +1734,11 @@ pub fn prove_aggregation(
     if tree_levels == 1 {
         return prove_leaf_aggregation(transaction_proofs, &statement_hashes, tree_levels, 0);
     }
-    let mut leaves = Vec::new();
+    let mut current_level_payloads = Vec::new();
     let mut offset = 0usize;
     while offset < transaction_proofs.len() {
         let end = (offset + leaf_fan_in()).min(transaction_proofs.len());
-        leaves.push(prove_leaf_aggregation(
+        current_level_payloads.push(prove_leaf_aggregation(
             &transaction_proofs[offset..end],
             &statement_hashes[offset..end],
             tree_levels,
@@ -1628,12 +1746,22 @@ pub fn prove_aggregation(
         )?);
         offset = end;
     }
-    if leaves.len() > merge_fan_in() {
-        return Err(AggregationError::InvalidAggregationPayload(format!(
-            "leaf count {} exceeds merge fan-in {}",
-            leaves.len(),
-            merge_fan_in()
-        )));
+    let mut root_level = 1u16;
+    while current_level_payloads.len() > 1 {
+        let mut next_level_payloads = Vec::new();
+        for child_group in current_level_payloads.chunks(merge_fan_in()) {
+            next_level_payloads.push(prove_merge_aggregation(
+                child_group,
+                tx_statements_commitment,
+                tree_levels,
+                root_level,
+            )?);
+        }
+        current_level_payloads = next_level_payloads;
+        root_level = root_level.saturating_add(1);
     }
-    prove_merge_aggregation(&leaves, tx_statements_commitment, tree_levels, 1)
+    current_level_payloads
+        .into_iter()
+        .next()
+        .ok_or(AggregationError::EmptyBatch)
 }

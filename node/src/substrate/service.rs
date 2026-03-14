@@ -2527,8 +2527,9 @@ fn prepared_proof_mode_from_env() -> PreparedProofMode {
 fn merge_root_arity_from_env() -> u16 {
     std::env::var("HEGEMON_MERGE_ARITY")
         .ok()
+        .or_else(|| std::env::var("HEGEMON_AGG_MERGE_FANIN").ok())
         .and_then(|raw| raw.parse::<u16>().ok())
-        .unwrap_or(8)
+        .unwrap_or(2)
         .max(2)
 }
 
@@ -2536,16 +2537,21 @@ fn merge_root_leaf_fan_in_from_env() -> usize {
     std::env::var("HEGEMON_AGG_LEAF_FANIN")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(8)
+        .unwrap_or(1)
         .max(1)
 }
 
 fn merge_root_tree_levels_for_tx_count(tx_count: usize) -> u16 {
-    if tx_count <= merge_root_leaf_fan_in_from_env() {
-        1
-    } else {
-        2
+    if tx_count <= 1 {
+        return 1;
     }
+    let mut levels = 1u16;
+    let mut width = tx_count.div_ceil(merge_root_leaf_fan_in_from_env());
+    while width > 1 {
+        width = width.div_ceil(merge_root_arity_from_env() as usize);
+        levels = levels.saturating_add(1);
+    }
+    levels
 }
 
 fn merge_root_leaf_manifest_commitment(statement_hashes: &[[u8; 48]]) -> Result<[u8; 48], String> {
