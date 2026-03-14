@@ -1,7 +1,8 @@
 //! Prover market RPC endpoints.
 
 use crate::substrate::prover_coordinator::{
-    LeafBatchWorkData, MergeNodeWorkData, ProverCoordinator, RootFinalizeWorkData, WorkStatus,
+    LeafBatchWorkData, MergeNodeWorkData, ProofBatchWorkData, ProverCoordinator,
+    RootFinalizeWorkData, WorkStatus,
 };
 use base64::Engine;
 use codec::{Decode, Encode};
@@ -28,11 +29,21 @@ pub struct WorkPackageResponse {
     pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<String>,
+    pub proof_batch_payload: Option<ProofBatchPayloadResponse>,
     pub leaf_batch_payload: Option<LeafBatchPayloadResponse>,
     pub merge_node_payload: Option<MergeNodePayloadResponse>,
     pub root_finalize_payload: Option<RootFinalizePayloadResponse>,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProofBatchPayloadResponse {
+    pub statement_hashes: Vec<String>,
+    pub tx_proofs_bincode: String,
+    pub tx_statements_commitment: String,
+    pub da_root: String,
+    pub da_chunk_count: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -247,6 +258,32 @@ impl ProverRpc {
         })
     }
 
+    fn map_proof_batch_payload(
+        payload: ProofBatchWorkData,
+    ) -> RpcResult<ProofBatchPayloadResponse> {
+        let tx_proofs_bincode = bincode::serialize(&payload.tx_proofs).map_err(|err| {
+            ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                format!("failed to serialize proof-batch tx proofs: {err}"),
+                None::<()>,
+            )
+        })?;
+        Ok(ProofBatchPayloadResponse {
+            statement_hashes: payload
+                .statement_hashes
+                .into_iter()
+                .map(|value| format!("0x{}", hex::encode(value)))
+                .collect(),
+            tx_proofs_bincode: base64::engine::general_purpose::STANDARD.encode(tx_proofs_bincode),
+            tx_statements_commitment: format!(
+                "0x{}",
+                hex::encode(payload.tx_statements_commitment)
+            ),
+            da_root: format!("0x{}", hex::encode(payload.da_root)),
+            da_chunk_count: payload.da_chunk_count,
+        })
+    }
+
     fn map_merge_node_payload(payload: MergeNodeWorkData) -> RpcResult<MergeNodePayloadResponse> {
         let child_proof_payloads_bincode = bincode::serialize(&payload.child_proof_payloads)
             .map_err(|err| {
@@ -290,6 +327,10 @@ impl ProverRpc {
                 .into_iter()
                 .map(|tx| format!("0x{}", hex::encode(tx)))
                 .collect(),
+            proof_batch_payload: package
+                .proof_batch_payload
+                .map(Self::map_proof_batch_payload)
+                .transpose()?,
             leaf_batch_payload: package
                 .leaf_batch_payload
                 .map(Self::map_leaf_batch_payload)

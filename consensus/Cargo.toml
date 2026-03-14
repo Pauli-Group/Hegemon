@@ -9,6 +9,7 @@ batch-circuit = { path = "../circuits/batch" }
 bincode = "1"
 blake3 = "1.5"
 block-circuit = { path = "../circuits/block" }
+proof-batch = { path = "../circuits/proof-batch" }
 codec = { workspace = true }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }

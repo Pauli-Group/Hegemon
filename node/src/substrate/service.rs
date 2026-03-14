@@ -136,18 +136,15 @@ use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use aggregation_circuit::prove_aggregation;
-use batch_circuit::{
-    prewarm_batch_verifier_cache, verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs,
-    BatchTransactionProver,
-};
+use batch_circuit::prewarm_batch_verifier_cache;
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
-    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, ParallelProofVerifier,
-    Sha256dAlgorithm, Sha256dSeal,
+    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind, ParallelProofVerifier,
+    Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
@@ -156,7 +153,6 @@ use network::{
     PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
     PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use p3_field::PrimeField64;
 use pallet_shielded_pool::family::ShieldedFamilyAction;
 use pallet_shielded_pool::family::{
     build_envelope as build_shielded_kernel_envelope, EnableAggregationModeArgs, MintCoinbaseArgs,
@@ -191,21 +187,16 @@ use wallet::address::ShieldedAddress;
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
+use proof_batch::{prove_transaction_proof_batch, ProofBatchPublicInputs};
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
-use transaction_circuit::dimensions::ROWS_PER_TX;
-use transaction_circuit::hashing_pq::{
-    bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
-};
-use transaction_circuit::p3_prover::TransactionProverP3;
-use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
+use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{
     BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs,
 };
-use transaction_circuit::witness::TransactionWitness;
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
@@ -2378,9 +2369,10 @@ fn build_root_finalize_work_data(
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
 ) -> Result<Option<RootFinalizeWorkData>, String> {
-    if prepared_proof_mode_from_env() != PreparedProofMode::MergeRoot {
-        return Ok(None);
-    }
+    // Both proof modes need this parent-bound summary. `MergeRoot` ships it to
+    // external recursive workers directly; `FlatBatches` slices it into
+    // parent-independent proof-batch chunk payloads and regenerates the final
+    // commitment proof locally once chunk results arrive.
     let context = build_candidate_context(
         candidate_txs,
         da_params,
@@ -2576,29 +2568,28 @@ fn merge_root_leaf_manifest_commitment(statement_hashes: &[[u8; 48]]) -> Result<
 #[allow(dead_code)]
 fn build_flat_batch_proofs_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
-    witnesses: Arc<Vec<TransactionWitness>>,
+    statement_bindings: Arc<Vec<consensus::types::TxStatementBinding>>,
     slot_txs: usize,
 ) -> Result<Vec<pallet_shielded_pool::types::BatchProofItem>, String> {
     if proofs.is_empty() {
         return Ok(Vec::new());
     }
-    if witnesses.len() != proofs.len() {
+    if statement_bindings.len() != proofs.len() {
         return Err(format!(
-            "flat batch witness/proof count mismatch (witnesses {}, proofs {})",
-            witnesses.len(),
+            "flat batch statement/proof count mismatch (bindings {}, proofs {})",
+            statement_bindings.len(),
             proofs.len()
         ));
     }
-    let max_batch = batch_circuit::MAX_BATCH_SIZE;
-    let capped_slot_txs = slot_txs.clamp(1, max_batch);
+    let capped_slot_txs = slot_txs.max(1);
     let mut out = Vec::new();
     let mut start_tx_index: u32 = 0;
     let mut offset = 0usize;
     while offset < proofs.len() {
         let remaining = proofs.len() - offset;
-        let batch_len = largest_power_of_two_at_most(remaining.min(capped_slot_txs));
-        let witness_chunk = witnesses[offset..offset + batch_len].to_vec();
+        let batch_len = remaining.min(capped_slot_txs);
         let proof_chunk = proofs[offset..offset + batch_len].to_vec();
+        let binding_chunk = statement_bindings[offset..offset + batch_len].to_vec();
         let chunk_started = Instant::now();
         tracing::info!(
             start_tx_index,
@@ -2607,158 +2598,38 @@ fn build_flat_batch_proofs_from_materials(
             "build_flat_batch_proofs_from_materials: proving chunk"
         );
         let encoded = run_aggregation_prepare_job(move || {
-            if std::env::var("HEGEMON_BATCH_DEBUG_WITNESS")
-                .map(|value| value == "1")
-                .unwrap_or(false)
-            {
-                for (witness_index, witness) in witness_chunk.iter().enumerate() {
-                    let anchor_prefix = hex::encode(&witness.merkle_root[..8]);
-                    let input_positions = witness
-                        .inputs
-                        .iter()
-                        .map(|input| input.position)
-                        .collect::<Vec<_>>();
-                    tracing::info!(
-                        witness_index,
-                        inputs = witness.inputs.len(),
-                        outputs = witness.outputs.len(),
-                        fee = witness.fee,
-                        anchor_prefix = %anchor_prefix,
-                        input_positions = ?input_positions,
-                        "build_flat_batch_proofs_from_materials: witness diagnostics"
-                    );
-                }
-            }
-
-            if std::env::var("HEGEMON_BATCH_VALIDATE_SINGLE_TX")
-                .map(|value| value == "1")
-                .unwrap_or(false)
-            {
-                let single_prover = TransactionProverP3::new();
-                for (witness_index, witness) in witness_chunk.iter().enumerate() {
-                    let trace = single_prover.build_trace(witness).map_err(|err| {
-                        format!("single-tx trace build failed for witness {witness_index}: {err}")
-                    })?;
-                    let trace_height = trace.values.len() / trace.width;
-                    let pub_inputs = single_prover.public_inputs(witness).map_err(|err| {
-                        format!(
-                            "single-tx public input build failed for witness {witness_index}: {err}"
-                        )
-                    })?;
-                    let proof = single_prover.prove(trace, &pub_inputs);
-                    verify_transaction_proof_p3(&proof, &pub_inputs).map_err(|err| {
-                        format!(
-                            "single-tx proof verification failed for witness {witness_index}: {err}"
-                        )
-                    })?;
-                    tracing::info!(
-                        witness_index,
-                        trace_height,
-                        batch_slot_rows = ROWS_PER_TX,
-                        "build_flat_batch_proofs_from_materials: single-tx witness verified"
-                    );
-                }
-            }
-
-            let prover = BatchTransactionProver::new();
-            let (batch_proof, batch_public_inputs) = prover
-                .prove_batch(&witness_chunk)
-                .map_err(|err| format!("batch proof generation failed: {err}"))?;
-
-            if std::env::var("HEGEMON_BATCH_SELF_VERIFY")
-                .map(|value| value == "1")
-                .unwrap_or(false)
-            {
-                verify_batch_proof(&batch_proof, &batch_public_inputs).map_err(|err| {
-                    format!("batch proof self verification failed before payload encoding: {err}")
-                })?;
-            }
-
-            if batch_public_inputs.batch_size as usize != proof_chunk.len() {
-                return Err(format!(
-                    "batch public input size mismatch (proofs {}, public {})",
-                    proof_chunk.len(),
-                    batch_public_inputs.batch_size
-                ));
-            }
-
-            let mut expected_anchor: Option<[u8; 48]> = None;
-            let mut expected_fee: u128 = 0;
-            let mut expected_nullifiers =
-                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_INPUTS);
-            let mut expected_commitments =
-                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_OUTPUTS);
-            for proof in &proof_chunk {
-                let anchor = proof.public_inputs.merkle_root;
-                if let Some(expected_anchor_value) = expected_anchor {
-                    if anchor != expected_anchor_value {
-                        return Err("batch proof chunk contains mixed anchors".to_string());
-                    }
-                } else {
-                    expected_anchor = Some(anchor);
-                }
-                expected_fee = expected_fee.saturating_add(proof.public_inputs.native_fee as u128);
-                expected_nullifiers.extend_from_slice(&proof.public_inputs.nullifiers);
-                expected_commitments.extend_from_slice(&proof.public_inputs.commitments);
-            }
-            for _ in proof_chunk.len()..batch_circuit::MAX_BATCH_SIZE {
-                expected_nullifiers.extend(std::iter::repeat_n([0u8; 48], MAX_INPUTS));
-                expected_commitments.extend(std::iter::repeat_n([0u8; 48], MAX_OUTPUTS));
-            }
-
-            let observed_anchor = felts_to_bytes48(&batch_public_inputs.anchor);
-            if expected_anchor.is_some() && Some(observed_anchor) != expected_anchor {
-                return Err("batch proof anchor mismatch with transaction proofs".to_string());
-            }
-            if batch_public_inputs.total_fee.as_canonical_u64() as u128 != expected_fee {
-                return Err("batch proof fee sum mismatch with transaction proofs".to_string());
-            }
-
-            let observed_nullifiers: Vec<[u8; 48]> = batch_public_inputs
-                .nullifiers
+            let (batch_proof_bytes, batch_public_inputs) =
+                prove_transaction_proof_batch(&proof_chunk)
+                    .map_err(|err| format!("proof batch generation failed: {err}"))?;
+            let expected_statement_hashes: Vec<[u8; 48]> = binding_chunk
                 .iter()
-                .map(felts_to_bytes48)
+                .map(|binding| binding.statement_hash)
                 .collect();
-            if observed_nullifiers != expected_nullifiers {
-                return Err("batch proof nullifier list mismatch".to_string());
+            if batch_public_inputs.statement_hashes != expected_statement_hashes {
+                return Err("proof batch statement hash mismatch".to_string());
             }
-            let observed_commitments: Vec<[u8; 48]> = batch_public_inputs
-                .commitments
-                .iter()
-                .map(felts_to_bytes48)
-                .collect();
-            if observed_commitments != expected_commitments {
-                return Err("batch proof commitment list mismatch".to_string());
-            }
-
-            let batch_proof_bytes = bincode::serialize(&batch_proof)
-                .map_err(|err| format!("batch proof serialization failed: {err}"))?;
             let batch_public_values = batch_public_inputs
-                .to_vec()
-                .iter()
-                .map(|value| value.as_canonical_u64())
-                .collect::<Vec<_>>();
-            let encoded = encode_flat_batch_proof_bytes(&batch_proof_bytes, &batch_public_values)
-                .map_err(|err| format!("flat batch proof encoding failed: {err}"))?;
+                .to_values()
+                .map_err(|err| format!("proof batch public value encoding failed: {err}"))?;
+            let encoded = encode_flat_batch_proof_bytes_with_kind(
+                FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+                &batch_proof_bytes,
+                &batch_public_values,
+            )
+            .map_err(|err| format!("proof batch payload encoding failed: {err}"))?;
 
             if std::env::var("HEGEMON_BATCH_ROUNDTRIP_VERIFY")
                 .map(|value| value == "1")
                 .unwrap_or(false)
             {
                 let payload = decode_flat_batch_proof_bytes(&encoded)
-                    .map_err(|err| format!("flat batch proof roundtrip decode failed: {err}"))?;
-                let roundtrip_public_values: Vec<Felt> = payload
-                    .batch_public_values
-                    .iter()
-                    .map(|value| Felt::new(*value))
-                    .collect();
+                    .map_err(|err| format!("proof batch roundtrip decode failed: {err}"))?;
                 let roundtrip_public_inputs =
-                    BatchPublicInputs::try_from_slice(&roundtrip_public_values).map_err(|err| {
-                        format!("flat batch public input roundtrip decode failed: {err}")
-                    })?;
-                verify_batch_proof_bytes(&payload.batch_proof, &roundtrip_public_inputs).map_err(
-                    |err| format!("flat batch proof roundtrip verification failed: {err}"),
-                )?;
+                    ProofBatchPublicInputs::try_from_values(&payload.batch_public_values).map_err(
+                        |err| format!("proof batch public input roundtrip decode failed: {err}"),
+                    )?;
+                proof_batch::verify_proof_batch(&payload.batch_proof, &roundtrip_public_inputs)
+                    .map_err(|err| format!("proof batch roundtrip verification failed: {err}"))?;
             }
             Ok(encoded)
         })?;
@@ -3075,6 +2946,7 @@ fn prepare_block_proof_bundle(
         .iter()
         .map(|binding| binding.statement_hash)
         .collect::<Vec<_>>();
+    let statement_bindings = Arc::new(context.statement_bindings.clone());
     let tx_statements_commitment = context.tx_statements_commitment;
     let tx_count = statement_hashes.len() as u32;
     if tx_count == 0 {
@@ -3118,6 +2990,7 @@ fn prepare_block_proof_bundle(
         });
 
         let aggregation_proofs = Arc::clone(&proofs_for_batching);
+        let aggregation_bindings = Arc::clone(&statement_bindings);
         let aggregation_handle = scope.spawn(move || {
             tracing::info!(
                 block_number,
@@ -3134,10 +3007,12 @@ fn prepare_block_proof_bundle(
                 Ok(cached)
             } else {
                 let built = match selected_mode {
-                    PreparedProofMode::FlatBatches => Err(
-                        "flat batch proof mode is disabled: witness sidecar uploads are blocked; use merge-root aggregation proofs"
-                            .to_string(),
-                    ),
+                    PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
+                        aggregation_proofs,
+                        aggregation_bindings,
+                        batch_slot_txs,
+                    )
+                    .map(PreparedAggregationArtifacts::Flat),
                     PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
                         aggregation_proofs,
                         Arc::new(statement_hashes.clone()),

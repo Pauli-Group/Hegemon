@@ -7,6 +7,8 @@ pub const FLAT_BATCH_PROOF_FORMAT_ID_V5: u8 = crate::types::BLOCK_PROOF_FORMAT_I
 pub const FLAT_BATCH_PROOF_SCHEMA_V2: u8 = 2;
 /// Flat batch proof kind for Plonky3 batch STARK proof bytes.
 pub const FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK: u8 = 1;
+/// Flat batch proof kind for proof-byte batch proofs over canonical tx proof bytes.
+pub const FLAT_BATCH_PROOF_KIND_PROOF_BATCH: u8 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlatBatchProofPayloadV2 {
@@ -18,6 +20,18 @@ pub struct FlatBatchProofPayloadV2 {
 }
 
 pub fn encode_flat_batch_proof_bytes(
+    batch_proof: &[u8],
+    batch_public_values: &[u64],
+) -> Result<Vec<u8>, ProofError> {
+    encode_flat_batch_proof_bytes_with_kind(
+        FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
+        batch_proof,
+        batch_public_values,
+    )
+}
+
+pub fn encode_flat_batch_proof_bytes_with_kind(
+    proof_kind: u8,
     batch_proof: &[u8],
     batch_public_values: &[u64],
 ) -> Result<Vec<u8>, ProofError> {
@@ -33,7 +47,7 @@ pub fn encode_flat_batch_proof_bytes(
     }
     let payload = FlatBatchProofPayloadV2 {
         version: FLAT_BATCH_PROOF_SCHEMA_V2,
-        proof_kind: FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
+        proof_kind,
         batch_proof: batch_proof.to_vec(),
         batch_public_values: batch_public_values.to_vec(),
     };
@@ -52,7 +66,9 @@ pub fn decode_flat_batch_proof_bytes(bytes: &[u8]) -> Result<FlatBatchProofPaylo
             payload.version
         )));
     }
-    if payload.proof_kind != FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK {
+    if payload.proof_kind != FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK
+        && payload.proof_kind != FLAT_BATCH_PROOF_KIND_PROOF_BATCH
+    {
         return Err(ProofError::FlatBatchProofDecodeFailed(format!(
             "unsupported flat batch proof kind {}",
             payload.proof_kind
@@ -69,4 +85,34 @@ pub fn decode_flat_batch_proof_bytes(bytes: &[u8]) -> Result<FlatBatchProofPaylo
         ));
     }
     Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK, FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+        decode_flat_batch_proof_bytes, encode_flat_batch_proof_bytes,
+        encode_flat_batch_proof_bytes_with_kind,
+    };
+
+    #[test]
+    fn proof_batch_kind_round_trips() {
+        let encoded = encode_flat_batch_proof_bytes_with_kind(
+            FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+            &[1, 2, 3],
+            &[4, 5, 6],
+        )
+        .expect("encode");
+        let decoded = decode_flat_batch_proof_bytes(&encoded).expect("decode");
+        assert_eq!(decoded.proof_kind, FLAT_BATCH_PROOF_KIND_PROOF_BATCH);
+        assert_eq!(decoded.batch_proof, vec![1, 2, 3]);
+        assert_eq!(decoded.batch_public_values, vec![4, 5, 6]);
+    }
+
+    #[test]
+    fn legacy_batch_stark_kind_still_round_trips() {
+        let encoded = encode_flat_batch_proof_bytes(&[9, 8, 7], &[6, 5, 4]).expect("encode");
+        let decoded = decode_flat_batch_proof_bytes(&encoded).expect("decode");
+        assert_eq!(decoded.proof_kind, FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK);
+    }
 }

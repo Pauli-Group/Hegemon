@@ -1627,6 +1627,7 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot 0.12.5",
  "postcard",
+ "proof-batch",
  "proptest",
  "protocol-versioning",
  "rayon",
@@ -3657,6 +3658,7 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot 0.12.5",
  "pq-noise",
+ "proof-batch",
  "protocol-kernel",
  "protocol-versioning",
  "rand 0.8.5",
@@ -7725,6 +7727,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.111",
+]
+
+[[package]]
+name = "proof-batch"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "p3-field",
+ "serde",
+ "thiserror 1.0.69",
+ "transaction-circuit",
 ]
 
 [[package]]
