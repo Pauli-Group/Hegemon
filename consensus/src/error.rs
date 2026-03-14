@@ -132,6 +132,8 @@ pub enum ProofError {
     FlatBatchProofDecodeFailed(String),
     #[error("flat batch coverage invalid: {0}")]
     FlatBatchCoverage(String),
+    #[error("proof verifier panicked: {0}")]
+    VerifierPanicked(String),
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]

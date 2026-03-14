@@ -144,7 +144,7 @@ use consensus::proof::HeaderProofExt;
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
     encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind, ParallelProofVerifier,
-    Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+    Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
@@ -187,7 +187,7 @@ use wallet::address::ShieldedAddress;
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
-use proof_batch::{prove_transaction_proof_batch, ProofBatchPublicInputs};
+use tx_proof_manifest::{build_transaction_proof_manifest, TxProofManifestPublicInputs};
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
@@ -2371,7 +2371,7 @@ fn build_root_finalize_work_data(
 ) -> Result<Option<RootFinalizeWorkData>, String> {
     // Both proof modes need this parent-bound summary. `MergeRoot` ships it to
     // external recursive workers directly; `FlatBatches` slices it into
-    // parent-independent proof-batch chunk payloads and regenerates the final
+    // parent-independent tx-proof-manifest chunk payloads and regenerates the final
     // commitment proof locally once chunk results arrive.
     let context = build_candidate_context(
         candidate_txs,
@@ -2510,10 +2510,11 @@ fn prepared_proof_mode_from_env() -> PreparedProofMode {
         || raw.eq_ignore_ascii_case("flat_batches")
         || raw.eq_ignore_ascii_case("flatbatches")
     {
-        PreparedProofMode::FlatBatches
-    } else {
-        PreparedProofMode::MergeRoot
+        tracing::warn!(
+            "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to merge_root"
+        );
     }
+    PreparedProofMode::MergeRoot
 }
 
 fn merge_root_arity_from_env() -> u16 {
@@ -2599,37 +2600,37 @@ fn build_flat_batch_proofs_from_materials(
         );
         let encoded = run_aggregation_prepare_job(move || {
             let (batch_proof_bytes, batch_public_inputs) =
-                prove_transaction_proof_batch(&proof_chunk)
-                    .map_err(|err| format!("proof batch generation failed: {err}"))?;
+                build_transaction_proof_manifest(&proof_chunk)
+                    .map_err(|err| format!("tx-proof-manifest generation failed: {err}"))?;
             let expected_statement_hashes: Vec<[u8; 48]> = binding_chunk
                 .iter()
                 .map(|binding| binding.statement_hash)
                 .collect();
             if batch_public_inputs.statement_hashes != expected_statement_hashes {
-                return Err("proof batch statement hash mismatch".to_string());
+                return Err("tx-proof-manifest statement hash mismatch".to_string());
             }
             let batch_public_values = batch_public_inputs
                 .to_values()
-                .map_err(|err| format!("proof batch public value encoding failed: {err}"))?;
+                .map_err(|err| format!("tx-proof-manifest public value encoding failed: {err}"))?;
             let encoded = encode_flat_batch_proof_bytes_with_kind(
-                FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+                FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
                 &batch_proof_bytes,
                 &batch_public_values,
             )
-            .map_err(|err| format!("proof batch payload encoding failed: {err}"))?;
+            .map_err(|err| format!("tx-proof-manifest payload encoding failed: {err}"))?;
 
             if std::env::var("HEGEMON_BATCH_ROUNDTRIP_VERIFY")
                 .map(|value| value == "1")
                 .unwrap_or(false)
             {
                 let payload = decode_flat_batch_proof_bytes(&encoded)
-                    .map_err(|err| format!("proof batch roundtrip decode failed: {err}"))?;
+                    .map_err(|err| format!("tx-proof-manifest roundtrip decode failed: {err}"))?;
                 let roundtrip_public_inputs =
-                    ProofBatchPublicInputs::try_from_values(&payload.batch_public_values).map_err(
-                        |err| format!("proof batch public input roundtrip decode failed: {err}"),
+                    TxProofManifestPublicInputs::try_from_values(&payload.batch_public_values).map_err(
+                        |err| format!("tx-proof-manifest public input roundtrip decode failed: {err}"),
                     )?;
-                proof_batch::verify_proof_batch(&payload.batch_proof, &roundtrip_public_inputs)
-                    .map_err(|err| format!("proof batch roundtrip verification failed: {err}"))?;
+                tx_proof_manifest::verify_tx_proof_manifest(&payload.batch_proof, &roundtrip_public_inputs)
+                    .map_err(|err| format!("tx-proof-manifest roundtrip verification failed: {err}"))?;
             }
             Ok(encoded)
         })?;
@@ -10229,6 +10230,47 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex as StdMutex, MutexGuard as StdMutexGuard, OnceLock};
+
+    struct BlockProofModeGuard {
+        previous: Option<String>,
+        _guard: StdMutexGuard<'static, ()>,
+    }
+
+    impl Drop for BlockProofModeGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe {
+                    std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", value);
+                },
+                None => unsafe {
+                    std::env::remove_var("HEGEMON_BLOCK_PROOF_MODE");
+                },
+            }
+        }
+    }
+
+    fn set_block_proof_mode(mode: &str) -> BlockProofModeGuard {
+        static ENV_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        let guard = ENV_LOCK
+            .get_or_init(|| StdMutex::new(()))
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", mode);
+        }
+        BlockProofModeGuard {
+            previous,
+            _guard: guard,
+        }
+    }
+
+    #[test]
+    fn flat_mode_falls_back_to_merge_root_after_tx_proof_manifest_removal() {
+        let _guard = set_block_proof_mode("flat");
+        assert_eq!(prepared_proof_mode_from_env(), PreparedProofMode::MergeRoot);
+    }
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
         kernel_shielded_extrinsic(

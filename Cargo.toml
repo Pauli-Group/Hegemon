@@ -4,7 +4,7 @@ members = [
     "circuits/transaction",
     "circuits/transaction-core",
     "circuits/batch",
-    "circuits/proof-batch",
+    "circuits/tx-proof-manifest",
     "circuits/settlement",
     "circuits/block",
     "circuits/bench",

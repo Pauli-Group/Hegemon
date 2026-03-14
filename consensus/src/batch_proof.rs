@@ -8,7 +8,7 @@ pub const FLAT_BATCH_PROOF_SCHEMA_V2: u8 = 2;
 /// Flat batch proof kind for Plonky3 batch STARK proof bytes.
 pub const FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK: u8 = 1;
 /// Flat batch proof kind for proof-byte batch proofs over canonical tx proof bytes.
-pub const FLAT_BATCH_PROOF_KIND_PROOF_BATCH: u8 = 2;
+pub const FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST: u8 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlatBatchProofPayloadV2 {
@@ -67,7 +67,7 @@ pub fn decode_flat_batch_proof_bytes(bytes: &[u8]) -> Result<FlatBatchProofPaylo
         )));
     }
     if payload.proof_kind != FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK
-        && payload.proof_kind != FLAT_BATCH_PROOF_KIND_PROOF_BATCH
+        && payload.proof_kind != FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST
     {
         return Err(ProofError::FlatBatchProofDecodeFailed(format!(
             "unsupported flat batch proof kind {}",
@@ -90,21 +90,21 @@ pub fn decode_flat_batch_proof_bytes(bytes: &[u8]) -> Result<FlatBatchProofPaylo
 #[cfg(test)]
 mod tests {
     use super::{
-        FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK, FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+        FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
         decode_flat_batch_proof_bytes, encode_flat_batch_proof_bytes,
         encode_flat_batch_proof_bytes_with_kind,
     };
 
     #[test]
-    fn proof_batch_kind_round_trips() {
+    fn tx_proof_manifest_kind_round_trips() {
         let encoded = encode_flat_batch_proof_bytes_with_kind(
-            FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+            FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
             &[1, 2, 3],
             &[4, 5, 6],
         )
         .expect("encode");
         let decoded = decode_flat_batch_proof_bytes(&encoded).expect("decode");
-        assert_eq!(decoded.proof_kind, FLAT_BATCH_PROOF_KIND_PROOF_BATCH);
+        assert_eq!(decoded.proof_kind, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST);
         assert_eq!(decoded.batch_proof, vec![1, 2, 3]);
         assert_eq!(decoded.batch_public_values, vec![4, 5, 6]);
     }

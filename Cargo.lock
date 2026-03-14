@@ -1473,8 +1473,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "batch-circuit",
+ "bincode",
  "block-circuit",
  "clap",
+ "consensus",
+ "p3-field",
  "p3-goldilocks",
  "p3-uni-stark",
  "protocol-versioning",
@@ -1485,6 +1488,7 @@ dependencies = [
  "state-merkle",
  "transaction-circuit",
  "transaction-core",
+ "tx-proof-manifest",
 ]
 
 [[package]]
@@ -1627,7 +1631,6 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot 0.12.5",
  "postcard",
- "proof-batch",
  "proptest",
  "protocol-versioning",
  "rayon",
@@ -1646,6 +1649,7 @@ dependencies = [
  "tokio",
  "tracing",
  "transaction-circuit",
+ "tx-proof-manifest",
  "zstd 0.13.3",
 ]
 
@@ -3658,7 +3662,6 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot 0.12.5",
  "pq-noise",
- "proof-batch",
  "protocol-kernel",
  "protocol-versioning",
  "rand 0.8.5",
@@ -3713,6 +3716,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transaction-circuit",
+ "tx-proof-manifest",
  "url",
  "wallet",
 ]
@@ -7727,18 +7731,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.111",
-]
-
-[[package]]
-name = "proof-batch"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "blake3",
- "p3-field",
- "serde",
- "thiserror 1.0.69",
- "transaction-circuit",
 ]
 
 [[package]]
@@ -11950,6 +11942,18 @@ dependencies = [
  "digest 0.10.7",
  "rand 0.8.5",
  "static_assertions",
+]
+
+[[package]]
+name = "tx-proof-manifest"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "p3-field",
+ "serde",
+ "thiserror 1.0.69",
+ "transaction-circuit",
 ]
 
 [[package]]

@@ -7,6 +7,11 @@ use anyhow::{anyhow, Context, Result};
 use batch_circuit::{prewarm_batch_verifier_cache, verify_batch_proof, BatchTransactionProver};
 use block_circuit::{verify_block_commitment, CommitmentBlockProver};
 use clap::Parser;
+use consensus::{
+    FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
+    encode_flat_batch_proof_bytes_with_kind,
+};
+use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use p3_uni_stark::get_log_num_quotient_chunks;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
@@ -29,6 +34,7 @@ use transaction_circuit::{TransactionAirP3, TransactionPublicInputsP3};
 use transaction_core::p3_air::{
     PREPROCESSED_WIDTH as TX_PREPROCESSED_WIDTH, TRACE_WIDTH as TX_TRACE_WIDTH,
 };
+use tx_proof_manifest::{build_transaction_proof_manifest, verify_tx_proof_manifest};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
@@ -59,6 +65,10 @@ struct Cli {
     /// Should match CIRCUIT_MERKLE_DEPTH (32) for STARK proof verification.
     #[arg(long, default_value_t = 32)]
     tree_depth: usize,
+    /// Batch sizes to compare across raw shipping, tx-proof-manifest wrapping,
+    /// and the legacy witness-batch STARK lane.
+    #[arg(long, value_delimiter = ',', default_values_t = vec![1usize, 2, 4, 8, 16])]
+    lane_batch_sizes: Vec<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -102,6 +112,28 @@ struct BenchReport {
     batch_prove_ns_per_tx: u128,
     batch_verify_ns_per_tx: u128,
     batch_transactions_per_second: f64,
+    lane_comparisons: Vec<LaneComparison>,
+}
+
+#[derive(Debug, Serialize)]
+struct LaneComparison {
+    batch_size: usize,
+    raw_shipping: LaneMetrics,
+    tx_proof_manifest: LaneMetrics,
+    legacy_witness_batch_stark: LaneMetrics,
+}
+
+#[derive(Debug, Serialize)]
+struct LaneMetrics {
+    batches: usize,
+    tx_count: usize,
+    prove_ns: u128,
+    verify_ns: u128,
+    bytes: usize,
+    prove_ns_per_tx: u128,
+    verify_ns_per_tx: u128,
+    bytes_per_tx: usize,
+    error: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -119,10 +151,45 @@ fn main() -> Result<()> {
         cli.batch_size,
         cli.batch_only,
         cli.batch_skip_verify,
+        &cli.lane_batch_sizes,
     )?;
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
+        let lane_summary = report
+            .lane_comparisons
+            .iter()
+            .map(|comparison| {
+                format!(
+                    " lanes[k={}]:raw(bytes={} prove_ns={} verify_ns={} err={}) manifest(bytes={} prove_ns={} verify_ns={} err={}) witness(bytes={} prove_ns={} verify_ns={} err={})",
+                    comparison.batch_size,
+                    comparison.raw_shipping.bytes,
+                    comparison.raw_shipping.prove_ns,
+                    comparison.raw_shipping.verify_ns,
+                    comparison
+                        .raw_shipping
+                        .error
+                        .as_deref()
+                        .unwrap_or("-"),
+                    comparison.tx_proof_manifest.bytes,
+                    comparison.tx_proof_manifest.prove_ns,
+                    comparison.tx_proof_manifest.verify_ns,
+                    comparison
+                        .tx_proof_manifest
+                        .error
+                        .as_deref()
+                        .unwrap_or("-"),
+                    comparison.legacy_witness_batch_stark.bytes,
+                    comparison.legacy_witness_batch_stark.prove_ns,
+                    comparison.legacy_witness_batch_stark.verify_ns,
+                    comparison
+                        .legacy_witness_batch_stark
+                        .error
+                        .as_deref()
+                        .unwrap_or("-"),
+                )
+            })
+            .collect::<String>();
         println!(
             "circuits-bench: iterations={iterations} tx_proof_avg={}B tx_proof_max={}B tx_rows={} tx_width={} tx_schedule_width={} tx_prove_ns_per_tx={} tx_verify_ns_per_tx={} witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2} batch_size={} batch_witness_ns={} batch_prove_ns={} batch_verify_ns={} batch_prove_ns_per_tx={} batch_verify_ns_per_tx={} batch_tx/s={:.2}",
             report.tx_proof_bytes_avg,
@@ -146,10 +213,398 @@ fn main() -> Result<()> {
             report.batch_verify_ns,
             report.batch_prove_ns_per_tx,
             report.batch_verify_ns_per_tx,
-            report.batch_transactions_per_second
+            report.batch_transactions_per_second,
         );
+        if !lane_summary.is_empty() {
+            println!("circuits-bench-comparison:{lane_summary}");
+        }
     }
     Ok(())
+}
+
+impl LaneMetrics {
+    fn failed(batch_size: usize, error: impl Into<String>) -> Self {
+        Self {
+            batches: 0,
+            tx_count: batch_size,
+            prove_ns: 0,
+            verify_ns: 0,
+            bytes: 0,
+            prove_ns_per_tx: 0,
+            verify_ns_per_tx: 0,
+            bytes_per_tx: 0,
+            error: Some(error.into()),
+        }
+    }
+
+    fn from_totals(
+        batch_size: usize,
+        batches: usize,
+        prove_ns: u128,
+        verify_ns: u128,
+        bytes: usize,
+    ) -> Self {
+        let tx_count = batches.saturating_mul(batch_size);
+        Self {
+            batches,
+            tx_count,
+            prove_ns,
+            verify_ns,
+            bytes,
+            prove_ns_per_tx: if tx_count > 0 {
+                prove_ns / tx_count as u128
+            } else {
+                0
+            },
+            verify_ns_per_tx: if tx_count > 0 {
+                verify_ns / tx_count as u128
+            } else {
+                0
+            },
+            bytes_per_tx: if tx_count > 0 { bytes / tx_count } else { 0 },
+            error: None,
+        }
+    }
+}
+
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => match payload.downcast::<&'static str>() {
+            Ok(message) => (*message).to_string(),
+            Err(_) => "non-string panic payload".to_string(),
+        },
+    }
+}
+
+fn benchmark_lane_comparisons(
+    proofs: &[transaction_circuit::proof::TransactionProof],
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    batch_sizes: &[usize],
+    batch_skip_verify: bool,
+) -> Result<Vec<LaneComparison>> {
+    let mut deduped_batch_sizes = batch_sizes.to_vec();
+    deduped_batch_sizes.sort_unstable();
+    deduped_batch_sizes.dedup();
+    let prewarm_sizes = deduped_batch_sizes
+        .iter()
+        .copied()
+        .filter(|batch_size| *batch_size > 0 && *batch_size <= proofs.len())
+        .collect::<Vec<_>>();
+    if !batch_skip_verify && !prewarm_sizes.is_empty() {
+        prewarm_batch_verifier_cache(&prewarm_sizes).context("prewarm batch verifier cache")?;
+    }
+
+    let mut rng = ChaCha20Rng::seed_from_u64(0xBA7C_1A9E);
+    let mut comparisons = Vec::with_capacity(deduped_batch_sizes.len());
+    for batch_size in deduped_batch_sizes {
+        if batch_size == 0 {
+            comparisons.push(LaneComparison {
+                batch_size,
+                raw_shipping: LaneMetrics::failed(batch_size, "batch_size must be greater than zero"),
+                tx_proof_manifest: LaneMetrics::failed(
+                    batch_size,
+                    "batch_size must be greater than zero",
+                ),
+                legacy_witness_batch_stark: LaneMetrics::failed(
+                    batch_size,
+                    "batch_size must be greater than zero",
+                ),
+            });
+            continue;
+        }
+        comparisons.push(LaneComparison {
+            batch_size,
+            raw_shipping: benchmark_raw_shipping_lane(proofs, verifying_key, batch_size),
+            tx_proof_manifest: benchmark_tx_proof_manifest_lane(
+                proofs,
+                batch_size,
+                batch_skip_verify,
+            ),
+            legacy_witness_batch_stark: benchmark_legacy_witness_batch_stark_lane(
+                &mut rng,
+                batch_size,
+                proofs.len(),
+                batch_skip_verify,
+            )?,
+        });
+    }
+
+    Ok(comparisons)
+}
+
+fn benchmark_raw_shipping_lane(
+    proofs: &[transaction_circuit::proof::TransactionProof],
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    batch_size: usize,
+) -> LaneMetrics {
+    let mut chunks = proofs.chunks_exact(batch_size);
+    if chunks.len() == 0 {
+        return LaneMetrics::failed(
+            batch_size,
+            format!("need at least {batch_size} tx proofs for raw shipping comparison"),
+        );
+    }
+
+    let mut verify_time = Duration::default();
+    let mut bytes = 0usize;
+    for chunk in &mut chunks {
+        match bincode::serialize(chunk) {
+            Ok(serialized) => {
+                bytes = bytes.saturating_add(serialized.len());
+            }
+            Err(err) => {
+                return LaneMetrics::failed(
+                    batch_size,
+                    format!("raw shipping serialization failed: {err}"),
+                );
+            }
+        }
+        for (index, proof) in chunk.iter().enumerate() {
+            let verify_started = Instant::now();
+            let verification = panic::catch_unwind(AssertUnwindSafe(|| {
+                proof::verify(proof, verifying_key)
+            }));
+            match verification {
+                Ok(Ok(report)) => {
+                    if !report.verified {
+                        return LaneMetrics::failed(
+                            batch_size,
+                            format!(
+                                "raw shipping tx verification returned !verified for chunk tx {index}"
+                            ),
+                        );
+                    }
+                    verify_time += verify_started.elapsed();
+                }
+                Ok(Err(err)) => {
+                    return LaneMetrics::failed(
+                        batch_size,
+                        format!("raw shipping tx verification failed: {err}"),
+                    );
+                }
+                Err(payload) => {
+                    return LaneMetrics::failed(
+                        batch_size,
+                        format!(
+                            "raw shipping tx verification panicked: {}",
+                            panic_payload_to_string(payload)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    LaneMetrics::from_totals(batch_size, proofs.len() / batch_size, 0, verify_time.as_nanos(), bytes)
+}
+
+fn benchmark_tx_proof_manifest_lane(
+    proofs: &[transaction_circuit::proof::TransactionProof],
+    batch_size: usize,
+    batch_skip_verify: bool,
+) -> LaneMetrics {
+    let mut chunks = proofs.chunks_exact(batch_size);
+    if chunks.len() == 0 {
+        return LaneMetrics::failed(
+            batch_size,
+            format!("need at least {batch_size} tx proofs for tx-proof-manifest comparison"),
+        );
+    }
+
+    let mut build_time = Duration::default();
+    let mut verify_time = Duration::default();
+    let mut bytes = 0usize;
+
+    for chunk in &mut chunks {
+        let build_started = Instant::now();
+        let build_result = panic::catch_unwind(AssertUnwindSafe(|| {
+            build_transaction_proof_manifest(chunk)
+        }));
+        let (manifest_bytes, public_inputs) = match build_result {
+            Ok(Ok(result)) => {
+                build_time += build_started.elapsed();
+                result
+            }
+            Ok(Err(err)) => {
+                return LaneMetrics::failed(
+                    batch_size,
+                    format!("tx-proof-manifest build failed: {err}"),
+                );
+            }
+            Err(payload) => {
+                return LaneMetrics::failed(
+                    batch_size,
+                    format!(
+                        "tx-proof-manifest build panicked: {}",
+                        panic_payload_to_string(payload)
+                    ),
+                );
+            }
+        };
+
+        let encoded = match public_inputs
+            .to_values()
+            .context("encode tx-proof-manifest public values")
+            .and_then(|public_values| {
+                encode_flat_batch_proof_bytes_with_kind(
+                    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
+                    &manifest_bytes,
+                    &public_values,
+                )
+                .context("encode tx-proof-manifest flat batch payload")
+            }) {
+            Ok(encoded) => encoded,
+            Err(err) => {
+                return LaneMetrics::failed(batch_size, err.to_string());
+            }
+        };
+        bytes = bytes.saturating_add(encoded.len());
+
+        if !batch_skip_verify {
+            let verify_started = Instant::now();
+            let verify_result = panic::catch_unwind(AssertUnwindSafe(|| {
+                verify_tx_proof_manifest(&manifest_bytes, &public_inputs)
+            }));
+            match verify_result {
+                Ok(Ok(())) => verify_time += verify_started.elapsed(),
+                Ok(Err(err)) => {
+                    return LaneMetrics::failed(
+                        batch_size,
+                        format!("tx-proof-manifest verify failed: {err}"),
+                    );
+                }
+                Err(payload) => {
+                    return LaneMetrics::failed(
+                        batch_size,
+                        format!(
+                            "tx-proof-manifest verify panicked: {}",
+                            panic_payload_to_string(payload)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    LaneMetrics::from_totals(
+        batch_size,
+        proofs.len() / batch_size,
+        build_time.as_nanos(),
+        verify_time.as_nanos(),
+        bytes,
+    )
+}
+
+fn benchmark_legacy_witness_batch_stark_lane(
+    rng: &mut ChaCha20Rng,
+    batch_size: usize,
+    total_proofs: usize,
+    batch_skip_verify: bool,
+) -> Result<LaneMetrics> {
+    let batches = total_proofs / batch_size;
+    if batches == 0 {
+        return Ok(LaneMetrics::failed(
+            batch_size,
+            format!("need at least {batch_size} txs for witness-batch comparison"),
+        ));
+    }
+
+    let batch_prover = BatchTransactionProver::new();
+    let mut prove_time = Duration::default();
+    let mut verify_time = Duration::default();
+    let mut bytes = 0usize;
+
+    for batch_idx in 0..batches {
+        let seed = (batch_idx as u64) << 16;
+        let base_witness = standalone_synthetic_witness(rng, seed);
+        let mut witnesses = Vec::with_capacity(batch_size);
+        for tx_idx in 0..batch_size {
+            let mut witness = base_witness.clone();
+            witness.sk_spend[0] ^= tx_idx as u8;
+            witness.sk_spend[1] ^= (tx_idx >> 8) as u8;
+            for output in &mut witness.outputs {
+                output.note.pk_recipient[0] ^= tx_idx as u8;
+                output.note.rho[0] ^= tx_idx as u8;
+                output.note.r[0] ^= tx_idx.wrapping_mul(31) as u8;
+            }
+            witnesses.push(witness);
+        }
+
+        let prove_started = Instant::now();
+        let prove_result = panic::catch_unwind(AssertUnwindSafe(|| {
+            batch_prover.prove_batch(&witnesses)
+        }));
+        let (batch_proof, batch_public_inputs) = match prove_result {
+            Ok(Ok(result)) => {
+                prove_time += prove_started.elapsed();
+                result
+            }
+            Ok(Err(err)) => {
+                return Ok(LaneMetrics::failed(
+                    batch_size,
+                    format!("legacy witness-batch prove failed: {err}"),
+                ));
+            }
+            Err(payload) => {
+                return Ok(LaneMetrics::failed(
+                    batch_size,
+                    format!(
+                        "legacy witness-batch prove panicked: {}",
+                        panic_payload_to_string(payload)
+                    ),
+                ));
+            }
+        };
+
+        let batch_proof_bytes = bincode::serialize(&batch_proof)
+            .context("serialize legacy witness-batch proof bytes")?;
+        let batch_public_values = batch_public_inputs
+            .to_vec()
+            .into_iter()
+            .map(|felt| felt.as_canonical_u64())
+            .collect::<Vec<_>>();
+        let encoded = encode_flat_batch_proof_bytes_with_kind(
+            FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
+            &batch_proof_bytes,
+            &batch_public_values,
+        )
+        .context("encode legacy witness-batch flat payload")?;
+        bytes = bytes.saturating_add(encoded.len());
+
+        if !batch_skip_verify {
+            let verify_started = Instant::now();
+            let verify_result = panic::catch_unwind(AssertUnwindSafe(|| {
+                verify_batch_proof(&batch_proof, &batch_public_inputs)
+            }));
+            match verify_result {
+                Ok(Ok(())) => verify_time += verify_started.elapsed(),
+                Ok(Err(err)) => {
+                    return Ok(LaneMetrics::failed(
+                        batch_size,
+                        format!("legacy witness-batch verify failed: {err}"),
+                    ));
+                }
+                Err(payload) => {
+                    return Ok(LaneMetrics::failed(
+                        batch_size,
+                        format!(
+                            "legacy witness-batch verify panicked: {}",
+                            panic_payload_to_string(payload)
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(LaneMetrics::from_totals(
+        batch_size,
+        batches,
+        prove_time.as_nanos(),
+        verify_time.as_nanos(),
+        bytes,
+    ))
 }
 
 fn run_benchmark(
@@ -160,6 +615,7 @@ fn run_benchmark(
     batch_size: usize,
     batch_only: bool,
     batch_skip_verify: bool,
+    lane_batch_sizes: &[usize],
 ) -> Result<BenchReport> {
     if iterations == 0 {
         return Err(anyhow!("iterations must be greater than zero"));
@@ -182,7 +638,7 @@ fn run_benchmark(
     let mut tx_prewarmed = false;
     let mut rng = ChaCha20Rng::seed_from_u64(0xC1C01E75);
 
-    let mut commitment_tree = if !batch_only {
+    let mut commitment_tree = if !batch_only && prove {
         Some(
             CommitmentTree::new(CIRCUIT_MERKLE_DEPTH)
                 .context("init shared commitment tree for benchmark")?,
@@ -196,14 +652,16 @@ fn run_benchmark(
             let witness_start = Instant::now();
             let witness = if smoke {
                 smoke_transaction_witness(idx as u8).context("build smoke transaction witness")?
-            } else {
+            } else if prove {
                 chain_synthetic_witness(
                     commitment_tree
                         .as_mut()
                         .expect("shared commitment tree available when proving transactions"),
                     idx as u64,
                 )
-                .context("build benchmark transaction witness")?
+                .context("build chain-linked benchmark transaction witness")?
+            } else {
+                standalone_synthetic_witness(&mut rng, idx as u64)
             };
             witness_time += witness_start.elapsed();
 
@@ -395,6 +853,11 @@ fn run_benchmark(
     let poseidon2_capacity_elems = transaction_circuit::constants::POSEIDON2_CAPACITY;
     let poseidon2_capacity_bits = poseidon2_capacity_elems * 64;
     let poseidon2_bht_pq_collision_bits = poseidon2_capacity_bits / 3;
+    let lane_comparisons = if batch_only {
+        Vec::new()
+    } else {
+        benchmark_lane_comparisons(&proofs, &verifying_key, lane_batch_sizes, batch_skip_verify)?
+    };
 
     Ok(BenchReport {
         iterations,
@@ -444,6 +907,7 @@ fn run_benchmark(
         batch_prove_ns_per_tx,
         batch_verify_ns_per_tx,
         batch_transactions_per_second,
+        lane_comparisons,
     })
 }
 

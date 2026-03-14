@@ -15,12 +15,13 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - [x] (2026-03-14) Confirmed that `consensus/src/batch_proof.rs` already has a versioned flat-batch payload with a `proof_kind` field, which is the clean insertion point for a new proof-byte batcher.
 - [x] (2026-03-14) Confirmed that `consensus/src/proof.rs` already enforces the right block-level flat-batch contract: ordered coverage, no gaps or overlaps, STARK verification, binding checks, zero tails for inactive slots, and statement-commitment recomputation.
 - [x] (2026-03-14) Confirmed that `node/src/substrate/prover_coordinator.rs` still bakes `parent_hash` and `block_number` into stage-work identities, which means the current job model is not yet truly parent-independent.
-- [x] (2026-03-14) Restored flat-mode proof-batch work publication so `prover_getWorkPackage` now includes the tx-proof/statement-hash payload instead of publishing dead chunk packages with `proof_batch_payload = None`.
-- [x] (2026-03-14) Added coordinator-side validation for proof-batch chunk submissions and reject dummy `FlatBatches` payloads before they enter the prepared-bundle cache.
-- [x] (2026-03-14) Removed parent dependence from proof-batch chunk package ids and verified the behavior with targeted node tests.
+- [x] (2026-03-14) Restored flat-mode tx-proof-manifest work publication so `prover_getWorkPackage` now includes the tx-proof/statement-hash payload instead of publishing dead chunk packages with `tx_proof_manifest_payload = None`.
+- [x] (2026-03-14) Added coordinator-side validation for tx-proof-manifest chunk submissions and reject dummy `FlatBatches` payloads before they enter the prepared-bundle cache.
+- [x] (2026-03-14) Removed parent dependence from tx-proof-manifest chunk package ids and verified the behavior with targeted node tests.
 - [x] (2026-03-14) Corrected `DESIGN.md` and `METHODS.md` to describe the proof-byte lane as a recovery prototype, not a finished permissionless throughput primitive.
-- [ ] Build and run a single-host benchmark harness for the **smallest warmed hot-path unit** of the replacement architecture.
-- [ ] Prove that the current `proof-batch` crate can survive real node-linked verification without panics and with timings that justify keeping it.
+- [x] (2026-03-14) Added a release benchmark harness that compares raw tx-proof shipping, `tx-proof-manifest`, and legacy witness-batch STARK side-by-side at `k=1,2,4,8`.
+- [x] (2026-03-14) Benchmarked the wrapper lane locally and killed it after raw tx-proof shipping won on marginal prove time and payload bytes.
+- [x] (2026-03-14) Made consensus/import verifier calls panic-safe and disabled `HEGEMON_BLOCK_PROOF_MODE=flat` generation so the dead wrapper lane cannot be rerun accidentally.
 - [ ] Re-run the acceptance matrix locally and only then re-enable remote topology tests.
 
 ## Surprises & Discoveries
@@ -30,10 +31,13 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - Observation: the present batch prover appears to rebuild preprocessing per prove. `circuits/batch/src/p3_prover.rs` calls `setup_preprocessed()` inside `prove()` before `prove_with_preprocessed()`. Unless there is higher-level memoization that is not obvious from the callsite, each job is paying setup overhead that should be amortized.
 - Observation: the consensus flat-batch verifier is already stricter than the architecture discussion sometimes assumed. `consensus/src/proof.rs` sorts batch items by `start_tx_index`, rejects zero-length items, rejects gaps and overlaps, decodes and verifies each batch proof, checks active nullifiers and commitments against the covered tx slice, rejects non-zero inactive tails, and recomputes the full statement-hash commitment at the end.
 - Observation: the coordinator still leaks parent dependence into work identities. `node/src/substrate/prover_coordinator.rs` includes `parent_hash` and `block_number` in `stage_work_id()` and still imports network artifacts with `candidate_bundle_key(parent_hash, &payload)`. That is exactly the wrong place to bind the expensive work.
-- Observation: flat-mode external proof-batch work publication was dead in the current branch. `node/src/substrate/service.rs::build_root_finalize_work_data()` returned `None` unless `HEGEMON_BLOCK_PROOF_MODE=merge_root`, so `prover_getWorkPackage` published `proof_batch_prove` packages with no `proof_batch_payload` and the standalone worker immediately skipped them.
-  Evidence: `node/src/bin/prover_worker.rs::work_flat_once()` exits early when `package.proof_batch_payload` is absent; targeted node test `flat_mode_external_work_packages_include_proof_batch_payloads` now proves the payload is present.
-- Observation: the proof-batch prototype still is not an accepted proving primitive. Under the node-linked build, the positive “generate proof-batch payload and verify it” test hit a Plonky3 constraint panic on the tx-proof verification path.
-  Evidence: the rejected positive test failed in `p3-uni-stark` with `constraints had nonzero value on row 0`; coordinator validation now catches proof-batch verifier panics and converts them into rejections instead of crashing the node.
+- Observation: flat-mode external tx-proof-manifest work publication was dead in the current branch. `node/src/substrate/service.rs::build_root_finalize_work_data()` returned `None` unless `HEGEMON_BLOCK_PROOF_MODE=merge_root`, so `prover_getWorkPackage` published `tx_proof_manifest_build` packages with no `tx_proof_manifest_payload` and the standalone worker immediately skipped them.
+  Evidence: `node/src/bin/prover_worker.rs::work_flat_once()` exits early when `package.tx_proof_manifest_payload` is absent; targeted node test `flat_mode_external_work_packages_include_tx_proof_manifest_payloads` now proves the payload is present.
+- Observation: the tx-proof-manifest prototype still is not an accepted proving primitive. Under the node-linked build, the positive “generate tx-proof-manifest payload and verify it” test hit a Plonky3 constraint panic on the tx-proof verification path.
+  Evidence: the rejected positive test failed in `p3-uni-stark` with `constraints had nonzero value on row 0`; coordinator validation now catches tx-proof-manifest verifier panics and converts them into rejections instead of crashing the node.
+- Observation: the warmed local lane benchmark falsified the tx-proof-manifest wrapper on its own stated purpose. On `cargo run --release -p circuits-bench -- --json --iterations 8 --batch-size 0 --lane-batch-sizes 1,2,4,8`, raw shipping beat the wrapper at every measured `k`: raw shipping adds zero marginal prove time, while `tx-proof-manifest` added about `66-69 ms` of extra build time over the same 8 tx proofs and slightly increased payload size from about `354.2 KiB/tx` to `355.2 KiB/tx`.
+  Evidence: `k=1` raw `bytes_per_tx=354244`, manifest `355287`, manifest `prove_ns_per_tx=8445276`; `k=8` raw `bytes_per_tx=354237`, manifest `355243`, manifest `prove_ns_per_tx=8521067`.
+- Observation: three-way live inclusion latency is not honestly measurable on the current node for the legacy witness-batch STARK lane because the hardened node path no longer accepts spend-witness sidecars. Reintroducing witness upload just to save a dead design would be a regression, so the wrapper was killed on the hot-path benchmark before any new live rerun.
 
 ## Decision Log
 
@@ -49,14 +53,16 @@ After this change, a new agent should be able to read this plan, inspect the nam
   Date/Author: 2026-03-14 / OpenAI assistant
 - Decision: No more paid remote proving runs until the replacement hot-path unit is measured warm, in isolation, against the 60-second budget. Rationale: the previous effort failed by mixing architecture uncertainty with remote rollout.
   Date/Author: 2026-03-14 / OpenAI assistant
-- Decision: Do not accept blind external proof-batch chunk payloads just because they fit the envelope. Rationale: the predecessor’s path would happily cache dummy `FlatBatches` artifacts; fail-closed means rejecting bad chunk results before block assembly sees them.
+- Decision: Do not accept blind external tx-proof-manifest chunk payloads just because they fit the envelope. Rationale: the predecessor’s path would happily cache dummy `FlatBatches` artifacts; fail-closed means rejecting bad chunk results before block assembly sees them.
   Date/Author: 2026-03-14 / OpenAI assistant
 - Decision: Downgrade the proof-byte lane description from “finished permissionless path” to “recovery prototype” until the verifier path survives node-linked testing and the benchmark harness exists. Rationale: the current code has a useful integration seam, but the positive proof story is still unearned.
+  Date/Author: 2026-03-14 / OpenAI assistant
+- Decision: Kill the tx-proof-manifest lane after the local release benchmark. Rationale: raw tx-proof shipping won on marginal prove cost and payload bytes at every measured `k`, so carrying the wrapper further would violate the acceptance rule and waste more time.
   Date/Author: 2026-03-14 / OpenAI assistant
 
 ## Outcomes & Retrospective
 
-Updated outcome: the flat proof-batch worker path is no longer dead on arrival, and the coordinator no longer accepts dummy chunk artifacts on that lane. That is real progress because it restores an honest local falsification loop for the external-work plumbing. It is **not** proof that the new architecture works: the proof-batch crate still lacks the benchmark harness required by Milestone 1, and the positive node-linked verification story is weak enough that the optimistic end-to-end acceptance test had to be removed after it triggered a Plonky3 constraint panic. The immediate success condition remains “make the next measurement and kill the design if it fails,” not “declare victory because some code compiled.”
+Updated outcome: the local falsification loop now did its job. The tx-proof-manifest lane was renamed honestly, benchmarked warm against raw shipping and legacy witness batching, and then disabled in generation/import once the numbers showed it loses. Consensus/import verification is now panic-safe for tx proofs, flat-batch proofs, merge-root proofs, and commitment proofs, so a bad verifier panic becomes a block rejection instead of a node crash. The remaining open work is no longer “rescue the wrapper”; it is “measure and improve the live lanes that still have a plausible path to real inclusion throughput.”
 
 ## Context and Orientation
 
@@ -117,7 +123,7 @@ Do not start with OVH or `hegemon-prover`. Start by adding or reusing a local be
 
 - `circuits/bench/`
 - `circuits/batch/`
-- a new crate such as `circuits/proof-batch/`
+- a new crate such as `circuits/tx-proof-manifest/`
 
 That harness must report, at minimum:
 
@@ -140,7 +146,7 @@ Acceptance for Milestone 1:
 
 The current batch circuit is not a permissionless scaling primitive because it consumes witness material. The second milestone is to prototype a new microbatch proof that accepts **canonical tx proof bytes plus their decoded public inputs**, verifies a fixed number of them, and emits the same block-level outputs the current flat-batch verification path expects.
 
-Create a new crate, tentatively `circuits/proof-batch/`. Do not repurpose `circuits/batch` into a public prover-market lane unless you also remove all witness dependence. The new crate should:
+Create a new crate, tentatively `circuits/tx-proof-manifest/`. Do not repurpose `circuits/batch` into a public prover-market lane unless you also remove all witness dependence. The new crate should:
 
 - accept a fixed batch size `k`;
 - accept canonical tx proof bytes and the public values needed to verify them;
@@ -206,7 +212,7 @@ If any of these fail, stop and kill the design. Do not write deployment glue to 
 
 4. Add or update a local benchmark harness for the current batch lane to measure warm prove/verify/setup cost. The point is not to save the current lane; the point is to establish a baseline the replacement must beat.
 
-5. Create `circuits/proof-batch/` as a new workspace member. Keep the first version deliberately small and fixed-shape. Do not attempt generalized recursion or adaptive tree structure in the first prototype.
+5. Create `circuits/tx-proof-manifest/` as a new workspace member. Keep the first version deliberately small and fixed-shape. Do not attempt generalized recursion or adaptive tree structure in the first prototype.
 
 6. In `consensus/src/batch_proof.rs`, add a second proof kind constant and extend the encoder/decoder so the payload envelope can carry the new proof type.
 
@@ -272,11 +278,11 @@ Existing interfaces you should preserve unless measurement forces a change:
 
 New interfaces that should exist by the end of the prototype:
 
-- a new proof-byte batch crate, tentatively `proof-batch-circuit` or equivalent
+- a new proof-byte batch crate, tentatively `tx-proof-manifest-circuit` or equivalent
 - a proof-kind dispatch path in `consensus/src/batch_proof.rs`
 - a proof-kind dispatch path in `consensus/src/proof.rs`
 - a parent-independent chunk identity in `node/src/substrate/prover_coordinator.rs`
 
 Revision note (2026-03-14): Initial recovery plan created from the supplied failure handoff and a cross-check of the current `architecture-cleanup` branch. The purpose of this revision is to give successor agents a self-contained starting point that is stricter than the failed effort and explicitly tied to measurable acceptance gates.
 
-Revision note (2026-03-14, later): Updated after repairing the dead flat proof-batch work-publication path and adding coordinator-side rejection for dummy chunk payloads. This revision also records the important negative result that the current proof-batch prototype still does not deserve “finished lane” language because node-linked verification remains fragile and the benchmark harness is still missing.
+Revision note (2026-03-14, later): Updated after repairing the dead flat tx-proof-manifest work-publication path and adding coordinator-side rejection for dummy chunk payloads. This revision also records the important negative result that the current tx-proof-manifest prototype still does not deserve “finished lane” language because node-linked verification remains fragile and the benchmark harness is still missing.

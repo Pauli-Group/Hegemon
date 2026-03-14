@@ -42,7 +42,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
 batch-circuit = { path = "../circuits/batch", optional = true }
-proof-batch = { path = "../circuits/proof-batch", optional = true }
+tx-proof-manifest = { path = "../circuits/tx-proof-manifest", optional = true }
 aggregation-circuit = { path = "../circuits/aggregation", optional = true }
 block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
@@ -174,7 +174,7 @@ substrate = [
     "dep:block-circuit",
     "dep:aggregation-circuit",
     "dep:batch-circuit",
-    "dep:proof-batch",
+    "dep:tx-proof-manifest",
     "consensus/substrate",
     "dep:p3-field",
 ]

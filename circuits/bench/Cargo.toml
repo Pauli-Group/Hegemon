@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+bincode = "1"
 clap = { version = "4", features = ["derive"] }
 rand = { version = "0.8", features = ["std"] }
 rand_chacha = "0.3"
@@ -17,7 +18,10 @@ protocol-versioning = { path = "../../protocol/versioning" }
 state-merkle = { path = "../../state/merkle" }
 p3-goldilocks = { workspace = true }
 p3-uni-stark = { workspace = true }
+p3-field = { workspace = true }
 batch-circuit = { path = "../batch" }
+consensus = { path = "../../consensus" }
+tx-proof-manifest = { path = "../tx-proof-manifest" }
 
 [lints]
 workspace = true

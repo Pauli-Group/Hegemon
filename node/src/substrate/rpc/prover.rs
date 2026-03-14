@@ -1,7 +1,7 @@
 //! Prover market RPC endpoints.
 
 use crate::substrate::prover_coordinator::{
-    LeafBatchWorkData, MergeNodeWorkData, ProofBatchWorkData, ProverCoordinator,
+    LeafBatchWorkData, MergeNodeWorkData, TxProofManifestWorkData, ProverCoordinator,
     RootFinalizeWorkData, WorkStatus,
 };
 use base64::Engine;
@@ -29,7 +29,7 @@ pub struct WorkPackageResponse {
     pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<String>,
-    pub proof_batch_payload: Option<ProofBatchPayloadResponse>,
+    pub tx_proof_manifest_payload: Option<TxProofManifestPayloadResponse>,
     pub leaf_batch_payload: Option<LeafBatchPayloadResponse>,
     pub merge_node_payload: Option<MergeNodePayloadResponse>,
     pub root_finalize_payload: Option<RootFinalizePayloadResponse>,
@@ -38,7 +38,7 @@ pub struct WorkPackageResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProofBatchPayloadResponse {
+pub struct TxProofManifestPayloadResponse {
     pub statement_hashes: Vec<String>,
     pub tx_proofs_bincode: String,
     pub tx_statements_commitment: String,
@@ -258,17 +258,17 @@ impl ProverRpc {
         })
     }
 
-    fn map_proof_batch_payload(
-        payload: ProofBatchWorkData,
-    ) -> RpcResult<ProofBatchPayloadResponse> {
+    fn map_tx_proof_manifest_payload(
+        payload: TxProofManifestWorkData,
+    ) -> RpcResult<TxProofManifestPayloadResponse> {
         let tx_proofs_bincode = bincode::serialize(&payload.tx_proofs).map_err(|err| {
             ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
-                format!("failed to serialize proof-batch tx proofs: {err}"),
+                format!("failed to serialize tx-proof-manifest tx proofs: {err}"),
                 None::<()>,
             )
         })?;
-        Ok(ProofBatchPayloadResponse {
+        Ok(TxProofManifestPayloadResponse {
             statement_hashes: payload
                 .statement_hashes
                 .into_iter()
@@ -327,9 +327,9 @@ impl ProverRpc {
                 .into_iter()
                 .map(|tx| format!("0x{}", hex::encode(tx)))
                 .collect(),
-            proof_batch_payload: package
-                .proof_batch_payload
-                .map(Self::map_proof_batch_payload)
+            tx_proof_manifest_payload: package
+                .tx_proof_manifest_payload
+                .map(Self::map_tx_proof_manifest_payload)
                 .transpose()?,
             leaf_batch_payload: package
                 .leaf_batch_payload

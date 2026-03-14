@@ -1,5 +1,5 @@
 [package]
-name = "proof-batch"
+name = "tx-proof-manifest"
 version = "0.1.0"
 edition = "2021"
 authors = ["Pauli Group Inc."]

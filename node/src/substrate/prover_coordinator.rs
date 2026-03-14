@@ -1,11 +1,11 @@
 use block_circuit::CommitmentBlockProver;
 use consensus::{
     decode_flat_batch_proof_bytes, encode_aggregation_proof_bytes,
-    FLAT_BATCH_PROOF_KIND_PROOF_BATCH,
+    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex;
-use proof_batch::{verify_proof_batch, ProofBatchPublicInputs};
+use tx_proof_manifest::{verify_tx_proof_manifest, TxProofManifestPublicInputs};
 use sp_core::H256;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
@@ -63,15 +63,15 @@ fn block_proof_bundle_payload_bytes(
     payload.commitment_proof.data.len() + aggregation_bytes
 }
 
-fn expected_proof_batch_public_inputs(
-    payload: &ProofBatchWorkData,
-) -> Result<ProofBatchPublicInputs, String> {
+fn expected_tx_proof_manifest_public_inputs(
+    payload: &TxProofManifestWorkData,
+) -> Result<TxProofManifestPublicInputs, String> {
     if payload.tx_proofs.is_empty() {
-        return Err("proof-batch payload is missing tx proofs".to_string());
+        return Err("tx-proof-manifest payload is missing tx proofs".to_string());
     }
     if payload.statement_hashes.len() != payload.tx_proofs.len() {
         return Err(format!(
-            "proof-batch payload statement hash count {} does not match tx proof count {}",
+            "tx-proof-manifest payload statement hash count {} does not match tx proof count {}",
             payload.statement_hashes.len(),
             payload.tx_proofs.len()
         ));
@@ -86,7 +86,7 @@ fn expected_proof_batch_public_inputs(
         match circuit_version {
             Some(expected) if expected != version => {
                 return Err(
-                    "proof-batch payload contains mixed transaction circuit versions".into(),
+                    "tx-proof-manifest payload contains mixed transaction circuit versions".into(),
                 );
             }
             None => circuit_version = Some(version),
@@ -94,12 +94,12 @@ fn expected_proof_batch_public_inputs(
         }
         total_fee = total_fee
             .checked_add(proof.public_inputs.native_fee)
-            .ok_or_else(|| "proof-batch payload total fee overflowed u64".to_string())?;
+            .ok_or_else(|| "tx-proof-manifest payload total fee overflowed u64".to_string())?;
         nullifiers.extend_from_slice(&proof.public_inputs.nullifiers);
         commitments.extend_from_slice(&proof.public_inputs.commitments);
     }
 
-    let public_inputs = ProofBatchPublicInputs {
+    let public_inputs = TxProofManifestPublicInputs {
         batch_size: payload.tx_proofs.len() as u32,
         statement_hashes: payload.statement_hashes.clone(),
         nullifiers,
@@ -109,43 +109,43 @@ fn expected_proof_batch_public_inputs(
     };
     public_inputs
         .validate()
-        .map_err(|err| format!("proof-batch payload public inputs are invalid: {err}"))?;
+        .map_err(|err| format!("tx-proof-manifest payload public inputs are invalid: {err}"))?;
     Ok(public_inputs)
 }
 
-fn verify_external_proof_batch_result(
+fn verify_external_tx_proof_manifest_result(
     package: &WorkPackage,
     payload: &pallet_shielded_pool::types::CandidateArtifact,
 ) -> Result<(), String> {
     let expected = package
-        .proof_batch_payload
+        .tx_proof_manifest_payload
         .as_ref()
-        .ok_or_else(|| "proof-batch work package is missing proof material".to_string())?;
-    let expected_public_inputs = expected_proof_batch_public_inputs(expected)?;
+        .ok_or_else(|| "tx-proof-manifest work package is missing proof material".to_string())?;
+    let expected_public_inputs = expected_tx_proof_manifest_public_inputs(expected)?;
 
     if payload.proof_mode != pallet_shielded_pool::types::BlockProofMode::FlatBatches {
-        return Err("proof-batch work result must use FlatBatches mode".to_string());
+        return Err("tx-proof-manifest work result must use FlatBatches mode".to_string());
     }
     if payload.merge_root.is_some() {
-        return Err("proof-batch work result must not include merge-root payloads".to_string());
+        return Err("tx-proof-manifest work result must not include merge-root payloads".to_string());
     }
     if !payload.commitment_proof.data.is_empty() {
         return Err(
-            "proof-batch work result must not include a parent-bound commitment proof".to_string(),
+            "tx-proof-manifest work result must not include a parent-bound commitment proof".to_string(),
         );
     }
     if payload.tx_statements_commitment != expected.tx_statements_commitment {
-        return Err("proof-batch work result tx_statements_commitment mismatch".to_string());
+        return Err("tx-proof-manifest work result tx_statements_commitment mismatch".to_string());
     }
     if payload.da_root != expected.da_root {
-        return Err("proof-batch work result da_root mismatch".to_string());
+        return Err("tx-proof-manifest work result da_root mismatch".to_string());
     }
     if payload.da_chunk_count != expected.da_chunk_count {
-        return Err("proof-batch work result da_chunk_count mismatch".to_string());
+        return Err("tx-proof-manifest work result da_chunk_count mismatch".to_string());
     }
     if payload.flat_batches.len() != 1 {
         return Err(format!(
-            "proof-batch work result must include exactly one flat batch item, got {}",
+            "tx-proof-manifest work result must include exactly one flat batch item, got {}",
             payload.flat_batches.len()
         ));
     }
@@ -153,50 +153,50 @@ fn verify_external_proof_batch_result(
     let batch = &payload.flat_batches[0];
     if batch.start_tx_index != package.chunk_start_tx_index {
         return Err(format!(
-            "proof-batch work result start_tx_index mismatch: expected {}, got {}",
+            "tx-proof-manifest work result start_tx_index mismatch: expected {}, got {}",
             package.chunk_start_tx_index, batch.start_tx_index
         ));
     }
     if batch.tx_count != package.chunk_tx_count {
         return Err(format!(
-            "proof-batch work result tx_count mismatch: expected {}, got {}",
+            "tx-proof-manifest work result tx_count mismatch: expected {}, got {}",
             package.chunk_tx_count, batch.tx_count
         ));
     }
     if batch.proof_format != pallet_shielded_pool::types::BLOCK_PROOF_FORMAT_ID_V5 {
         return Err(format!(
-            "proof-batch work result uses unsupported proof format {}",
+            "tx-proof-manifest work result uses unsupported proof format {}",
             batch.proof_format
         ));
     }
 
     let decoded = decode_flat_batch_proof_bytes(&batch.proof.data)
-        .map_err(|err| format!("proof-batch work result decode failed: {err}"))?;
-    if decoded.proof_kind != FLAT_BATCH_PROOF_KIND_PROOF_BATCH {
+        .map_err(|err| format!("tx-proof-manifest work result decode failed: {err}"))?;
+    if decoded.proof_kind != FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST {
         return Err(format!(
-            "proof-batch work result uses unsupported proof kind {}",
+            "tx-proof-manifest work result uses unsupported proof kind {}",
             decoded.proof_kind
         ));
     }
-    let public_inputs = ProofBatchPublicInputs::try_from_values(&decoded.batch_public_values)
-        .map_err(|err| format!("proof-batch work result public inputs are invalid: {err}"))?;
+    let public_inputs = TxProofManifestPublicInputs::try_from_values(&decoded.batch_public_values)
+        .map_err(|err| format!("tx-proof-manifest work result public inputs are invalid: {err}"))?;
     if public_inputs != expected_public_inputs {
         return Err(
-            "proof-batch work result public inputs do not match the scheduled chunk".into(),
+            "tx-proof-manifest work result public inputs do not match the scheduled chunk".into(),
         );
     }
     let verification = panic::catch_unwind(AssertUnwindSafe(|| {
-        verify_proof_batch(&decoded.batch_proof, &public_inputs)
+        verify_tx_proof_manifest(&decoded.batch_proof, &public_inputs)
     }));
     match verification {
         Ok(Ok(())) => {}
         Ok(Err(err)) => {
             return Err(format!(
-                "proof-batch work result verification failed: {err}"
+                "tx-proof-manifest work result verification failed: {err}"
             ));
         }
         Err(_) => {
-            return Err("proof-batch work result verification panicked".to_string());
+            return Err("tx-proof-manifest work result verification panicked".to_string());
         }
     }
     Ok(())
@@ -218,7 +218,7 @@ pub struct WorkPackage {
     pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<Vec<u8>>,
-    pub proof_batch_payload: Option<ProofBatchWorkData>,
+    pub tx_proof_manifest_payload: Option<TxProofManifestWorkData>,
     pub leaf_batch_payload: Option<LeafBatchWorkData>,
     pub merge_node_payload: Option<MergeNodeWorkData>,
     pub root_finalize_payload: Option<RootFinalizeWorkData>,
@@ -227,7 +227,7 @@ pub struct WorkPackage {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProofBatchWorkData {
+pub struct TxProofManifestWorkData {
     pub statement_hashes: Vec<[u8; 48]>,
     pub tx_proofs: Vec<TransactionProof>,
     pub tx_statements_commitment: [u8; 48],
@@ -920,13 +920,13 @@ impl ProverCoordinator {
         ))
     }
 
-    fn proof_batch_shape_id(
+    fn tx_proof_manifest_shape_id(
         stage_index: u32,
         tx_count: u32,
         candidate_digest: [u8; 32],
     ) -> [u8; 32] {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"proof-batch-prove");
+        bytes.extend_from_slice(b"tx-proof-manifest-build");
         bytes.extend_from_slice(&stage_index.to_le_bytes());
         bytes.extend_from_slice(&tx_count.to_le_bytes());
         bytes.extend_from_slice(&candidate_digest);
@@ -1493,8 +1493,8 @@ impl ProverCoordinator {
             return Err("work result payload exceeds max size".to_string());
         }
 
-        if package.stage_type == "proof_batch_prove" {
-            if let Err(error) = verify_external_proof_batch_result(&package, &payload) {
+        if package.stage_type == "tx_proof_manifest_build" {
+            if let Err(error) = verify_external_tx_proof_manifest_result(&package, &payload) {
                 state
                     .work_status
                     .insert(package_id.to_string(), WorkStatus::Rejected(error.clone()));
@@ -1509,7 +1509,7 @@ impl ProverCoordinator {
             .source_submissions
             .insert(source_key, source_count.saturating_add(1));
 
-        if package.stage_type == "proof_batch_prove" {
+        if package.stage_type == "tx_proof_manifest_build" {
             let maybe_bundle =
                 Self::register_chunk_result_and_maybe_assemble(&mut state, &package, payload)?;
             state
@@ -1802,7 +1802,7 @@ impl ProverCoordinator {
                     root_payload.sorted_nullifiers.clone(),
                 )
                 .map_err(|err| {
-                    format!("flat proof-batch commitment proof generation failed: {err}")
+                    format!("flat tx-proof-manifest commitment proof generation failed: {err}")
                 })?;
             return Ok(pallet_shielded_pool::types::CandidateArtifact {
                 version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
@@ -2004,7 +2004,7 @@ impl ProverCoordinator {
         }
 
         // Publish the largest candidate either as recursive leaf/merge work for
-        // MergeRoot mode or as proof-batch fan-out work for FlatBatches.
+        // MergeRoot mode or as tx-proof-manifest fan-out work for FlatBatches.
         if let Some(primary_candidate) = candidate_variants.back().cloned() {
             if primary_candidate.len() >= self.config.target_txs {
                 state.target_batch_scheduled_at_ms = Some(Self::now_ms());
@@ -2093,10 +2093,10 @@ impl ProverCoordinator {
 
                 let mut chunk_plans = Vec::with_capacity(chunks.len());
                 for (chunk_start_tx_index, chunk_txs) in chunks {
-                    let proof_batch_payload = flat_root_payload.as_ref().map(|root_payload| {
+                    let tx_proof_manifest_payload = flat_root_payload.as_ref().map(|root_payload| {
                         let start = chunk_start_tx_index as usize;
                         let end = start + chunk_txs.len();
-                        ProofBatchWorkData {
+                        TxProofManifestWorkData {
                             statement_hashes: root_payload.statement_hashes[start..end].to_vec(),
                             tx_proofs: root_payload.tx_proofs[start..end].to_vec(),
                             tx_statements_commitment: root_payload.tx_statements_commitment,
@@ -2112,7 +2112,7 @@ impl ProverCoordinator {
                         chunk_start_tx_index,
                         expected_chunks,
                         self.config.work_package_ttl,
-                        proof_batch_payload,
+                        tx_proof_manifest_payload,
                     );
                     let package_id = package.package_id.clone();
                     chunk_plans.push(ChunkPlan {
@@ -2461,10 +2461,11 @@ impl ProverCoordinator {
             || raw.eq_ignore_ascii_case("flat_batches")
             || raw.eq_ignore_ascii_case("flatbatches")
         {
-            pallet_shielded_pool::types::BlockProofMode::FlatBatches
-        } else {
-            pallet_shielded_pool::types::BlockProofMode::MergeRoot
+            tracing::warn!(
+                "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to merge_root"
+            );
         }
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot
     }
 
     fn leaf_fan_in() -> usize {
@@ -2574,7 +2575,7 @@ impl ProverCoordinator {
             dependencies: Vec::new(),
             tx_count: chunk_tx_count as u32,
             candidate_txs,
-            proof_batch_payload: None,
+            tx_proof_manifest_payload: None,
             leaf_batch_payload: Some(payload),
             merge_node_payload: None,
             root_finalize_payload: None,
@@ -2633,7 +2634,7 @@ impl ProverCoordinator {
             dependencies,
             tx_count: subtree_tx_count,
             candidate_txs,
-            proof_batch_payload: None,
+            tx_proof_manifest_payload: None,
             leaf_batch_payload: None,
             merge_node_payload: Some(payload),
             root_finalize_payload: None,
@@ -2650,16 +2651,16 @@ impl ProverCoordinator {
         chunk_start_tx_index: u32,
         expected_chunks: u16,
         ttl: Duration,
-        payload: Option<ProofBatchWorkData>,
+        payload: Option<TxProofManifestWorkData>,
     ) -> WorkPackage {
         let created_at_ms = Self::now_ms();
         let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
         let tx_count = candidate_txs.len() as u32;
         let chunk_tx_count = tx_count.min(u16::MAX as u32) as u16;
         let candidate_digest = Self::candidate_digest(&candidate_txs);
-        let stage_type = "proof_batch_prove".to_string();
+        let stage_type = "tx_proof_manifest_build".to_string();
         let stage_index = chunk_start_tx_index / Self::batch_slot_txs().max(1) as u32;
-        let shape_id = Self::proof_batch_shape_id(stage_index, tx_count, candidate_digest);
+        let shape_id = Self::tx_proof_manifest_shape_id(stage_index, tx_count, candidate_digest);
         let dependencies = Vec::new();
         let package_id =
             Self::chunk_work_package_id(&candidate_set_id, chunk_start_tx_index, chunk_tx_count);
@@ -2678,7 +2679,7 @@ impl ProverCoordinator {
             dependencies,
             tx_count,
             candidate_txs,
-            proof_batch_payload: payload,
+            tx_proof_manifest_payload: payload,
             leaf_batch_payload: None,
             merge_node_payload: None,
             root_finalize_payload: None,
@@ -2728,7 +2729,7 @@ impl ProverCoordinator {
             dependencies,
             tx_count,
             candidate_txs,
-            proof_batch_payload: None,
+            tx_proof_manifest_payload: None,
             leaf_batch_payload: None,
             merge_node_payload: None,
             root_finalize_payload: Some(payload),
@@ -3512,6 +3513,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn flat_mode_falls_back_to_merge_root_after_tx_proof_manifest_removal() {
+        let _guard = set_block_proof_mode("flat");
+        assert_eq!(
+            ProverCoordinator::prepared_proof_mode_from_env(),
+            pallet_shielded_pool::types::BlockProofMode::MergeRoot
+        );
+    }
+
     fn ready_payload(
         tx_count: u32,
         commitment: [u8; 48],
@@ -3654,7 +3664,7 @@ mod tests {
         }
     }
 
-    fn proof_batch_sample_witness() -> TransactionWitness {
+    fn tx_proof_manifest_sample_witness() -> TransactionWitness {
         let sk_spend = [42u8; 32];
         let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
         let input_note = NoteData {
@@ -3703,7 +3713,7 @@ mod tests {
         static SAMPLE_TX_PROOF: OnceLock<TransactionProof> = OnceLock::new();
         SAMPLE_TX_PROOF
             .get_or_init(|| {
-                let witness = proof_batch_sample_witness();
+                let witness = tx_proof_manifest_sample_witness();
                 let (proving_key, _) = generate_keys();
                 transaction_circuit::proof::prove(&witness, &proving_key).expect("sample tx proof")
             })
@@ -3770,7 +3780,7 @@ mod tests {
     }
 
     #[test]
-    fn proof_batch_ids_are_parent_independent() {
+    fn tx_proof_manifest_ids_are_parent_independent() {
         let candidate_txs = vec![vec![1u8], vec![2u8], vec![3u8]];
         let candidate_set_id = ProverCoordinator::candidate_set_id(&candidate_txs);
         let first_parent = H256::repeat_byte(1);
@@ -4182,7 +4192,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn flat_mode_external_work_packages_include_proof_batch_payloads() {
+    async fn flat_mode_external_work_packages_include_tx_proof_manifest_payloads() {
         let _mode = set_block_proof_mode("flat");
         let parent_hash = H256::repeat_byte(45);
         let mut config = test_config();
@@ -4193,7 +4203,7 @@ mod tests {
         let pending = Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8]]);
         let build = Arc::new(
             move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
-                Err("local builder disabled for proof-batch test".to_string())
+                Err("local builder disabled for tx-proof-manifest test".to_string())
             },
         );
         let root_finalize = Arc::new(
@@ -4214,25 +4224,25 @@ mod tests {
 
         let package = coordinator
             .get_work_package()
-            .expect("proof-batch work package should be published");
-        assert_eq!(package.stage_type, "proof_batch_prove");
-        assert!(package.proof_batch_payload.is_some());
-        let proof_batch_payload = package
-            .proof_batch_payload
+            .expect("tx-proof-manifest work package should be published");
+        assert_eq!(package.stage_type, "tx_proof_manifest_build");
+        assert!(package.tx_proof_manifest_payload.is_some());
+        let tx_proof_manifest_payload = package
+            .tx_proof_manifest_payload
             .as_ref()
-            .expect("proof-batch payload");
+            .expect("tx-proof-manifest payload");
         assert_eq!(
-            proof_batch_payload.statement_hashes.len(),
+            tx_proof_manifest_payload.statement_hashes.len(),
             package.tx_count as usize
         );
         assert_eq!(
-            proof_batch_payload.tx_proofs.len(),
+            tx_proof_manifest_payload.tx_proofs.len(),
             package.tx_count as usize
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn external_proof_batch_work_rejects_unverified_dummy_payloads() {
+    async fn external_tx_proof_manifest_work_rejects_unverified_dummy_payloads() {
         let _mode = set_block_proof_mode("flat");
         let parent_hash = H256::repeat_byte(46);
         let mut config = test_config();
@@ -4243,7 +4253,7 @@ mod tests {
         let pending = Arc::new(move |_max_txs: usize| vec![vec![3u8]]);
         let build = Arc::new(
             move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
-                Err("local builder disabled for proof-batch rejection test".to_string())
+                Err("local builder disabled for tx-proof-manifest rejection test".to_string())
             },
         );
         let root_finalize = Arc::new(
@@ -4264,17 +4274,17 @@ mod tests {
 
         let package = coordinator
             .get_work_package()
-            .expect("proof-batch work package should be published");
+            .expect("tx-proof-manifest work package should be published");
         let commitment = package
-            .proof_batch_payload
+            .tx_proof_manifest_payload
             .as_ref()
-            .expect("proof-batch payload")
+            .expect("tx-proof-manifest payload")
             .tx_statements_commitment;
         let payload = ready_payload(package.tx_count, commitment);
         let error = coordinator
-            .submit_external_work_result("proof-batch-worker", &package.package_id, payload)
+            .submit_external_work_result("tx-proof-manifest-worker", &package.package_id, payload)
             .expect_err("dummy payload should be rejected");
-        assert!(error.contains("proof-batch"));
+        assert!(error.contains("tx-proof-manifest"));
         let status = coordinator
             .get_work_status(&package.package_id)
             .expect("status should exist");
@@ -4419,7 +4429,7 @@ mod tests {
                         dependencies: Vec::new(),
                         tx_count,
                         candidate_txs: candidate_txs.clone(),
-                        proof_batch_payload: None,
+                        tx_proof_manifest_payload: None,
                         leaf_batch_payload: None,
                         merge_node_payload: None,
                         root_finalize_payload: None,
@@ -4772,7 +4782,7 @@ mod tests {
             .expect("upsized work package should exist");
         assert_eq!(upsized.tx_count, 8);
         assert_ne!(upsized.package_id, first.package_id);
-        assert_eq!(upsized.stage_type, "proof_batch_prove");
+        assert_eq!(upsized.stage_type, "tx_proof_manifest_build");
         assert_eq!(upsized.level, 0);
         assert_eq!(upsized.dependencies.len(), 0);
         assert_eq!(upsized.chunk_start_tx_index, 0);
