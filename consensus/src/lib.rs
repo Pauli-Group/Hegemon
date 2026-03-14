@@ -5,6 +5,7 @@ pub mod commitment_tree;
 pub mod error;
 pub mod header;
 pub mod mining;
+pub mod merge_root_layout;
 pub mod nullifier;
 pub mod pow;
 pub mod proof;
@@ -16,8 +17,10 @@ pub mod validator;
 pub mod version_policy;
 
 pub use aggregation::{
-    AggregationCacheWarmup, aggregation_proof_uncompressed_len, encode_aggregation_proof_bytes,
-    verify_aggregation_proof, warm_aggregation_cache,
+    AggregationCacheWarmup, AggregationVerifyMetrics, aggregation_proof_uncompressed_len,
+    decode_aggregation_proof_bytes, encode_aggregation_proof_bytes, verify_aggregation_proof,
+    verify_aggregation_proof_with_metrics, warm_aggregation_cache,
+    warm_aggregation_cache_from_proof_bytes,
 };
 pub use batch_proof::{
     FLAT_BATCH_PROOF_FORMAT_ID_V5, FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
@@ -32,6 +35,10 @@ pub use commitment_tree::{
 pub use error::{ConsensusError, ProofError, SlashingEvidence};
 pub use header::{BlockHeader, ConsensusMode, PowSeal};
 pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
+pub use merge_root_layout::{
+    merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
+    merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
+};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use proof::{

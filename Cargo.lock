@@ -1471,6 +1471,7 @@ dependencies = [
 name = "circuits-bench"
 version = "0.1.0"
 dependencies = [
+ "aggregation-circuit",
  "anyhow",
  "batch-circuit",
  "bincode",
@@ -1486,6 +1487,7 @@ dependencies = [
  "serde",
  "serde_json",
  "state-merkle",
+ "synthetic-crypto",
  "transaction-circuit",
  "transaction-core",
  "tx-proof-manifest",

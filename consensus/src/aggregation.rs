@@ -5,7 +5,7 @@ use crypto::hashes::blake3_384;
 use p3_batch_stark::{BatchProof, CommonData, verify_batch};
 use p3_circuit::CircuitBuilder;
 use p3_circuit_prover::common::{CircuitTableAir, get_airs_and_degrees_with_prep};
-use p3_circuit_prover::{TablePacking, config as circuit_config};
+use p3_circuit_prover::TablePacking;
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, PrimeField64};
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
@@ -546,7 +546,7 @@ pub fn aggregation_proof_uncompressed_len(bytes: &[u8]) -> usize {
     length
 }
 
-fn decode_aggregation_proof_bytes(bytes: &[u8]) -> Result<Vec<u8>, ProofError> {
+pub fn decode_aggregation_proof_bytes(bytes: &[u8]) -> Result<Vec<u8>, ProofError> {
     if bytes.len() < AGGREGATION_PROOF_HEADER_LEN {
         return Ok(bytes.to_vec());
     }

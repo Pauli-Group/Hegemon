@@ -20,7 +20,9 @@ p3-goldilocks = { workspace = true }
 p3-uni-stark = { workspace = true }
 p3-field = { workspace = true }
 batch-circuit = { path = "../batch" }
+aggregation-circuit = { path = "../aggregation" }
 consensus = { path = "../../consensus" }
+crypto = { package = "synthetic-crypto", path = "../../crypto" }
 tx-proof-manifest = { path = "../tx-proof-manifest" }
 
 [lints]

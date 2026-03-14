@@ -6,7 +6,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 Hegemon does **not** need “a recursive prover” in the abstract. It needs a shielded proving pipeline whose **real inclusion throughput increases when more prover power is added** on a chain with a **60-second block target**. The replacement engineer’s job is to restore a clean falsification loop, stop spending time on architectures that fail the live budget, and build the first proving unit that can honestly pass the acceptance gates.
 
-After this change, a new agent should be able to read this plan, inspect the named files, measure the current hot-path unit cost, and either (a) ship a proof-byte microbatch prototype that has a plausible path to live scaling, or (b) kill the design early with evidence before more remote rollout theater happens.
+After this change, a new agent should be able to read this plan, inspect the named files, measure the current hot-path unit cost, and either (a) find a witness-free proof-byte microbatch that beats raw shipping locally on both bytes and warm-prove time, or (b) kill the candidate early with evidence before more remote rollout theater happens. Until that happens, the chain stays on raw tx-proof shipping plus `merge_root`.
 
 ## Progress
 
@@ -22,6 +22,14 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - [x] (2026-03-14) Added a release benchmark harness that compares raw tx-proof shipping, `tx-proof-manifest`, and legacy witness-batch STARK side-by-side at `k=1,2,4,8`.
 - [x] (2026-03-14) Benchmarked the wrapper lane locally and killed it after raw tx-proof shipping won on marginal prove time and payload bytes.
 - [x] (2026-03-14) Made consensus/import verifier calls panic-safe and disabled `HEGEMON_BLOCK_PROOF_MODE=flat` generation so the dead wrapper lane cannot be rerun accidentally.
+- [x] (2026-03-14 18:10Z) Re-ran and archived the raw-shipping baseline under `output/prover-recovery/2026-03-14/raw-baseline/` with the exact benchmark command, commit hash, machine metadata, JSON output, and a TSV extraction of the lane metrics.
+- [x] (2026-03-14 18:10Z) Wrote the mandatory SuperNeo Phase 1 feasibility memo under `output/prover-recovery/2026-03-14/superneo-feasibility/summary.md` and killed the design at Phase 1 instead of starting a spike crate.
+- [x] (2026-03-14) Reframed the remaining recovery milestones around the only honest next steps: benchmark any replacement candidate locally against raw shipping, preserve parent-independent chunk identities for any future expensive job lane, and rerun the acceptance matrix only after a candidate wins locally.
+- [x] (2026-03-14, later) Reworked the live merge-root coordinator path around a canonical `StageType` enum (`leaf_batch_prove`, `merge_node_prove`, `root_aggregate_prove`, `finalize_bundle`), fixed the stage-name mismatch in root dependency ids, and split parent-independent expensive stage ids from parent-bound final bundle ids.
+- [x] (2026-03-14, later) Finished the coordinator root/finalize split so leaf/merge/root aggregation artifacts are cached in a reusable parent-independent tier while only the final bundle assembly remains parent-bound.
+- [x] (2026-03-14, later) Extracted shared merge-root layout helpers into `consensus/src/merge_root_layout.rs` so consensus verification, node planning, and the benchmark lane use the same fan-in/arity/tree-level/leaf-manifest logic.
+- [x] (2026-03-14, later) Replaced the dead default lane comparison in `circuits-bench` with a live `raw_shipping` vs `merge_root_active` surface, including leaf/merge/root/commitment timing fields, warm/cold mode selection, and structured lane-failure reporting instead of process aborts.
+- [ ] (2026-03-14, later) Fix the current local merge-root bench failure where commitment proving rejects the synthetic tx-proof roots as missing from anchor history; until that lands, merge-root has shape instrumentation but not a clean local acceptance-matrix win.
 - [ ] Re-run the acceptance matrix locally and only then re-enable remote topology tests.
 
 ## Surprises & Discoveries
@@ -38,6 +46,18 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - Observation: the warmed local lane benchmark falsified the tx-proof-manifest wrapper on its own stated purpose. On `cargo run --release -p circuits-bench -- --json --iterations 8 --batch-size 0 --lane-batch-sizes 1,2,4,8`, raw shipping beat the wrapper at every measured `k`: raw shipping adds zero marginal prove time, while `tx-proof-manifest` added about `66-69 ms` of extra build time over the same 8 tx proofs and slightly increased payload size from about `354.2 KiB/tx` to `355.2 KiB/tx`.
   Evidence: `k=1` raw `bytes_per_tx=354244`, manifest `355287`, manifest `prove_ns_per_tx=8445276`; `k=8` raw `bytes_per_tx=354237`, manifest `355243`, manifest `prove_ns_per_tx=8521067`.
 - Observation: three-way live inclusion latency is not honestly measurable on the current node for the legacy witness-batch STARK lane because the hardened node path no longer accepts spend-witness sidecars. Reintroducing witness upload just to save a dead design would be a regression, so the wrapper was killed on the hot-path benchmark before any new live rerun.
+- Observation: the archived raw baseline confirms that bytes are not the hard part for a proof-byte batcher. The current raw lane is about `354.2 KiB/tx`, while the ordered public outputs consensus actually needs for a folded proof are only a few hundred bytes per transaction. The real barrier is the verifier relation cost, not the binding payload.
+  Evidence: `output/prover-recovery/2026-03-14/raw-baseline/benchmark.json` reports `354244 / 354240 / 354238 / 354237 B/tx` for raw at `k=1/2/4/8`; the SuperNeo memo computes a public-output floor of roughly `300 / 270 / 255 / 248 B/tx`.
+- Observation: the nearest repo-local proxy for "fold the tx-proof verifier" is still far outside the 60-second budget. Existing recursive verifier shapes already measured `133886 ms` warm for the singleton/binary-merge proxy and `227329 ms` warm for the `k=2` root leaf.
+  Evidence: `DESIGN.md` and `METHODS.md` record the warmed recursion measurements `19616022 / 11935172 / 7859506` rows at `133886 ms` and `30404798 / 18437798 / 12147322` rows at `227329 ms`.
+- Observation: SuperNeo may still be intellectually aligned with the target shape, but in this repo it is not a narrow prototype. The hidden cost is exposing the exact Goldilocks-plus-extension tx-proof verifier relation, not just selecting a prettier folding paper.
+  Evidence: `circuits/transaction-core/src/p3_air.rs` fixes the tx stack at `8192` rows and production tx proofs at `76` public inputs, while the Phase 1 memo could not reduce the required integration surface below a new proving-stack branch.
+- Observation: the lower half of this ExecPlan drifted behind reality after the wrapper and SuperNeo were killed. It still told future agents to build `circuits/tx-proof-manifest/` even though that lane is dead.
+  Evidence: the current live state is already "raw shipping plus `merge_root`," and the next actionable work is candidate benchmarking, generic parent-independent chunk identity preservation, and the acceptance matrix, not a wrapper resurrection.
+- Observation: the recursive stage namespace had a real liveness bug. Root dependency ids were built from ad hoc labels (`leaf_verify`, `merge`) while worker dispatch and stage package ids used `leaf_batch_prove` / `merge_node_prove`. That mismatch could strand finalize work forever because the dependency ids did not actually name any executable child package.
+  Evidence: `node/src/substrate/prover_coordinator.rs` now derives both dependency ids and worker packages from the same `StageType` enum.
+- Observation: the surviving local merge-root benchmark still does not pass cleanly even after the comparison surface was fixed. The first warm singleton run succeeds only as a structured failure: raw shipping verifies, while the merge-root lane reaches commitment proving and then fails because the synthetic tx proof's Merkle root is not in the local anchor history.
+  Evidence: `cargo run -p circuits-bench -- --json --iterations 1 --batch-size 0 --lane-batch-sizes 1,2 --warm` now returns JSON with `raw_shipping` metrics plus `merge_root_active.error = "commitment proof generation failed: transaction proof at index 0 reported merkle root ... not found in anchor history ..."`.
 
 ## Decision Log
 
@@ -59,10 +79,18 @@ After this change, a new agent should be able to read this plan, inspect the nam
   Date/Author: 2026-03-14 / OpenAI assistant
 - Decision: Kill the tx-proof-manifest lane after the local release benchmark. Rationale: raw tx-proof shipping won on marginal prove cost and payload bytes at every measured `k`, so carrying the wrapper further would violate the acceptance rule and waste more time.
   Date/Author: 2026-03-14 / OpenAI assistant
+- Decision: Archive the raw-shipping benchmark before touching a new candidate lane. Rationale: future agents need a stable local baseline with the exact command, commit, and machine context so no one can hand-wave the comparison target.
+  Date/Author: 2026-03-14 / OpenAI assistant
+- Decision: Kill SuperNeo at Phase 1 and do not create a `proof-fold-spike` crate. Rationale: although proof bytes may plausibly beat raw shipping on paper, the actual tx-proof verifier relation is already expensive in the closest repo-local proxy, and the implementation surface is far too wide for an honest narrow prototype.
+  Date/Author: 2026-03-14 / OpenAI assistant
+- Decision: Keep the production path on raw tx-proof shipping plus `merge_root` until a witness-free microbatch beats raw shipping locally on both proof bytes and warm-prove time. Rationale: a replacement that wins only one metric can still lose the 60-second block budget once serial tail is counted.
+  Date/Author: 2026-03-14 / OpenAI assistant
 
 ## Outcomes & Retrospective
 
-Updated outcome: the local falsification loop now did its job. The tx-proof-manifest lane was renamed honestly, benchmarked warm against raw shipping and legacy witness batching, and then disabled in generation/import once the numbers showed it loses. Consensus/import verification is now panic-safe for tx proofs, flat-batch proofs, merge-root proofs, and commitment proofs, so a bad verifier panic becomes a block rejection instead of a node crash. The remaining open work is no longer “rescue the wrapper”; it is “measure and improve the live lanes that still have a plausible path to real inclusion throughput.”
+Updated outcome: the local falsification loop now did its job twice. First it killed the `tx-proof-manifest` wrapper after the warmed benchmark showed raw shipping wins. Then it killed the SuperNeo idea at Phase 1 after the archived baseline and current verifier-shape evidence showed that "fold the full tx-proof verifier" is not a narrow prototype in this repo. Consensus/import verification is panic-safe for tx proofs, flat-batch proofs, merge-root proofs, and commitment proofs, so a bad verifier panic becomes a block rejection instead of a node crash. The remaining open work is narrower and more concrete now: benchmark any replacement candidate locally against raw shipping, preserve parent-independent chunk identities for any future expensive work lane, and rerun the acceptance matrix only after a candidate clears the local gate. Until then, the project stays on raw shipping plus `merge_root`.
+
+Later update: the merge-root recovery work is now wired where it should have been all along. Stage planning and worker dispatch share one canonical stage namespace, root aggregation is separated cleanly from parent-bound bundle finalization, reusable expensive artifacts are keyed without the parent, and the benchmark harness defaults to the real live comparison surface instead of the dead wrapper lane. That is real progress, but not a throughput win yet: the current local warm bench still fails at the commitment stage because the synthetic benchmark proofs do not line up with anchor-history expectations. So the honest status remains unchanged at the product level: raw shipping plus `merge_root` stays live, replacement candidates still need to beat raw shipping locally, and the acceptance matrix stays blocked until merge-root itself measures cleanly.
 
 ## Context and Orientation
 
@@ -103,6 +131,7 @@ Terms used in this plan:
 4. Do not ask recursion to save a proving primitive whose leaf jobs are already too large.
 5. Do not hand private witness material to a supposed permissionless prover market.
 6. Do not mix deployment churn with architectural uncertainty. First prove the unit economics. Then ship.
+7. Do not move the default live path off raw tx-proof shipping plus `merge_root` until a witness-free microbatch beats raw shipping on both bytes and warm-prove time.
 
 ## Plan of Work
 
@@ -123,7 +152,7 @@ Do not start with OVH or `hegemon-prover`. Start by adding or reusing a local be
 
 - `circuits/bench/`
 - `circuits/batch/`
-- a new crate such as `circuits/tx-proof-manifest/`
+- a new candidate-specific crate if the relation cannot be expressed honestly inside the existing benchmark harness
 
 That harness must report, at minimum:
 
@@ -142,32 +171,29 @@ Acceptance for Milestone 1:
 - the output clearly distinguishes cold from warm timings;
 - the engineer can say, without hand-waving, whether the unit plausibly fits inside a 60-second chain budget once serial tail is included.
 
-### Milestone 2 — Replace witness batching with proof-byte batching
+### Milestone 2 — Benchmark Any Replacement Candidate Locally
 
-The current batch circuit is not a permissionless scaling primitive because it consumes witness material. The second milestone is to prototype a new microbatch proof that accepts **canonical tx proof bytes plus their decoded public inputs**, verifies a fixed number of them, and emits the same block-level outputs the current flat-batch verification path expects.
+The current batch circuit is not a permissionless scaling primitive because it consumes witness material, and the first proof-byte wrapper already lost. The second milestone is therefore not "build another wrapper." It is "identify a genuinely new witness-free candidate and benchmark it locally before touching consensus or node wiring."
 
-Create a new crate, tentatively `circuits/tx-proof-manifest/`. Do not repurpose `circuits/batch` into a public prover-market lane unless you also remove all witness dependence. The new crate should:
+For any candidate, start with the smallest honest local artifact:
 
-- accept a fixed batch size `k`;
-- accept canonical tx proof bytes and the public values needed to verify them;
-- verify those proofs inside one fixed-shape AIR or other fixed-shape proof system compatible with the repo’s proving stack;
-- emit ordered statement hashes, nullifiers, commitments, fee summary, and batch size in a form that can slot into the existing flat-batch block contract;
-- never require `sk_spend`, plaintext witness notes, or any wallet secret.
+- a memo or spike that defines the exact folded or batched relation over canonical tx proof bytes and public inputs;
+- a local benchmark command under `circuits/bench/` or a new candidate-specific crate;
+- measurements at `k = 1, 2, 4, 8`;
+- explicit comparison against the frozen raw baseline in `output/prover-recovery/2026-03-14/raw-baseline/`.
 
-You already have the clean insertion point in `consensus/src/batch_proof.rs`: add a new `proof_kind` constant and extend decoding/verification to dispatch on proof kind rather than reject everything except the current batch STARK kind.
-
-Do **not** redesign the block-level semantics first. Keep the existing semantics unless the prototype proves they are insufficient. The point is to change the proving primitive, not to invent a second block protocol.
+Do **not** add a new `proof_kind`, coordinator path, or block-format change before the candidate clears that local gate.
 
 Acceptance for Milestone 2:
 
-- a new proof kind exists in `consensus/src/batch_proof.rs`;
-- `consensus/src/proof.rs` can verify both the legacy witness-batch payload and the new proof-byte batch payload;
-- the new proving crate has a local benchmark harness and unit tests;
-- no private witness material is required to construct the new batch witness.
+- the candidate is witness-free;
+- the local benchmark artifact is reproducible from the repository root;
+- the candidate beats raw shipping on both proof bytes and warm-prove time, or is killed immediately with archived evidence;
+- no private witness material is required to construct the candidate inputs.
 
 ### Milestone 3 — Remove parent dependence from expensive unit jobs
 
-The coordinator still bakes `parent_hash` and `block_number` into stage-work identities. That prevents expensive work from surviving parent churn. The third milestone is to split **chunk identity** from **bundle identity**.
+The coordinator historically baked `parent_hash` and `block_number` into stage-work identities. That prevents expensive work from surviving parent churn. The tx-proof-manifest prototype already demonstrated the right shape for this split, and the third milestone is to preserve that property for any future expensive public lane rather than regress it.
 
 In `node/src/substrate/prover_coordinator.rs`, introduce two separate concepts:
 
@@ -180,13 +206,14 @@ Acceptance for Milestone 3:
 
 - there is a code path where prepared expensive chunk artifacts remain reusable across parent changes;
 - stage-work IDs for expensive jobs no longer include `parent_hash` or `block_number`;
-- prepared bundle lookup can still bind correctly at final assembly time.
+- prepared bundle lookup can still bind correctly at final assembly time;
+- any new candidate lane inherits this parent-independent identity rule instead of reintroducing parent-bound expensive jobs.
 
 ### Milestone 4 — Re-run the acceptance matrix before any remote rollout
 
 Only after Milestones 1–3 are complete should you touch `hegemon-ovh` or `hegemon-prover` again.
 
-The local and then remote acceptance matrix is mandatory:
+The local and then remote acceptance matrix is mandatory, but only after a replacement candidate survives Milestone 2. Until then, stay on raw shipping plus `merge_root`.
 
 - `tx4 / pw2` must include in under 60 seconds.
 - `tx32 / pw16` must achieve strictly higher real inclusion TPS than `tx32 / pw1`.
@@ -212,19 +239,19 @@ If any of these fail, stop and kill the design. Do not write deployment glue to 
 
 4. Add or update a local benchmark harness for the current batch lane to measure warm prove/verify/setup cost. The point is not to save the current lane; the point is to establish a baseline the replacement must beat.
 
-5. Create `circuits/tx-proof-manifest/` as a new workspace member. Keep the first version deliberately small and fixed-shape. Do not attempt generalized recursion or adaptive tree structure in the first prototype.
+5. If a new witness-free candidate is proposed, write its feasibility memo and smallest local benchmark artifact first. Do not add consensus or node plumbing yet. Archive the result under:
 
-6. In `consensus/src/batch_proof.rs`, add a second proof kind constant and extend the encoder/decoder so the payload envelope can carry the new proof type.
+       output/prover-recovery/YYYY-MM-DD/<candidate-name>/
 
-7. In `consensus/src/proof.rs`, refactor flat-batch verification to dispatch by `proof_kind`. Keep the existing ordered coverage and binding checks exactly as strict as they are today.
+6. Only if that candidate beats raw shipping on both proof bytes and warm-prove time, add the new `proof_kind` in `consensus/src/batch_proof.rs` and the corresponding verification dispatch in `consensus/src/proof.rs`.
 
-8. In `node/src/substrate/prover_coordinator.rs`, introduce a parent-independent key for chunk work and preserve parent binding only in the last cheap stage.
+7. Preserve parent-independent expensive-job identities in `node/src/substrate/prover_coordinator.rs` for any surviving candidate lane. Parent binding must remain confined to the final cheap stage.
 
-9. Only after the local benchmark and unit tests pass, rebuild the Linux binaries for the node and worker:
+8. Only after the local benchmark and unit tests pass, rebuild the Linux binaries for the node and worker:
 
        cargo build -p hegemon-node --features substrate --release --bins
 
-10. Only after the local acceptance matrix passes, stage a remote run with the smallest credible matrix first (`tx4 / pw2`), then escalate.
+9. Only after the local acceptance matrix passes, stage a remote run with the smallest credible matrix first (`tx4 / pw2`), then escalate.
 
 ## Validation and Acceptance
 
@@ -235,6 +262,7 @@ The replacement architecture is accepted only if all of the following are true:
 3. `tx32 / pw16` has strictly higher real inclusion TPS than `tx32 / pw1`.
 4. The proving primitive used for the public scaling lane does not require private witness material.
 5. Parent churn only invalidates the cheap final commitment stage, not the expensive chunk proofs.
+6. If no witness-free candidate beats raw shipping on both bytes and warm-prove time, the node remains on raw tx-proof shipping plus `merge_root`.
 
 Useful negative acceptance rule:
 
@@ -246,7 +274,7 @@ This plan is safe to execute multiple times because it starts with local reading
 
 Recovery rules:
 
-- Keep the legacy flat-batch proof kind working until the new proof kind is validated.
+- Keep the current raw-shipping and `merge_root` path as the default until a replacement path is validated.
 - Do not delete the current verification path until the replacement path passes the acceptance matrix.
 - If a benchmark result invalidates the new design, archive the benchmark output under a deterministic path such as `output/prover-recovery/<date>/` and stop. The output is valuable even if the design dies.
 
@@ -276,13 +304,17 @@ Existing interfaces you should preserve unless measurement forces a change:
 - `crate::types::BatchProofItem` usage in the flat-batch path
 - the current block commitment proof flow
 
-New interfaces that should exist by the end of the prototype:
+New interfaces that should exist by the end of the next successful prototype:
 
-- a new proof-byte batch crate, tentatively `tx-proof-manifest-circuit` or equivalent
-- a proof-kind dispatch path in `consensus/src/batch_proof.rs`
-- a proof-kind dispatch path in `consensus/src/proof.rs`
-- a parent-independent chunk identity in `node/src/substrate/prover_coordinator.rs`
+- a candidate-specific local benchmark artifact and archive under `output/prover-recovery/YYYY-MM-DD/<candidate-name>/`
+- only if the candidate wins locally, a proof-kind dispatch path in `consensus/src/batch_proof.rs`
+- only if the candidate wins locally, a proof-kind dispatch path in `consensus/src/proof.rs`
+- a parent-independent chunk identity in `node/src/substrate/prover_coordinator.rs` for any expensive reusable job lane
 
 Revision note (2026-03-14): Initial recovery plan created from the supplied failure handoff and a cross-check of the current `architecture-cleanup` branch. The purpose of this revision is to give successor agents a self-contained starting point that is stricter than the failed effort and explicitly tied to measurable acceptance gates.
 
 Revision note (2026-03-14, later): Updated after repairing the dead flat tx-proof-manifest work-publication path and adding coordinator-side rejection for dummy chunk payloads. This revision also records the important negative result that the current tx-proof-manifest prototype still does not deserve “finished lane” language because node-linked verification remains fragile and the benchmark harness is still missing.
+
+Revision note (2026-03-14, 18:10Z): Updated after freezing the raw-shipping baseline under `output/prover-recovery/2026-03-14/raw-baseline/` and writing the mandatory SuperNeo feasibility memo under `output/prover-recovery/2026-03-14/superneo-feasibility/summary.md`. The purpose of this revision is to preserve the exact comparison target and record the Phase 1 no-go decision before any successor agent wastes time building a folding spike that does not clear the local gate.
+
+Revision note (2026-03-14, later): Updated to remove stale "build tx-proof-manifest" instructions from the remaining milestones. The purpose of this revision is to align the plan with the current recovery policy: benchmark any replacement candidate locally first, preserve parent-independent chunk identities for any surviving expensive lane, rerun the acceptance matrix only after a local win, and otherwise stay on raw tx-proof shipping plus `merge_root`.

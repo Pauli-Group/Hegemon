@@ -124,8 +124,8 @@ use crate::substrate::mining_worker::{
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::prover_coordinator::{
-    BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
-    RootFinalizeWorkData,
+    BundleMatchKey, FinalizeBundleInputs, PreparedBundle, ProverCoordinator,
+    ProverCoordinatorConfig, RootAggregationWorkData,
 };
 use crate::substrate::rpc::{
     BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc, NodeConfigSnapshot,
@@ -143,8 +143,11 @@ use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
-    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind, ParallelProofVerifier,
-    Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
+    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
+    merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
+    merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
+    ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal,
+    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
@@ -2361,18 +2364,47 @@ fn build_commitment_block_proof_from_materials(
     Ok(Some(proof))
 }
 
-fn build_root_finalize_work_data(
+fn build_root_aggregation_work_data(
+    candidate_txs: &[Vec<u8>],
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<Option<RootAggregationWorkData>, String> {
+    let context = build_candidate_context(
+        candidate_txs,
+        da_params,
+        pending_ciphertexts,
+        pending_proofs,
+    )?;
+    let proofs = context.tx_proofs.as_ref();
+    if proofs.is_empty() {
+        return Ok(None);
+    }
+
+    let statement_hashes = context
+        .statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+
+    let tree_levels = merge_root_tree_levels_for_tx_count(proofs.len());
+    Ok(Some(RootAggregationWorkData {
+        statement_hashes,
+        tx_proofs: proofs.to_vec(),
+        tx_statements_commitment: context.tx_statements_commitment,
+        tree_levels,
+        root_level: tree_levels.saturating_sub(1),
+    }))
+}
+
+fn build_finalize_bundle_inputs(
     client: &HegemonFullClient,
     parent_hash: H256,
     candidate_txs: &[Vec<u8>],
     da_params: DaParams,
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
-) -> Result<Option<RootFinalizeWorkData>, String> {
-    // Both proof modes need this parent-bound summary. `MergeRoot` ships it to
-    // external recursive workers directly; `FlatBatches` slices it into
-    // parent-independent tx-proof-manifest chunk payloads and regenerates the final
-    // commitment proof locally once chunk results arrive.
+) -> Result<Option<FinalizeBundleInputs>, String> {
     let context = build_candidate_context(
         candidate_txs,
         da_params,
@@ -2416,10 +2448,8 @@ fn build_root_finalize_work_data(
     let starting_kernel_root = kernel_root_from_shielded_root(&starting_state_root);
     let ending_kernel_root = kernel_root_from_shielded_root(&ending_state_root);
 
-    Ok(Some(RootFinalizeWorkData {
+    Ok(Some(FinalizeBundleInputs {
         statement_hashes,
-        tx_proofs: proofs.to_vec(),
-        tx_statements_commitment: context.tx_statements_commitment,
         da_root: context.da_root,
         da_chunk_count: context.da_chunk_count,
         starting_state_root,
@@ -2430,6 +2460,84 @@ fn build_root_finalize_work_data(
         nullifiers,
         sorted_nullifiers,
     }))
+}
+
+fn finalize_merge_root_bundle_from_artifact(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    _block_number: u64,
+    candidate_txs: Vec<Vec<u8>>,
+    root_proof_bytes: Vec<u8>,
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<PreparedBundle, String> {
+    let started = Instant::now();
+    let finalize_inputs = build_finalize_bundle_inputs(
+        client,
+        parent_hash,
+        &candidate_txs,
+        da_params,
+        pending_ciphertexts,
+        pending_proofs,
+    )?
+    .ok_or_else(|| "candidate tx set has no finalize bundle inputs".to_string())?;
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&finalize_inputs.statement_hashes)
+            .map_err(|err| format!("statement commitment derivation failed: {err}"))?;
+    let commitment_proof = CommitmentBlockProver::new()
+        .prove_from_statement_hashes_with_inputs(
+            &finalize_inputs.statement_hashes,
+            finalize_inputs.starting_state_root,
+            finalize_inputs.ending_state_root,
+            finalize_inputs.starting_kernel_root,
+            finalize_inputs.ending_kernel_root,
+            finalize_inputs.nullifier_root,
+            finalize_inputs.da_root,
+            finalize_inputs.nullifiers.clone(),
+            finalize_inputs.sorted_nullifiers.clone(),
+        )
+        .map_err(|err| format!("commitment proof generation failed: {err}"))?;
+    let merge_root = pallet_shielded_pool::types::MergeRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
+            encode_aggregation_proof_bytes(root_proof_bytes),
+        ),
+        metadata: pallet_shielded_pool::types::MergeRootMetadata {
+            tree_arity: merge_root_arity_from_env(),
+            tree_levels: merge_root_tree_levels_for_tx_count(candidate_txs.len()),
+            leaf_count: candidate_txs.len().div_ceil(merge_root_leaf_fan_in_from_env()) as u32,
+            leaf_manifest_commitment: merge_root_leaf_manifest_commitment(
+                &finalize_inputs.statement_hashes,
+            )?,
+        },
+        diagnostics_leaf_proofs: Vec::new(),
+    };
+    let payload = pallet_shielded_pool::types::CandidateArtifact {
+        version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+        tx_count: candidate_txs.len() as u32,
+        tx_statements_commitment,
+        da_root: finalize_inputs.da_root,
+        da_chunk_count: finalize_inputs.da_chunk_count,
+        commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
+            commitment_proof.proof_bytes,
+        ),
+        proof_mode: pallet_shielded_pool::types::BlockProofMode::MergeRoot,
+        flat_batches: Vec::new(),
+        merge_root: Some(merge_root),
+        artifact_claim: None,
+    };
+    Ok(PreparedBundle {
+        key: BundleMatchKey {
+            parent_hash,
+            tx_statements_commitment,
+            tx_count: payload.tx_count,
+            proof_mode: payload.proof_mode,
+            artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(&payload),
+        },
+        payload,
+        candidate_txs,
+        build_ms: started.elapsed().as_millis(),
+    })
 }
 
 fn batch_slot_txs() -> usize {
@@ -2515,55 +2623,6 @@ fn prepared_proof_mode_from_env() -> PreparedProofMode {
         );
     }
     PreparedProofMode::MergeRoot
-}
-
-fn merge_root_arity_from_env() -> u16 {
-    std::env::var("HEGEMON_MERGE_ARITY")
-        .ok()
-        .or_else(|| std::env::var("HEGEMON_AGG_MERGE_FANIN").ok())
-        .and_then(|raw| raw.parse::<u16>().ok())
-        .unwrap_or(2)
-        .max(2)
-}
-
-fn merge_root_leaf_fan_in_from_env() -> usize {
-    std::env::var("HEGEMON_AGG_LEAF_FANIN")
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(1)
-        .max(1)
-}
-
-fn merge_root_tree_levels_for_tx_count(tx_count: usize) -> u16 {
-    if tx_count <= 1 {
-        return 1;
-    }
-    let mut levels = 1u16;
-    let mut width = tx_count.div_ceil(merge_root_leaf_fan_in_from_env());
-    while width > 1 {
-        width = width.div_ceil(merge_root_arity_from_env() as usize);
-        levels = levels.saturating_add(1);
-    }
-    levels
-}
-
-fn merge_root_leaf_manifest_commitment(statement_hashes: &[[u8; 48]]) -> Result<[u8; 48], String> {
-    let leaf_fan_in = merge_root_leaf_fan_in_from_env();
-    let mut manifest_material = Vec::new();
-    manifest_material.extend_from_slice(b"agg-leaf-manifest-v1");
-    manifest_material.extend_from_slice(&(leaf_fan_in as u16).to_le_bytes());
-    manifest_material.extend_from_slice(&(statement_hashes.len() as u32).to_le_bytes());
-    for (leaf_index, chunk) in statement_hashes.chunks(leaf_fan_in).enumerate() {
-        let leaf_commitment = CommitmentBlockProver::commitment_from_statement_hashes(chunk)
-            .map_err(|err| format!("leaf manifest statement commitment failed: {err}"))?;
-        let mut descriptor = Vec::new();
-        descriptor.extend_from_slice(b"agg-leaf-v1");
-        descriptor.extend_from_slice(&(leaf_index as u32).to_le_bytes());
-        descriptor.extend_from_slice(&(chunk.len() as u16).to_le_bytes());
-        descriptor.extend_from_slice(&leaf_commitment);
-        manifest_material.extend_from_slice(&blake3_384(&descriptor));
-    }
-    Ok(blake3_384(&manifest_material))
 }
 
 #[allow(dead_code)]
@@ -9437,12 +9496,41 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 },
             )
         };
-        let root_work_for_coord = {
+        let root_aggregation_for_coord = {
+            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
+            let pending_proofs = Arc::clone(&pending_proof_store);
+            Arc::new(move |candidate_txs: Vec<Vec<u8>>| {
+                let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                if filter_stats.dropped_total() > 0 {
+                    tracing::warn!(
+                        total_candidates = filter_stats.total,
+                        kept_candidates = filter_stats.kept,
+                        dropped_decode_errors = filter_stats.dropped_decode_errors,
+                        dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                        dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                        "Filtered conflicting shielded transfers before root-aggregation work package publication"
+                    );
+                }
+                let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
+                let pending_proofs_snapshot = { pending_proofs.lock().clone() };
+                build_root_aggregation_work_data(
+                    &filtered,
+                    da_params,
+                    &pending_ciphertexts_snapshot,
+                    &pending_proofs_snapshot,
+                )
+            })
+        };
+        let finalize_bundle_for_coord = {
             let client = client.clone();
             let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
             let pending_proofs = Arc::clone(&pending_proof_store);
             Arc::new(
-                move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
+                move |parent_hash: H256,
+                      block_number: u64,
+                      candidate_txs: Vec<Vec<u8>>,
+                      root_proof_bytes: Vec<u8>| {
                     let ordered = reorder_shielded_transfers(&candidate_txs)?;
                     let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
                     if filter_stats.dropped_total() > 0 {
@@ -9453,15 +9541,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             dropped_decode_errors = filter_stats.dropped_decode_errors,
                             dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
                             dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
-                            "Filtered conflicting shielded transfers before root-finalize work package publication"
+                            "Filtered conflicting shielded transfers before final bundle assembly"
                         );
                     }
                     let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
                     let pending_proofs_snapshot = { pending_proofs.lock().clone() };
-                    build_root_finalize_work_data(
+                    finalize_merge_root_bundle_from_artifact(
                         client.as_ref(),
                         parent_hash,
-                        &filtered,
+                        block_number,
+                        filtered,
+                        root_proof_bytes,
                         da_params,
                         &pending_ciphertexts_snapshot,
                         &pending_proofs_snapshot,
@@ -9469,12 +9559,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 },
             )
         };
-        let prover_coordinator = ProverCoordinator::new_with_root_finalize_builder(
+        let prover_coordinator = ProverCoordinator::new_with_recursive_builders(
             coordinator_cfg,
             best_for_coord,
             pending_for_coord,
             build_for_coord,
-            Some(root_work_for_coord),
+            finalize_bundle_for_coord,
+            Some(root_aggregation_for_coord),
         );
         prover_coordinator.start();
         prover_coordinator_for_rpc = Some(Arc::clone(&prover_coordinator));

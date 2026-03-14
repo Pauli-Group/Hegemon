@@ -1,8 +1,7 @@
 //! Prover market RPC endpoints.
 
 use crate::substrate::prover_coordinator::{
-    LeafBatchWorkData, MergeNodeWorkData, TxProofManifestWorkData, ProverCoordinator,
-    RootFinalizeWorkData, WorkStatus,
+    LeafBatchWorkData, MergeNodeWorkData, ProverCoordinator, TxProofManifestWorkData, WorkStatus,
 };
 use base64::Engine;
 use codec::{Decode, Encode};
@@ -32,7 +31,6 @@ pub struct WorkPackageResponse {
     pub tx_proof_manifest_payload: Option<TxProofManifestPayloadResponse>,
     pub leaf_batch_payload: Option<LeafBatchPayloadResponse>,
     pub merge_node_payload: Option<MergeNodePayloadResponse>,
-    pub root_finalize_payload: Option<RootFinalizePayloadResponse>,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
 }
@@ -61,22 +59,6 @@ pub struct MergeNodePayloadResponse {
     pub tx_statements_commitment: String,
     pub tree_levels: u16,
     pub root_level: u16,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RootFinalizePayloadResponse {
-    pub statement_hashes: Vec<String>,
-    pub tx_proofs_bincode: String,
-    pub tx_statements_commitment: String,
-    pub da_root: String,
-    pub da_chunk_count: u32,
-    pub starting_state_root: String,
-    pub ending_state_root: String,
-    pub starting_kernel_root: String,
-    pub ending_kernel_root: String,
-    pub nullifier_root: String,
-    pub nullifiers: Vec<String>,
-    pub sorted_nullifiers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -193,47 +175,6 @@ impl ProverRpc {
         Self { coordinator }
     }
 
-    fn map_root_finalize_payload(
-        payload: RootFinalizeWorkData,
-    ) -> RpcResult<RootFinalizePayloadResponse> {
-        let tx_proofs_bincode = bincode::serialize(&payload.tx_proofs).map_err(|err| {
-            ErrorObjectOwned::owned(
-                INVALID_PARAMS_CODE,
-                format!("failed to serialize tx proofs: {err}"),
-                None::<()>,
-            )
-        })?;
-        Ok(RootFinalizePayloadResponse {
-            statement_hashes: payload
-                .statement_hashes
-                .into_iter()
-                .map(|value| format!("0x{}", hex::encode(value)))
-                .collect(),
-            tx_proofs_bincode: base64::engine::general_purpose::STANDARD.encode(tx_proofs_bincode),
-            tx_statements_commitment: format!(
-                "0x{}",
-                hex::encode(payload.tx_statements_commitment)
-            ),
-            da_root: format!("0x{}", hex::encode(payload.da_root)),
-            da_chunk_count: payload.da_chunk_count,
-            starting_state_root: format!("0x{}", hex::encode(payload.starting_state_root)),
-            ending_state_root: format!("0x{}", hex::encode(payload.ending_state_root)),
-            starting_kernel_root: format!("0x{}", hex::encode(payload.starting_kernel_root)),
-            ending_kernel_root: format!("0x{}", hex::encode(payload.ending_kernel_root)),
-            nullifier_root: format!("0x{}", hex::encode(payload.nullifier_root)),
-            nullifiers: payload
-                .nullifiers
-                .into_iter()
-                .map(|value| format!("0x{}", hex::encode(value)))
-                .collect(),
-            sorted_nullifiers: payload
-                .sorted_nullifiers
-                .into_iter()
-                .map(|value| format!("0x{}", hex::encode(value)))
-                .collect(),
-        })
-    }
-
     fn map_leaf_batch_payload(payload: LeafBatchWorkData) -> RpcResult<LeafBatchPayloadResponse> {
         let tx_proofs_bincode = bincode::serialize(&payload.tx_proofs).map_err(|err| {
             ErrorObjectOwned::owned(
@@ -316,7 +257,7 @@ impl ProverRpc {
             chunk_start_tx_index: package.chunk_start_tx_index,
             chunk_tx_count: package.chunk_tx_count,
             expected_chunks: package.expected_chunks,
-            stage_type: package.stage_type,
+            stage_type: package.stage_type.as_str().to_string(),
             level: package.level,
             arity: package.arity,
             shape_id: format!("0x{}", hex::encode(package.shape_id)),
@@ -338,10 +279,6 @@ impl ProverRpc {
             merge_node_payload: package
                 .merge_node_payload
                 .map(Self::map_merge_node_payload)
-                .transpose()?,
-            root_finalize_payload: package
-                .root_finalize_payload
-                .map(Self::map_root_finalize_payload)
                 .transpose()?,
             created_at_ms: package.created_at_ms,
             expires_at_ms: package.expires_at_ms,
@@ -491,14 +428,14 @@ impl ProverApiServer for ProverRpc {
             inflight_jobs: status.inflight_jobs,
             prepared_bundles: status.prepared_bundles,
             latest_work_package: status.latest_work_package,
-            stage_queue: status
-                .stage_queue
-                .into_iter()
-                .map(|stage| StageQueueStatusResponse {
-                    stage_type: stage.stage_type,
-                    level: stage.level,
-                    queued_jobs: stage.queued_jobs,
-                    inflight_jobs: stage.inflight_jobs,
+                stage_queue: status
+                    .stage_queue
+                    .into_iter()
+                    .map(|stage| StageQueueStatusResponse {
+                    stage_type: stage.stage_type.to_string(),
+                        level: stage.level,
+                        queued_jobs: stage.queued_jobs,
+                        inflight_jobs: stage.inflight_jobs,
                 })
                 .collect(),
         })
@@ -579,7 +516,7 @@ fn parse_bytes(value: &str) -> Result<Vec<u8>, ErrorObjectOwned> {
 mod tests {
     use super::*;
     use crate::substrate::prover_coordinator::{
-        ProverCoordinator, ProverCoordinatorConfig, RootFinalizeWorkData,
+        ProverCoordinator, ProverCoordinatorConfig,
     };
     use codec::Encode;
     use sp_core::H256;
@@ -632,9 +569,8 @@ mod tests {
                 Err("disabled local builder for rpc test".to_string())
             },
         );
-        let root_finalize = Arc::new(
-            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
-                Ok(Some(RootFinalizeWorkData {
+        let root_aggregation = Arc::new(move |_candidate_txs: Vec<Vec<u8>>| {
+            Ok(Some(crate::substrate::prover_coordinator::RootAggregationWorkData {
                     statement_hashes: vec![[7u8; 48]],
                     tx_proofs: vec![TransactionProof {
                         public_inputs: TransactionPublicInputs::default(),
@@ -645,24 +581,39 @@ mod tests {
                         stark_public_inputs: None,
                     }],
                     tx_statements_commitment: [5u8; 48],
-                    da_root: [6u8; 48],
-                    da_chunk_count: 1,
-                    starting_state_root: [1u8; 48],
-                    ending_state_root: [2u8; 48],
-                    starting_kernel_root: [3u8; 48],
-                    ending_kernel_root: [4u8; 48],
-                    nullifier_root: [8u8; 48],
-                    nullifiers: vec![[9u8; 48]],
-                    sorted_nullifiers: vec![[9u8; 48]],
+                    tree_levels: 1,
+                    root_level: 0,
                 }))
+        });
+        let finalize = Arc::new(
+            move |parent_hash: H256,
+                  _number: u64,
+                  candidate_txs: Vec<Vec<u8>>,
+                  _root_proof_bytes: Vec<u8>| {
+                let payload = payload(candidate_txs.len() as u32);
+                Ok(crate::substrate::prover_coordinator::PreparedBundle {
+                    key: crate::substrate::prover_coordinator::BundleMatchKey {
+                        parent_hash,
+                        tx_statements_commitment: payload.tx_statements_commitment,
+                        tx_count: payload.tx_count,
+                        proof_mode: payload.proof_mode,
+                        artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(
+                            &payload,
+                        ),
+                    },
+                    payload,
+                    candidate_txs,
+                    build_ms: 1,
+                })
             },
         );
-        let coordinator = ProverCoordinator::new_with_root_finalize_builder(
+        let coordinator = ProverCoordinator::new_with_recursive_builders(
             config,
             best,
             pending,
             build,
-            Some(root_finalize),
+            finalize,
+            Some(root_aggregation),
         );
         coordinator.start();
         tokio::time::sleep(Duration::from_millis(60)).await;
@@ -676,7 +627,6 @@ mod tests {
         assert_eq!(stage_package.stage_type, "leaf_batch_prove");
         assert!(stage_package.leaf_batch_payload.is_some());
         assert!(stage_package.merge_node_payload.is_none());
-        assert!(stage_package.root_finalize_payload.is_none());
 
         let encoded = payload(stage_package.tx_count).encode();
         let submit = rpc
