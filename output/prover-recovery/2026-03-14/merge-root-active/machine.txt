@@ -1,0 +1,9 @@
+ProductName:		macOS
+ProductVersion:		26.3.1
+BuildVersion:		25D2128
+
+Darwin Pierre-Lucs-MacBook-Air.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:56:34 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T8112 arm64
+
+Apple M2
+
+25769803776

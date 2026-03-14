@@ -28,7 +28,7 @@ use rand_chacha::ChaCha20Rng;
 use serde::Serialize;
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
-    constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, NATIVE_ASSET_ID},
+    constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
     hashing_pq::{bytes48_to_felts, felts_to_bytes48, spend_auth_key_bytes, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
@@ -85,6 +85,10 @@ struct Cli {
     /// Include dead historical lanes in output for comparison.
     #[arg(long)]
     dead_lanes: bool,
+    /// Run only the canonical raw-shipping lane. Use this to recheck the frozen baseline
+    /// without paying merge-root aggregation costs.
+    #[arg(long)]
+    raw_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -203,6 +207,7 @@ fn main() -> Result<()> {
         &cli.lane_batch_sizes,
         !cli.cold,
         cli.dead_lanes,
+        cli.raw_only,
     )?;
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -392,11 +397,13 @@ fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
 
 fn benchmark_lane_comparisons(
     proofs: &[transaction_circuit::proof::TransactionProof],
+    parent_tree: &CommitmentTree,
     verifying_key: &transaction_circuit::keys::VerifyingKey,
     batch_sizes: &[usize],
     batch_skip_verify: bool,
     warm_mode: bool,
     include_dead_lanes: bool,
+    raw_only: bool,
 ) -> Result<Vec<LaneComparison>> {
     let mut deduped_batch_sizes = batch_sizes.to_vec();
     deduped_batch_sizes.sort_unstable();
@@ -456,7 +463,21 @@ fn benchmark_lane_comparisons(
         comparisons.push(LaneComparison {
             batch_size,
             raw_shipping: benchmark_raw_shipping_lane(proofs, verifying_key, batch_size),
-            merge_root_active: benchmark_merge_root_lane(proofs, batch_size, warm_mode)?,
+            merge_root_active: if raw_only {
+                MergeRootLaneMetrics::failed(
+                    batch_size,
+                    merge_root_leaf_fan_in_from_env(),
+                    merge_root_arity_from_env() as usize,
+                    "skipped by --raw-only",
+                )
+            } else {
+                benchmark_merge_root_lane(
+                    proofs,
+                    parent_tree,
+                    batch_size,
+                    warm_mode,
+                )?
+            },
             dead_lanes,
         });
     }
@@ -561,13 +582,14 @@ fn statement_hash_from_proof(proof: &transaction_circuit::proof::TransactionProo
 
 fn benchmark_merge_root_lane(
     proofs: &[transaction_circuit::proof::TransactionProof],
+    parent_tree: &CommitmentTree,
     batch_size: usize,
     warm_mode: bool,
 ) -> Result<MergeRootLaneMetrics> {
     let leaf_fan_in = merge_root_leaf_fan_in_from_env();
     let merge_arity = merge_root_arity_from_env() as usize;
     let run = panic::catch_unwind(AssertUnwindSafe(|| {
-        benchmark_merge_root_lane_inner(proofs, batch_size, warm_mode)
+        benchmark_merge_root_lane_inner(proofs, parent_tree, batch_size, warm_mode)
     }));
     match run {
         Ok(Ok(result)) => Ok(result),
@@ -591,6 +613,7 @@ fn benchmark_merge_root_lane(
 
 fn benchmark_merge_root_lane_inner(
     proofs: &[transaction_circuit::proof::TransactionProof],
+    parent_tree: &CommitmentTree,
     batch_size: usize,
     warm_mode: bool,
 ) -> Result<MergeRootLaneMetrics> {
@@ -664,10 +687,8 @@ fn benchmark_merge_root_lane_inner(
     let mut commitment_prove_ns = 0u128;
     let mut commitment_verify_ns = 0u128;
     let mut commitment_proof_bytes = 0usize;
-    let mut commitment_tree =
-        CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).context("init merge-root commitment tree")?;
-
     for chunk in &mut chunks {
+        let mut commitment_tree = parent_tree.clone();
         let statement_hashes = chunk
             .iter()
             .map(statement_hash_from_proof)
@@ -1026,6 +1047,7 @@ fn run_benchmark(
     lane_batch_sizes: &[usize],
     warm_mode: bool,
     include_dead_lanes: bool,
+    raw_only: bool,
 ) -> Result<BenchReport> {
     if iterations == 0 {
         return Err(anyhow!("iterations must be greater than zero"));
@@ -1048,10 +1070,10 @@ fn run_benchmark(
     let mut tx_prewarmed = false;
     let mut rng = ChaCha20Rng::seed_from_u64(0xC1C01E75);
 
-    let mut commitment_tree = if !batch_only && prove {
+    let mut anchor_history_tree = if !batch_only {
         Some(
             CommitmentTree::new(CIRCUIT_MERKLE_DEPTH)
-                .context("init shared commitment tree for benchmark")?,
+                .context("init shared anchor-history tree for benchmark")?,
         )
     } else {
         None
@@ -1062,16 +1084,15 @@ fn run_benchmark(
             let witness_start = Instant::now();
             let witness = if smoke {
                 smoke_transaction_witness(idx as u8).context("build smoke transaction witness")?
-            } else if prove {
+            } else {
                 chain_synthetic_witness(
-                    commitment_tree
+                    anchor_history_tree
                         .as_mut()
-                        .expect("shared commitment tree available when proving transactions"),
+                        .expect("shared anchor-history tree available when benchmarking transactions"),
+                    &mut rng,
                     idx as u64,
                 )
                 .context("build chain-linked benchmark transaction witness")?
-            } else {
-                standalone_synthetic_witness(&mut rng, idx as u64)
             };
             witness_time += witness_start.elapsed();
 
@@ -1134,10 +1155,12 @@ fn run_benchmark(
         let proof_result = panic::catch_unwind(AssertUnwindSafe(|| {
             let prover = CommitmentBlockProver::new();
             let prove_start = Instant::now();
+            let mut commitment_tree = anchor_history_tree
+                .as_ref()
+                .expect("shared anchor-history tree available for commitment proving")
+                .clone();
             let proof = prover.prove_block_commitment_with_tree(
-                commitment_tree
-                    .as_mut()
-                    .expect("shared commitment tree available for commitment proving"),
+                &mut commitment_tree,
                 &proofs,
                 [0u8; 48],
             )?;
@@ -1268,11 +1291,15 @@ fn run_benchmark(
     } else {
         benchmark_lane_comparisons(
             &proofs,
+            anchor_history_tree
+                .as_ref()
+                .expect("shared anchor-history tree available for lane comparisons"),
             &verifying_key,
             lane_batch_sizes,
             batch_skip_verify,
             warm_mode,
             include_dead_lanes,
+            raw_only,
         )?
     };
 
@@ -1378,76 +1405,38 @@ fn merkle_path_from_tree(tree: &CommitmentTree, index: usize) -> Result<MerklePa
     Ok(MerklePath { siblings })
 }
 
-fn chain_synthetic_witness(tree: &mut CommitmentTree, counter: u64) -> Result<TransactionWitness> {
-    let seed = counter as u8;
-    let input_native = NoteData {
-        value: 9,
-        asset_id: NATIVE_ASSET_ID,
-        pk_recipient: [seed.wrapping_add(1); 32],
-        pk_auth: [0u8; 32],
-        rho: [seed.wrapping_add(2); 32],
-        r: [seed.wrapping_add(3); 32],
-    };
-    let input_asset = NoteData {
-        value: 7,
-        asset_id: counter + 100,
-        pk_recipient: [seed.wrapping_add(5); 32],
-        pk_auth: [0u8; 32],
-        rho: [seed.wrapping_add(6); 32],
-        r: [seed.wrapping_add(7); 32],
-    };
-
-    let input_notes = vec![input_native, input_asset];
-    let mut note_positions = Vec::with_capacity(MAX_INPUTS);
-    for note in &input_notes {
-        note_positions.push(append_note(tree, note)? as u64);
+fn chain_synthetic_witness(
+    tree: &mut CommitmentTree,
+    rng: &mut ChaCha20Rng,
+    counter: u64,
+) -> Result<TransactionWitness> {
+    let base = standalone_synthetic_witness(rng, counter);
+    let mut note_positions = Vec::with_capacity(base.inputs.len());
+    for input in &base.inputs {
+        note_positions.push(append_note(tree, &input.note)? as u64);
     }
     let merkle_root = tree.root();
-
-    let mut input_witnesses = Vec::with_capacity(input_notes.len());
-    for (note, position) in input_notes.into_iter().zip(note_positions.into_iter()) {
+    let mut inputs = Vec::with_capacity(base.inputs.len());
+    for (input, position) in base.inputs.into_iter().zip(note_positions.into_iter()) {
         let merkle_path = merkle_path_from_tree(tree, position as usize)?;
-        input_witnesses.push(InputNoteWitness {
-            note,
+        inputs.push(InputNoteWitness {
+            note: input.note,
             position,
-            rho_seed: [seed.wrapping_add(8); 32],
+            rho_seed: input.rho_seed,
             merkle_path,
         });
     }
 
-    let outputs = vec![
-        OutputNoteWitness {
-            note: NoteData {
-                value: 4,
-                asset_id: NATIVE_ASSET_ID,
-                pk_recipient: [seed.wrapping_add(9); 32],
-                pk_auth: [0u8; 32],
-                rho: [seed.wrapping_add(10); 32],
-                r: [seed.wrapping_add(11); 32],
-            },
-        },
-        OutputNoteWitness {
-            note: NoteData {
-                value: 7,
-                asset_id: counter + 100,
-                pk_recipient: [seed.wrapping_add(12); 32],
-                pk_auth: [0u8; 32],
-                rho: [seed.wrapping_add(13); 32],
-                r: [seed.wrapping_add(14); 32],
-            },
-        },
-    ];
-
     Ok(TransactionWitness {
-        inputs: input_witnesses,
-        outputs,
-        ciphertext_hashes: vec![[0u8; 48]; 2],
-        sk_spend: [seed.wrapping_add(15); 32],
+        inputs,
+        outputs: base.outputs,
+        ciphertext_hashes: base.ciphertext_hashes,
+        sk_spend: base.sk_spend,
         merkle_root,
-        fee: 5,
-        value_balance: 0,
-        stablecoin: StablecoinPolicyBinding::default(),
-        version: DEFAULT_VERSION_BINDING,
+        fee: base.fee,
+        value_balance: base.value_balance,
+        stablecoin: base.stablecoin,
+        version: base.version,
     })
 }
 
@@ -1575,4 +1564,43 @@ fn random_bytes(rng: &mut ChaCha20Rng) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     rng.fill_bytes(&mut bytes);
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use block_circuit::BlockError;
+    use transaction_circuit::keys::generate_keys;
+
+    fn sample_anchor_history_fixture() -> (CommitmentTree, Vec<transaction_circuit::proof::TransactionProof>) {
+        let (proving_key, _) = generate_keys();
+        let witness = smoke_transaction_witness(7).expect("smoke witness");
+        let mut tree = CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("anchor tree");
+        for input in &witness.inputs {
+            append_note(&mut tree, &input.note).expect("append smoke input note");
+        }
+        assert_eq!(tree.root(), witness.merkle_root);
+        let proof = proof::prove(&witness, &proving_key).expect("transaction proof");
+        (tree, vec![proof])
+    }
+
+    #[test]
+    fn commitment_proving_rejects_absent_anchor_history_root() {
+        let (_, proofs) = sample_anchor_history_fixture();
+        let mut wrong_tree = CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("wrong tree");
+        let err = CommitmentBlockProver::new()
+            .prove_block_commitment_with_tree(&mut wrong_tree, &proofs, [0u8; 48])
+            .expect_err("missing anchor root should reject");
+        assert!(matches!(err, BlockError::UnexpectedMerkleRoot { index: 0, .. }));
+    }
+
+    #[test]
+    fn commitment_proving_accepts_anchor_history_root_present() {
+        let (parent_tree, proofs) = sample_anchor_history_fixture();
+        let mut tree = parent_tree.clone();
+        let proof = CommitmentBlockProver::new()
+            .prove_block_commitment_with_tree(&mut tree, &proofs, [0u8; 48])
+            .expect("anchor root present should succeed");
+        verify_block_commitment(&proof).expect("commitment proof verifies");
+    }
 }

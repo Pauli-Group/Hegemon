@@ -528,7 +528,8 @@ where
         }
 
         let public_values = builder.public_values();
-        let base_len = 33;
+        // 7 x bytes48 commitments + tx_count + permutation challenges.
+        let base_len = 45;
         debug_assert!(public_values.len() >= base_len);
         debug_assert!((public_values.len() - base_len).is_multiple_of(12));
         let nullifier_count = (public_values.len() - base_len) / 12;
@@ -554,6 +555,24 @@ where
         ];
         idx += 6;
         let end_root = [
+            pv(idx),
+            pv(idx + 1),
+            pv(idx + 2),
+            pv(idx + 3),
+            pv(idx + 4),
+            pv(idx + 5),
+        ];
+        idx += 6;
+        let _starting_kernel_root = [
+            pv(idx),
+            pv(idx + 1),
+            pv(idx + 2),
+            pv(idx + 3),
+            pv(idx + 4),
+            pv(idx + 5),
+        ];
+        idx += 6;
+        let _ending_kernel_root = [
             pv(idx),
             pv(idx + 1),
             pv(idx + 2),
