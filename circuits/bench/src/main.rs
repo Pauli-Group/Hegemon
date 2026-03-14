@@ -72,8 +72,8 @@ struct Cli {
     /// Should match CIRCUIT_MERKLE_DEPTH (32) for STARK proof verification.
     #[arg(long, default_value_t = 32)]
     tree_depth: usize,
-    /// Batch sizes to compare across raw shipping, tx-proof-manifest wrapping,
-    /// and the surviving merge-root active path.
+    /// Batch sizes to compare across raw shipping, raw active, and the surviving
+    /// merge-root active path.
     #[arg(long, value_delimiter = ',', default_values_t = vec![1usize, 2, 4, 8, 16])]
     lane_batch_sizes: Vec<usize>,
     /// Benchmark the cold path without aggregation-shape warmup.
@@ -89,6 +89,9 @@ struct Cli {
     /// without paying merge-root aggregation costs.
     #[arg(long)]
     raw_only: bool,
+    /// Skip merge-root active benchmarking while keeping raw_active enabled.
+    #[arg(long)]
+    skip_merge_root: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,7 +143,8 @@ struct BenchReport {
 struct LaneComparison {
     batch_size: usize,
     raw_shipping: LaneMetrics,
-    merge_root_active: MergeRootLaneMetrics,
+    raw_active: ActiveLaneMetrics,
+    merge_root_active: ActiveLaneMetrics,
     dead_lanes: Option<DeadLaneComparison>,
 }
 
@@ -164,9 +168,11 @@ struct LaneMetrics {
 }
 
 #[derive(Debug, Serialize)]
-struct MergeRootLaneMetrics {
+struct ActiveLaneMetrics {
     batches: usize,
     tx_count: usize,
+    tx_verify_ns: u128,
+    tx_proof_bytes: usize,
     leaf_fan_in: usize,
     merge_arity: usize,
     leaf_batches: usize,
@@ -185,6 +191,7 @@ struct MergeRootLaneMetrics {
     commitment_proof_bytes: usize,
     total_active_path_prove_ns: u128,
     total_active_path_verify_ns: u128,
+    total_bytes: usize,
     bytes_per_tx: usize,
     error: Option<String>,
 }
@@ -208,6 +215,7 @@ fn main() -> Result<()> {
         !cli.cold,
         cli.dead_lanes,
         cli.raw_only,
+        cli.skip_merge_root,
     )?;
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -217,7 +225,7 @@ fn main() -> Result<()> {
             .iter()
             .map(|comparison| {
                 format!(
-                    " lanes[k={}]:raw(bytes={} prove_ns={} verify_ns={} err={}) merge_root(bytes={} prove_ns={} verify_ns={} err={}) dead_manifest(bytes={} prove_ns={} verify_ns={} err={}) dead_witness(bytes={} prove_ns={} verify_ns={} err={})",
+                    " lanes[k={}]:raw_shipping(bytes={} prove_ns={} verify_ns={} err={}) raw_active(bytes={} prove_ns={} verify_ns={} err={}) merge_root(bytes={} prove_ns={} verify_ns={} err={}) dead_manifest(bytes={} prove_ns={} verify_ns={} err={}) dead_witness(bytes={} prove_ns={} verify_ns={} err={})",
                     comparison.batch_size,
                     comparison.raw_shipping.bytes,
                     comparison.raw_shipping.prove_ns,
@@ -227,8 +235,15 @@ fn main() -> Result<()> {
                         .error
                         .as_deref()
                         .unwrap_or("-"),
-                    comparison.merge_root_active.root_proof_bytes
-                        + comparison.merge_root_active.commitment_proof_bytes,
+                    comparison.raw_active.total_bytes,
+                    comparison.raw_active.total_active_path_prove_ns,
+                    comparison.raw_active.total_active_path_verify_ns,
+                    comparison
+                        .raw_active
+                        .error
+                        .as_deref()
+                        .unwrap_or("-"),
+                    comparison.merge_root_active.total_bytes,
                     comparison.merge_root_active.total_active_path_prove_ns,
                     comparison.merge_root_active.total_active_path_verify_ns,
                     comparison
@@ -356,11 +371,48 @@ impl LaneMetrics {
     }
 }
 
-impl MergeRootLaneMetrics {
-    fn failed(batch_size: usize, leaf_fan_in: usize, merge_arity: usize, error: impl Into<String>) -> Self {
+impl ActiveLaneMetrics {
+    fn failed(batch_size: usize, error: impl Into<String>) -> Self {
         Self {
             batches: 0,
             tx_count: batch_size,
+            tx_verify_ns: 0,
+            tx_proof_bytes: 0,
+            leaf_fan_in: 0,
+            merge_arity: 0,
+            leaf_batches: 0,
+            merge_nodes: 0,
+            leaf_prove_ns: 0,
+            merge_prove_ns: 0,
+            root_prove_ns: 0,
+            agg_verify_ns: 0,
+            agg_verify_batch_ns: 0,
+            agg_cache_prewarm_total_ns: 0,
+            agg_cache_build_ns: 0,
+            agg_cache_hit: false,
+            root_proof_bytes: 0,
+            commitment_prove_ns: 0,
+            commitment_verify_ns: 0,
+            commitment_proof_bytes: 0,
+            total_active_path_prove_ns: 0,
+            total_active_path_verify_ns: 0,
+            total_bytes: 0,
+            bytes_per_tx: 0,
+            error: Some(error.into()),
+        }
+    }
+
+    fn failed_with_layout(
+        batch_size: usize,
+        leaf_fan_in: usize,
+        merge_arity: usize,
+        error: impl Into<String>,
+    ) -> Self {
+        Self {
+            batches: 0,
+            tx_count: batch_size,
+            tx_verify_ns: 0,
+            tx_proof_bytes: 0,
             leaf_fan_in,
             merge_arity,
             leaf_batches: 0,
@@ -379,6 +431,7 @@ impl MergeRootLaneMetrics {
             commitment_proof_bytes: 0,
             total_active_path_prove_ns: 0,
             total_active_path_verify_ns: 0,
+            total_bytes: 0,
             bytes_per_tx: 0,
             error: Some(error.into()),
         }
@@ -404,6 +457,7 @@ fn benchmark_lane_comparisons(
     warm_mode: bool,
     include_dead_lanes: bool,
     raw_only: bool,
+    skip_merge_root: bool,
 ) -> Result<Vec<LaneComparison>> {
     let mut deduped_batch_sizes = batch_sizes.to_vec();
     deduped_batch_sizes.sort_unstable();
@@ -424,7 +478,11 @@ fn benchmark_lane_comparisons(
             comparisons.push(LaneComparison {
                 batch_size,
                 raw_shipping: LaneMetrics::failed(batch_size, "batch_size must be greater than zero"),
-                merge_root_active: MergeRootLaneMetrics::failed(
+                raw_active: ActiveLaneMetrics::failed(
+                    batch_size,
+                    "batch_size must be greater than zero",
+                ),
+                merge_root_active: ActiveLaneMetrics::failed_with_layout(
                     batch_size,
                     merge_root_leaf_fan_in_from_env(),
                     merge_root_arity_from_env() as usize,
@@ -463,12 +521,29 @@ fn benchmark_lane_comparisons(
         comparisons.push(LaneComparison {
             batch_size,
             raw_shipping: benchmark_raw_shipping_lane(proofs, verifying_key, batch_size),
+            raw_active: if raw_only {
+                ActiveLaneMetrics::failed(batch_size, "skipped by --raw-only")
+            } else {
+                benchmark_raw_active_lane(
+                    proofs,
+                    parent_tree,
+                    verifying_key,
+                    batch_size,
+                )?
+            },
             merge_root_active: if raw_only {
-                MergeRootLaneMetrics::failed(
+                ActiveLaneMetrics::failed_with_layout(
                     batch_size,
                     merge_root_leaf_fan_in_from_env(),
                     merge_root_arity_from_env() as usize,
                     "skipped by --raw-only",
+                )
+            } else if skip_merge_root {
+                ActiveLaneMetrics::failed_with_layout(
+                    batch_size,
+                    merge_root_leaf_fan_in_from_env(),
+                    merge_root_arity_from_env() as usize,
+                    "skipped by --skip-merge-root",
                 )
             } else {
                 benchmark_merge_root_lane(
@@ -498,12 +573,12 @@ fn benchmark_raw_shipping_lane(
         );
     }
 
-    let mut verify_time = Duration::default();
+    let mut verify_time = 0u128;
     let mut bytes = 0usize;
     for chunk in &mut chunks {
-        match bincode::serialize(chunk) {
-            Ok(serialized) => {
-                bytes = bytes.saturating_add(serialized.len());
+        match serialized_tx_proof_chunk_bytes(chunk) {
+            Ok(serialized_len) => {
+                bytes = bytes.saturating_add(serialized_len);
             }
             Err(err) => {
                 return LaneMetrics::failed(
@@ -512,43 +587,15 @@ fn benchmark_raw_shipping_lane(
                 );
             }
         }
-        for (index, proof) in chunk.iter().enumerate() {
-            let verify_started = Instant::now();
-            let verification = panic::catch_unwind(AssertUnwindSafe(|| {
-                proof::verify(proof, verifying_key)
-            }));
-            match verification {
-                Ok(Ok(report)) => {
-                    if !report.verified {
-                        return LaneMetrics::failed(
-                            batch_size,
-                            format!(
-                                "raw shipping tx verification returned !verified for chunk tx {index}"
-                            ),
-                        );
-                    }
-                    verify_time += verify_started.elapsed();
-                }
-                Ok(Err(err)) => {
-                    return LaneMetrics::failed(
-                        batch_size,
-                        format!("raw shipping tx verification failed: {err}"),
-                    );
-                }
-                Err(payload) => {
-                    return LaneMetrics::failed(
-                        batch_size,
-                        format!(
-                            "raw shipping tx verification panicked: {}",
-                            panic_payload_to_string(payload)
-                        ),
-                    );
-                }
+        match verify_tx_proof_chunk(chunk, verifying_key, "raw shipping") {
+            Ok(chunk_verify_ns) => {
+                verify_time = verify_time.saturating_add(chunk_verify_ns);
             }
+            Err(err) => return LaneMetrics::failed(batch_size, err.to_string()),
         }
     }
 
-    LaneMetrics::from_totals(batch_size, proofs.len() / batch_size, 0, verify_time.as_nanos(), bytes)
+    LaneMetrics::from_totals(batch_size, proofs.len() / batch_size, 0, verify_time, bytes)
 }
 
 fn statement_hash_from_proof(proof: &transaction_circuit::proof::TransactionProof) -> [u8; 48] {
@@ -580,12 +627,101 @@ fn statement_hash_from_proof(proof: &transaction_circuit::proof::TransactionProo
     crypto::hashes::blake3_384(&message)
 }
 
+fn benchmark_raw_active_lane(
+    proofs: &[transaction_circuit::proof::TransactionProof],
+    parent_tree: &CommitmentTree,
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    batch_size: usize,
+) -> Result<ActiveLaneMetrics> {
+    let run = panic::catch_unwind(AssertUnwindSafe(|| {
+        benchmark_raw_active_lane_inner(proofs, parent_tree, verifying_key, batch_size)
+    }));
+    match run {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(err)) => Ok(ActiveLaneMetrics::failed(batch_size, err.to_string())),
+        Err(payload) => Ok(ActiveLaneMetrics::failed(
+            batch_size,
+            format!("raw active path panicked: {}", panic_payload_to_string(payload)),
+        )),
+    }
+}
+
+fn benchmark_raw_active_lane_inner(
+    proofs: &[transaction_circuit::proof::TransactionProof],
+    parent_tree: &CommitmentTree,
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    batch_size: usize,
+) -> Result<ActiveLaneMetrics> {
+    let mut chunks = proofs.chunks_exact(batch_size);
+    let batches = chunks.len();
+    if batches == 0 {
+        return Ok(ActiveLaneMetrics::failed(
+            batch_size,
+            format!("need at least {batch_size} tx proofs for raw active comparison"),
+        ));
+    }
+
+    let mut tx_verify_ns = 0u128;
+    let mut tx_proof_bytes = 0usize;
+    let mut commitment_prove_ns = 0u128;
+    let mut commitment_verify_ns = 0u128;
+    let mut commitment_proof_bytes = 0usize;
+    for chunk in &mut chunks {
+        tx_proof_bytes =
+            tx_proof_bytes.saturating_add(serialized_tx_proof_chunk_bytes(chunk)?);
+        tx_verify_ns = tx_verify_ns.saturating_add(verify_tx_proof_chunk(
+            chunk,
+            verifying_key,
+            "raw active",
+        )?);
+        let (prove_ns, verify_ns, proof_bytes) =
+            prove_and_verify_commitment_chunk(parent_tree, chunk)?;
+        commitment_prove_ns = commitment_prove_ns.saturating_add(prove_ns);
+        commitment_verify_ns = commitment_verify_ns.saturating_add(verify_ns);
+        commitment_proof_bytes = commitment_proof_bytes.saturating_add(proof_bytes);
+    }
+
+    let tx_count = batches.saturating_mul(batch_size);
+    let total_bytes = tx_proof_bytes.saturating_add(commitment_proof_bytes);
+    Ok(ActiveLaneMetrics {
+        batches,
+        tx_count,
+        tx_verify_ns,
+        tx_proof_bytes,
+        leaf_fan_in: 0,
+        merge_arity: 0,
+        leaf_batches: 0,
+        merge_nodes: 0,
+        leaf_prove_ns: 0,
+        merge_prove_ns: 0,
+        root_prove_ns: 0,
+        agg_verify_ns: 0,
+        agg_verify_batch_ns: 0,
+        agg_cache_prewarm_total_ns: 0,
+        agg_cache_build_ns: 0,
+        agg_cache_hit: false,
+        root_proof_bytes: 0,
+        commitment_prove_ns,
+        commitment_verify_ns,
+        commitment_proof_bytes,
+        total_active_path_prove_ns: commitment_prove_ns,
+        total_active_path_verify_ns: tx_verify_ns.saturating_add(commitment_verify_ns),
+        total_bytes,
+        bytes_per_tx: if tx_count > 0 {
+            total_bytes.saturating_div(tx_count)
+        } else {
+            0
+        },
+        error: None,
+    })
+}
+
 fn benchmark_merge_root_lane(
     proofs: &[transaction_circuit::proof::TransactionProof],
     parent_tree: &CommitmentTree,
     batch_size: usize,
     warm_mode: bool,
-) -> Result<MergeRootLaneMetrics> {
+) -> Result<ActiveLaneMetrics> {
     let leaf_fan_in = merge_root_leaf_fan_in_from_env();
     let merge_arity = merge_root_arity_from_env() as usize;
     let run = panic::catch_unwind(AssertUnwindSafe(|| {
@@ -593,13 +729,13 @@ fn benchmark_merge_root_lane(
     }));
     match run {
         Ok(Ok(result)) => Ok(result),
-        Ok(Err(err)) => Ok(MergeRootLaneMetrics::failed(
+        Ok(Err(err)) => Ok(ActiveLaneMetrics::failed_with_layout(
             batch_size,
             leaf_fan_in,
             merge_arity,
             err.to_string(),
         )),
-        Err(payload) => Ok(MergeRootLaneMetrics::failed(
+        Err(payload) => Ok(ActiveLaneMetrics::failed_with_layout(
             batch_size,
             leaf_fan_in,
             merge_arity,
@@ -616,13 +752,13 @@ fn benchmark_merge_root_lane_inner(
     parent_tree: &CommitmentTree,
     batch_size: usize,
     warm_mode: bool,
-) -> Result<MergeRootLaneMetrics> {
+) -> Result<ActiveLaneMetrics> {
     let leaf_fan_in = merge_root_leaf_fan_in_from_env();
     let merge_arity = merge_root_arity_from_env() as usize;
     let mut chunks = proofs.chunks_exact(batch_size);
     let batches = chunks.len();
     if batches == 0 {
-        return Ok(MergeRootLaneMetrics::failed(
+        return Ok(ActiveLaneMetrics::failed_with_layout(
             batch_size,
             leaf_fan_in,
             merge_arity,
@@ -771,29 +907,23 @@ fn benchmark_merge_root_lane_inner(
             .saturating_add(verify_metrics.cache_build_ms.saturating_mul(1_000_000));
         agg_cache_hit &= verify_metrics.cache_hit;
 
-        let prove_started = Instant::now();
-        let commitment_proof = CommitmentBlockProver::new()
-            .prove_block_commitment_with_tree(&mut commitment_tree, chunk, [0u8; 48])
-            .map_err(|err| anyhow!("commitment proof generation failed: {err}"))?;
-        commitment_prove_ns =
-            commitment_prove_ns.saturating_add(prove_started.elapsed().as_nanos());
-        commitment_proof_bytes =
-            commitment_proof_bytes.saturating_add(commitment_proof.proof_bytes.len());
-
-        let verify_started = Instant::now();
-        verify_block_commitment(&commitment_proof)
-            .map_err(|err| anyhow!("commitment proof verification failed: {err}"))?;
-        commitment_verify_ns =
-            commitment_verify_ns.saturating_add(verify_started.elapsed().as_nanos());
+        let (prove_ns, verify_ns, proof_bytes) =
+            prove_and_verify_commitment_chunk_from_tree(&mut commitment_tree, chunk)?;
+        commitment_prove_ns = commitment_prove_ns.saturating_add(prove_ns);
+        commitment_verify_ns = commitment_verify_ns.saturating_add(verify_ns);
+        commitment_proof_bytes = commitment_proof_bytes.saturating_add(proof_bytes);
 
         let _ = merge_root_leaf_manifest_commitment(&statement_hashes)
             .map_err(|err| anyhow!("derive merge-root leaf manifest commitment: {err}"))?;
     }
 
     let tx_count = batches.saturating_mul(batch_size);
-    Ok(MergeRootLaneMetrics {
+    let total_bytes = root_proof_bytes.saturating_add(commitment_proof_bytes);
+    Ok(ActiveLaneMetrics {
         batches,
         tx_count,
+        tx_verify_ns: 0,
+        tx_proof_bytes: 0,
         leaf_fan_in,
         merge_arity,
         leaf_batches,
@@ -817,15 +947,87 @@ fn benchmark_merge_root_lane_inner(
         total_active_path_verify_ns: agg_cache_prewarm_total_ns
             .saturating_add(agg_verify_ns)
             .saturating_add(commitment_verify_ns),
+        total_bytes,
         bytes_per_tx: if tx_count > 0 {
-            root_proof_bytes
-                .saturating_add(commitment_proof_bytes)
-                .saturating_div(tx_count)
+            total_bytes.saturating_div(tx_count)
         } else {
             0
         },
         error: None,
     })
+}
+
+fn serialized_tx_proof_chunk_bytes(
+    chunk: &[transaction_circuit::proof::TransactionProof],
+) -> Result<usize> {
+    Ok(bincode::serialize(chunk)
+        .context("serialize tx-proof chunk")?
+        .len())
+}
+
+fn verify_tx_proof_chunk(
+    chunk: &[transaction_circuit::proof::TransactionProof],
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    lane_name: &str,
+) -> Result<u128> {
+    let mut verify_ns = 0u128;
+    for (index, proof) in chunk.iter().enumerate() {
+        let verify_started = Instant::now();
+        let verification = panic::catch_unwind(AssertUnwindSafe(|| {
+            proof::verify(proof, verifying_key)
+        }));
+        match verification {
+            Ok(Ok(report)) => {
+                if !report.verified {
+                    return Err(anyhow!(
+                        "{lane_name} tx verification returned !verified for chunk tx {index}"
+                    ));
+                }
+                verify_ns = verify_ns.saturating_add(verify_started.elapsed().as_nanos());
+            }
+            Ok(Err(err)) => {
+                return Err(anyhow!("{lane_name} tx verification failed: {err}"));
+            }
+            Err(payload) => {
+                return Err(anyhow!(
+                    "{lane_name} tx verification panicked: {}",
+                    panic_payload_to_string(payload)
+                ));
+            }
+        }
+    }
+    Ok(verify_ns)
+}
+
+fn prove_and_verify_commitment_chunk(
+    parent_tree: &CommitmentTree,
+    chunk: &[transaction_circuit::proof::TransactionProof],
+) -> Result<(u128, u128, usize)> {
+    let mut commitment_tree = parent_tree.clone();
+    prove_and_verify_commitment_chunk_from_tree(&mut commitment_tree, chunk)
+}
+
+fn prove_and_verify_commitment_chunk_from_tree(
+    commitment_tree: &mut CommitmentTree,
+    chunk: &[transaction_circuit::proof::TransactionProof],
+) -> Result<(u128, u128, usize)> {
+    let prove_started = Instant::now();
+    let commitment_proof = CommitmentBlockProver::new()
+        .prove_block_commitment_with_tree(commitment_tree, chunk, [0u8; 48])
+        .map_err(|err| anyhow!("commitment proof generation failed: {err}"))?;
+    let commitment_prove_ns = prove_started.elapsed().as_nanos();
+    let commitment_proof_bytes = commitment_proof.proof_bytes.len();
+
+    let verify_started = Instant::now();
+    verify_block_commitment(&commitment_proof)
+        .map_err(|err| anyhow!("commitment proof verification failed: {err}"))?;
+    let commitment_verify_ns = verify_started.elapsed().as_nanos();
+
+    Ok((
+        commitment_prove_ns,
+        commitment_verify_ns,
+        commitment_proof_bytes,
+    ))
 }
 
 fn benchmark_tx_proof_manifest_lane(
@@ -1048,6 +1250,7 @@ fn run_benchmark(
     warm_mode: bool,
     include_dead_lanes: bool,
     raw_only: bool,
+    skip_merge_root: bool,
 ) -> Result<BenchReport> {
     if iterations == 0 {
         return Err(anyhow!("iterations must be greater than zero"));
@@ -1300,6 +1503,7 @@ fn run_benchmark(
             warm_mode,
             include_dead_lanes,
             raw_only,
+            skip_merge_root,
         )?
     };
 

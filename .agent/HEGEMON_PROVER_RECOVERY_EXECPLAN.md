@@ -28,11 +28,12 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - [x] (2026-03-14, later) Reworked the live merge-root coordinator path around a canonical `StageType` enum (`leaf_batch_prove`, `merge_node_prove`, `root_aggregate_prove`, `finalize_bundle`), fixed the stage-name mismatch in root dependency ids, and split parent-independent expensive stage ids from parent-bound final bundle ids.
 - [x] (2026-03-14, later) Finished the coordinator root/finalize split so leaf/merge/root aggregation artifacts are cached in a reusable parent-independent tier while only the final bundle assembly remains parent-bound.
 - [x] (2026-03-14, later) Extracted shared merge-root layout helpers into `consensus/src/merge_root_layout.rs` so consensus verification, node planning, and the benchmark lane use the same fan-in/arity/tree-level/leaf-manifest logic.
-- [x] (2026-03-14, later) Replaced the dead default lane comparison in `circuits-bench` with a live `raw_shipping` vs `merge_root_active` surface, including leaf/merge/root/commitment timing fields, warm/cold mode selection, and structured lane-failure reporting instead of process aborts.
+- [x] (2026-03-14, later) Replaced the dead default lane comparison in `circuits-bench` with live lanes over the real surfaces that matter: `raw_shipping` as the frozen transport baseline, `raw_active` as canonical tx proofs plus commitment, and `merge_root_active` as aggregation plus commitment. The bench now reports common active-path metrics across those lanes, supports `--raw-only` for the frozen transport fingerprint and `--skip-merge-root` for isolating `raw_active`, and returns structured lane failures instead of aborting the process.
 - [x] (2026-03-14, later) Restored honest benchmark fixtures: `circuits-bench --raw-only` now reproduces the frozen release raw-proof fingerprint (`tx_trace_rows = 8192`, `fri_log_blowup_config = 4`, `fri_num_queries = 32`) and the raw lane is back within `49 B/tx` of the archived baseline at `k=1/2/4/8`.
 - [x] (2026-03-14, later) Fixed the benchmark anchor-history mismatch and the commitment AIR public-input offset bug so release-mode `merge_root_active` now completes cleanly at `k=1`.
-- [ ] (2026-03-14, later) Capture a clean warm release result for `merge_root_active` at `k=2` and above, or kill the lane there with explicit wall-clock evidence if it stalls.
-- [ ] Re-run the acceptance matrix locally and only then re-enable remote topology tests.
+- [x] (2026-03-14, later) Archived the active-lane comparison under `output/prover-recovery/2026-03-14/active-lanes/`: `raw_active` beats `merge_root_active` already at `k=1`, and `merge_root_active(k=2)` was killed with explicit `65s` timed-stall evidence instead of being given more excuses.
+- [ ] Implement the explicit raw/inline-tx live lane (`service.rs`, `prover_coordinator.rs`, `consensus/src/proof.rs`) so production follows the benchmark verdict instead of still routing through `merge_root`.
+- [ ] Re-run the acceptance matrix locally on the raw-active live lane and only then re-enable remote topology tests.
 
 ## Surprises & Discoveries
 
@@ -66,6 +67,10 @@ After this change, a new agent should be able to read this plan, inspect the nam
   Evidence: `circuits/block/src/p3_commitment_air.rs` now consumes the full `45`-element base layout and advances past both kernel roots before reading `nullifier_root`, `da_root`, and the nullifier lists.
 - Observation: the benchmark honesty blockers have moved. Raw release compatibility is now restored and release `k=1` merge-root is positive; the next practical question is whether warm `k=2` finishes on anything close to a useful budget.
   Evidence: `output/prover-recovery/2026-03-14/merge-root-active/benchmark.json` records a successful singleton run, while the attempted `iterations=2`, `lane_batch_sizes=2` release command consumed several minutes of CPU without yielding a clean JSON artifact in-turn.
+- Observation: `raw_shipping` was never the real live baseline. The honest live comparison is `raw_active` (canonical tx proofs plus the same commitment proof path) versus `merge_root_active` (aggregation plus commitment).
+  Evidence: the archived transport baseline has `commitment_prove_ns = 0`, `commitment_verify_ns = 0`, and `commitment_proof_bytes = 0`, while `output/prover-recovery/2026-03-14/active-lanes/benchmark-k1.json` and `raw-active-k*.json` now record the full post-tx-proof path.
+- Observation: merge-root lost immediately once the correct comparator existed. At `k=1`, `raw_active` already beat `merge_root_active` on bytes (`536098` vs `536258 B/tx`), prove time (`70812417` vs `79701375 ns`), and verify time (`18299167` vs `25680001 ns`); at `k=2`, merge-root could not finish within a `65s` wall-clock budget while `raw_active` finished at `456262 B/tx`, `108371875 ns` active-path prove, and `29954584 ns` active-path verify.
+  Evidence: `output/prover-recovery/2026-03-14/active-lanes/benchmark-k1.json`, `output/prover-recovery/2026-03-14/active-lanes/raw-active-k2.json`, and `output/prover-recovery/2026-03-14/active-lanes/merge-root-k2-stall.txt`.
 
 ## Decision Log
 
@@ -93,6 +98,8 @@ After this change, a new agent should be able to read this plan, inspect the nam
   Date/Author: 2026-03-14 / OpenAI assistant
 - Decision: Keep the production path on raw tx-proof shipping plus `merge_root` until a witness-free microbatch beats raw shipping locally on both proof bytes and warm-prove time. Rationale: a replacement that wins only one metric can still lose the 60-second block budget once serial tail is counted.
   Date/Author: 2026-03-14 / OpenAI assistant
+- Decision: Treat `raw_active` as the real live baseline and kill `merge_root` as the low-TPS hot path. Rationale: once both lanes included the same parent-bound commitment proof, `merge_root` lost at `k=1` and failed to clear a `65s` wall-clock budget at `k=2`, so carrying it as the default low-TPS path would violate the benchmark gate.
+  Date/Author: 2026-03-14 / OpenAI assistant
 
 ## Outcomes & Retrospective
 
@@ -100,7 +107,7 @@ Updated outcome: the local falsification loop now did its job twice. First it ki
 
 Later update: the merge-root recovery work is now wired where it should have been all along. Stage planning and worker dispatch share one canonical stage namespace, root aggregation is separated cleanly from parent-bound bundle finalization, reusable expensive artifacts are keyed without the parent, and the benchmark harness defaults to the real live comparison surface instead of the dead wrapper lane. That is real progress, but not a throughput win yet: the current local warm bench still fails at the commitment stage because the synthetic benchmark proofs do not line up with anchor-history expectations. So the honest status remains unchanged at the product level: raw shipping plus `merge_root` stays live, replacement candidates still need to beat raw shipping locally, and the acceptance matrix stays blocked until merge-root itself measures cleanly.
 
-Latest update: the two benchmark-honesty blockers from the previous handoff are resolved. Blocker A (raw lane no longer matching the frozen baseline) was a dev-vs-release FRI profile mismatch; release-mode `--raw-only` now restores the canonical fingerprint within `49 B/tx` of the frozen archive. Blocker B (merge-root blocked by anchor-history mismatch) is also fixed: the bench now generates proofs against a shared anchor-history tree and the commitment AIR consumes the full public-input layout, which yields a positive release `k=1` `merge_root_active` run. The next blocker is narrower and uglier: warm release `k=2` and above have not yet produced clean archived results, so the lane is currently in "measure or kill" territory rather than "fix the fixture" territory.
+Latest update: the benchmark-honesty blockers from the previous handoff are resolved and the correct live comparator now exists. `raw_active` is the honest local baseline because it includes canonical tx proofs plus the same commitment proof path that any live block must pay. Against that surface, merge-root lost immediately: `k=1` is already worse on bytes and active-path latency, and `k=2` was killed with explicit `65s` wall-clock stall evidence. The benchmark verdict is therefore clear even though production code has not yet been switched over: merge-root is dead as the low-TPS hot path, and the remaining implementation work is to wire an explicit raw/inline-tx live lane and run the acceptance matrix on that path.
 
 ## Context and Orientation
 

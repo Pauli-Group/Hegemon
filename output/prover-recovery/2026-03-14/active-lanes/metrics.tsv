@@ -1,0 +1,7 @@
+lane	k	status	bytes_per_tx	total_active_path_prove_ns	total_active_path_verify_ns	commitment_prove_ns	commitment_verify_ns	tx_verify_ns	root_proof_bytes	commitment_proof_bytes	note
+raw_active	1	ok	536098	70812417	18299167	70812417	10534167	7765000	0	181884	combined run
+merge_root_active	1	ok	536258	79701375	25680001	72044625	10475584	0	354374	181884	combined run
+raw_active	2	ok	456262	108371875	29954584	108371875	14754417	15200167	0	204212	isolated with --skip-merge-root
+merge_root_active	2	stall	-	-	-	-	-	-	-	-	65s timed stall; see merge-root-k2-stall.txt
+raw_active	4	ok	411145	156455625	54544459	156455625	24047750	30496709	0	228076	isolated with --skip-merge-root
+raw_active	8	ok	385872	247197333	102435334	247197333	40455500	61979834	0	253476	isolated with --skip-merge-root
