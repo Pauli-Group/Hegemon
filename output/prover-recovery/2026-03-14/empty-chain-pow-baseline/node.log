@@ -1,0 +1,603 @@
+2026-03-14 22:04:25 Hegemon Node
+2026-03-14 22:04:25 ✌️  version 0.9.1
+2026-03-14 22:04:25 ❤️  by Pauli Group Inc., 2025-2026
+2026-03-14 22:04:25 📋 Chain specification: Hegemon
+2026-03-14 22:04:25 🏷  Node name: delirious-mark-2246
+2026-03-14 22:04:25 👤 Role: AUTHORITY
+2026-03-14 22:04:25 💾 Database: RocksDb at /tmp/hegemon-empty-pow-30/chains/hegemon/db/full
+2026-03-14 22:04:26 🔨 Initializing Genesis block/state (state: 0x41e8…2280, header-hash: 0xc04d…5be8)
+2026-03-14 22:04:26 Full Substrate client created best_number=0 best_hash=0xc04d…5be8
+2026-03-14 22:04:26 Creating transaction pool txpool_type=ForkAware ready=Limit { count: 8192, total_bytes: 20971520 } future=Limit { count: 819, total_bytes: 2097152 }
+2026-03-14 22:04:26 Full Substrate transaction pool created
+2026-03-14 22:04:26 PoW block import pipeline created
+2026-03-14 22:04:26 PQ service config initialized listen_addr=[::]:30333 max_peers=0
+2026-03-14 22:04:26 Generated PQ identity seed path=/tmp/hegemon-empty-pow-30/pq-identity.seed
+2026-03-14 22:04:26 Initialized PQ network keypair peer_id=d5d0e7ee37f2675272770f790f6b6f5c73418dd3076638d09adfec9fc91ef4ea
+2026-03-14 22:04:26 Hegemon node with full client initialized pq_peer_id=7cbb91e64e9f07454135ed3172ee3c77485f2788177d8c65779ac1c406cfa113
+2026-03-14 22:04:26 Generated DA sampling secret path=/tmp/hegemon-empty-pow-30/da-secret
+2026-03-14 22:04:26 Hegemon node started with FULL SUBSTRATE CLIENT chain=Hegemon role=Authority best_number=0 best_hash=0xc04d…5be8 pq_enabled=true
+=== RPC CONFIG DEBUG ===
+config.rpc.addr: Some([RpcEndpoint { listen_addr: 127.0.0.1:9975, batch_config: Unlimited, max_connections: 100, max_payload_in_mb: 15, max_payload_out_mb: 15, max_subscriptions_per_connection: 1024, max_buffer_capacity_per_connection: 64, rate_limit: None, rate_limit_trust_proxy_headers: false, rate_limit_whitelisted_ips: [], cors: None, rpc_methods: Auto, is_optional: false, retry_random_port: true }, RpcEndpoint { listen_addr: [::1]:9975, batch_config: Unlimited, max_connections: 100, max_payload_in_mb: 15, max_payload_out_mb: 15, max_subscriptions_per_connection: 1024, max_buffer_capacity_per_connection: 64, rate_limit: None, rate_limit_trust_proxy_headers: false, rate_limit_whitelisted_ips: [], cors: None, rpc_methods: Auto, is_optional: true, retry_random_port: true }])
+config.rpc.port: 9944
+========================
+2026-03-14 22:04:49 batch verifier preprocessed cache warmup complete sizes=[16] warmed=1
+2026-03-14 22:04:49 PQ-secure network transport configured peer_id=d5d0e7ee37f2675272770f790f6b6f5c73418dd3076638d09adfec9fc91ef4ea
+2026-03-14 22:04:49 SubstratePqTransport ready for peer connections transport_peer_id=7cbb91e64e9f07454135ed3172ee3c77485f2788177d8c65779ac1c406cfa113 protocol=/hegemon/pq/1
+2026-03-14 22:04:49 Started 1 mining thread(s)
+2026-03-14 22:04:49 Mining started threads=1
+2026-03-14 22:04:49 Mining enabled and started threads=1
+2026-03-14 22:04:49 Transaction pool bridge wired to Substrate pool pool_capacity=4096 max_pending=1000 pool_type="SubstrateTransactionPoolWrapper (real pool)"
+2026-03-14 22:04:49 Ciphertext DA retention disabled; keeping all ciphertexts
+2026-03-14 22:04:49 Proof DA retention disabled; keeping all proof DA blobs
+2026-03-14 22:04:49 DA sampling configured da_chunk_size=65536 da_sample_count=80 da_store_capacity=128 pending_ciphertext_capacity=4096 pending_proof_capacity=256 ciphertext_da_retention_blocks=0 proof_da_retention_blocks=0 da_store_path=/tmp/hegemon-empty-pow-30/da-store da_sample_timeout_ms=5000
+2026-03-14 22:04:49 Commitment block proof store configured commitment_block_proof_store_capacity=128
+2026-03-14 22:04:49 CRITICAL: Transaction pool maintenance task spawned - pool will receive block notifications
+2026-03-14 22:04:49 PQ network backend started addr=[::]:30333 peer_id=7cbb91e64e9f07454135ed3172ee3c77485f2788177d8c65779ac1c406cfa113
+2026-03-14 22:04:49 PqNetworkBackend started listen_addr=[::]:30333 max_peers=0 peer_id=7cbb91e64e9f07454135ed3172ee3c77485f2788177d8c65779ac1c406cfa113
+2026-03-14 22:04:49 PQ network handle captured for mining worker
+2026-03-14 22:04:49 Strict compatibility enabled; skipping cached discovery dials at startup
+2026-03-14 22:04:49 Chain sync service created
+2026-03-14 22:04:49 Transaction propagation task spawned
+2026-03-14 22:04:49 Block import handler wired to PowBlockImport for network sync
+2026-03-14 22:04:49 best_block_fn wired to client.chain_info()
+2026-03-14 22:04:49 difficulty_fn wired to runtime ConsensusApi::difficulty_bits()
+2026-03-14 22:04:49 No HEGEMON_BATCH_TARGET_TXS override set; capping default proven-batch target to keep preparation latency bounded max_block_transactions=1000 default_batch_target_txs=32
+2026-03-14 22:04:49 Transaction pool maintenance task started
+2026-03-14 22:04:49 Chain sync tick task started
+2026-03-14 22:04:49 PQ discovery enabled (address exchange) min_peers=0 tick_secs=30 strict_compatibility=true
+2026-03-14 22:04:49 PQ network event handler started (Full Client Mode + Sync)
+2026-03-14 22:04:49 Mining will pause while shielded batches wait for a ready prepared bundle min_ready_proven_batch_txs=1 proof_mode=InlineTx
+2026-03-14 22:04:49 PQ network event received by Full Client handler event="Discriminant(3)"
+2026-03-14 22:04:49 Transaction pool wired to chain state provider max_block_transactions=1000 prover_candidate_overscan_factor=4 prover_workers=2 prover_batch_target_txs=32 prover_batch_queue_capacity=4 prover_liveness_lane=true prover_adaptive_liveness_timeout_ms=0 prover_batch_job_timeout_ms=180000
+2026-03-14 22:04:49 Proofless inclusion waits briefly for newly prepared bundles before deferring proofless_ready_wait_ms=1500
+2026-03-14 22:04:49 No shielded miner address configured - coinbase rewards disabled
+2026-03-14 22:04:49 BlockBuilder API wired with StorageChanges capture
+2026-03-14 22:04:49 BlockBuilder API wired for real state execution
+2026-03-14 22:04:49 Block import wired with StorageChanges application
+2026-03-14 22:04:49 PowBlockImport wired for real block import
+2026-03-14 22:04:49 Skipping aggregation prover worker prewarm by configuration worker_index=1
+2026-03-14 22:04:49 Skipping aggregation prover worker prewarm by configuration worker_index=0
+2026-03-14 22:04:49 Transaction propagation task started
+2026-03-14 22:04:49 Block import handler started (syncs blocks from network + historical sync)
+2026-03-14 22:04:49 FULL PRODUCTION PIPELINE CONFIGURED using_real_client=true difficulty_bits=488298482 best_number=0 best_hash=c04d82c23b7320e81c15afb8069ea404df1bf1cb2be57f2c79bb59dab3ba5be8
+2026-03-14 22:04:49 Spawning PRODUCTION mining worker with real client + PQ broadcasting threads=1 test_mode=true
+2026-03-14 22:04:49 Creating production mining worker (Task 10.5) threads=1 is_production=true verbose=false
+2026-03-14 22:04:49 Mining worker started (Phase 9.3) threads=1 round_duration_ms=500 test_mode=true
+2026-03-14 22:04:49 Chain RPC wired (chain_getBlock, chain_getHeader, etc.)
+2026-03-14 22:04:49 State RPC wired (state_getStorage, state_getRuntimeVersion, etc.)
+2026-03-14 22:04:49 System RPC wired (system_name, system_version, system_chain, etc.)
+2026-03-14 22:04:49 CALLING REAL execute_extrinsics_fn parent=c04d82c23b7320e81c15afb8069ea404df1bf1cb2be57f2c79bb59dab3ba5be8 block_number=1 tx_count=0
+2026-03-14 22:04:49 Building block with sc_block_builder block_number=1 parent=c04d82c23b7320e81c15afb8069ea404df1bf1cb2be57f2c79bb59dab3ba5be8 tx_count=0
+2026-03-14 22:04:49 Hegemon RPC wired (hegemon_miningStatus, hegemon_consensusStatus, etc.)
+2026-03-14 22:04:49 Wallet RPC wired (wallet_notes, wallet_commitments, etc.)
+2026-03-14 22:04:49 Shielded RPC wired (shielded_submitTransfer, etc.)
+2026-03-14 22:04:49 Block RPC wired (block_getCommitmentProof)
+2026-03-14 22:04:49 DA RPC wired (da_getChunk, da_getParams)
+2026-03-14 22:04:49 Prover RPC wired (prover_getWorkPackage, prover_submitWorkResult, prover_getWorkStatus, prover_getMarketParams)
+2026-03-14 22:04:49 RPC server spawned with production service rpc_addr=127.0.0.1:9975 rpc_port=9975
+2026-03-14 22:04:49 ═══════════════════════════════════════════════════════════════
+2026-03-14 22:04:49 STARTING NODE
+2026-03-14 22:04:49 ═══════════════════════════════════════════════════════════════
+2026-03-14 22:04:49   RPC server spawned at 127.0.0.1:9975
+2026-03-14 22:04:49   PQ network broadcasting: true
+2026-03-14 22:04:49   RPC server: http://127.0.0.1:9975
+2026-03-14 22:04:49   Set HEGEMON_MINE=1 to enable mining
+2026-03-14 22:04:49 ═══════════════════════════════════════════════════════════════
+2026-03-14 22:04:49 RPC server started addr=127.0.0.1:9975
+2026-03-14 22:04:49 BlockBuilder created block_number=1 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:04:49 Created 1 inherent extrinsics count=1
+2026-03-14 22:04:49 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b3307abef9c01
+2026-03-14 22:04:49 Block built with StorageChanges cached block_number=1 applied=1 failed=0 state_root=f0f6b17434652dc3ec464f7f7c451e1facf1c38b387ae95cb2211d22c8ef746f extrinsics_root=337f1996cb1453b9b339a0ff8f3fc886136347b7aca1f8a8376c3b656cc9a855 storage_changes_key=1
+2026-03-14 22:04:49 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=1 pre_hash=0b9ce8fb781347dd341b07db1f7b9f40cb9bcb504a2c26ff7b55156cb4625ae6 parent_hash=c04d82c23b7320e81c15afb8069ea404df1bf1cb2be57f2c79bb59dab3ba5be8 difficulty="1d1ad7f2" state_root=f0f6b17434652dc3ec464f7f7c451e1facf1c38b387ae95cb2211d22c8ef746f extrinsics_root=337f1996cb1453b9b339a0ff8f3fc886136347b7aca1f8a8376c3b656cc9a855
+2026-03-14 22:04:49 hashing_started trace_ts_ms=1773547489177 thread_id=0 pre_hash=0x0b9ce8fb781347dd341b07db1f7b9f40cb9bcb504a2c26ff7b55156cb4625ae6 pow_bits="1d1ad7f2" height=1 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:04:49 mine_round: checking difficulty pow_bits="1d1ad7f2" target=1ad7f20000000000000000000000000000000000000000000000000000 first_work_value=44bd01c2b815b11ca86157f8b13a3483d102e11b9c91ba450660cbe66dec6f9a passes=false first_nonce=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:04:53 mining_solution_found trace_ts_ms=1773547493812 thread_id=0 nonce=[47, 55, 90, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=67700 height=1 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:04:53 Found PoW solution height=1 nonce=[47, 55, 90, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:04:53 Applying cached StorageChanges during import block_number=1 storage_changes_key=1
+2026-03-14 22:04:53 PoW seal verification details pre_hash=0x0b9ce8fb781347dd341b07db1f7b9f40cb9bcb504a2c26ff7b55156cb4625ae6 nonce=[47, 55, 90, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000011ddb986871957f4f342dc962429cc18033a440428bdd1ef320ae047aa stored_work=0x00000011ddb986871957f4f342dc962429cc18033a440428bdd1ef320ae047aa work_matches=true
+2026-03-14 22:04:53 DA encoding stored for imported block block_number=1 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:04:53 Block imported successfully with state changes applied block_hash=f004f9eb1068735b10859e427dc8f6095f54096c0636982243ba8befd104fb23 block_number=1
+2026-03-14 22:04:53 🎉 Block mined!
+2026-03-14 22:04:53 Block imported successfully block_number=1 block_hash=f004f9eb1068735b10859e427dc8f6095f54096c0636982243ba8befd104fb23 nonce=[47, 55, 90, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:04:53 Broadcasting mined block via PQ network block_number=1 block_hash=f004f9eb1068735b10859e427dc8f6095f54096c0636982243ba8befd104fb23 has_body=true data_len=230
+2026-03-14 22:04:53 CALLING REAL execute_extrinsics_fn parent=f004f9eb1068735b10859e427dc8f6095f54096c0636982243ba8befd104fb23 block_number=2 tx_count=0
+2026-03-14 22:04:53 Building block with sc_block_builder block_number=2 parent=f004f9eb1068735b10859e427dc8f6095f54096c0636982243ba8befd104fb23 tx_count=0
+2026-03-14 22:04:53 BlockBuilder created block_number=2 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:04:53 Created 1 inherent extrinsics count=1
+2026-03-14 22:04:53 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bb619abef9c01
+2026-03-14 22:04:53 Block built with StorageChanges cached block_number=2 applied=1 failed=0 state_root=8fe8b72a34b9cdd877cd3e3d0efebdd294b8131f2a77af3e66cca0b7814c1cef extrinsics_root=f520e0643f353b9ed8b9d59e4af7e04640637502ebca6608d89f52d9d451f8cb storage_changes_key=2
+2026-03-14 22:04:53 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=2 pre_hash=e523ae2d026894f2f46b6a2950332f0926dcc343f56054f209d01f19e1e88ef7 parent_hash=f004f9eb1068735b10859e427dc8f6095f54096c0636982243ba8befd104fb23 difficulty="1d1ad7f2" state_root=8fe8b72a34b9cdd877cd3e3d0efebdd294b8131f2a77af3e66cca0b7814c1cef extrinsics_root=f520e0643f353b9ed8b9d59e4af7e04640637502ebca6608d89f52d9d451f8cb
+2026-03-14 22:04:53 hashing_started trace_ts_ms=1773547493817 thread_id=0 pre_hash=0xe523ae2d026894f2f46b6a2950332f0926dcc343f56054f209d01f19e1e88ef7 pow_bits="1d1ad7f2" height=2 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:07:56 mining_solution_found trace_ts_ms=1773547676674 thread_id=0 nonce=[234, 242, 254, 119, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=2778300 height=2 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:07:56 Found PoW solution height=2 nonce=[234, 242, 254, 119, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:07:56 Applying cached StorageChanges during import block_number=2 storage_changes_key=2
+2026-03-14 22:07:56 PoW seal verification details pre_hash=0xe523ae2d026894f2f46b6a2950332f0926dcc343f56054f209d01f19e1e88ef7 nonce=[234, 242, 254, 119, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000015ce2c92eb5aba3b4b300e2811f6d01f77d8abb8367d34321d8e091ebc stored_work=0x00000015ce2c92eb5aba3b4b300e2811f6d01f77d8abb8367d34321d8e091ebc work_matches=true
+2026-03-14 22:07:56 DA encoding stored for imported block block_number=2 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:07:56 Block imported successfully with state changes applied block_hash=cf3229c31f9c655bee1ecc942ace4bee2cc459c138a748891bb11c72671d2411 block_number=2
+2026-03-14 22:07:56 🎉 Block mined!
+2026-03-14 22:07:56 Block imported successfully block_number=2 block_hash=cf3229c31f9c655bee1ecc942ace4bee2cc459c138a748891bb11c72671d2411 nonce=[234, 242, 254, 119, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:07:56 Broadcasting mined block via PQ network block_number=2 block_hash=cf3229c31f9c655bee1ecc942ace4bee2cc459c138a748891bb11c72671d2411 has_body=true data_len=230
+2026-03-14 22:07:56 CALLING REAL execute_extrinsics_fn parent=cf3229c31f9c655bee1ecc942ace4bee2cc459c138a748891bb11c72671d2411 block_number=3 tx_count=0
+2026-03-14 22:07:56 Building block with sc_block_builder block_number=3 parent=cf3229c31f9c655bee1ecc942ace4bee2cc459c138a748891bb11c72671d2411 tx_count=0
+2026-03-14 22:07:56 BlockBuilder created block_number=3 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:07:56 Created 1 inherent extrinsics count=1
+2026-03-14 22:07:56 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b04e4adef9c01
+2026-03-14 22:07:56 Block built with StorageChanges cached block_number=3 applied=1 failed=0 state_root=218281d39e6b61c87762e884688e54444af29ca064a84afc06c3256addb302e9 extrinsics_root=677c9f625d0740d9565c6f7c55dbca8b7e80bef7eb9b431273ec0aece2ae727b storage_changes_key=3
+2026-03-14 22:07:56 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=3 pre_hash=1020adf897141f0f6e38958f24ce8832ffa6333bef3a23215d2a7478d677df3c parent_hash=cf3229c31f9c655bee1ecc942ace4bee2cc459c138a748891bb11c72671d2411 difficulty="1d1ad7f2" state_root=218281d39e6b61c87762e884688e54444af29ca064a84afc06c3256addb302e9 extrinsics_root=677c9f625d0740d9565c6f7c55dbca8b7e80bef7eb9b431273ec0aece2ae727b
+2026-03-14 22:07:56 hashing_started trace_ts_ms=1773547676680 thread_id=0 pre_hash=0x1020adf897141f0f6e38958f24ce8832ffa6333bef3a23215d2a7478d677df3c pow_bits="1d1ad7f2" height=3 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:09:01 mining_solution_found trace_ts_ms=1773547741671 thread_id=0 nonce=[82, 149, 5, 180, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=3738000 height=3 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:09:01 Found PoW solution height=3 nonce=[82, 149, 5, 180, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:09:01 Applying cached StorageChanges during import block_number=3 storage_changes_key=3
+2026-03-14 22:09:01 PoW seal verification details pre_hash=0x1020adf897141f0f6e38958f24ce8832ffa6333bef3a23215d2a7478d677df3c nonce=[82, 149, 5, 180, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000003f813d8f1e7b03a54f24ba145f122cebefc47fb3cf9d329e82afab18 stored_work=0x000000003f813d8f1e7b03a54f24ba145f122cebefc47fb3cf9d329e82afab18 work_matches=true
+2026-03-14 22:09:01 DA encoding stored for imported block block_number=3 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:09:01 Block imported successfully with state changes applied block_hash=0ef9dd465f0e9226ace4ab76d314563beb7d8eda759740bcc1686a45964b479f block_number=3
+2026-03-14 22:09:01 🎉 Block mined!
+2026-03-14 22:09:01 Block imported successfully block_number=3 block_hash=0ef9dd465f0e9226ace4ab76d314563beb7d8eda759740bcc1686a45964b479f nonce=[82, 149, 5, 180, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:09:01 Broadcasting mined block via PQ network block_number=3 block_hash=0ef9dd465f0e9226ace4ab76d314563beb7d8eda759740bcc1686a45964b479f has_body=true data_len=230
+2026-03-14 22:09:01 CALLING REAL execute_extrinsics_fn parent=0ef9dd465f0e9226ace4ab76d314563beb7d8eda759740bcc1686a45964b479f block_number=4 tx_count=0
+2026-03-14 22:09:01 Building block with sc_block_builder block_number=4 parent=0ef9dd465f0e9226ace4ab76d314563beb7d8eda759740bcc1686a45964b479f tx_count=0
+2026-03-14 22:09:01 BlockBuilder created block_number=4 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:09:01 Created 1 inherent extrinsics count=1
+2026-03-14 22:09:01 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000be8e1aeef9c01
+2026-03-14 22:09:01 Block built with StorageChanges cached block_number=4 applied=1 failed=0 state_root=6e881d5e0a7165487fdd5abb4934f5f1a7ece7a23639421432e62fb483bb8771 extrinsics_root=ff2ebde5b024019344915b65162e4c9e42c4c6045b6a9a455952d6339d341e64 storage_changes_key=4
+2026-03-14 22:09:01 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=4 pre_hash=5eabb576b826bf55b3c8c4f0c95a37837cafb9fce15b0f862601e326eab42b7f parent_hash=0ef9dd465f0e9226ace4ab76d314563beb7d8eda759740bcc1686a45964b479f difficulty="1d1ad7f2" state_root=6e881d5e0a7165487fdd5abb4934f5f1a7ece7a23639421432e62fb483bb8771 extrinsics_root=ff2ebde5b024019344915b65162e4c9e42c4c6045b6a9a455952d6339d341e64
+2026-03-14 22:09:01 hashing_started trace_ts_ms=1773547741678 thread_id=0 pre_hash=0x5eabb576b826bf55b3c8c4f0c95a37837cafb9fce15b0f862601e326eab42b7f pow_bits="1d1ad7f2" height=4 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:09:11 mining_solution_found trace_ts_ms=1773547751986 thread_id=0 nonce=[2, 215, 36, 14, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=3889200 height=4 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:09:11 Found PoW solution height=4 nonce=[2, 215, 36, 14, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:09:11 Applying cached StorageChanges during import block_number=4 storage_changes_key=4
+2026-03-14 22:09:11 PoW seal verification details pre_hash=0x5eabb576b826bf55b3c8c4f0c95a37837cafb9fce15b0f862601e326eab42b7f nonce=[2, 215, 36, 14, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000b4b4bb779d8edca3e052e3095a707b3175ffe5a051229c55950d11ee3 stored_work=0x0000000b4b4bb779d8edca3e052e3095a707b3175ffe5a051229c55950d11ee3 work_matches=true
+2026-03-14 22:09:11 DA encoding stored for imported block block_number=4 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:09:11 Block imported successfully with state changes applied block_hash=402fcaa0e58af7854e6ea268514f92f58391a2b7fd04079ce7df8940ee12ea23 block_number=4
+2026-03-14 22:09:11 🎉 Block mined!
+2026-03-14 22:09:11 Block imported successfully block_number=4 block_hash=402fcaa0e58af7854e6ea268514f92f58391a2b7fd04079ce7df8940ee12ea23 nonce=[2, 215, 36, 14, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:09:11 Broadcasting mined block via PQ network block_number=4 block_hash=402fcaa0e58af7854e6ea268514f92f58391a2b7fd04079ce7df8940ee12ea23 has_body=true data_len=230
+2026-03-14 22:09:11 CALLING REAL execute_extrinsics_fn parent=402fcaa0e58af7854e6ea268514f92f58391a2b7fd04079ce7df8940ee12ea23 block_number=5 tx_count=0
+2026-03-14 22:09:11 Building block with sc_block_builder block_number=5 parent=402fcaa0e58af7854e6ea268514f92f58391a2b7fd04079ce7df8940ee12ea23 tx_count=0
+2026-03-14 22:09:11 BlockBuilder created block_number=5 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:09:11 Created 1 inherent extrinsics count=1
+2026-03-14 22:09:11 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b330aafef9c01
+2026-03-14 22:09:11 Block built with StorageChanges cached block_number=5 applied=1 failed=0 state_root=2b11cd2e4a2a7ae72ee31f959ca173a8826cb2ea1ccc4cb2bfbcb431bbea1646 extrinsics_root=cf657e876648b7c0d3e052ae3afd85d95811f8c4d3adc7df50347f64bbaac27b storage_changes_key=5
+2026-03-14 22:09:11 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=5 pre_hash=52c056c4921e7388937e388545d30ad604f7d52003003ca3363746513a494dc7 parent_hash=402fcaa0e58af7854e6ea268514f92f58391a2b7fd04079ce7df8940ee12ea23 difficulty="1d1ad7f2" state_root=2b11cd2e4a2a7ae72ee31f959ca173a8826cb2ea1ccc4cb2bfbcb431bbea1646 extrinsics_root=cf657e876648b7c0d3e052ae3afd85d95811f8c4d3adc7df50347f64bbaac27b
+2026-03-14 22:09:11 hashing_started trace_ts_ms=1773547751993 thread_id=0 pre_hash=0x52c056c4921e7388937e388545d30ad604f7d52003003ca3363746513a494dc7 pow_bits="1d1ad7f2" height=5 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:10:05 mining_solution_found trace_ts_ms=1773547805774 thread_id=0 nonce=[154, 210, 252, 230, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=4682500 height=5 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:10:05 Found PoW solution height=5 nonce=[154, 210, 252, 230, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:10:05 Applying cached StorageChanges during import block_number=5 storage_changes_key=5
+2026-03-14 22:10:05 PoW seal verification details pre_hash=0x52c056c4921e7388937e388545d30ad604f7d52003003ca3363746513a494dc7 nonce=[154, 210, 252, 230, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000aed154102e21b81d9bb2e191f8fbf13a27800bf30acf48e564e271100 stored_work=0x0000000aed154102e21b81d9bb2e191f8fbf13a27800bf30acf48e564e271100 work_matches=true
+2026-03-14 22:10:05 DA encoding stored for imported block block_number=5 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:10:05 Block imported successfully with state changes applied block_hash=e7b43570a1cbd7ab73503031fddf53debdfaf4cc0580e1a1dc8b4e4ed521b42d block_number=5
+2026-03-14 22:10:05 🎉 Block mined!
+2026-03-14 22:10:05 Block imported successfully block_number=5 block_hash=e7b43570a1cbd7ab73503031fddf53debdfaf4cc0580e1a1dc8b4e4ed521b42d nonce=[154, 210, 252, 230, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:10:05 Broadcasting mined block via PQ network block_number=5 block_hash=e7b43570a1cbd7ab73503031fddf53debdfaf4cc0580e1a1dc8b4e4ed521b42d has_body=true data_len=230
+2026-03-14 22:10:05 CALLING REAL execute_extrinsics_fn parent=e7b43570a1cbd7ab73503031fddf53debdfaf4cc0580e1a1dc8b4e4ed521b42d block_number=6 tx_count=0
+2026-03-14 22:10:05 Building block with sc_block_builder block_number=6 parent=e7b43570a1cbd7ab73503031fddf53debdfaf4cc0580e1a1dc8b4e4ed521b42d tx_count=0
+2026-03-14 22:10:05 BlockBuilder created block_number=6 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:10:05 Created 1 inherent extrinsics count=1
+2026-03-14 22:10:05 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b4fdcafef9c01
+2026-03-14 22:10:05 Block built with StorageChanges cached block_number=6 applied=1 failed=0 state_root=7d9e80b4f72dc6f9da5c676730f277c2619469e6c91e712cd637a4e072555972 extrinsics_root=c2c391293a915958fbca9a9ee4073469272edc577a3e6bf39b8ec45ecf82865f storage_changes_key=6
+2026-03-14 22:10:05 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=6 pre_hash=cc5cfd0bd88f36e845ec5dca9e5161fc49489feadc58bb53bad5f3b1cf979ad4 parent_hash=e7b43570a1cbd7ab73503031fddf53debdfaf4cc0580e1a1dc8b4e4ed521b42d difficulty="1d1ad7f2" state_root=7d9e80b4f72dc6f9da5c676730f277c2619469e6c91e712cd637a4e072555972 extrinsics_root=c2c391293a915958fbca9a9ee4073469272edc577a3e6bf39b8ec45ecf82865f
+2026-03-14 22:10:05 hashing_started trace_ts_ms=1773547805781 thread_id=0 pre_hash=0xcc5cfd0bd88f36e845ec5dca9e5161fc49489feadc58bb53bad5f3b1cf979ad4 pow_bits="1d1ad7f2" height=6 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:14:08 mining_solution_found trace_ts_ms=1773548048930 thread_id=0 nonce=[39, 192, 9, 27, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=8205800 height=6 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:14:08 Found PoW solution height=6 nonce=[39, 192, 9, 27, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:14:08 Applying cached StorageChanges during import block_number=6 storage_changes_key=6
+2026-03-14 22:14:08 PoW seal verification details pre_hash=0xcc5cfd0bd88f36e845ec5dca9e5161fc49489feadc58bb53bad5f3b1cf979ad4 nonce=[39, 192, 9, 27, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000016245cd82dfff9876933330e4e774869e04550879e4b22f5c14593deba stored_work=0x00000016245cd82dfff9876933330e4e774869e04550879e4b22f5c14593deba work_matches=true
+2026-03-14 22:14:08 DA encoding stored for imported block block_number=6 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:14:08 Block imported successfully with state changes applied block_hash=819d6e214b1c43121dbc131df3567c0b180c479ee28228ef7f9a14709f8e8920 block_number=6
+2026-03-14 22:14:08 🎉 Block mined!
+2026-03-14 22:14:08 Block imported successfully block_number=6 block_hash=819d6e214b1c43121dbc131df3567c0b180c479ee28228ef7f9a14709f8e8920 nonce=[39, 192, 9, 27, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:14:08 Broadcasting mined block via PQ network block_number=6 block_hash=819d6e214b1c43121dbc131df3567c0b180c479ee28228ef7f9a14709f8e8920 has_body=true data_len=230
+2026-03-14 22:14:08 CALLING REAL execute_extrinsics_fn parent=819d6e214b1c43121dbc131df3567c0b180c479ee28228ef7f9a14709f8e8920 block_number=7 tx_count=0
+2026-03-14 22:14:08 Building block with sc_block_builder block_number=7 parent=819d6e214b1c43121dbc131df3567c0b180c479ee28228ef7f9a14709f8e8920 tx_count=0
+2026-03-14 22:14:08 BlockBuilder created block_number=7 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:14:08 Created 1 inherent extrinsics count=1
+2026-03-14 22:14:08 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b2392b3ef9c01
+2026-03-14 22:14:08 Block built with StorageChanges cached block_number=7 applied=1 failed=0 state_root=c2d6606f030043d6e6bef700925799280e5b1afa5366910ddf7bded7b60ee7cd extrinsics_root=7eef46e459613d30f1e1dfddcd8b3e1ea11f84434acf1f76c2d743bc3a804d78 storage_changes_key=7
+2026-03-14 22:14:08 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=7 pre_hash=ff4a61be24c885628ea93545daba038399ce8a7860678a5c94c3ad07294920df parent_hash=819d6e214b1c43121dbc131df3567c0b180c479ee28228ef7f9a14709f8e8920 difficulty="1d1ad7f2" state_root=c2d6606f030043d6e6bef700925799280e5b1afa5366910ddf7bded7b60ee7cd extrinsics_root=7eef46e459613d30f1e1dfddcd8b3e1ea11f84434acf1f76c2d743bc3a804d78
+2026-03-14 22:14:08 hashing_started trace_ts_ms=1773548048936 thread_id=0 pre_hash=0xff4a61be24c885628ea93545daba038399ce8a7860678a5c94c3ad07294920df pow_bits="1d1ad7f2" height=7 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:17:44 mining_solution_found trace_ts_ms=1773548264255 thread_id=0 nonce=[32, 183, 108, 91, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=11320300 height=7 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:17:44 Found PoW solution height=7 nonce=[32, 183, 108, 91, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:17:44 Applying cached StorageChanges during import block_number=7 storage_changes_key=7
+2026-03-14 22:17:44 PoW seal verification details pre_hash=0xff4a61be24c885628ea93545daba038399ce8a7860678a5c94c3ad07294920df nonce=[32, 183, 108, 91, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000b34ecac0e97268db5d405b1b938e4ca3a9ba95118747a92f9653a2cd2 stored_work=0x0000000b34ecac0e97268db5d405b1b938e4ca3a9ba95118747a92f9653a2cd2 work_matches=true
+2026-03-14 22:17:44 DA encoding stored for imported block block_number=7 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:17:44 Block imported successfully with state changes applied block_hash=eb98c068f0a0bfd232aad1a68cb1bddd5ec8e4745753a3eb99e53852eab281d9 block_number=7
+2026-03-14 22:17:44 🎉 Block mined!
+2026-03-14 22:17:44 Block imported successfully block_number=7 block_hash=eb98c068f0a0bfd232aad1a68cb1bddd5ec8e4745753a3eb99e53852eab281d9 nonce=[32, 183, 108, 91, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:17:44 Broadcasting mined block via PQ network block_number=7 block_hash=eb98c068f0a0bfd232aad1a68cb1bddd5ec8e4745753a3eb99e53852eab281d9 has_body=true data_len=230
+2026-03-14 22:17:44 CALLING REAL execute_extrinsics_fn parent=eb98c068f0a0bfd232aad1a68cb1bddd5ec8e4745753a3eb99e53852eab281d9 block_number=8 tx_count=0
+2026-03-14 22:17:44 Building block with sc_block_builder block_number=8 parent=eb98c068f0a0bfd232aad1a68cb1bddd5ec8e4745753a3eb99e53852eab281d9 tx_count=0
+2026-03-14 22:17:44 BlockBuilder created block_number=8 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:17:44 Created 1 inherent extrinsics count=1
+2026-03-14 22:17:44 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b40dbb6ef9c01
+2026-03-14 22:17:44 Block built with StorageChanges cached block_number=8 applied=1 failed=0 state_root=916f49bcb3335d4193497f97cac9779d9029ab49d2da464af09957bf4b8e5dee extrinsics_root=2b1ebbcd01b210ff351b9080e2478904df219669d1a7ad2a796dc80953c7dc02 storage_changes_key=8
+2026-03-14 22:17:44 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=8 pre_hash=a9fb22cfc52e3108569dd213a36f64f1b394896bb6288c5e43aadfc5e64bb0bf parent_hash=eb98c068f0a0bfd232aad1a68cb1bddd5ec8e4745753a3eb99e53852eab281d9 difficulty="1d1ad7f2" state_root=916f49bcb3335d4193497f97cac9779d9029ab49d2da464af09957bf4b8e5dee extrinsics_root=2b1ebbcd01b210ff351b9080e2478904df219669d1a7ad2a796dc80953c7dc02
+2026-03-14 22:17:44 hashing_started trace_ts_ms=1773548264261 thread_id=0 pre_hash=0xa9fb22cfc52e3108569dd213a36f64f1b394896bb6288c5e43aadfc5e64bb0bf pow_bits="1d1ad7f2" height=8 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:23:39 mining_solution_found trace_ts_ms=1773548619232 thread_id=0 nonce=[6, 201, 119, 79, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=16454200 height=8 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:23:39 Found PoW solution height=8 nonce=[6, 201, 119, 79, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:23:39 Applying cached StorageChanges during import block_number=8 storage_changes_key=8
+2026-03-14 22:23:39 PoW seal verification details pre_hash=0xa9fb22cfc52e3108569dd213a36f64f1b394896bb6288c5e43aadfc5e64bb0bf nonce=[6, 201, 119, 79, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000004f0658319df73f1becf32ebbbbd2570970e02bf377c683f5e5f6b0a71 stored_work=0x00000004f0658319df73f1becf32ebbbbd2570970e02bf377c683f5e5f6b0a71 work_matches=true
+2026-03-14 22:23:39 DA encoding stored for imported block block_number=8 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:23:39 Block imported successfully with state changes applied block_hash=b11b0bef9ca3d4f5d53cbcb14682ab1bd7597723bcc8ed024f1296322c1192a3 block_number=8
+2026-03-14 22:23:39 🎉 Block mined!
+2026-03-14 22:23:39 Block imported successfully block_number=8 block_hash=b11b0bef9ca3d4f5d53cbcb14682ab1bd7597723bcc8ed024f1296322c1192a3 nonce=[6, 201, 119, 79, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:23:39 Broadcasting mined block via PQ network block_number=8 block_hash=b11b0bef9ca3d4f5d53cbcb14682ab1bd7597723bcc8ed024f1296322c1192a3 has_body=true data_len=230
+2026-03-14 22:23:39 CALLING REAL execute_extrinsics_fn parent=b11b0bef9ca3d4f5d53cbcb14682ab1bd7597723bcc8ed024f1296322c1192a3 block_number=9 tx_count=0
+2026-03-14 22:23:39 Building block with sc_block_builder block_number=9 parent=b11b0bef9ca3d4f5d53cbcb14682ab1bd7597723bcc8ed024f1296322c1192a3 tx_count=0
+2026-03-14 22:23:39 BlockBuilder created block_number=9 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:23:39 Created 1 inherent extrinsics count=1
+2026-03-14 22:23:39 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000be145bcef9c01
+2026-03-14 22:23:39 Block built with StorageChanges cached block_number=9 applied=1 failed=0 state_root=8ff4dbaaeaf4d5ce361710becaff4c56001c664176a3c206157b677f0fc0fdb7 extrinsics_root=5f7bc0f30a2970c8c11764dbf0fe387db7f3c0a452470946f879f17fc687d551 storage_changes_key=9
+2026-03-14 22:23:39 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=9 pre_hash=4e22a85ff77e36b312d23048e35a8a9552c96b187a2f03d25809c69e67780e24 parent_hash=b11b0bef9ca3d4f5d53cbcb14682ab1bd7597723bcc8ed024f1296322c1192a3 difficulty="1d1ad7f2" state_root=8ff4dbaaeaf4d5ce361710becaff4c56001c664176a3c206157b677f0fc0fdb7 extrinsics_root=5f7bc0f30a2970c8c11764dbf0fe387db7f3c0a452470946f879f17fc687d551
+2026-03-14 22:23:39 hashing_started trace_ts_ms=1773548619238 thread_id=0 pre_hash=0x4e22a85ff77e36b312d23048e35a8a9552c96b187a2f03d25809c69e67780e24 pow_bits="1d1ad7f2" height=9 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:27:29 mining_solution_found trace_ts_ms=1773548849637 thread_id=0 nonce=[185, 147, 60, 20, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=19790800 height=9 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:27:29 Found PoW solution height=9 nonce=[185, 147, 60, 20, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:27:29 Applying cached StorageChanges during import block_number=9 storage_changes_key=9
+2026-03-14 22:27:29 PoW seal verification details pre_hash=0x4e22a85ff77e36b312d23048e35a8a9552c96b187a2f03d25809c69e67780e24 nonce=[185, 147, 60, 20, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000d112fcfbd597864bc36da3fadce11ee74403a610925636b444d4a250d stored_work=0x0000000d112fcfbd597864bc36da3fadce11ee74403a610925636b444d4a250d work_matches=true
+2026-03-14 22:27:29 DA encoding stored for imported block block_number=9 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:27:29 Block imported successfully with state changes applied block_hash=dcbd81256afc50a8a94618a21f11c690927e77487715477d0770d099aad02e1f block_number=9
+2026-03-14 22:27:29 🎉 Block mined!
+2026-03-14 22:27:29 Block imported successfully block_number=9 block_hash=dcbd81256afc50a8a94618a21f11c690927e77487715477d0770d099aad02e1f nonce=[185, 147, 60, 20, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:27:29 Broadcasting mined block via PQ network block_number=9 block_hash=dcbd81256afc50a8a94618a21f11c690927e77487715477d0770d099aad02e1f has_body=true data_len=230
+2026-03-14 22:27:29 CALLING REAL execute_extrinsics_fn parent=dcbd81256afc50a8a94618a21f11c690927e77487715477d0770d099aad02e1f block_number=10 tx_count=0
+2026-03-14 22:27:29 Building block with sc_block_builder block_number=10 parent=dcbd81256afc50a8a94618a21f11c690927e77487715477d0770d099aad02e1f tx_count=0
+2026-03-14 22:27:29 BlockBuilder created block_number=10 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:27:29 Created 1 inherent extrinsics count=1
+2026-03-14 22:27:29 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000be6c9bfef9c01
+2026-03-14 22:27:29 Block built with StorageChanges cached block_number=10 applied=1 failed=0 state_root=e94aa1d78d58f6bf10d961dd9df121af73e5ffc231fb58fd9ad79a293ade00f4 extrinsics_root=594cb885986f2c7c9508316d143e0cb1caa77ad5e58a168b40924577c05a15c6 storage_changes_key=10
+2026-03-14 22:27:29 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=10 pre_hash=3d61ebaac1960d1144cedf971123b0efa7c15b9a9eafb17191cd250b21e5e77d parent_hash=dcbd81256afc50a8a94618a21f11c690927e77487715477d0770d099aad02e1f difficulty="1d1ad7f2" state_root=e94aa1d78d58f6bf10d961dd9df121af73e5ffc231fb58fd9ad79a293ade00f4 extrinsics_root=594cb885986f2c7c9508316d143e0cb1caa77ad5e58a168b40924577c05a15c6
+2026-03-14 22:27:29 hashing_started trace_ts_ms=1773548849643 thread_id=0 pre_hash=0x3d61ebaac1960d1144cedf971123b0efa7c15b9a9eafb17191cd250b21e5e77d pow_bits="1d1ad7f2" height=10 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:27:39 mining_solution_found trace_ts_ms=1773548859323 thread_id=0 nonce=[103, 147, 98, 103, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=19930300 height=10 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:27:39 Found PoW solution height=10 nonce=[103, 147, 98, 103, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:27:39 Applying cached StorageChanges during import block_number=10 storage_changes_key=10
+2026-03-14 22:27:39 PoW seal verification details pre_hash=0x3d61ebaac1960d1144cedf971123b0efa7c15b9a9eafb17191cd250b21e5e77d nonce=[103, 147, 98, 103, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000013b20d563a65695ab75be76df3689a756b621323898947d3b56a0ff73a stored_work=0x00000013b20d563a65695ab75be76df3689a756b621323898947d3b56a0ff73a work_matches=true
+2026-03-14 22:27:39 DA encoding stored for imported block block_number=10 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:27:39 Block imported successfully with state changes applied block_hash=2c1e9f16085be94dc6cbdf383d1bb4a73253f140bb1767a6ef5f1797b7295540 block_number=10
+2026-03-14 22:27:39 🎉 Block mined!
+2026-03-14 22:27:39 Block imported successfully block_number=10 block_hash=2c1e9f16085be94dc6cbdf383d1bb4a73253f140bb1767a6ef5f1797b7295540 nonce=[103, 147, 98, 103, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:27:39 Broadcasting mined block via PQ network block_number=10 block_hash=2c1e9f16085be94dc6cbdf383d1bb4a73253f140bb1767a6ef5f1797b7295540 has_body=true data_len=230
+2026-03-14 22:27:39 CALLING REAL execute_extrinsics_fn parent=2c1e9f16085be94dc6cbdf383d1bb4a73253f140bb1767a6ef5f1797b7295540 block_number=11 tx_count=0
+2026-03-14 22:27:39 Building block with sc_block_builder block_number=11 parent=2c1e9f16085be94dc6cbdf383d1bb4a73253f140bb1767a6ef5f1797b7295540 tx_count=0
+2026-03-14 22:27:39 BlockBuilder created block_number=11 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:27:39 Created 1 inherent extrinsics count=1
+2026-03-14 22:27:39 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bbcefbfef9c01
+2026-03-14 22:27:39 Block built with StorageChanges cached block_number=11 applied=1 failed=0 state_root=e7dd43dc6951525bfc913e23134554144e71f95e8e4779b5afd81188aa98926e extrinsics_root=77ba6dd3ab06d0f21fe346c3153cd4bcaac9e332b011cc2253c185c880f0aab5 storage_changes_key=11
+2026-03-14 22:27:39 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=11 pre_hash=8cb02b5f911f2c8a5aa4d241119e7af4c4954d9ad2e8b43af8279e878711a71d parent_hash=2c1e9f16085be94dc6cbdf383d1bb4a73253f140bb1767a6ef5f1797b7295540 difficulty="1d1ad7f2" state_root=e7dd43dc6951525bfc913e23134554144e71f95e8e4779b5afd81188aa98926e extrinsics_root=77ba6dd3ab06d0f21fe346c3153cd4bcaac9e332b011cc2253c185c880f0aab5
+2026-03-14 22:27:39 hashing_started trace_ts_ms=1773548859329 thread_id=0 pre_hash=0x8cb02b5f911f2c8a5aa4d241119e7af4c4954d9ad2e8b43af8279e878711a71d pow_bits="1d1ad7f2" height=11 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:27:39 mining_solution_found trace_ts_ms=1773548859468 thread_id=0 nonce=[140, 115, 193, 104, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=19932600 height=11 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:27:39 Found PoW solution height=11 nonce=[140, 115, 193, 104, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:27:39 Applying cached StorageChanges during import block_number=11 storage_changes_key=11
+2026-03-14 22:27:39 PoW seal verification details pre_hash=0x8cb02b5f911f2c8a5aa4d241119e7af4c4954d9ad2e8b43af8279e878711a71d nonce=[140, 115, 193, 104, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000bc6ff7271910a5009e9ffa75fb8184a01443e88892746dd1650cba345 stored_work=0x0000000bc6ff7271910a5009e9ffa75fb8184a01443e88892746dd1650cba345 work_matches=true
+2026-03-14 22:27:39 DA encoding stored for imported block block_number=11 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:27:39 Block imported successfully with state changes applied block_hash=1c30a8e5aea8f6dd70c5fd431d9f255893f0f7f9cdaa64d6653da9d1f9ea1076 block_number=11
+2026-03-14 22:27:39 🎉 Block mined!
+2026-03-14 22:27:39 Block imported successfully block_number=11 block_hash=1c30a8e5aea8f6dd70c5fd431d9f255893f0f7f9cdaa64d6653da9d1f9ea1076 nonce=[140, 115, 193, 104, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:27:39 Broadcasting mined block via PQ network block_number=11 block_hash=1c30a8e5aea8f6dd70c5fd431d9f255893f0f7f9cdaa64d6653da9d1f9ea1076 has_body=true data_len=230
+2026-03-14 22:27:39 CALLING REAL execute_extrinsics_fn parent=1c30a8e5aea8f6dd70c5fd431d9f255893f0f7f9cdaa64d6653da9d1f9ea1076 block_number=12 tx_count=0
+2026-03-14 22:27:39 Building block with sc_block_builder block_number=12 parent=1c30a8e5aea8f6dd70c5fd431d9f255893f0f7f9cdaa64d6653da9d1f9ea1076 tx_count=0
+2026-03-14 22:27:39 BlockBuilder created block_number=12 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:27:39 Created 1 inherent extrinsics count=1
+2026-03-14 22:27:39 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b4df0bfef9c01
+2026-03-14 22:27:39 Block built with StorageChanges cached block_number=12 applied=1 failed=0 state_root=00733cb47c42475c7812bba7cd5e29ad05d26c798c3dda1894cb620be4ded2d7 extrinsics_root=03f29ffc73b1e612fbbeb96f5f1c33fe0c9ca4288cef401c3ac2facecd86bf43 storage_changes_key=12
+2026-03-14 22:27:39 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=12 pre_hash=73a898d050abd37b30c1dcdbd378b03126a667b3ee6db24ec72dd9b37963903c parent_hash=1c30a8e5aea8f6dd70c5fd431d9f255893f0f7f9cdaa64d6653da9d1f9ea1076 difficulty="1d1ad7f2" state_root=00733cb47c42475c7812bba7cd5e29ad05d26c798c3dda1894cb620be4ded2d7 extrinsics_root=03f29ffc73b1e612fbbeb96f5f1c33fe0c9ca4288cef401c3ac2facecd86bf43
+2026-03-14 22:27:39 hashing_started trace_ts_ms=1773548859473 thread_id=0 pre_hash=0x73a898d050abd37b30c1dcdbd378b03126a667b3ee6db24ec72dd9b37963903c pow_bits="1d1ad7f2" height=12 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:31:32 mining_solution_found trace_ts_ms=1773549092748 thread_id=0 nonce=[213, 84, 112, 70, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=23311000 height=12 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:31:32 Found PoW solution height=12 nonce=[213, 84, 112, 70, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:31:32 Applying cached StorageChanges during import block_number=12 storage_changes_key=12
+2026-03-14 22:31:32 PoW seal verification details pre_hash=0x73a898d050abd37b30c1dcdbd378b03126a667b3ee6db24ec72dd9b37963903c nonce=[213, 84, 112, 70, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000001611bac3d6ee8921cd784e28c806c4495d885778d9acc980fc0c74d53b stored_work=0x0000001611bac3d6ee8921cd784e28c806c4495d885778d9acc980fc0c74d53b work_matches=true
+2026-03-14 22:31:32 DA encoding stored for imported block block_number=12 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:31:32 Block imported successfully with state changes applied block_hash=79f3b5b7cdb54a2bf244359aa94797a49f3f97e0b52a00ed284b3455d41f2e09 block_number=12
+2026-03-14 22:31:32 🎉 Block mined!
+2026-03-14 22:31:32 Block imported successfully block_number=12 block_hash=79f3b5b7cdb54a2bf244359aa94797a49f3f97e0b52a00ed284b3455d41f2e09 nonce=[213, 84, 112, 70, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:31:32 Broadcasting mined block via PQ network block_number=12 block_hash=79f3b5b7cdb54a2bf244359aa94797a49f3f97e0b52a00ed284b3455d41f2e09 has_body=true data_len=230
+2026-03-14 22:31:32 CALLING REAL execute_extrinsics_fn parent=79f3b5b7cdb54a2bf244359aa94797a49f3f97e0b52a00ed284b3455d41f2e09 block_number=13 tx_count=0
+2026-03-14 22:31:32 Building block with sc_block_builder block_number=13 parent=79f3b5b7cdb54a2bf244359aa94797a49f3f97e0b52a00ed284b3455d41f2e09 tx_count=0
+2026-03-14 22:31:32 BlockBuilder created block_number=13 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:31:32 Created 1 inherent extrinsics count=1
+2026-03-14 22:31:32 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b8d7fc3ef9c01
+2026-03-14 22:31:32 Block built with StorageChanges cached block_number=13 applied=1 failed=0 state_root=825d368d539aea714de4ba029d12ee4188cc6b45aca8204a474a378e0fa5f5c7 extrinsics_root=ae94d5fb976e4679228c5902ecd07d0255ddc970371ebb6ded12c096c9b46b44 storage_changes_key=13
+2026-03-14 22:31:32 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=13 pre_hash=c259954fffd70e45dbec0644c9bba2717ccb5e30e44c02f5ee75a614304f32b4 parent_hash=79f3b5b7cdb54a2bf244359aa94797a49f3f97e0b52a00ed284b3455d41f2e09 difficulty="1d1ad7f2" state_root=825d368d539aea714de4ba029d12ee4188cc6b45aca8204a474a378e0fa5f5c7 extrinsics_root=ae94d5fb976e4679228c5902ecd07d0255ddc970371ebb6ded12c096c9b46b44
+2026-03-14 22:31:32 hashing_started trace_ts_ms=1773549092754 thread_id=0 pre_hash=0xc259954fffd70e45dbec0644c9bba2717ccb5e30e44c02f5ee75a614304f32b4 pow_bits="1d1ad7f2" height=13 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:32:32 mining_solution_found trace_ts_ms=1773549152765 thread_id=0 nonce=[47, 120, 174, 79, 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=24185500 height=13 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:32:32 Found PoW solution height=13 nonce=[47, 120, 174, 79, 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:32:32 Applying cached StorageChanges during import block_number=13 storage_changes_key=13
+2026-03-14 22:32:32 PoW seal verification details pre_hash=0xc259954fffd70e45dbec0644c9bba2717ccb5e30e44c02f5ee75a614304f32b4 nonce=[47, 120, 174, 79, 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000017099dc8d6eb7f40e8f4ded508a83fa154bb0e4f672b1e5cc57b8177bf stored_work=0x00000017099dc8d6eb7f40e8f4ded508a83fa154bb0e4f672b1e5cc57b8177bf work_matches=true
+2026-03-14 22:32:32 DA encoding stored for imported block block_number=13 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:32:32 Block imported successfully with state changes applied block_hash=bab67ee74ec010ae540691c01f8c3785eaffb44788dd541fe61ce6d2fdbc70a6 block_number=13
+2026-03-14 22:32:32 🎉 Block mined!
+2026-03-14 22:32:32 Block imported successfully block_number=13 block_hash=bab67ee74ec010ae540691c01f8c3785eaffb44788dd541fe61ce6d2fdbc70a6 nonce=[47, 120, 174, 79, 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:32:32 Broadcasting mined block via PQ network block_number=13 block_hash=bab67ee74ec010ae540691c01f8c3785eaffb44788dd541fe61ce6d2fdbc70a6 has_body=true data_len=230
+2026-03-14 22:32:32 CALLING REAL execute_extrinsics_fn parent=bab67ee74ec010ae540691c01f8c3785eaffb44788dd541fe61ce6d2fdbc70a6 block_number=14 tx_count=0
+2026-03-14 22:32:32 Building block with sc_block_builder block_number=14 parent=bab67ee74ec010ae540691c01f8c3785eaffb44788dd541fe61ce6d2fdbc70a6 tx_count=0
+2026-03-14 22:32:32 BlockBuilder created block_number=14 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:32:32 Created 1 inherent extrinsics count=1
+2026-03-14 22:32:32 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bfe69c4ef9c01
+2026-03-14 22:32:32 Block built with StorageChanges cached block_number=14 applied=1 failed=0 state_root=0f001896de1b1dfe8d4c8c83dae809bc3c5c842c08e8548f5ac3b6a51ac69521 extrinsics_root=4f095ec5800864b60dbe91fdab37a09c27db458c07b3c43adebd4813a51d452e storage_changes_key=14
+2026-03-14 22:32:32 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=14 pre_hash=08defd29e1704992c7a279b5e754b3118cd208ad04d7493d3b1c82d233aef015 parent_hash=bab67ee74ec010ae540691c01f8c3785eaffb44788dd541fe61ce6d2fdbc70a6 difficulty="1d1ad7f2" state_root=0f001896de1b1dfe8d4c8c83dae809bc3c5c842c08e8548f5ac3b6a51ac69521 extrinsics_root=4f095ec5800864b60dbe91fdab37a09c27db458c07b3c43adebd4813a51d452e
+2026-03-14 22:32:32 hashing_started trace_ts_ms=1773549152771 thread_id=0 pre_hash=0x08defd29e1704992c7a279b5e754b3118cd208ad04d7493d3b1c82d233aef015 pow_bits="1d1ad7f2" height=14 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:33:40 mining_solution_found trace_ts_ms=1773549220312 thread_id=0 nonce=[64, 252, 26, 152, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=25166000 height=14 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:33:40 Found PoW solution height=14 nonce=[64, 252, 26, 152, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:33:40 Applying cached StorageChanges during import block_number=14 storage_changes_key=14
+2026-03-14 22:33:40 PoW seal verification details pre_hash=0x08defd29e1704992c7a279b5e754b3118cd208ad04d7493d3b1c82d233aef015 nonce=[64, 252, 26, 152, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000ef3c5cd99fc18feb5646f57fba851cda4b1a332244df4be7faf730bb9 stored_work=0x0000000ef3c5cd99fc18feb5646f57fba851cda4b1a332244df4be7faf730bb9 work_matches=true
+2026-03-14 22:33:40 DA encoding stored for imported block block_number=14 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:33:40 Block imported successfully with state changes applied block_hash=d5cb9f46cb091fb927cc059fb30aefe0b56756e94f0f19a7998dd7c79bec78fd block_number=14
+2026-03-14 22:33:40 🎉 Block mined!
+2026-03-14 22:33:40 Block imported successfully block_number=14 block_hash=d5cb9f46cb091fb927cc059fb30aefe0b56756e94f0f19a7998dd7c79bec78fd nonce=[64, 252, 26, 152, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:33:40 Broadcasting mined block via PQ network block_number=14 block_hash=d5cb9f46cb091fb927cc059fb30aefe0b56756e94f0f19a7998dd7c79bec78fd has_body=true data_len=230
+2026-03-14 22:33:40 CALLING REAL execute_extrinsics_fn parent=d5cb9f46cb091fb927cc059fb30aefe0b56756e94f0f19a7998dd7c79bec78fd block_number=15 tx_count=0
+2026-03-14 22:33:40 Building block with sc_block_builder block_number=15 parent=d5cb9f46cb091fb927cc059fb30aefe0b56756e94f0f19a7998dd7c79bec78fd tx_count=0
+2026-03-14 22:33:40 BlockBuilder created block_number=15 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:33:40 Created 1 inherent extrinsics count=1
+2026-03-14 22:33:40 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bda71c5ef9c01
+2026-03-14 22:33:40 Block built with StorageChanges cached block_number=15 applied=1 failed=0 state_root=03ef112ef5af288a3ac50b94fc30134106ddd627f931419775741ae27506d3b9 extrinsics_root=7710ad69ab76f6febe535eccefd1a1d6f35db85d40495dd44304058bcde86a29 storage_changes_key=15
+2026-03-14 22:33:40 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=15 pre_hash=a0081466faa18113214841a272771eab304f6872a21a0e1d4a583bfa1e797d76 parent_hash=d5cb9f46cb091fb927cc059fb30aefe0b56756e94f0f19a7998dd7c79bec78fd difficulty="1d1ad7f2" state_root=03ef112ef5af288a3ac50b94fc30134106ddd627f931419775741ae27506d3b9 extrinsics_root=7710ad69ab76f6febe535eccefd1a1d6f35db85d40495dd44304058bcde86a29
+2026-03-14 22:33:40 hashing_started trace_ts_ms=1773549220318 thread_id=0 pre_hash=0xa0081466faa18113214841a272771eab304f6872a21a0e1d4a583bfa1e797d76 pow_bits="1d1ad7f2" height=15 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:34:50 mining_solution_found trace_ts_ms=1773549290592 thread_id=0 nonce=[216, 232, 128, 2, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=26203500 height=15 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:34:50 Found PoW solution height=15 nonce=[216, 232, 128, 2, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:34:50 Applying cached StorageChanges during import block_number=15 storage_changes_key=15
+2026-03-14 22:34:50 PoW seal verification details pre_hash=0xa0081466faa18113214841a272771eab304f6872a21a0e1d4a583bfa1e797d76 nonce=[216, 232, 128, 2, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000008ae97bc180c514d028689052e16eb3c352a008a78d9226c4f0aeb73b stored_work=0x000000008ae97bc180c514d028689052e16eb3c352a008a78d9226c4f0aeb73b work_matches=true
+2026-03-14 22:34:50 DA encoding stored for imported block block_number=15 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:34:50 Block imported successfully with state changes applied block_hash=b873876c519df49c6cfb576e991b1bf1fd229dea08d6017c35f2d69e2b5f4a92 block_number=15
+2026-03-14 22:34:50 🎉 Block mined!
+2026-03-14 22:34:50 Block imported successfully block_number=15 block_hash=b873876c519df49c6cfb576e991b1bf1fd229dea08d6017c35f2d69e2b5f4a92 nonce=[216, 232, 128, 2, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:34:50 Broadcasting mined block via PQ network block_number=15 block_hash=b873876c519df49c6cfb576e991b1bf1fd229dea08d6017c35f2d69e2b5f4a92 has_body=true data_len=230
+2026-03-14 22:34:50 CALLING REAL execute_extrinsics_fn parent=b873876c519df49c6cfb576e991b1bf1fd229dea08d6017c35f2d69e2b5f4a92 block_number=16 tx_count=0
+2026-03-14 22:34:50 Building block with sc_block_builder block_number=16 parent=b873876c519df49c6cfb576e991b1bf1fd229dea08d6017c35f2d69e2b5f4a92 tx_count=0
+2026-03-14 22:34:50 BlockBuilder created block_number=16 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:34:50 Created 1 inherent extrinsics count=1
+2026-03-14 22:34:50 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b6184c6ef9c01
+2026-03-14 22:34:50 Block built with StorageChanges cached block_number=16 applied=1 failed=0 state_root=128b1e844bba5206a63e75d9ee633713e3766d83d116a6a878f1e2190c906e18 extrinsics_root=e73b11566104a88942ebb144ebab6f34152180f14e61d99652cfd197c2f2129b storage_changes_key=16
+2026-03-14 22:34:50 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=16 pre_hash=f7036dfa83222c73ff74b2f91039445519451aab365a28e76d72de81da365a3b parent_hash=b873876c519df49c6cfb576e991b1bf1fd229dea08d6017c35f2d69e2b5f4a92 difficulty="1d1ad7f2" state_root=128b1e844bba5206a63e75d9ee633713e3766d83d116a6a878f1e2190c906e18 extrinsics_root=e73b11566104a88942ebb144ebab6f34152180f14e61d99652cfd197c2f2129b
+2026-03-14 22:34:50 hashing_started trace_ts_ms=1773549290599 thread_id=0 pre_hash=0xf7036dfa83222c73ff74b2f91039445519451aab365a28e76d72de81da365a3b pow_bits="1d1ad7f2" height=16 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:34:59 mining_solution_found trace_ts_ms=1773549299662 thread_id=0 nonce=[12, 56, 187, 82, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=26338100 height=16 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:34:59 Found PoW solution height=16 nonce=[12, 56, 187, 82, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:34:59 Applying cached StorageChanges during import block_number=16 storage_changes_key=16
+2026-03-14 22:34:59 PoW seal verification details pre_hash=0xf7036dfa83222c73ff74b2f91039445519451aab365a28e76d72de81da365a3b nonce=[12, 56, 187, 82, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000c08c3887406828378600ee35b08defbd51aa86ecd6a3e63a8415a4dbe stored_work=0x0000000c08c3887406828378600ee35b08defbd51aa86ecd6a3e63a8415a4dbe work_matches=true
+2026-03-14 22:34:59 DA encoding stored for imported block block_number=16 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:34:59 Block imported successfully with state changes applied block_hash=2b3613ffdb03bb798b54e2b7957cea1b37cd4dbf6abc89c589931f5882fb682e block_number=16
+2026-03-14 22:34:59 🎉 Block mined!
+2026-03-14 22:34:59 Block imported successfully block_number=16 block_hash=2b3613ffdb03bb798b54e2b7957cea1b37cd4dbf6abc89c589931f5882fb682e nonce=[12, 56, 187, 82, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:34:59 Broadcasting mined block via PQ network block_number=16 block_hash=2b3613ffdb03bb798b54e2b7957cea1b37cd4dbf6abc89c589931f5882fb682e has_body=true data_len=230
+2026-03-14 22:34:59 CALLING REAL execute_extrinsics_fn parent=2b3613ffdb03bb798b54e2b7957cea1b37cd4dbf6abc89c589931f5882fb682e block_number=17 tx_count=0
+2026-03-14 22:34:59 Building block with sc_block_builder block_number=17 parent=2b3613ffdb03bb798b54e2b7957cea1b37cd4dbf6abc89c589931f5882fb682e tx_count=0
+2026-03-14 22:34:59 BlockBuilder created block_number=17 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:34:59 Created 1 inherent extrinsics count=1
+2026-03-14 22:34:59 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bcfa7c6ef9c01
+2026-03-14 22:34:59 Block built with StorageChanges cached block_number=17 applied=1 failed=0 state_root=4543fa0b80f24fd274ab60c7ca4fe78bc39ae6f7e00f08f9e723acf5d0bc4360 extrinsics_root=f3894a9f20ca3f350f89b594b9c2a4195776a41a55a349fd1843faac5e6424b3 storage_changes_key=17
+2026-03-14 22:34:59 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=17 pre_hash=1884fd229cab4ce7df1f8abf19e8d05da7535144ca76e5bf7ec647f8366b3ee0 parent_hash=2b3613ffdb03bb798b54e2b7957cea1b37cd4dbf6abc89c589931f5882fb682e difficulty="1d1ad7f2" state_root=4543fa0b80f24fd274ab60c7ca4fe78bc39ae6f7e00f08f9e723acf5d0bc4360 extrinsics_root=f3894a9f20ca3f350f89b594b9c2a4195776a41a55a349fd1843faac5e6424b3
+2026-03-14 22:34:59 hashing_started trace_ts_ms=1773549299669 thread_id=0 pre_hash=0x1884fd229cab4ce7df1f8abf19e8d05da7535144ca76e5bf7ec647f8366b3ee0 pow_bits="1d1ad7f2" height=17 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:38:26 mining_solution_found trace_ts_ms=1773549506561 thread_id=0 nonce=[102, 251, 210, 79, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=29339700 height=17 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:38:26 Found PoW solution height=17 nonce=[102, 251, 210, 79, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:38:26 Applying cached StorageChanges during import block_number=17 storage_changes_key=17
+2026-03-14 22:38:26 PoW seal verification details pre_hash=0x1884fd229cab4ce7df1f8abf19e8d05da7535144ca76e5bf7ec647f8366b3ee0 nonce=[102, 251, 210, 79, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000008a457f2de4397863b13f366fbe2e646f84e76bc9f6ad424093175cf07 stored_work=0x00000008a457f2de4397863b13f366fbe2e646f84e76bc9f6ad424093175cf07 work_matches=true
+2026-03-14 22:38:26 DA encoding stored for imported block block_number=17 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:38:26 Block imported successfully with state changes applied block_hash=f265d2db76713d387b42acf077b049e693c537259dcbeddc4e5980e3dd591caf block_number=17
+2026-03-14 22:38:26 🎉 Block mined!
+2026-03-14 22:38:26 Block imported successfully block_number=17 block_hash=f265d2db76713d387b42acf077b049e693c537259dcbeddc4e5980e3dd591caf nonce=[102, 251, 210, 79, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:38:26 Broadcasting mined block via PQ network block_number=17 block_hash=f265d2db76713d387b42acf077b049e693c537259dcbeddc4e5980e3dd591caf has_body=true data_len=230
+2026-03-14 22:38:26 CALLING REAL execute_extrinsics_fn parent=f265d2db76713d387b42acf077b049e693c537259dcbeddc4e5980e3dd591caf block_number=18 tx_count=0
+2026-03-14 22:38:26 Building block with sc_block_builder block_number=18 parent=f265d2db76713d387b42acf077b049e693c537259dcbeddc4e5980e3dd591caf tx_count=0
+2026-03-14 22:38:26 BlockBuilder created block_number=18 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:38:26 Created 1 inherent extrinsics count=1
+2026-03-14 22:38:26 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b02d0c9ef9c01
+2026-03-14 22:38:26 Block built with StorageChanges cached block_number=18 applied=1 failed=0 state_root=7e41bacd4496f3d48cf54b4ce23f9e8d9dd6e12dfafbef800e9fbc7a393bda3c extrinsics_root=206f15b913b3bc95ba480e08d0d7f15ff88069e179334173d4d68b7fce6be87e storage_changes_key=18
+2026-03-14 22:38:26 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=18 pre_hash=8ad59a94621f44db0c0ea86ba6498c0f9331eca15e812d885aa419daaf746905 parent_hash=f265d2db76713d387b42acf077b049e693c537259dcbeddc4e5980e3dd591caf difficulty="1d1ad7f2" state_root=7e41bacd4496f3d48cf54b4ce23f9e8d9dd6e12dfafbef800e9fbc7a393bda3c extrinsics_root=206f15b913b3bc95ba480e08d0d7f15ff88069e179334173d4d68b7fce6be87e
+2026-03-14 22:38:26 hashing_started trace_ts_ms=1773549506567 thread_id=0 pre_hash=0x8ad59a94621f44db0c0ea86ba6498c0f9331eca15e812d885aa419daaf746905 pow_bits="1d1ad7f2" height=18 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:39:20 mining_solution_found trace_ts_ms=1773549560965 thread_id=0 nonce=[238, 224, 221, 37, 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=30128300 height=18 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:39:20 Found PoW solution height=18 nonce=[238, 224, 221, 37, 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:39:20 Applying cached StorageChanges during import block_number=18 storage_changes_key=18
+2026-03-14 22:39:20 PoW seal verification details pre_hash=0x8ad59a94621f44db0c0ea86ba6498c0f9331eca15e812d885aa419daaf746905 nonce=[238, 224, 221, 37, 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000d62b82568ee75ac78476bab9574e789ff4016e041370b516ae61c6fdf stored_work=0x0000000d62b82568ee75ac78476bab9574e789ff4016e041370b516ae61c6fdf work_matches=true
+2026-03-14 22:39:20 DA encoding stored for imported block block_number=18 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:39:20 Block imported successfully with state changes applied block_hash=d2e47896df77eb2c20b95bf600923cfef049ae8cbed5c57004a99407116015bb block_number=18
+2026-03-14 22:39:20 🎉 Block mined!
+2026-03-14 22:39:20 Block imported successfully block_number=18 block_hash=d2e47896df77eb2c20b95bf600923cfef049ae8cbed5c57004a99407116015bb nonce=[238, 224, 221, 37, 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:39:20 Broadcasting mined block via PQ network block_number=18 block_hash=d2e47896df77eb2c20b95bf600923cfef049ae8cbed5c57004a99407116015bb has_body=true data_len=230
+2026-03-14 22:39:20 CALLING REAL execute_extrinsics_fn parent=d2e47896df77eb2c20b95bf600923cfef049ae8cbed5c57004a99407116015bb block_number=19 tx_count=0
+2026-03-14 22:39:20 Building block with sc_block_builder block_number=19 parent=d2e47896df77eb2c20b95bf600923cfef049ae8cbed5c57004a99407116015bb tx_count=0
+2026-03-14 22:39:20 BlockBuilder created block_number=19 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:39:20 Created 1 inherent extrinsics count=1
+2026-03-14 22:39:20 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b86a4caef9c01
+2026-03-14 22:39:20 Block built with StorageChanges cached block_number=19 applied=1 failed=0 state_root=dcd192c7b1f7fef71c96eba2fb0e8372512b173f52df49279e1fce2a6969652a extrinsics_root=44fe40cb277e0aadc14919408af608997eea5d324e5b57a596e48754d95bfa20 storage_changes_key=19
+2026-03-14 22:39:20 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=19 pre_hash=e525ca9034444a8f37e5dcac7d2990e3288bce7542ec36fed61085de34ecd241 parent_hash=d2e47896df77eb2c20b95bf600923cfef049ae8cbed5c57004a99407116015bb difficulty="1d1ad7f2" state_root=dcd192c7b1f7fef71c96eba2fb0e8372512b173f52df49279e1fce2a6969652a extrinsics_root=44fe40cb277e0aadc14919408af608997eea5d324e5b57a596e48754d95bfa20
+2026-03-14 22:39:20 hashing_started trace_ts_ms=1773549560971 thread_id=0 pre_hash=0xe525ca9034444a8f37e5dcac7d2990e3288bce7542ec36fed61085de34ecd241 pow_bits="1d1ad7f2" height=19 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:42:51 mining_solution_found trace_ts_ms=1773549771795 thread_id=0 nonce=[245, 232, 106, 65, 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=33181000 height=19 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:42:51 Found PoW solution height=19 nonce=[245, 232, 106, 65, 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:42:51 Applying cached StorageChanges during import block_number=19 storage_changes_key=19
+2026-03-14 22:42:51 PoW seal verification details pre_hash=0xe525ca9034444a8f37e5dcac7d2990e3288bce7542ec36fed61085de34ecd241 nonce=[245, 232, 106, 65, 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000152c30a10ee03ecf713c0459fe4ec601f882403a445c4f31b078994004 stored_work=0x000000152c30a10ee03ecf713c0459fe4ec601f882403a445c4f31b078994004 work_matches=true
+2026-03-14 22:42:51 DA encoding stored for imported block block_number=19 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:42:51 Block imported successfully with state changes applied block_hash=00c3b395edb75317a31fe316581e92f8aed8e9fe783a8d22beac967fc687aebc block_number=19
+2026-03-14 22:42:51 🎉 Block mined!
+2026-03-14 22:42:51 Block imported successfully block_number=19 block_hash=00c3b395edb75317a31fe316581e92f8aed8e9fe783a8d22beac967fc687aebc nonce=[245, 232, 106, 65, 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:42:51 Broadcasting mined block via PQ network block_number=19 block_hash=00c3b395edb75317a31fe316581e92f8aed8e9fe783a8d22beac967fc687aebc has_body=true data_len=230
+2026-03-14 22:42:51 CALLING REAL execute_extrinsics_fn parent=00c3b395edb75317a31fe316581e92f8aed8e9fe783a8d22beac967fc687aebc block_number=20 tx_count=0
+2026-03-14 22:42:51 Building block with sc_block_builder block_number=20 parent=00c3b395edb75317a31fe316581e92f8aed8e9fe783a8d22beac967fc687aebc tx_count=0
+2026-03-14 22:42:51 BlockBuilder created block_number=20 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:42:51 Created 1 inherent extrinsics count=1
+2026-03-14 22:42:51 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b14dccdef9c01
+2026-03-14 22:42:51 Block built with StorageChanges cached block_number=20 applied=1 failed=0 state_root=ba8f9febe404a5748248bbb1d0b2c1eaf18a1e7c128fc6584f9415a1fd049c3c extrinsics_root=6777cf04a926365f57e751f4a369e54dc1eb92379e5af2f964974f8600e668f3 storage_changes_key=20
+2026-03-14 22:42:51 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=20 pre_hash=6328d3631027a92fc35e8dca370828bc8046ac15d963be5159d0f87ad95d2bcf parent_hash=00c3b395edb75317a31fe316581e92f8aed8e9fe783a8d22beac967fc687aebc difficulty="1d1ad7f2" state_root=ba8f9febe404a5748248bbb1d0b2c1eaf18a1e7c128fc6584f9415a1fd049c3c extrinsics_root=6777cf04a926365f57e751f4a369e54dc1eb92379e5af2f964974f8600e668f3
+2026-03-14 22:42:51 hashing_started trace_ts_ms=1773549771801 thread_id=0 pre_hash=0x6328d3631027a92fc35e8dca370828bc8046ac15d963be5159d0f87ad95d2bcf pow_bits="1d1ad7f2" height=20 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:45:15 mining_solution_found trace_ts_ms=1773549915589 thread_id=0 nonce=[93, 54, 175, 26, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=35263500 height=20 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:45:15 Found PoW solution height=20 nonce=[93, 54, 175, 26, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:45:15 Applying cached StorageChanges during import block_number=20 storage_changes_key=20
+2026-03-14 22:45:15 PoW seal verification details pre_hash=0x6328d3631027a92fc35e8dca370828bc8046ac15d963be5159d0f87ad95d2bcf nonce=[93, 54, 175, 26, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000012a74ea2ed23e69fe7801f56bdd3e0995aad8f84b94c98e701042371b stored_work=0x000000012a74ea2ed23e69fe7801f56bdd3e0995aad8f84b94c98e701042371b work_matches=true
+2026-03-14 22:45:15 DA encoding stored for imported block block_number=20 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:45:15 Block imported successfully with state changes applied block_hash=0365c6f4b01f8b328d913a7e95e59968d3abc45b6c91b86f865b37ec8658237d block_number=20
+2026-03-14 22:45:15 🎉 Block mined!
+2026-03-14 22:45:15 Block imported successfully block_number=20 block_hash=0365c6f4b01f8b328d913a7e95e59968d3abc45b6c91b86f865b37ec8658237d nonce=[93, 54, 175, 26, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:45:15 Broadcasting mined block via PQ network block_number=20 block_hash=0365c6f4b01f8b328d913a7e95e59968d3abc45b6c91b86f865b37ec8658237d has_body=true data_len=230
+2026-03-14 22:45:15 CALLING REAL execute_extrinsics_fn parent=0365c6f4b01f8b328d913a7e95e59968d3abc45b6c91b86f865b37ec8658237d block_number=21 tx_count=0
+2026-03-14 22:45:15 Building block with sc_block_builder block_number=21 parent=0365c6f4b01f8b328d913a7e95e59968d3abc45b6c91b86f865b37ec8658237d tx_count=0
+2026-03-14 22:45:15 BlockBuilder created block_number=21 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:45:15 Created 1 inherent extrinsics count=1
+2026-03-14 22:45:15 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bc60dd0ef9c01
+2026-03-14 22:45:15 Block built with StorageChanges cached block_number=21 applied=1 failed=0 state_root=6cb1a6fb036bdf1d61c9f7b7cf570fd53ad0a2b7eab9f51edfa41aa580a1c4e3 extrinsics_root=2d4bdfaa1814dca7d92bd18c8b283d4a566af48b8501521cc6409884472b7273 storage_changes_key=21
+2026-03-14 22:45:15 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=21 pre_hash=cee14e42b188dcdc438a7596a40461c2c8fe46e66ecdd9bba5d290ec2db0286f parent_hash=0365c6f4b01f8b328d913a7e95e59968d3abc45b6c91b86f865b37ec8658237d difficulty="1d1ad7f2" state_root=6cb1a6fb036bdf1d61c9f7b7cf570fd53ad0a2b7eab9f51edfa41aa580a1c4e3 extrinsics_root=2d4bdfaa1814dca7d92bd18c8b283d4a566af48b8501521cc6409884472b7273
+2026-03-14 22:45:15 hashing_started trace_ts_ms=1773549915595 thread_id=0 pre_hash=0xcee14e42b188dcdc438a7596a40461c2c8fe46e66ecdd9bba5d290ec2db0286f pow_bits="1d1ad7f2" height=21 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:47:03 mining_solution_found trace_ts_ms=1773550023101 thread_id=0 nonce=[98, 57, 115, 183, 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=36815000 height=21 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:47:03 Found PoW solution height=21 nonce=[98, 57, 115, 183, 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:47:03 Applying cached StorageChanges during import block_number=21 storage_changes_key=21
+2026-03-14 22:47:03 PoW seal verification details pre_hash=0xcee14e42b188dcdc438a7596a40461c2c8fe46e66ecdd9bba5d290ec2db0286f nonce=[98, 57, 115, 183, 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000006a1143fca8392f03081407835772d5ef05af7d482358732d7d4d0e431 stored_work=0x00000006a1143fca8392f03081407835772d5ef05af7d482358732d7d4d0e431 work_matches=true
+2026-03-14 22:47:03 DA encoding stored for imported block block_number=21 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:47:03 Block imported successfully with state changes applied block_hash=888d6fe77d6a2d2222e9e49be89727ac6f37cbfd8755521325509bcbf76e183f block_number=21
+2026-03-14 22:47:03 🎉 Block mined!
+2026-03-14 22:47:03 Block imported successfully block_number=21 block_hash=888d6fe77d6a2d2222e9e49be89727ac6f37cbfd8755521325509bcbf76e183f nonce=[98, 57, 115, 183, 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:47:03 Broadcasting mined block via PQ network block_number=21 block_hash=888d6fe77d6a2d2222e9e49be89727ac6f37cbfd8755521325509bcbf76e183f has_body=true data_len=230
+2026-03-14 22:47:03 CALLING REAL execute_extrinsics_fn parent=888d6fe77d6a2d2222e9e49be89727ac6f37cbfd8755521325509bcbf76e183f block_number=22 tx_count=0
+2026-03-14 22:47:03 Building block with sc_block_builder block_number=22 parent=888d6fe77d6a2d2222e9e49be89727ac6f37cbfd8755521325509bcbf76e183f tx_count=0
+2026-03-14 22:47:03 BlockBuilder created block_number=22 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:47:03 Created 1 inherent extrinsics count=1
+2026-03-14 22:47:03 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bbeb1d1ef9c01
+2026-03-14 22:47:03 Block built with StorageChanges cached block_number=22 applied=1 failed=0 state_root=c02cfd942cd5ca2180fc6bafeb234facbf41fdc269df4b7ee8a5e31b3e8bc581 extrinsics_root=090c8c57d321502f07155db1b1130c01c202c2ccfd83fc1e0934a221038f9d79 storage_changes_key=22
+2026-03-14 22:47:03 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=22 pre_hash=087016cf20331315d0d0e837b22b3db19500f262867fc417150f56b7cd84be08 parent_hash=888d6fe77d6a2d2222e9e49be89727ac6f37cbfd8755521325509bcbf76e183f difficulty="1d1ad7f2" state_root=c02cfd942cd5ca2180fc6bafeb234facbf41fdc269df4b7ee8a5e31b3e8bc581 extrinsics_root=090c8c57d321502f07155db1b1130c01c202c2ccfd83fc1e0934a221038f9d79
+2026-03-14 22:47:03 hashing_started trace_ts_ms=1773550023107 thread_id=0 pre_hash=0x087016cf20331315d0d0e837b22b3db19500f262867fc417150f56b7cd84be08 pow_bits="1d1ad7f2" height=22 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:48:49 mining_solution_found trace_ts_ms=1773550129648 thread_id=0 nonce=[51, 247, 51, 74, 89, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=38349700 height=22 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:48:49 Found PoW solution height=22 nonce=[51, 247, 51, 74, 89, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:48:49 Applying cached StorageChanges during import block_number=22 storage_changes_key=22
+2026-03-14 22:48:49 PoW seal verification details pre_hash=0x087016cf20331315d0d0e837b22b3db19500f262867fc417150f56b7cd84be08 nonce=[51, 247, 51, 74, 89, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000673d6cbb1b08641ec7a7e2d3479e2c13e53280994794e0be01039ed48 stored_work=0x0000000673d6cbb1b08641ec7a7e2d3479e2c13e53280994794e0be01039ed48 work_matches=true
+2026-03-14 22:48:49 DA encoding stored for imported block block_number=22 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:48:49 Block imported successfully with state changes applied block_hash=941b7cb7c65758967d060a6b3be2a3ed461af3bd0d7416888adf6d9e0a759d26 block_number=22
+2026-03-14 22:48:49 🎉 Block mined!
+2026-03-14 22:48:49 Block imported successfully block_number=22 block_hash=941b7cb7c65758967d060a6b3be2a3ed461af3bd0d7416888adf6d9e0a759d26 nonce=[51, 247, 51, 74, 89, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:48:49 Broadcasting mined block via PQ network block_number=22 block_hash=941b7cb7c65758967d060a6b3be2a3ed461af3bd0d7416888adf6d9e0a759d26 has_body=true data_len=230
+2026-03-14 22:48:49 CALLING REAL execute_extrinsics_fn parent=941b7cb7c65758967d060a6b3be2a3ed461af3bd0d7416888adf6d9e0a759d26 block_number=23 tx_count=0
+2026-03-14 22:48:49 Building block with sc_block_builder block_number=23 parent=941b7cb7c65758967d060a6b3be2a3ed461af3bd0d7416888adf6d9e0a759d26 tx_count=0
+2026-03-14 22:48:49 BlockBuilder created block_number=23 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:48:49 Created 1 inherent extrinsics count=1
+2026-03-14 22:48:49 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bf151d3ef9c01
+2026-03-14 22:48:49 Block built with StorageChanges cached block_number=23 applied=1 failed=0 state_root=898c4b74e40d9e38518435c0c0ac731511e515e8b66cafee54247ac30817d4d4 extrinsics_root=3e62cd81237df938959954fed57c17a48f4ca9908a53202aaba5732f39a6a2b3 storage_changes_key=23
+2026-03-14 22:48:49 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=23 pre_hash=61b03fd43c830e7b611c8ad9bdf31a4b900e67ecb5ba31402af765586642c2ff parent_hash=941b7cb7c65758967d060a6b3be2a3ed461af3bd0d7416888adf6d9e0a759d26 difficulty="1d1ad7f2" state_root=898c4b74e40d9e38518435c0c0ac731511e515e8b66cafee54247ac30817d4d4 extrinsics_root=3e62cd81237df938959954fed57c17a48f4ca9908a53202aaba5732f39a6a2b3
+2026-03-14 22:48:49 hashing_started trace_ts_ms=1773550129655 thread_id=0 pre_hash=0x61b03fd43c830e7b611c8ad9bdf31a4b900e67ecb5ba31402af765586642c2ff pow_bits="1d1ad7f2" height=23 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:53:44 mining_solution_found trace_ts_ms=1773550424135 thread_id=0 nonce=[227, 117, 85, 42, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=42591200 height=23 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:53:44 Found PoW solution height=23 nonce=[227, 117, 85, 42, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:53:44 Applying cached StorageChanges during import block_number=23 storage_changes_key=23
+2026-03-14 22:53:44 PoW seal verification details pre_hash=0x61b03fd43c830e7b611c8ad9bdf31a4b900e67ecb5ba31402af765586642c2ff nonce=[227, 117, 85, 42, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000001604d596a125ce8522fe645f816d843b7d7653c8b5b3747ff1bf68b4a9 stored_work=0x0000001604d596a125ce8522fe645f816d843b7d7653c8b5b3747ff1bf68b4a9 work_matches=true
+2026-03-14 22:53:44 DA encoding stored for imported block block_number=23 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:53:44 Block imported successfully with state changes applied block_hash=3babd7d2aa5075e94e0f965b656148ae33819fa59dd56fc9ed2da3a94feb2ee1 block_number=23
+2026-03-14 22:53:44 🎉 Block mined!
+2026-03-14 22:53:44 Block imported successfully block_number=23 block_hash=3babd7d2aa5075e94e0f965b656148ae33819fa59dd56fc9ed2da3a94feb2ee1 nonce=[227, 117, 85, 42, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:53:44 Broadcasting mined block via PQ network block_number=23 block_hash=3babd7d2aa5075e94e0f965b656148ae33819fa59dd56fc9ed2da3a94feb2ee1 has_body=true data_len=230
+2026-03-14 22:53:44 CALLING REAL execute_extrinsics_fn parent=3babd7d2aa5075e94e0f965b656148ae33819fa59dd56fc9ed2da3a94feb2ee1 block_number=24 tx_count=0
+2026-03-14 22:53:44 Building block with sc_block_builder block_number=24 parent=3babd7d2aa5075e94e0f965b656148ae33819fa59dd56fc9ed2da3a94feb2ee1 tx_count=0
+2026-03-14 22:53:44 BlockBuilder created block_number=24 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:53:44 Created 1 inherent extrinsics count=1
+2026-03-14 22:53:44 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b48d0d7ef9c01
+2026-03-14 22:53:44 Block built with StorageChanges cached block_number=24 applied=1 failed=0 state_root=6aaf334ae8c305bc4fcfaca076b2f279fadb8ccc15690f47bc3d1734a413d3c7 extrinsics_root=e65540819aeb59d9e63b325c6773421058b6fc5611eeb31f06732d153d64a9a3 storage_changes_key=24
+2026-03-14 22:53:44 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=24 pre_hash=c0e7b4519f16c632d2f23d78ee283ccb1b2998576b17fc2f8b4091341e1b41f8 parent_hash=3babd7d2aa5075e94e0f965b656148ae33819fa59dd56fc9ed2da3a94feb2ee1 difficulty="1d1ad7f2" state_root=6aaf334ae8c305bc4fcfaca076b2f279fadb8ccc15690f47bc3d1734a413d3c7 extrinsics_root=e65540819aeb59d9e63b325c6773421058b6fc5611eeb31f06732d153d64a9a3
+2026-03-14 22:53:44 hashing_started trace_ts_ms=1773550424141 thread_id=0 pre_hash=0xc0e7b4519f16c632d2f23d78ee283ccb1b2998576b17fc2f8b4091341e1b41f8 pow_bits="1d1ad7f2" height=24 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:57:54 mining_solution_found trace_ts_ms=1773550674067 thread_id=0 nonce=[20, 219, 64, 147, 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=46203200 height=24 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 22:57:54 Found PoW solution height=24 nonce=[20, 219, 64, 147, 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:57:54 Applying cached StorageChanges during import block_number=24 storage_changes_key=24
+2026-03-14 22:57:54 PoW seal verification details pre_hash=0xc0e7b4519f16c632d2f23d78ee283ccb1b2998576b17fc2f8b4091341e1b41f8 nonce=[20, 219, 64, 147, 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000028c13ad5fe948a167b9ad8f05519bfe83689dc8b9e320941a92e4b39b stored_work=0x000000028c13ad5fe948a167b9ad8f05519bfe83689dc8b9e320941a92e4b39b work_matches=true
+2026-03-14 22:57:54 DA encoding stored for imported block block_number=24 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 22:57:54 Block imported successfully with state changes applied block_hash=c5239bccdaa95e9d7a00a86872614dcfdb457a2ca2ac8e715d6c8c4d666c0f9e block_number=24
+2026-03-14 22:57:54 🎉 Block mined!
+2026-03-14 22:57:54 Block imported successfully block_number=24 block_hash=c5239bccdaa95e9d7a00a86872614dcfdb457a2ca2ac8e715d6c8c4d666c0f9e nonce=[20, 219, 64, 147, 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 22:57:54 Broadcasting mined block via PQ network block_number=24 block_hash=c5239bccdaa95e9d7a00a86872614dcfdb457a2ca2ac8e715d6c8c4d666c0f9e has_body=true data_len=230
+2026-03-14 22:57:54 CALLING REAL execute_extrinsics_fn parent=c5239bccdaa95e9d7a00a86872614dcfdb457a2ca2ac8e715d6c8c4d666c0f9e block_number=25 tx_count=0
+2026-03-14 22:57:54 Building block with sc_block_builder block_number=25 parent=c5239bccdaa95e9d7a00a86872614dcfdb457a2ca2ac8e715d6c8c4d666c0f9e tx_count=0
+2026-03-14 22:57:54 BlockBuilder created block_number=25 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 22:57:54 Created 1 inherent extrinsics count=1
+2026-03-14 22:57:54 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b94a0dbef9c01
+2026-03-14 22:57:54 Block built with StorageChanges cached block_number=25 applied=1 failed=0 state_root=d8f7432c61e472de623a29c27d326fe539dc0b967c4bd48e411aa7a6ddf56694 extrinsics_root=344b14b0bbc662bed554896258ba965066b78a20cab0717b13bd3cf270a29fe9 storage_changes_key=25
+2026-03-14 22:57:54 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=25 pre_hash=33ee0c690a81a48e9a5908a494320fa5c5ecadf36758c6ee3a818d3febcc3a68 parent_hash=c5239bccdaa95e9d7a00a86872614dcfdb457a2ca2ac8e715d6c8c4d666c0f9e difficulty="1d1ad7f2" state_root=d8f7432c61e472de623a29c27d326fe539dc0b967c4bd48e411aa7a6ddf56694 extrinsics_root=344b14b0bbc662bed554896258ba965066b78a20cab0717b13bd3cf270a29fe9
+2026-03-14 22:57:54 hashing_started trace_ts_ms=1773550674074 thread_id=0 pre_hash=0x33ee0c690a81a48e9a5908a494320fa5c5ecadf36758c6ee3a818d3febcc3a68 pow_bits="1d1ad7f2" height=25 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:04:08 mining_solution_found trace_ts_ms=1773551048878 thread_id=0 nonce=[70, 20, 89, 40, 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=51607300 height=25 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:04:08 Found PoW solution height=25 nonce=[70, 20, 89, 40, 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:04:08 Applying cached StorageChanges during import block_number=25 storage_changes_key=25
+2026-03-14 23:04:08 PoW seal verification details pre_hash=0x33ee0c690a81a48e9a5908a494320fa5c5ecadf36758c6ee3a818d3febcc3a68 nonce=[70, 20, 89, 40, 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000001781ed658634c17982a74b6061f38d1be95b7d63881bf563c482716c57 stored_work=0x0000001781ed658634c17982a74b6061f38d1be95b7d63881bf563c482716c57 work_matches=true
+2026-03-14 23:04:08 DA encoding stored for imported block block_number=25 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 23:04:08 Block imported successfully with state changes applied block_hash=dd6a3d050fb2595daf7fd365370fb5dcaf9d2113ea07a8a9262c5604788dcde0 block_number=25
+2026-03-14 23:04:08 🎉 Block mined!
+2026-03-14 23:04:08 Block imported successfully block_number=25 block_hash=dd6a3d050fb2595daf7fd365370fb5dcaf9d2113ea07a8a9262c5604788dcde0 nonce=[70, 20, 89, 40, 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:04:08 Broadcasting mined block via PQ network block_number=25 block_hash=dd6a3d050fb2595daf7fd365370fb5dcaf9d2113ea07a8a9262c5604788dcde0 has_body=true data_len=230
+2026-03-14 23:04:08 CALLING REAL execute_extrinsics_fn parent=dd6a3d050fb2595daf7fd365370fb5dcaf9d2113ea07a8a9262c5604788dcde0 block_number=26 tx_count=0
+2026-03-14 23:04:08 Building block with sc_block_builder block_number=26 parent=dd6a3d050fb2595daf7fd365370fb5dcaf9d2113ea07a8a9262c5604788dcde0 tx_count=0
+2026-03-14 23:04:08 BlockBuilder created block_number=26 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:04:08 Created 1 inherent extrinsics count=1
+2026-03-14 23:04:08 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000baf58e1ef9c01
+2026-03-14 23:04:08 Block built with StorageChanges cached block_number=26 applied=1 failed=0 state_root=fcf563d4cc038b2b1cc3f53cf638be508265b2d0497e1a999b082b11b3b921f5 extrinsics_root=fe60a079e836a370a4de16c84538b6169fdc315dbe7c7e1178d0255c383c59dd storage_changes_key=26
+2026-03-14 23:04:08 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=26 pre_hash=f469d45f19d32b79749661ebdea30858ca91c056aea9a09bf2e8d716173c8306 parent_hash=dd6a3d050fb2595daf7fd365370fb5dcaf9d2113ea07a8a9262c5604788dcde0 difficulty="1d1ad7f2" state_root=fcf563d4cc038b2b1cc3f53cf638be508265b2d0497e1a999b082b11b3b921f5 extrinsics_root=fe60a079e836a370a4de16c84538b6169fdc315dbe7c7e1178d0255c383c59dd
+2026-03-14 23:04:08 hashing_started trace_ts_ms=1773551048884 thread_id=0 pre_hash=0xf469d45f19d32b79749661ebdea30858ca91c056aea9a09bf2e8d716173c8306 pow_bits="1d1ad7f2" height=26 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:05:08 mining_solution_found trace_ts_ms=1773551108469 thread_id=0 nonce=[179, 173, 181, 40, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=52466900 height=26 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:05:08 Found PoW solution height=26 nonce=[179, 173, 181, 40, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:05:08 Applying cached StorageChanges during import block_number=26 storage_changes_key=26
+2026-03-14 23:05:08 PoW seal verification details pre_hash=0xf469d45f19d32b79749661ebdea30858ca91c056aea9a09bf2e8d716173c8306 nonce=[179, 173, 181, 40, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000165aec8245f4de832be1b4bcd679b38c597ba2861dcd1b0369cf7638dd stored_work=0x000000165aec8245f4de832be1b4bcd679b38c597ba2861dcd1b0369cf7638dd work_matches=true
+2026-03-14 23:05:08 DA encoding stored for imported block block_number=26 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 23:05:08 Block imported successfully with state changes applied block_hash=934e1114e43304c1b5378e8615a32ddb17b6c924b51440e59ebaa7c547b31c2a block_number=26
+2026-03-14 23:05:08 🎉 Block mined!
+2026-03-14 23:05:08 Block imported successfully block_number=26 block_hash=934e1114e43304c1b5378e8615a32ddb17b6c924b51440e59ebaa7c547b31c2a nonce=[179, 173, 181, 40, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:05:08 Broadcasting mined block via PQ network block_number=26 block_hash=934e1114e43304c1b5378e8615a32ddb17b6c924b51440e59ebaa7c547b31c2a has_body=true data_len=230
+2026-03-14 23:05:08 CALLING REAL execute_extrinsics_fn parent=934e1114e43304c1b5378e8615a32ddb17b6c924b51440e59ebaa7c547b31c2a block_number=27 tx_count=0
+2026-03-14 23:05:08 Building block with sc_block_builder block_number=27 parent=934e1114e43304c1b5378e8615a32ddb17b6c924b51440e59ebaa7c547b31c2a tx_count=0
+2026-03-14 23:05:08 BlockBuilder created block_number=27 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:05:08 Created 1 inherent extrinsics count=1
+2026-03-14 23:05:08 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b7641e2ef9c01
+2026-03-14 23:05:08 Block built with StorageChanges cached block_number=27 applied=1 failed=0 state_root=41e370a706d23d206e10114f3839cdd532ae169b0683199868affac7b9fe2168 extrinsics_root=526ca0459cdff45e9a19f380d84864d2abec6f91595108fa741886f1559739e1 storage_changes_key=27
+2026-03-14 23:05:08 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=27 pre_hash=5d7d51eb4f8b23ed19f2dc84de1064bfea5faa08ccfef8c47d691722d93e8391 parent_hash=934e1114e43304c1b5378e8615a32ddb17b6c924b51440e59ebaa7c547b31c2a difficulty="1d1ad7f2" state_root=41e370a706d23d206e10114f3839cdd532ae169b0683199868affac7b9fe2168 extrinsics_root=526ca0459cdff45e9a19f380d84864d2abec6f91595108fa741886f1559739e1
+2026-03-14 23:05:08 hashing_started trace_ts_ms=1773551108474 thread_id=0 pre_hash=0x5d7d51eb4f8b23ed19f2dc84de1064bfea5faa08ccfef8c47d691722d93e8391 pow_bits="1d1ad7f2" height=27 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:05:16 mining_solution_found trace_ts_ms=1773551116471 thread_id=0 nonce=[171, 219, 22, 110, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=52583300 height=27 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:05:16 Found PoW solution height=27 nonce=[171, 219, 22, 110, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:05:16 Applying cached StorageChanges during import block_number=27 storage_changes_key=27
+2026-03-14 23:05:16 PoW seal verification details pre_hash=0x5d7d51eb4f8b23ed19f2dc84de1064bfea5faa08ccfef8c47d691722d93e8391 nonce=[171, 219, 22, 110, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000b7390b93858ddabbd6b48ed5c8fbbfa19454b10e0c504551b96796cbc stored_work=0x0000000b7390b93858ddabbd6b48ed5c8fbbfa19454b10e0c504551b96796cbc work_matches=true
+2026-03-14 23:05:16 DA encoding stored for imported block block_number=27 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 23:05:16 Block imported successfully with state changes applied block_hash=e4848555cb0edb77947a6255e79a057c863200d6573b61a00f6aed8a3fb26a26 block_number=27
+2026-03-14 23:05:16 🎉 Block mined!
+2026-03-14 23:05:16 Block imported successfully block_number=27 block_hash=e4848555cb0edb77947a6255e79a057c863200d6573b61a00f6aed8a3fb26a26 nonce=[171, 219, 22, 110, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:05:16 Broadcasting mined block via PQ network block_number=27 block_hash=e4848555cb0edb77947a6255e79a057c863200d6573b61a00f6aed8a3fb26a26 has_body=true data_len=230
+2026-03-14 23:05:16 CALLING REAL execute_extrinsics_fn parent=e4848555cb0edb77947a6255e79a057c863200d6573b61a00f6aed8a3fb26a26 block_number=28 tx_count=0
+2026-03-14 23:05:16 Building block with sc_block_builder block_number=28 parent=e4848555cb0edb77947a6255e79a057c863200d6573b61a00f6aed8a3fb26a26 tx_count=0
+2026-03-14 23:05:16 BlockBuilder created block_number=28 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:05:16 Created 1 inherent extrinsics count=1
+2026-03-14 23:05:16 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000bb860e2ef9c01
+2026-03-14 23:05:16 Block built with StorageChanges cached block_number=28 applied=1 failed=0 state_root=71c814a3ba8c7b83d44f95519c325d9697e07b2ec0d2eb527577434a6644118b extrinsics_root=77428f63803ae6385c7b1d691978f994fd22d5cfa97038a062af7fb7ea257530 storage_changes_key=28
+2026-03-14 23:05:16 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=28 pre_hash=8673bc2b9beef278fbb99a6ddffec1d4162040a8cebe0b12ecd7496287ea7d1e parent_hash=e4848555cb0edb77947a6255e79a057c863200d6573b61a00f6aed8a3fb26a26 difficulty="1d1ad7f2" state_root=71c814a3ba8c7b83d44f95519c325d9697e07b2ec0d2eb527577434a6644118b extrinsics_root=77428f63803ae6385c7b1d691978f994fd22d5cfa97038a062af7fb7ea257530
+2026-03-14 23:05:16 hashing_started trace_ts_ms=1773551116478 thread_id=0 pre_hash=0x8673bc2b9beef278fbb99a6ddffec1d4162040a8cebe0b12ecd7496287ea7d1e pow_bits="1d1ad7f2" height=28 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:07:19 mining_solution_found trace_ts_ms=1773551239756 thread_id=0 nonce=[208, 66, 81, 158, 126, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=54382200 height=28 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:07:19 Found PoW solution height=28 nonce=[208, 66, 81, 158, 126, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:07:19 Applying cached StorageChanges during import block_number=28 storage_changes_key=28
+2026-03-14 23:07:19 PoW seal verification details pre_hash=0x8673bc2b9beef278fbb99a6ddffec1d4162040a8cebe0b12ecd7496287ea7d1e nonce=[208, 66, 81, 158, 126, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x0000000f56338cd62750fa3bb434967752ac513e2affad8a942224b4cbc13f9b stored_work=0x0000000f56338cd62750fa3bb434967752ac513e2affad8a942224b4cbc13f9b work_matches=true
+2026-03-14 23:07:19 DA encoding stored for imported block block_number=28 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 23:07:19 Block imported successfully with state changes applied block_hash=41c0a90b7285fcaa560bcd9c5fa2d88eabdd6be4cfa0819839f8240fc592139a block_number=28
+2026-03-14 23:07:19 🎉 Block mined!
+2026-03-14 23:07:19 Block imported successfully block_number=28 block_hash=41c0a90b7285fcaa560bcd9c5fa2d88eabdd6be4cfa0819839f8240fc592139a nonce=[208, 66, 81, 158, 126, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:07:19 Broadcasting mined block via PQ network block_number=28 block_hash=41c0a90b7285fcaa560bcd9c5fa2d88eabdd6be4cfa0819839f8240fc592139a has_body=true data_len=230
+2026-03-14 23:07:19 CALLING REAL execute_extrinsics_fn parent=41c0a90b7285fcaa560bcd9c5fa2d88eabdd6be4cfa0819839f8240fc592139a block_number=29 tx_count=0
+2026-03-14 23:07:19 Building block with sc_block_builder block_number=29 parent=41c0a90b7285fcaa560bcd9c5fa2d88eabdd6be4cfa0819839f8240fc592139a tx_count=0
+2026-03-14 23:07:19 BlockBuilder created block_number=29 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:07:19 Created 1 inherent extrinsics count=1
+2026-03-14 23:07:19 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b4d42e4ef9c01
+2026-03-14 23:07:19 Block built with StorageChanges cached block_number=29 applied=1 failed=0 state_root=d76d55837dd2f5a77707208783a410bd9ae1d0930a4b76e84c0bf65cf3b89d35 extrinsics_root=b7b2483bb5b676787808328a7a9603acad9f1b78ec1c60fd220f58e5369abba1 storage_changes_key=29
+2026-03-14 23:07:19 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=29 pre_hash=d357234c855e01f06656ea32cf7e076f63a785684c67b8b954bd48d1b0cce559 parent_hash=41c0a90b7285fcaa560bcd9c5fa2d88eabdd6be4cfa0819839f8240fc592139a difficulty="1d1ad7f2" state_root=d76d55837dd2f5a77707208783a410bd9ae1d0930a4b76e84c0bf65cf3b89d35 extrinsics_root=b7b2483bb5b676787808328a7a9603acad9f1b78ec1c60fd220f58e5369abba1
+2026-03-14 23:07:19 hashing_started trace_ts_ms=1773551239762 thread_id=0 pre_hash=0xd357234c855e01f06656ea32cf7e076f63a785684c67b8b954bd48d1b0cce559 pow_bits="1d1ad7f2" height=29 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:08:16 mining_solution_found trace_ts_ms=1773551296336 thread_id=0 nonce=[98, 235, 193, 137, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=55206700 height=29 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:08:16 Found PoW solution height=29 nonce=[98, 235, 193, 137, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:08:16 Applying cached StorageChanges during import block_number=29 storage_changes_key=29
+2026-03-14 23:08:16 PoW seal verification details pre_hash=0xd357234c855e01f06656ea32cf7e076f63a785684c67b8b954bd48d1b0cce559 nonce=[98, 235, 193, 137, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000096208ffe3368c26365d41bcdf58f77b74504d572f8744a1f74d48f463 stored_work=0x000000096208ffe3368c26365d41bcdf58f77b74504d572f8744a1f74d48f463 work_matches=true
+2026-03-14 23:08:16 DA encoding stored for imported block block_number=29 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 23:08:16 Block imported successfully with state changes applied block_hash=37a153426fb9f4a8b518601a06c8c5e30f274eb8d2bec5f8d666b123db07126c block_number=29
+2026-03-14 23:08:16 🎉 Block mined!
+2026-03-14 23:08:16 Block imported successfully block_number=29 block_hash=37a153426fb9f4a8b518601a06c8c5e30f274eb8d2bec5f8d666b123db07126c nonce=[98, 235, 193, 137, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:08:16 Broadcasting mined block via PQ network block_number=29 block_hash=37a153426fb9f4a8b518601a06c8c5e30f274eb8d2bec5f8d666b123db07126c has_body=true data_len=230
+2026-03-14 23:08:16 CALLING REAL execute_extrinsics_fn parent=37a153426fb9f4a8b518601a06c8c5e30f274eb8d2bec5f8d666b123db07126c block_number=30 tx_count=0
+2026-03-14 23:08:16 Building block with sc_block_builder block_number=30 parent=37a153426fb9f4a8b518601a06c8c5e30f274eb8d2bec5f8d666b123db07126c tx_count=0
+2026-03-14 23:08:16 BlockBuilder created block_number=30 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:08:16 Created 1 inherent extrinsics count=1
+2026-03-14 23:08:16 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b511fe5ef9c01
+2026-03-14 23:08:16 Block built with StorageChanges cached block_number=30 applied=1 failed=0 state_root=84ec77051a678c59aa116be88939f3f4ff9bb1bee8711157e436c2bd8c8d1878 extrinsics_root=37d1cd08cd21ed080b5ece623aa7452718029792280302a61fca0bc8bca3000e storage_changes_key=30
+2026-03-14 23:08:16 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=30 pre_hash=bda19b705b893893a28b0a44a7b88b523d320eeac53bb48aea29d62ab0acf1e5 parent_hash=37a153426fb9f4a8b518601a06c8c5e30f274eb8d2bec5f8d666b123db07126c difficulty="1d1ad7f2" state_root=84ec77051a678c59aa116be88939f3f4ff9bb1bee8711157e436c2bd8c8d1878 extrinsics_root=37d1cd08cd21ed080b5ece623aa7452718029792280302a61fca0bc8bca3000e
+2026-03-14 23:08:16 hashing_started trace_ts_ms=1773551296343 thread_id=0 pre_hash=0xbda19b705b893893a28b0a44a7b88b523d320eeac53bb48aea29d62ab0acf1e5 pow_bits="1d1ad7f2" height=30 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:09:55 mining_solution_found trace_ts_ms=1773551395182 thread_id=0 nonce=[178, 171, 48, 224, 131, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=56640200 height=30 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:09:55 Found PoW solution height=30 nonce=[178, 171, 48, 224, 131, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:09:55 Applying cached StorageChanges during import block_number=30 storage_changes_key=30
+2026-03-14 23:09:55 PoW seal verification details pre_hash=0xbda19b705b893893a28b0a44a7b88b523d320eeac53bb48aea29d62ab0acf1e5 nonce=[178, 171, 48, 224, 131, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x00000016e313a9f7a47801b2a17387fdeb7f7506c42cfe78ef74573e2b77c7ec stored_work=0x00000016e313a9f7a47801b2a17387fdeb7f7506c42cfe78ef74573e2b77c7ec work_matches=true
+2026-03-14 23:09:55 DA encoding stored for imported block block_number=30 da_root=aa6c0615baec566dfb19f4dd47cc75aa9f11b47aac4c7daeac214c85fd8f9de7118ecfc454e709dc57d84891ad5957f7 da_chunks=2
+2026-03-14 23:09:55 Block imported successfully with state changes applied block_hash=98c931c5cc484b0fb5389bd1ad7e46d910b6a1e7a2508454da78d47ac29ed3a0 block_number=30
+2026-03-14 23:09:55 🎉 Block mined!
+2026-03-14 23:09:55 Block imported successfully block_number=30 block_hash=98c931c5cc484b0fb5389bd1ad7e46d910b6a1e7a2508454da78d47ac29ed3a0 nonce=[178, 171, 48, 224, 131, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:09:55 Broadcasting mined block via PQ network block_number=30 block_hash=98c931c5cc484b0fb5389bd1ad7e46d910b6a1e7a2508454da78d47ac29ed3a0 has_body=true data_len=230
+2026-03-14 23:09:55 CALLING REAL execute_extrinsics_fn parent=98c931c5cc484b0fb5389bd1ad7e46d910b6a1e7a2508454da78d47ac29ed3a0 block_number=31 tx_count=0
+2026-03-14 23:09:55 Building block with sc_block_builder block_number=31 parent=98c931c5cc484b0fb5389bd1ad7e46d910b6a1e7a2508454da78d47ac29ed3a0 tx_count=0
+2026-03-14 23:09:55 BlockBuilder created block_number=31 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:09:55 Created 1 inherent extrinsics count=1
+2026-03-14 23:09:55 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b6fa1e6ef9c01
+2026-03-14 23:09:55 Block built with StorageChanges cached block_number=31 applied=1 failed=0 state_root=043726663a04f175b0c862be872e8709a778ea57dee82921752919a8907a1a35 extrinsics_root=8926274b49a5a467b436cd108098fae00bead2ea2cc3c2d7fab4503b9f69c05c storage_changes_key=31
+2026-03-14 23:09:55 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=31 pre_hash=bbb119ce97e35cac17a08cb17355dfc672c86627b79f1b68157d134af698232e parent_hash=98c931c5cc484b0fb5389bd1ad7e46d910b6a1e7a2508454da78d47ac29ed3a0 difficulty="1d1ad7f2" state_root=043726663a04f175b0c862be872e8709a778ea57dee82921752919a8907a1a35 extrinsics_root=8926274b49a5a467b436cd108098fae00bead2ea2cc3c2d7fab4503b9f69c05c
+2026-03-14 23:09:55 hashing_started trace_ts_ms=1773551395187 thread_id=0 pre_hash=0xbbb119ce97e35cac17a08cb17355dfc672c86627b79f1b68157d134af698232e pow_bits="1d1ad7f2" height=31 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""

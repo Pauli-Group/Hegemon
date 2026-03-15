@@ -1,0 +1,318 @@
+2026-03-14 23:12:28 Hegemon Node
+2026-03-14 23:12:28 ✌️  version 0.9.1
+2026-03-14 23:12:28 ❤️  by Pauli Group Inc., 2025-2026
+2026-03-14 23:12:28 📋 Chain specification: Hegemon
+2026-03-14 23:12:28 🏷  Node name: ashamed-band-9582
+2026-03-14 23:12:28 👤 Role: AUTHORITY
+2026-03-14 23:12:28 💾 Database: RocksDb at /tmp/hegemon-tx4-pw1-repeat20/run02/base/chains/hegemon/db/full
+2026-03-14 23:12:28 Full Substrate client created best_number=13 best_hash=0x8a46…01d7
+2026-03-14 23:12:28 Creating transaction pool txpool_type=ForkAware ready=Limit { count: 8192, total_bytes: 20971520 } future=Limit { count: 819, total_bytes: 2097152 }
+2026-03-14 23:12:28 Full Substrate transaction pool created
+2026-03-14 23:12:28 PoW block import pipeline created
+2026-03-14 23:12:28 PQ service config initialized listen_addr=[::]:30333 max_peers=0
+2026-03-14 23:12:28 Loaded PQ identity seed path=/tmp/hegemon-tx4-pw1-repeat20/run02/base/pq-identity.seed
+2026-03-14 23:12:28 Initialized PQ network keypair peer_id=2ab29409f455d4aed1c015e71a88f8d4018b2eeb00278879b89104bcafe5b9e7
+2026-03-14 23:12:28 Hegemon node with full client initialized pq_peer_id=8bc18098cdb0dfd32f095f91612e65e723981edbf30b9ec67c4ebe6fb3b94d43
+2026-03-14 23:12:28 Loaded DA sampling secret path=/tmp/hegemon-tx4-pw1-repeat20/run02/base/da-secret
+2026-03-14 23:12:28 Hegemon node started with FULL SUBSTRATE CLIENT chain=Hegemon role=Authority best_number=13 best_hash=0x8a46…01d7 pq_enabled=true
+2026-03-14 23:13:10 batch verifier preprocessed cache warmup complete sizes=[16] warmed=1
+2026-03-14 23:13:10 PQ-secure network transport configured peer_id=2ab29409f455d4aed1c015e71a88f8d4018b2eeb00278879b89104bcafe5b9e7
+2026-03-14 23:13:10 SubstratePqTransport ready for peer connections transport_peer_id=8bc18098cdb0dfd32f095f91612e65e723981edbf30b9ec67c4ebe6fb3b94d43 protocol=/hegemon/pq/1
+2026-03-14 23:13:10 Started 1 mining thread(s)
+2026-03-14 23:13:10 Mining started threads=1
+2026-03-14 23:13:10 Mining enabled and started threads=1
+2026-03-14 23:13:10 Transaction pool bridge wired to Substrate pool pool_capacity=4096 max_pending=1000 pool_type="SubstrateTransactionPoolWrapper (real pool)"
+2026-03-14 23:13:10 Ciphertext DA retention disabled; keeping all ciphertexts
+2026-03-14 23:13:10 Proof DA retention disabled; keeping all proof DA blobs
+2026-03-14 23:13:10 DA sampling configured da_chunk_size=65536 da_sample_count=80 da_store_capacity=128 pending_ciphertext_capacity=4096 pending_proof_capacity=256 ciphertext_da_retention_blocks=0 proof_da_retention_blocks=0 da_store_path=/tmp/hegemon-tx4-pw1-repeat20/run02/base/da-store da_sample_timeout_ms=5000
+2026-03-14 23:13:10 Commitment block proof store configured commitment_block_proof_store_capacity=128
+2026-03-14 23:13:10 CRITICAL: Transaction pool maintenance task spawned - pool will receive block notifications
+2026-03-14 23:13:10 PQ network backend started addr=[::]:30333 peer_id=8bc18098cdb0dfd32f095f91612e65e723981edbf30b9ec67c4ebe6fb3b94d43
+2026-03-14 23:13:10 PqNetworkBackend started listen_addr=[::]:30333 max_peers=0 peer_id=8bc18098cdb0dfd32f095f91612e65e723981edbf30b9ec67c4ebe6fb3b94d43
+2026-03-14 23:13:10 PQ network handle captured for mining worker
+2026-03-14 23:13:10 Strict compatibility enabled; skipping cached discovery dials at startup
+2026-03-14 23:13:10 Chain sync service created
+2026-03-14 23:13:10 Transaction propagation task spawned
+2026-03-14 23:13:10 Block import handler wired to PowBlockImport for network sync
+2026-03-14 23:13:10 Transaction pool maintenance task started
+2026-03-14 23:13:10 best_block_fn wired to client.chain_info()
+2026-03-14 23:13:10 difficulty_fn wired to runtime ConsensusApi::difficulty_bits()
+2026-03-14 23:13:10 Mining will pause while shielded batches wait for a ready prepared bundle min_ready_proven_batch_txs=4 proof_mode=InlineTx
+2026-03-14 23:13:10 Transaction pool wired to chain state provider max_block_transactions=1000 prover_candidate_overscan_factor=4 prover_workers=1 prover_batch_target_txs=4 prover_batch_queue_capacity=4 prover_liveness_lane=true prover_adaptive_liveness_timeout_ms=0 prover_batch_job_timeout_ms=180000
+2026-03-14 23:13:10 Proofless transfers require a ready proven batch of at least this size before inclusion min_ready_proven_batch_txs=4
+2026-03-14 23:13:10 Proofless inclusion waits briefly for newly prepared bundles before deferring proofless_ready_wait_ms=1500
+2026-03-14 23:13:10 Shielded coinbase enabled for miner address=shca1qvpsqqqqqqqg97slmukvs4cdp6w0rzc58kt24ue5k430gdmve2qmram2s6mlekph3tp64de7j07lva8aulltw5wnmpg0umxrvfa3jhy4gls90gwk57882at9sd9j5pgvd7nmsmyxen95fdc8mfjpazrsn5dcx2fjzpzav4mwwvhgt22jsx4sngzmqst0xc5z32kzkgsz39a5ruvpwj7ev55rvfq5pgk0447xggux2thhxg37f3ajh55aswpjtx53cpqpkzjx5zwltecfwnjfwatvnmg6hdjyz9lxsxaa0sjpdhmmwf4v89c3kjecve960setgtgsd34zvsusm0qvmyg2akypykmz5q7xzyd2d373nyznkx2km80sstluqast7azec7mchxuzeffqxskr574l5v2n2xkgv85xdt88xfujy8hsrpfyywghsz4kl40gzc62c3em9jx844t5l6ypgveztvxu030d0jvtx322zzer2x5y8ftxk3tufpnzterl3r295695jm8cgvh9d27k66vnhzusnlmut5uf2r6trp7dm44d2hauuk2vvvm7qw96qty076jfv83kfzdtn5n2xv7zhvxeygglv34xljm895vt9z5m33cjp8pmgs49e69rtzwqyedh5cajtp5l30r6deqfrg6ns6cvclyw72d88wvgfztqpzqgsltauqs5qyntdqts79wtjpgyx8ly6997n8zyqkxg8nnxxpnryxgr66m6peczvyerz6zkpzmzse852r9kpkg9na5rhzqe4vqy20nzt8r6lhxze05qdkms3557hzv45k29gdtmnkjudxntchvwwmpftrxem99e9r3y94newlluhrzlks2nz9z9newp8jvvjnddjerrdpxr65t59pxgjn55zynqpjjpxcnh6s687kuc5uv69uua550py3vahq4r8gst06uke99x0s6h5g3z93x2xpuk9l6cjx5qz0wmw592es7tlxe33xm5yqvys06lctpk2a55s6nrs9v8huxl554zv98cud90uttc352e45eqf05cn3zun4vw8q49sxn4far0x2f4g6s0a7zwndy87fq4ja5jhvm6kwkksa6fp8uhqhqz4gnqe2z98w5w3q3nx35k3msk0rzfequk5qetqqd43jn3qtn820uy2lls82say5dpaxv37gu5s04fd904lg0genrfmtdm59mkxdcvv3cltpnknzpekeju74eu9s8r3gw7pvg9qnr9cymhuc6znwjwfp9h9r8fcpeauhy6xwtyzw0cjztd4j2pj5zaa0nnsvem9ms49d705vs62fvnstvedvnnr9ens640var0czs9scckwnamw3vpqvwylpwgs4kzeq2nlnsv55xxj0sac573u2c0qvaczghtykc7xhn2cqchmea5xxa3cwrsva9qz2c39qyla3eh99nt837j0wzwjp2tj8rxee9amksvc3tyrfaqrqfv7wsk3pyj5vpzkkam8h8a8pc5ujr2k2x2qza309rsx59l80uksnz8l29dd63x5x96qwnvppsr8wqf34977vzrlhhj44m4vd8mhg8hr4xywa4c2n2hzp0hgfl8zwtgyywv84r4yfdenk3zqltuz4yrn9dghhfpg3lszdh8ccvfcryur3s95z5jk70vngjmwr8syl9cu6qzm5s2rt8mzuqg66yplszgnxrsf0fckvzyr7h8yqdl93sr9vzlujxxswvfr63msux36z3tvrr7k0392f0rq7ee5ldmw50d2e90ffgexcuqzgpjs6xue3t8xl9366mytg79c5vyk45mnwfs9quqhqx22m04tkswkfg9ag6wvsu2t6n4tlwts25ehr796a07cwkxct5kjr8ck53fjt6x25gzrggfw95fj535s6ttzeugjqncce5jweu5fu8g8j4sv0s3krq6n73mqdy68729nmv22wfmaylnygpfx023uwuhpzqjx8lhk38khqygv7qud7jmcu958p98fx5zngcpneup00duqf5fz84ut2evdazvnfmmup864dv62n4vzfpy5hz738sxlmttz38w9x4r4st7da6dmkrxeu583jr9sk5kh35uekzzkcxghf6snd08y8fgg0y3kxttzlguv2usyvk7wp4nx3y20y3ug0yeuh62tz9kh0w8jctjtue8x54ux8hcyqy6hwwp59dgqkf6zfum3mugn3xvcqzddnz0lxk8grdfgucxvjjq03nju8zkjdrazpn2ylm943l3szs3vzqgswsq8z98awxk26t5czg3zxuxavd5l39m0w8eg6ju3qvkl0z4qdafdawy70e3sye2z4mm26rwa4ak2tg4fmv4spjxkptkc9g5z665clnmj0ys08y823p09d9fsankpckp75s2wj3qdzn3e89c9wqyzq446h3mtyr0sfl8krrx6uq7up96jcftdts0wv8dpx9g8xwwss4ccwcqtzfphsvlyg8xpgcdv4meqxun35088psswhrpcwq269yq3kdu287zrvp9zpz90s58w43eyzrugsfypwzqgfpaqsf3a634whar2gwpejkhrhxkqyqty5svs6c9d9nnajvszv4kqfcdqh0x6
+2026-03-14 23:13:10 Chain sync tick task started
+2026-03-14 23:13:10 BlockBuilder API wired with StorageChanges capture
+2026-03-14 23:13:10 BlockBuilder API wired for real state execution
+2026-03-14 23:13:10 Block import wired with StorageChanges application
+2026-03-14 23:13:10 PowBlockImport wired for real block import
+2026-03-14 23:13:10 PQ discovery enabled (address exchange) min_peers=0 tick_secs=30 strict_compatibility=true
+2026-03-14 23:13:10 PQ network event handler started (Full Client Mode + Sync)
+2026-03-14 23:13:10 Transaction propagation task started
+2026-03-14 23:13:10 PQ network event received by Full Client handler event="Discriminant(3)"
+2026-03-14 23:13:10 Block import handler started (syncs blocks from network + historical sync)
+2026-03-14 23:13:10 Skipping aggregation prover worker prewarm by configuration worker_index=0
+=== RPC CONFIG DEBUG ===
+config.rpc.addr: Some([RpcEndpoint { listen_addr: 127.0.0.1:9957, batch_config: Unlimited, max_connections: 100, max_payload_in_mb: 15, max_payload_out_mb: 15, max_subscriptions_per_connection: 1024, max_buffer_capacity_per_connection: 64, rate_limit: None, rate_limit_trust_proxy_headers: false, rate_limit_whitelisted_ips: [], cors: None, rpc_methods: Auto, is_optional: false, retry_random_port: true }, RpcEndpoint { listen_addr: [::1]:9957, batch_config: Unlimited, max_connections: 100, max_payload_in_mb: 15, max_payload_out_mb: 15, max_subscriptions_per_connection: 1024, max_buffer_capacity_per_connection: 64, rate_limit: None, rate_limit_trust_proxy_headers: false, rate_limit_whitelisted_ips: [], cors: None, rpc_methods: Auto, is_optional: true, retry_random_port: true }])
+config.rpc.port: 9944
+========================
+2026-03-14 23:13:10 FULL PRODUCTION PIPELINE CONFIGURED using_real_client=true difficulty_bits=488298482 best_number=13 best_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7
+2026-03-14 23:13:10 Spawning PRODUCTION mining worker with real client + PQ broadcasting threads=1 test_mode=true
+2026-03-14 23:13:10 Chain RPC wired (chain_getBlock, chain_getHeader, etc.)
+2026-03-14 23:13:10 Creating production mining worker (Task 10.5) threads=1 is_production=true verbose=false
+2026-03-14 23:13:10 State RPC wired (state_getStorage, state_getRuntimeVersion, etc.)
+2026-03-14 23:13:10 Mining worker started (Phase 9.3) threads=1 round_duration_ms=500 test_mode=true
+2026-03-14 23:13:10 System RPC wired (system_name, system_version, system_chain, etc.)
+2026-03-14 23:13:10 Hegemon RPC wired (hegemon_miningStatus, hegemon_consensusStatus, etc.)
+2026-03-14 23:13:10 Wallet RPC wired (wallet_notes, wallet_commitments, etc.)
+2026-03-14 23:13:10 Shielded RPC wired (shielded_submitTransfer, etc.)
+2026-03-14 23:13:10 Block RPC wired (block_getCommitmentProof)
+2026-03-14 23:13:10 DA RPC wired (da_getChunk, da_getParams)
+2026-03-14 23:13:10 Prover RPC wired (prover_getWorkPackage, prover_submitWorkResult, prover_getWorkStatus, prover_getMarketParams)
+2026-03-14 23:13:10 RPC server spawned with production service rpc_addr=127.0.0.1:9957 rpc_port=9957
+2026-03-14 23:13:10 ═══════════════════════════════════════════════════════════════
+2026-03-14 23:13:10 STARTING NODE
+2026-03-14 23:13:10 ═══════════════════════════════════════════════════════════════
+2026-03-14 23:13:10   RPC server spawned at 127.0.0.1:9957
+2026-03-14 23:13:10   PQ network broadcasting: true
+2026-03-14 23:13:10   RPC server: http://127.0.0.1:9957
+2026-03-14 23:13:10   Set HEGEMON_MINE=1 to enable mining
+2026-03-14 23:13:10 ═══════════════════════════════════════════════════════════════
+2026-03-14 23:13:10 CALLING REAL execute_extrinsics_fn parent=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 block_number=14 tx_count=0
+2026-03-14 23:13:10 Building block with sc_block_builder block_number=14 parent=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 tx_count=0
+2026-03-14 23:13:10 RPC server started addr=127.0.0.1:9957
+2026-03-14 23:13:10 BlockBuilder created block_number=14 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:13:10 Created 1 inherent extrinsics count=1
+2026-03-14 23:13:10 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b559de9ef9c01
+2026-03-14 23:13:10 Encrypting shielded block rewards block_number=14 subsidy=499429223 miner_fees=0 prover_fees=0 miner_amount=499429223 has_prover_claim=false
+2026-03-14 23:13:10 💰 Minted 499429223 shielded coins at commitment index 46
+2026-03-14 23:13:10 Added shielded coinbase extrinsic for block reward block_number=14 subsidy=499429223 miner_fees=0 prover_fees=0
+2026-03-14 23:13:10 Block built with StorageChanges cached block_number=14 applied=2 failed=0 state_root=601667a972a86a4e1b9a823563ef40b8dbd424d49026863981ce2882b90b4342 extrinsics_root=ca13296c5a28255e98f85f93c50819a6ade79df9c3941247fa72694230bb41d8 storage_changes_key=1
+2026-03-14 23:13:10 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=14 pre_hash=d5228da93caf66f5d63f455cc6dff9551b814e8ea4739a3790268d77c508d3dc parent_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 difficulty="1d1ad7f2" state_root=601667a972a86a4e1b9a823563ef40b8dbd424d49026863981ce2882b90b4342 extrinsics_root=ca13296c5a28255e98f85f93c50819a6ade79df9c3941247fa72694230bb41d8
+2026-03-14 23:13:10 hashing_started trace_ts_ms=1773551590832 thread_id=0 pre_hash=0xd5228da93caf66f5d63f455cc6dff9551b814e8ea4739a3790268d77c508d3dc pow_bits="1d1ad7f2" height=14 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:13:10 mine_round: checking difficulty pow_bits="1d1ad7f2" target=1ad7f20000000000000000000000000000000000000000000000000000 first_work_value=3609cdf15ac2de5b4750c78ef3754fd05d6b7c415b3b44031cea828a1379d2a4 passes=false first_nonce=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:13:11 Stopped mining threads
+2026-03-14 23:13:11 Stopped mining threads
+2026-03-14 23:13:11 Mining stopped
+2026-03-14 23:13:15 verify;
+2026-03-14 23:13:15 verify_with_preprocessed;
+2026-03-14 23:13:15 get_log_num_quotient_chunks;
+2026-03-14 23:13:15 infer log of base and extension constraint degree;
+2026-03-14 23:13:15 prepare_block_proof_bundle: start block_number=14 tx_count=1 candidate_bytes=362585
+2026-03-14 23:13:15 prepare_block_proof_bundle: built shared candidate context block_number=14 tx_count=1 decoded_extrinsics=1 extracted_transactions=1 resolved_ciphertext_txs=1 da_blob_bytes=4310 da_chunk_count=2 stage_ms=0 total_ms=0
+2026-03-14 23:13:15 prepare_block_proof_bundle: starting commitment stage block_number=14 tx_count=1
+2026-03-14 23:13:15 prepare_block_proof_bundle: starting aggregation stage block_number=14 tx_count=1 mode=InlineTx
+2026-03-14 23:13:15 prepare_block_proof_bundle: commitment stage complete block_number=14 tx_count=1 commitment_stage_ms=60
+2026-03-14 23:13:15 prepare_block_proof_bundle: aggregation stage complete block_number=14 tx_count=1 aggregation_stage_ms=0 aggregation_cache_hit=false
+2026-03-14 23:13:15 prepare_block_proof_bundle: built commitment and bundle proof artifacts block_number=14 commitment_bytes=181884 aggregation_bytes=0 batch_count=0 batch_slot_txs=16 proof_mode=InlineTx aggregation_cache_hit=false commitment_stage_ms=60 aggregation_stage_ms=0 total_ms=60
+2026-03-14 23:13:15 prepare_block_proof_bundle: done block_number=14 tx_count=1 build_ms=61
+2026-03-14 23:13:16 Prepared proven batch candidate job_id=0 block_number=14 key_parent_hash=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 key_tx_statements_commitment=6a5df584b2160b30532517da5d16362cf4a0373dbf4c27437316f5f45e16c5b29fbe992555e4fe7267dba83e05b5248f key_tx_count=1 stage_type=finalize_bundle level=0 arity=0 shape_id=0000000000000000000000000000000000000000000000000000000000000000 dependencies=0 queue_depth=0 queue_wait_ms=0 dispatch_wait_ms=0 total_job_age_ms=251 stage_mem_budget_mb=4096 stage_max_inflight_per_level=1 tx_count=1 candidate_bytes=362585 build_ms=61 package_id=5c4672a7044ab036a13366df7e19921737f1da9f82933bba708152228ee59f16 stale_parent=false stale_generation=false
+2026-03-14 23:13:16 prepared_bundle_ready trace_ts_ms=1773551596035 bundle_id=11aae93271f38275223f0766cb4f22a144939c6eaa3196cc04ab6e01c678f024 artifact_hash=8a0091d42409e392de443fefbef0a6fc592c215939fcaf6f55331c5369793dce parent_hash=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 block_number=14 tx_count=1 tx_statements_commitment=6a5df584b2160b30532517da5d16362cf4a0373dbf4c27437316f5f45e16c5b29fbe992555e4fe7267dba83e05b5248f build_ms=61 total_job_age_ms=251
+2026-03-14 23:13:16 📡 Broadcast transactions to peers tx_count=1 failed_peers=0
+2026-03-14 23:13:17 verify;
+2026-03-14 23:13:17 verify_with_preprocessed;
+2026-03-14 23:13:17 get_log_num_quotient_chunks;
+2026-03-14 23:13:17 infer log of base and extension constraint degree;
+2026-03-14 23:13:17 prepare_block_proof_bundle: start block_number=14 tx_count=2 candidate_bytes=725208
+2026-03-14 23:13:17 prepare_block_proof_bundle: built shared candidate context block_number=14 tx_count=2 decoded_extrinsics=2 extracted_transactions=2 resolved_ciphertext_txs=2 da_blob_bytes=8616 da_chunk_count=2 stage_ms=0 total_ms=0
+2026-03-14 23:13:17 prepare_block_proof_bundle: starting commitment stage block_number=14 tx_count=2
+2026-03-14 23:13:17 prepare_block_proof_bundle: starting aggregation stage block_number=14 tx_count=2 mode=InlineTx
+2026-03-14 23:13:17 prepare_block_proof_bundle: commitment stage complete block_number=14 tx_count=2 commitment_stage_ms=107
+2026-03-14 23:13:17 prepare_block_proof_bundle: aggregation stage complete block_number=14 tx_count=2 aggregation_stage_ms=0 aggregation_cache_hit=false
+2026-03-14 23:13:17 prepare_block_proof_bundle: built commitment and bundle proof artifacts block_number=14 commitment_bytes=204212 aggregation_bytes=0 batch_count=0 batch_slot_txs=16 proof_mode=InlineTx aggregation_cache_hit=false commitment_stage_ms=107 aggregation_stage_ms=0 total_ms=107
+2026-03-14 23:13:17 prepare_block_proof_bundle: done block_number=14 tx_count=2 build_ms=108
+2026-03-14 23:13:17 Prepared proven batch candidate job_id=1 block_number=14 key_parent_hash=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 key_tx_statements_commitment=05107a2abcc3de69e5be31dba996941dd4c148eb77ad8cb454ffba53abcc974c2c9417cff8a28da8c33217dadda64afd key_tx_count=2 stage_type=finalize_bundle level=0 arity=0 shape_id=0000000000000000000000000000000000000000000000000000000000000000 dependencies=0 queue_depth=0 queue_wait_ms=0 dispatch_wait_ms=0 total_job_age_ms=251 stage_mem_budget_mb=4096 stage_max_inflight_per_level=1 tx_count=2 candidate_bytes=725208 build_ms=108 package_id=4ae473df2854f59f23ae22feb6869b7af9da005fd647c61488e115f626d66bfb stale_parent=false stale_generation=false
+2026-03-14 23:13:17 prepared_bundle_ready trace_ts_ms=1773551597561 bundle_id=f7800bcdd397598f7cf54b102df94bcb0f682b6a2da8a4eaa2b97ca9b846c44c artifact_hash=bd2c85e5bfb2f04dbb1e9d2d83a15934f22ab0d8773cbbd5caf71becb2059099 parent_hash=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 block_number=14 tx_count=2 tx_statements_commitment=05107a2abcc3de69e5be31dba996941dd4c148eb77ad8cb454ffba53abcc974c2c9417cff8a28da8c33217dadda64afd build_ms=108 total_job_age_ms=251
+2026-03-14 23:13:17 📡 Broadcast transactions to peers tx_count=1 failed_peers=0
+2026-03-14 23:13:18 verify;
+2026-03-14 23:13:18 verify_with_preprocessed;
+2026-03-14 23:13:18 get_log_num_quotient_chunks;
+2026-03-14 23:13:18 infer log of base and extension constraint degree;
+2026-03-14 23:13:19 📡 Broadcast transactions to peers tx_count=1 failed_peers=0
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 📡 Broadcast transactions to peers tx_count=1 failed_peers=0
+2026-03-14 23:13:20 prepare_block_proof_bundle: start block_number=14 tx_count=4 candidate_bytes=1450616
+2026-03-14 23:13:20 prepare_block_proof_bundle: built shared candidate context block_number=14 tx_count=4 decoded_extrinsics=4 extracted_transactions=4 resolved_ciphertext_txs=4 da_blob_bytes=17228 da_chunk_count=2 stage_ms=0 total_ms=0
+2026-03-14 23:13:20 prepare_block_proof_bundle: starting commitment stage block_number=14 tx_count=4
+2026-03-14 23:13:20 prepare_block_proof_bundle: starting aggregation stage block_number=14 tx_count=4 mode=InlineTx
+2026-03-14 23:13:20 Started 1 mining thread(s)
+2026-03-14 23:13:20 Mining started threads=1
+2026-03-14 23:13:20 CALLING REAL execute_extrinsics_fn parent=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 block_number=14 tx_count=2
+2026-03-14 23:13:20 Building block with sc_block_builder block_number=14 parent=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 tx_count=2
+2026-03-14 23:13:20 BlockBuilder created block_number=14 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:13:20 Created 1 inherent extrinsics count=1
+2026-03-14 23:13:20 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b40c3e9ef9c01
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 🔐 Unsigned shielded transfer: 1 nullifiers, 2 commitments
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 prepare_block_proof_bundle: commitment stage complete block_number=14 tx_count=4 commitment_stage_ms=189
+2026-03-14 23:13:20 prepare_block_proof_bundle: aggregation stage complete block_number=14 tx_count=4 aggregation_stage_ms=0 aggregation_cache_hit=false
+2026-03-14 23:13:20 prepare_block_proof_bundle: built commitment and bundle proof artifacts block_number=14 commitment_bytes=228076 aggregation_bytes=0 batch_count=0 batch_slot_txs=16 proof_mode=InlineTx aggregation_cache_hit=false commitment_stage_ms=189 aggregation_stage_ms=0 total_ms=190
+2026-03-14 23:13:20 prepare_block_proof_bundle: done block_number=14 tx_count=4 build_ms=190
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 🔐 Unsigned shielded transfer: 1 nullifiers, 2 commitments
+2026-03-14 23:13:20 Proven batch extrinsic attached block_number=14 proof_size=204212 proof_size_uncompressed=0 proven_batch_build_ms=108 proven_batch_stale_count=0 prepared_parent=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 current_parent=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7
+2026-03-14 23:13:20 Encrypting shielded block rewards block_number=14 subsidy=499429223 miner_fees=0 prover_fees=0 miner_amount=499429223 has_prover_claim=false
+2026-03-14 23:13:20 💰 Minted 499429223 shielded coins at commitment index 50
+2026-03-14 23:13:20 Added shielded coinbase extrinsic for block reward block_number=14 subsidy=499429223 miner_fees=0 prover_fees=0
+2026-03-14 23:13:20 Block built with StorageChanges cached block_number=14 applied=5 failed=0 state_root=0b749904149dd01ed5b42b91f8f354745a71fd56cd58ee938178175e55b6cafc extrinsics_root=087f7cae0206466488c06fe2c0dbc9b90c4ac00e827dfb6365f498870248e7c3 storage_changes_key=2
+2026-03-14 23:13:20 block_template_installed trace_ts_ms=1773551600650 block_number=14 parent_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 pre_hash=e0a0bb0ba2faa59a06f05df09f5c0dfee2350901356e0a7de733fe9f2123d15f template_id=e0a0bb0ba2faa59a06f05df09f5c0dfee2350901356e0a7de733fe9f2123d15f bundle_id="f7800bcdd397598f7cf54b102df94bcb0f682b6a2da8a4eaa2b97ca9b846c44c" artifact_hash="bd2c85e5bfb2f04dbb1e9d2d83a15934f22ab0d8773cbbd5caf71becb2059099" tx_count=2 tx_statements_commitment="05107a2abcc3de69e5be31dba996941dd4c148eb77ad8cb454ffba53abcc974c2c9417cff8a28da8c33217dadda64afd" parent_changed=false pending_changed=true
+2026-03-14 23:13:20 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=14 pre_hash=e0a0bb0ba2faa59a06f05df09f5c0dfee2350901356e0a7de733fe9f2123d15f parent_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 difficulty="1d1ad7f2" state_root=0b749904149dd01ed5b42b91f8f354745a71fd56cd58ee938178175e55b6cafc extrinsics_root=087f7cae0206466488c06fe2c0dbc9b90c4ac00e827dfb6365f498870248e7c3
+2026-03-14 23:13:20 Prepared proven batch candidate job_id=2 block_number=14 key_parent_hash=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 key_tx_statements_commitment=8f7979a673c7d73ee65db1b51a809a6fc6315f14fc809978f8252bd829e292796ae0aa4352208d2b73b2372fe9dcb631 key_tx_count=4 stage_type=finalize_bundle level=0 arity=0 shape_id=0000000000000000000000000000000000000000000000000000000000000000 dependencies=0 queue_depth=0 queue_wait_ms=0 dispatch_wait_ms=0 total_job_age_ms=272 stage_mem_budget_mb=4096 stage_max_inflight_per_level=1 tx_count=4 candidate_bytes=1450616 build_ms=190 package_id=130bea98cae646e8d94b33a2bea9f72e61318535ff8b2f62f6eef60cba3fab38 stale_parent=false stale_generation=false
+2026-03-14 23:13:20 prepared_bundle_ready trace_ts_ms=1773551600650 bundle_id=716eb70ec639523ee75c963ccd89ab610851fef1f580a6e406955be95b49ac11 artifact_hash=f9ccabdc1aa839fb46a767b927d36763eaea260559ee1d7544bbcb8ccf83f738 parent_hash=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 block_number=14 tx_count=4 tx_statements_commitment=8f7979a673c7d73ee65db1b51a809a6fc6315f14fc809978f8252bd829e292796ae0aa4352208d2b73b2372fe9dcb631 build_ms=190 total_job_age_ms=272
+2026-03-14 23:13:20 CALLING REAL execute_extrinsics_fn parent=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 block_number=14 tx_count=4
+2026-03-14 23:13:20 Building block with sc_block_builder block_number=14 parent=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 tx_count=4
+2026-03-14 23:13:20 BlockBuilder created block_number=14 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:13:20 Created 1 inherent extrinsics count=1
+2026-03-14 23:13:20 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b0bc4e9ef9c01
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 hashing_started trace_ts_ms=1773551600714 thread_id=0 pre_hash=0xe0a0bb0ba2faa59a06f05df09f5c0dfee2350901356e0a7de733fe9f2123d15f pow_bits="1d1ad7f2" height=14 template_id="e0a0bb0ba2faa59a06f05df09f5c0dfee2350901356e0a7de733fe9f2123d15f" bundle_id="f7800bcdd397598f7cf54b102df94bcb0f682b6a2da8a4eaa2b97ca9b846c44c" artifact_hash="bd2c85e5bfb2f04dbb1e9d2d83a15934f22ab0d8773cbbd5caf71becb2059099" tx_count=2 tx_statements_commitment="05107a2abcc3de69e5be31dba996941dd4c148eb77ad8cb454ffba53abcc974c2c9417cff8a28da8c33217dadda64afd"
+2026-03-14 23:13:20 mine_round: checking difficulty pow_bits="1d1ad7f2" target=1ad7f20000000000000000000000000000000000000000000000000000 first_work_value=c28bba5bd73dfc7865e1f1e8671676ff6406b6b6037b1add7fb91826159b1330 passes=false first_nonce=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:13:20 🔐 Unsigned shielded transfer: 1 nullifiers, 2 commitments
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 🔐 Unsigned shielded transfer: 1 nullifiers, 2 commitments
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 🔐 Unsigned shielded transfer: 1 nullifiers, 2 commitments
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 verify;
+2026-03-14 23:13:20 verify_with_preprocessed;
+2026-03-14 23:13:20 get_log_num_quotient_chunks;
+2026-03-14 23:13:20 infer log of base and extension constraint degree;
+2026-03-14 23:13:20 🔐 Unsigned shielded transfer: 1 nullifiers, 2 commitments
+2026-03-14 23:13:21 Proven batch extrinsic attached block_number=14 proof_size=228076 proof_size_uncompressed=0 proven_batch_build_ms=190 proven_batch_stale_count=0 prepared_parent=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 current_parent=0x8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7
+2026-03-14 23:13:21 Encrypting shielded block rewards block_number=14 subsidy=499429223 miner_fees=0 prover_fees=0 miner_amount=499429223 has_prover_claim=false
+2026-03-14 23:13:21 💰 Minted 499429223 shielded coins at commitment index 54
+2026-03-14 23:13:21 Added shielded coinbase extrinsic for block reward block_number=14 subsidy=499429223 miner_fees=0 prover_fees=0
+2026-03-14 23:13:21 Block built with StorageChanges cached block_number=14 applied=7 failed=0 state_root=5334534f08a85159eb1f3b734fd2c2ee8fccf0a1f2bcba9ee5c03fb35a8502ad extrinsics_root=58bb34a4f8b11292c3b1a75f034c8604be2860d27a8fdb06979f03e7f4b7f29d storage_changes_key=3
+2026-03-14 23:13:21 block_template_installed trace_ts_ms=1773551601020 block_number=14 parent_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 pre_hash=936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da template_id=936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da bundle_id="716eb70ec639523ee75c963ccd89ab610851fef1f580a6e406955be95b49ac11" artifact_hash="f9ccabdc1aa839fb46a767b927d36763eaea260559ee1d7544bbcb8ccf83f738" tx_count=4 tx_statements_commitment="8f7979a673c7d73ee65db1b51a809a6fc6315f14fc809978f8252bd829e292796ae0aa4352208d2b73b2372fe9dcb631" parent_changed=false pending_changed=true
+2026-03-14 23:13:21 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=14 pre_hash=936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da parent_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 difficulty="1d1ad7f2" state_root=5334534f08a85159eb1f3b734fd2c2ee8fccf0a1f2bcba9ee5c03fb35a8502ad extrinsics_root=58bb34a4f8b11292c3b1a75f034c8604be2860d27a8fdb06979f03e7f4b7f29d
+2026-03-14 23:13:21 hashing_started trace_ts_ms=1773551601020 thread_id=0 pre_hash=0x936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da pow_bits="1d1ad7f2" height=14 template_id="936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da" bundle_id="716eb70ec639523ee75c963ccd89ab610851fef1f580a6e406955be95b49ac11" artifact_hash="f9ccabdc1aa839fb46a767b927d36763eaea260559ee1d7544bbcb8ccf83f738" tx_count=4 tx_statements_commitment="8f7979a673c7d73ee65db1b51a809a6fc6315f14fc809978f8252bd829e292796ae0aa4352208d2b73b2372fe9dcb631"
+2026-03-14 23:13:50 mining_solution_found trace_ts_ms=1773551630426 thread_id=0 nonce=[157, 56, 206, 65, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] round=539900 height=14 template_id="936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da" bundle_id="716eb70ec639523ee75c963ccd89ab610851fef1f580a6e406955be95b49ac11" artifact_hash="f9ccabdc1aa839fb46a767b927d36763eaea260559ee1d7544bbcb8ccf83f738" tx_count=4 tx_statements_commitment="8f7979a673c7d73ee65db1b51a809a6fc6315f14fc809978f8252bd829e292796ae0aa4352208d2b73b2372fe9dcb631"
+2026-03-14 23:13:50 Found PoW solution height=14 nonce=[157, 56, 206, 65, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:13:50 block_found trace_ts_ms=1773551630427 block_number=14 parent_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 pre_hash=936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da template_id=936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da bundle_id="716eb70ec639523ee75c963ccd89ab610851fef1f580a6e406955be95b49ac11" artifact_hash="f9ccabdc1aa839fb46a767b927d36763eaea260559ee1d7544bbcb8ccf83f738" tx_count=4 tx_statements_commitment="8f7979a673c7d73ee65db1b51a809a6fc6315f14fc809978f8252bd829e292796ae0aa4352208d2b73b2372fe9dcb631" nonce=[157, 56, 206, 65, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:13:50 block_payload_size_metrics block_number=14 tx_count=4 extrinsics_bytes_total=1681167 da_blob_bytes_estimate=17228 tx_proof_bytes_total=1432116 proven_batch_present=true proven_batch_bytes=228076 proven_batch_build_ms=0 proven_batch_stale_count=0 commitment_proof_bytes=228076 aggregation_proof_bytes=0 da_chunk_count=2 da_root=d3b1a3d3ed09c7ab84980276476aaf3e54ea022ca85c040eaae9ce0f2b21fefdd930a812b5b9f249b0614ac3986a8da1 da_policy=FullFetch proof_policy=SelfContained aggregation_mode_enabled=false verification_mode=InlineRequired
+2026-03-14 23:13:50 block_proof_verification_metrics tx_count=4 tx_proof_bytes_total=1432116 commitment_proof_bytes=228076 aggregation_proof_bytes=0 aggregation_proof_uncompressed_bytes=0 ciphertext_bytes_total=17176 commitment_verify_ms=43 aggregation_verify_ms=0 aggregation_verify_batch_ms=0 aggregation_cache_hit=false aggregation_cache_build_ms=0 aggregation_cache_prewarm_hit=false aggregation_cache_prewarm_build_ms=0 aggregation_cache_prewarm_total_ms=0 tx_verify_ms=16 total_verify_ms=60 aggregation_verified=false
+2026-03-14 23:13:50 block_import_verify_time_ms block_number=14 verify_ms=60 proven_batch_present=true
+2026-03-14 23:13:50 Applying cached StorageChanges during import block_number=14 storage_changes_key=3
+2026-03-14 23:13:50 PoW seal verification details pre_hash=0x936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da nonce=[157, 56, 206, 65, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] computed_work=0x000000062125927afe20803d930b1010f3b6bc75394a924b6d1b87616fbcfc1f stored_work=0x000000062125927afe20803d930b1010f3b6bc75394a924b6d1b87616fbcfc1f work_matches=true
+2026-03-14 23:13:50 DA encoding stored for imported block block_number=14 da_root=d3b1a3d3ed09c7ab84980276476aaf3e54ea022ca85c040eaae9ce0f2b21fefdd930a812b5b9f249b0614ac3986a8da1 da_chunks=2
+2026-03-14 23:13:50 Ciphertexts stored for imported block block_number=14 ciphertext_count=9
+2026-03-14 23:13:50 Commitment block proof stored for imported block block_number=14 block_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da proof_size=228076 proof_hash=37fde441d737638798346fbf6280b1f4fce4724742d1fda13cab99a2a141a0ffa9cb4e42177d1557854bb8cb30d224b0
+2026-03-14 23:13:50 Block imported successfully with state changes applied block_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da block_number=14
+2026-03-14 23:13:50 block_imported trace_ts_ms=1773551630493 block_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da block_number=14 parent_hash=8a464ec30b175faf42a13cd159aa2ab85ef593ae463f5a0bf46cd43fa90801d7 pre_hash=936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da template_id=936dcbad2ffc9143c2156610bbbb780086bef3b93aa346a1ccaa839fc14373da bundle_id="716eb70ec639523ee75c963ccd89ab610851fef1f580a6e406955be95b49ac11" artifact_hash="f9ccabdc1aa839fb46a767b927d36763eaea260559ee1d7544bbcb8ccf83f738" tx_count=4 tx_statements_commitment="8f7979a673c7d73ee65db1b51a809a6fc6315f14fc809978f8252bd829e292796ae0aa4352208d2b73b2372fe9dcb631"
+2026-03-14 23:13:50 🎉 Block mined!
+2026-03-14 23:13:50 Block imported successfully block_number=14 block_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da nonce=[157, 56, 206, 65, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-03-14 23:13:50 Broadcasting mined block via PQ network block_number=14 block_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da has_body=true data_len=1681408
+2026-03-14 23:13:50 prepare_block_proof_bundle: start block_number=15 tx_count=1 candidate_bytes=362975
+2026-03-14 23:13:50 prepare_block_proof_bundle: built shared candidate context block_number=15 tx_count=1 decoded_extrinsics=1 extracted_transactions=1 resolved_ciphertext_txs=1 da_blob_bytes=4310 da_chunk_count=2 stage_ms=0 total_ms=0
+2026-03-14 23:13:50 prepare_block_proof_bundle: starting commitment stage block_number=15 tx_count=1
+2026-03-14 23:13:50 prepare_block_proof_bundle: starting aggregation stage block_number=15 tx_count=1 mode=InlineTx
+2026-03-14 23:13:50 CALLING REAL execute_extrinsics_fn parent=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da block_number=15 tx_count=0
+2026-03-14 23:13:50 Building block with sc_block_builder block_number=15 parent=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da tx_count=0
+2026-03-14 23:13:50 BlockBuilder created block_number=15 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:13:50 Created 1 inherent extrinsics count=1
+2026-03-14 23:13:50 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000baa38eaef9c01
+2026-03-14 23:13:50 Encrypting shielded block rewards block_number=15 subsidy=499429223 miner_fees=0 prover_fees=0 miner_amount=499429223 has_prover_claim=false
+2026-03-14 23:13:50 kernel action validation failed: family_id=1 action_id=6 err=Other("invalid-shielded-action")
+2026-03-14 23:13:50 kernel transfer-inline validation failed: err=<wasm:stripped> proof_bytes=357808 nullifiers=1 commitments=2 fee=0
+2026-03-14 23:13:50 kernel action validation failed: family_id=1 action_id=1 err=Other("invalid-shielded-action")
+2026-03-14 23:13:50 kernel transfer-inline validation failed: err=<wasm:stripped> proof_bytes=358350 nullifiers=1 commitments=2 fee=0
+2026-03-14 23:13:50 kernel action validation failed: family_id=1 action_id=1 err=Other("invalid-shielded-action")
+2026-03-14 23:13:50 💰 Minted 499429223 shielded coins at commitment index 55
+2026-03-14 23:13:50 Added shielded coinbase extrinsic for block reward block_number=15 subsidy=499429223 miner_fees=0 prover_fees=0
+2026-03-14 23:13:50 Block built with StorageChanges cached block_number=15 applied=2 failed=0 state_root=216bd561e6d0d57303cc342c7c9d29de690f00e5c53b21d48afa8955564f8ae7 extrinsics_root=d992cc426ccb73686f4d0177c9bf8757573b8d45bcb33bb1630d8495c5ddd38f storage_changes_key=4
+2026-03-14 23:13:50 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=15 pre_hash=646672dc0ed1e2af13fcd7433b8ac9c72fe0239c18a9c8d2f6334935835703d5 parent_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da difficulty="1d1ad7f2" state_root=216bd561e6d0d57303cc342c7c9d29de690f00e5c53b21d48afa8955564f8ae7 extrinsics_root=d992cc426ccb73686f4d0177c9bf8757573b8d45bcb33bb1630d8495c5ddd38f
+2026-03-14 23:13:50 kernel transfer-inline validation failed: err=<wasm:stripped> proof_bytes=357960 nullifiers=1 commitments=2 fee=0
+2026-03-14 23:13:50 kernel action validation failed: family_id=1 action_id=1 err=Other("invalid-shielded-action")
+2026-03-14 23:13:50 hashing_started trace_ts_ms=1773551630525 thread_id=0 pre_hash=0x646672dc0ed1e2af13fcd7433b8ac9c72fe0239c18a9c8d2f6334935835703d5 pow_bits="1d1ad7f2" height=15 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:13:50 kernel transfer-inline validation failed: err=<wasm:stripped> proof_bytes=357998 nullifiers=1 commitments=2 fee=0
+2026-03-14 23:13:50 kernel action validation failed: family_id=1 action_id=1 err=Other("invalid-shielded-action")
+2026-03-14 23:13:50 prepare_block_proof_bundle: commitment stage complete block_number=15 tx_count=1 commitment_stage_ms=80
+2026-03-14 23:13:50 prepare_block_proof_bundle: aggregation stage complete block_number=15 tx_count=1 aggregation_stage_ms=0 aggregation_cache_hit=false
+2026-03-14 23:13:50 prepare_block_proof_bundle: built commitment and bundle proof artifacts block_number=15 commitment_bytes=181884 aggregation_bytes=0 batch_count=0 batch_slot_txs=16 proof_mode=InlineTx aggregation_cache_hit=false commitment_stage_ms=80 aggregation_stage_ms=0 total_ms=80
+2026-03-14 23:13:50 prepare_block_proof_bundle: done block_number=15 tx_count=1 build_ms=81
+2026-03-14 23:13:50 Prepared proven batch candidate job_id=3 block_number=15 key_parent_hash=0xb26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da key_tx_statements_commitment=ca0ea65609a2f901a0b963795dd3f2bd4d42bd844a5afbf77d514fb2514b1e32497c4d3042035a995fe41d6274278391 key_tx_count=1 stage_type=finalize_bundle level=0 arity=0 shape_id=0000000000000000000000000000000000000000000000000000000000000000 dependencies=0 queue_depth=2 queue_wait_ms=4 dispatch_wait_ms=0 total_job_age_ms=135 stage_mem_budget_mb=4096 stage_max_inflight_per_level=1 tx_count=1 candidate_bytes=362975 build_ms=81 package_id=3ccff68ae3d1a04e147bb65494f8da7830d0481778e6bdd0db976e346f1c38c3 stale_parent=false stale_generation=false
+2026-03-14 23:13:50 prepared_bundle_ready trace_ts_ms=1773551630636 bundle_id=de23bdc2a9a48e942b4e82dcdf3ee411c9e7c5539c2c4a72ed1fe5bc996940c8 artifact_hash=f3d9f6a7443e6e306440505f9590ff67e9b19cd179b7255b12573273adf93701 parent_hash=0xb26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da block_number=15 tx_count=1 tx_statements_commitment=ca0ea65609a2f901a0b963795dd3f2bd4d42bd844a5afbf77d514fb2514b1e32497c4d3042035a995fe41d6274278391 build_ms=81 total_job_age_ms=135
+2026-03-14 23:13:50 prepare_block_proof_bundle: start block_number=15 tx_count=2 candidate_bytes=725408
+2026-03-14 23:13:50 CALLING REAL execute_extrinsics_fn parent=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da block_number=15 tx_count=1
+2026-03-14 23:13:50 Building block with sc_block_builder block_number=15 parent=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da tx_count=1
+2026-03-14 23:13:50 BlockBuilder created block_number=15 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:13:50 Created 1 inherent extrinsics count=1
+2026-03-14 23:13:50 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b2c39eaef9c01
+2026-03-14 23:13:50 prepare_block_proof_bundle: built shared candidate context block_number=15 tx_count=2 decoded_extrinsics=2 extracted_transactions=2 resolved_ciphertext_txs=2 da_blob_bytes=8616 da_chunk_count=2 stage_ms=0 total_ms=0
+2026-03-14 23:13:50 prepare_block_proof_bundle: starting aggregation stage block_number=15 tx_count=2 mode=InlineTx
+2026-03-14 23:13:50 prepare_block_proof_bundle: starting commitment stage block_number=15 tx_count=2
+2026-03-14 23:13:50 Dropped shielded transfers already included in parent block block_number=15 dropped_parent_duplicates=1 parent_shielded_transfer_count=4
+2026-03-14 23:13:50 Encrypting shielded block rewards block_number=15 subsidy=499429223 miner_fees=0 prover_fees=0 miner_amount=499429223 has_prover_claim=false
+2026-03-14 23:13:50 💰 Minted 499429223 shielded coins at commitment index 55
+2026-03-14 23:13:50 Added shielded coinbase extrinsic for block reward block_number=15 subsidy=499429223 miner_fees=0 prover_fees=0
+2026-03-14 23:13:50 Block built with StorageChanges cached block_number=15 applied=2 failed=0 state_root=a94accf65e2ff431309a26c9995c8568ec1ddf2e7e16d32488b001fd2cbace0b extrinsics_root=890237b3d06cbaa44b484f99595d05a1be8fadb00a49450f040eccb38e57ebaa storage_changes_key=5
+2026-03-14 23:13:50 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=15 pre_hash=4d519154078d9aa06836e9961b732fcabc915288d9e4adc4bd46f9b9f353920b parent_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da difficulty="1d1ad7f2" state_root=a94accf65e2ff431309a26c9995c8568ec1ddf2e7e16d32488b001fd2cbace0b extrinsics_root=890237b3d06cbaa44b484f99595d05a1be8fadb00a49450f040eccb38e57ebaa
+2026-03-14 23:13:50 hashing_started trace_ts_ms=1773551630660 thread_id=0 pre_hash=0x4d519154078d9aa06836e9961b732fcabc915288d9e4adc4bd46f9b9f353920b pow_bits="1d1ad7f2" height=15 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:13:50 prepare_block_proof_bundle: commitment stage complete block_number=15 tx_count=2 commitment_stage_ms=163
+2026-03-14 23:13:50 prepare_block_proof_bundle: aggregation stage complete block_number=15 tx_count=2 aggregation_stage_ms=0 aggregation_cache_hit=false
+2026-03-14 23:13:50 prepare_block_proof_bundle: built commitment and bundle proof artifacts block_number=15 commitment_bytes=204212 aggregation_bytes=0 batch_count=0 batch_slot_txs=16 proof_mode=InlineTx aggregation_cache_hit=false commitment_stage_ms=163 aggregation_stage_ms=0 total_ms=164
+2026-03-14 23:13:50 prepare_block_proof_bundle: done block_number=15 tx_count=2 build_ms=164
+2026-03-14 23:13:50 Prepared proven batch candidate job_id=4 block_number=15 key_parent_hash=0xb26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da key_tx_statements_commitment=167a804149061c2229eec19d437748e009fcafc85baba4121d776547c32a67dc1d50bde9d67fe5664e0a361a95f1f83e key_tx_count=2 stage_type=finalize_bundle level=0 arity=0 shape_id=0000000000000000000000000000000000000000000000000000000000000000 dependencies=0 queue_depth=1 queue_wait_ms=133 dispatch_wait_ms=0 total_job_age_ms=386 stage_mem_budget_mb=4096 stage_max_inflight_per_level=1 tx_count=2 candidate_bytes=725408 build_ms=164 package_id=b71342c81223a10dd41927d75bec259d87b9c7f8d5d309bc68d7cd7f882721b4 stale_parent=false stale_generation=false
+2026-03-14 23:13:50 prepared_bundle_ready trace_ts_ms=1773551630889 bundle_id=707e9bff408c6ef02ba0b101dfb8af033f5ee5e14ea3ad5ddeca6eac7fc2939b artifact_hash=b10f3efd2da82a172316921442751282a47f859ccfb80d281ab036f14f5c1f30 parent_hash=0xb26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da block_number=15 tx_count=2 tx_statements_commitment=167a804149061c2229eec19d437748e009fcafc85baba4121d776547c32a67dc1d50bde9d67fe5664e0a361a95f1f83e build_ms=164 total_job_age_ms=386
+2026-03-14 23:13:50 CALLING REAL execute_extrinsics_fn parent=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da block_number=15 tx_count=2
+2026-03-14 23:13:50 Building block with sc_block_builder block_number=15 parent=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da tx_count=2
+2026-03-14 23:13:50 BlockBuilder created block_number=15 block_builder_api_version=Some(6) extrinsic_inclusion_mode=AllExtrinsics
+2026-03-14 23:13:50 prepare_block_proof_bundle: start block_number=15 tx_count=4 candidate_bytes=1450616
+2026-03-14 23:13:50 Created 1 inherent extrinsics count=1
+2026-03-14 23:13:50 Inherent extrinsic 0 index=0 inherent_kind="timestamp" encoded_len=11 first_bytes=280501000b2a3aeaef9c01
+2026-03-14 23:13:50 prepare_block_proof_bundle: built shared candidate context block_number=15 tx_count=4 decoded_extrinsics=4 extracted_transactions=4 resolved_ciphertext_txs=4 da_blob_bytes=17228 da_chunk_count=2 stage_ms=0 total_ms=0
+2026-03-14 23:13:50 Dropped shielded transfers already included in parent block block_number=15 dropped_parent_duplicates=2 parent_shielded_transfer_count=4
+2026-03-14 23:13:50 prepare_block_proof_bundle: starting commitment stage block_number=15 tx_count=4
+2026-03-14 23:13:50 prepare_block_proof_bundle: starting aggregation stage block_number=15 tx_count=4 mode=InlineTx
+2026-03-14 23:13:50 Encrypting shielded block rewards block_number=15 subsidy=499429223 miner_fees=0 prover_fees=0 miner_amount=499429223 has_prover_claim=false
+2026-03-14 23:13:50 💰 Minted 499429223 shielded coins at commitment index 55
+2026-03-14 23:13:50 Added shielded coinbase extrinsic for block reward block_number=15 subsidy=499429223 miner_fees=0 prover_fees=0
+2026-03-14 23:13:50 Block built with StorageChanges cached block_number=15 applied=2 failed=0 state_root=c5ad062fb3a2c03ed80f093b43069c5f82aea807efea5e8c8353093506f4e263 extrinsics_root=9f789cc9442c4ed913e6dd087b7d1b74b21827b3a2d0779dec5df6d64174a5ed storage_changes_key=6
+2026-03-14 23:13:50 🔍 DEBUG: Mining work pre_hash (verifier must match this) height=15 pre_hash=b04d17b1228687dd6ade368874466f8fdc1122097327e91005d4a028285c3236 parent_hash=b26df059b2724651ab86e7192eebe4faea32e9825b4833cffaa1abe7736109da difficulty="1d1ad7f2" state_root=c5ad062fb3a2c03ed80f093b43069c5f82aea807efea5e8c8353093506f4e263 extrinsics_root=9f789cc9442c4ed913e6dd087b7d1b74b21827b3a2d0779dec5df6d64174a5ed
+2026-03-14 23:13:50 hashing_started trace_ts_ms=1773551630914 thread_id=0 pre_hash=0xb04d17b1228687dd6ade368874466f8fdc1122097327e91005d4a028285c3236 pow_bits="1d1ad7f2" height=15 template_id="" bundle_id="" artifact_hash="" tx_count=0 tx_statements_commitment=""
+2026-03-14 23:13:51 prepare_block_proof_bundle: commitment stage complete block_number=15 tx_count=4 commitment_stage_ms=263
+2026-03-14 23:13:51 prepare_block_proof_bundle: aggregation stage complete block_number=15 tx_count=4 aggregation_stage_ms=0 aggregation_cache_hit=true
+2026-03-14 23:13:51 prepare_block_proof_bundle: built commitment and bundle proof artifacts block_number=15 commitment_bytes=228076 aggregation_bytes=0 batch_count=0 batch_slot_txs=16 proof_mode=InlineTx aggregation_cache_hit=true commitment_stage_ms=263 aggregation_stage_ms=0 total_ms=264
+2026-03-14 23:13:51 prepare_block_proof_bundle: done block_number=15 tx_count=4 build_ms=264
