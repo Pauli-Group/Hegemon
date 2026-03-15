@@ -30,6 +30,7 @@ SNAPSHOT_ROOT="${HEGEMON_SCALE_SNAPSHOT_ROOT:-${ARTIFACTS_DIR}/snapshots}"
 REBUILD_SNAPSHOTS="${HEGEMON_SCALE_REBUILD_SNAPSHOTS:-0}"
 THREADS_PER_PROVER="${HEGEMON_SCALE_THREADS_PER_PROVER:-4}"
 DISABLE_WORKER_PREWARM="${HEGEMON_SCALE_DISABLE_WORKER_PREWARM:-0}"
+MATRIX_PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}"
 
 HOST_THREADS="$(
   getconf _NPROCESSORS_ONLN 2>/dev/null \
@@ -109,7 +110,9 @@ for tx_count in $TX_COUNTS; do
       HEGEMON_TP_UNSAFE=1 \
       HEGEMON_TP_PROFILE="$PROFILE" \
       HEGEMON_TP_TX_COUNT="$tx_count" \
+      HEGEMON_TP_WORKERS=1 \
       HEGEMON_TP_PROVER_WORKERS=1 \
+      HEGEMON_TP_SEND_DA_SIDECAR="$([ "$MATRIX_PROOF_MODE" = "single" ] && echo 0 || echo 1)" \
       HEGEMON_TP_NODE_RAYON_THREADS="$snapshot_node_rayon_threads" \
       HEGEMON_TP_AGG_PREPARE_THREADS="$snapshot_agg_prepare_threads" \
       HEGEMON_TP_AGG_PROVER_THREADS="$AGG_PROVER_THREADS" \
@@ -171,14 +174,32 @@ for tx_count in $TX_COUNTS; do
     if [ -n "$BATCH_JOB_TIMEOUT_MS" ]; then
       run_timeout_env+=(HEGEMON_TP_BATCH_JOB_TIMEOUT_MS="$BATCH_JOB_TIMEOUT_MS")
     fi
+    run_wallet_workers=1
+    run_node_prover_workers="$prover_workers"
     run_node_rayon_threads="$NODE_RAYON_THREADS"
-    if [ "$run_node_rayon_threads" -le 0 ]; then
-      run_node_rayon_threads=$((THREADS_PER_PROVER * prover_workers))
-      if [ "$run_node_rayon_threads" -gt "$HOST_THREADS" ]; then
-        run_node_rayon_threads="$HOST_THREADS"
+    if [ "$MATRIX_PROOF_MODE" = "single" ]; then
+      run_wallet_workers="$prover_workers"
+      # InlineTx still needs one local coordinator/finalize worker to build the
+      # parent-bound commitment artifact; prover scaling lives at the tx edge.
+      run_node_prover_workers=1
+      if [ "$run_node_rayon_threads" -le 0 ]; then
+        run_node_rayon_threads="$THREADS_PER_PROVER"
+        if [ "$run_node_rayon_threads" -gt "$HOST_THREADS" ]; then
+          run_node_rayon_threads="$HOST_THREADS"
+        fi
+        if [ "$run_node_rayon_threads" -lt 1 ]; then
+          run_node_rayon_threads=1
+        fi
       fi
-      if [ "$run_node_rayon_threads" -lt 1 ]; then
-        run_node_rayon_threads=1
+    else
+      if [ "$run_node_rayon_threads" -le 0 ]; then
+        run_node_rayon_threads=$((THREADS_PER_PROVER * prover_workers))
+        if [ "$run_node_rayon_threads" -gt "$HOST_THREADS" ]; then
+          run_node_rayon_threads="$HOST_THREADS"
+        fi
+        if [ "$run_node_rayon_threads" -lt 1 ]; then
+          run_node_rayon_threads=1
+        fi
       fi
     fi
     run_agg_prepare_threads="$AGG_PREPARE_THREADS"
@@ -197,7 +218,9 @@ for tx_count in $TX_COUNTS; do
       HEGEMON_TP_UNSAFE=1 \
       HEGEMON_TP_PROFILE="$PROFILE" \
       HEGEMON_TP_TX_COUNT="$tx_count" \
-      HEGEMON_TP_PROVER_WORKERS="$prover_workers" \
+      HEGEMON_TP_WORKERS="$run_wallet_workers" \
+      HEGEMON_TP_PROVER_WORKERS="$run_node_prover_workers" \
+      HEGEMON_TP_SEND_DA_SIDECAR="$([ "$MATRIX_PROOF_MODE" = "single" ] && echo 0 || echo 1)" \
       HEGEMON_TP_NODE_RAYON_THREADS="$run_node_rayon_threads" \
       HEGEMON_TP_AGG_PREPARE_THREADS="$run_agg_prepare_threads" \
       HEGEMON_TP_AGG_PROVER_THREADS="$AGG_PROVER_THREADS" \
@@ -243,16 +266,18 @@ if not artifact_path.exists():
     sys.exit(0)
 
 payload = json.loads(artifact_path.read_text())
+metrics = payload.get("metrics") or {}
+timings = payload.get("timings_ms") or {}
 print(
     "\t".join(
         [
             tx_count,
             prover_workers,
-            str(payload.get("included_tx_count", "")),
-            str(payload.get("strict_wait_ms", "")),
-            str(payload.get("inclusion_total_ms", "")),
-            str(payload.get("round_total_ms", "")),
-            str(payload.get("effective_tps", "")),
+            str(metrics.get("included_tx_count", "")),
+            str(timings.get("strict_wait_ms", "")),
+            str(timings.get("inclusion_total_ms", "")),
+            str(timings.get("round_total_ms", "")),
+            str(metrics.get("effective_tps", "")),
             str(artifact_path),
             status,
         ]

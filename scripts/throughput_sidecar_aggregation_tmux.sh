@@ -51,6 +51,18 @@ if [ "$PROOF_MODE" = "single" ] && [ "$SEND_PROOF_SIDECAR" != "0" ]; then
   exit 1
 fi
 
+if [ -n "${HEGEMON_TP_SEND_DA_SIDECAR:-}" ]; then
+  SEND_DA_SIDECAR="${HEGEMON_TP_SEND_DA_SIDECAR}"
+elif [ "$PROOF_MODE" = "single" ]; then
+  SEND_DA_SIDECAR=0
+else
+  SEND_DA_SIDECAR=1
+fi
+if ! [[ "$SEND_DA_SIDECAR" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_SEND_DA_SIDECAR must be 0 or 1 (got '$SEND_DA_SIDECAR')." >&2
+  exit 1
+fi
+
 if [ -n "${HEGEMON_TP_SEND_NO_SYNC:-}" ]; then
   SEND_NO_SYNC_DEFAULT="${HEGEMON_TP_SEND_NO_SYNC}"
 elif [ "$PROOF_MODE" = "single" ]; then
@@ -315,7 +327,7 @@ WORKERS="${HEGEMON_TP_WORKERS:-1}"
 if [ -n "${HEGEMON_TP_PROVER_WORKERS:-}" ]; then
   PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS}"
 elif [ "$PROOF_MODE" = "single" ]; then
-  PROVER_WORKERS=0
+  PROVER_WORKERS=1
 elif [ "$TP_PROFILE" = "safe" ]; then
   if [ "$HOST_THREADS" -ge 2 ]; then
     PROVER_WORKERS=2
@@ -362,6 +374,7 @@ TP_MAX_PEERS="${HEGEMON_TP_MAX_PEERS:-0}"
 ARTIFACTS_DIR="${HEGEMON_TP_ARTIFACTS_DIR:-/tmp/hegemon-throughput-artifacts}"
 RUN_ID="${HEGEMON_TP_RUN_ID:-${PROOF_MODE}-tx${TX_COUNT}-$(date -u +%Y%m%dT%H%M%SZ)}"
 ARTIFACT_JSON="${ARTIFACTS_DIR}/${RUN_ID}.json"
+SEND_TRACE_FILE="${ARTIFACTS_DIR}/${RUN_ID}.send-trace.tsv"
 if [ -n "${HEGEMON_TP_WALLET_RAYON_THREADS:-}" ]; then
   WALLET_RAYON_THREADS="${HEGEMON_TP_WALLET_RAYON_THREADS}"
 else
@@ -473,6 +486,20 @@ wait_for_tip_quiescence() {
   return 0
 }
 
+author_pending_extrinsic_count() {
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"author_pendingExtrinsics","params":[],"id":1}' \
+    "$RPC_HTTP" \
+    | python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; print(len(obj.get("result") or []))'
+}
+
+prepared_bundle_count() {
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"prover_getStagePlanStatus","params":[],"id":1}' \
+    "$RPC_HTTP" \
+    | python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; print(((obj.get("result") or {}).get("prepared_bundles")) or 0)'
+}
+
 now_ms() {
   python3 - <<'PY'
 import time
@@ -546,6 +573,8 @@ emit_metrics_artifact() {
   python3 - "$ARTIFACT_JSON" "$mode" <<'PY'
 import json
 import os
+import pathlib
+import re
 import sys
 
 path = sys.argv[1]
@@ -573,6 +602,141 @@ def to_float(name):
     except ValueError:
         return None
 
+def parse_bool(value):
+    if value is None:
+        return None
+    lowered = value.strip().lower()
+    if lowered in {"true", "1", "yes"}:
+        return True
+    if lowered in {"false", "0", "no"}:
+        return False
+    return None
+
+def parse_kv_line(line):
+    return dict(re.findall(r'([A-Za-z0-9_]+)=([^\s]+)', line))
+
+send_trace_path = pathlib.Path(getenv("SEND_TRACE_FILE"))
+metric_block_number = to_int("METRIC_BLOCK_NUMBER")
+metric_tx_count = to_int("METRIC_TX_COUNT")
+send_trace = []
+if send_trace_path.exists():
+    for raw_line in send_trace_path.read_text().splitlines():
+        if not raw_line.strip():
+            continue
+        worker_id, tx_ordinal, start_ms, end_ms, duration_ms, start_block, end_block = raw_line.split("\t")
+        send_trace.append(
+            {
+                "worker_id": int(worker_id),
+                "tx_ordinal": int(tx_ordinal),
+                "start_ms": int(start_ms),
+                "end_ms": int(end_ms),
+                "duration_ms": int(duration_ms),
+                "start_block": int(start_block),
+                "end_block": int(end_block),
+            }
+        )
+
+send_durations = [item["duration_ms"] for item in send_trace]
+send_stats = {
+    "count": len(send_trace),
+    "min_ms": min(send_durations) if send_durations else None,
+    "max_ms": max(send_durations) if send_durations else None,
+    "avg_ms": round(sum(send_durations) / len(send_durations), 3) if send_durations else None,
+}
+
+log_path = pathlib.Path(getenv("LOG_FILE"))
+inclusion_start_block = to_int("INCLUSION_START_BLOCK")
+final_block_number = to_int("FINAL_BLOCK_NUMBER")
+payload_by_block = {}
+verify_by_block = {}
+consensus_by_block = {}
+prepare_stage_lines = {
+    "context": [],
+    "commitment": [],
+    "aggregation": [],
+    "artifacts": [],
+    "attached": [],
+    "failed": [],
+}
+if log_path.exists():
+    for line in log_path.read_text().splitlines():
+        if "block_payload_size_metrics" in line:
+            data = parse_kv_line(line)
+            block_number = data.get("block_number")
+            if block_number is not None:
+                payload_by_block[int(block_number)] = data
+        elif "block_import_verify_time_ms" in line:
+            data = parse_kv_line(line)
+            block_number = data.get("block_number")
+            if block_number is not None:
+                verify_by_block[int(block_number)] = data
+        elif "block_proof_verification_metrics" in line:
+            data = parse_kv_line(line)
+            tx_count = data.get("tx_count")
+            if tx_count is not None:
+                consensus_by_block[len(consensus_by_block) + 1] = data
+        elif "prepare_block_proof_bundle: built shared candidate context" in line:
+            prepare_stage_lines["context"].append(parse_kv_line(line))
+        elif "prepare_block_proof_bundle: commitment stage complete" in line:
+            prepare_stage_lines["commitment"].append(parse_kv_line(line))
+        elif "prepare_block_proof_bundle: aggregation stage complete" in line:
+            prepare_stage_lines["aggregation"].append(parse_kv_line(line))
+        elif "prepare_block_proof_bundle: built commitment and bundle proof artifacts" in line:
+            prepare_stage_lines["artifacts"].append(parse_kv_line(line))
+        elif "Proven batch extrinsic attached" in line:
+            prepare_stage_lines["attached"].append(parse_kv_line(line))
+        elif "failed to build DA blob for proven batch" in line or "Missing prepared proven batch for mandatory proofless sidecar set" in line:
+            prepare_stage_lines["failed"].append({"line": line})
+
+block_progression = []
+if inclusion_start_block is not None and final_block_number is not None:
+    consensus_items = list(consensus_by_block.values())
+    for offset, block_number in enumerate(range(inclusion_start_block + 1, final_block_number + 1)):
+        payload = payload_by_block.get(block_number, {})
+        verify = verify_by_block.get(block_number, {})
+        consensus = consensus_items[offset] if offset < len(consensus_items) else {}
+        block_progression.append(
+            {
+                "block_number": block_number,
+                "tx_count": int(payload.get("tx_count", "0")),
+                "proven_batch_present": parse_bool(payload.get("proven_batch_present")),
+                "proven_batch_bytes": int(payload.get("proven_batch_bytes", "0")),
+                "commitment_proof_bytes": int(payload.get("commitment_proof_bytes", "0")),
+                "aggregation_proof_bytes": int(payload.get("aggregation_proof_bytes", "0")),
+                "verify_ms": int(verify.get("verify_ms", "0")),
+                "tx_verify_ms": int(consensus.get("tx_verify_ms", "0")),
+                "commitment_verify_ms": int(consensus.get("commitment_verify_ms", "0")),
+                "aggregation_verify_ms": int(consensus.get("aggregation_verify_ms", "0")),
+                "total_verify_ms": int(consensus.get("total_verify_ms", "0")),
+            }
+        )
+
+def latest_stage_value(name, key):
+    entries = prepare_stage_lines[name]
+    if not entries:
+        return None
+    filtered = entries
+    if metric_block_number is not None:
+        filtered = [
+            entry for entry in filtered
+            if int(entry.get("block_number", "-1")) == metric_block_number
+        ]
+    if metric_tx_count is not None and filtered:
+        exact_tx = [
+            entry for entry in filtered
+            if int(entry.get("tx_count", entry.get("key_tx_count", "-1"))) == metric_tx_count
+        ]
+        if exact_tx:
+            filtered = exact_tx
+    target = filtered if filtered else entries
+    value = target[-1].get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
 payload = {
     "run_id": getenv("RUN_ID"),
     "mode": mode,
@@ -585,6 +749,7 @@ payload = {
     },
     "config": {
         "proof_mode": getenv("PROOF_MODE"),
+        "send_da_sidecar": to_int("SEND_DA_SIDECAR"),
         "strict_aggregation": to_int("STRICT_AGGREGATION"),
         "tx_count_requested": to_int("TX_COUNT"),
         "workers": to_int("WORKERS"),
@@ -613,8 +778,43 @@ payload = {
         "proven_batch_bytes_total": to_int("PROVEN_BATCH_BYTES_TOTAL"),
         "queue_depth": to_int("QUEUE_DEPTH"),
         "queue_wait_ms": to_int("QUEUE_WAIT_MS"),
+        "dispatch_wait_ms": to_int("DISPATCH_WAIT_MS"),
+        "total_job_age_ms": to_int("TOTAL_JOB_AGE_MS"),
         "cache_hit": getenv("CACHE_HIT"),
         "cache_build_ms": to_int("CACHE_BUILD_MS"),
+        "import_verify_total_ms": sum(item["verify_ms"] for item in block_progression),
+        "consensus_verify_total_ms": sum(item["total_verify_ms"] for item in block_progression),
+        "commitment_verify_total_ms": sum(item["commitment_verify_ms"] for item in block_progression),
+        "tx_verify_total_ms": sum(item["tx_verify_ms"] for item in block_progression),
+    },
+    "proof_ready": {
+        "send_trace_file": str(send_trace_path),
+        "per_tx": send_trace,
+        "stats": send_stats,
+    },
+    "mempool": {
+        "ready_pending_extrinsics_before_mining": to_int("READY_PENDING_COUNT_BEFORE_MINING"),
+        "ready_pending_extrinsics_after_inclusion": to_int("READY_PENDING_COUNT_AFTER_INCLUSION"),
+    },
+    "prepared": {
+        "bundles_before_mining": to_int("PREPARED_BUNDLES_BEFORE_MINING"),
+        "bundles_after_inclusion": to_int("PREPARED_BUNDLES_AFTER_INCLUSION"),
+    },
+    "blocks": {
+        "inclusion_start_block": inclusion_start_block,
+        "final_block_number": final_block_number,
+        "progression": block_progression,
+        "count_until_full_inclusion": len(block_progression),
+        "proven_batch_blocks": sum(1 for item in block_progression if item["proven_batch_present"]),
+        "missed_target_block": len(block_progression) > 1,
+    },
+    "prepare": {
+        "context_stage_ms": latest_stage_value("context", "stage_ms"),
+        "commitment_stage_ms": latest_stage_value("commitment", "commitment_stage_ms"),
+        "aggregation_stage_ms": latest_stage_value("aggregation", "aggregation_stage_ms"),
+        "bundle_total_ms": latest_stage_value("artifacts", "total_ms"),
+        "prepared_bundle_build_ms": latest_stage_value("attached", "proven_batch_build_ms"),
+        "artifact_failures": prepare_stage_lines["failed"][-5:],
     },
 }
 
@@ -954,8 +1154,11 @@ if [ -n "$NODE_PREWARM_BLOCKING_ENV" ]; then
   echo "Aggregation cache startup: worker_prewarm_blocking=1" >&2
 fi
 echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
-echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
+echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_da_sidecar=${SEND_DA_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
 echo "Artifacts: run_id=${RUN_ID} json=${ARTIFACT_JSON}" >&2
+
+mkdir -p "$ARTIFACTS_DIR"
+: > "$SEND_TRACE_FILE"
 
 wallet_sync() {
   local store="$1"
@@ -981,7 +1184,7 @@ wallet_send_once() {
     maybe_no_sync="--no-sync"
   fi
   env \
-    HEGEMON_WALLET_DA_SIDECAR=1 \
+    HEGEMON_WALLET_DA_SIDECAR="$SEND_DA_SIDECAR" \
     HEGEMON_WALLET_PROOF_SIDECAR="$proof_sidecar" \
     HEGEMON_TX_RECURSION_NUM_QUERIES="$TX_RECURSION_NUM_QUERIES" \
     HEGEMON_TX_RECURSION_LOG_BLOWUP="$TX_RECURSION_LOG_BLOWUP" \
@@ -995,6 +1198,30 @@ wallet_send_once() {
       --ws-url "$RPC_WS" \
       --fee "$FEE" \
       $maybe_no_sync >/dev/null
+}
+
+wallet_send_with_metrics() {
+  local store="$1"
+  local passphrase="$2"
+  local recipients_json="$3"
+  local no_sync="${4:-0}"
+  local proof_sidecar="${5:-$SEND_PROOF_SIDECAR}"
+  local worker_id="$6"
+  local tx_ordinal="$7"
+  local start_ms
+  local end_ms
+  local start_block
+  local end_block
+
+  start_ms="$(now_ms)"
+  start_block="$(current_block_number)"
+  wallet_send_with_retry "$store" "$passphrase" "$recipients_json" "$no_sync" "$proof_sidecar"
+  end_ms="$(now_ms)"
+  end_block="$(current_block_number)"
+
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "$worker_id" "$tx_ordinal" "$start_ms" "$end_ms" "$((end_ms - start_ms))" "$start_block" "$end_block" \
+    >> "$SEND_TRACE_FILE"
 }
 
 wallet_send_with_retry() {
@@ -1215,7 +1442,7 @@ SEND_START_MS="$ROUND_START_MS"
 if [ "$WORKERS" -le 1 ]; then
   for i in $(seq 1 "$TX_COUNT"); do
     echo "  sending ${i}/${TX_COUNT}..." >&2
-    wallet_send_with_retry "$WALLET_A" "$PASS_A" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT"
+    wallet_send_with_metrics "$WALLET_A" "$PASS_A" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT" "$SEND_PROOF_SIDECAR" 1 "$i"
   done
 else
   pids=()
@@ -1230,7 +1457,7 @@ else
     {
       for j in $(seq 1 "$worker_tx_count"); do
         echo "  worker ${worker_id} sending ${j}/${worker_tx_count}..." >&2
-        wallet_send_with_retry "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT"
+        wallet_send_with_metrics "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT" "$SEND_PROOF_SIDECAR" "$worker_id" "$j"
       done
     } &
     pids+=("$!")
@@ -1250,6 +1477,8 @@ fi
 SEND_END_MS="$(now_ms)"
 SEND_TOTAL_MS=$((SEND_END_MS - SEND_START_MS))
 echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
+READY_PENDING_COUNT_BEFORE_MINING="$(author_pending_extrinsic_count)"
+PREPARED_BUNDLES_BEFORE_MINING="$(prepared_bundle_count)"
 STRICT_WAIT_MS=0
 INCLUSION_TOTAL_MS=0
 ROUND_TOTAL_MS=0
@@ -1266,8 +1495,15 @@ COMMITMENT_STAGE_MS=0
 AGGREGATION_STAGE_MS=0
 QUEUE_DEPTH=0
 QUEUE_WAIT_MS=0
+DISPATCH_WAIT_MS=0
+TOTAL_JOB_AGE_MS=0
 CACHE_HIT=""
 CACHE_BUILD_MS=0
+METRIC_BLOCK_NUMBER=0
+METRIC_TX_COUNT=0
+READY_PENDING_COUNT_AFTER_INCLUSION=0
+PREPARED_BUNDLES_AFTER_INCLUSION=0
+FINAL_BLOCK_NUMBER=0
 
 if [ "$STRICT_AGGREGATION" = "1" ]; then
   echo "Strict mode: waiting for local proven batch candidate before mining (min_prepared_txs=${MIN_PREPARED_TXS})..." >&2
@@ -1303,6 +1539,8 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
   echo "$PREPARED_LINE" >&2
   QUEUE_DEPTH="$(metric_from_line "$PREPARED_LINE" "queue_depth")"
   QUEUE_WAIT_MS="$(metric_from_line "$PREPARED_LINE" "queue_wait_ms")"
+  DISPATCH_WAIT_MS="$(metric_from_line "$PREPARED_LINE" "dispatch_wait_ms")"
+  TOTAL_JOB_AGE_MS="$(metric_from_line "$PREPARED_LINE" "total_job_age_ms")"
   STRICT_WAIT_END_MS="$(now_ms)"
   STRICT_WAIT_MS=$((STRICT_WAIT_END_MS - STRICT_WAIT_START_MS))
   echo "Prepared batch became ready in strict_wait_ms=${STRICT_WAIT_MS}" >&2
@@ -1315,7 +1553,7 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
     AGGREGATION_STAGE_MS="$(metric_from_line "$STAGE_LINE" "aggregation_stage_ms")"
     CACHE_HIT="$(bool_metric_from_line "$AGG_LINE" "cache_hit")"
     CACHE_BUILD_MS="$(metric_from_line "$AGG_LINE" "cache_build_ms")"
-    export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS CACHE_HIT CACHE_BUILD_MS
+    export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS DISPATCH_WAIT_MS TOTAL_JOB_AGE_MS CACHE_HIT CACHE_BUILD_MS SEND_DA_SIDECAR SEND_TRACE_FILE LOG_FILE READY_PENDING_COUNT_BEFORE_MINING READY_PENDING_COUNT_AFTER_INCLUSION PREPARED_BUNDLES_BEFORE_MINING PREPARED_BUNDLES_AFTER_INCLUSION INCLUSION_START_BLOCK FINAL_BLOCK_NUMBER
     emit_metrics_artifact "prewarm"
     echo "Prewarm-only mode: exiting before inclusion/mining stage." >&2
     echo "prewarm_metrics tx_count=${TX_COUNT} proof_mode=${PROOF_MODE} strict_wait_ms=${STRICT_WAIT_MS} min_prepared_txs=${MIN_PREPARED_TXS}" >&2
@@ -1461,6 +1699,11 @@ case "$TPS_EFFECTIVE_MODE" in
 esac
 
 BLOCK_NUMBER="$FOUND_BLOCK"
+FINAL_BLOCK_NUMBER="$BLOCK_NUMBER"
+METRIC_BLOCK_NUMBER="$BLOCK_NUMBER"
+METRIC_TX_COUNT="$FOUND_TX_COUNT"
+READY_PENDING_COUNT_AFTER_INCLUSION="$(author_pending_extrinsic_count)"
+PREPARED_BUNDLES_AFTER_INCLUSION="$(prepared_bundle_count)"
 
 VERIFY_LINE=""
 CONS_LINE=""
@@ -1525,18 +1768,32 @@ fi
 echo "" >&2
 echo "throughput_round_metrics tx_count=${TX_COUNT} included_tx_count=${INCLUDED_TX_COUNT} proof_mode=${PROOF_MODE} inclusion_target_mode=${INCLUSION_TARGET_MODE} send_proof_sidecar=${SEND_PROOF_SIDECAR} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
 
-PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate" | tail -n 1 || true)"
-CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context" | tail -n 1 || true)"
-STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts)" | tail -n 1 || true)"
-AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed)" | tail -n 1 || true)"
+PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate.*block_number=${BLOCK_NUMBER}.*key_tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$PREPARED_LINE_FINAL" ]; then
+  PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate.*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
+CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context.*block_number=${BLOCK_NUMBER}.*tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$CONTEXT_LINE" ]; then
+  CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context.*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
+STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts).*block_number=${BLOCK_NUMBER}.*tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$STAGE_LINE" ]; then
+  STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts).*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
+AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed).*block_number=${BLOCK_NUMBER}.*tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$AGG_LINE" ]; then
+  AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed).*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
 QUEUE_DEPTH="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_depth")"
 QUEUE_WAIT_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_wait_ms")"
+DISPATCH_WAIT_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "dispatch_wait_ms")"
+TOTAL_JOB_AGE_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "total_job_age_ms")"
 CONTEXT_STAGE_MS="$(metric_from_line "$CONTEXT_LINE" "stage_ms")"
 COMMITMENT_STAGE_MS="$(metric_from_line "$STAGE_LINE" "commitment_stage_ms")"
 AGGREGATION_STAGE_MS="$(metric_from_line "$STAGE_LINE" "aggregation_stage_ms")"
 CACHE_HIT="$(bool_metric_from_line "$AGG_LINE" "cache_hit")"
 CACHE_BUILD_MS="$(metric_from_line "$AGG_LINE" "cache_build_ms")"
-export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS CACHE_HIT CACHE_BUILD_MS
+export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS DISPATCH_WAIT_MS TOTAL_JOB_AGE_MS CACHE_HIT CACHE_BUILD_MS METRIC_BLOCK_NUMBER METRIC_TX_COUNT SEND_DA_SIDECAR SEND_TRACE_FILE LOG_FILE READY_PENDING_COUNT_BEFORE_MINING READY_PENDING_COUNT_AFTER_INCLUSION PREPARED_BUNDLES_BEFORE_MINING PREPARED_BUNDLES_AFTER_INCLUSION INCLUSION_START_BLOCK FINAL_BLOCK_NUMBER
 emit_metrics_artifact "throughput"
 
 echo "Done. Node is still running in tmux." >&2

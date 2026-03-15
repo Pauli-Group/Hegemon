@@ -34,6 +34,7 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - [x] (2026-03-14, later) Archived the active-lane comparison under `output/prover-recovery/2026-03-14/active-lanes/`: `raw_active` beats `merge_root_active` already at `k=1`, and `merge_root_active(k=2)` was killed with explicit `65s` timed-stall evidence instead of being given more excuses.
 - [x] (2026-03-14, latest) Implemented the explicit raw/inline-tx live lane in `service.rs`, `prover_coordinator.rs`, `consensus/src/proof.rs`, and the runtime proof-mode enums. `HEGEMON_BLOCK_PROOF_MODE` now defaults to `inline_tx`, raw mode schedules only parent-bound finalize/commitment work, and consensus verifies ordered tx proofs directly plus the commitment proof when an `InlineTx` artifact is present.
 - [x] (2026-03-14, latest) Added proof-backed raw-active consensus tests for block acceptance, bad tx proof rejection, bad ordering rejection, commitment mismatch rejection, and duplicate/nullifier-conflict rejection, plus a coordinator regression test that `inline_tx` mode publishes no external proving work.
+- [x] (2026-03-14, latest) Fixed the first local raw-active acceptance bottlenecks in the node path: InlineTx authoring now exposes only prepared shielded candidates to block assembly, mining pauses while a shielded batch still lacks its parent-bound prepared bundle, and aggregation worker prewarm is skipped entirely outside `merge_root`.
 - [ ] Re-run the acceptance matrix locally on the raw-active live lane and only then re-enable remote topology tests.
 
 ## Surprises & Discoveries
@@ -72,6 +73,8 @@ After this change, a new agent should be able to read this plan, inspect the nam
   Evidence: the archived transport baseline has `commitment_prove_ns = 0`, `commitment_verify_ns = 0`, and `commitment_proof_bytes = 0`, while `output/prover-recovery/2026-03-14/active-lanes/benchmark-k1.json` and `raw-active-k*.json` now record the full post-tx-proof path.
 - Observation: merge-root lost immediately once the correct comparator existed. At `k=1`, `raw_active` already beat `merge_root_active` on bytes (`536098` vs `536258 B/tx`), prove time (`70812417` vs `79701375 ns`), and verify time (`18299167` vs `25680001 ns`); at `k=2`, merge-root could not finish within a `65s` wall-clock budget while `raw_active` finished at `456262 B/tx`, `108371875 ns` active-path prove, and `29954584 ns` active-path verify.
   Evidence: `output/prover-recovery/2026-03-14/active-lanes/benchmark-k1.json`, `output/prover-recovery/2026-03-14/active-lanes/raw-active-k2.json`, and `output/prover-recovery/2026-03-14/active-lanes/merge-root-k2-stall.txt`.
+- Observation: the next blocker on the raw-active path is no longer “aggregation math is too slow.” It is harness honesty and node-side prepared-bundle gating. Before the latest fix, InlineTx workers still paid merge-root aggregation prewarm on startup and block authoring repeatedly tried to assemble shielded blocks from unprepared liveness candidates, which burned minutes while waiting for a parent-bound bundle that did not exist yet.
+  Evidence: targeted node regressions now cover `inline_tx_disables_aggregation_worker_prewarm`, `inline_tx_authoring_transactions_require_prepared_bundle`, and `mining_pause_reason_requires_ready_bundle_for_inline_tx_batch`; the first fresh matrix rerun after those fixes still spent most of its turn budget in snapshot bootstrap rather than the patched `tx4/pw1` inclusion path.
 
 ## Decision Log
 
@@ -101,6 +104,8 @@ After this change, a new agent should be able to read this plan, inspect the nam
   Date/Author: 2026-03-14 / OpenAI assistant
 - Decision: Treat `raw_active` as the real live baseline and kill `merge_root` as the low-TPS hot path. Rationale: once both lanes included the same parent-bound commitment proof, `merge_root` lost at `k=1` and failed to clear a `65s` wall-clock budget at `k=2`, so carrying it as the default low-TPS path would violate the benchmark gate.
   Date/Author: 2026-03-14 / OpenAI assistant
+- Decision: In `inline_tx`, block authoring must consume only prepared shielded candidates, and mining must pause while a shielded batch still lacks its parent-bound prepared bundle. Rationale: exposing unprepared liveness candidates to block assembly creates repeated failed authoring work, distorts acceptance metrics, and hides the real node-side bottleneck.
+  Date/Author: 2026-03-14 / OpenAI assistant
 
 ## Outcomes & Retrospective
 
@@ -109,6 +114,8 @@ Updated outcome: the local falsification loop now did its job twice. First it ki
 Later update: the merge-root recovery work is now wired where it should have been all along. Stage planning and worker dispatch share one canonical stage namespace, root aggregation is separated cleanly from parent-bound bundle finalization, reusable expensive artifacts are keyed without the parent, and the benchmark harness defaults to the real live comparison surface instead of the dead wrapper lane. That is real progress, but it did not rescue merge-root: once the benchmark fixtures were honest, the low-TPS verdict still favored raw-active, so merge-root was demoted to an experimental lane and the acceptance matrix moved to the raw/inline-tx path.
 
 Latest update: the benchmark-honesty blockers from the previous handoff are resolved and the correct live comparator now exists. `raw_active` is the honest local baseline because it includes canonical tx proofs plus the same commitment proof path that any live block must pay. Against that surface, merge-root lost immediately: `k=1` is already worse on bytes and active-path latency, and `k=2` was killed with explicit `65s` wall-clock stall evidence. Production now follows that verdict: the explicit `inline_tx` lane is the default live mode, the coordinator does not publish recursive or flat fan-out work in that mode, and consensus/import verifies ordered tx proofs directly plus the commitment proof. The next honest milestone is no longer “switch to raw”; it is “run the acceptance matrix on raw-active and then decide whether remote topology is worth the spend.”
+
+Newest update: the first local raw-active acceptance failure was partly a node-path bug, not just a performance result. InlineTx now skips aggregation worker prewarm, block authoring only sees prepared shielded candidates, and mining pauses while a pending shielded batch still lacks the required parent-bound prepared bundle. That removes the fake work loop where block assembly kept retrying unprepared liveness candidates. The remaining job is to finish a fresh local matrix run on the patched path and archive the real `tx4 / pw1`, `tx4 / pw2`, and larger acceptance results instead of reading stale mixed logs.
 
 ## Context and Orientation
 

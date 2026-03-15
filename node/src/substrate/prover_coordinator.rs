@@ -399,6 +399,8 @@ enum WorkerOutcome {
 struct WorkerJobResult {
     job: QueuedJob,
     queue_depth_after_pop: usize,
+    enqueue_to_start_ms: u128,
+    dispatch_to_start_ms: u128,
     build_elapsed_ms: u128,
     outcome: WorkerOutcome,
 }
@@ -407,6 +409,7 @@ enum WorkerCommand {
     Run {
         job: QueuedJob,
         queue_depth_after_pop: usize,
+        dispatched_at: Instant,
     },
     Stop,
 }
@@ -463,11 +466,16 @@ impl WorkerPool {
                         let WorkerCommand::Run {
                             job,
                             queue_depth_after_pop,
+                            dispatched_at,
                         } = command
                         else {
                             break;
                         };
                         let build_started = Instant::now();
+                        let enqueue_to_start_ms =
+                            build_started.duration_since(job.enqueued_at).as_millis();
+                        let dispatch_to_start_ms =
+                            build_started.duration_since(dispatched_at).as_millis();
                         let outcome = match job.stage_type {
                             StageType::LeafBatchProve => {
                                 let payload = job.leaf_batch_payload.clone();
@@ -601,6 +609,8 @@ impl WorkerPool {
                         let _ = worker_results_tx.send(WorkerJobResult {
                             job,
                             queue_depth_after_pop,
+                            enqueue_to_start_ms,
+                            dispatch_to_start_ms,
                             build_elapsed_ms,
                             outcome,
                         });
@@ -651,6 +661,7 @@ impl WorkerPool {
         if self.senders.is_empty() {
             return false;
         }
+        let dispatched_at = Instant::now();
         self.senders
             .get(worker_index % self.senders.len())
             .and_then(|sender| {
@@ -658,6 +669,7 @@ impl WorkerPool {
                     .send(WorkerCommand::Run {
                         job,
                         queue_depth_after_pop,
+                        dispatched_at,
                     })
                     .ok()
             })
@@ -686,6 +698,9 @@ fn should_block_on_worker_prewarm() -> bool {
 }
 
 fn worker_prewarm_disabled() -> bool {
+    if !aggregation_worker_prewarm_enabled_for_mode() {
+        return true;
+    }
     std::env::var("HEGEMON_AGG_DISABLE_WORKER_PREWARM")
         .ok()
         .map(|value| {
@@ -695,6 +710,13 @@ fn worker_prewarm_disabled() -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn aggregation_worker_prewarm_enabled_for_mode() -> bool {
+    matches!(
+        ProverCoordinator::prepared_proof_mode_from_env(),
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot
+    )
 }
 
 fn worker_prewarm_timeout() -> Duration {
@@ -1258,6 +1280,23 @@ impl ProverCoordinator {
             Self::best_pending_candidate_locked(&state).unwrap_or_default()
         } else {
             state.selected_txs.clone()
+        };
+        txs.truncate(max_txs);
+        txs
+    }
+
+    pub fn authoring_transactions(&self, max_txs: usize) -> Vec<Vec<u8>> {
+        let state = self.state.lock();
+        let mut txs = match Self::prepared_proof_mode_from_env() {
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+            | pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
+                Self::best_prepared_candidate_locked(&state).unwrap_or_default()
+            }
+            pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
+                Self::best_prepared_candidate_locked(&state)
+                    .or_else(|| Self::best_pending_candidate_locked(&state))
+                    .unwrap_or_default()
+            }
         };
         txs.truncate(max_txs);
         txs
@@ -3106,13 +3145,15 @@ impl ProverCoordinator {
                     leaf_batch_payload: _,
                     merge_node_payload: _,
                     finalize_bundle_payload: _,
-                },
+            },
             queue_depth_after_pop,
+            enqueue_to_start_ms,
+            dispatch_to_start_ms,
             build_elapsed_ms,
             outcome,
         } = result;
 
-        let queue_wait_ms = enqueued_at.elapsed().as_millis();
+        let total_job_age_ms = enqueued_at.elapsed().as_millis();
         let candidate_tx_count = candidate_txs.len();
         let candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>();
         let job_package_id = package_id.clone();
@@ -3204,7 +3245,9 @@ impl ProverCoordinator {
                         shape_id = %hex::encode(shape_id),
                         dependencies = dependencies.len(),
                         queue_depth = queue_depth_after_pop,
-                        queue_wait_ms,
+                        queue_wait_ms = enqueue_to_start_ms,
+                        dispatch_wait_ms = dispatch_to_start_ms,
+                        total_job_age_ms,
                         stage_mem_budget_mb = Self::stage_mem_budget_mb(),
                         stage_max_inflight_per_level,
                         tx_count = candidate_tx_count,
@@ -3257,7 +3300,9 @@ impl ProverCoordinator {
                         shape_id = %hex::encode(shape_id),
                         dependencies = dependencies.len(),
                         queue_depth = queue_depth_after_pop,
-                        queue_wait_ms,
+                        queue_wait_ms = enqueue_to_start_ms,
+                        dispatch_wait_ms = dispatch_to_start_ms,
+                        total_job_age_ms,
                         stage_mem_budget_mb = Self::stage_mem_budget_mb(),
                         stage_max_inflight_per_level,
                         tx_count = candidate_len,
@@ -3556,6 +3601,18 @@ mod tests {
             ProverCoordinator::prepared_proof_mode_from_env(),
             pallet_shielded_pool::types::BlockProofMode::InlineTx
         );
+    }
+
+    #[test]
+    fn inline_tx_disables_aggregation_worker_prewarm() {
+        {
+            let _guard = set_block_proof_mode("inline_tx");
+            assert!(!aggregation_worker_prewarm_enabled_for_mode());
+        }
+        {
+            let _guard = set_block_proof_mode("merge_root");
+            assert!(aggregation_worker_prewarm_enabled_for_mode());
+        }
     }
 
     fn ready_payload(
@@ -3874,6 +3931,41 @@ mod tests {
         let looked_up = coordinator.lookup_prepared_bundle(parent_hash, commitment, 2);
         assert!(looked_up.is_some());
         assert_eq!(coordinator.pending_transactions(8).len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inline_tx_authoring_transactions_require_prepared_bundle() {
+        let _mode = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(12);
+        let config = test_config();
+        let best = Arc::new(move || (parent_hash, 9u64));
+        let pending = Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8]]);
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("unused".to_string())
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(
+            coordinator.pending_transactions(8),
+            vec![vec![1u8]],
+            "planning path should still expose the current liveness candidate"
+        );
+        assert!(
+            coordinator.authoring_transactions(8).is_empty(),
+            "authoring path must stay empty until a prepared bundle exists"
+        );
+
+        let payload = ready_payload(2, [2u8; 48]);
+        coordinator.import_network_artifact(parent_hash, payload, vec![vec![1u8], vec![2u8]]);
+        assert_eq!(
+            coordinator.authoring_transactions(8),
+            vec![vec![1u8], vec![2u8]],
+            "authoring path should expose only prepared inline_tx candidates"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

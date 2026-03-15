@@ -4334,11 +4334,12 @@ fn ready_proofless_binding_hashes_for_preview(
     }
 }
 
-fn mining_pause_reason_for_pending_proofless_batch(
+fn mining_pause_reason_for_pending_shielded_batch(
     prover_coordinator: &ProverCoordinator,
     parent_hash: H256,
     candidate_txs: &[Vec<u8>],
     min_ready_batch_txs: usize,
+    proof_mode: PreparedProofMode,
 ) -> Result<Option<String>, String> {
     if candidate_txs.is_empty() {
         return Ok(None);
@@ -4351,14 +4352,14 @@ fn mining_pause_reason_for_pending_proofless_batch(
         decoded.push(extrinsic);
     }
 
-    let missing = missing_proof_binding_hashes(&decoded);
-    if missing.is_empty() {
-        return Ok(None);
-    }
-
     let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
     let shielded_tx_count = statement_bindings.len() as u32;
     if shielded_tx_count == 0 || shielded_tx_count < min_ready_batch_txs as u32 {
+        return Ok(None);
+    }
+
+    let missing = missing_proof_binding_hashes(&decoded);
+    if matches!(proof_mode, PreparedProofMode::MergeRoot) && missing.is_empty() {
         return Ok(None);
     }
 
@@ -4377,11 +4378,19 @@ fn mining_pause_reason_for_pending_proofless_batch(
         return Ok(None);
     }
 
-    Ok(Some(format!(
-        "proofless shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
-        shielded_tx_count,
-        missing.len()
-    )))
+    let reason = match proof_mode {
+        PreparedProofMode::InlineTx => format!(
+            "inline_tx shielded batch waiting for prepared bundle (tx_count={})",
+            shielded_tx_count
+        ),
+        PreparedProofMode::MergeRoot => format!(
+            "proofless shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
+            shielded_tx_count,
+            missing.len()
+        ),
+        PreparedProofMode::FlatBatches => return Ok(None),
+    };
+    Ok(Some(reason))
 }
 
 fn shielded_transfer_order_key_material(
@@ -9684,12 +9693,16 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // =======================================================================
         let coordinator_for_pending = Arc::clone(&prover_coordinator);
         chain_state.set_pending_txs_fn(move || {
-            coordinator_for_pending.pending_transactions(max_block_txs)
+            coordinator_for_pending.authoring_transactions(max_block_txs)
         });
 
         let hold_mining_while_proving = load_hold_mining_while_proving();
-        let aggregation_proofs_enabled = load_aggregation_proofs_enabled();
-        if aggregation_proofs_enabled && hold_mining_while_proving {
+        let selected_proof_mode = prepared_proof_mode_from_env();
+        let prepared_bundle_required_while_proving = matches!(
+            selected_proof_mode,
+            PreparedProofMode::InlineTx | PreparedProofMode::MergeRoot
+        );
+        if prepared_bundle_required_while_proving && hold_mining_while_proving {
             let client_for_mining_pause = client.clone();
             let coordinator_for_mining_pause = Arc::clone(&prover_coordinator);
             let min_ready_batch_txs = load_min_ready_proven_batch_txs();
@@ -9697,11 +9710,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let parent_hash = client_for_mining_pause.chain_info().best_hash;
                 let candidate_txs =
                     coordinator_for_mining_pause.pending_transactions(max_block_txs);
-                match mining_pause_reason_for_pending_proofless_batch(
+                match mining_pause_reason_for_pending_shielded_batch(
                     coordinator_for_mining_pause.as_ref(),
                     parent_hash,
                     &candidate_txs,
                     min_ready_batch_txs,
+                    selected_proof_mode,
                 ) {
                     Ok(reason) => reason,
                     Err(error) => {
@@ -9715,11 +9729,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             });
             tracing::info!(
                 min_ready_proven_batch_txs = min_ready_batch_txs,
-                "Mining will pause while strict proofless batches wait for a ready proven batch"
+                proof_mode = ?selected_proof_mode,
+                "Mining will pause while shielded batches wait for a ready prepared bundle"
             );
-        } else if aggregation_proofs_enabled {
+        } else if prepared_bundle_required_while_proving {
             tracing::warn!(
-                "Mining hold while proving is disabled; long recursive proofs may churn on stale parents"
+                proof_mode = ?selected_proof_mode,
+                "Mining hold while proving is disabled; parent-bound prepared bundles may churn on stale parents"
             );
         }
 
@@ -10447,6 +10463,25 @@ mod tests {
         .encode()
     }
 
+    fn test_inline_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
+        kernel_shielded_extrinsic(
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            vec![nullifier],
+            pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+                proof: vec![binding_byte],
+                commitments: vec![[binding_byte; 48]],
+                ciphertexts: vec![pallet_shielded_pool::types::EncryptedNote::default()],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+                binding_hash: [binding_byte; 64],
+                stablecoin: None,
+                fee: 0,
+            }
+            .encode(),
+        )
+        .encode()
+    }
+
     #[test]
     fn filter_conflicting_shielded_transfers_drops_binding_conflicts_and_keeps_nullifier_overlaps()
     {
@@ -10615,11 +10650,12 @@ mod tests {
         );
 
         let candidate_txs = vec![test_sidecar_transfer_extrinsic(9, [3u8; 48])];
-        let reason = mining_pause_reason_for_pending_proofless_batch(
+        let reason = mining_pause_reason_for_pending_shielded_batch(
             coordinator.as_ref(),
             parent_hash,
             &candidate_txs,
             1,
+            PreparedProofMode::MergeRoot,
         )
         .expect("pause reason evaluation succeeds");
         assert!(
@@ -10664,16 +10700,98 @@ mod tests {
             candidate_txs.clone(),
         );
 
-        let reason = mining_pause_reason_for_pending_proofless_batch(
+        let reason = mining_pause_reason_for_pending_shielded_batch(
             coordinator.as_ref(),
             parent_hash,
             &candidate_txs,
             1,
+            PreparedProofMode::MergeRoot,
         )
         .expect("pause reason evaluation succeeds");
         assert!(
             reason.is_none(),
             "mining should resume once the matching prepared bundle exists"
+        );
+    }
+
+    #[test]
+    fn mining_pause_reason_requires_ready_bundle_for_inline_tx_batch() {
+        let _guard = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(0x42);
+        let coordinator = ProverCoordinator::new(
+            ProverCoordinatorConfig {
+                workers: 0,
+                target_txs: 1,
+                queue_capacity: 1,
+                max_inflight_per_level: 1,
+                liveness_lane: true,
+                adaptive_liveness_timeout: Duration::from_millis(0),
+                incremental_upsizing: false,
+                poll_interval: Duration::from_millis(50),
+                job_timeout: Duration::from_secs(30),
+                work_package_ttl: Duration::from_secs(30),
+                max_submissions_per_package: 16,
+                max_submissions_per_source: 32,
+                max_payload_bytes: 4 * 1024 * 1024,
+            },
+            Arc::new(move || (parent_hash, 7u64)),
+            Arc::new(|_max_txs| Vec::new()),
+            Arc::new(|_, _, _| Err("unused".to_string())),
+        );
+
+        let candidate_txs = vec![test_inline_transfer_extrinsic(5, [4u8; 48])];
+        let reason = mining_pause_reason_for_pending_shielded_batch(
+            coordinator.as_ref(),
+            parent_hash,
+            &candidate_txs,
+            1,
+            PreparedProofMode::InlineTx,
+        )
+        .expect("pause reason evaluation succeeds");
+        assert!(
+            reason.is_some(),
+            "inline_tx batch without ready bundle should pause mining"
+        );
+
+        let decoded = runtime::UncheckedExtrinsic::decode(&mut &candidate_txs[0][..])
+            .expect("candidate decodes");
+        let statement_bindings =
+            statement_bindings_from_extrinsics(&[decoded]).expect("statement bindings");
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .expect("commitment");
+        coordinator.import_network_artifact(
+            parent_hash,
+            pallet_shielded_pool::types::CandidateArtifact {
+                version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment,
+                da_root: [0u8; 48],
+                da_chunk_count: 0,
+                commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                flat_batches: Vec::new(),
+                merge_root: None,
+                artifact_claim: None,
+            },
+            candidate_txs.clone(),
+        );
+
+        let reason = mining_pause_reason_for_pending_shielded_batch(
+            coordinator.as_ref(),
+            parent_hash,
+            &candidate_txs,
+            1,
+            PreparedProofMode::InlineTx,
+        )
+        .expect("pause reason evaluation succeeds");
+        assert!(
+            reason.is_none(),
+            "mining should resume once the matching inline_tx prepared bundle exists"
         );
     }
 }
