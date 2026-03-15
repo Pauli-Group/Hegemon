@@ -181,7 +181,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
@@ -4393,6 +4393,84 @@ fn mining_pause_reason_for_pending_shielded_batch(
     Ok(Some(reason))
 }
 
+#[derive(Clone, Debug)]
+struct ReadyBundleTrace {
+    bundle_id: String,
+    artifact_hash: [u8; 32],
+    tx_statements_commitment: [u8; 48],
+    tx_count: u32,
+    parent_hash: H256,
+    block_number: u64,
+}
+
+fn ready_bundle_trace_for_candidate(
+    prover_coordinator: &ProverCoordinator,
+    parent_hash: H256,
+    block_number: u64,
+    candidate_txs: &[Vec<u8>],
+    min_ready_batch_txs: usize,
+    proof_mode: PreparedProofMode,
+) -> Result<Option<ReadyBundleTrace>, String> {
+    if candidate_txs.is_empty() {
+        return Ok(None);
+    }
+
+    let mut decoded = Vec::with_capacity(candidate_txs.len());
+    for ext_bytes in candidate_txs {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
+        decoded.push(extrinsic);
+    }
+
+    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    let shielded_tx_count = statement_bindings.len() as u32;
+    if shielded_tx_count == 0 || shielded_tx_count < min_ready_batch_txs as u32 {
+        return Ok(None);
+    }
+
+    let missing = missing_proof_binding_hashes(&decoded);
+    if matches!(proof_mode, PreparedProofMode::MergeRoot) && missing.is_empty() {
+        return Ok(None);
+    }
+
+    let statement_hashes = statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
+
+    let Some(ready_batch) = prover_coordinator.lookup_prepared_bundle(
+        parent_hash,
+        tx_statements_commitment,
+        shielded_tx_count,
+    ) else {
+        return Ok(None);
+    };
+
+    Ok(Some(ReadyBundleTrace {
+        bundle_id: ProverCoordinator::final_bundle_id(
+            parent_hash,
+            block_number,
+            tx_statements_commitment,
+            shielded_tx_count,
+        ),
+        artifact_hash: ready_batch.key.artifact_hash,
+        tx_statements_commitment,
+        tx_count: shielded_tx_count,
+        parent_hash,
+        block_number,
+    }))
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn shielded_transfer_order_key_material(
     binding_hash: Option<[u8; 64]>,
     nullifiers: &[[u8; 48]],
@@ -5313,6 +5391,7 @@ pub fn wire_block_builder_api(
             && (matches!(selected_proof_mode, PreparedProofMode::InlineTx)
                 || aggregation_mode_enabled);
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ArtifactClaim> = None;
+        let mut template_trace = None;
         if requires_proven_batch {
             let tx_statements_commitment =
                 CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
@@ -5362,6 +5441,20 @@ pub fn wire_block_builder_api(
                             current_parent = ?parent_substrate_hash,
                             "Proven batch extrinsic attached"
                         );
+                        template_trace = Some(consensus::MiningWorkTrace {
+                            template_id: String::new(),
+                            bundle_id: Some(ProverCoordinator::final_bundle_id(
+                                parent_substrate_hash,
+                                block_number,
+                                tx_statements_commitment,
+                                shielded_tx_count,
+                            )),
+                            artifact_hash: Some(hex::encode(ready_batch.key.artifact_hash)),
+                            tx_count: shielded_tx_count,
+                            tx_statements_commitment: Some(hex::encode(
+                                tx_statements_commitment,
+                            )),
+                        });
                     }
                     Err(e) => {
                         return Err(format!(
@@ -5564,6 +5657,7 @@ pub fn wire_block_builder_api(
             extrinsics_root,
             failed_count: failed,
             storage_changes: Some(storage_changes),
+            template_trace,
         })
     });
 
@@ -5906,6 +6000,25 @@ fn wire_pow_block_import(
                     block_number = template.number,
                     "Block imported successfully with state changes applied"
                 );
+                if let Some(trace) = template.trace.as_ref() {
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = unix_time_ms(),
+                        block_hash = %hex::encode(block_hash.as_bytes()),
+                        block_number = template.number,
+                        parent_hash = %hex::encode(template.parent_hash.as_bytes()),
+                        pre_hash = %hex::encode(template.pre_hash.as_bytes()),
+                        template_id = %trace.template_id,
+                        bundle_id = trace.bundle_id.as_deref().unwrap_or(""),
+                        artifact_hash = trace.artifact_hash.as_deref().unwrap_or(""),
+                        tx_count = trace.tx_count,
+                        tx_statements_commitment = trace
+                            .tx_statements_commitment
+                            .as_deref()
+                            .unwrap_or(""),
+                        "block_imported"
+                    );
+                }
                 Ok(block_hash)
             }
             Ok(ImportResult::AlreadyInChain) => {
@@ -9706,11 +9819,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let client_for_mining_pause = client.clone();
             let coordinator_for_mining_pause = Arc::clone(&prover_coordinator);
             let min_ready_batch_txs = load_min_ready_proven_batch_txs();
+            let mining_pause_active = Arc::new(ParkingMutex::new(false));
+            let mining_pause_active_for_callback = Arc::clone(&mining_pause_active);
             chain_state.set_mining_pause_fn(move || {
-                let parent_hash = client_for_mining_pause.chain_info().best_hash;
+                let chain_info = client_for_mining_pause.chain_info();
+                let parent_hash = chain_info.best_hash;
+                let block_number = chain_info.best_number.saturating_add(1);
                 let candidate_txs =
                     coordinator_for_mining_pause.pending_transactions(max_block_txs);
-                match mining_pause_reason_for_pending_shielded_batch(
+                let reason = match mining_pause_reason_for_pending_shielded_batch(
                     coordinator_for_mining_pause.as_ref(),
                     parent_hash,
                     &candidate_txs,
@@ -9725,7 +9842,54 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         );
                         None
                     }
+                };
+                let ready_trace = if reason.is_none() {
+                    match ready_bundle_trace_for_candidate(
+                        coordinator_for_mining_pause.as_ref(),
+                        parent_hash,
+                        block_number,
+                        &candidate_txs,
+                        min_ready_batch_txs,
+                        selected_proof_mode,
+                    ) {
+                        Ok(trace) => trace,
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "Failed to derive ready bundle trace for mining handoff"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                let mut pause_active = mining_pause_active_for_callback.lock();
+                match (&reason, ready_trace.as_ref(), *pause_active) {
+                    (Some(_), _, false) => {
+                        *pause_active = true;
+                    }
+                    (None, Some(trace), true) => {
+                        tracing::info!(
+                            target: "prover::last_mile",
+                            trace_ts_ms = unix_time_ms(),
+                            bundle_id = %trace.bundle_id,
+                            artifact_hash = %hex::encode(trace.artifact_hash),
+                            parent_hash = ?trace.parent_hash,
+                            block_number = trace.block_number,
+                            tx_count = trace.tx_count,
+                            tx_statements_commitment =
+                                %hex::encode(trace.tx_statements_commitment),
+                            "mining_unpaused"
+                        );
+                        *pause_active = false;
+                    }
+                    (None, _, true) => {
+                        *pause_active = false;
+                    }
+                    _ => {}
                 }
+                reason
             });
             tracing::info!(
                 min_ready_proven_batch_txs = min_ready_batch_txs,

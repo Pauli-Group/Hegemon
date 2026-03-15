@@ -130,22 +130,15 @@ impl PowHandle {
     }
 
     /// Update the work template for mining
-    pub fn update_work(&self, pre_hash: H256, pow_bits: u32, height: u64, parent_hash: H256) {
-        let work = MiningWork {
-            pre_hash,
-            pow_bits,
-            height,
-            parent_hash,
-        };
-
+    pub fn update_work(&self, work: MiningWork) {
         let coordinator = self.coordinator.lock();
-        coordinator.update_work(work);
+        coordinator.update_work(work.clone());
 
-        debug!(height, difficulty = pow_bits, "New mining work");
+        debug!(height = work.height, difficulty = work.pow_bits, "New mining work");
 
         let _ = self.event_tx.send(PowEvent::NewWork {
-            height,
-            difficulty: pow_bits,
+            height: work.height,
+            difficulty: work.pow_bits,
         });
     }
 

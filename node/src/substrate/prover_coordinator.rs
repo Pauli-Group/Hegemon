@@ -1033,7 +1033,7 @@ impl ProverCoordinator {
         ))
     }
 
-    fn final_bundle_id(
+    pub(crate) fn final_bundle_id(
         parent_hash: H256,
         block_number: u64,
         tx_statements_commitment: [u8; 48],
@@ -3312,6 +3312,24 @@ impl ProverCoordinator {
                         stale_parent,
                         stale_generation,
                         "Prepared proven batch candidate"
+                    );
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = Self::now_ms(),
+                        bundle_id = %Self::final_bundle_id(
+                            bundle.key.parent_hash,
+                            block_number,
+                            bundle.key.tx_statements_commitment,
+                            bundle.key.tx_count,
+                        ),
+                        artifact_hash = %hex::encode(bundle.key.artifact_hash),
+                        parent_hash = ?bundle.key.parent_hash,
+                        block_number,
+                        tx_count = bundle.key.tx_count,
+                        tx_statements_commitment = %hex::encode(bundle.key.tx_statements_commitment),
+                        build_ms = bundle.build_ms,
+                        total_job_age_ms,
+                        "prepared_bundle_ready"
                     );
                     guard.prepared.insert(bundle.key.clone(), bundle);
                 }

@@ -44,6 +44,7 @@ mod tests {
             pow_bits: 0x207fffff,
             height: 42,
             parent_hash: H256::repeat_byte(0x22),
+            trace: None,
         }
     }
 

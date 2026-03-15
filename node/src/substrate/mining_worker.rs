@@ -63,7 +63,7 @@ use crate::pow::PowHandle;
 use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
 use crate::substrate::service::StorageChangesHandle;
 use codec::Encode;
-use consensus::{MiningWork, Sha256dSeal};
+use consensus::{MiningWork, MiningWorkTrace, Sha256dSeal};
 use sp_core::H256;
 use sp_runtime::generic::Digest;
 use sp_runtime::traits::Header as HeaderT;
@@ -72,7 +72,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Mining worker configuration
 #[derive(Clone, Debug)]
@@ -172,6 +172,8 @@ pub struct BlockTemplate {
     /// Task 11.5.5: Handle for cached StorageChanges for block import.
     /// This is set during block building when using sc_block_builder::BlockBuilder.
     pub storage_changes: Option<StorageChangesHandle>,
+    /// Optional trace metadata for last-mile block assembly and mining handoff.
+    pub trace: Option<MiningWorkTrace>,
 }
 
 impl BlockTemplate {
@@ -196,6 +198,7 @@ impl BlockTemplate {
             difficulty_bits,
             extrinsics: Vec::new(),
             storage_changes: None, // Task 11.5.5: Set during block building
+            trace: None,
         }
     }
 
@@ -215,6 +218,16 @@ impl BlockTemplate {
             &self.extrinsics_root,
             &self.state_root,
         );
+        self
+    }
+
+    pub fn with_trace(mut self, trace: Option<MiningWorkTrace>) -> Self {
+        self.trace = trace.map(|mut item| {
+            if item.template_id.is_empty() {
+                item.template_id = hex::encode(self.pre_hash.as_bytes());
+            }
+            item
+        });
         self
     }
 
@@ -263,6 +276,7 @@ impl BlockTemplate {
             pow_bits: self.difficulty_bits,
             height: self.number,
             parent_hash: self.parent_hash,
+            trace: self.trace.clone(),
         }
     }
 
@@ -826,6 +840,26 @@ where
 
                 // Update mining work
                 let work = template.to_mining_work();
+                if let Some(trace) = template.trace.as_ref() {
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = unix_time_ms(),
+                        block_number = template.number,
+                        parent_hash = %hex::encode(template.parent_hash.as_bytes()),
+                        pre_hash = %hex::encode(work.pre_hash.as_bytes()),
+                        template_id = %trace.template_id,
+                        bundle_id = trace.bundle_id.as_deref().unwrap_or(""),
+                        artifact_hash = trace.artifact_hash.as_deref().unwrap_or(""),
+                        tx_count = trace.tx_count,
+                        tx_statements_commitment = trace
+                            .tx_statements_commitment
+                            .as_deref()
+                            .unwrap_or(""),
+                        parent_changed,
+                        pending_changed,
+                        "block_template_installed"
+                    );
+                }
 
                 // DEBUG: Log the pre_hash being used for mining
                 tracing::info!(
@@ -838,12 +872,7 @@ where
                     "🔍 DEBUG: Mining work pre_hash (verifier must match this)"
                 );
 
-                self.pow_handle.update_work(
-                    work.pre_hash,
-                    work.pow_bits,
-                    work.height,
-                    work.parent_hash,
-                );
+                self.pow_handle.update_work(work);
 
                 if self.config.verbose {
                     tracing::debug!(
@@ -888,6 +917,26 @@ where
                 {
                     let mut stats = self.stats.write();
                     stats.blocks_mined += 1;
+                }
+
+                if let Some(trace) = template.trace.as_ref() {
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = unix_time_ms(),
+                        block_number = template.number,
+                        parent_hash = %hex::encode(template.parent_hash.as_bytes()),
+                        pre_hash = %hex::encode(template.pre_hash.as_bytes()),
+                        template_id = %trace.template_id,
+                        bundle_id = trace.bundle_id.as_deref().unwrap_or(""),
+                        artifact_hash = trace.artifact_hash.as_deref().unwrap_or(""),
+                        tx_count = trace.tx_count,
+                        tx_statements_commitment = trace
+                            .tx_statements_commitment
+                            .as_deref()
+                            .unwrap_or(""),
+                        nonce = ?solution.seal.nonce,
+                        "block_found"
+                    );
                 }
 
                 // Import the block
@@ -966,6 +1015,13 @@ where
             tokio::task::yield_now().await;
         }
     }
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Create a mining worker for scaffold mode

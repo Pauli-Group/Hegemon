@@ -56,6 +56,7 @@
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
 use consensus::{Sha256dAlgorithm, Sha256dSeal};
+use consensus::MiningWorkTrace;
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -513,6 +514,8 @@ pub struct StateExecutionResult {
     /// If Some, storage changes were captured and can be applied during import.
     /// If None, block import will use StateAction::Skip (scaffold mode).
     pub storage_changes: Option<StorageChangesHandle>,
+    /// Optional last-mile trace metadata to attach to the mined template.
+    pub template_trace: Option<MiningWorkTrace>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -721,6 +724,7 @@ impl ProductionChainStateProvider {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None, // No storage changes in mock mode
+                template_trace: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -866,12 +870,22 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         "Block template built with state execution (Task 11.4 + 11.5.5)"
                     );
                 }
-                template.with_executed_state(
-                    result.applied_extrinsics,
-                    result.state_root,
-                    result.extrinsics_root,
-                    result.storage_changes,
-                )
+                let StateExecutionResult {
+                    applied_extrinsics,
+                    state_root,
+                    extrinsics_root,
+                    failed_count: _,
+                    storage_changes,
+                    template_trace,
+                } = result;
+                template
+                    .with_executed_state(
+                        applied_extrinsics,
+                        state_root,
+                        extrinsics_root,
+                        storage_changes,
+                    )
+                    .with_trace(template_trace)
             }
             Err(mut e) => {
                 if !pending.is_empty() && Self::is_missing_ready_proven_batch_error(&e) {
@@ -906,12 +920,22 @@ impl ChainStateProvider for ProductionChainStateProvider {
                                         "Block template built after waiting for ready proven batch"
                                     );
                                 }
-                                return template.with_executed_state(
-                                    result.applied_extrinsics,
-                                    result.state_root,
-                                    result.extrinsics_root,
-                                    result.storage_changes,
-                                );
+                                let StateExecutionResult {
+                                    applied_extrinsics,
+                                    state_root,
+                                    extrinsics_root,
+                                    failed_count: _,
+                                    storage_changes,
+                                    template_trace,
+                                } = result;
+                                return template
+                                    .with_executed_state(
+                                        applied_extrinsics,
+                                        state_root,
+                                        extrinsics_root,
+                                        storage_changes,
+                                    )
+                                    .with_trace(template_trace);
                             }
                             Err(retry_err)
                                 if Self::is_missing_ready_proven_batch_error(&retry_err) =>
@@ -967,12 +991,22 @@ impl ChainStateProvider for ProductionChainStateProvider {
                                     "Block template built with fallback state execution (empty pending set)"
                                 );
                             }
-                            template.with_executed_state(
-                                result.applied_extrinsics,
-                                result.state_root,
-                                result.extrinsics_root,
-                                result.storage_changes,
-                            )
+                            let StateExecutionResult {
+                                applied_extrinsics,
+                                state_root,
+                                extrinsics_root,
+                                failed_count: _,
+                                storage_changes,
+                                template_trace,
+                            } = result;
+                            template
+                                .with_executed_state(
+                                    applied_extrinsics,
+                                    state_root,
+                                    extrinsics_root,
+                                    storage_changes,
+                                )
+                                .with_trace(template_trace)
                         }
                         Err(retry_err) => {
                             tracing::error!(
@@ -1382,6 +1416,7 @@ mod tests {
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
+                template_trace: None,
             })
         });
 
@@ -1413,6 +1448,7 @@ mod tests {
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
                 storage_changes: None,
+                template_trace: None,
             })
         });
 
@@ -1448,6 +1484,7 @@ mod tests {
                     extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                     failed_count: 0,
                     storage_changes: None,
+                    template_trace: None,
                 })
             } else {
                 // First failure should trigger pending proven-batch retry path; second failure
@@ -1492,6 +1529,7 @@ mod tests {
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
                 storage_changes: None,
+                template_trace: None,
             })
         });
 
@@ -1522,6 +1560,7 @@ mod tests {
                 extrinsics_root: H256::repeat_byte(0x44),
                 failed_count: 0,
                 storage_changes: None,
+                template_trace: None,
             })
         });
 

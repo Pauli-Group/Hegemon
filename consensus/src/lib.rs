@@ -38,7 +38,9 @@ pub use merge_root_layout::{
     merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
     merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
 };
-pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
+pub use mining::{
+    MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorkTrace, MiningWorker,
+};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use proof::{
