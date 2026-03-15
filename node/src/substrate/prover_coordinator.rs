@@ -3,7 +3,6 @@ use consensus::{
     FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use parking_lot::Mutex;
-use tx_proof_manifest::{verify_tx_proof_manifest, TxProofManifestPublicInputs};
 use sp_core::H256;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
@@ -11,6 +10,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use transaction_circuit::proof::TransactionProof;
+use tx_proof_manifest::{verify_tx_proof_manifest, TxProofManifestPublicInputs};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BundleMatchKey {
@@ -47,6 +47,7 @@ fn block_proof_bundle_payload_bytes(
     payload: &pallet_shielded_pool::types::CandidateArtifact,
 ) -> usize {
     let aggregation_bytes = match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 0,
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
             .flat_batches
             .iter()
@@ -125,11 +126,14 @@ fn verify_external_tx_proof_manifest_result(
         return Err("tx-proof-manifest work result must use FlatBatches mode".to_string());
     }
     if payload.merge_root.is_some() {
-        return Err("tx-proof-manifest work result must not include merge-root payloads".to_string());
+        return Err(
+            "tx-proof-manifest work result must not include merge-root payloads".to_string(),
+        );
     }
     if !payload.commitment_proof.data.is_empty() {
         return Err(
-            "tx-proof-manifest work result must not include a parent-bound commitment proof".to_string(),
+            "tx-proof-manifest work result must not include a parent-bound commitment proof"
+                .to_string(),
         );
     }
     if payload.tx_statements_commitment != expected.tx_statements_commitment {
@@ -354,10 +358,7 @@ pub type PendingTxsFn = dyn Fn(usize) -> Vec<Vec<u8>> + Send + Sync + 'static;
 pub type PrepareBundleFn =
     dyn Fn(H256, u64, Vec<Vec<u8>>) -> Result<PreparedBundle, String> + Send + Sync + 'static;
 pub type BuildRootAggregationWorkFn =
-    dyn Fn(Vec<Vec<u8>>) -> Result<Option<RootAggregationWorkData>, String>
-        + Send
-        + Sync
-        + 'static;
+    dyn Fn(Vec<Vec<u8>>) -> Result<Option<RootAggregationWorkData>, String> + Send + Sync + 'static;
 pub type FinalizeBundleFn = dyn Fn(H256, u64, Vec<Vec<u8>>, Vec<u8>) -> Result<PreparedBundle, String>
     + Send
     + Sync
@@ -534,17 +535,21 @@ impl WorkerPool {
                                 let candidate_txs = job.candidate_txs.clone();
                                 let finalize_bundle_payload = job.finalize_bundle_payload.clone();
                                 let finalize_bundle_fn = Arc::clone(&worker_finalize_bundle_fn);
+                                let prepare_bundle_fn = Arc::clone(&worker_prepare_bundle_fn);
                                 match panic::catch_unwind(AssertUnwindSafe(move || {
-                                    let finalize_bundle_payload =
-                                        finalize_bundle_payload.ok_or_else(|| {
-                                            "missing finalize bundle payload".to_string()
-                                        })?;
-                                    finalize_bundle_fn(
-                                        parent_hash,
-                                        block_number,
-                                        candidate_txs,
-                                        finalize_bundle_payload,
-                                    )
+                                    match finalize_bundle_payload {
+                                        Some(finalize_bundle_payload) => finalize_bundle_fn(
+                                            parent_hash,
+                                            block_number,
+                                            candidate_txs,
+                                            finalize_bundle_payload,
+                                        ),
+                                        None => prepare_bundle_fn(
+                                            parent_hash,
+                                            block_number,
+                                            candidate_txs,
+                                        ),
+                                    }
                                 })) {
                                     Ok(result) => WorkerOutcome::Bundle(Box::new(result)),
                                     Err(panic_payload) => {
@@ -1080,7 +1085,8 @@ impl ProverCoordinator {
             let chunk_groups = current_level
                 .chunks(merge_fan_in)
                 .map(|group| {
-                    let subtree_tx_count = group.iter().map(|node| node.subtree_tx_count).sum::<u32>();
+                    let subtree_tx_count =
+                        group.iter().map(|node| node.subtree_tx_count).sum::<u32>();
                     let child_package_ids = group
                         .iter()
                         .map(|node| node.package_id.clone())
@@ -2183,13 +2189,14 @@ impl ProverCoordinator {
             state.fanout_assemblies.clear();
             state.recursive_assemblies.clear();
 
+            let selected_mode = Self::prepared_proof_mode_from_env();
             let mut handled_recursive = false;
-            let prefer_merge_root = Self::prepared_proof_mode_from_env()
-                == pallet_shielded_pool::types::BlockProofMode::MergeRoot;
-            if let Some(builder) = self.build_root_aggregation_work_fn.as_ref() {
-                match builder(primary_candidate.clone()) {
-                    Ok(Some(root_payload)) => {
-                        if prefer_merge_root {
+            let prefer_merge_root =
+                selected_mode == pallet_shielded_pool::types::BlockProofMode::MergeRoot;
+            if prefer_merge_root {
+                if let Some(builder) = self.build_root_aggregation_work_fn.as_ref() {
+                    match builder(primary_candidate.clone()) {
+                        Ok(Some(root_payload)) => {
                             handled_recursive = true;
                             candidate_variants.pop_back();
                             self.publish_recursive_candidate_variant_locked(
@@ -2227,20 +2234,22 @@ impl ProverCoordinator {
                                 }
                             }
                         }
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        tracing::warn!(
-                            block_number,
-                            tx_count = primary_candidate.len(),
-                            error = %error,
-                            "Failed to build proof-stage payloads; falling back to flat fan-out without root payload"
-                        );
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                block_number,
+                                tx_count = primary_candidate.len(),
+                                error = %error,
+                                "Failed to build proof-stage payloads; falling back to flat fan-out without root payload"
+                            );
+                        }
                     }
                 }
             }
 
-            if !handled_recursive {
+            if !handled_recursive
+                && selected_mode == pallet_shielded_pool::types::BlockProofMode::FlatBatches
+            {
                 let slot_txs = Self::batch_slot_txs();
                 let chunks = Self::split_candidate_into_chunks(&primary_candidate, slot_txs);
                 let expected_chunks = chunks.len().min(u16::MAX as usize) as u16;
@@ -2360,11 +2369,7 @@ impl ProverCoordinator {
             .recursive_assemblies
             .get(&candidate_set_id)
             .and_then(|assembly| assembly.root_package_id())
-            .is_some_and(|root_package_id| {
-                state
-                    .prepared_expensive
-                    .contains_key(root_package_id)
-            });
+            .is_some_and(|root_package_id| state.prepared_expensive.contains_key(root_package_id));
         if root_already_prepared {
             let _ = self.maybe_enqueue_finalize_bundle_locked(state, &candidate_set_id);
             return;
@@ -2409,10 +2414,13 @@ impl ProverCoordinator {
             );
             self.enqueue_recursive_stage_package_locked(state, package, high_priority);
             if let Some(assembly) = state.recursive_assemblies.get_mut(&candidate_set_id) {
-                assembly.scheduled_packages.insert(leaf_plan.package_id.clone());
+                assembly
+                    .scheduled_packages
+                    .insert(leaf_plan.package_id.clone());
             }
         }
-        if let Ok(ready_packages) = self.ready_recursive_merge_packages_locked(state, &candidate_set_id)
+        if let Ok(ready_packages) =
+            self.ready_recursive_merge_packages_locked(state, &candidate_set_id)
         {
             for package in ready_packages {
                 self.enqueue_recursive_stage_package_locked(state, package, high_priority);
@@ -2586,15 +2594,31 @@ impl ProverCoordinator {
 
     fn prepared_proof_mode_from_env() -> pallet_shielded_pool::types::BlockProofMode {
         let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
+        if raw.is_empty()
+            || raw.eq_ignore_ascii_case("inline_tx")
+            || raw.eq_ignore_ascii_case("inline")
+            || raw.eq_ignore_ascii_case("raw")
+            || raw.eq_ignore_ascii_case("raw_active")
+        {
+            return pallet_shielded_pool::types::BlockProofMode::InlineTx;
+        }
+        if raw.eq_ignore_ascii_case("merge_root") || raw.eq_ignore_ascii_case("merge-root") {
+            return pallet_shielded_pool::types::BlockProofMode::MergeRoot;
+        }
         if raw.eq_ignore_ascii_case("flat")
             || raw.eq_ignore_ascii_case("flat_batches")
             || raw.eq_ignore_ascii_case("flatbatches")
         {
             tracing::warn!(
-                "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to merge_root"
+                "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to inline_tx"
             );
+            return pallet_shielded_pool::types::BlockProofMode::InlineTx;
         }
-        pallet_shielded_pool::types::BlockProofMode::MergeRoot
+        tracing::warn!(
+            mode = raw,
+            "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
+        );
+        pallet_shielded_pool::types::BlockProofMode::InlineTx
     }
 
     fn leaf_fan_in() -> usize {
@@ -2936,7 +2960,8 @@ impl ProverCoordinator {
         let Some(root_package_id) = assembly.root_package_id().map(str::to_string) else {
             return Ok(());
         };
-        let Some(root_proof_bytes) = assembly.completed_results.get(&root_package_id).cloned() else {
+        let Some(root_proof_bytes) = assembly.completed_results.get(&root_package_id).cloned()
+        else {
             return Ok(());
         };
         assembly.finalize_enqueued = true;
@@ -2954,7 +2979,10 @@ impl ProverCoordinator {
             parent_hash: assembly.parent_hash,
             block_number: assembly.block_number,
             stage_type: StageType::FinalizeBundle,
-            level: assembly.root_aggregation_payload.root_level.saturating_add(1),
+            level: assembly
+                .root_aggregation_payload
+                .root_level
+                .saturating_add(1),
             arity: 0,
             shape_id: [0u8; 32],
             dependencies: vec![root_package_id],
@@ -3244,7 +3272,8 @@ impl ProverCoordinator {
                 }
                 Err(error) => {
                     if stage_type == StageType::FinalizeBundle {
-                        if let Some(assembly) = guard.recursive_assemblies.get_mut(&candidate_set_id)
+                        if let Some(assembly) =
+                            guard.recursive_assemblies.get_mut(&candidate_set_id)
                         {
                             assembly.finalize_enqueued = false;
                         }
@@ -3414,6 +3443,7 @@ fn proof_mode_rank(mode: pallet_shielded_pool::types::BlockProofMode) -> u8 {
     match mode {
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => 0,
         pallet_shielded_pool::types::BlockProofMode::MergeRoot => 1,
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 2,
     }
 }
 
@@ -3520,11 +3550,11 @@ mod tests {
     }
 
     #[test]
-    fn flat_mode_falls_back_to_merge_root_after_tx_proof_manifest_removal() {
+    fn flat_mode_falls_back_to_inline_tx_after_tx_proof_manifest_removal() {
         let _guard = set_block_proof_mode("flat");
         assert_eq!(
             ProverCoordinator::prepared_proof_mode_from_env(),
-            pallet_shielded_pool::types::BlockProofMode::MergeRoot
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
         );
     }
 
@@ -4080,7 +4110,41 @@ mod tests {
         let _mode = set_block_proof_mode("flat");
         assert_eq!(
             ProverCoordinator::prepared_proof_mode_from_env(),
-            pallet_shielded_pool::types::BlockProofMode::MergeRoot
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inline_tx_mode_does_not_publish_external_proving_work() {
+        let _mode = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(0x55);
+        let mut config = test_config();
+        config.workers = 0;
+        config.target_txs = 4;
+        config.queue_capacity = 1;
+        let best = Arc::new(move || (parent_hash, 9u64));
+        let pending = Arc::new(move |_max_txs: usize| {
+            (0..4usize)
+                .map(|idx| vec![(idx as u8).saturating_add(1)])
+                .collect()
+        });
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("raw inline bundle intentionally not built in this scheduler test".to_string())
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        assert!(
+            coordinator.get_work_package().is_none(),
+            "inline_tx mode must not publish flat fan-out work packages"
+        );
+        assert!(
+            coordinator.get_stage_work_package().is_none(),
+            "inline_tx mode must not publish recursive stage work packages"
         );
     }
 
@@ -4101,7 +4165,9 @@ mod tests {
             },
         );
         let root_aggregation = Arc::new(move |candidate_txs: Vec<Vec<u8>>| {
-            Ok(Some(synthetic_root_aggregation_work_data(candidate_txs.len())))
+            Ok(Some(synthetic_root_aggregation_work_data(
+                candidate_txs.len(),
+            )))
         });
         let finalize = Arc::new(
             move |_parent: H256,
@@ -4770,7 +4836,10 @@ mod tests {
             .map(|value| vec![value as u8])
             .collect::<Vec<_>>();
         let plans = ProverCoordinator::plan_recursive_stages(&candidate_txs);
-        let root = plans.last().and_then(|level| level.first()).expect("root plan");
+        let root = plans
+            .last()
+            .and_then(|level| level.first())
+            .expect("root plan");
         let parent_level = &plans[plans.len().saturating_sub(2)];
         assert!(parent_level
             .iter()

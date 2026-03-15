@@ -6,7 +6,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 Hegemon does **not** need “a recursive prover” in the abstract. It needs a shielded proving pipeline whose **real inclusion throughput increases when more prover power is added** on a chain with a **60-second block target**. The replacement engineer’s job is to restore a clean falsification loop, stop spending time on architectures that fail the live budget, and build the first proving unit that can honestly pass the acceptance gates.
 
-After this change, a new agent should be able to read this plan, inspect the named files, measure the current hot-path unit cost, and either (a) find a witness-free proof-byte microbatch that beats raw shipping locally on both bytes and warm-prove time, or (b) kill the candidate early with evidence before more remote rollout theater happens. Until that happens, the chain stays on raw tx-proof shipping plus `merge_root`.
+After this change, a new agent should be able to read this plan, inspect the named files, measure the current hot-path unit cost, and either (a) find a witness-free proof-byte microbatch that beats raw-active locally on both bytes and warm-prove time, or (b) kill the candidate early with evidence before more remote rollout theater happens. Until that happens, the chain stays on the explicit raw/inline-tx live lane: canonical tx proofs plus the parent-bound commitment proof, with `merge_root` kept behind an experimental switch only.
 
 ## Progress
 
@@ -32,7 +32,8 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - [x] (2026-03-14, later) Restored honest benchmark fixtures: `circuits-bench --raw-only` now reproduces the frozen release raw-proof fingerprint (`tx_trace_rows = 8192`, `fri_log_blowup_config = 4`, `fri_num_queries = 32`) and the raw lane is back within `49 B/tx` of the archived baseline at `k=1/2/4/8`.
 - [x] (2026-03-14, later) Fixed the benchmark anchor-history mismatch and the commitment AIR public-input offset bug so release-mode `merge_root_active` now completes cleanly at `k=1`.
 - [x] (2026-03-14, later) Archived the active-lane comparison under `output/prover-recovery/2026-03-14/active-lanes/`: `raw_active` beats `merge_root_active` already at `k=1`, and `merge_root_active(k=2)` was killed with explicit `65s` timed-stall evidence instead of being given more excuses.
-- [ ] Implement the explicit raw/inline-tx live lane (`service.rs`, `prover_coordinator.rs`, `consensus/src/proof.rs`) so production follows the benchmark verdict instead of still routing through `merge_root`.
+- [x] (2026-03-14, latest) Implemented the explicit raw/inline-tx live lane in `service.rs`, `prover_coordinator.rs`, `consensus/src/proof.rs`, and the runtime proof-mode enums. `HEGEMON_BLOCK_PROOF_MODE` now defaults to `inline_tx`, raw mode schedules only parent-bound finalize/commitment work, and consensus verifies ordered tx proofs directly plus the commitment proof when an `InlineTx` artifact is present.
+- [x] (2026-03-14, latest) Added proof-backed raw-active consensus tests for block acceptance, bad tx proof rejection, bad ordering rejection, commitment mismatch rejection, and duplicate/nullifier-conflict rejection, plus a coordinator regression test that `inline_tx` mode publishes no external proving work.
 - [ ] Re-run the acceptance matrix locally on the raw-active live lane and only then re-enable remote topology tests.
 
 ## Surprises & Discoveries
@@ -56,7 +57,7 @@ After this change, a new agent should be able to read this plan, inspect the nam
 - Observation: SuperNeo may still be intellectually aligned with the target shape, but in this repo it is not a narrow prototype. The hidden cost is exposing the exact Goldilocks-plus-extension tx-proof verifier relation, not just selecting a prettier folding paper.
   Evidence: `circuits/transaction-core/src/p3_air.rs` fixes the tx stack at `8192` rows and production tx proofs at `76` public inputs, while the Phase 1 memo could not reduce the required integration surface below a new proving-stack branch.
 - Observation: the lower half of this ExecPlan drifted behind reality after the wrapper and SuperNeo were killed. It still told future agents to build `circuits/tx-proof-manifest/` even though that lane is dead.
-  Evidence: the current live state is already "raw shipping plus `merge_root`," and the next actionable work is candidate benchmarking, generic parent-independent chunk identity preservation, and the acceptance matrix, not a wrapper resurrection.
+  Evidence: the current live state is the explicit raw/inline-tx lane plus the parent-bound commitment proof, and the next actionable work is candidate benchmarking, generic parent-independent chunk identity preservation, and the acceptance matrix, not a wrapper resurrection.
 - Observation: the recursive stage namespace had a real liveness bug. Root dependency ids were built from ad hoc labels (`leaf_verify`, `merge`) while worker dispatch and stage package ids used `leaf_batch_prove` / `merge_node_prove`. That mismatch could strand finalize work forever because the dependency ids did not actually name any executable child package.
   Evidence: `node/src/substrate/prover_coordinator.rs` now derives both dependency ids and worker packages from the same `StageType` enum.
 - Observation: the surviving local merge-root benchmark still does not pass cleanly even after the comparison surface was fixed. The first warm singleton run succeeds only as a structured failure: raw shipping verifies, while the merge-root lane reaches commitment proving and then fails because the synthetic tx proof's Merkle root is not in the local anchor history.
@@ -96,18 +97,18 @@ After this change, a new agent should be able to read this plan, inspect the nam
   Date/Author: 2026-03-14 / OpenAI assistant
 - Decision: Kill SuperNeo at Phase 1 and do not create a `proof-fold-spike` crate. Rationale: although proof bytes may plausibly beat raw shipping on paper, the actual tx-proof verifier relation is already expensive in the closest repo-local proxy, and the implementation surface is far too wide for an honest narrow prototype.
   Date/Author: 2026-03-14 / OpenAI assistant
-- Decision: Keep the production path on raw tx-proof shipping plus `merge_root` until a witness-free microbatch beats raw shipping locally on both proof bytes and warm-prove time. Rationale: a replacement that wins only one metric can still lose the 60-second block budget once serial tail is counted.
+- Decision: Keep the production path on raw-active (`inline_tx` + commitment) until a witness-free microbatch beats raw-active locally on both proof bytes and warm-prove time. Rationale: a replacement that wins only one metric can still lose the 60-second block budget once serial tail is counted.
   Date/Author: 2026-03-14 / OpenAI assistant
 - Decision: Treat `raw_active` as the real live baseline and kill `merge_root` as the low-TPS hot path. Rationale: once both lanes included the same parent-bound commitment proof, `merge_root` lost at `k=1` and failed to clear a `65s` wall-clock budget at `k=2`, so carrying it as the default low-TPS path would violate the benchmark gate.
   Date/Author: 2026-03-14 / OpenAI assistant
 
 ## Outcomes & Retrospective
 
-Updated outcome: the local falsification loop now did its job twice. First it killed the `tx-proof-manifest` wrapper after the warmed benchmark showed raw shipping wins. Then it killed the SuperNeo idea at Phase 1 after the archived baseline and current verifier-shape evidence showed that "fold the full tx-proof verifier" is not a narrow prototype in this repo. Consensus/import verification is panic-safe for tx proofs, flat-batch proofs, merge-root proofs, and commitment proofs, so a bad verifier panic becomes a block rejection instead of a node crash. The remaining open work is narrower and more concrete now: benchmark any replacement candidate locally against raw shipping, preserve parent-independent chunk identities for any future expensive work lane, and rerun the acceptance matrix only after a candidate clears the local gate. Until then, the project stays on raw shipping plus `merge_root`.
+Updated outcome: the local falsification loop now did its job twice. First it killed the `tx-proof-manifest` wrapper after the warmed benchmark showed raw shipping wins. Then it killed the SuperNeo idea at Phase 1 after the archived baseline and current verifier-shape evidence showed that "fold the full tx-proof verifier" is not a narrow prototype in this repo. Consensus/import verification is panic-safe for tx proofs, flat-batch proofs, merge-root proofs, and commitment proofs, so a bad verifier panic becomes a block rejection instead of a node crash. The remaining open work is narrower and more concrete now: benchmark any replacement candidate locally against raw-active, preserve parent-independent chunk identities for any future expensive work lane, and rerun the acceptance matrix only after a candidate clears the local gate. Until then, the project stays on the explicit raw/inline-tx lane plus the parent-bound commitment proof.
 
-Later update: the merge-root recovery work is now wired where it should have been all along. Stage planning and worker dispatch share one canonical stage namespace, root aggregation is separated cleanly from parent-bound bundle finalization, reusable expensive artifacts are keyed without the parent, and the benchmark harness defaults to the real live comparison surface instead of the dead wrapper lane. That is real progress, but not a throughput win yet: the current local warm bench still fails at the commitment stage because the synthetic benchmark proofs do not line up with anchor-history expectations. So the honest status remains unchanged at the product level: raw shipping plus `merge_root` stays live, replacement candidates still need to beat raw shipping locally, and the acceptance matrix stays blocked until merge-root itself measures cleanly.
+Later update: the merge-root recovery work is now wired where it should have been all along. Stage planning and worker dispatch share one canonical stage namespace, root aggregation is separated cleanly from parent-bound bundle finalization, reusable expensive artifacts are keyed without the parent, and the benchmark harness defaults to the real live comparison surface instead of the dead wrapper lane. That is real progress, but it did not rescue merge-root: once the benchmark fixtures were honest, the low-TPS verdict still favored raw-active, so merge-root was demoted to an experimental lane and the acceptance matrix moved to the raw/inline-tx path.
 
-Latest update: the benchmark-honesty blockers from the previous handoff are resolved and the correct live comparator now exists. `raw_active` is the honest local baseline because it includes canonical tx proofs plus the same commitment proof path that any live block must pay. Against that surface, merge-root lost immediately: `k=1` is already worse on bytes and active-path latency, and `k=2` was killed with explicit `65s` wall-clock stall evidence. The benchmark verdict is therefore clear even though production code has not yet been switched over: merge-root is dead as the low-TPS hot path, and the remaining implementation work is to wire an explicit raw/inline-tx live lane and run the acceptance matrix on that path.
+Latest update: the benchmark-honesty blockers from the previous handoff are resolved and the correct live comparator now exists. `raw_active` is the honest local baseline because it includes canonical tx proofs plus the same commitment proof path that any live block must pay. Against that surface, merge-root lost immediately: `k=1` is already worse on bytes and active-path latency, and `k=2` was killed with explicit `65s` wall-clock stall evidence. Production now follows that verdict: the explicit `inline_tx` lane is the default live mode, the coordinator does not publish recursive or flat fan-out work in that mode, and consensus/import verifies ordered tx proofs directly plus the commitment proof. The next honest milestone is no longer “switch to raw”; it is “run the acceptance matrix on raw-active and then decide whether remote topology is worth the spend.”
 
 ## Context and Orientation
 
@@ -148,7 +149,7 @@ Terms used in this plan:
 4. Do not ask recursion to save a proving primitive whose leaf jobs are already too large.
 5. Do not hand private witness material to a supposed permissionless prover market.
 6. Do not mix deployment churn with architectural uncertainty. First prove the unit economics. Then ship.
-7. Do not move the default live path off raw tx-proof shipping plus `merge_root` until a witness-free microbatch beats raw shipping on both bytes and warm-prove time.
+7. Do not move the default live path off raw-active (`inline_tx` + commitment) until a witness-free microbatch beats it on both bytes and warm-prove time.
 
 ## Plan of Work
 
@@ -230,7 +231,7 @@ Acceptance for Milestone 3:
 
 Only after Milestones 1–3 are complete should you touch `hegemon-ovh` or `hegemon-prover` again.
 
-The local and then remote acceptance matrix is mandatory, but only after a replacement candidate survives Milestone 2. Until then, stay on raw shipping plus `merge_root`.
+The local and then remote acceptance matrix is mandatory, but only after a replacement candidate survives Milestone 2. Until then, stay on raw-active (`inline_tx` + commitment).
 
 - `tx4 / pw2` must include in under 60 seconds.
 - `tx32 / pw16` must achieve strictly higher real inclusion TPS than `tx32 / pw1`.
@@ -279,7 +280,7 @@ The replacement architecture is accepted only if all of the following are true:
 3. `tx32 / pw16` has strictly higher real inclusion TPS than `tx32 / pw1`.
 4. The proving primitive used for the public scaling lane does not require private witness material.
 5. Parent churn only invalidates the cheap final commitment stage, not the expensive chunk proofs.
-6. If no witness-free candidate beats raw shipping on both bytes and warm-prove time, the node remains on raw tx-proof shipping plus `merge_root`.
+6. If no witness-free candidate beats raw-active on both bytes and warm-prove time, the node remains on raw-active (`inline_tx` + commitment).
 
 Useful negative acceptance rule:
 
@@ -291,7 +292,7 @@ This plan is safe to execute multiple times because it starts with local reading
 
 Recovery rules:
 
-- Keep the current raw-shipping and `merge_root` path as the default until a replacement path is validated.
+- Keep the current raw-active (`inline_tx` + commitment) path as the default until a replacement path is validated.
 - Do not delete the current verification path until the replacement path passes the acceptance matrix.
 - If a benchmark result invalidates the new design, archive the benchmark output under a deterministic path such as `output/prover-recovery/<date>/` and stop. The output is valuable even if the design dies.
 
@@ -334,4 +335,4 @@ Revision note (2026-03-14, later): Updated after repairing the dead flat tx-proo
 
 Revision note (2026-03-14, 18:10Z): Updated after freezing the raw-shipping baseline under `output/prover-recovery/2026-03-14/raw-baseline/` and writing the mandatory SuperNeo feasibility memo under `output/prover-recovery/2026-03-14/superneo-feasibility/summary.md`. The purpose of this revision is to preserve the exact comparison target and record the Phase 1 no-go decision before any successor agent wastes time building a folding spike that does not clear the local gate.
 
-Revision note (2026-03-14, later): Updated to remove stale "build tx-proof-manifest" instructions from the remaining milestones. The purpose of this revision is to align the plan with the current recovery policy: benchmark any replacement candidate locally first, preserve parent-independent chunk identities for any surviving expensive lane, rerun the acceptance matrix only after a local win, and otherwise stay on raw tx-proof shipping plus `merge_root`.
+Revision note (2026-03-14, later): Updated to remove stale "build tx-proof-manifest" instructions from the remaining milestones. The purpose of this revision is to align the plan with the current recovery policy: benchmark any replacement candidate locally first, preserve parent-independent chunk identities for any surviving expensive lane, rerun the acceptance matrix only after a local win, and otherwise stay on raw-active (`inline_tx` + commitment).

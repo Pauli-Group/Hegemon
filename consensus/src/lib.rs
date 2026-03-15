@@ -4,8 +4,8 @@ pub mod bft;
 pub mod commitment_tree;
 pub mod error;
 pub mod header;
-pub mod mining;
 pub mod merge_root_layout;
+pub mod mining;
 pub mod nullifier;
 pub mod pow;
 pub mod proof;
@@ -34,11 +34,11 @@ pub use commitment_tree::{
 };
 pub use error::{ConsensusError, ProofError, SlashingEvidence};
 pub use header::{BlockHeader, ConsensusMode, PowSeal};
-pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
 pub use merge_root_layout::{
     merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
     merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
 };
+pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use proof::{

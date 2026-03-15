@@ -327,6 +327,7 @@ impl ProverRpc {
             ),
             tx_count: announcement.tx_count,
             proof_mode: match announcement.proof_mode {
+                consensus::ProvenBatchMode::InlineTx => "inline_tx".to_string(),
                 consensus::ProvenBatchMode::FlatBatches => "flat_batches".to_string(),
                 consensus::ProvenBatchMode::MergeRoot => "merge_root".to_string(),
             },
@@ -428,14 +429,14 @@ impl ProverApiServer for ProverRpc {
             inflight_jobs: status.inflight_jobs,
             prepared_bundles: status.prepared_bundles,
             latest_work_package: status.latest_work_package,
-                stage_queue: status
-                    .stage_queue
-                    .into_iter()
-                    .map(|stage| StageQueueStatusResponse {
+            stage_queue: status
+                .stage_queue
+                .into_iter()
+                .map(|stage| StageQueueStatusResponse {
                     stage_type: stage.stage_type.to_string(),
-                        level: stage.level,
-                        queued_jobs: stage.queued_jobs,
-                        inflight_jobs: stage.inflight_jobs,
+                    level: stage.level,
+                    queued_jobs: stage.queued_jobs,
+                    inflight_jobs: stage.inflight_jobs,
                 })
                 .collect(),
         })
@@ -515,9 +516,7 @@ fn parse_bytes(value: &str) -> Result<Vec<u8>, ErrorObjectOwned> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::substrate::prover_coordinator::{
-        ProverCoordinator, ProverCoordinatorConfig,
-    };
+    use crate::substrate::prover_coordinator::{ProverCoordinator, ProverCoordinatorConfig};
     use codec::Encode;
     use sp_core::H256;
     use std::sync::Arc;
@@ -570,7 +569,8 @@ mod tests {
             },
         );
         let root_aggregation = Arc::new(move |_candidate_txs: Vec<Vec<u8>>| {
-            Ok(Some(crate::substrate::prover_coordinator::RootAggregationWorkData {
+            Ok(Some(
+                crate::substrate::prover_coordinator::RootAggregationWorkData {
                     statement_hashes: vec![[7u8; 48]],
                     tx_proofs: vec![TransactionProof {
                         public_inputs: TransactionPublicInputs::default(),
@@ -583,7 +583,8 @@ mod tests {
                     tx_statements_commitment: [5u8; 48],
                     tree_levels: 1,
                     root_level: 0,
-                }))
+                },
+            ))
         });
         let finalize = Arc::new(
             move |parent_hash: H256,

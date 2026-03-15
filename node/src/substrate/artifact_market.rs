@@ -16,6 +16,9 @@ pub fn artifact_announcement(
         tx_statements_commitment: artifact.tx_statements_commitment,
         tx_count: artifact.tx_count,
         proof_mode: match artifact.proof_mode {
+            pallet_shielded_pool::types::BlockProofMode::InlineTx => {
+                consensus::ProvenBatchMode::InlineTx
+            }
             pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
                 consensus::ProvenBatchMode::FlatBatches
             }

@@ -21,8 +21,6 @@ use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use crypto::hashes::blake3_384;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
-#[cfg(test)]
-use tx_proof_manifest::TxProofManifestPublicInputs;
 use rayon::prelude::*;
 use std::any::Any;
 use std::collections::BTreeSet;
@@ -32,6 +30,8 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify as verify_transaction_proof;
+#[cfg(test)]
+use tx_proof_manifest::TxProofManifestPublicInputs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentNullifierLists {
@@ -185,11 +185,7 @@ fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
     }
 }
 
-fn run_verifier<T, E, F, M>(
-    context: String,
-    verifier: F,
-    map_err: M,
-) -> Result<T, ProofError>
+fn run_verifier<T, E, F, M>(context: String, verifier: F, map_err: M) -> Result<T, ProofError>
 where
     F: FnOnce() -> Result<T, E>,
     M: FnOnce(E) -> ProofError,
@@ -524,6 +520,7 @@ impl ProofVerifier for ParallelProofVerifier {
         let mut aggregation_cache_prewarm_total_ms = None;
         let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
             match proven_batch.mode {
+                ProvenBatchMode::InlineTx => (false, 0u128, 0u128),
                 ProvenBatchMode::FlatBatches => {
                     let statement_bindings = resolved_statement_bindings
                         .as_deref()
@@ -570,9 +567,8 @@ impl ProofVerifier for ParallelProofVerifier {
                         )));
                     }
                     let expected_leaf_manifest =
-                        merge_root_leaf_manifest_commitment(&statement_hashes).map_err(
-                            ProofError::AggregationProofInputsMismatch,
-                        )?;
+                        merge_root_leaf_manifest_commitment(&statement_hashes)
+                            .map_err(ProofError::AggregationProofInputsMismatch)?;
                     if merge_root.metadata.leaf_manifest_commitment != expected_leaf_manifest {
                         return Err(ProofError::ProvenBatchBindingMismatch(
                             "merge-root leaf_manifest_commitment mismatch".to_string(),
@@ -793,6 +789,7 @@ fn commitment_from_statement_bindings(
 
 fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
     match batch.mode {
+        ProvenBatchMode::InlineTx => 0,
         ProvenBatchMode::FlatBatches => {
             batch.flat_batches.iter().map(|item| item.proof.len()).sum()
         }
@@ -806,6 +803,7 @@ fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
 
 fn total_batch_proof_uncompressed_bytes(batch: &crate::types::ProvenBatch) -> usize {
     match batch.mode {
+        ProvenBatchMode::InlineTx => 0,
         ProvenBatchMode::FlatBatches => {
             batch.flat_batches.iter().map(|item| item.proof.len()).sum()
         }
@@ -1360,9 +1358,9 @@ fn verify_and_apply_tree_transition_without_anchors(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tx_proof_manifest::TxProofManifestPublicInputs;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
     use transaction_circuit::hashing_pq::bytes48_to_felts;
+    use tx_proof_manifest::TxProofManifestPublicInputs;
 
     fn tx_with_commitments(commitments: Vec<[u8; 48]>) -> crate::types::Transaction {
         crate::types::Transaction::new(

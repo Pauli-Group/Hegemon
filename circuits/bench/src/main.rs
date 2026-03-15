@@ -12,11 +12,11 @@ use batch_circuit::{prewarm_batch_verifier_cache, verify_batch_proof, BatchTrans
 use block_circuit::{verify_block_commitment, CommitmentBlockProver};
 use clap::Parser;
 use consensus::{
-    merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
-    merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
-    verify_aggregation_proof_with_metrics, warm_aggregation_cache_from_proof_bytes,
-    FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
-    encode_flat_batch_proof_bytes_with_kind,
+    encode_flat_batch_proof_bytes_with_kind, merge_root_arity_from_env,
+    merge_root_leaf_fan_in_from_env, merge_root_leaf_manifest_commitment,
+    merge_root_tree_levels_for_tx_count, verify_aggregation_proof_with_metrics,
+    warm_aggregation_cache_from_proof_bytes, FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
+    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
@@ -477,7 +477,10 @@ fn benchmark_lane_comparisons(
         if batch_size == 0 {
             comparisons.push(LaneComparison {
                 batch_size,
-                raw_shipping: LaneMetrics::failed(batch_size, "batch_size must be greater than zero"),
+                raw_shipping: LaneMetrics::failed(
+                    batch_size,
+                    "batch_size must be greater than zero",
+                ),
                 raw_active: ActiveLaneMetrics::failed(
                     batch_size,
                     "batch_size must be greater than zero",
@@ -524,12 +527,7 @@ fn benchmark_lane_comparisons(
             raw_active: if raw_only {
                 ActiveLaneMetrics::failed(batch_size, "skipped by --raw-only")
             } else {
-                benchmark_raw_active_lane(
-                    proofs,
-                    parent_tree,
-                    verifying_key,
-                    batch_size,
-                )?
+                benchmark_raw_active_lane(proofs, parent_tree, verifying_key, batch_size)?
             },
             merge_root_active: if raw_only {
                 ActiveLaneMetrics::failed_with_layout(
@@ -546,12 +544,7 @@ fn benchmark_lane_comparisons(
                     "skipped by --skip-merge-root",
                 )
             } else {
-                benchmark_merge_root_lane(
-                    proofs,
-                    parent_tree,
-                    batch_size,
-                    warm_mode,
-                )?
+                benchmark_merge_root_lane(proofs, parent_tree, batch_size, warm_mode)?
             },
             dead_lanes,
         });
@@ -641,7 +634,10 @@ fn benchmark_raw_active_lane(
         Ok(Err(err)) => Ok(ActiveLaneMetrics::failed(batch_size, err.to_string())),
         Err(payload) => Ok(ActiveLaneMetrics::failed(
             batch_size,
-            format!("raw active path panicked: {}", panic_payload_to_string(payload)),
+            format!(
+                "raw active path panicked: {}",
+                panic_payload_to_string(payload)
+            ),
         )),
     }
 }
@@ -667,13 +663,9 @@ fn benchmark_raw_active_lane_inner(
     let mut commitment_verify_ns = 0u128;
     let mut commitment_proof_bytes = 0usize;
     for chunk in &mut chunks {
-        tx_proof_bytes =
-            tx_proof_bytes.saturating_add(serialized_tx_proof_chunk_bytes(chunk)?);
-        tx_verify_ns = tx_verify_ns.saturating_add(verify_tx_proof_chunk(
-            chunk,
-            verifying_key,
-            "raw active",
-        )?);
+        tx_proof_bytes = tx_proof_bytes.saturating_add(serialized_tx_proof_chunk_bytes(chunk)?);
+        tx_verify_ns =
+            tx_verify_ns.saturating_add(verify_tx_proof_chunk(chunk, verifying_key, "raw active")?);
         let (prove_ns, verify_ns, proof_bytes) =
             prove_and_verify_commitment_chunk(parent_tree, chunk)?;
         commitment_prove_ns = commitment_prove_ns.saturating_add(prove_ns);
@@ -859,9 +851,13 @@ fn benchmark_merge_root_lane_inner(
                 let mut next_level = Vec::with_capacity(next_width);
                 for group in current_level_payloads.chunks(merge_arity) {
                     let started = Instant::now();
-                    let payload =
-                        prove_merge_aggregation(group, tx_statements_commitment, tree_levels, level)
-                            .map_err(|err| anyhow!("merge aggregation proof generation failed: {err}"))?;
+                    let payload = prove_merge_aggregation(
+                        group,
+                        tx_statements_commitment,
+                        tree_levels,
+                        level,
+                    )
+                    .map_err(|err| anyhow!("merge aggregation proof generation failed: {err}"))?;
                     let elapsed_ns = started.elapsed().as_nanos();
                     if is_root_level {
                         root_prove_ns = root_prove_ns.saturating_add(elapsed_ns);
@@ -889,8 +885,8 @@ fn benchmark_merge_root_lane_inner(
         .map_err(|err| anyhow!("merge-root cache prewarm failed: {err}"))?;
         agg_cache_prewarm_total_ns =
             agg_cache_prewarm_total_ns.saturating_add(prewarm_started.elapsed().as_nanos());
-        agg_cache_build_ns = agg_cache_build_ns
-            .saturating_add(warmup.cache_build_ms.saturating_mul(1_000_000));
+        agg_cache_build_ns =
+            agg_cache_build_ns.saturating_add(warmup.cache_build_ms.saturating_mul(1_000_000));
         agg_cache_hit &= warmup.cache_hit;
 
         let verify_metrics = verify_aggregation_proof_with_metrics(
@@ -973,9 +969,8 @@ fn verify_tx_proof_chunk(
     let mut verify_ns = 0u128;
     for (index, proof) in chunk.iter().enumerate() {
         let verify_started = Instant::now();
-        let verification = panic::catch_unwind(AssertUnwindSafe(|| {
-            proof::verify(proof, verifying_key)
-        }));
+        let verification =
+            panic::catch_unwind(AssertUnwindSafe(|| proof::verify(proof, verifying_key)));
         match verification {
             Ok(Ok(report)) => {
                 if !report.verified {
@@ -1049,9 +1044,8 @@ fn benchmark_tx_proof_manifest_lane(
 
     for chunk in &mut chunks {
         let build_started = Instant::now();
-        let build_result = panic::catch_unwind(AssertUnwindSafe(|| {
-            build_transaction_proof_manifest(chunk)
-        }));
+        let build_result =
+            panic::catch_unwind(AssertUnwindSafe(|| build_transaction_proof_manifest(chunk)));
         let (manifest_bytes, public_inputs) = match build_result {
             Ok(Ok(result)) => {
                 build_time += build_started.elapsed();
@@ -1163,9 +1157,8 @@ fn benchmark_legacy_witness_batch_stark_lane(
         }
 
         let prove_started = Instant::now();
-        let prove_result = panic::catch_unwind(AssertUnwindSafe(|| {
-            batch_prover.prove_batch(&witnesses)
-        }));
+        let prove_result =
+            panic::catch_unwind(AssertUnwindSafe(|| batch_prover.prove_batch(&witnesses)));
         let (batch_proof, batch_public_inputs) = match prove_result {
             Ok(Ok(result)) => {
                 prove_time += prove_started.elapsed();
@@ -1289,9 +1282,9 @@ fn run_benchmark(
                 smoke_transaction_witness(idx as u8).context("build smoke transaction witness")?
             } else {
                 chain_synthetic_witness(
-                    anchor_history_tree
-                        .as_mut()
-                        .expect("shared anchor-history tree available when benchmarking transactions"),
+                    anchor_history_tree.as_mut().expect(
+                        "shared anchor-history tree available when benchmarking transactions",
+                    ),
                     &mut rng,
                     idx as u64,
                 )
@@ -1776,7 +1769,10 @@ mod tests {
     use block_circuit::BlockError;
     use transaction_circuit::keys::generate_keys;
 
-    fn sample_anchor_history_fixture() -> (CommitmentTree, Vec<transaction_circuit::proof::TransactionProof>) {
+    fn sample_anchor_history_fixture() -> (
+        CommitmentTree,
+        Vec<transaction_circuit::proof::TransactionProof>,
+    ) {
         let (proving_key, _) = generate_keys();
         let witness = smoke_transaction_witness(7).expect("smoke witness");
         let mut tree = CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("anchor tree");
@@ -1795,7 +1791,10 @@ mod tests {
         let err = CommitmentBlockProver::new()
             .prove_block_commitment_with_tree(&mut wrong_tree, &proofs, [0u8; 48])
             .expect_err("missing anchor root should reject");
-        assert!(matches!(err, BlockError::UnexpectedMerkleRoot { index: 0, .. }));
+        assert!(matches!(
+            err,
+            BlockError::UnexpectedMerkleRoot { index: 0, .. }
+        ));
     }
 
     #[test]

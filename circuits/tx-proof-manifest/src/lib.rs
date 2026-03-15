@@ -183,8 +183,8 @@ pub fn build_tx_proof_manifest(
     let proof = TxProofManifest {
         entries: entries.to_vec(),
     };
-    let proof_bytes =
-        bincode::serialize(&proof).map_err(|err| TxProofManifestError::ProofEncode(err.to_string()))?;
+    let proof_bytes = bincode::serialize(&proof)
+        .map_err(|err| TxProofManifestError::ProofEncode(err.to_string()))?;
     Ok((proof_bytes, public_inputs))
 }
 
@@ -361,8 +361,8 @@ fn decode_commitments(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_transaction_proof_manifest, verify_tx_proof_manifest, manifest_entries_from_transaction_proofs,
-        TxProofManifestPublicInputs,
+        build_transaction_proof_manifest, manifest_entries_from_transaction_proofs,
+        verify_tx_proof_manifest, TxProofManifestPublicInputs,
     };
     use transaction_circuit::{
         generate_keys,
@@ -463,7 +463,8 @@ mod tests {
         let (proof_bytes, public_inputs) =
             build_transaction_proof_manifest(&proofs).expect("tx-proof-manifest");
         let decoded_values = public_inputs.to_values().expect("values");
-        let round_trip = TxProofManifestPublicInputs::try_from_values(&decoded_values).expect("decode");
+        let round_trip =
+            TxProofManifestPublicInputs::try_from_values(&decoded_values).expect("decode");
         verify_tx_proof_manifest(&proof_bytes, &round_trip).expect("verify");
         assert_eq!(round_trip.batch_size, 1);
     }

@@ -2108,13 +2108,23 @@ pub mod pallet {
                             .sum::<usize>()
                 })
                 .unwrap_or(0);
-            bundle.commitment_proof.data.len() + flat_batches_bytes + merge_root_bytes
+            let aggregation_bytes = match bundle.proof_mode {
+                types::BlockProofMode::InlineTx => 0,
+                types::BlockProofMode::FlatBatches => flat_batches_bytes,
+                types::BlockProofMode::MergeRoot => merge_root_bytes,
+            };
+            bundle.commitment_proof.data.len() + aggregation_bytes
         }
 
         fn validate_block_proof_bundle_mode(
             bundle: &types::BlockProofBundle,
         ) -> Result<(), Error<T>> {
             match bundle.proof_mode {
+                types::BlockProofMode::InlineTx => {
+                    if !bundle.flat_batches.is_empty() || bundle.merge_root.is_some() {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                }
                 types::BlockProofMode::FlatBatches => {
                     if bundle.flat_batches.is_empty()
                         || bundle.flat_batches.len() > types::MAX_FLAT_BATCHES_PER_BLOCK

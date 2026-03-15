@@ -210,6 +210,8 @@ pub type ProverCompensationClaim = ArtifactClaim;
     MaxEncodedLen,
 )]
 pub enum BlockProofMode {
+    /// Verify ordered inline tx proofs directly plus the commitment proof.
+    InlineTx,
     /// Verify a deterministic set of flat proof batches.
     FlatBatches,
     /// Verify a recursion root proof over leaf batches.

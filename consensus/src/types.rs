@@ -223,6 +223,7 @@ impl Default for ProofVerificationMode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProvenBatchMode {
+    InlineTx,
     FlatBatches,
     MergeRoot,
 }

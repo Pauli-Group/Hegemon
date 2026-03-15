@@ -146,8 +146,7 @@ use consensus::{
     encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
     merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
     merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
-    ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal,
-    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
+    ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
@@ -190,7 +189,6 @@ use wallet::address::ShieldedAddress;
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
-use tx_proof_manifest::{build_transaction_proof_manifest, TxProofManifestPublicInputs};
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
@@ -200,6 +198,7 @@ use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{
     BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs,
 };
+use tx_proof_manifest::{build_transaction_proof_manifest, TxProofManifestPublicInputs};
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
@@ -2505,7 +2504,9 @@ fn finalize_merge_root_bundle_from_artifact(
         metadata: pallet_shielded_pool::types::MergeRootMetadata {
             tree_arity: merge_root_arity_from_env(),
             tree_levels: merge_root_tree_levels_for_tx_count(candidate_txs.len()),
-            leaf_count: candidate_txs.len().div_ceil(merge_root_leaf_fan_in_from_env()) as u32,
+            leaf_count: candidate_txs
+                .len()
+                .div_ceil(merge_root_leaf_fan_in_from_env()) as u32,
             leaf_manifest_commitment: merge_root_leaf_manifest_commitment(
                 &finalize_inputs.statement_hashes,
             )?,
@@ -2608,21 +2609,39 @@ fn largest_power_of_two_at_most(value: usize) -> usize {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PreparedProofMode {
+    InlineTx,
+    #[allow(dead_code)]
     FlatBatches,
     MergeRoot,
 }
 
 fn prepared_proof_mode_from_env() -> PreparedProofMode {
     let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
+    if raw.is_empty()
+        || raw.eq_ignore_ascii_case("inline_tx")
+        || raw.eq_ignore_ascii_case("inline")
+        || raw.eq_ignore_ascii_case("raw")
+        || raw.eq_ignore_ascii_case("raw_active")
+    {
+        return PreparedProofMode::InlineTx;
+    }
+    if raw.eq_ignore_ascii_case("merge_root") || raw.eq_ignore_ascii_case("merge-root") {
+        return PreparedProofMode::MergeRoot;
+    }
     if raw.eq_ignore_ascii_case("flat")
         || raw.eq_ignore_ascii_case("flat_batches")
         || raw.eq_ignore_ascii_case("flatbatches")
     {
         tracing::warn!(
-            "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to merge_root"
+            "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to inline_tx"
         );
+        return PreparedProofMode::InlineTx;
     }
-    PreparedProofMode::MergeRoot
+    tracing::warn!(
+        mode = raw,
+        "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
+    );
+    PreparedProofMode::InlineTx
 }
 
 #[allow(dead_code)]
@@ -2685,11 +2704,15 @@ fn build_flat_batch_proofs_from_materials(
                 let payload = decode_flat_batch_proof_bytes(&encoded)
                     .map_err(|err| format!("tx-proof-manifest roundtrip decode failed: {err}"))?;
                 let roundtrip_public_inputs =
-                    TxProofManifestPublicInputs::try_from_values(&payload.batch_public_values).map_err(
-                        |err| format!("tx-proof-manifest public input roundtrip decode failed: {err}"),
-                    )?;
-                tx_proof_manifest::verify_tx_proof_manifest(&payload.batch_proof, &roundtrip_public_inputs)
-                    .map_err(|err| format!("tx-proof-manifest roundtrip verification failed: {err}"))?;
+                    TxProofManifestPublicInputs::try_from_values(&payload.batch_public_values)
+                        .map_err(|err| {
+                            format!("tx-proof-manifest public input roundtrip decode failed: {err}")
+                        })?;
+                tx_proof_manifest::verify_tx_proof_manifest(
+                    &payload.batch_proof,
+                    &roundtrip_public_inputs,
+                )
+                .map_err(|err| format!("tx-proof-manifest roundtrip verification failed: {err}"))?;
             }
             Ok(encoded)
         })?;
@@ -2748,6 +2771,7 @@ fn build_merge_root_proof_from_materials(
 
 #[derive(Clone, Debug)]
 enum PreparedAggregationArtifacts {
+    InlineTx,
     #[allow(dead_code)]
     Flat(Vec<pallet_shielded_pool::types::BatchProofItem>),
     Merge(pallet_shielded_pool::types::MergeRootProofPayload),
@@ -2908,6 +2932,7 @@ fn block_proof_payload_aggregation_bytes(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> usize {
     match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 0,
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
             .flat_batches
             .iter()
@@ -2925,6 +2950,7 @@ fn block_proof_payload_aggregation_uncompressed_bytes(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> usize {
     match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 0,
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
             .flat_batches
             .iter()
@@ -3067,6 +3093,7 @@ fn prepare_block_proof_bundle(
                 Ok(cached)
             } else {
                 let built = match selected_mode {
+                    PreparedProofMode::InlineTx => Ok(PreparedAggregationArtifacts::InlineTx),
                     PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
                         aggregation_proofs,
                         aggregation_bindings,
@@ -3157,12 +3184,17 @@ fn prepare_block_proof_bundle(
         commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
             commitment_proof.proof_bytes.clone(),
         ),
-        proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+        proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
         flat_batches: Vec::new(),
         merge_root: None,
         artifact_claim: None,
     };
     match aggregation_artifacts {
+        PreparedAggregationArtifacts::InlineTx => {
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::InlineTx;
+            payload.flat_batches.clear();
+            payload.merge_root = None;
+        }
         PreparedAggregationArtifacts::Flat(flat_batches) => {
             if flat_batches.is_empty() {
                 return Err("candidate tx set has no flat batch proof material".to_string());
@@ -3705,17 +3737,12 @@ fn verify_proof_carrying_block(
             Some((_, ShieldedFamilyAction::EnableAggregationMode))
         )
     });
-    let verification_mode = if aggregation_mode_enabled
+    let self_contained_requested = aggregation_mode_enabled
         && matches!(
             proof_policy,
             pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
         )
-        && proven_batch_payload.is_some()
-    {
-        consensus::types::ProofVerificationMode::SelfContainedAggregation
-    } else {
-        consensus::types::ProofVerificationMode::InlineRequired
-    };
+        && proven_batch_payload.is_some();
 
     if transactions.is_empty() {
         if proven_batch_payload.is_some() {
@@ -3811,6 +3838,15 @@ fn verify_proof_carrying_block(
             }
         }
         let aggregation_payload_bytes = block_proof_payload_aggregation_bytes(&payload);
+        let verification_mode = if self_contained_requested
+            && !matches!(
+                payload.proof_mode,
+                pallet_shielded_pool::types::BlockProofMode::InlineTx
+            ) {
+            consensus::types::ProofVerificationMode::SelfContainedAggregation
+        } else {
+            consensus::types::ProofVerificationMode::InlineRequired
+        };
         if matches!(
             verification_mode,
             consensus::types::ProofVerificationMode::SelfContainedAggregation
@@ -3864,6 +3900,15 @@ fn verify_proof_carrying_block(
             da_params,
             Some(payload.da_root),
         )?;
+        if matches!(
+            payload.proof_mode,
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+        ) && transaction_proofs.is_none()
+        {
+            return Err(
+                "inline_tx candidate artifact requires inline transaction proof bytes".to_string(),
+            );
+        }
         let transaction_proofs = if matches!(
             verification_mode,
             consensus::types::ProofVerificationMode::SelfContainedAggregation
@@ -3908,6 +3953,9 @@ fn verify_proof_carrying_block(
                 da_chunk_count: payload.da_chunk_count,
                 commitment_proof: commitment_proof.clone(),
                 mode: match payload.proof_mode {
+                    pallet_shielded_pool::types::BlockProofMode::InlineTx => {
+                        consensus::types::ProvenBatchMode::InlineTx
+                    }
                     pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
                         consensus::types::ProvenBatchMode::FlatBatches
                     }
@@ -3995,7 +4043,7 @@ fn verify_proof_carrying_block(
         da_policy = ?da_policy,
         proof_policy = ?proof_policy,
         aggregation_mode_enabled,
-        verification_mode = ?verification_mode,
+        verification_mode = ?consensus::types::ProofVerificationMode::InlineRequired,
         "block_payload_size_metrics"
     );
 
@@ -4952,10 +5000,12 @@ pub fn wire_block_builder_api(
         }
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
+        let selected_proof_mode = prepared_proof_mode_from_env();
+        let merge_root_mode_enabled = matches!(selected_proof_mode, PreparedProofMode::MergeRoot);
         let mut defer_proofless_until_ready_batch = false;
         let mut aggregation_mode_required_for_block = false;
         let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
-        if aggregation_proofs_enabled {
+        if aggregation_proofs_enabled && merge_root_mode_enabled {
             let mut preview_extrinsics = Vec::new();
             for ext_bytes in &applied {
                 if let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
@@ -5053,7 +5103,7 @@ pub fn wire_block_builder_api(
             }
         }
 
-        if aggregation_proofs_enabled && aggregation_mode_required_for_block {
+        if aggregation_proofs_enabled && merge_root_mode_enabled && aggregation_mode_required_for_block {
             let enable_extrinsic = kernel_shielded_extrinsic(
                 ACTION_ENABLE_AGGREGATION_MODE,
                 Vec::new(),
@@ -5108,7 +5158,16 @@ pub fn wire_block_builder_api(
                         );
                         continue;
                     }
+                    if !merge_root_mode_enabled && is_proofless_sidecar {
+                        tracing::warn!(
+                            block_number,
+                            mode = ?selected_proof_mode,
+                            "Skipping proofless shielded transfer: raw inline_tx mode requires canonical inline tx proofs"
+                        );
+                        continue;
+                    }
                     if aggregation_proofs_enabled
+                        && merge_root_mode_enabled
                         && defer_proofless_until_ready_batch
                         && is_proofless_sidecar
                     {
@@ -5177,7 +5236,7 @@ pub fn wire_block_builder_api(
             }
         }
 
-        if aggregation_proofs_enabled && deferred_proofless_sidecar_count > 0 {
+        if aggregation_proofs_enabled && merge_root_mode_enabled && deferred_proofless_sidecar_count > 0 {
             tracing::info!(
                 block_number,
                 deferred_proofless_sidecar_count,
@@ -5241,7 +5300,9 @@ pub fn wire_block_builder_api(
             .map(|binding| binding.statement_hash)
             .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
-        let requires_proven_batch = aggregation_mode_enabled && shielded_tx_count > 0;
+        let requires_proven_batch = shielded_tx_count > 0
+            && (matches!(selected_proof_mode, PreparedProofMode::InlineTx)
+                || aggregation_mode_enabled);
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ArtifactClaim> = None;
         if requires_proven_batch {
             let tx_statements_commitment =
@@ -9597,6 +9658,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 tx_statements_commitment: announcement.tx_statements_commitment,
                                 tx_count: announcement.tx_count,
                                 proof_mode: match announcement.proof_mode {
+                                    consensus::ProvenBatchMode::InlineTx => {
+                                        pallet_shielded_pool::types::BlockProofMode::InlineTx
+                                    }
                                     consensus::ProvenBatchMode::FlatBatches => {
                                         pallet_shielded_pool::types::BlockProofMode::FlatBatches
                                     }
@@ -10358,9 +10422,9 @@ mod tests {
     }
 
     #[test]
-    fn flat_mode_falls_back_to_merge_root_after_tx_proof_manifest_removal() {
+    fn flat_mode_falls_back_to_inline_tx_after_tx_proof_manifest_removal() {
         let _guard = set_block_proof_mode("flat");
-        assert_eq!(prepared_proof_mode_from_env(), PreparedProofMode::MergeRoot);
+        assert_eq!(prepared_proof_mode_from_env(), PreparedProofMode::InlineTx);
     }
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
