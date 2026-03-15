@@ -1,0 +1,136 @@
+{
+  "blocks": {
+    "count_until_full_inclusion": 1,
+    "final_block_number": 13,
+    "inclusion_start_block": 12,
+    "missed_target_block": false,
+    "progression": [
+      {
+        "aggregation_proof_bytes": 0,
+        "aggregation_verify_ms": 0,
+        "block_number": 13,
+        "commitment_proof_bytes": 228076,
+        "commitment_verify_ms": 42,
+        "proven_batch_bytes": 228076,
+        "proven_batch_present": true,
+        "total_verify_ms": 59,
+        "tx_count": 4,
+        "tx_verify_ms": 16,
+        "verify_ms": 59
+      }
+    ],
+    "proven_batch_blocks": 1
+  },
+  "config": {
+    "batch_queue_capacity": 4,
+    "profile": "safe",
+    "proof_mode": "single",
+    "prover_workers": 1,
+    "send_da_sidecar": 0,
+    "strict_aggregation": 0,
+    "target_txs": 4,
+    "tx_count_requested": 4,
+    "workers": 1
+  },
+  "genesis_hash": "0x900c8f5331e5e8156d7dcb64a04be2fcac09517edf44b400daabd39c7bd409a3",
+  "git_commit": "bd45648a427fed65698f387e04dfaf00f8a29a21",
+  "mempool": {
+    "ready_pending_extrinsics_after_inclusion": 0,
+    "ready_pending_extrinsics_before_mining": 0
+  },
+  "metrics": {
+    "cache_build_ms": null,
+    "cache_hit": "",
+    "commitment_verify_total_ms": 42,
+    "consensus_verify_total_ms": 59,
+    "dispatch_wait_ms": 0,
+    "effective_tps": 0.237883,
+    "end_to_end_tps": 0.172943,
+    "import_verify_total_ms": 59,
+    "included_tx_count": 4,
+    "inclusion_tps": 0.237883,
+    "payload_bytes_per_tx": 414978.5,
+    "proven_batch_bytes_total": 228076,
+    "queue_depth": 0,
+    "queue_wait_ms": 0,
+    "submission_tps": 0.643397,
+    "total_job_age_ms": 307,
+    "tx_proof_bytes_total": 1431838,
+    "tx_verify_total_ms": 16
+  },
+  "mode": "throughput",
+  "network": {
+    "max_peers": 0,
+    "seeds": ""
+  },
+  "prepare": {
+    "aggregation_stage_ms": 0,
+    "artifact_failures": [],
+    "bundle_total_ms": 194,
+    "commitment_stage_ms": 193,
+    "context_stage_ms": 1,
+    "prepared_bundle_build_ms": 194
+  },
+  "prepared": {
+    "bundles_after_inclusion": 1,
+    "bundles_before_mining": 2
+  },
+  "proof_ready": {
+    "per_tx": [
+      {
+        "duration_ms": 1574,
+        "end_block": 12,
+        "end_ms": 1773593099362,
+        "start_block": 12,
+        "start_ms": 1773593097788,
+        "tx_ordinal": 1,
+        "worker_id": 1
+      },
+      {
+        "duration_ms": 1482,
+        "end_block": 12,
+        "end_ms": 1773593100896,
+        "start_block": 12,
+        "start_ms": 1773593099414,
+        "tx_ordinal": 2,
+        "worker_id": 1
+      },
+      {
+        "duration_ms": 1470,
+        "end_block": 12,
+        "end_ms": 1773593102419,
+        "start_block": 12,
+        "start_ms": 1773593100949,
+        "tx_ordinal": 3,
+        "worker_id": 1
+      },
+      {
+        "duration_ms": 1462,
+        "end_block": 12,
+        "end_ms": 1773593103933,
+        "start_block": 12,
+        "start_ms": 1773593102471,
+        "tx_ordinal": 4,
+        "worker_id": 1
+      }
+    ],
+    "send_trace_file": "/tmp/hegemon-inline-tx-scaling/run-tx4-pw1/artifacts/tx4-pw1.send-trace.tsv",
+    "stats": {
+      "avg_ms": 1497.0,
+      "count": 4,
+      "max_ms": 1574,
+      "min_ms": 1462
+    }
+  },
+  "run_id": "tx4-pw1",
+  "timestamp_utc": "2026-03-15T16:44:11Z",
+  "timings_ms": {
+    "aggregation_stage_ms": 0,
+    "commitment_stage_ms": 193,
+    "context_stage_ms": 1,
+    "inclusion_total_ms": 16815,
+    "round_total_ms": 23129,
+    "send_total_ms": 6217,
+    "strict_wait_ms": 0
+  }
+}
