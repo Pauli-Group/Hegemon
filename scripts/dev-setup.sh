@@ -9,7 +9,8 @@ RUST_TOOLCHAIN="stable"
 GO_VERSION="1.21.6"
 NODE_VERSION="20.19.0"
 NODE_INSTALL_DIR=${NODE_INSTALL_DIR:-"$HOME/.local/node"}
-APT_PACKAGES=(build-essential pkg-config libssl-dev clang-format jq)
+APT_PACKAGES=(build-essential pkg-config libssl-dev clang-format jq protobuf-compiler)
+BREW_PACKAGES=(protobuf)
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
@@ -25,6 +26,23 @@ print_tool_version() {
     else
         echo "$label (not found)"
     fi
+}
+
+ensure_brew_packages() {
+    if ! have_cmd brew; then
+        return
+    fi
+    local missing=()
+    for pkg in "${BREW_PACKAGES[@]}"; do
+        if ! brew list "$pkg" >/dev/null 2>&1; then
+            missing+=("$pkg")
+        fi
+    done
+    if ((${#missing[@]} == 0)); then
+        return
+    fi
+    echo "Installing Homebrew packages: ${missing[*]}"
+    brew install "${missing[@]}"
 }
 
 # shellcheck disable=SC2120
@@ -207,6 +225,7 @@ ensure_node() {
 }
 
 main() {
+    ensure_brew_packages
     ensure_apt_packages
     install_rustup
     install_rust_toolchain
@@ -218,6 +237,7 @@ main() {
     print_tool_version "Go" go version
     print_tool_version "Node" node --version
     print_tool_version "npm" npm --version
+    print_tool_version "protoc" protoc --version
     print_tool_version "clang-format" clang-format --version
     print_tool_version "jq" jq --version
 }
