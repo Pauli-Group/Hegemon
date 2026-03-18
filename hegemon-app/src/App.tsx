@@ -47,7 +47,7 @@ const defaultMineThreads = (() => {
 const participationRoleLabels: Record<NodeParticipationRole, string> = {
   full_node: 'Full node',
   pooled_hasher: 'Pooled hasher',
-  authoring_pool: 'Public author',
+  authoring_pool: 'Authoring pool',
   private_prover: 'Private prover'
 };
 
@@ -66,34 +66,34 @@ const participationRoleMeta: Record<
     statusTone: 'ok',
     summary: 'Verifies the network, serves wallet traffic, and relays chain state without local shielded block authoring.',
     guidance:
-      'Use this for wallets, verification, and monitoring. Switch to Public author only if you control proving access or operate a pool.'
+      'Use this for wallets, verification, and monitoring. Switch to Authoring pool only if you control the public authoring host and its proving path.'
   },
   pooled_hasher: {
     statusTone: 'ok',
     summary:
       'Intended public mining path for ordinary users. The machine should hash against pool-provided templates instead of authoring shielded blocks.',
     guidance:
-      'Configure the pool endpoint, worker name, and payout address here, then start pooled hashing from the Operations panel.',
+      'Configure the pool endpoint, worker name, and optional auth token here, then start pooled hashing from the Operations panel.',
     endpointLabel: 'Pool endpoint',
     endpointPlaceholder: 'wss://pool.example:9443 or stratum+tcp://pool.example:3333'
   },
   authoring_pool: {
-    statusLabel: 'Advanced',
+    statusLabel: 'Operator only',
     statusTone: 'warn',
     summary:
-      'Builds candidate sets, coordinates proving, attaches ready block proofs, and broadcasts final blocks. This role should be rare and operator-managed.',
+      'Runs the public template-builder and local mining coordinator. This node canonicalizes candidate sets, publishes pool work, attaches ready bundles, and broadcasts final blocks.',
     guidance:
-      'Use this only when the machine has access to a private proving backend or is itself part of a dedicated authoring pool. Most users should stay on Full node or Pooled hasher.'
+      'Use this only on the public authoring host or a federated pool operator machine. Most users should stay on Full node or Pooled hasher.'
   },
   private_prover: {
-    statusLabel: 'Worker pending',
+    statusLabel: 'External worker',
     statusTone: 'warn',
     summary:
-      'Reserved for a private proving host that stays off the public internet and polls author work over a private tunnel.',
+      'Runs the private proving host behind a tunnel and returns recursive stage results to the authoring pool.',
     guidance:
-      'The standalone prover worker is not shipped yet. Keep the host private, store the author endpoint and worker identity here, and use the machine as a verifier until the worker lands.',
-    endpointLabel: 'Author endpoint',
-    endpointPlaceholder: 'https://author.internal:9944'
+      'Launch `hegemon-prover-worker` outside the app on this machine. The desktop stores the author RPC endpoint and worker identity, but it does not manage the prover worker lifecycle.',
+    endpointLabel: 'Author RPC endpoint',
+    endpointPlaceholder: 'http://127.0.0.1:9944 via SSH/VPN tunnel'
   }
 };
 
@@ -1361,7 +1361,7 @@ export default function App() {
       });
     }
     if (normalizedRole !== 'authoring_pool' && normalizedConnection.miningIntent) {
-      setNodeError('Local mining is reserved for the Public author role. Switch roles or disable Auto-start mining.');
+      setNodeError('Local mining is reserved for the Authoring pool role. Switch roles or disable Auto-start mining.');
       return;
     }
     if (normalizedRole === 'authoring_pool' && normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
@@ -2121,15 +2121,15 @@ export default function App() {
   const effectiveMiningActive = activeParticipationRole === 'pooled_hasher' ? poolMinerRunning : Boolean(activeSummary?.mining);
   const effectiveMiningHashRate = activeParticipationRole === 'pooled_hasher' ? poolMinerStatus?.hashRate : activeSummary?.hashRate;
   const miningHint = activeSummary?.mining
-    ? 'Public author mode is active. To change local authoring settings, stop the node, update Participation + retention, then restart.'
+    ? 'Authoring pool mode is active. To change local authoring settings, stop the node, update Participation + retention, then restart.'
     : activeParticipationRole === 'authoring_pool'
-      ? 'This connection is configured as a public author. Enable Auto-start mining under Participation + retention and restart the node to author locally.'
+      ? 'This connection is configured as an authoring pool node. Enable Auto-start mining under Participation + retention and restart the node to author locally.'
       : activeParticipationRole === 'pooled_hasher'
         ? poolMinerRunning
           ? 'Pooled hashing is active. Keep the pool endpoint reachable and watch accepted shares below.'
           : 'Pooled hashing is the intended public mining path. Configure the pool endpoint and worker identity, then start pooled hashing.'
         : activeParticipationRole === 'private_prover'
-          ? 'The standalone private prover worker is not shipped yet. Keep this host private and use it as a verifier until the worker milestone lands.'
+          ? 'Private prover mode stores the worker’s tunnel/RPC settings. Run `hegemon-prover-worker` separately on the private host.'
           : 'This connection is configured as a full node. It verifies and relays the network without authoring shielded blocks.';
   const walletConnectionTone =
     walletSummary?.reachable === true ? 'ok' : walletSummary?.reachable === false ? 'error' : 'neutral';
@@ -2583,7 +2583,7 @@ export default function App() {
           >
             <option value="full_node">Full node</option>
             <option value="pooled_hasher">Pooled hasher</option>
-            <option value="authoring_pool">Public author</option>
+            <option value="authoring_pool">Authoring pool</option>
             <option value="private_prover">Private prover</option>
           </select>
         </label>
@@ -2603,14 +2603,9 @@ export default function App() {
           />
         </label>
         {activeConnection?.mode === 'remote' && activeParticipationRole === 'authoring_pool' ? (
-          <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-            <input
-              type="checkbox"
-              checked={Boolean(activeConnection.allowRemoteMining)}
-              onChange={(event) => updateActiveConnection({ allowRemoteMining: event.target.checked })}
-            />
-            Allow remote authoring control
-          </label>
+          <p className="text-xs text-surfaceMuted md:col-span-2">
+            Remote authoring profiles are read-only in the desktop app. Start/stop and mining control stay on the operator host.
+          </p>
         ) : null}
       </div>
       {activeConnection ? (
@@ -2645,7 +2640,7 @@ export default function App() {
                 />
               </label>
               <label className="space-y-2 md:col-span-2">
-                <span className="label">Payout address</span>
+                <span className="label">{activeParticipationRole === 'private_prover' ? 'Reward address' : 'Payout address'}</span>
                 <input
                   value={activeConnection.payoutAddress ?? ''}
                   onChange={(event) => updateActiveConnection({ payoutAddress: event.target.value })}
@@ -2653,7 +2648,7 @@ export default function App() {
                 />
               </label>
               <label className="space-y-2 md:col-span-2">
-                <span className="label">Pool auth token</span>
+                <span className="label">{activeParticipationRole === 'private_prover' ? 'RPC auth token' : 'Pool auth token'}</span>
                 <input
                   type="password"
                   value={activeConnection.poolAuthToken ?? ''}
@@ -2663,8 +2658,8 @@ export default function App() {
               </label>
               <p className="text-xs text-guard md:col-span-2">
                 {activeParticipationRole === 'pooled_hasher'
-                  ? 'The desktop pooled hash worker uses these settings directly.'
-                  : 'This role is not wired into the desktop client yet. These fields are stored now so the future pool/prover worker can attach without re-entering operator data.'}
+                  ? 'The desktop pooled hash worker uses the pool endpoint, worker name, and auth token directly. Payout address is stored with the profile for operator bookkeeping.'
+                  : 'The desktop stores these settings, but you still launch `hegemon-prover-worker` outside the app on the private host.'}
               </p>
             </div>
           ) : null}
@@ -2691,7 +2686,7 @@ export default function App() {
                 />
               </label>
               <p className="text-xs text-surfaceMuted md:col-span-2">
-                Share bits are exported as <span className="mono">HEGEMON_POOL_SHARE_BITS</span> when this connection starts the public author node.
+                Share bits are exported as <span className="mono">HEGEMON_POOL_SHARE_BITS</span> when this connection starts the authoring pool node.
               </p>
             </div>
           ) : null}
@@ -2899,8 +2894,8 @@ export default function App() {
               ) : (
                 <p className="text-xs text-surfaceMuted md:col-span-2">
                   {activeParticipationRole === 'full_node'
-                    ? 'Full node mode keeps local authoring disabled. Switch the participation role to Public author to reveal local mining controls.'
-                    : 'Private prover mode is reserved for a future standalone prover worker and keeps local mining disabled.'}
+                    ? 'Full node mode keeps local authoring disabled. Switch the participation role to Authoring pool to reveal local mining controls.'
+                    : 'Private prover mode keeps node-side authoring disabled. Run `hegemon-prover-worker` separately on the private host.'}
                 </p>
               )}
               <label className="space-y-2">

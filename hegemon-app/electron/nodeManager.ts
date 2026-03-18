@@ -270,11 +270,13 @@ export class NodeManager extends EventEmitter {
     const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
     const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
     const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
+    const stageWorkPackage = await this.safeRpcCall('prover_getStageWorkPackage', [], request.httpUrl);
     const workPackage = await this.safeRpcCall('prover_getWorkPackage', [], request.httpUrl);
+    const proverPackage = stageWorkPackage ?? workPackage;
     const nowMs = Date.now();
     const proverReadyBundleAgeMs =
-      workPackage && typeof workPackage.created_at_ms === 'number'
-        ? Math.max(0, nowMs - Number(workPackage.created_at_ms))
+      proverPackage && typeof proverPackage.created_at_ms === 'number'
+        ? Math.max(0, nowMs - Number(proverPackage.created_at_ms))
         : null;
 
     return {
@@ -293,12 +295,12 @@ export class NodeManager extends EventEmitter {
       hashRate: mining?.hash_rate ?? null,
       blocksFound: mining?.blocks_found ?? null,
       difficulty: mining?.difficulty ?? null,
-      aggregationProofFormat: 'V4',
-      proverStageType: workPackage?.stage_type ? String(workPackage.stage_type) : null,
+      aggregationProofFormat: null,
+      proverStageType: proverPackage?.stage_type ? String(proverPackage.stage_type) : null,
       proverStageLevel:
-        workPackage && typeof workPackage.level === 'number' ? Number(workPackage.level) : null,
+        proverPackage && typeof proverPackage.level === 'number' ? Number(proverPackage.level) : null,
       proverStageArity:
-        workPackage && typeof workPackage.arity === 'number' ? Number(workPackage.arity) : null,
+        proverPackage && typeof proverPackage.arity === 'number' ? Number(proverPackage.arity) : null,
       proverReadyBundleAgeMs,
       blockHeight: mining?.block_height ?? null,
       supplyDigest: consensus?.supply_digest ? String(consensus.supply_digest) : null,
