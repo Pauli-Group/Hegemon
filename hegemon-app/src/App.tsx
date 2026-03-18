@@ -43,8 +43,8 @@ const defaultMineThreads = (() => {
 })();
 
 const participationRoleLabels: Record<NodeParticipationRole, string> = {
-  full_node: 'Full node',
-  authoring_pool: 'Authoring node'
+  full_node: 'Relay node',
+  authoring_pool: 'Mining node'
 };
 
 const participationRoleMeta: Record<
@@ -58,9 +58,9 @@ const participationRoleMeta: Record<
 > = {
   full_node: {
     statusTone: 'ok',
-    summary: 'Verifies the network, serves wallet traffic, and relays chain state without local shielded block authoring.',
+    summary: 'Verifies the network, serves wallet traffic, and relays chain state without local block production.',
     guidance:
-      'Use this for wallets, verification, and monitoring. Switch to Authoring node only if this machine should build and mine shielded blocks.'
+      'Use this for wallets, verification, and relaying. Switch to Mining node only if this machine should build and mine blocks.'
   },
   authoring_pool: {
     statusLabel: 'Operator only',
@@ -68,16 +68,16 @@ const participationRoleMeta: Record<
     summary:
       'Runs the public block author. This node accepts proof-ready transactions, builds the commitment proof, mines locally, and broadcasts final blocks.',
     guidance:
-      'Use this only on the machine that should author blocks. Everyone else should stay on Full node.'
+      'Use this only on the machine that should mine blocks. Everyone else should stay on Relay node.'
   }
 };
 
-const inferParticipationRole = (connection: NodeConnection): NodeParticipationRole =>
-  connection.participationRole === 'authoring_pool'
-    ? 'authoring_pool'
-    : connection.miningIntent || connection.minerAddress
-      ? 'authoring_pool'
-      : 'full_node';
+const inferParticipationRole = (connection: NodeConnection): NodeParticipationRole => {
+  if (connection.participationRole === 'full_node' || connection.participationRole === 'authoring_pool') {
+    return connection.participationRole;
+  }
+  return connection.miningIntent || connection.minerAddress ? 'authoring_pool' : 'full_node';
+};
 
 const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -1330,7 +1330,7 @@ export default function App() {
       });
     }
     if (normalizedRole !== 'authoring_pool' && normalizedConnection.miningIntent) {
-      setNodeError('Local mining is reserved for the Authoring node role. Switch roles or disable Auto-start mining.');
+      setNodeError('Local mining is reserved for the Mining node role. Switch roles or disable Auto-start mining.');
       return;
     }
     if (normalizedRole === 'authoring_pool' && normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
@@ -2027,10 +2027,10 @@ export default function App() {
   const effectiveMiningActive = Boolean(activeSummary?.mining);
   const effectiveMiningHashRate = activeSummary?.hashRate;
   const miningHint = activeSummary?.mining
-    ? 'Authoring mode is active. To change local authoring settings, stop the node, update Participation + retention, then restart.'
+    ? 'Mining mode is active. To change local mining settings, stop the node, update Mining + retention, then restart.'
     : activeParticipationRole === 'authoring_pool'
-      ? 'This connection is configured as an authoring node. Enable Auto-start mining under Participation + retention and restart the node to author locally.'
-      : 'This connection is configured as a full node. It verifies and relays the network without authoring shielded blocks.';
+      ? 'This connection is configured as a mining node. Enable Auto-start mining under Mining + retention and restart the node to mine locally.'
+      : 'This connection is configured as a relay node. It verifies and relays the network without local block production.';
   const walletConnectionTone =
     walletSummary?.reachable === true ? 'ok' : walletSummary?.reachable === false ? 'error' : 'neutral';
   const walletConnectionLabel =
@@ -2470,7 +2470,7 @@ export default function App() {
           </select>
         </label>
         <label className="space-y-2">
-          <span className="label">Participation role</span>
+          <span className="label">Node role</span>
           <select
             value={activeParticipationRole}
             onChange={(event) => {
@@ -2481,8 +2481,8 @@ export default function App() {
               }));
             }}
           >
-            <option value="full_node">Full node</option>
-            <option value="authoring_pool">Authoring node</option>
+            <option value="full_node">Relay node</option>
+            <option value="authoring_pool">Mining node</option>
           </select>
         </label>
         <label className="space-y-2">
@@ -2502,7 +2502,7 @@ export default function App() {
         </label>
         {activeConnection?.mode === 'remote' && activeParticipationRole === 'authoring_pool' ? (
           <p className="text-xs text-surfaceMuted md:col-span-2">
-            Remote authoring profiles are read-only in the desktop app. Start/stop and mining control stay on the operator host.
+            Remote mining profiles are read-only in the desktop app. Start/stop and mining control stay on the operator host.
           </p>
         ) : null}
       </div>
@@ -2510,7 +2510,7 @@ export default function App() {
         <div className="panel space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="label">Participation</p>
+              <p className="label">Node role</p>
               <h3 className="text-base font-semibold">{participationRoleLabels[activeParticipationRole]}</h3>
             </div>
             {activeParticipationMeta.statusLabel ? (
@@ -2675,11 +2675,11 @@ export default function App() {
 
           <div className="panel space-y-4">
             <div>
-              <p className="label">Participation + retention</p>
+              <p className="label">Mining + retention</p>
               <p className="text-sm text-surfaceMuted/80">
                 {roleAllowsLocalMining
-                  ? 'Local public-author controls and DA retention policies.'
-                  : 'Role-specific notes and DA retention policies.'}
+                  ? 'Local mining controls and DA retention policies.'
+                  : 'Relay-node notes and DA retention policies.'}
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -2706,7 +2706,7 @@ export default function App() {
                 </>
               ) : (
                 <p className="text-xs text-surfaceMuted md:col-span-2">
-                  Full node mode keeps local authoring disabled. Switch the participation role to Authoring node to reveal local mining controls.
+                  Relay node mode keeps local mining disabled. Switch the node role to Mining node to reveal local mining controls.
                 </p>
               )}
               <label className="space-y-2">
@@ -3944,7 +3944,7 @@ export default function App() {
         <p className="label">Node</p>
         <h1 className="text-headline font-semibold tracking-tight">Operate + Observe</h1>
         <p className="text-surfaceMuted max-w-2xl">
-          Run full nodes, configure public-author or future pool/prover roles, and monitor telemetry.
+          Run relay or mining nodes and monitor telemetry.
         </p>
       </header>
       <div className="grid gap-6 2xl:grid-cols-[minmax(480px,1fr)_minmax(0,2fr)]">
