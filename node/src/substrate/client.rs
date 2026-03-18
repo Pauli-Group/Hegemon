@@ -55,8 +55,8 @@
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
-use consensus::{Sha256dAlgorithm, Sha256dSeal};
 use consensus::MiningWorkTrace;
+use consensus::{Sha256dAlgorithm, Sha256dSeal};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

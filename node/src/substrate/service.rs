@@ -10565,7 +10565,7 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex as StdMutex, MutexGuard as StdMutexGuard, OnceLock};
+    use std::sync::MutexGuard as StdMutexGuard;
 
     struct BlockProofModeGuard {
         previous: Option<String>,
@@ -10586,9 +10586,7 @@ mod tests {
     }
 
     fn set_block_proof_mode(mode: &str) -> BlockProofModeGuard {
-        static ENV_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-        let guard = ENV_LOCK
-            .get_or_init(|| StdMutex::new(()))
+        let guard = crate::substrate::test_env_lock()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         let previous = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();

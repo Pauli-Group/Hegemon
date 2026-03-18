@@ -1208,6 +1208,35 @@ fn hex_to_array48(value: &str) -> Result<[u8; 48], String> {
 mod tests {
     use super::*;
     use consensus::counter_to_nonce;
+    struct LegacyPoolRpcGuard {
+        previous: Option<String>,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for LegacyPoolRpcGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.previous.take() {
+                    Some(value) => std::env::set_var("HEGEMON_ENABLE_LEGACY_POOL_RPC", value),
+                    None => std::env::remove_var("HEGEMON_ENABLE_LEGACY_POOL_RPC"),
+                }
+            }
+        }
+    }
+
+    fn enable_legacy_pool_rpc() -> LegacyPoolRpcGuard {
+        let guard = crate::substrate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("HEGEMON_ENABLE_LEGACY_POOL_RPC").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_ENABLE_LEGACY_POOL_RPC", "1");
+        }
+        LegacyPoolRpcGuard {
+            previous,
+            _guard: guard,
+        }
+    }
 
     #[derive(Clone)]
     struct MockMiningHandle {
@@ -1574,6 +1603,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pool_work_exposes_current_template() {
+        let _legacy = enable_legacy_pool_rpc();
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
         let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
@@ -1601,6 +1631,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_submit_pool_share_accepts_full_target_solution() {
+        let _legacy = enable_legacy_pool_rpc();
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
         let rpc = HegemonRpc::new(
@@ -1636,6 +1667,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_submit_pool_share_rejects_stale_work() {
+        let _legacy = enable_legacy_pool_rpc();
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
         let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);

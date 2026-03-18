@@ -126,6 +126,7 @@ pub enum DaChunkProtocolMessage {
 
 /// Candidate-artifact protocol messages for builder-to-builder distribution.
 #[derive(Debug, Clone, Encode, Decode)]
+#[allow(clippy::large_enum_variant)]
 pub enum ArtifactProtocolMessage {
     Announcement {
         artifact_hash: [u8; 32],

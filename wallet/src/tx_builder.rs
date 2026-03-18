@@ -831,159 +831,6 @@ fn select_notes(notes: &mut [SpendableNote], target: u64) -> Result<Selection, W
     Ok(Selection { spent, total })
 }
 
-#[cfg(test)]
-mod tests {
-    use rand::{rngs::StdRng, SeedableRng};
-    use tempfile::tempdir;
-
-    use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
-    use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
-
-    use super::*;
-
-    #[test]
-    fn sidecar_binding_hash_matches_pallet_verifier() {
-        let dir = tempdir().unwrap();
-        let sender_path = dir.path().join("sender.wallet");
-        let recipient_path = dir.path().join("recipient.wallet");
-        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
-        let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
-
-        let sender_ivk = sender.incoming_key().unwrap();
-        let sender_addr = sender_ivk.shielded_address(0).unwrap();
-        let mut rng = StdRng::seed_from_u64(123);
-
-        for (position, value) in [(0u64, 150_000_000u64), (1u64, 160_000_000u64)] {
-            let note = NotePlaintext::random(value, 0, MemoPlaintext::default(), &mut rng);
-            let ciphertext = NoteCiphertext::encrypt(&sender_addr, &note, &mut rng).unwrap();
-            let recovered = sender_ivk.decrypt_note(&ciphertext).unwrap();
-            let commitment = felts_to_bytes48(&recovered.note_data.commitment());
-            sender
-                .append_commitments(&[(position, commitment)])
-                .unwrap();
-            sender.register_ciphertext_index(position).unwrap();
-            sender
-                .record_recovered_note(recovered, position, position)
-                .unwrap();
-        }
-
-        let recipient = Recipient {
-            address: recipient_store.primary_address().unwrap(),
-            value: 100_000_000,
-            asset_id: 0,
-            memo: MemoPlaintext::new(b"sidecar regression".to_vec()),
-        };
-        let stablecoin = StablecoinPolicyBinding::default();
-        let plan = plan_selections(&sender, &[recipient], 0, &stablecoin).unwrap();
-
-        let mut rng = OsRng;
-        let mut outputs = Vec::new();
-        let mut ciphertexts = Vec::new();
-        let recipient = Recipient {
-            address: recipient_store.primary_address().unwrap(),
-            value: 100_000_000,
-            asset_id: 0,
-            memo: MemoPlaintext::new(b"sidecar regression".to_vec()),
-        };
-        let (output, ciphertext, _) = build_output(&recipient, &mut rng).unwrap();
-        outputs.push(output);
-        ciphertexts.push(ciphertext);
-
-        if plan.output_change > 0 {
-            let address = sender.reserve_internal_address().unwrap();
-            let note = NotePlaintext::random(
-                plan.output_change,
-                plan.output_asset,
-                MemoPlaintext::default(),
-                &mut rng,
-            );
-            let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
-            let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
-            outputs.push(OutputNoteWitness { note: note_data });
-            ciphertexts.push(ciphertext);
-        }
-
-        let nullifiers = {
-            let fvk = sender.full_viewing_key().unwrap().unwrap();
-            plan.inputs()
-                .iter()
-                .map(|note| fvk.compute_nullifier(&note.recovered.note.rho, note.position))
-                .collect::<Vec<_>>()
-        };
-        let commitments = outputs
-            .iter()
-            .map(|output| felts_to_bytes48(&output.note.commitment()))
-            .collect::<Vec<_>>();
-        let anchor = sender.commitment_tree().unwrap().root();
-        let ciphertext_hashes = ciphertexts
-            .iter()
-            .map(|note| {
-                note.to_da_bytes()
-                    .map(|bytes| ciphertext_hash_bytes(&bytes))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let balance_slot_asset_ids = [0u64, u64::MAX, u64::MAX, u64::MAX];
-        let binding_hash = compute_binding_hash(
-            &anchor,
-            &nullifiers,
-            &commitments,
-            &ciphertext_hashes,
-            balance_slot_asset_ids,
-            0,
-            0,
-            to_pallet_stablecoin_binding(&stablecoin),
-        );
-        let bundle = TransactionBundle::new(
-            Vec::new(),
-            nullifiers.clone(),
-            commitments.clone(),
-            &ciphertexts,
-            anchor,
-            binding_hash,
-            balance_slot_asset_ids,
-            0,
-            0,
-            stablecoin.clone(),
-        )
-        .unwrap();
-        let decoded = bundle.decode_notes().unwrap();
-        let decoded_hashes = decoded
-            .iter()
-            .map(|note| {
-                note.to_da_bytes()
-                    .map(|bytes| ciphertext_hash_bytes(&bytes))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        let stablecoin = bundle.stablecoin.enabled.then_some(
-            pallet_shielded_pool::types::StablecoinPolicyBinding {
-                asset_id: bundle.stablecoin.asset_id,
-                policy_hash: bundle.stablecoin.policy_hash,
-                oracle_commitment: bundle.stablecoin.oracle_commitment,
-                attestation_commitment: bundle.stablecoin.attestation_commitment,
-                issuance_delta: bundle.stablecoin.issuance_delta,
-                policy_version: bundle.stablecoin.policy_version,
-            },
-        );
-        let inputs = ShieldedTransferInputs {
-            anchor: bundle.anchor,
-            nullifiers: bundle.nullifiers.clone(),
-            commitments: bundle.commitments.clone(),
-            ciphertext_hashes: decoded_hashes.clone(),
-            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
-            fee: bundle.fee,
-            value_balance: bundle.value_balance,
-            stablecoin,
-        };
-        let expected = StarkVerifier::compute_binding_hash(&inputs);
-
-        assert_eq!(decoded_hashes, ciphertext_hashes);
-        assert_eq!(bundle.binding_hash, expected.data);
-    }
-}
-
 fn select_notes_exact(
     notes: &[SpendableNote],
     target: u64,
@@ -1187,4 +1034,157 @@ fn build_output(
         ciphertext,
         note,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::{rngs::StdRng, SeedableRng};
+    use tempfile::tempdir;
+
+    use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
+    use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
+
+    use super::*;
+
+    #[test]
+    fn sidecar_binding_hash_matches_pallet_verifier() {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
+
+        let sender_ivk = sender.incoming_key().unwrap();
+        let sender_addr = sender_ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(123);
+
+        for (position, value) in [(0u64, 150_000_000u64), (1u64, 160_000_000u64)] {
+            let note = NotePlaintext::random(value, 0, MemoPlaintext::default(), &mut rng);
+            let ciphertext = NoteCiphertext::encrypt(&sender_addr, &note, &mut rng).unwrap();
+            let recovered = sender_ivk.decrypt_note(&ciphertext).unwrap();
+            let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+            sender
+                .append_commitments(&[(position, commitment)])
+                .unwrap();
+            sender.register_ciphertext_index(position).unwrap();
+            sender
+                .record_recovered_note(recovered, position, position)
+                .unwrap();
+        }
+
+        let recipient = Recipient {
+            address: recipient_store.primary_address().unwrap(),
+            value: 100_000_000,
+            asset_id: 0,
+            memo: MemoPlaintext::new(b"sidecar regression".to_vec()),
+        };
+        let stablecoin = StablecoinPolicyBinding::default();
+        let plan = plan_selections(&sender, &[recipient], 0, &stablecoin).unwrap();
+
+        let mut rng = OsRng;
+        let mut outputs = Vec::new();
+        let mut ciphertexts = Vec::new();
+        let recipient = Recipient {
+            address: recipient_store.primary_address().unwrap(),
+            value: 100_000_000,
+            asset_id: 0,
+            memo: MemoPlaintext::new(b"sidecar regression".to_vec()),
+        };
+        let (output, ciphertext, _) = build_output(&recipient, &mut rng).unwrap();
+        outputs.push(output);
+        ciphertexts.push(ciphertext);
+
+        if plan.output_change > 0 {
+            let address = sender.reserve_internal_address().unwrap();
+            let note = NotePlaintext::random(
+                plan.output_change,
+                plan.output_asset,
+                MemoPlaintext::default(),
+                &mut rng,
+            );
+            let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+            let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
+            outputs.push(OutputNoteWitness { note: note_data });
+            ciphertexts.push(ciphertext);
+        }
+
+        let nullifiers = {
+            let fvk = sender.full_viewing_key().unwrap().unwrap();
+            plan.inputs()
+                .iter()
+                .map(|note| fvk.compute_nullifier(&note.recovered.note.rho, note.position))
+                .collect::<Vec<_>>()
+        };
+        let commitments = outputs
+            .iter()
+            .map(|output| felts_to_bytes48(&output.note.commitment()))
+            .collect::<Vec<_>>();
+        let anchor = sender.commitment_tree().unwrap().root();
+        let ciphertext_hashes = ciphertexts
+            .iter()
+            .map(|note| {
+                note.to_da_bytes()
+                    .map(|bytes| ciphertext_hash_bytes(&bytes))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let balance_slot_asset_ids = [0u64, u64::MAX, u64::MAX, u64::MAX];
+        let binding_hash = compute_binding_hash(
+            &anchor,
+            &nullifiers,
+            &commitments,
+            &ciphertext_hashes,
+            balance_slot_asset_ids,
+            0,
+            0,
+            to_pallet_stablecoin_binding(&stablecoin),
+        );
+        let bundle = TransactionBundle::new(
+            Vec::new(),
+            nullifiers.clone(),
+            commitments.clone(),
+            &ciphertexts,
+            anchor,
+            binding_hash,
+            balance_slot_asset_ids,
+            0,
+            0,
+            stablecoin.clone(),
+        )
+        .unwrap();
+        let decoded = bundle.decode_notes().unwrap();
+        let decoded_hashes = decoded
+            .iter()
+            .map(|note| {
+                note.to_da_bytes()
+                    .map(|bytes| ciphertext_hash_bytes(&bytes))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let stablecoin = bundle.stablecoin.enabled.then_some(
+            pallet_shielded_pool::types::StablecoinPolicyBinding {
+                asset_id: bundle.stablecoin.asset_id,
+                policy_hash: bundle.stablecoin.policy_hash,
+                oracle_commitment: bundle.stablecoin.oracle_commitment,
+                attestation_commitment: bundle.stablecoin.attestation_commitment,
+                issuance_delta: bundle.stablecoin.issuance_delta,
+                policy_version: bundle.stablecoin.policy_version,
+            },
+        );
+        let inputs = ShieldedTransferInputs {
+            anchor: bundle.anchor,
+            nullifiers: bundle.nullifiers.clone(),
+            commitments: bundle.commitments.clone(),
+            ciphertext_hashes: decoded_hashes.clone(),
+            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
+            fee: bundle.fee,
+            value_balance: bundle.value_balance,
+            stablecoin,
+        };
+        let expected = StarkVerifier::compute_binding_hash(&inputs);
+
+        assert_eq!(decoded_hashes, ciphertext_hashes);
+        assert_eq!(bundle.binding_hash, expected.data);
+    }
 }

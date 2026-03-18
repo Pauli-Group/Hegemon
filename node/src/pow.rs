@@ -134,7 +134,11 @@ impl PowHandle {
         let coordinator = self.coordinator.lock();
         coordinator.update_work(work.clone());
 
-        debug!(height = work.height, difficulty = work.pow_bits, "New mining work");
+        debug!(
+            height = work.height,
+            difficulty = work.pow_bits,
+            "New mining work"
+        );
 
         let _ = self.event_tx.send(PowEvent::NewWork {
             height: work.height,

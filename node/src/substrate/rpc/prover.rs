@@ -523,6 +523,36 @@ mod tests {
     use std::time::Duration;
     use transaction_circuit::{proof::TransactionProof, public_inputs::TransactionPublicInputs};
 
+    struct BlockProofModeGuard {
+        previous: Option<String>,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for BlockProofModeGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.previous.take() {
+                    Some(value) => std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", value),
+                    None => std::env::remove_var("HEGEMON_BLOCK_PROOF_MODE"),
+                }
+            }
+        }
+    }
+
+    fn set_block_proof_mode(mode: &str) -> BlockProofModeGuard {
+        let guard = crate::substrate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", mode);
+        }
+        BlockProofModeGuard {
+            previous,
+            _guard: guard,
+        }
+    }
+
     fn payload(tx_count: u32) -> pallet_shielded_pool::types::CandidateArtifact {
         pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
@@ -545,6 +575,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn prover_rpc_workflow_methods_operate_end_to_end() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(91);
         let config = ProverCoordinatorConfig {
             workers: 1,

@@ -1887,7 +1887,6 @@ fn describe_witness_origin(circuit: &Circuit<Challenge>, witness_id: WitnessId) 
                     }
                 }
             }
-            _ => {}
         }
     }
     if parts.is_empty() {

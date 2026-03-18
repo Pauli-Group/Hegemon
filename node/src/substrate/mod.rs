@@ -79,6 +79,12 @@ pub mod sync;
 pub mod template_builder;
 pub mod transaction_pool;
 
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    static ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    ENV_LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 // Re-export common types
 pub use artifact_market::{artifact_announcement, candidate_artifact_hash};
 pub use block_import::{

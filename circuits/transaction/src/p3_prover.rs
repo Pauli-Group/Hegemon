@@ -320,31 +320,21 @@ impl TransactionProverP3 {
                 row_slice[slot_out_cols[slot]] = Val::from_u64(slot_out_acc[slot]);
             }
 
-            if row == start_row_in0 && start_row_in0 < trace_len {
-                if input_flags[0] {
-                    let slot = selector_bits_to_index(selector_bits[0]);
-                    slot_in_acc[slot] = slot_in_acc[slot].saturating_add(input_notes[0].note.value);
-                }
+            if row == start_row_in0 && start_row_in0 < trace_len && input_flags[0] {
+                let slot = selector_bits_to_index(selector_bits[0]);
+                slot_in_acc[slot] = slot_in_acc[slot].saturating_add(input_notes[0].note.value);
             }
-            if row == start_row_in1 && start_row_in1 < trace_len {
-                if input_flags[1] {
-                    let slot = selector_bits_to_index(selector_bits[1]);
-                    slot_in_acc[slot] = slot_in_acc[slot].saturating_add(input_notes[1].note.value);
-                }
+            if row == start_row_in1 && start_row_in1 < trace_len && input_flags[1] {
+                let slot = selector_bits_to_index(selector_bits[1]);
+                slot_in_acc[slot] = slot_in_acc[slot].saturating_add(input_notes[1].note.value);
             }
-            if row == start_row_out0 && start_row_out0 < trace_len {
-                if output_flags[0] {
-                    let slot = selector_bits_to_index(selector_bits[2]);
-                    slot_out_acc[slot] =
-                        slot_out_acc[slot].saturating_add(output_notes[0].note.value);
-                }
+            if row == start_row_out0 && start_row_out0 < trace_len && output_flags[0] {
+                let slot = selector_bits_to_index(selector_bits[2]);
+                slot_out_acc[slot] = slot_out_acc[slot].saturating_add(output_notes[0].note.value);
             }
-            if row == start_row_out1 && start_row_out1 < trace_len {
-                if output_flags[1] {
-                    let slot = selector_bits_to_index(selector_bits[3]);
-                    slot_out_acc[slot] =
-                        slot_out_acc[slot].saturating_add(output_notes[1].note.value);
-                }
+            if row == start_row_out1 && start_row_out1 < trace_len && output_flags[1] {
+                let slot = selector_bits_to_index(selector_bits[3]);
+                slot_out_acc[slot] = slot_out_acc[slot].saturating_add(output_notes[1].note.value);
             }
         }
 

@@ -126,6 +126,7 @@ fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
             commitments: built.bundle.commitments.clone(),
             ciphertexts,
             anchor: built.bundle.anchor,
+            balance_slot_asset_ids: built.bundle.balance_slot_asset_ids,
             binding_hash: built.bundle.binding_hash,
             stablecoin: None,
             fee: built.bundle.fee,

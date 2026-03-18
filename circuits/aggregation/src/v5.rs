@@ -350,27 +350,6 @@ fn decode_payload(bytes: &[u8]) -> Result<AggregationProofV5Payload, Aggregation
     })
 }
 
-fn unpack_public_values(values: &[u64]) -> Result<Vec<Challenge>, AggregationError> {
-    let ext_degree = <Challenge as BasedVectorSpace<Val>>::DIMENSION;
-    if !values.len().is_multiple_of(ext_degree) {
-        return Err(AggregationError::InvalidAggregationPayload(
-            "packed public values length is not aligned to extension degree".to_string(),
-        ));
-    }
-    let mut out = Vec::with_capacity(values.len() / ext_degree);
-    for chunk in values.chunks_exact(ext_degree) {
-        let coeffs = chunk.iter().copied().map(Val::from_u64).collect::<Vec<_>>();
-        out.push(
-            Challenge::from_basis_coefficients_slice(&coeffs).ok_or_else(|| {
-                AggregationError::InvalidAggregationPayload(
-                    "failed to unpack extension public value".to_string(),
-                )
-            })?,
-        );
-    }
-    Ok(out)
-}
-
 fn public_values_as_vals(values: &[u64]) -> Vec<Val> {
     values.iter().copied().map(Val::from_u64).collect()
 }
@@ -389,35 +368,6 @@ fn batch_extra_params() -> [usize; 2] {
         FRI_POW_BITS,
         outer_batch_log_blowup() + BATCH_PROOF_LOG_FINAL_POLY_LEN,
     ]
-}
-
-fn outer_fri_targets(fri: &OuterBatchFri) -> Vec<p3_recursion::Target> {
-    let mut targets = Vec::new();
-    for commit_targets in &fri.commit_phase_commits {
-        targets.extend(commit_targets.hash_targets.iter().copied());
-    }
-    for pow_target in &fri.commit_pow_witnesses {
-        targets.push(pow_target.witness);
-    }
-    targets.extend(fri.final_poly.iter().copied());
-    targets.push(fri.pow_witness.witness);
-    for query_targets in &fri.query_proofs {
-        for batch_targets in &query_targets.input_proof {
-            for row_targets in &batch_targets.opened_values {
-                targets.extend(row_targets.iter().copied());
-            }
-            for hash_targets in &batch_targets.opening_proof.hash_proof_targets {
-                targets.extend(hash_targets.iter().copied());
-            }
-        }
-        for step_targets in &query_targets.commit_phase_openings {
-            targets.push(step_targets.sibling_value);
-            for hash_targets in &step_targets.opening_proof.hash_proof_targets {
-                targets.extend(hash_targets.iter().copied());
-            }
-        }
-    }
-    targets
 }
 
 fn collect_merge_assignment_values(
