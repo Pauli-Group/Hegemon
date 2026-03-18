@@ -1,5 +1,7 @@
 target/
 bin/
+!node/src/bin/
+!node/src/bin/*.rs
 wallet-demo-artifacts/
 node.db/
 *.db
