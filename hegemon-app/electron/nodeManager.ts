@@ -8,6 +8,11 @@ import type { NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/t
 import { resolveBinaryPath } from './binPaths';
 
 const DEFAULT_RPC_PORT = 9944;
+const CANONICAL_TESTNET_P2P_PORT = 30333;
+const LEGACY_TESTNET_P2P_PORT = 31333;
+const APPROVED_SEEDS = 'hegemon.pauli.group:30333,158.69.222.121:30333';
+const DEFAULT_LOCAL_BASE_PATH = '~/.hegemon-node';
+const DEFAULT_TESTNET_BASE_PATH = '~/.hegemon-node-testnet';
 const DESKTOP_LIVENESS_ENV_DEFAULTS: Record<string, string> = {
   // Desktop operators prioritize confirmation liveness over throughput.
   HEGEMON_BATCH_TARGET_TXS: '1',
@@ -24,6 +29,58 @@ type RpcRequest = {
   id: number;
   method: string;
   params?: unknown[];
+};
+
+const normalizeSeedList = (value?: string | null) =>
+  (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .join(',');
+
+const normalizeListenAddr = (listenAddr?: string) => {
+  if (!listenAddr) {
+    return undefined;
+  }
+  if (listenAddr.includes(`/tcp/${LEGACY_TESTNET_P2P_PORT}`)) {
+    return listenAddr.replace(
+      `/tcp/${LEGACY_TESTNET_P2P_PORT}`,
+      `/tcp/${CANONICAL_TESTNET_P2P_PORT}`
+    );
+  }
+  return listenAddr;
+};
+
+const normalizeManagedStartOptions = (options: NodeStartOptions): NodeStartOptions => {
+  const isDefaultLocal =
+    options.dev &&
+    (!options.basePath || options.basePath === DEFAULT_LOCAL_BASE_PATH);
+  const isDefaultTestnet =
+    !options.dev &&
+    (!options.basePath || options.basePath === DEFAULT_TESTNET_BASE_PATH);
+
+  if (!isDefaultLocal && !isDefaultTestnet) {
+    return options;
+  }
+
+  const next: NodeStartOptions = { ...options };
+
+  if (normalizeSeedList(next.seeds) !== APPROVED_SEEDS) {
+    next.seeds = APPROVED_SEEDS;
+  }
+
+  if (!next.listenAddr && (!next.p2pPort || next.p2pPort === LEGACY_TESTNET_P2P_PORT)) {
+    next.p2pPort = CANONICAL_TESTNET_P2P_PORT;
+  } else if (next.p2pPort === LEGACY_TESTNET_P2P_PORT) {
+    next.p2pPort = CANONICAL_TESTNET_P2P_PORT;
+  }
+
+  const normalizedListenAddr = normalizeListenAddr(next.listenAddr);
+  if (normalizedListenAddr && normalizedListenAddr !== next.listenAddr) {
+    next.listenAddr = normalizedListenAddr;
+  }
+
+  return next;
 };
 
 export class NodeManager extends EventEmitter {
@@ -52,19 +109,20 @@ export class NodeManager extends EventEmitter {
       return;
     }
 
+    const normalizedOptions = normalizeManagedStartOptions(options);
     const nodePath = resolveBinaryPath('hegemon-node');
     const args: string[] = [];
-    const chainSpecPath = resolveChainSpecPath(options.chainSpecPath);
-    const basePath = expandHomePath(options.basePath);
+    const chainSpecPath = resolveChainSpecPath(normalizedOptions.chainSpecPath);
+    const basePath = expandHomePath(normalizedOptions.basePath);
 
     if (chainSpecPath) {
       args.push('--chain', chainSpecPath);
     }
-    if (options.dev) {
+    if (normalizedOptions.dev) {
       args.push('--dev');
     }
 
-    if (options.tmp) {
+    if (normalizedOptions.tmp) {
       args.push('--tmp');
     }
 
@@ -72,9 +130,9 @@ export class NodeManager extends EventEmitter {
       args.push('--base-path', basePath);
     }
 
-    if (options.rpcPort) {
-      args.push('--rpc-port', String(options.rpcPort));
-      this.rpcPort = options.rpcPort;
+    if (normalizedOptions.rpcPort) {
+      args.push('--rpc-port', String(normalizedOptions.rpcPort));
+      this.rpcPort = normalizedOptions.rpcPort;
     } else {
       this.rpcPort = DEFAULT_RPC_PORT;
     }
@@ -101,50 +159,54 @@ export class NodeManager extends EventEmitter {
       );
     }
 
-    if (options.listenAddr) {
-      args.push('--listen-addr', options.listenAddr);
-    } else if (options.p2pPort) {
-      args.push('--port', String(options.p2pPort));
+    if (normalizedOptions.listenAddr) {
+      args.push('--listen-addr', normalizedOptions.listenAddr);
+    } else if (normalizedOptions.p2pPort) {
+      args.push('--port', String(normalizedOptions.p2pPort));
     }
 
-    if (options.rpcExternal) {
+    if (normalizedOptions.rpcExternal) {
       args.push('--rpc-external');
     }
 
-    const rpcMethods = options.rpcMethods ?? (options.rpcExternal ? 'safe' : undefined);
+    const rpcMethods =
+      normalizedOptions.rpcMethods ?? (normalizedOptions.rpcExternal ? 'safe' : undefined);
     if (rpcMethods) {
       args.push('--rpc-methods', rpcMethods);
     }
 
-    if (options.rpcCorsAll) {
+    if (normalizedOptions.rpcCorsAll) {
       args.push('--rpc-cors=all');
     }
 
-    if (options.nodeName) {
-      args.push('--name', options.nodeName);
+    if (normalizedOptions.nodeName) {
+      args.push('--name', normalizedOptions.nodeName);
     }
 
-    const mineFlag = options.mineOnStart ? '1' : '0';
+    const mineFlag = normalizedOptions.mineOnStart ? '1' : '0';
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      HEGEMON_MINER_ADDRESS: options.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
-      HEGEMON_SEEDS: options.seeds ?? process.env.HEGEMON_SEEDS,
-      HEGEMON_MAX_PEERS: options.maxPeers !== undefined ? String(options.maxPeers) : process.env.HEGEMON_MAX_PEERS,
+      HEGEMON_MINER_ADDRESS: normalizedOptions.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
+      HEGEMON_SEEDS: normalizedOptions.seeds ?? process.env.HEGEMON_SEEDS,
+      HEGEMON_MAX_PEERS:
+        normalizedOptions.maxPeers !== undefined
+          ? String(normalizedOptions.maxPeers)
+          : process.env.HEGEMON_MAX_PEERS,
       HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS:
-        options.ciphertextDaRetentionBlocks !== undefined
-          ? String(options.ciphertextDaRetentionBlocks)
+        normalizedOptions.ciphertextDaRetentionBlocks !== undefined
+          ? String(normalizedOptions.ciphertextDaRetentionBlocks)
           : process.env.HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS,
       HEGEMON_PROOF_DA_RETENTION_BLOCKS:
-        options.proofDaRetentionBlocks !== undefined
-          ? String(options.proofDaRetentionBlocks)
+        normalizedOptions.proofDaRetentionBlocks !== undefined
+          ? String(normalizedOptions.proofDaRetentionBlocks)
           : process.env.HEGEMON_PROOF_DA_RETENTION_BLOCKS,
       HEGEMON_DA_STORE_CAPACITY:
-        options.daStoreCapacity !== undefined
-          ? String(options.daStoreCapacity)
+        normalizedOptions.daStoreCapacity !== undefined
+          ? String(normalizedOptions.daStoreCapacity)
           : process.env.HEGEMON_DA_STORE_CAPACITY,
       HEGEMON_MINE: mineFlag,
-      HEGEMON_MINE_THREADS: options.mineThreads
-        ? String(options.mineThreads)
+      HEGEMON_MINE_THREADS: normalizedOptions.mineThreads
+        ? String(normalizedOptions.mineThreads)
         : process.env.HEGEMON_MINE_THREADS
     };
     for (const [key, value] of Object.entries(DESKTOP_LIVENESS_ENV_DEFAULTS)) {
@@ -155,7 +217,7 @@ export class NodeManager extends EventEmitter {
     }
 
     this.process = spawn(nodePath, args, { env });
-    this.managedConnectionId = options.connectionId ?? null;
+    this.managedConnectionId = normalizedOptions.connectionId ?? null;
 
     this.process.stdout.on('data', (data) => this.appendLogs(data.toString()));
     this.process.stderr.on('data', (data) => this.appendLogs(data.toString()));
