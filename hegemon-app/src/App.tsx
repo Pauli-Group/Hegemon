@@ -726,8 +726,10 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
   if (currentSeeds && normalizedSeeds !== currentSeeds.toLowerCase()) {
     next = { ...next, seeds: normalizedSeeds };
   }
-  if ((isDefaultLocal || isDefaultTestnet) && normalizedSeeds === '') {
-    next = { ...next, seeds: approvedSeeds };
+  if (isDefaultLocal || isDefaultTestnet) {
+    if (normalizedSeeds !== approvedSeeds) {
+      next = { ...next, seeds: approvedSeeds };
+    }
   }
 
   if (next.mode === 'local') {

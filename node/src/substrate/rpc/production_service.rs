@@ -68,6 +68,7 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::{Decode, Encode};
 use network::PeerId;
+use network::PqNetworkHandle;
 use pallet_shielded_pool::family::{
     build_envelope as build_shielded_kernel_envelope, MintCoinbaseArgs, ShieldedFamilyAction,
     ShieldedTransferInlineArgs, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
@@ -96,6 +97,7 @@ use std::time::Instant;
 
 use crate::substrate::client::HegemonTransactionPool;
 use crate::substrate::mining_worker::MinedBlockRecord;
+use crate::substrate::network_bridge::{TransactionMessage, TRANSACTIONS_PROTOCOL};
 use crate::substrate::service::PeerGraphReport;
 use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
@@ -143,6 +145,8 @@ where
     mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
     /// Miner recipient address bytes (if configured)
     miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
+    /// PQ network handle for immediate tx relay to connected peers.
+    pq_network_handle: Option<PqNetworkHandle>,
     /// Phantom data for the block type
     _phantom: PhantomData<Block>,
 }
@@ -177,6 +181,7 @@ where
         mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
         mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
         miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
+        pq_network_handle: Option<PqNetworkHandle>,
     ) -> Self {
         Self {
             client,
@@ -192,6 +197,7 @@ where
             mined_blocks,
             mined_history,
             miner_recipient,
+            pq_network_handle,
             _phantom: PhantomData,
         }
     }
@@ -212,12 +218,51 @@ where
         self.client.info().best_number.try_into().unwrap_or(0)
     }
 
+    async fn broadcast_submitted_transaction(&self, tx_hash: [u8; 32], extrinsic: Vec<u8>) {
+        let Some(handle) = self.pq_network_handle.clone() else {
+            return;
+        };
+
+        let peer_count = handle.peer_count().await;
+        if peer_count == 0 {
+            tracing::warn!(
+                tx_hash = %hex::encode(tx_hash),
+                "Accepted local tx but skipped immediate relay broadcast because no peers are connected"
+            );
+            return;
+        }
+
+        let encoded = TransactionMessage::new(vec![extrinsic]).encode();
+        let failed = handle
+            .broadcast_to_all(TRANSACTIONS_PROTOCOL, encoded)
+            .await;
+        let delivered = peer_count.saturating_sub(failed.len());
+
+        if delivered == 0 {
+            tracing::warn!(
+                tx_hash = %hex::encode(tx_hash),
+                peer_count,
+                failed_peers = failed.len(),
+                "Accepted local tx but immediate relay broadcast reached no peers"
+            );
+        } else {
+            tracing::info!(
+                tx_hash = %hex::encode(tx_hash),
+                peer_count,
+                delivered_peers = delivered,
+                failed_peers = failed.len(),
+                "Immediately relayed accepted local tx to connected peers"
+            );
+        }
+    }
+
     async fn submit_kernel_action_inner(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>
     where
         Block::Hash: Into<sp_core::H256>,
     {
         let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
+        let extrinsic_bytes = extrinsic.encode();
         let at: sp_core::H256 = self.best_hash().into();
         let tx_hash = self
             .transaction_pool
@@ -226,6 +271,7 @@ where
             .map_err(|e| format!("transaction pool rejected kernel action: {e:?}"))?;
         let mut out = [0u8; 32];
         out.copy_from_slice(tx_hash.as_ref());
+        self.broadcast_submitted_transaction(out, extrinsic_bytes).await;
         Ok(out)
     }
 }
@@ -772,6 +818,7 @@ where
 
         let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
+        let extrinsic_bytes = extrinsic.encode();
         let at: sp_core::H256 = self.best_hash().into();
 
         let tx_hash = self
@@ -782,6 +829,7 @@ where
 
         let mut out = [0u8; 32];
         out.copy_from_slice(tx_hash.as_ref());
+        self.broadcast_submitted_transaction(out, extrinsic_bytes).await;
         tracing::info!(
             nullifiers = nullifier_count,
             commitments = commitment_count,

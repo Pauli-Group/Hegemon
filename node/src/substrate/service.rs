@@ -8277,26 +8277,39 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 .filter(|(hash, _)| !broadcast_txs.contains(hash))
                                 .collect();
 
-                            // Extract data for broadcast and mark as broadcast
-                            let new_txs: Vec<Vec<u8>> = new_tx_pairs
-                                .iter()
-                                .map(|(hash, data)| {
-                                    broadcast_txs.insert(*hash);
-                                    data.clone()
-                                })
-                                .collect();
+                            // Broadcast new transactions. Only mark them as delivered if at least
+                            // one connected peer actually received the message; otherwise retry on
+                            // the next poll instead of stranding the tx forever.
+                            if !new_tx_pairs.is_empty() {
+                                let peer_count = pq_handle_for_tx_prop.peer_count().await;
+                                if peer_count == 0 {
+                                    tracing::debug!(
+                                        tx_count = new_tx_pairs.len(),
+                                        "Skipping tx propagation tick because no peers are connected"
+                                    );
+                                    continue;
+                                }
 
-                            // Broadcast new transactions
-                            if !new_txs.is_empty() {
+                                let new_txs: Vec<Vec<u8>> =
+                                    new_tx_pairs.iter().map(|(_, data)| data.clone()).collect();
                                 let msg = TransactionMessage::new(new_txs.clone());
                                 let encoded = msg.encode();
 
                                 let failed = pq_handle_for_tx_prop
                                     .broadcast_to_all(TRANSACTIONS_PROTOCOL, encoded)
                                     .await;
+                                let delivered = peer_count.saturating_sub(failed.len());
+
+                                if delivered > 0 {
+                                    for (hash, _) in &new_tx_pairs {
+                                        broadcast_txs.insert(*hash);
+                                    }
+                                }
 
                                 tracing::info!(
                                     tx_count = new_txs.len(),
+                                    delivered_peers = delivered,
+                                    peer_count,
                                     failed_peers = failed.len(),
                                     "📡 Broadcast transactions to peers"
                                 );
@@ -10070,6 +10083,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         mined_block_store,
         mined_history,
         miner_recipient,
+        pq_network_handle.clone(),
     ));
     // Create RPC module with all extensions
     let rpc_module = {
