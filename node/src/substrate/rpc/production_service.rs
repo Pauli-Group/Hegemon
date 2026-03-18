@@ -221,7 +221,7 @@ where
         let at: sp_core::H256 = self.best_hash().into();
         let tx_hash = self
             .transaction_pool
-            .submit_one(at, TransactionSource::External, extrinsic)
+            .submit_one(at, TransactionSource::Local, extrinsic)
             .await
             .map_err(|e| format!("transaction pool rejected kernel action: {e:?}"))?;
         let mut out = [0u8; 32];
@@ -776,7 +776,7 @@ where
 
         let tx_hash = self
             .transaction_pool
-            .submit_one(at, TransactionSource::External, extrinsic)
+            .submit_one(at, TransactionSource::Local, extrinsic)
             .await
             .map_err(|e| format!("transaction pool rejected unsigned shielded transfer: {e:?}"))?;
 
