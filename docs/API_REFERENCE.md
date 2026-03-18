@@ -89,12 +89,15 @@ Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
 - `hegemon_peerList() -> Vec<PeerDetail>` (connected PQ peers with address, direction, best height/hash, last-seen seconds)
 - `hegemon_peerGraph() -> PeerGraphSnapshot` (direct peers plus reported peers from discovery)
 
-Pool worker notes:
+Compact mining RPC notes:
 - `hegemon_compactJob` is the preferred compact-job miner surface. It exposes a stable `job_id`, `pre_hash`, `parent_hash`, and share/network targets without assuming an implicit `u64` nonce.
 - `hegemon_submitCompactSolution` accepts a 32-byte nonce (`0x`-prefixed hex) plus the advertised `job_id`.
+
+Legacy / experimental pool-worker RPC notes:
 - `hegemon_poolWork` exposes the current authoring template to pooled hash workers.
 - `hegemon_submitPoolShare` remains as a compatibility path and now also accepts a 32-byte nonce (`0x`-prefixed hex); full-target solutions are forwarded into the mining coordinator.
 - `hegemon_poolStatus` reports aggregate and per-worker share accounting for the current process.
+- These pool-worker RPCs are not part of the current default desktop or `InlineTx` operator flow. They remain in-tree for compatibility and experiments.
 
 `CompactJobResponse` fields:
 - `available: bool`
@@ -184,7 +187,7 @@ Block validity and data-availability RPC methods exposed by the Substrate node:
 - `da_getParams() -> DaParams`
   - Returns global DA parameters (chunk size, sample count, encoding scheme).
 
-Prover market RPC methods exposed on the Substrate node:
+Experimental prover-market RPC methods exposed on the Substrate node:
 
 - `prover_getWorkPackage() -> Option<WorkPackageResponse>`
 - `prover_getStageWorkPackage() -> Option<WorkPackageResponse>`
@@ -196,9 +199,12 @@ Prover market RPC methods exposed on the Substrate node:
 - `prover_listArtifactAnnouncements() -> Vec<ArtifactAnnouncementResponse>`
 - `prover_getCandidateArtifact(tx_statements_commitment: String, tx_count: u32) -> Option<CandidateArtifactResponse>`
 
+These prover RPCs are experimental surfaces for recursive / market research. The live
+`InlineTx` path does not publish external proving work by default.
+
 `WorkPackageResponse` can now carry `root_finalize_payload` for standalone private
 prover workers. In the current branch this payload is intended for the
-`MergeRoot` root-finalize path and includes:
+experimental `MergeRoot` root-finalize path and includes:
 
 - resolved transaction proof material (bincode + base64)
 - statement hashes
@@ -212,6 +218,7 @@ Standalone private prover worker binary:
   - Polls `prover_getStageWorkPackage`
   - Builds commitment proof + merge-root payload for `root_finalize`
   - Submits the completed bundle with `prover_submitStageWorkResult`
+  - Remains experimental and is not required for the normal `InlineTx` deployment path
 
 Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursive epoch proofs are temporarily disabled until a Plonky3 recursion path is reintroduced.
 

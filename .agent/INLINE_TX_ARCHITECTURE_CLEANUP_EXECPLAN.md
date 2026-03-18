@@ -15,6 +15,7 @@ This cleanup makes the current product behavior visible and consistent. After th
 - [x] (2026-03-18 09:52Z) Removed stale pooled/private-prover participation roles from the desktop UI, deleted pool-miner IPC from the app surface, and stopped ordinary node summaries from probing prover RPC.
 - [x] (2026-03-18 10:11Z) Rewrote operator/testnet docs so the current shipping topology is “authoring node + full nodes” and demoted external-prover language to explicit experimental or historical context only.
 - [x] (2026-03-18 10:33Z) Validated the cleanup with `npm --prefix hegemon-app run typecheck`, `cargo check -p runtime`, and `cargo check -p hegemon-node --features substrate`.
+- [x] (2026-03-18 11:07Z) Cleaned the remaining stale instruction surfaces outside the main rollout docs: `docs/API_REFERENCE.md` now marks pool/prover RPC as compatibility or experimental surfaces, and both repo-local `hegemon-testnet-join` skills now follow the live `InlineTx` join path instead of the dead external-prover path.
 
 ## Surprises & Discoveries
 
@@ -50,6 +51,7 @@ What intentionally remains in-tree:
 - the experimental recursive worker code and `hegemon-prover-worker` binary;
 - the pool miner manager implementation, now disconnected from the shipping desktop surface;
 - recursive/merge-root documentation inside `DESIGN.md` and `METHODS.md`, but reworded so it is clearly experimental rather than current product topology.
+- compatibility / experimental RPC documentation for pooled workers and prover-market research in `docs/API_REFERENCE.md`, now explicitly labeled as non-default product surface rather than current operator guidance.
 
 The main practical gain is not cosmetic. A fresh reader can now look at the runtime manifest, the desktop app, and the rollout docs and see the same architecture: proof-ready transactions at the edge, `InlineTx` in the core, and a normal deployment built around an authoring node plus full nodes.
 
