@@ -1721,7 +1721,18 @@ export default function App() {
       if (genesisMismatch) {
         throw new Error('Genesis mismatch between wallet and node. Switch nodes or force a rescan before sending.');
       }
-      if (walletSummary?.reachable === false) {
+      const liveHttpUrl = deriveHttpUrl(wsUrl, activeConnection?.httpUrl);
+      if (liveHttpUrl) {
+        const liveSummary = await window.hegemon.node.summary({
+          connectionId: 'wallet-send',
+          label: 'Wallet send target',
+          isLocal: false,
+          httpUrl: liveHttpUrl
+        });
+        if (!liveSummary.reachable) {
+          throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
+        }
+      } else if (walletSummary?.reachable === false) {
         throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
       }
 
