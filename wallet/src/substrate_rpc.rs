@@ -242,6 +242,38 @@ pub struct TransactionResponse {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct ShieldedTransferRequest {
+    proof: String,
+    nullifiers: Vec<String>,
+    commitments: Vec<String>,
+    encrypted_notes: Vec<String>,
+    anchor: String,
+    balance_slot_asset_ids: [u64; 4],
+    binding_hash: String,
+    fee: u64,
+    value_balance: i128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stablecoin: Option<ShieldedStablecoinPolicyBindingRequest>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShieldedStablecoinPolicyBindingRequest {
+    asset_id: u64,
+    policy_hash: String,
+    oracle_commitment: String,
+    attestation_commitment: String,
+    issuance_delta: i128,
+    policy_version: u32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ShieldedTransferResponse {
+    success: bool,
+    tx_hash: Option<String>,
+    error: Option<String>,
+}
+
 /// Parse a NoteCiphertext from the pallet's on-chain format.
 ///
 /// The runtime API returns:
@@ -719,6 +751,60 @@ impl SubstrateRpcClient {
         hex_to_array(&tx_hash)
     }
 
+    async fn submit_shielded_transfer_via_rpc(
+        &self,
+        bundle: &TransactionBundle,
+    ) -> Result<[u8; 32], WalletError> {
+        use base64::Engine;
+
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+
+        let request = ShieldedTransferRequest {
+            proof: base64::engine::general_purpose::STANDARD.encode(&bundle.proof_bytes),
+            nullifiers: bundle.nullifiers.iter().map(hex::encode).collect(),
+            commitments: bundle.commitments.iter().map(hex::encode).collect(),
+            encrypted_notes: bundle
+                .ciphertexts
+                .iter()
+                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+                .collect(),
+            anchor: hex::encode(bundle.anchor),
+            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
+            binding_hash: hex::encode(bundle.binding_hash),
+            fee: bundle.fee,
+            value_balance: bundle.value_balance,
+            stablecoin: bundle.stablecoin.enabled.then(|| ShieldedStablecoinPolicyBindingRequest {
+                asset_id: bundle.stablecoin.asset_id,
+                policy_hash: hex::encode(bundle.stablecoin.policy_hash),
+                oracle_commitment: hex::encode(bundle.stablecoin.oracle_commitment),
+                attestation_commitment: hex::encode(bundle.stablecoin.attestation_commitment),
+                issuance_delta: bundle.stablecoin.issuance_delta,
+                policy_version: bundle.stablecoin.policy_version,
+            }),
+        };
+
+        let response: ShieldedTransferResponse = client
+            .request("hegemon_submitShieldedTransfer", rpc_params![request])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_submitShieldedTransfer failed: {}", e)))?;
+
+        if !response.success {
+            return Err(WalletError::Http(format!(
+                "Shielded transfer submission failed: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
+            )));
+        }
+
+        let tx_hash = response
+            .tx_hash
+            .ok_or_else(|| WalletError::Rpc("Missing tx_hash in shielded transfer response".to_string()))?;
+
+        hex_to_array(&tx_hash)
+    }
+
     /// Check if connected to the node
     pub async fn is_connected(&self) -> bool {
         let client = self.client.read().await;
@@ -1120,7 +1206,7 @@ impl SubstrateRpcClient {
         bundle: &TransactionBundle,
         _signing_seed: &[u8; 32],
     ) -> Result<[u8; 32], WalletError> {
-        self.submit_transaction(bundle).await
+        self.submit_shielded_transfer_via_rpc(bundle).await
     }
 
     /// Submit a pure shielded-to-shielded transfer (unsigned)
@@ -1143,7 +1229,7 @@ impl SubstrateRpcClient {
         &self,
         bundle: &TransactionBundle,
     ) -> Result<[u8; 32], WalletError> {
-        self.submit_transaction(bundle).await
+        self.submit_shielded_transfer_via_rpc(bundle).await
     }
 
     /// Submit a pure shielded-to-shielded transfer (unsigned, DA sidecar variant).

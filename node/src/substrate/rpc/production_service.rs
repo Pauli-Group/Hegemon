@@ -256,6 +256,21 @@ where
         }
     }
 
+    fn submitted_tx_tracking_state(&self, tx_hash: &sp_core::H256) -> (bool, bool) {
+        use sc_transaction_pool_api::{InPoolTransaction, TransactionPool as ScTransactionPool};
+
+        let ready = self
+            .transaction_pool
+            .ready()
+            .any(|tx| *InPoolTransaction::hash(&*tx) == *tx_hash);
+        let future = self
+            .transaction_pool
+            .futures()
+            .into_iter()
+            .any(|tx| *InPoolTransaction::hash(&tx) == *tx_hash);
+        (ready, future)
+    }
+
     async fn submit_kernel_action_inner(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>
     where
         Block::Hash: Into<sp_core::H256>,
@@ -269,9 +284,22 @@ where
             .submit_one(at, TransactionSource::Local, extrinsic)
             .await
             .map_err(|e| format!("transaction pool rejected kernel action: {e:?}"))?;
+        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        if !tracked_ready && !tracked_future {
+            return Err(format!(
+                "kernel action disappeared after local submission (tx_hash=0x{})",
+                hex::encode(tx_hash.as_ref())
+            ));
+        }
         let mut out = [0u8; 32];
         out.copy_from_slice(tx_hash.as_ref());
         self.broadcast_submitted_transaction(out, extrinsic_bytes).await;
+        tracing::info!(
+            tx_hash = %hex::encode(out),
+            tracked_ready,
+            tracked_future,
+            "Submitted kernel action via Hegemon RPC"
+        );
         Ok(out)
     }
 }
@@ -826,6 +854,13 @@ where
             .submit_one(at, TransactionSource::Local, extrinsic)
             .await
             .map_err(|e| format!("transaction pool rejected unsigned shielded transfer: {e:?}"))?;
+        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        if !tracked_ready && !tracked_future {
+            return Err(format!(
+                "unsigned shielded transfer disappeared after local submission (tx_hash=0x{})",
+                hex::encode(tx_hash.as_ref())
+            ));
+        }
 
         let mut out = [0u8; 32];
         out.copy_from_slice(tx_hash.as_ref());
@@ -834,6 +869,8 @@ where
             nullifiers = nullifier_count,
             commitments = commitment_count,
             tx_hash = %hex::encode(out),
+            tracked_ready,
+            tracked_future,
             "Submitted unsigned shielded transfer via Hegemon RPC"
         );
         Ok(out)

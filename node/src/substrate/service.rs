@@ -8261,18 +8261,32 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         loop {
                             interval.tick().await;
 
-                            // Get ready transactions from pool
-                            let ready_txs: Vec<_> = transaction_pool_for_prop
-                                .ready()
-                                .map(|tx| {
-                                    let hash: sp_core::H256 = *InPoolTransaction::hash(&*tx);
-                                    let data = InPoolTransaction::data(&*tx).encode();
-                                    (hash, data)
-                                })
-                                .collect();
+                            // Get ready transactions from pool, plus futures as a fallback.
+                            // InlineTx relays are not authoring locally, so a wallet-submitted
+                            // transfer that temporarily sits in `future` still needs to reach the
+                            // actual mining node instead of waiting forever on the relay.
+                            let mut candidate_txs: Vec<(sp_core::H256, Vec<u8>)> =
+                                transaction_pool_for_prop
+                                    .ready()
+                                    .map(|tx| {
+                                        let hash: sp_core::H256 = *InPoolTransaction::hash(&*tx);
+                                        let data = InPoolTransaction::data(&*tx).encode();
+                                        (hash, data)
+                                    })
+                                    .collect();
+                            let mut seen_hashes: std::collections::HashSet<sp_core::H256> =
+                                candidate_txs.iter().map(|(hash, _)| *hash).collect();
+                            for tx in transaction_pool_for_prop.futures() {
+                                let hash: sp_core::H256 = *InPoolTransaction::hash(&tx);
+                                if !seen_hashes.insert(hash) {
+                                    continue;
+                                }
+                                let data = InPoolTransaction::data(&tx).encode();
+                                candidate_txs.push((hash, data));
+                            }
 
                             // Find transactions we haven't broadcast yet
-                            let new_tx_pairs: Vec<(sp_core::H256, Vec<u8>)> = ready_txs
+                            let new_tx_pairs: Vec<(sp_core::H256, Vec<u8>)> = candidate_txs
                                 .into_iter()
                                 .filter(|(hash, _)| !broadcast_txs.contains(hash))
                                 .collect();

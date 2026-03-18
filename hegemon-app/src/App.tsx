@@ -1423,6 +1423,32 @@ export default function App() {
     return trimmed;
   };
 
+  const invalidateWalletSession = useCallback(
+    (message: string, storePathOverride?: string) => {
+      const targetStorePath = (storePathOverride ?? storePath).trim();
+      setWalletStatus(null);
+      setWalletError(message);
+      setActiveUnlockToken(null);
+      setWalletSyncQueued(false);
+      setDisclosureRecords([]);
+      if (!targetStorePath) {
+        return;
+      }
+      setSendAttempts((prev) =>
+        prev.map((entry) =>
+          entry.storePath === targetStorePath && entry.status === 'pending'
+            ? {
+                ...entry,
+                status: 'failed',
+                error: entry.error ?? message
+              }
+            : entry
+        )
+      );
+    },
+    [storePath]
+  );
+
   const requireActiveUnlockToken = () => {
     if (!activeUnlockToken) {
       throw new Error('Wallet is locked. Open or init the store first.');
@@ -1430,45 +1456,66 @@ export default function App() {
     return activeUnlockToken;
   };
 
-  const refreshWalletStatus = async (overrideUnlockToken?: string) => {
-    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
-    if (!unlockToken) {
-      setWalletStatus(null);
-      return;
-    }
-    try {
-      const resolvedStorePath = resolveStorePath();
-      const status = await window.hegemon.wallet.status(resolvedStorePath, unlockToken, true);
-      setWalletStatus(status);
-      setWalletError(null);
-    } catch (error) {
-      setWalletError(error instanceof Error ? error.message : 'Wallet status failed.');
-    }
-  };
+  const refreshWalletStatus = useCallback(
+    async (overrideUnlockToken?: string) => {
+      const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+      if (!unlockToken) {
+        setWalletStatus(null);
+        return;
+      }
+      let resolvedStorePath = '';
+      try {
+        resolvedStorePath = resolveStorePath();
+        const status = await window.hegemon.wallet.status(resolvedStorePath, unlockToken, true);
+        setWalletStatus(status);
+        setWalletError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Wallet status failed.';
+        const normalized = message.toLowerCase();
+        if (
+          normalized.includes('walletd process not running') ||
+          normalized.includes('walletd stopped') ||
+          normalized.includes('walletd stdin not available') ||
+          normalized.includes('wallet is locked') ||
+          normalized.includes('wallet unlock token') ||
+          normalized.includes('expired')
+        ) {
+          invalidateWalletSession(message, resolvedStorePath || storePath);
+          return;
+        }
+        setWalletStatus(null);
+        setWalletError(message);
+      }
+    },
+    [activeUnlockToken, invalidateWalletSession, storePath]
+  );
 
-  const refreshDisclosureRecords = async (overrideUnlockToken?: string) => {
-    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
-    if (!unlockToken) {
-      setDisclosureRecords([]);
-      return;
-    }
-    setDisclosureListBusy(true);
-    try {
-      const resolvedStorePath = resolveStorePath();
-      const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, unlockToken);
-      setDisclosureRecords(records);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Disclosure list failed.';
-      const code = (error as { code?: string }).code;
-      if (code === 'unknown_method' || message.includes('unknown method disclosure.list')) {
+  const refreshDisclosureRecords = useCallback(
+    async (overrideUnlockToken?: string) => {
+      const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+      if (!unlockToken) {
         setDisclosureRecords([]);
         return;
       }
-      setWalletError(message);
-    } finally {
-      setDisclosureListBusy(false);
-    }
-  };
+      setDisclosureListBusy(true);
+      try {
+        const resolvedStorePath = resolveStorePath();
+        const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, unlockToken);
+        setDisclosureRecords(records);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Disclosure list failed.';
+        const code = (error as { code?: string }).code;
+        if (code === 'unknown_method' || message.includes('unknown method disclosure.list')) {
+          setDisclosureRecords([]);
+          return;
+        }
+        setWalletError(message);
+      } finally {
+        setDisclosureListBusy(false);
+      }
+    },
+    [activeUnlockToken]
+  );
 
   const handleWalletInit = async () => {
     setWalletBusy(true);
@@ -1573,6 +1620,21 @@ export default function App() {
       window.clearInterval(interval);
     };
   }, [autoLockEnabled, activeUnlockToken, autoLockMinutes, handleWalletLock, walletBusy]);
+
+  useEffect(() => {
+    if (!activeUnlockToken) {
+      return;
+    }
+    if (!walletBusy) {
+      void refreshWalletStatus();
+    }
+    const interval = window.setInterval(() => {
+      if (!walletBusy) {
+        void refreshWalletStatus();
+      }
+    }, 10_000);
+    return () => window.clearInterval(interval);
+  }, [activeUnlockToken, refreshWalletStatus, walletBusy]);
 
   const handleCopyAddress = async () => {
     if (!walletStatus?.primaryAddress) {
@@ -2105,7 +2167,15 @@ export default function App() {
     const attemptEntries: ActivityEntry[] = sortedAttempts.map((attempt, index) => {
       const windowEnd = index > 0 ? sortedAttempts[index - 1]?.createdAt : null;
       const pending = attempt.txId ? pendingByTxId.get(attempt.txId) : null;
-      const status = pending ? (pending.status === 'confirmed' ? 'confirmed' : 'pending') : attempt.status;
+      const missingWalletPending =
+        attempt.status === 'pending' && !pending && walletUnlocked && !walletError;
+      const status = pending
+        ? pending.status === 'confirmed'
+          ? 'confirmed'
+          : 'pending'
+        : missingWalletPending
+          ? 'failed'
+          : attempt.status;
       const expectedSteps = attempt.consolidationExpected ?? 0;
       const matchingSteps = consolidationEntries
         .filter((entry) => parseTimestamp(entry.createdAt) >= parseTimestamp(attempt.createdAt))
@@ -2152,7 +2222,9 @@ export default function App() {
         status,
         txId: normalizeTxId(pending?.txId) ?? attempt.txId,
         confirmations: pending?.confirmations,
-        error: attempt.error,
+        error: missingWalletPending
+          ? attempt.error ?? 'Submission never appeared in wallet pending state.'
+          : attempt.error,
         notesNeeded: attempt.notesNeeded,
         walletNoteCount: attempt.walletNoteCount,
         maxInputs: attempt.maxInputs,
@@ -2176,7 +2248,7 @@ export default function App() {
     ];
     merged.sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
     return merged;
-  }, [attemptsForStore, pendingTransactions, pendingByTxId]);
+  }, [attemptsForStore, pendingTransactions, pendingByTxId, walletError, walletUnlocked]);
 
   const sendInFlight = attemptsForStore.some((attempt) => attempt.status === 'processing');
 
