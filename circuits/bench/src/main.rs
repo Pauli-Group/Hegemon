@@ -55,7 +55,8 @@ struct Cli {
     /// Emit structured JSON instead of a human summary.
     #[arg(long)]
     json: bool,
-    /// Run a fast smoke test (caps iterations at 4).
+    /// Run a fast smoke test with a reduced transaction count and the
+    /// smallest representative active-lane batch size.
     #[arg(long)]
     smoke: bool,
     /// Batch size for `BatchTransactionProver::prove_batch` benchmarking.
@@ -198,10 +199,11 @@ struct ActiveLaneMetrics {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let iterations = if cli.smoke {
-        cli.iterations.min(4)
+    let iterations = if cli.smoke { 1 } else { cli.iterations };
+    let lane_batch_sizes = if cli.smoke {
+        vec![1]
     } else {
-        cli.iterations
+        cli.lane_batch_sizes.clone()
     };
     let report = run_benchmark(
         iterations,
@@ -211,7 +213,7 @@ fn main() -> Result<()> {
         cli.batch_size,
         cli.batch_only,
         cli.batch_skip_verify,
-        &cli.lane_batch_sizes,
+        &lane_batch_sizes,
         !cli.cold,
         cli.dead_lanes,
         cli.raw_only,
@@ -1279,7 +1281,13 @@ fn run_benchmark(
         for idx in 0..iterations {
             let witness_start = Instant::now();
             let witness = if smoke {
-                smoke_transaction_witness(idx as u8).context("build smoke transaction witness")?
+                smoke_transaction_witness(
+                    anchor_history_tree.as_mut().expect(
+                        "shared anchor-history tree available when benchmarking transactions",
+                    ),
+                    idx as u8,
+                )
+                .context("build smoke transaction witness")?
             } else {
                 chain_synthetic_witness(
                     anchor_history_tree.as_mut().expect(
@@ -1715,7 +1723,7 @@ fn standalone_synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> Transact
     }
 }
 
-fn smoke_transaction_witness(seed: u8) -> Result<TransactionWitness> {
+fn smoke_transaction_witness(tree: &mut CommitmentTree, seed: u8) -> Result<TransactionWitness> {
     let sk_spend = [seed.wrapping_add(8); 32];
     let pk_auth = spend_auth_key_bytes(&sk_spend);
     let input_note = NoteData {
@@ -1734,17 +1742,14 @@ fn smoke_transaction_witness(seed: u8) -> Result<TransactionWitness> {
         rho: [seed.wrapping_add(5); 32],
         r: [seed.wrapping_add(6); 32],
     };
-    let leaf = input_note.commitment();
-    let (paths, merkle_root) = build_commitment_tree(&[leaf])?;
+    let position = append_note(tree, &input_note)? as u64;
+    let merkle_root = tree.root();
     Ok(TransactionWitness {
         inputs: vec![InputNoteWitness {
             note: input_note,
-            position: 0,
+            position,
             rho_seed: [seed.wrapping_add(7); 32],
-            merkle_path: paths
-                .into_iter()
-                .next()
-                .expect("single leaf path should exist"),
+            merkle_path: merkle_path_from_tree(tree, position as usize)?,
         }],
         outputs: vec![OutputNoteWitness { note: output_note }],
         ciphertext_hashes: vec![[seed.wrapping_add(9); 48]; 1],
@@ -1774,11 +1779,8 @@ mod tests {
         Vec<transaction_circuit::proof::TransactionProof>,
     ) {
         let (proving_key, _) = generate_keys();
-        let witness = smoke_transaction_witness(7).expect("smoke witness");
         let mut tree = CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("anchor tree");
-        for input in &witness.inputs {
-            append_note(&mut tree, &input.note).expect("append smoke input note");
-        }
+        let witness = smoke_transaction_witness(&mut tree, 7).expect("smoke witness");
         assert_eq!(tree.root(), witness.merkle_root);
         let proof = proof::prove(&witness, &proving_key).expect("transaction proof");
         (tree, vec![proof])
