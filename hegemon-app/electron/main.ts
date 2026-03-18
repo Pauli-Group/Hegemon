@@ -5,13 +5,11 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
-import { PoolMinerManager } from './poolMinerManager';
 import { WalletdClient } from './walletdClient';
 import type {
   NodeMiningRequest,
   NodeStartOptions,
   NodeSummaryRequest,
-  PoolMinerStartRequest,
   Contact,
   DialogOpenOptions,
   WalletDisclosureRecord,
@@ -28,7 +26,6 @@ import type {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nodeManager = new NodeManager();
-const poolMinerManager = new PoolMinerManager();
 const walletdClient = new WalletdClient();
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const contactsFileName = 'contacts.json';
@@ -216,7 +213,7 @@ const createWindow = () => {
 
 const stopManagedServices = async () => {
   walletUnlockState = null;
-  await Promise.allSettled([nodeManager.stopNode(), poolMinerManager.stop(), walletdClient.stop()]);
+  await Promise.allSettled([nodeManager.stopNode(), walletdClient.stop()]);
 };
 
 const resolveStorePathForSession = (storePath: string) =>
@@ -319,14 +316,6 @@ ipcMain.handle('node:setMining', async (_event, request: NodeMiningRequest) => {
 });
 
 ipcMain.handle('node:logs', async () => nodeManager.getLogs());
-ipcMain.handle('poolMiner:start', async (_event, request: PoolMinerStartRequest) => {
-  await poolMinerManager.start(request);
-});
-ipcMain.handle('poolMiner:stop', async () => {
-  await poolMinerManager.stop();
-});
-ipcMain.handle('poolMiner:status', async () => poolMinerManager.getStatus());
-ipcMain.handle('poolMiner:logs', async () => poolMinerManager.getLogs());
 
 ipcMain.handle('wallet:init', async (_event, storePath: string, passphrase: string) => {
   const status = (await walletdClient.init(storePath, passphrase)) as WalletStatus;

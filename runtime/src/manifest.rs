@@ -79,10 +79,10 @@ pub fn protocol_manifest() -> ProtocolManifest {
         fee_parameters: FeeParameters::default(),
         da_policy: DaAvailabilityPolicy::default(),
         ciphertext_policy: CiphertextPolicy::default(),
-        // The fresh testnet targets self-contained aggregation by default:
-        // wallets may omit per-tx proof bytes and authors must attach a
-        // same-block CandidateArtifact/proven-batch payload.
-        proof_availability_policy: ProofAvailabilityPolicy::SelfContained,
+        // Fresh testnets now ship the live InlineTx lane by default:
+        // wallets carry canonical per-tx proof bytes inline and authors bind
+        // the ordered set with the parent-bound commitment proof.
+        proof_availability_policy: ProofAvailabilityPolicy::InlineRequired,
         stablecoin_policies: vec![StablecoinPolicyManifestEntry {
             asset_id: 1001,
             oracle_feed: 1,

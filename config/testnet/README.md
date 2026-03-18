@@ -2,10 +2,10 @@
 
 This directory contains configuration and tools for deploying the Hegemon testnet.
 
-For the fresh-testnet rollout on the laptop + `hegemon-ovh` + `hegemon-prover`,
+For the fresh-testnet rollout on the laptop + `hegemon-ovh`,
 follow [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md)
 before starting any host. The laptop-created boot-wallet address is the payout
-address that should be configured everywhere for mining and proving.
+address that should be configured everywhere for mining.
 
 ## Quick Start
 

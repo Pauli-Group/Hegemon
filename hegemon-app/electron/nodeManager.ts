@@ -145,12 +145,7 @@ export class NodeManager extends EventEmitter {
       HEGEMON_MINE: mineFlag,
       HEGEMON_MINE_THREADS: options.mineThreads
         ? String(options.mineThreads)
-        : process.env.HEGEMON_MINE_THREADS,
-      HEGEMON_POOL_SHARE_BITS:
-        options.poolShareBits !== undefined
-          ? String(options.poolShareBits)
-          : process.env.HEGEMON_POOL_SHARE_BITS,
-      HEGEMON_POOL_RPC_TOKEN: options.poolAuthToken ?? process.env.HEGEMON_POOL_RPC_TOKEN
+        : process.env.HEGEMON_MINE_THREADS
     };
     for (const [key, value] of Object.entries(DESKTOP_LIVENESS_ENV_DEFAULTS)) {
       const current = env[key];
@@ -247,11 +242,6 @@ export class NodeManager extends EventEmitter {
         hashRate: null,
         blocksFound: null,
         difficulty: null,
-        aggregationProofFormat: null,
-        proverStageType: null,
-        proverStageLevel: null,
-        proverStageArity: null,
-        proverReadyBundleAgeMs: null,
         blockHeight: null,
         supplyDigest: null,
         storage: null,
@@ -270,14 +260,6 @@ export class NodeManager extends EventEmitter {
     const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
     const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
     const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
-    const stageWorkPackage = await this.safeRpcCall('prover_getStageWorkPackage', [], request.httpUrl);
-    const workPackage = await this.safeRpcCall('prover_getWorkPackage', [], request.httpUrl);
-    const proverPackage = stageWorkPackage ?? workPackage;
-    const nowMs = Date.now();
-    const proverReadyBundleAgeMs =
-      proverPackage && typeof proverPackage.created_at_ms === 'number'
-        ? Math.max(0, nowMs - Number(proverPackage.created_at_ms))
-        : null;
 
     return {
       connectionId: request.connectionId,
@@ -295,13 +277,6 @@ export class NodeManager extends EventEmitter {
       hashRate: mining?.hash_rate ?? null,
       blocksFound: mining?.blocks_found ?? null,
       difficulty: mining?.difficulty ?? null,
-      aggregationProofFormat: null,
-      proverStageType: proverPackage?.stage_type ? String(proverPackage.stage_type) : null,
-      proverStageLevel:
-        proverPackage && typeof proverPackage.level === 'number' ? Number(proverPackage.level) : null,
-      proverStageArity:
-        proverPackage && typeof proverPackage.arity === 'number' ? Number(proverPackage.arity) : null,
-      proverReadyBundleAgeMs,
       blockHeight: mining?.block_height ?? null,
       supplyDigest: consensus?.supply_digest ? String(consensus.supply_digest) : null,
       storage: storage

@@ -1,5 +1,5 @@
 export type NodeConnectionMode = 'local' | 'remote';
-export type NodeParticipationRole = 'full_node' | 'pooled_hasher' | 'authoring_pool' | 'private_prover';
+export type NodeParticipationRole = 'full_node' | 'authoring_pool';
 
 export type NodeConnection = {
   id: string;
@@ -8,11 +8,6 @@ export type NodeConnection = {
   participationRole?: NodeParticipationRole;
   wsUrl: string;
   httpUrl?: string;
-  operatorEndpoint?: string;
-  workerName?: string;
-  payoutAddress?: string;
-  poolAuthToken?: string;
-  poolShareBits?: number;
   chainSpecPath?: string;
   dev?: boolean;
   tmp?: boolean;
@@ -99,11 +94,6 @@ export type NodeSummary = {
   hashRate: number | null;
   blocksFound: number | null;
   difficulty: number | null;
-  aggregationProofFormat: string | null;
-  proverStageType: string | null;
-  proverStageLevel: number | null;
-  proverStageArity: number | null;
-  proverReadyBundleAgeMs: number | null;
   blockHeight: number | null;
   supplyDigest: string | null;
   storage: NodeStorageFootprint | null;
@@ -312,8 +302,6 @@ export type NodeStartOptions = {
   ciphertextDaRetentionBlocks?: number;
   proofDaRetentionBlocks?: number;
   daStoreCapacity?: number;
-  poolShareBits?: number;
-  poolAuthToken?: string;
 };
 
 export type NodeSummaryRequest = {

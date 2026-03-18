@@ -5,8 +5,6 @@ import type {
   DialogOpenOptions,
   NodeConnection,
   NodeManagedStatus,
-  PoolMinerStartRequest,
-  PoolMinerStatus,
   NodeParticipationRole,
   NodeSummary,
   WalletDisclosureCreateResult,
@@ -46,9 +44,7 @@ const defaultMineThreads = (() => {
 
 const participationRoleLabels: Record<NodeParticipationRole, string> = {
   full_node: 'Full node',
-  pooled_hasher: 'Pooled hasher',
-  authoring_pool: 'Authoring pool',
-  private_prover: 'Private prover'
+  authoring_pool: 'Authoring node'
 };
 
 const participationRoleMeta: Record<
@@ -58,48 +54,30 @@ const participationRoleMeta: Record<
     statusTone: 'ok' | 'warn';
     summary: string;
     guidance: string;
-    endpointLabel?: string;
-    endpointPlaceholder?: string;
   }
 > = {
   full_node: {
     statusTone: 'ok',
     summary: 'Verifies the network, serves wallet traffic, and relays chain state without local shielded block authoring.',
     guidance:
-      'Use this for wallets, verification, and monitoring. Switch to Authoring pool only if you control the public authoring host and its proving path.'
-  },
-  pooled_hasher: {
-    statusTone: 'ok',
-    summary:
-      'Intended public mining path for ordinary users. The machine should hash against pool-provided templates instead of authoring shielded blocks.',
-    guidance:
-      'Configure the pool endpoint, worker name, and optional auth token here, then start pooled hashing from the Operations panel.',
-    endpointLabel: 'Pool endpoint',
-    endpointPlaceholder: 'wss://pool.example:9443 or stratum+tcp://pool.example:3333'
+      'Use this for wallets, verification, and monitoring. Switch to Authoring node only if this machine should build and mine shielded blocks.'
   },
   authoring_pool: {
     statusLabel: 'Operator only',
     statusTone: 'warn',
     summary:
-      'Runs the public template-builder and local mining coordinator. This node canonicalizes candidate sets, publishes pool work, attaches ready bundles, and broadcasts final blocks.',
+      'Runs the public block author. This node accepts proof-ready transactions, builds the commitment proof, mines locally, and broadcasts final blocks.',
     guidance:
-      'Use this only on the public authoring host or a federated pool operator machine. Most users should stay on Full node or Pooled hasher.'
-  },
-  private_prover: {
-    statusLabel: 'External worker',
-    statusTone: 'warn',
-    summary:
-      'Runs the private proving host behind a tunnel and returns recursive stage results to the authoring pool.',
-    guidance:
-      'Launch `hegemon-prover-worker` outside the app on this machine. The desktop stores the author RPC endpoint and worker identity, but it does not manage the prover worker lifecycle.',
-    endpointLabel: 'Author RPC endpoint',
-    endpointPlaceholder: 'http://127.0.0.1:9944 via SSH/VPN tunnel'
+      'Use this only on the machine that should author blocks. Everyone else should stay on Full node.'
   }
 };
 
 const inferParticipationRole = (connection: NodeConnection): NodeParticipationRole =>
-  connection.participationRole ??
-  (connection.miningIntent || connection.minerAddress ? 'authoring_pool' : 'full_node');
+  connection.participationRole === 'authoring_pool'
+    ? 'authoring_pool'
+    : connection.miningIntent || connection.minerAddress
+      ? 'authoring_pool'
+      : 'full_node';
 
 const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -707,16 +685,30 @@ const buildTestnetConnection = (): NodeConnection => ({
 const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
 
 const normalizeConnection = (connection: NodeConnection): NodeConnection => {
+  const {
+    operatorEndpoint: _operatorEndpoint,
+    workerName: _workerName,
+    payoutAddress: _payoutAddress,
+    poolAuthToken: _poolAuthToken,
+    poolShareBits: _poolShareBits,
+    ...sanitizedConnection
+  } = connection as NodeConnection & {
+    operatorEndpoint?: string;
+    workerName?: string;
+    payoutAddress?: string;
+    poolAuthToken?: string;
+    poolShareBits?: number;
+  };
   const isDefaultLocal =
-    connection.mode === 'local' &&
-    connection.label === 'Local node' &&
-    (!connection.basePath || connection.basePath === '~/.hegemon-node');
+    sanitizedConnection.mode === 'local' &&
+    sanitizedConnection.label === 'Local node' &&
+    (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node');
   const isDefaultTestnet =
-    connection.mode === 'local' &&
-    connection.label === 'Testnet node' &&
-    (!connection.basePath || connection.basePath === '~/.hegemon-node-testnet');
+    sanitizedConnection.mode === 'local' &&
+    sanitizedConnection.label === 'Testnet node' &&
+    (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node-testnet');
 
-  let next = normalizeLocalConnectionEndpoints(connection);
+  let next = normalizeLocalConnectionEndpoints(sanitizedConnection);
   const inferredParticipationRole = inferParticipationRole(next);
   if (next.participationRole !== inferredParticipationRole) {
     next = { ...next, participationRole: inferredParticipationRole };
@@ -725,7 +717,7 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     next = { ...next, httpUrl: deriveHttpUrl(next.wsUrl) };
   }
 
-  if (isDefaultLocal && connection.dev && !connection.chainSpecPath) {
+  if (isDefaultLocal && sanitizedConnection.dev && !sanitizedConnection.chainSpecPath) {
     next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
   }
 
@@ -769,13 +761,9 @@ export default function App() {
   const [nodeSummaries, setNodeSummaries] = useState<Record<string, NodeSummary>>({});
   const [nodeLogs, setNodeLogs] = useState<string[]>([]);
   const [nodeManagedStatus, setNodeManagedStatus] = useState<NodeManagedStatus | null>(null);
-  const [poolMinerStatus, setPoolMinerStatus] = useState<PoolMinerStatus | null>(null);
-  const [poolMinerLogs, setPoolMinerLogs] = useState<string[]>([]);
   const [nodeBusy, setNodeBusy] = useState(false);
-  const [poolMinerBusy, setPoolMinerBusy] = useState(false);
   const [nodeTransition, setNodeTransition] = useState<NodeTransition | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
-  const [poolMinerError, setPoolMinerError] = useState<string | null>(null);
   const [logFilterInfo, setLogFilterInfo] = useState(true);
   const [logFilterWarn, setLogFilterWarn] = useState(true);
   const [logFilterError, setLogFilterError] = useState(true);
@@ -1207,11 +1195,6 @@ export default function App() {
             hashRate: null,
             blocksFound: null,
             difficulty: null,
-            aggregationProofFormat: null,
-            proverStageType: null,
-            proverStageLevel: null,
-            proverStageArity: null,
-            proverReadyBundleAgeMs: null,
             blockHeight: null,
             supplyDigest: null,
             storage: null,
@@ -1245,23 +1228,9 @@ export default function App() {
       } catch {
         setNodeManagedStatus(null);
       }
-      try {
-        const status = await window.hegemon.poolMiner.status();
-        setPoolMinerStatus(status);
-      } catch {
-        setPoolMinerStatus(null);
-      }
-      try {
-        const logs = await window.hegemon.poolMiner.logs();
-        setPoolMinerLogs(logs);
-      } catch {
-        setPoolMinerLogs([]);
-      }
     } else {
       setNodeLogs([]);
       setNodeManagedStatus(null);
-      setPoolMinerStatus(null);
-      setPoolMinerLogs([]);
     }
   };
 
@@ -1361,7 +1330,7 @@ export default function App() {
       });
     }
     if (normalizedRole !== 'authoring_pool' && normalizedConnection.miningIntent) {
-      setNodeError('Local mining is reserved for the Authoring pool role. Switch roles or disable Auto-start mining.');
+      setNodeError('Local mining is reserved for the Authoring node role. Switch roles or disable Auto-start mining.');
       return;
     }
     if (normalizedRole === 'authoring_pool' && normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
@@ -1407,11 +1376,7 @@ export default function App() {
         nodeName: normalizedConnection.nodeName || undefined,
         ciphertextDaRetentionBlocks: normalizedConnection.ciphertextDaRetentionBlocks,
         proofDaRetentionBlocks: normalizedConnection.proofDaRetentionBlocks,
-        daStoreCapacity: normalizedConnection.daStoreCapacity,
-        poolShareBits:
-          normalizedRole === 'authoring_pool' ? normalizedConnection.poolShareBits : undefined,
-        poolAuthToken:
-          normalizedRole === 'authoring_pool' ? normalizedConnection.poolAuthToken || undefined : undefined
+        daStoreCapacity: normalizedConnection.daStoreCapacity
       });
       await refreshNode();
     } catch (error) {
@@ -1445,58 +1410,6 @@ export default function App() {
       setNodeError(error instanceof Error ? error.message : 'Failed to stop node.');
     } finally {
       setNodeBusy(false);
-    }
-  };
-
-  const handlePoolMinerStart = async () => {
-    if (!activeConnection || activeConnection.mode !== 'local') {
-      setPoolMinerError('Select a local connection to run pooled hashing.');
-      return;
-    }
-    const role = inferParticipationRole(activeConnection);
-    if (role !== 'pooled_hasher') {
-      setPoolMinerError('Switch the participation role to Pooled hasher before starting the pool worker.');
-      return;
-    }
-    const endpoint = (activeConnection.operatorEndpoint || activeConnection.httpUrl || '').trim();
-    if (!endpoint) {
-      setPoolMinerError('Set the pool endpoint before starting pooled hashing.');
-      return;
-    }
-    const workerName =
-      activeConnection.workerName?.trim() ||
-      `worker-${activeConnection.id.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase()}`;
-    const threads = Math.max(1, activeConnection.mineThreads ?? defaultMineThreads);
-
-    setPoolMinerBusy(true);
-    setPoolMinerError(null);
-    try {
-      const request: PoolMinerStartRequest = {
-        endpoint,
-        workerName,
-        authToken: activeConnection.poolAuthToken?.trim() || undefined,
-        threads
-      };
-      await window.hegemon.poolMiner.start(request);
-      updateActiveConnection({ workerName });
-      await refreshNode();
-    } catch (error) {
-      setPoolMinerError(error instanceof Error ? error.message : 'Failed to start pooled hashing.');
-    } finally {
-      setPoolMinerBusy(false);
-    }
-  };
-
-  const handlePoolMinerStop = async () => {
-    setPoolMinerBusy(true);
-    setPoolMinerError(null);
-    try {
-      await window.hegemon.poolMiner.stop();
-      await refreshNode();
-    } catch (error) {
-      setPoolMinerError(error instanceof Error ? error.message : 'Failed to stop pooled hashing.');
-    } finally {
-      setPoolMinerBusy(false);
     }
   };
 
@@ -2111,26 +2024,13 @@ export default function App() {
     }
     void handleNodeStart();
   };
-  const poolMinerRunning = Boolean(poolMinerStatus?.running);
-  const poolMinerToggleLabel = poolMinerBusy
-    ? 'Working...'
-    : poolMinerRunning
-      ? 'Stop pooled hashing'
-      : 'Start pooled hashing';
-  const poolMinerHashRate = formatHashRate(poolMinerStatus?.hashRate);
-  const effectiveMiningActive = activeParticipationRole === 'pooled_hasher' ? poolMinerRunning : Boolean(activeSummary?.mining);
-  const effectiveMiningHashRate = activeParticipationRole === 'pooled_hasher' ? poolMinerStatus?.hashRate : activeSummary?.hashRate;
+  const effectiveMiningActive = Boolean(activeSummary?.mining);
+  const effectiveMiningHashRate = activeSummary?.hashRate;
   const miningHint = activeSummary?.mining
-    ? 'Authoring pool mode is active. To change local authoring settings, stop the node, update Participation + retention, then restart.'
+    ? 'Authoring mode is active. To change local authoring settings, stop the node, update Participation + retention, then restart.'
     : activeParticipationRole === 'authoring_pool'
-      ? 'This connection is configured as an authoring pool node. Enable Auto-start mining under Participation + retention and restart the node to author locally.'
-      : activeParticipationRole === 'pooled_hasher'
-        ? poolMinerRunning
-          ? 'Pooled hashing is active. Keep the pool endpoint reachable and watch accepted shares below.'
-          : 'Pooled hashing is the intended public mining path. Configure the pool endpoint and worker identity, then start pooled hashing.'
-        : activeParticipationRole === 'private_prover'
-          ? 'Private prover mode stores the worker’s tunnel/RPC settings. Run `hegemon-prover-worker` separately on the private host.'
-          : 'This connection is configured as a full node. It verifies and relays the network without authoring shielded blocks.';
+      ? 'This connection is configured as an authoring node. Enable Auto-start mining under Participation + retention and restart the node to author locally.'
+      : 'This connection is configured as a full node. It verifies and relays the network without authoring shielded blocks.';
   const walletConnectionTone =
     walletSummary?.reachable === true ? 'ok' : walletSummary?.reachable === false ? 'error' : 'neutral';
   const walletConnectionLabel =
@@ -2582,9 +2482,7 @@ export default function App() {
             }}
           >
             <option value="full_node">Full node</option>
-            <option value="pooled_hasher">Pooled hasher</option>
-            <option value="authoring_pool">Authoring pool</option>
-            <option value="private_prover">Private prover</option>
+            <option value="authoring_pool">Authoring node</option>
           </select>
         </label>
         <label className="space-y-2">
@@ -2621,75 +2519,6 @@ export default function App() {
           </div>
           <p className="text-sm text-surfaceMuted">{activeParticipationMeta.summary}</p>
           <p className="text-xs text-surfaceMuted/80">{activeParticipationMeta.guidance}</p>
-          {activeParticipationMeta.endpointLabel ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="label">{activeParticipationMeta.endpointLabel}</span>
-                <input
-                  value={activeConnection.operatorEndpoint ?? ''}
-                  onChange={(event) => updateActiveConnection({ operatorEndpoint: event.target.value })}
-                  placeholder={activeParticipationMeta.endpointPlaceholder}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="label">Worker name</span>
-                <input
-                  value={activeConnection.workerName ?? ''}
-                  onChange={(event) => updateActiveConnection({ workerName: event.target.value })}
-                  placeholder="worker-01"
-                />
-              </label>
-              <label className="space-y-2 md:col-span-2">
-                <span className="label">{activeParticipationRole === 'private_prover' ? 'Reward address' : 'Payout address'}</span>
-                <input
-                  value={activeConnection.payoutAddress ?? ''}
-                  onChange={(event) => updateActiveConnection({ payoutAddress: event.target.value })}
-                  placeholder="shca1..."
-                />
-              </label>
-              <label className="space-y-2 md:col-span-2">
-                <span className="label">{activeParticipationRole === 'private_prover' ? 'RPC auth token' : 'Pool auth token'}</span>
-                <input
-                  type="password"
-                  value={activeConnection.poolAuthToken ?? ''}
-                  onChange={(event) => updateActiveConnection({ poolAuthToken: event.target.value })}
-                  placeholder="optional shared secret"
-                />
-              </label>
-              <p className="text-xs text-guard md:col-span-2">
-                {activeParticipationRole === 'pooled_hasher'
-                  ? 'The desktop pooled hash worker uses the pool endpoint, worker name, and auth token directly. Payout address is stored with the profile for operator bookkeeping.'
-                  : 'The desktop stores these settings, but you still launch `hegemon-prover-worker` outside the app on the private host.'}
-              </p>
-            </div>
-          ) : null}
-          {activeParticipationRole === 'authoring_pool' ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="label">Pool share bits</span>
-                <input
-                  value={activeConnection.poolShareBits?.toString() ?? ''}
-                  onChange={(event) => {
-                    const nextValue = Number.parseInt(event.target.value, 10);
-                    updateActiveConnection({ poolShareBits: Number.isNaN(nextValue) ? undefined : nextValue });
-                  }}
-                  placeholder="Defaults to network difficulty"
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="label">Pool auth token</span>
-                <input
-                  type="password"
-                  value={activeConnection.poolAuthToken ?? ''}
-                  onChange={(event) => updateActiveConnection({ poolAuthToken: event.target.value })}
-                  placeholder="optional shared secret"
-                />
-              </label>
-              <p className="text-xs text-surfaceMuted md:col-span-2">
-                Share bits are exported as <span className="mono">HEGEMON_POOL_SHARE_BITS</span> when this connection starts the authoring pool node.
-              </p>
-            </div>
-          ) : null}
         </div>
       ) : null}
       {activeConnection?.mode === 'remote' ? (
@@ -2875,27 +2704,9 @@ export default function App() {
                     />
                   </label>
                 </>
-              ) : activeParticipationRole === 'pooled_hasher' ? (
-                <>
-                  <label className="space-y-2">
-                    <span className="label">Hash worker threads</span>
-                    <input
-                      value={activeConnection.mineThreads?.toString() ?? ''}
-                      onChange={(event) => {
-                        const nextValue = Number.parseInt(event.target.value, 10);
-                        updateActiveConnection({ mineThreads: Number.isNaN(nextValue) ? undefined : nextValue });
-                      }}
-                    />
-                  </label>
-                  <p className="text-xs text-surfaceMuted md:col-span-2">
-                    These threads are used by the local pooled hash worker, not by node-side authoring.
-                  </p>
-                </>
               ) : (
                 <p className="text-xs text-surfaceMuted md:col-span-2">
-                  {activeParticipationRole === 'full_node'
-                    ? 'Full node mode keeps local authoring disabled. Switch the participation role to Authoring pool to reveal local mining controls.'
-                    : 'Private prover mode keeps node-side authoring disabled. Run `hegemon-prover-worker` separately on the private host.'}
+                  Full node mode keeps local authoring disabled. Switch the participation role to Authoring node to reveal local mining controls.
                 </p>
               )}
               <label className="space-y-2">
@@ -3048,25 +2859,8 @@ export default function App() {
         >
           {nodeToggleLabel}
         </button>
-        {activeConnection?.mode === 'local' && activeParticipationRole === 'pooled_hasher' ? (
-          <button
-            className={poolMinerRunning ? 'secondary' : 'primary'}
-            onClick={() => {
-              if (poolMinerRunning) {
-                void handlePoolMinerStop();
-              } else {
-                void handlePoolMinerStart();
-              }
-            }}
-            disabled={poolMinerBusy}
-          >
-            {poolMinerToggleLabel}
-          </button>
-        ) : null}
       </div>
       <p className="text-sm text-surfaceMuted">{miningHint}</p>
-      {poolMinerError ? <p className="text-guard text-sm">{poolMinerError}</p> : null}
-      {!poolMinerError && poolMinerStatus?.error ? <p className="text-guard text-sm">{poolMinerStatus.error}</p> : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <div className="panel">
@@ -3105,11 +2899,7 @@ export default function App() {
         <div className="panel">
           <p className="label">Mining</p>
           <p className="text-lg font-medium">
-            {activeParticipationRole === 'pooled_hasher'
-              ? poolMinerRunning
-                ? 'Active'
-                : 'Idle'
-              : activeSummary?.mining === null || activeSummary?.mining === undefined
+            {activeSummary?.mining === null || activeSummary?.mining === undefined
               ? 'N/A'
               : activeSummary.mining
                 ? 'Active'
@@ -3117,13 +2907,6 @@ export default function App() {
           </p>
           <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(effectiveMiningHashRate)}</p>
         </div>
-        {activeParticipationRole === 'pooled_hasher' ? (
-          <div className="panel">
-            <p className="label">Pooled worker</p>
-            <p className="text-lg font-medium">{poolMinerRunning ? 'Active' : 'Idle'}</p>
-            <p className="text-xs text-surfaceMuted">Hash rate: {poolMinerHashRate}</p>
-          </div>
-        ) : null}
         <div className="panel">
           <p className="label">Storage</p>
           <p className="text-lg font-medium">{formatBytes(activeSummary?.storage?.totalBytes)}</p>
@@ -3140,17 +2923,6 @@ export default function App() {
           <p className="text-sm text-surfaceMuted">Difficulty: {formatNumber(activeSummary?.difficulty)}</p>
           <p className="text-sm text-surfaceMuted">Block height: {formatNumber(activeSummary?.blockHeight)}</p>
         </div>
-        {activeParticipationRole === 'pooled_hasher' ? (
-          <div className="panel">
-            <p className="label">Pooled worker details</p>
-            <p className="text-sm text-surfaceMuted">Threads: {poolMinerStatus?.threads ?? 'N/A'}</p>
-            <p className="text-sm text-surfaceMuted">Hash rate: {poolMinerHashRate}</p>
-            <p className="text-sm text-surfaceMuted">Hashes computed: {formatNumber(poolMinerStatus?.hashesComputed)}</p>
-            <p className="text-sm text-surfaceMuted">Accepted shares: {formatNumber(poolMinerStatus?.acceptedShares)}</p>
-            <p className="text-sm text-surfaceMuted">Rejected shares: {formatNumber(poolMinerStatus?.rejectedShares)}</p>
-            <p className="text-sm text-surfaceMuted">Block candidates: {formatNumber(poolMinerStatus?.blockCandidates)}</p>
-          </div>
-        ) : null}
         <div className="panel">
           <p className="label">Storage breakdown</p>
           <p className="text-sm text-surfaceMuted">Blocks: {formatBytes(activeSummary?.storage?.blocksBytes)}</p>
@@ -3226,48 +2998,6 @@ export default function App() {
             </span>
           </p>
         </div>
-        {activeParticipationRole === 'pooled_hasher' ? (
-          <div className="panel md:col-span-2 space-y-2">
-            <p className="label">Pool accounting</p>
-            <p className="text-sm text-surfaceMuted">
-              Pool target: {poolMinerStatus?.pool?.shareDifficulty ? `0x${poolMinerStatus.pool.shareDifficulty.toString(16)}` : 'N/A'}
-            </p>
-            <p className="text-sm text-surfaceMuted">
-              Network target: {poolMinerStatus?.pool?.networkDifficulty ? `0x${poolMinerStatus.pool.networkDifficulty.toString(16)}` : 'N/A'}
-            </p>
-            <p className="text-sm text-surfaceMuted">
-              Pool accepted/rejected shares: {formatNumber(poolMinerStatus?.pool?.acceptedShares)} / {formatNumber(poolMinerStatus?.pool?.rejectedShares)}
-            </p>
-            <p className="text-sm text-surfaceMuted">Tracked workers: {formatNumber(poolMinerStatus?.pool?.workerCount)}</p>
-            {poolMinerStatus?.pool?.workers?.length ? (
-              <div className="space-y-1 pt-2">
-                {poolMinerStatus.pool.workers.slice(0, 5).map((worker) => (
-                  <p key={worker.workerName} className="text-xs text-surfaceMuted">
-                    {worker.workerName}: {formatNumber(worker.acceptedShares)} accepted / {formatNumber(worker.rejectedShares)} rejected · payout {(worker.payoutFractionPpm / 10_000).toFixed(2)}%
-                  </p>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-surfaceMuted">No pool worker share records yet.</p>
-            )}
-          </div>
-        ) : null}
-        {activeParticipationRole === 'pooled_hasher' ? (
-          <div className="panel md:col-span-2 space-y-2">
-            <p className="label">Pool worker log</p>
-            {poolMinerLogs.length ? (
-              <div className="max-h-48 overflow-auto rounded-xl border border-surfaceMuted/10 bg-midnight/40 p-3">
-                {poolMinerLogs.slice(-20).map((line, index) => (
-                  <p key={`${index}-${line.slice(0, 12)}`} className="mono text-xs text-surfaceMuted/90">
-                    {line}
-                  </p>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-surfaceMuted">No pooled worker events yet.</p>
-            )}
-          </div>
-        ) : null}
       </div>
 
       {nodeError && <p className="text-guard">{nodeError}</p>}
