@@ -67,6 +67,8 @@ pub struct CommitmentBlockPublicInputsP3 {
     pub tx_statements_commitment: [Felt; 6],
     pub starting_state_root: [Felt; 6],
     pub ending_state_root: [Felt; 6],
+    pub starting_kernel_root: [Felt; 6],
+    pub ending_kernel_root: [Felt; 6],
     pub nullifier_root: [Felt; 6],
     pub da_root: [Felt; 6],
     pub tx_count: u32,
@@ -82,6 +84,8 @@ impl CommitmentBlockPublicInputsP3 {
         elements.extend_from_slice(&self.tx_statements_commitment);
         elements.extend_from_slice(&self.starting_state_root);
         elements.extend_from_slice(&self.ending_state_root);
+        elements.extend_from_slice(&self.starting_kernel_root);
+        elements.extend_from_slice(&self.ending_kernel_root);
         elements.extend_from_slice(&self.nullifier_root);
         elements.extend_from_slice(&self.da_root);
         elements.push(Felt::from_u64(self.tx_count as u64));
@@ -97,7 +101,7 @@ impl CommitmentBlockPublicInputsP3 {
     }
 
     pub fn try_from_slice(elements: &[Felt]) -> Result<Self, String> {
-        let base_len = 33;
+        let base_len = 45;
         if elements.len() < base_len || !(elements.len() - base_len).is_multiple_of(12) {
             return Err("commitment public inputs length mismatch".into());
         }
@@ -106,6 +110,8 @@ impl CommitmentBlockPublicInputsP3 {
         let tx_statements_commitment = slice6(elements, &mut idx);
         let starting_state_root = slice6(elements, &mut idx);
         let ending_state_root = slice6(elements, &mut idx);
+        let starting_kernel_root = slice6(elements, &mut idx);
+        let ending_kernel_root = slice6(elements, &mut idx);
         let nullifier_root = slice6(elements, &mut idx);
         let da_root = slice6(elements, &mut idx);
         let tx_count = elements[idx].as_canonical_u64() as u32;
@@ -127,6 +133,8 @@ impl CommitmentBlockPublicInputsP3 {
             tx_statements_commitment,
             starting_state_root,
             ending_state_root,
+            starting_kernel_root,
+            ending_kernel_root,
             nullifier_root,
             da_root,
             tx_count,
@@ -171,7 +179,7 @@ impl CommitmentBlockPublicInputsP3 {
     }
 
     fn expected_len(&self) -> usize {
-        33 + self.nullifiers.len() * 12
+        45 + self.nullifiers.len() * 12
     }
 }
 
@@ -520,7 +528,8 @@ where
         }
 
         let public_values = builder.public_values();
-        let base_len = 33;
+        // 7 x bytes48 commitments + tx_count + permutation challenges.
+        let base_len = 45;
         debug_assert!(public_values.len() >= base_len);
         debug_assert!((public_values.len() - base_len).is_multiple_of(12));
         let nullifier_count = (public_values.len() - base_len) / 12;
@@ -546,6 +555,24 @@ where
         ];
         idx += 6;
         let end_root = [
+            pv(idx),
+            pv(idx + 1),
+            pv(idx + 2),
+            pv(idx + 3),
+            pv(idx + 4),
+            pv(idx + 5),
+        ];
+        idx += 6;
+        let _starting_kernel_root = [
+            pv(idx),
+            pv(idx + 1),
+            pv(idx + 2),
+            pv(idx + 3),
+            pv(idx + 4),
+            pv(idx + 5),
+        ];
+        idx += 6;
+        let _ending_kernel_root = [
             pv(idx),
             pv(idx + 1),
             pv(idx + 2),

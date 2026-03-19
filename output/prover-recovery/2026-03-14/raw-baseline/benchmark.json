@@ -1,0 +1,187 @@
+{
+  "iterations": 8,
+  "prove": false,
+  "witness_ns": 2700709,
+  "prove_ns": 9144622791,
+  "verify_ns": 62331251,
+  "block_ns": 0,
+  "commitment_prove_ns": 0,
+  "commitment_verify_ns": 0,
+  "commitment_proof_bytes": 0,
+  "commitment_tx_count": 0,
+  "tx_proof_bytes_avg": 352839,
+  "tx_proof_bytes_min": 352751,
+  "tx_proof_bytes_max": 353046,
+  "tx_log_num_quotient_chunks": 3,
+  "tx_log_blowup_used": 4,
+  "fri_log_blowup_config": 4,
+  "fri_num_queries": 32,
+  "fri_query_pow_bits": 0,
+  "fri_conjectured_soundness_bits": 128,
+  "tx_trace_rows": 8192,
+  "tx_trace_width": 146,
+  "tx_schedule_width": 42,
+  "tx_prove_ns_per_tx": 1143077848,
+  "tx_verify_ns_per_tx": 7791406,
+  "digest_bytes": 48,
+  "poseidon2_width": 12,
+  "poseidon2_rate": 6,
+  "poseidon2_capacity_elems": 6,
+  "poseidon2_capacity_bits": 384,
+  "poseidon2_bht_pq_collision_bits": 128,
+  "transactions_per_second": 0.8686536266879435,
+  "batch_size": 0,
+  "batch_iterations": 0,
+  "batch_witness_ns": 0,
+  "batch_prove_ns": 0,
+  "batch_verify_ns": 0,
+  "batch_prove_ns_per_tx": 0,
+  "batch_verify_ns_per_tx": 0,
+  "batch_transactions_per_second": 0.0,
+  "lane_comparisons": [
+    {
+      "batch_size": 1,
+      "raw_shipping": {
+        "batches": 8,
+        "tx_count": 8,
+        "prove_ns": 0,
+        "verify_ns": 61505209,
+        "bytes": 2833955,
+        "prove_ns_per_tx": 0,
+        "verify_ns_per_tx": 7688151,
+        "bytes_per_tx": 354244,
+        "error": null
+      },
+      "tx_proof_manifest": {
+        "batches": 8,
+        "tx_count": 8,
+        "prove_ns": 68804789,
+        "verify_ns": 74368791,
+        "bytes": 2842299,
+        "prove_ns_per_tx": 8600598,
+        "verify_ns_per_tx": 9296098,
+        "bytes_per_tx": 355287,
+        "error": null
+      },
+      "legacy_witness_batch_stark": {
+        "batches": 8,
+        "tx_count": 8,
+        "prove_ns": 22054006458,
+        "verify_ns": 87864624,
+        "bytes": 3307504,
+        "prove_ns_per_tx": 2756750807,
+        "verify_ns_per_tx": 10983078,
+        "bytes_per_tx": 413438,
+        "error": null
+      }
+    },
+    {
+      "batch_size": 2,
+      "raw_shipping": {
+        "batches": 4,
+        "tx_count": 8,
+        "prove_ns": 0,
+        "verify_ns": 63211915,
+        "bytes": 2833923,
+        "prove_ns_per_tx": 0,
+        "verify_ns_per_tx": 7901489,
+        "bytes_per_tx": 354240,
+        "error": null
+      },
+      "tx_proof_manifest": {
+        "batches": 4,
+        "tx_count": 8,
+        "prove_ns": 65301917,
+        "verify_ns": 63737417,
+        "bytes": 2842099,
+        "prove_ns_per_tx": 8162739,
+        "verify_ns_per_tx": 7967177,
+        "bytes_per_tx": 355262,
+        "error": null
+      },
+      "legacy_witness_batch_stark": {
+        "batches": 4,
+        "tx_count": 8,
+        "prove_ns": 22294882751,
+        "verify_ns": 48987042,
+        "bytes": 1779928,
+        "prove_ns_per_tx": 2786860343,
+        "verify_ns_per_tx": 6123380,
+        "bytes_per_tx": 222491,
+        "error": null
+      }
+    },
+    {
+      "batch_size": 4,
+      "raw_shipping": {
+        "batches": 2,
+        "tx_count": 8,
+        "prove_ns": 0,
+        "verify_ns": 66531874,
+        "bytes": 2833907,
+        "prove_ns_per_tx": 0,
+        "verify_ns_per_tx": 8316484,
+        "bytes_per_tx": 354238,
+        "error": null
+      },
+      "tx_proof_manifest": {
+        "batches": 2,
+        "tx_count": 8,
+        "prove_ns": 66946667,
+        "verify_ns": 65154626,
+        "bytes": 2841999,
+        "prove_ns_per_tx": 8368333,
+        "verify_ns_per_tx": 8144328,
+        "bytes_per_tx": 355249,
+        "error": null
+      },
+      "legacy_witness_batch_stark": {
+        "batches": 2,
+        "tx_count": 8,
+        "prove_ns": 23128139834,
+        "verify_ns": 27141001,
+        "bytes": 956124,
+        "prove_ns_per_tx": 2891017479,
+        "verify_ns_per_tx": 3392625,
+        "bytes_per_tx": 119515,
+        "error": null
+      }
+    },
+    {
+      "batch_size": 8,
+      "raw_shipping": {
+        "batches": 1,
+        "tx_count": 8,
+        "prove_ns": 0,
+        "verify_ns": 67995541,
+        "bytes": 2833899,
+        "prove_ns_per_tx": 0,
+        "verify_ns_per_tx": 8499442,
+        "bytes_per_tx": 354237,
+        "error": null
+      },
+      "tx_proof_manifest": {
+        "batches": 1,
+        "tx_count": 8,
+        "prove_ns": 68421709,
+        "verify_ns": 65023958,
+        "bytes": 2841949,
+        "prove_ns_per_tx": 8552713,
+        "verify_ns_per_tx": 8127994,
+        "bytes_per_tx": 355243,
+        "error": null
+      },
+      "legacy_witness_batch_stark": {
+        "batches": 1,
+        "tx_count": 8,
+        "prove_ns": 23363885166,
+        "verify_ns": 14512917,
+        "bytes": 512678,
+        "prove_ns_per_tx": 2920485645,
+        "verify_ns_per_tx": 1814114,
+        "bytes_per_tx": 64084,
+        "error": null
+      }
+    }
+  ]
+}

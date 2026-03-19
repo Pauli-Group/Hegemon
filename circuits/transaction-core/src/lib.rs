@@ -18,6 +18,7 @@ pub mod p3_verifier;
 pub mod poseidon2;
 pub mod poseidon2_constants;
 pub mod poseidon_constants;
+pub mod range;
 pub mod types;
 
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};

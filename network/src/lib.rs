@@ -23,7 +23,7 @@ pub mod substrate_transport;
 
 pub use nat::{NatProtocol, NatTraversal, NatTraversalConfig, NatTraversalResult};
 pub use network_backend::{
-    PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
+    BootstrapNode, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
 };
 pub use peer_store::{PeerStore, PeerStoreConfig};
 pub use pq_transport::{

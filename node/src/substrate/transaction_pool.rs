@@ -434,6 +434,12 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
             }
         };
 
+        if extrinsic.is_signed() {
+            return Err(PoolError::InvalidTransaction(
+                "Signed extrinsics are disabled; submit unsigned kernel actions".into(),
+            ));
+        }
+
         // Convert our TransactionSource to Substrate's
         let sc_source = match source {
             TransactionSource::External => sc_transaction_pool_api::TransactionSource::External,
@@ -448,15 +454,18 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
         // The pool will validate against the runtime
         match self.pool.submit_one(at, sc_source, extrinsic).await {
             Ok(tx_hash) => {
-                tracing::debug!(
+                tracing::info!(
                     tx_hash = %tx_hash,
+                    source = ?source,
                     "Transaction submitted to Substrate pool (Task 11.5.2)"
                 );
                 Ok(SubmissionResult::success(hash, None))
             }
             Err(e) => {
                 let error_msg = format!("{:?}", e);
-                tracing::debug!(
+                tracing::warn!(
+                    tx_hash = %hex::encode(hash),
+                    source = ?source,
                     error = %error_msg,
                     "Transaction rejected by Substrate pool"
                 );
@@ -610,7 +619,7 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
                 self.stats
                     .transactions_submitted
                     .fetch_add(1, Ordering::Relaxed);
-                tracing::debug!(
+                tracing::info!(
                     tx_hash = %hex::encode(result.hash),
                     peer = peer_id.map(|p| hex::encode(p)).unwrap_or_else(|| "local".to_string()),
                     "Transaction submitted to pool"
@@ -621,7 +630,8 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
                 self.stats
                     .transactions_rejected
                     .fetch_add(1, Ordering::Relaxed);
-                tracing::debug!(
+                tracing::warn!(
+                    tx_hash = %hex::encode(sp_core::hashing::blake2_256(data)),
                     error = %e,
                     peer = peer_id.map(|p| hex::encode(p)).unwrap_or_else(|| "local".to_string()),
                     "Transaction rejected"
@@ -642,15 +652,25 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
             match self.pool.submit(&tx.data, tx.source).await {
                 Ok(result) if result.accepted => {
                     submitted += 1;
-                    tracing::debug!(
+                    tracing::info!(
                         tx_hash = %hex::encode(result.hash),
+                        peer = tx
+                            .peer_id
+                            .map(hex::encode)
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        source = ?tx.source,
                         latency_ms = tx.received_at.elapsed().as_millis(),
                         "Pending transaction submitted"
                     );
                 }
                 Ok(result) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         tx_hash = %hex::encode(result.hash),
+                        peer = tx
+                            .peer_id
+                            .map(hex::encode)
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        source = ?tx.source,
                         error = result.error.as_deref().unwrap_or("unknown"),
                         "Pending transaction rejected"
                     );
@@ -659,7 +679,13 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
                         .fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e) => {
-                    tracing::debug!(
+                    tracing::warn!(
+                        tx_hash = %hex::encode(sp_core::hashing::blake2_256(&tx.data)),
+                        peer = tx
+                            .peer_id
+                            .map(hex::encode)
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        source = ?tx.source,
                         error = %e,
                         "Failed to submit pending transaction"
                     );

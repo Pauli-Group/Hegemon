@@ -1,15 +1,15 @@
 # User Privacy Guidelines
 
-These guidelines explain how to use HEGEMON (HGN) software in a way that preserves the post-quantum privacy guarantees described in `README.md`, `DESIGN.md`, `METHODS.md`, and `docs/THREAT_MODEL.md`. Treat this document as the living owner’s manual for privacy hygiene: every new wallet feature, networking mode, or governance control must be reflected here so that end users can make informed operational decisions.
+These guidelines explain how to use HEGEMON (HGN) software in a way that preserves the post-quantum privacy guarantees described in `README.md`, `DESIGN.md`, `METHODS.md`, and `docs/THREAT_MODEL.md`. Treat this document as the living owner’s manual for privacy hygiene: every new wallet feature, networking mode, or protocol-control surface must be reflected here so that end users can make informed operational decisions.
 
 ## 1. Purpose and scope
-- **Audience** – Wallet operators, PoW miners, governance participants, and auditors who interact with HGN infrastructure or artifacts derived from it.
+- **Audience** – Wallet operators, PoW miners, release operators, and auditors who interact with HGN infrastructure or artifacts derived from it.
 - **Goals** – Minimize metadata leakage, protect secret material, and keep shielded transactions unlinkable even when an adversary controls networks or compromised devices as described in the threat model.
 - **Maintenance rule** – Any change to shielded-pool semantics, wallet key handling, networking transports, or disclosure tooling must update these guidelines before the feature is considered shippable.
 
 ## 2. Core principles
 1. **Local custody first** – Generate and store spending/view keys only inside wallets you control. Never paste keys into remote tooling.
-2. **Version parity** – Use the same release channel for wallet, consensus, and governance clients so that circuit bindings and privacy patches land simultaneously.
+2. **Version parity** – Use the same release channel for wallet, consensus, and release artifacts so that circuit bindings and privacy patches land simultaneously.
 3. **Least disclosure** – Share selective-disclosure proofs or decrypted memos only with entities that can prove a regulatory or contractual requirement.
 4. **Documented workflows** – Follow the official runbooks (e.g., `runbooks/security_testing.md`) whenever a security workflow or audit is triggered; ad-hoc steps often leak metadata.
 
@@ -25,7 +25,7 @@ Additional wallet-specific recommendations:
 - Pin the `VersionSchedule` hash emitted by your consensus peers before crafting a transaction so you do not build proofs against deprecated circuits.
 - Use the wallet’s built-in address book tags instead of plaintext memos when referencing counterparties; tags stay local and prevent memo correlation.
 - Enable `wallet send --randomize-memo-order` (or set the flag in wrapper scripts) before the public alpha launch so deterministic memo ordering never reveals which recipients were co-batched in a shielded transaction.
-- Never re-use transparent fallback addresses when shielded notes are available. Transparent outputs should remain disabled unless governance explicitly mandates an escape hatch.
+- Never re-use transparent fallback addresses when shielded notes are available. Transparent outputs should remain disabled.
 - Treat disclosure packages from `wallet payment-proof create` as sensitive receipts: they reveal value, asset id, recipient address, commitment, and anchor. Store them encrypted, share only with the requesting party, and avoid copying them into broad email/chat logs.
 - Use `wallet payment-proof purge` once a payment proof is delivered or once its retention window expires; the wallet store retains outgoing note openings specifically so on-demand proofs are possible.
 - Disclosed memos are not bound by the ZK proof. Only include memos when required by policy, and transmit them over the same secure channel as the disclosure package.
@@ -33,7 +33,7 @@ Additional wallet-specific recommendations:
 ## 4. Node and network hygiene
 - **Run your own light/full node** – Point wallets at self-hosted RPC endpoints hardened with TLS and mutual authentication. Shared endpoints can log note commitment deltas.
 - **Network privacy layers** – Route RPC and gossip traffic through mixnets, Tor, or VPNs that do not share exit IPs with personal browsing. Monitor bandwidth padding in `consensus/bench` to ensure timing obfuscation stays enabled.
-- **Log discipline** – Sanitize or disable disk logs that contain nullifiers, note commitments, IPs, or governance votes. If logs must be retained for compliance, encrypt them with ML-KEM session keys and rotate every epoch.
+- **Log discipline** – Sanitize or disable disk logs that contain nullifiers, note commitments, IPs, or release-operator activity. If logs must be retained for compliance, encrypt them with ML-KEM session keys and rotate every epoch.
 - **Software updates** – Subscribe to release feeds and apply critical patches (especially ones touching `crypto/` or `wallet/`) within 24 hours. Always restart both wallet and node processes so that patched privacy parameters take effect.
 
 ## 5. Crafting private transactions
@@ -60,6 +60,6 @@ Additional wallet-specific recommendations:
 - **On every release candidate** – Review this document alongside `DESIGN.md` and `METHODS.md`; confirm that new bindings, disclosure options, or wallet UX changes have corresponding privacy steps.
 - **After every security review** – When `docs/SECURITY_REVIEWS.md` gains a new entry, update this guide with any new mitigations or workflow changes.
 - **Quarterly privacy drills** – Operators should rehearse the checklist in Sections 3–7, capture deviations, and open issues if tooling cannot enforce a recommendation.
-- **Document stewardship** – The wallet team owns Sections 3 & 5, the consensus/networking team owns Section 4, and the governance team owns Sections 6–8. Ownership must be reassigned explicitly whenever team composition changes.
+- **Document stewardship** – The wallet team owns Sections 3 & 5, the consensus/networking team owns Section 4, and the protocol/release team owns Sections 6–8. Ownership must be reassigned explicitly whenever team composition changes.
 
 Keeping this guide synchronized with implementation details ensures HGN’s privacy guarantees remain actionable rather than aspirational. Treat every guideline as a testable requirement, and open a pull request whenever you find a gap.

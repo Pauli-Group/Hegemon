@@ -122,12 +122,18 @@ pub enum ProofError {
     AggregationProofV4Decode(String),
     #[error("aggregation proof V4 binding failed: {0}")]
     AggregationProofV4Binding(String),
+    #[error("aggregation proof V5 decode failed: {0}")]
+    AggregationProofV5Decode(String),
+    #[error("aggregation proof V5 binding failed: {0}")]
+    AggregationProofV5Binding(String),
     #[error("flat batch proof encode failed: {0}")]
     FlatBatchProofEncodeFailed(String),
     #[error("flat batch proof decode failed: {0}")]
     FlatBatchProofDecodeFailed(String),
     #[error("flat batch coverage invalid: {0}")]
     FlatBatchCoverage(String),
+    #[error("proof verifier panicked: {0}")]
+    VerifierPanicked(String),
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]

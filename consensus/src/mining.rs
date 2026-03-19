@@ -31,12 +31,12 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
-use crate::substrate_pow::{Blake3Seal, mine_round};
+use crate::substrate_pow::{Sha256dSeal, mine_round};
 use sp_core::H256;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Mining statistics
 #[derive(Debug, Default)]
@@ -91,6 +91,21 @@ impl MiningStats {
     }
 }
 
+/// Additional trace metadata for last-mile mining handoff attribution.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MiningWorkTrace {
+    /// Template-local identifier (currently the pre-hash hex).
+    pub template_id: String,
+    /// Parent-bound prepared bundle identifier.
+    pub bundle_id: Option<String>,
+    /// Candidate artifact hash for the prepared bundle attached to this template.
+    pub artifact_hash: Option<String>,
+    /// Shielded transaction count covered by the prepared bundle.
+    pub tx_count: u32,
+    /// Hex-encoded tx statements commitment for the prepared bundle.
+    pub tx_statements_commitment: Option<String>,
+}
+
 /// Mining work template
 #[derive(Clone, Debug)]
 pub struct MiningWork {
@@ -102,13 +117,15 @@ pub struct MiningWork {
     pub height: u64,
     /// Parent block hash
     pub parent_hash: H256,
+    /// Optional trace metadata for last-mile mining attribution.
+    pub trace: Option<MiningWorkTrace>,
 }
 
 /// Result of a mining attempt
 #[derive(Clone, Debug)]
 pub struct MiningSolution {
     /// The valid seal found
-    pub seal: Blake3Seal,
+    pub seal: Sha256dSeal,
     /// The work this solution is for
     pub work: MiningWork,
 }
@@ -199,6 +216,18 @@ impl MiningWorker {
         self.solution_rx.try_recv().ok()
     }
 
+    /// Inject an externally discovered solution into the worker pipeline.
+    pub fn submit_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        self.solution_tx
+            .send(solution)
+            .map_err(|_| "mining solution receiver is closed".to_string())
+    }
+
+    /// Snapshot the current work template.
+    pub fn current_work(&self) -> Option<MiningWork> {
+        self.current_work.read().clone()
+    }
+
     /// Receive a solution (blocking with timeout)
     pub fn recv_solution_timeout(&self, timeout: Duration) -> Option<MiningSolution> {
         self.solution_rx.recv_timeout(timeout).ok()
@@ -233,6 +262,7 @@ fn mining_thread_loop(
     const ROUNDS_PER_THREAD: u32 = 100;
 
     let mut round_offset = 0u32;
+    let mut last_logged_pre_hash = None;
 
     tracing::debug!(thread_id, "Mining thread starting");
 
@@ -248,18 +278,33 @@ fn mining_thread_loop(
             if round_offset == 0 {
                 tracing::debug!(thread_id, "Mining thread waiting for work");
             }
+            last_logged_pre_hash = None;
             thread::sleep(Duration::from_millis(100));
             continue;
         };
 
-        if round_offset == 0 {
+        if last_logged_pre_hash != Some(work.pre_hash) {
+            let trace = work.trace.as_ref();
             tracing::info!(
+                trace_ts_ms = unix_time_ms(),
                 thread_id,
                 pre_hash = %format!("{:?}", work.pre_hash),
                 pow_bits = format!("{:08x}", work.pow_bits),
                 height = work.height,
-                "Mining thread got work, starting to mine"
+                template_id = trace.map(|item| item.template_id.as_str()).unwrap_or(""),
+                bundle_id = trace
+                    .and_then(|item| item.bundle_id.as_deref())
+                    .unwrap_or(""),
+                artifact_hash = trace
+                    .and_then(|item| item.artifact_hash.as_deref())
+                    .unwrap_or(""),
+                tx_count = trace.map(|item| item.tx_count).unwrap_or(0),
+                tx_statements_commitment = trace
+                    .and_then(|item| item.tx_statements_commitment.as_deref())
+                    .unwrap_or(""),
+                "hashing_started"
             );
+            last_logged_pre_hash = Some(work.pre_hash);
         }
 
         // Calculate round number for this thread
@@ -270,11 +315,25 @@ fn mining_thread_loop(
         // Try to find a solution
         if let Some(seal) = mine_round(&work.pre_hash, work.pow_bits, round, NONCES_PER_ROUND) {
             // Found a solution!
+            let trace = work.trace.as_ref();
             tracing::info!(
+                trace_ts_ms = unix_time_ms(),
                 thread_id,
-                nonce = seal.nonce,
+                nonce = ?seal.nonce,
                 round,
-                "🎯 Mining thread found solution!"
+                height = work.height,
+                template_id = trace.map(|item| item.template_id.as_str()).unwrap_or(""),
+                bundle_id = trace
+                    .and_then(|item| item.bundle_id.as_deref())
+                    .unwrap_or(""),
+                artifact_hash = trace
+                    .and_then(|item| item.artifact_hash.as_deref())
+                    .unwrap_or(""),
+                tx_count = trace.map(|item| item.tx_count).unwrap_or(0),
+                tx_statements_commitment = trace
+                    .and_then(|item| item.tx_statements_commitment.as_deref())
+                    .unwrap_or(""),
+                "mining_solution_found"
             );
 
             let solution = MiningSolution {
@@ -296,6 +355,13 @@ fn mining_thread_loop(
         // Move to next round
         round_offset = round_offset.wrapping_add(1);
     }
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Simple mining coordinator for the Substrate service
@@ -353,6 +419,19 @@ impl MiningCoordinator {
         self.worker.as_ref().and_then(|w| w.try_recv_solution())
     }
 
+    /// Inject an externally discovered solution into the current worker.
+    pub fn submit_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        self.worker
+            .as_ref()
+            .ok_or_else(|| "mining worker not running".to_string())?
+            .submit_solution(solution)
+    }
+
+    /// Snapshot the current work template if the worker is active.
+    pub fn current_work(&self) -> Option<MiningWork> {
+        self.worker.as_ref().and_then(|w| w.current_work())
+    }
+
     /// Check if mining is active
     pub fn is_mining(&self) -> bool {
         self.worker.as_ref().is_some_and(|w| w.is_mining())
@@ -400,6 +479,7 @@ mod tests {
             pow_bits: 0x1d00ffff,
             height: 100,
             parent_hash: H256::repeat_byte(0x01),
+            trace: None,
         };
 
         let cloned = work.clone();
@@ -432,6 +512,7 @@ mod tests {
             pow_bits: 0x2100ffff, // Very easy
             height: 1,
             parent_hash: H256::zero(),
+            trace: None,
         };
 
         worker.update_work(work.clone());

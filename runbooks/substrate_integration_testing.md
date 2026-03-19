@@ -59,8 +59,9 @@ which tlc apalache-mc  # TLA+ tools
 ```bash
 cd /path/to/hegemon
 
-# Clean build (recommended after cargo clean)
-cargo build --release -p hegemon-node --features substrate
+# Fresh-clone baseline
+make setup
+make node
 
 # Verify binary exists
 ls -la target/release/hegemon-node 2>/dev/null || \
@@ -143,8 +144,7 @@ These require starting a node, but verification is scripted.
 ```bash
 # Terminal 1: Start node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=2 \
-cargo run --release -p hegemon-node --features substrate -- \
-  --dev --tmp --rpc-port 9944 --port 30333
+./target/release/hegemon-node --dev --tmp --rpc-port 9944 --port 30333
 
 # Terminal 2: Wait 30s, then verify
 sleep 30
@@ -181,14 +181,13 @@ These tests require multiple terminals and human observation.
 cd /path/to/hegemon
 
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=2 \
-cargo run --release -p hegemon-node --features substrate -- \
+./target/release/hegemon-node \
   --dev \
   --tmp \
   --base-path /tmp/hegemon-node-a \
   --rpc-port 9944 \
   --port 30333 \
   --name "NodeA-Miner" \
-  --require-pq \
   --pq-verbose
 ```
 
@@ -198,15 +197,14 @@ Wait for: `"Hegemon node started"` and note the peer ID.
 ```bash
 cd /path/to/hegemon
 
-cargo run --release -p hegemon-node --features substrate -- \
+HEGEMON_SEEDS="127.0.0.1:30333" \
+./target/release/hegemon-node \
   --dev \
   --tmp \
   --base-path /tmp/hegemon-node-b \
   --rpc-port 9945 \
   --port 30334 \
-  --name "NodeB-Sync" \
-  --require-pq \
-  --bootnodes /ip4/127.0.0.1/tcp/30333
+  --name "NodeB-Sync"
 ```
 
 **Terminal 3 - Verification**:
@@ -227,13 +225,13 @@ curl -s -X POST -H "Content-Type: application/json" \
 # Check peer count
 echo "=== Node A Peers ==="
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
-  http://127.0.0.1:9944 | jq '.result | length'
+  -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq '.result.peers'
 
 echo "=== Node B Peers ==="
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
-  http://127.0.0.1:9945 | jq '.result | length'
+  -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+  http://127.0.0.1:9945 | jq '.result.peers'
 ```
 
 **Success Criteria**:
@@ -259,28 +257,25 @@ rm -rf /tmp/hegemon-node-a /tmp/hegemon-node-b
 **Terminal 1 - Node A**:
 ```bash
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=1 \
-cargo run --release -p hegemon-node --features substrate -- \
+./target/release/hegemon-node \
   --dev --tmp --base-path /tmp/node-a \
-  --rpc-port 9944 --port 30333 --name "NodeA" --require-pq
+  --rpc-port 9944 --port 30333 --name "NodeA"
 ```
 
 **Terminal 2 - Node B**:
 ```bash
-HEGEMON_MINE=1 HEGEMON_MINE_THREADS=1 \
-cargo run --release -p hegemon-node --features substrate -- \
+HEGEMON_MINE=1 HEGEMON_MINE_THREADS=1 HEGEMON_SEEDS="127.0.0.1:30333" \
+./target/release/hegemon-node \
   --dev --tmp --base-path /tmp/node-b \
-  --rpc-port 9945 --port 30334 --name "NodeB" --require-pq \
-  --bootnodes /ip4/127.0.0.1/tcp/30333
+  --rpc-port 9945 --port 30334 --name "NodeB"
 ```
 
 **Terminal 3 - Node C**:
 ```bash
-HEGEMON_MINE=1 HEGEMON_MINE_THREADS=1 \
-cargo run --release -p hegemon-node --features substrate -- \
+HEGEMON_MINE=1 HEGEMON_MINE_THREADS=1 HEGEMON_SEEDS="127.0.0.1:30333,127.0.0.1:30334" \
+./target/release/hegemon-node \
   --dev --tmp --base-path /tmp/node-c \
-  --rpc-port 9946 --port 30335 --name "NodeC" --require-pq \
-  --bootnodes /ip4/127.0.0.1/tcp/30333 \
-  --bootnodes /ip4/127.0.0.1/tcp/30334
+  --rpc-port 9946 --port 30335 --name "NodeC"
 ```
 
 **Terminal 4 - Monitor**:
@@ -297,8 +292,8 @@ for i in 9944 9945 9946; do
   NUM=$(echo $HEADER | jq -r ".result.number // \"offline\"")
   HASH=$(echo $HEADER | jq -r ".result.hash // \"\"" | cut -c1-18)
   PEERS=$(curl -s -X POST -H "Content-Type: application/json" \
-    -d "{\"jsonrpc\":\"2.0\",\"method\":\"system_peers\",\"params\":[],\"id\":1}" \
-    http://127.0.0.1:$i 2>/dev/null | jq -r ".result | length // 0")
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"system_health\",\"params\":[],\"id\":1}" \
+    http://127.0.0.1:$i 2>/dev/null | jq -r ".result.peers // 0")
   echo "Node $NAME (port $i): Block $NUM | Hash: ${HASH}... | Peers: $PEERS"
 done
 '
@@ -365,11 +360,10 @@ curl -s -X POST -H "Content-Type: application/json" \
 **Phase 4 - Heal Partition** (restart Node B):
 ```bash
 # Terminal 2: Restart Node B
-HEGEMON_MINE=1 HEGEMON_MINE_THREADS=1 \
-cargo run --release -p hegemon-node --features substrate -- \
+HEGEMON_MINE=1 HEGEMON_MINE_THREADS=1 HEGEMON_SEEDS="127.0.0.1:30333" \
+./target/release/hegemon-node \
   --dev --tmp --base-path /tmp/node-b \
-  --rpc-port 9945 --port 30334 --name "NodeB" --require-pq \
-  --bootnodes /ip4/127.0.0.1/tcp/30333
+  --rpc-port 9945 --port 30334 --name "NodeB"
 ```
 
 **Phase 5 - Verify Recovery** (1 minute):
@@ -427,8 +421,7 @@ rm -rf /tmp/hegemon-* /tmp/node-*
 
 ```bash
 # Verify PQ handshake is working
-HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate -- \
-  --dev --tmp --pq-verbose
+HEGEMON_PQ_VERBOSE=1 ./target/release/hegemon-node --dev --tmp --pq-verbose
 
 # Check for firewall issues (macOS)
 sudo pfctl -sr | grep "block"
@@ -521,8 +514,8 @@ substrate-tests:
   runs-on: ubuntu-latest
   steps:
     - uses: actions/checkout@v4
-    - name: Build with Substrate feature
-      run: cargo build --release -p hegemon-node --features substrate
+    - name: Build node
+      run: cargo build --release -p hegemon-node
     - name: Run Substrate tests
       run: cargo test -p security-tests --test multi_node_substrate --features substrate
     - name: Run PQ network tests
@@ -535,25 +528,26 @@ substrate-tests:
 
 ```bash
 # === BUILD ===
-cargo build --release -p hegemon-node --features substrate
+make setup
+make node
 
 # === AUTOMATED TESTS ===
 cargo test -p security-tests --test multi_node_substrate --features substrate
 cargo test -p network
 
 # === SINGLE NODE ===
-HEGEMON_MINE=1 cargo run --release -p hegemon-node --features substrate -- --dev --tmp
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 
 # === MULTI-NODE ===
 # Node A: HEGEMON_MINE=1 ... --port 30333 --rpc-port 9944
-# Node B: ... --port 30334 --rpc-port 9945 --bootnodes /ip4/127.0.0.1/tcp/30333
+# Node B: HEGEMON_SEEDS="127.0.0.1:30333" ... --port 30334 --rpc-port 9945
 
 # === RPC QUERIES ===
 # Block header
 curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}'
 
 # Peer count
-curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}'
+curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}'
 
 # Health
 curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}'

@@ -17,8 +17,11 @@ COINBASE_BLOCKS="${HEGEMON_TP_COINBASE_BLOCKS:-$((TX_COUNT + 3))}"
 MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
+SKIP_BUILD="${HEGEMON_TP_SKIP_BUILD:-0}" # 1 = reuse existing release binaries
+REUSE_EXISTING_STATE="${HEGEMON_TP_REUSE_EXISTING_STATE:-0}" # 1 = reuse pre-funded base path + wallet stores
+PREPARE_SNAPSHOT_ONLY="${HEGEMON_TP_PREPARE_SNAPSHOT_ONLY:-0}" # 1 = fund/sync then exit before sends
 STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven batch is absent
-STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-600}"
+STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-}"
 MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
 PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}" # aggregation|single
@@ -45,6 +48,18 @@ if ! [[ "$SEND_PROOF_SIDECAR" =~ ^[01]$ ]]; then
 fi
 if [ "$PROOF_MODE" = "single" ] && [ "$SEND_PROOF_SIDECAR" != "0" ]; then
   echo "HEGEMON_TP_PROOF_MODE=single requires HEGEMON_TP_SEND_PROOF_SIDECAR=0." >&2
+  exit 1
+fi
+
+if [ -n "${HEGEMON_TP_SEND_DA_SIDECAR:-}" ]; then
+  SEND_DA_SIDECAR="${HEGEMON_TP_SEND_DA_SIDECAR}"
+elif [ "$PROOF_MODE" = "single" ]; then
+  SEND_DA_SIDECAR=0
+else
+  SEND_DA_SIDECAR=1
+fi
+if ! [[ "$SEND_DA_SIDECAR" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_SEND_DA_SIDECAR must be 0 or 1 (got '$SEND_DA_SIDECAR')." >&2
   exit 1
 fi
 
@@ -169,8 +184,17 @@ else
     AGG_PROVER_THREADS="$HOST_THREADS"
   fi
 fi
-AGG_PREPARE_THREADS="${HEGEMON_TP_AGG_PREPARE_THREADS:-$NODE_RAYON_THREADS}"
-AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-0}"
+AGG_PREPARE_THREADS="${HEGEMON_TP_AGG_PREPARE_THREADS:-}"
+AGG_PREPARE_THREADS_AUTO=0
+if [ -z "$AGG_PREPARE_THREADS" ]; then
+  AGG_PREPARE_THREADS_AUTO=1
+  AGG_PREPARE_THREADS="$NODE_RAYON_THREADS"
+fi
+AGG_WITNESS_LANES="${HEGEMON_TP_AGG_WITNESS_LANES:-}"
+AGG_ADD_LANES="${HEGEMON_TP_AGG_ADD_LANES:-}"
+AGG_MUL_LANES="${HEGEMON_TP_AGG_MUL_LANES:-}"
+AGG_PREWARM_INCLUDE_MERGE="${HEGEMON_TP_AGG_PREWARM_INCLUDE_MERGE:-}"
+AGG_PREWARM_MAX_TXS="${HEGEMON_TP_AGG_PREWARM_MAX_TXS:-}"
 PREWARM_ONLY="${HEGEMON_TP_PREWARM_ONLY:-0}" # 1 = stop after prepared batch is available
 
 if [ "$NODE_RAYON_THREADS" -lt 1 ] || [ "$CARGO_JOBS" -lt 1 ] || [ "$MINE_THREADS" -lt 1 ]; then
@@ -189,12 +213,40 @@ if ! [[ "$AGG_PREPARE_THREADS" =~ ^[0-9]+$ ]] || [ "$AGG_PREPARE_THREADS" -lt 1 
   echo "HEGEMON_TP_AGG_PREPARE_THREADS must be a positive integer (got '$AGG_PREPARE_THREADS')." >&2
   exit 1
 fi
-if ! [[ "$AGG_PREWARM_MAX_TXS" =~ ^[0-9]+$ ]]; then
+if [ -n "$AGG_WITNESS_LANES" ] && { ! [[ "$AGG_WITNESS_LANES" =~ ^[0-9]+$ ]] || [ "$AGG_WITNESS_LANES" -lt 1 ]; }; then
+  echo "HEGEMON_TP_AGG_WITNESS_LANES must be a positive integer when set (got '$AGG_WITNESS_LANES')." >&2
+  exit 1
+fi
+if [ -n "$AGG_ADD_LANES" ] && { ! [[ "$AGG_ADD_LANES" =~ ^[0-9]+$ ]] || [ "$AGG_ADD_LANES" -lt 1 ]; }; then
+  echo "HEGEMON_TP_AGG_ADD_LANES must be a positive integer when set (got '$AGG_ADD_LANES')." >&2
+  exit 1
+fi
+if [ -n "$AGG_MUL_LANES" ] && { ! [[ "$AGG_MUL_LANES" =~ ^[0-9]+$ ]] || [ "$AGG_MUL_LANES" -lt 1 ]; }; then
+  echo "HEGEMON_TP_AGG_MUL_LANES must be a positive integer when set (got '$AGG_MUL_LANES')." >&2
+  exit 1
+fi
+if [ -n "$AGG_PREWARM_INCLUDE_MERGE" ] && ! [[ "$AGG_PREWARM_INCLUDE_MERGE" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_AGG_PREWARM_INCLUDE_MERGE must be 0 or 1 when set (got '$AGG_PREWARM_INCLUDE_MERGE')." >&2
+  exit 1
+fi
+if [ -n "$AGG_PREWARM_MAX_TXS" ] && ! [[ "$AGG_PREWARM_MAX_TXS" =~ ^[0-9]+$ ]]; then
   echo "HEGEMON_TP_AGG_PREWARM_MAX_TXS must be an integer >= 0 (got '$AGG_PREWARM_MAX_TXS')." >&2
   exit 1
 fi
 if ! [[ "$PREWARM_ONLY" =~ ^[01]$ ]]; then
   echo "HEGEMON_TP_PREWARM_ONLY must be 0 or 1 (got '$PREWARM_ONLY')." >&2
+  exit 1
+fi
+if ! [[ "$SKIP_BUILD" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_SKIP_BUILD must be 0 or 1 (got '$SKIP_BUILD')." >&2
+  exit 1
+fi
+if ! [[ "$REUSE_EXISTING_STATE" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_REUSE_EXISTING_STATE must be 0 or 1 (got '$REUSE_EXISTING_STATE')." >&2
+  exit 1
+fi
+if ! [[ "$PREPARE_SNAPSHOT_ONLY" =~ ^[01]$ ]]; then
+  echo "HEGEMON_TP_PREPARE_SNAPSHOT_ONLY must be 0 or 1 (got '$PREPARE_SNAPSHOT_ONLY')." >&2
   exit 1
 fi
 
@@ -214,7 +266,7 @@ case "$TPS_EFFECTIVE_MODE" in
     exit 1
     ;;
 esac
-if ! [[ "$STRICT_PREPARE_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [ "$STRICT_PREPARE_TIMEOUT_SECS" -lt 1 ]; then
+if [ -n "$STRICT_PREPARE_TIMEOUT_SECS" ] && { ! [[ "$STRICT_PREPARE_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [ "$STRICT_PREPARE_TIMEOUT_SECS" -lt 1 ]; }; then
   echo "HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS must be a positive integer (got '$STRICT_PREPARE_TIMEOUT_SECS')." >&2
   exit 1
 fi
@@ -249,6 +301,7 @@ fi
 
 CHAIN_SPEC="${HEGEMON_TP_CHAIN_SPEC:-}"
 NODE_CHAIN_ARGS="--dev"
+NODE_BASE_PATH="${HEGEMON_TP_NODE_BASE_PATH:-}"
 if [ -n "$CHAIN_SPEC" ]; then
   if [ ! -f "$CHAIN_SPEC" ]; then
     echo "HEGEMON_TP_CHAIN_SPEC file not found: $CHAIN_SPEC" >&2
@@ -256,6 +309,13 @@ if [ -n "$CHAIN_SPEC" ]; then
   fi
   CHAIN_SPEC_ABS="$(cd "$(dirname "$CHAIN_SPEC")" && pwd)/$(basename "$CHAIN_SPEC")"
   NODE_CHAIN_ARGS="--dev --chain '${CHAIN_SPEC_ABS}'"
+fi
+if [ -n "$NODE_BASE_PATH" ]; then
+  mkdir -p "$NODE_BASE_PATH"
+  NODE_BASE_PATH_ABS="$(cd "$(dirname "$NODE_BASE_PATH")" && pwd)/$(basename "$NODE_BASE_PATH")"
+  NODE_CHAIN_ARGS="${NODE_CHAIN_ARGS} --base-path '${NODE_BASE_PATH_ABS}'"
+else
+  NODE_CHAIN_ARGS="${NODE_CHAIN_ARGS} --tmp"
 fi
 
 WALLET_A="${HEGEMON_TP_WALLET_A:-/tmp/hegemon-throughput-wallet-a}"
@@ -267,17 +327,30 @@ WORKERS="${HEGEMON_TP_WORKERS:-1}"
 if [ -n "${HEGEMON_TP_PROVER_WORKERS:-}" ]; then
   PROVER_WORKERS="${HEGEMON_TP_PROVER_WORKERS}"
 elif [ "$PROOF_MODE" = "single" ]; then
-  PROVER_WORKERS=0
-else
   PROVER_WORKERS=1
-fi
-if [ -n "${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-}" ]; then
-  PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS}"
-elif [ "$STRICT_AGGREGATION" = "1" ]; then
-  PROVER_BATCH_JOB_TIMEOUT_MS=900000
+elif [ "$TP_PROFILE" = "safe" ]; then
+  if [ "$HOST_THREADS" -ge 2 ]; then
+    PROVER_WORKERS=2
+  else
+    PROVER_WORKERS=1
+  fi
+elif [ "$HOST_MEM_GIB" -ge 128 ]; then
+  if [ "$HOST_THREADS" -ge 4 ]; then
+    PROVER_WORKERS=4
+  else
+    PROVER_WORKERS="$HOST_THREADS"
+  fi
 else
-  PROVER_BATCH_JOB_TIMEOUT_MS=180000
+  if [ "$HOST_THREADS" -ge 4 ]; then
+    PROVER_WORKERS=4
+  elif [ "$HOST_THREADS" -ge 2 ]; then
+    PROVER_WORKERS=2
+  else
+    PROVER_WORKERS=1
+  fi
 fi
+PROVER_BATCH_JOB_TIMEOUT_MS="${HEGEMON_TP_BATCH_JOB_TIMEOUT_MS:-}"
+PROVER_WORK_PACKAGE_TTL_MS="${HEGEMON_TP_WORK_PACKAGE_TTL_MS:-}"
 if [ -n "${HEGEMON_TP_ADAPTIVE_LIVENESS_MS:-}" ]; then
   ADAPTIVE_LIVENESS_MS="${HEGEMON_TP_ADAPTIVE_LIVENESS_MS}"
 else
@@ -285,6 +358,15 @@ else
 fi
 WORKER_PREFIX="${HEGEMON_TP_WORKER_PREFIX:-/tmp/hegemon-throughput-worker}"
 WALLET_RPC_REQUEST_TIMEOUT_SECS="${HEGEMON_TP_WALLET_RPC_REQUEST_TIMEOUT_SECS:-180}"
+if [ -n "${HEGEMON_TP_RPC_WAIT_SECS:-}" ]; then
+  RPC_WAIT_SECS="${HEGEMON_TP_RPC_WAIT_SECS}"
+elif [ -n "$CHAIN_SPEC" ]; then
+  RPC_WAIT_SECS=180
+elif [ -n "$AGG_PREWARM_MAX_TXS" ] && [ "$AGG_PREWARM_MAX_TXS" -gt 0 ]; then
+  RPC_WAIT_SECS=300
+else
+  RPC_WAIT_SECS=60
+fi
 SEND_RETRIES="${HEGEMON_TP_SEND_RETRIES:-4}"
 SEND_RETRY_DELAY_SECS="${HEGEMON_TP_SEND_RETRY_DELAY_SECS:-2}"
 TP_SEEDS="${HEGEMON_TP_SEEDS:-}"
@@ -292,6 +374,7 @@ TP_MAX_PEERS="${HEGEMON_TP_MAX_PEERS:-0}"
 ARTIFACTS_DIR="${HEGEMON_TP_ARTIFACTS_DIR:-/tmp/hegemon-throughput-artifacts}"
 RUN_ID="${HEGEMON_TP_RUN_ID:-${PROOF_MODE}-tx${TX_COUNT}-$(date -u +%Y%m%dT%H%M%SZ)}"
 ARTIFACT_JSON="${ARTIFACTS_DIR}/${RUN_ID}.json"
+SEND_TRACE_FILE="${ARTIFACTS_DIR}/${RUN_ID}.send-trace.tsv"
 if [ -n "${HEGEMON_TP_WALLET_RAYON_THREADS:-}" ]; then
   WALLET_RAYON_THREADS="${HEGEMON_TP_WALLET_RAYON_THREADS}"
 else
@@ -377,6 +460,46 @@ current_block_number() {
   python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; num=(obj.get("result") or {}).get("number"); print(int(num,16) if isinstance(num,str) else 0)' <<<"$header_json"
 }
 
+wait_for_tip_quiescence() {
+  local max_wait_secs="${1:-30}"
+  local settle_polls="${2:-3}"
+  local prev
+  local current
+  local stable_polls=0
+
+  prev="$(current_block_number)"
+  for _ in $(seq 1 "$max_wait_secs"); do
+    sleep 1
+    current="$(current_block_number)"
+    if [ "$current" -eq "$prev" ]; then
+      stable_polls=$((stable_polls + 1))
+      if [ "$stable_polls" -ge "$settle_polls" ]; then
+        return 0
+      fi
+    else
+      prev="$current"
+      stable_polls=0
+    fi
+  done
+
+  echo "WARNING: chain tip did not quiesce after ${max_wait_secs}s; proceeding anyway." >&2
+  return 0
+}
+
+author_pending_extrinsic_count() {
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"author_pendingExtrinsics","params":[],"id":1}' \
+    "$RPC_HTTP" \
+    | python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; print(len(obj.get("result") or []))'
+}
+
+prepared_bundle_count() {
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"prover_getStagePlanStatus","params":[],"id":1}' \
+    "$RPC_HTTP" \
+    | python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; print(((obj.get("result") or {}).get("prepared_bundles")) or 0)'
+}
+
 now_ms() {
   python3 - <<'PY'
 import time
@@ -388,6 +511,54 @@ metric_from_line() {
   local line="$1"
   local key="$2"
   python3 -c 'import re,sys; key=re.escape(sys.argv[1]); line=sys.stdin.read(); m=re.search(rf"\b{key}=([0-9]+(?:\.[0-9]+)?)\b", line); print(m.group(1) if m else "")' "$key" <<<"$line"
+}
+
+ceil_div() {
+  local numerator="$1"
+  local denominator="$2"
+  echo $(((numerator + denominator - 1) / denominator))
+}
+
+aggregation_leaf_job_count() {
+  local tx_count="$1"
+  local leaf_fanin="$2"
+  ceil_div "$tx_count" "$leaf_fanin"
+}
+
+derive_aggregation_prepare_budget_ms() {
+  local tx_count="$1"
+  local leaf_fanin="$2"
+  local merge_fanin="$3"
+  local prover_workers="$4"
+  local cold_leaf_ms=900000
+  local warm_leaf_ms=720000
+  local merge_base_ms=2400000
+  local merge_per_child_ms=120000
+  local finalize_ms=300000
+  local safety_ms=900000
+  local leaf_jobs
+  local max_jobs_per_worker
+  local leaf_phase_ms
+  local merge_phase_ms=0
+
+  leaf_jobs="$(aggregation_leaf_job_count "$tx_count" "$leaf_fanin")"
+  if [ "$prover_workers" -lt 1 ]; then
+    prover_workers=1
+  fi
+  if [ "$prover_workers" -gt "$leaf_jobs" ]; then
+    prover_workers="$leaf_jobs"
+  fi
+  max_jobs_per_worker="$(ceil_div "$leaf_jobs" "$prover_workers")"
+  leaf_phase_ms=$((cold_leaf_ms + (max_jobs_per_worker - 1) * warm_leaf_ms))
+
+  if [ "$leaf_jobs" -gt 1 ]; then
+    merge_phase_ms=$((merge_base_ms + leaf_jobs * merge_per_child_ms))
+    if [ "$leaf_jobs" -gt "$merge_fanin" ]; then
+      merge_phase_ms=$((merge_phase_ms + merge_base_ms))
+    fi
+  fi
+
+  echo $((leaf_phase_ms + merge_phase_ms + finalize_ms + safety_ms))
 }
 
 bool_metric_from_line() {
@@ -402,6 +573,8 @@ emit_metrics_artifact() {
   python3 - "$ARTIFACT_JSON" "$mode" <<'PY'
 import json
 import os
+import pathlib
+import re
 import sys
 
 path = sys.argv[1]
@@ -429,6 +602,141 @@ def to_float(name):
     except ValueError:
         return None
 
+def parse_bool(value):
+    if value is None:
+        return None
+    lowered = value.strip().lower()
+    if lowered in {"true", "1", "yes"}:
+        return True
+    if lowered in {"false", "0", "no"}:
+        return False
+    return None
+
+def parse_kv_line(line):
+    return dict(re.findall(r'([A-Za-z0-9_]+)=([^\s]+)', line))
+
+send_trace_path = pathlib.Path(getenv("SEND_TRACE_FILE"))
+metric_block_number = to_int("METRIC_BLOCK_NUMBER")
+metric_tx_count = to_int("METRIC_TX_COUNT")
+send_trace = []
+if send_trace_path.exists():
+    for raw_line in send_trace_path.read_text().splitlines():
+        if not raw_line.strip():
+            continue
+        worker_id, tx_ordinal, start_ms, end_ms, duration_ms, start_block, end_block = raw_line.split("\t")
+        send_trace.append(
+            {
+                "worker_id": int(worker_id),
+                "tx_ordinal": int(tx_ordinal),
+                "start_ms": int(start_ms),
+                "end_ms": int(end_ms),
+                "duration_ms": int(duration_ms),
+                "start_block": int(start_block),
+                "end_block": int(end_block),
+            }
+        )
+
+send_durations = [item["duration_ms"] for item in send_trace]
+send_stats = {
+    "count": len(send_trace),
+    "min_ms": min(send_durations) if send_durations else None,
+    "max_ms": max(send_durations) if send_durations else None,
+    "avg_ms": round(sum(send_durations) / len(send_durations), 3) if send_durations else None,
+}
+
+log_path = pathlib.Path(getenv("LOG_FILE"))
+inclusion_start_block = to_int("INCLUSION_START_BLOCK")
+final_block_number = to_int("FINAL_BLOCK_NUMBER")
+payload_by_block = {}
+verify_by_block = {}
+consensus_by_block = {}
+prepare_stage_lines = {
+    "context": [],
+    "commitment": [],
+    "aggregation": [],
+    "artifacts": [],
+    "attached": [],
+    "failed": [],
+}
+if log_path.exists():
+    for line in log_path.read_text().splitlines():
+        if "block_payload_size_metrics" in line:
+            data = parse_kv_line(line)
+            block_number = data.get("block_number")
+            if block_number is not None:
+                payload_by_block[int(block_number)] = data
+        elif "block_import_verify_time_ms" in line:
+            data = parse_kv_line(line)
+            block_number = data.get("block_number")
+            if block_number is not None:
+                verify_by_block[int(block_number)] = data
+        elif "block_proof_verification_metrics" in line:
+            data = parse_kv_line(line)
+            tx_count = data.get("tx_count")
+            if tx_count is not None:
+                consensus_by_block[len(consensus_by_block) + 1] = data
+        elif "prepare_block_proof_bundle: built shared candidate context" in line:
+            prepare_stage_lines["context"].append(parse_kv_line(line))
+        elif "prepare_block_proof_bundle: commitment stage complete" in line:
+            prepare_stage_lines["commitment"].append(parse_kv_line(line))
+        elif "prepare_block_proof_bundle: aggregation stage complete" in line:
+            prepare_stage_lines["aggregation"].append(parse_kv_line(line))
+        elif "prepare_block_proof_bundle: built commitment and bundle proof artifacts" in line:
+            prepare_stage_lines["artifacts"].append(parse_kv_line(line))
+        elif "Proven batch extrinsic attached" in line:
+            prepare_stage_lines["attached"].append(parse_kv_line(line))
+        elif "failed to build DA blob for proven batch" in line or "Missing prepared proven batch for mandatory proofless sidecar set" in line:
+            prepare_stage_lines["failed"].append({"line": line})
+
+block_progression = []
+if inclusion_start_block is not None and final_block_number is not None:
+    consensus_items = list(consensus_by_block.values())
+    for offset, block_number in enumerate(range(inclusion_start_block + 1, final_block_number + 1)):
+        payload = payload_by_block.get(block_number, {})
+        verify = verify_by_block.get(block_number, {})
+        consensus = consensus_items[offset] if offset < len(consensus_items) else {}
+        block_progression.append(
+            {
+                "block_number": block_number,
+                "tx_count": int(payload.get("tx_count", "0")),
+                "proven_batch_present": parse_bool(payload.get("proven_batch_present")),
+                "proven_batch_bytes": int(payload.get("proven_batch_bytes", "0")),
+                "commitment_proof_bytes": int(payload.get("commitment_proof_bytes", "0")),
+                "aggregation_proof_bytes": int(payload.get("aggregation_proof_bytes", "0")),
+                "verify_ms": int(verify.get("verify_ms", "0")),
+                "tx_verify_ms": int(consensus.get("tx_verify_ms", "0")),
+                "commitment_verify_ms": int(consensus.get("commitment_verify_ms", "0")),
+                "aggregation_verify_ms": int(consensus.get("aggregation_verify_ms", "0")),
+                "total_verify_ms": int(consensus.get("total_verify_ms", "0")),
+            }
+        )
+
+def latest_stage_value(name, key):
+    entries = prepare_stage_lines[name]
+    if not entries:
+        return None
+    filtered = entries
+    if metric_block_number is not None:
+        filtered = [
+            entry for entry in filtered
+            if int(entry.get("block_number", "-1")) == metric_block_number
+        ]
+    if metric_tx_count is not None and filtered:
+        exact_tx = [
+            entry for entry in filtered
+            if int(entry.get("tx_count", entry.get("key_tx_count", "-1"))) == metric_tx_count
+        ]
+        if exact_tx:
+            filtered = exact_tx
+    target = filtered if filtered else entries
+    value = target[-1].get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
 payload = {
     "run_id": getenv("RUN_ID"),
     "mode": mode,
@@ -441,6 +749,7 @@ payload = {
     },
     "config": {
         "proof_mode": getenv("PROOF_MODE"),
+        "send_da_sidecar": to_int("SEND_DA_SIDECAR"),
         "strict_aggregation": to_int("STRICT_AGGREGATION"),
         "tx_count_requested": to_int("TX_COUNT"),
         "workers": to_int("WORKERS"),
@@ -469,8 +778,43 @@ payload = {
         "proven_batch_bytes_total": to_int("PROVEN_BATCH_BYTES_TOTAL"),
         "queue_depth": to_int("QUEUE_DEPTH"),
         "queue_wait_ms": to_int("QUEUE_WAIT_MS"),
+        "dispatch_wait_ms": to_int("DISPATCH_WAIT_MS"),
+        "total_job_age_ms": to_int("TOTAL_JOB_AGE_MS"),
         "cache_hit": getenv("CACHE_HIT"),
         "cache_build_ms": to_int("CACHE_BUILD_MS"),
+        "import_verify_total_ms": sum(item["verify_ms"] for item in block_progression),
+        "consensus_verify_total_ms": sum(item["total_verify_ms"] for item in block_progression),
+        "commitment_verify_total_ms": sum(item["commitment_verify_ms"] for item in block_progression),
+        "tx_verify_total_ms": sum(item["tx_verify_ms"] for item in block_progression),
+    },
+    "proof_ready": {
+        "send_trace_file": str(send_trace_path),
+        "per_tx": send_trace,
+        "stats": send_stats,
+    },
+    "mempool": {
+        "ready_pending_extrinsics_before_mining": to_int("READY_PENDING_COUNT_BEFORE_MINING"),
+        "ready_pending_extrinsics_after_inclusion": to_int("READY_PENDING_COUNT_AFTER_INCLUSION"),
+    },
+    "prepared": {
+        "bundles_before_mining": to_int("PREPARED_BUNDLES_BEFORE_MINING"),
+        "bundles_after_inclusion": to_int("PREPARED_BUNDLES_AFTER_INCLUSION"),
+    },
+    "blocks": {
+        "inclusion_start_block": inclusion_start_block,
+        "final_block_number": final_block_number,
+        "progression": block_progression,
+        "count_until_full_inclusion": len(block_progression),
+        "proven_batch_blocks": sum(1 for item in block_progression if item["proven_batch_present"]),
+        "missed_target_block": len(block_progression) > 1,
+    },
+    "prepare": {
+        "context_stage_ms": latest_stage_value("context", "stage_ms"),
+        "commitment_stage_ms": latest_stage_value("commitment", "commitment_stage_ms"),
+        "aggregation_stage_ms": latest_stage_value("aggregation", "aggregation_stage_ms"),
+        "bundle_total_ms": latest_stage_value("artifacts", "total_ms"),
+        "prepared_bundle_build_ms": latest_stage_value("attached", "proven_batch_build_ms"),
+        "artifact_failures": prepare_stage_lines["failed"][-5:],
     },
 }
 
@@ -485,14 +829,6 @@ cd "$ROOT_DIR"
 GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 RUN_TIMESTAMP_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 GENESIS_HASH=""
-
-echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
-echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
-echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
-echo "Aggregation cache config: prewarm_max_txs=$AGG_PREWARM_MAX_TXS" >&2
-echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
-echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
-echo "Artifacts: run_id=${RUN_ID} json=${ARTIFACT_JSON}" >&2
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   if [ "${HEGEMON_TP_FORCE:-0}" = "1" ]; then
@@ -538,8 +874,12 @@ if ! [[ "$PROVER_WORKERS" =~ ^[0-9]+$ ]]; then
   echo "HEGEMON_TP_PROVER_WORKERS must be an integer >= 0 (got '$PROVER_WORKERS')." >&2
   exit 1
 fi
-if ! [[ "$PROVER_BATCH_JOB_TIMEOUT_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_BATCH_JOB_TIMEOUT_MS" -lt 1 ]; then
+if [ -n "$PROVER_BATCH_JOB_TIMEOUT_MS" ] && { ! [[ "$PROVER_BATCH_JOB_TIMEOUT_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_BATCH_JOB_TIMEOUT_MS" -lt 1 ]; }; then
   echo "HEGEMON_TP_BATCH_JOB_TIMEOUT_MS must be a positive integer (got '$PROVER_BATCH_JOB_TIMEOUT_MS')." >&2
+  exit 1
+fi
+if [ -n "$PROVER_WORK_PACKAGE_TTL_MS" ] && { ! [[ "$PROVER_WORK_PACKAGE_TTL_MS" =~ ^[0-9]+$ ]] || [ "$PROVER_WORK_PACKAGE_TTL_MS" -lt 1 ]; }; then
+  echo "HEGEMON_TP_WORK_PACKAGE_TTL_MS must be a positive integer (got '$PROVER_WORK_PACKAGE_TTL_MS')." >&2
   exit 1
 fi
 if [ -n "$ADAPTIVE_LIVENESS_MS" ] && ! [[ "$ADAPTIVE_LIVENESS_MS" =~ ^[0-9]+$ ]]; then
@@ -582,18 +922,29 @@ if [ "$WALLET_RAYON_THREADS" -le 0 ]; then
 fi
 echo "Wallet send config: workers=$WORKERS wallet_rayon=$WALLET_RAYON_THREADS wallet_rpc_timeout_s=$WALLET_RPC_REQUEST_TIMEOUT_SECS send_retries=$SEND_RETRIES" >&2
 
-if [ "$FAST" = "1" ]; then
-  echo "Building node (fast proofs enabled)..." >&2
-  make node-fast
-else
+if [ "$SKIP_BUILD" = "1" ]; then
   if [ ! -x ./target/release/hegemon-node ]; then
-    echo "Building node..." >&2
-    make node
+    echo "HEGEMON_TP_SKIP_BUILD=1 requires ./target/release/hegemon-node to exist." >&2
+    exit 1
   fi
-fi
+  if [ ! -x ./target/release/wallet ]; then
+    echo "HEGEMON_TP_SKIP_BUILD=1 requires ./target/release/wallet to exist." >&2
+    exit 1
+  fi
+else
+  if [ "$FAST" = "1" ]; then
+    echo "Building node (fast proofs enabled)..." >&2
+    make node-fast
+  else
+    if [ ! -x ./target/release/hegemon-node ]; then
+      echo "Building node..." >&2
+      make node
+    fi
+  fi
 
-echo "Building wallet..." >&2
-cargo build --release -p wallet
+  echo "Building wallet..." >&2
+  cargo build --release -p wallet
+fi
 
 WALLET_SEND_SUPPORTS_NO_SYNC=0
 if ./target/release/wallet substrate-send --help 2>&1 | grep -q -- "--no-sync"; then
@@ -612,31 +963,40 @@ if [ "$WORKERS" -gt 1 ]; then
   done
 fi
 
-existing_stores=()
-for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"; do
-  if [ -n "$store" ] && [ -d "$store" ]; then
-    existing_stores+=("$store")
-  fi
-done
-
-if [ "${#existing_stores[@]}" -gt 0 ]; then
-  echo "Wallet stores already exist; delete them or set HEGEMON_TP_FORCE=1:" >&2
-  for store in "${existing_stores[@]}"; do
-    echo "  $store" >&2
+if [ "$REUSE_EXISTING_STATE" != "1" ]; then
+  existing_stores=()
+  for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"; do
+    if [ -n "$store" ] && [ -e "$store" ]; then
+      existing_stores+=("$store")
+    fi
   done
-  if [ "${HEGEMON_TP_FORCE:-0}" != "1" ]; then
-    exit 1
+
+  if [ "${#existing_stores[@]}" -gt 0 ]; then
+    echo "Wallet stores already exist; delete them or set HEGEMON_TP_FORCE=1:" >&2
+    for store in "${existing_stores[@]}"; do
+      echo "  $store" >&2
+    done
+    if [ "${HEGEMON_TP_FORCE:-0}" != "1" ]; then
+      exit 1
+    fi
+    rm -rf "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"
   fi
-  rm -rf "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"
-fi
 
-echo "Initializing wallets..." >&2
-./target/release/wallet init --store "$WALLET_A" --passphrase "$PASS_A"
-./target/release/wallet init --store "$WALLET_B" --passphrase "$PASS_B"
+  echo "Initializing wallets..." >&2
+  ./target/release/wallet init --store "$WALLET_A" --passphrase "$PASS_A"
+  ./target/release/wallet init --store "$WALLET_B" --passphrase "$PASS_B"
 
-if [ "$WORKERS" -gt 1 ]; then
-  for i in "${!WORKER_STORES[@]}"; do
-    ./target/release/wallet init --store "${WORKER_STORES[$i]}" --passphrase "${WORKER_PASSES[$i]}"
+  if [ "$WORKERS" -gt 1 ]; then
+    for i in "${!WORKER_STORES[@]}"; do
+      ./target/release/wallet init --store "${WORKER_STORES[$i]}" --passphrase "${WORKER_PASSES[$i]}"
+    done
+  fi
+else
+  for store in "$WALLET_A" "$WALLET_B" "${WORKER_STORES[@]-}"; do
+    if [ -n "$store" ] && [ ! -e "$store" ]; then
+      echo "HEGEMON_TP_REUSE_EXISTING_STATE=1 requires existing wallet store path: $store" >&2
+      exit 1
+    fi
   done
 fi
 
@@ -695,6 +1055,110 @@ NODE_ADAPTIVE_LIVENESS_ENV=""
 if [ -n "$ADAPTIVE_LIVENESS_MS" ]; then
   NODE_ADAPTIVE_LIVENESS_ENV="HEGEMON_PROVER_ADAPTIVE_LIVENESS_MS=${ADAPTIVE_LIVENESS_MS}"
 fi
+NODE_MINE_ENV="HEGEMON_MINE=1"
+NODE_PREWARM_BLOCKING_ENV=""
+NODE_PREWARM_MAX_TXS_ENV=""
+AGG_LEAF_FANIN="${HEGEMON_TP_AGG_LEAF_FANIN:-4}"
+if ! [[ "$AGG_LEAF_FANIN" =~ ^[0-9]+$ ]] || [ "$AGG_LEAF_FANIN" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_LEAF_FANIN must be a positive integer (got '$AGG_LEAF_FANIN')." >&2
+  exit 1
+fi
+AGG_MERGE_FANIN="${HEGEMON_TP_AGG_MERGE_FANIN:-8}"
+AGG_MERGE_FANIN_EXPLICIT=0
+if [ -n "${HEGEMON_TP_AGG_MERGE_FANIN:-}" ]; then
+  AGG_MERGE_FANIN_EXPLICIT=1
+fi
+if ! [[ "$AGG_MERGE_FANIN" =~ ^[0-9]+$ ]] || [ "$AGG_MERGE_FANIN" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_MERGE_FANIN must be a positive integer (got '$AGG_MERGE_FANIN')." >&2
+  exit 1
+fi
+if [ "$PROOF_MODE" = "aggregation" ]; then
+  current_recursive_capacity=$((AGG_LEAF_FANIN * AGG_MERGE_FANIN))
+  if [ "$TX_COUNT" -gt "$current_recursive_capacity" ]; then
+    required_merge_fanin=$(((TX_COUNT + AGG_LEAF_FANIN - 1) / AGG_LEAF_FANIN))
+    if [ "$AGG_MERGE_FANIN_EXPLICIT" = "1" ]; then
+      echo "TX_COUNT=${TX_COUNT} exceeds recursive capacity ${current_recursive_capacity} for leaf_fanin=${AGG_LEAF_FANIN}, merge_fanin=${AGG_MERGE_FANIN}." >&2
+      echo "Set HEGEMON_TP_AGG_MERGE_FANIN >= ${required_merge_fanin} or lower HEGEMON_TP_TX_COUNT." >&2
+      exit 1
+    fi
+    AGG_MERGE_FANIN="$required_merge_fanin"
+  fi
+fi
+TX_RECURSION_NUM_QUERIES="${HEGEMON_TP_TX_RECURSION_NUM_QUERIES:-2}"
+if ! [[ "$TX_RECURSION_NUM_QUERIES" =~ ^[0-9]+$ ]] || [ "$TX_RECURSION_NUM_QUERIES" -lt 1 ]; then
+  echo "HEGEMON_TP_TX_RECURSION_NUM_QUERIES must be a positive integer (got '$TX_RECURSION_NUM_QUERIES')." >&2
+  exit 1
+fi
+TX_RECURSION_LOG_BLOWUP="${HEGEMON_TP_TX_RECURSION_LOG_BLOWUP:-2}"
+if ! [[ "$TX_RECURSION_LOG_BLOWUP" =~ ^[0-9]+$ ]] || [ "$TX_RECURSION_LOG_BLOWUP" -lt 1 ]; then
+  echo "HEGEMON_TP_TX_RECURSION_LOG_BLOWUP must be a positive integer (got '$TX_RECURSION_LOG_BLOWUP')." >&2
+  exit 1
+fi
+AGG_OUTER_NUM_QUERIES="${HEGEMON_TP_AGG_OUTER_NUM_QUERIES:-2}"
+if ! [[ "$AGG_OUTER_NUM_QUERIES" =~ ^[0-9]+$ ]] || [ "$AGG_OUTER_NUM_QUERIES" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_OUTER_NUM_QUERIES must be a positive integer (got '$AGG_OUTER_NUM_QUERIES')." >&2
+  exit 1
+fi
+AGG_OUTER_LOG_BLOWUP="${HEGEMON_TP_AGG_OUTER_LOG_BLOWUP:-2}"
+if ! [[ "$AGG_OUTER_LOG_BLOWUP" =~ ^[0-9]+$ ]] || [ "$AGG_OUTER_LOG_BLOWUP" -lt 1 ]; then
+  echo "HEGEMON_TP_AGG_OUTER_LOG_BLOWUP must be a positive integer (got '$AGG_OUTER_LOG_BLOWUP')." >&2
+  exit 1
+fi
+if [ "$PREWARM_ONLY" = "1" ] && [ "$PROOF_MODE" = "aggregation" ]; then
+  NODE_PREWARM_BLOCKING_ENV="HEGEMON_AGG_PREWARM_BLOCKING=1"
+elif [ -n "$AGG_PREWARM_MAX_TXS" ] && [ "$AGG_PREWARM_MAX_TXS" -gt "$AGG_LEAF_FANIN" ]; then
+  NODE_PREWARM_BLOCKING_ENV="HEGEMON_AGG_PREWARM_BLOCKING=1"
+fi
+if [ -n "$AGG_PREWARM_MAX_TXS" ]; then
+  NODE_PREWARM_MAX_TXS_ENV="HEGEMON_AGG_PREWARM_MAX_TXS=${AGG_PREWARM_MAX_TXS}"
+fi
+AGG_LEAF_JOBS=0
+if [ "$PROOF_MODE" = "aggregation" ]; then
+  AGG_LEAF_JOBS="$(aggregation_leaf_job_count "$TX_COUNT" "$AGG_LEAF_FANIN")"
+  if [ "$PROVER_WORKERS" -gt "$AGG_LEAF_JOBS" ]; then
+    echo "Capping local aggregation prover workers from ${PROVER_WORKERS} to ${AGG_LEAF_JOBS} to match first-level leaf jobs." >&2
+    PROVER_WORKERS="$AGG_LEAF_JOBS"
+  fi
+fi
+if [ "$AGG_PREPARE_THREADS_AUTO" = "1" ]; then
+  if [ "$PROVER_WORKERS" -gt "$NODE_RAYON_THREADS" ]; then
+    AGG_PREPARE_THREADS="$PROVER_WORKERS"
+  else
+    AGG_PREPARE_THREADS="$NODE_RAYON_THREADS"
+  fi
+fi
+if [ -z "$PROVER_BATCH_JOB_TIMEOUT_MS" ]; then
+  if [ "$PROOF_MODE" = "aggregation" ]; then
+    PROVER_BATCH_JOB_TIMEOUT_MS="$(derive_aggregation_prepare_budget_ms "$TX_COUNT" "$AGG_LEAF_FANIN" "$AGG_MERGE_FANIN" "$PROVER_WORKERS")"
+  elif [ "$STRICT_AGGREGATION" = "1" ]; then
+    PROVER_BATCH_JOB_TIMEOUT_MS=900000
+  else
+    PROVER_BATCH_JOB_TIMEOUT_MS=180000
+  fi
+fi
+if [ -z "$PROVER_WORK_PACKAGE_TTL_MS" ]; then
+  PROVER_WORK_PACKAGE_TTL_MS="$PROVER_BATCH_JOB_TIMEOUT_MS"
+fi
+if [ -z "$STRICT_PREPARE_TIMEOUT_SECS" ]; then
+  STRICT_PREPARE_TIMEOUT_SECS="$(ceil_div "$PROVER_BATCH_JOB_TIMEOUT_MS" 1000)"
+fi
+
+echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$HOST_MEM_GIB)" >&2
+echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
+echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
+echo "Aggregation recursion config: leaf_fanin=$AGG_LEAF_FANIN merge_fanin=$AGG_MERGE_FANIN tx_recursion_queries=$TX_RECURSION_NUM_QUERIES tx_recursion_log_blowup=$TX_RECURSION_LOG_BLOWUP outer_queries=$AGG_OUTER_NUM_QUERIES outer_log_blowup=$AGG_OUTER_LOG_BLOWUP prover_workers=$PROVER_WORKERS" >&2
+echo "Aggregation packing config: witness_lanes=${AGG_WITNESS_LANES:-default} add_lanes=${AGG_ADD_LANES:-default} mul_lanes=${AGG_MUL_LANES:-default}" >&2
+echo "Aggregation prewarm config: include_merge=${AGG_PREWARM_INCLUDE_MERGE:-default} max_txs=${AGG_PREWARM_MAX_TXS:-default(target_txs)}" >&2
+echo "Aggregation timeout budget: strict_prepare_timeout_secs=$STRICT_PREPARE_TIMEOUT_SECS batch_job_timeout_ms=$PROVER_BATCH_JOB_TIMEOUT_MS work_package_ttl_ms=$PROVER_WORK_PACKAGE_TTL_MS leaf_jobs=${AGG_LEAF_JOBS:-0}" >&2
+if [ -n "$NODE_PREWARM_BLOCKING_ENV" ]; then
+  echo "Aggregation cache startup: worker_prewarm_blocking=1" >&2
+fi
+echo "Network config: seeds='${TP_SEEDS}' max_peers=${TP_MAX_PEERS}" >&2
+echo "Mode flags: proof_mode=${PROOF_MODE} aggregation_enabled=${AGGREGATION_PROOFS_ENABLED} send_proof_sidecar=${SEND_PROOF_SIDECAR} send_da_sidecar=${SEND_DA_SIDECAR} send_no_sync=${SEND_NO_SYNC_DEFAULT} inclusion_target_mode=${INCLUSION_TARGET_MODE} prewarm_only=${PREWARM_ONLY} incremental_upsize=${BATCH_INCREMENTAL_UPSIZE}" >&2
+echo "Artifacts: run_id=${RUN_ID} json=${ARTIFACT_JSON}" >&2
+
+mkdir -p "$ARTIFACTS_DIR"
+: > "$SEND_TRACE_FILE"
 
 wallet_sync() {
   local store="$1"
@@ -720,8 +1184,10 @@ wallet_send_once() {
     maybe_no_sync="--no-sync"
   fi
   env \
-    HEGEMON_WALLET_DA_SIDECAR=1 \
+    HEGEMON_WALLET_DA_SIDECAR="$SEND_DA_SIDECAR" \
     HEGEMON_WALLET_PROOF_SIDECAR="$proof_sidecar" \
+    HEGEMON_TX_RECURSION_NUM_QUERIES="$TX_RECURSION_NUM_QUERIES" \
+    HEGEMON_TX_RECURSION_LOG_BLOWUP="$TX_RECURSION_LOG_BLOWUP" \
     HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS="$WALLET_RPC_REQUEST_TIMEOUT_SECS" \
     RAYON_NUM_THREADS="$WALLET_RAYON_THREADS" \
     HEGEMON_RAYON_THREADS="$WALLET_RAYON_THREADS" \
@@ -732,6 +1198,30 @@ wallet_send_once() {
       --ws-url "$RPC_WS" \
       --fee "$FEE" \
       $maybe_no_sync >/dev/null
+}
+
+wallet_send_with_metrics() {
+  local store="$1"
+  local passphrase="$2"
+  local recipients_json="$3"
+  local no_sync="${4:-0}"
+  local proof_sidecar="${5:-$SEND_PROOF_SIDECAR}"
+  local worker_id="$6"
+  local tx_ordinal="$7"
+  local start_ms
+  local end_ms
+  local start_block
+  local end_block
+
+  start_ms="$(now_ms)"
+  start_block="$(current_block_number)"
+  wallet_send_with_retry "$store" "$passphrase" "$recipients_json" "$no_sync" "$proof_sidecar"
+  end_ms="$(now_ms)"
+  end_block="$(current_block_number)"
+
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "$worker_id" "$tx_ordinal" "$start_ms" "$end_ms" "$((end_ms - start_ms))" "$start_block" "$end_block" \
+    >> "$SEND_TRACE_FILE"
 }
 
 wallet_send_with_retry() {
@@ -770,15 +1260,17 @@ tmux new-session -d -s "$SESSION" -n node \
      $NODE_STRICT_ENV \
      HEGEMON_SEEDS='${TP_SEEDS}' \
      HEGEMON_MAX_PEERS='${TP_MAX_PEERS}' \
-     HEGEMON_MINE=1 \
+     $NODE_MINE_ENV \
      HEGEMON_MINE_THREADS='${MINE_THREADS}' \
      HEGEMON_PROVER_WORKERS='${PROVER_WORKERS}' \
      HEGEMON_PROVER_LIVENESS_LANE='${PROVER_LIVENESS_LANE}' \
      $NODE_ADAPTIVE_LIVENESS_ENV \
+     $NODE_PREWARM_BLOCKING_ENV \
      HEGEMON_BATCH_QUEUE_CAPACITY='${BATCH_QUEUE_CAPACITY}' \
      HEGEMON_BATCH_INCREMENTAL_UPSIZE='${BATCH_INCREMENTAL_UPSIZE}' \
      HEGEMON_BATCH_TARGET_TXS='${TX_COUNT}' \
      HEGEMON_BATCH_JOB_TIMEOUT_MS='${PROVER_BATCH_JOB_TIMEOUT_MS}' \
+     HEGEMON_PROVER_WORK_PACKAGE_TTL_MS='${PROVER_WORK_PACKAGE_TTL_MS}' \
      HEGEMON_MIN_READY_PROVEN_BATCH_TXS='${MIN_READY_BATCH_TXS}' \
      HEGEMON_MINE_TEST=1 \
      HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
@@ -787,22 +1279,33 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_FULL_IMPORT=1 \
      HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK='${TX_COUNT}' \
      HEGEMON_AGG_PROFILE='${AGG_PROFILE}' \
+     HEGEMON_AGG_LEAF_FANIN='${AGG_LEAF_FANIN}' \
+     HEGEMON_AGG_MERGE_FANIN='${AGG_MERGE_FANIN}' \
+     HEGEMON_TX_RECURSION_NUM_QUERIES='${TX_RECURSION_NUM_QUERIES}' \
+     HEGEMON_TX_RECURSION_LOG_BLOWUP='${TX_RECURSION_LOG_BLOWUP}' \
+     HEGEMON_AGG_OUTER_NUM_QUERIES='${AGG_OUTER_NUM_QUERIES}' \
+     HEGEMON_AGG_OUTER_LOG_BLOWUP='${AGG_OUTER_LOG_BLOWUP}' \
+     HEGEMON_AGG_WITNESS_LANES='${AGG_WITNESS_LANES}' \
+     HEGEMON_AGG_ADD_LANES='${AGG_ADD_LANES}' \
+     HEGEMON_AGG_MUL_LANES='${AGG_MUL_LANES}' \
+     HEGEMON_AGG_PREWARM_INCLUDE_MERGE='${AGG_PREWARM_INCLUDE_MERGE}' \
      HEGEMON_AGG_PREPARE_THREADS='${AGG_PREPARE_THREADS}' \
      HEGEMON_AGG_PROVER_THREADS='${AGG_PROVER_THREADS}' \
-     HEGEMON_AGG_PREWARM_MAX_TXS='${AGG_PREWARM_MAX_TXS}' \
+     HEGEMON_AGG_STAGE_LOCAL_PARALLELISM='${PROVER_WORKERS}' \
+     $NODE_PREWARM_MAX_TXS_ENV \
      HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
-     ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --tmp --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
+     ./target/release/hegemon-node ${NODE_CHAIN_ARGS} --rpc-port '${RPC_PORT}' 2>&1 | tee '$LOG_FILE'"
 
 echo "Waiting for RPC to respond..." >&2
-for i in $(seq 1 60); do
+for i in $(seq 1 "$RPC_WAIT_SECS"); do
   if curl -s -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
     "$RPC_HTTP" >/dev/null 2>&1; then
     break
   fi
   sleep 1
-  if [ "$i" -eq 60 ]; then
-    echo "RPC did not respond after 60s; check logs: $LOG_FILE" >&2
+  if [ "$i" -eq "$RPC_WAIT_SECS" ]; then
+    echo "RPC did not respond after ${RPC_WAIT_SECS}s; check logs: $LOG_FILE" >&2
     exit 1
   fi
 done
@@ -814,47 +1317,57 @@ GENESIS_HASH="$(
     | python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; print((obj.get("result") or ""))'
 )"
 
-echo "Starting mining to generate coinbase notes..." >&2
-curl -s -H "Content-Type: application/json" \
-  -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
-  "$RPC_HTTP" >/dev/null
-
-echo "Waiting for >= ${COINBASE_BLOCKS} blocks..." >&2
-for i in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
-  HEADER_JSON="$(curl -s -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
-    "$RPC_HTTP" || true)"
-  BLOCK_NUM="$(python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; num=(obj.get("result") or {}).get("number"); print(int(num,16) if isinstance(num,str) else 0)' <<<"$HEADER_JSON")"
-  if [ "$BLOCK_NUM" -ge "$COINBASE_BLOCKS" ]; then
-    break
-  fi
-  sleep 1
-done
-if [ "$BLOCK_NUM" -lt "$COINBASE_BLOCKS" ]; then
-  echo "Timed out waiting for >= ${COINBASE_BLOCKS} blocks after ${MAX_BLOCK_WAIT_SECS}s (got ${BLOCK_NUM})." >&2
-  echo "Hint: increase HEGEMON_TP_MAX_BLOCK_WAIT_SECS or lower HEGEMON_TP_VALUE/HEGEMON_TP_TX_COUNT." >&2
-  exit 1
+if [ "$REUSE_EXISTING_STATE" = "1" ]; then
+  echo "Stopping mining immediately on reused funded state..." >&2
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
+    "$RPC_HTTP" >/dev/null || true
+  wait_for_tip_quiescence 30 3
 fi
 
-echo "Stopping mining so transfers accumulate in the pool..." >&2
-curl -s -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
-  "$RPC_HTTP" >/dev/null
+if [ "$REUSE_EXISTING_STATE" != "1" ]; then
+  echo "Starting mining to generate coinbase notes..." >&2
+  curl -s -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
+    "$RPC_HTTP" >/dev/null
 
-echo "Syncing miner wallet..." >&2
-wallet_sync "$WALLET_A" "$PASS_A"
-
-if [ "$WORKERS" -gt 1 ]; then
-  echo "Funding worker wallets from miner..." >&2
-  funding_sends=0
-  for i in "${!WORKER_STORES[@]}"; do
-    worker_tx_count="${WORKER_TX_COUNTS[$i]}"
-    if [ "$worker_tx_count" -le 0 ]; then
-      continue
+  echo "Waiting for >= ${COINBASE_BLOCKS} blocks..." >&2
+  for i in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
+    HEADER_JSON="$(curl -s -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
+      "$RPC_HTTP" || true)"
+    BLOCK_NUM="$(python3 -c 'import json,sys; data=sys.stdin.read().strip(); obj=json.loads(data) if data else {}; num=(obj.get("result") or {}).get("number"); print(int(num,16) if isinstance(num,str) else 0)' <<<"$HEADER_JSON")"
+    if [ "$BLOCK_NUM" -ge "$COINBASE_BLOCKS" ]; then
+      break
     fi
-    fund_json="/tmp/hegemon-throughput-worker-fund-$((i + 1)).json"
-    fund_note_value=$((VALUE + FEE))
-    cat <<EOF > "$fund_json"
+    sleep 1
+  done
+  if [ "$BLOCK_NUM" -lt "$COINBASE_BLOCKS" ]; then
+    echo "Timed out waiting for >= ${COINBASE_BLOCKS} blocks after ${MAX_BLOCK_WAIT_SECS}s (got ${BLOCK_NUM})." >&2
+    echo "Hint: increase HEGEMON_TP_MAX_BLOCK_WAIT_SECS or lower HEGEMON_TP_VALUE/HEGEMON_TP_TX_COUNT." >&2
+    exit 1
+  fi
+
+  echo "Stopping mining so transfers accumulate in the pool..." >&2
+  curl -s -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
+    "$RPC_HTTP" >/dev/null
+  wait_for_tip_quiescence 30 3
+
+  echo "Syncing miner wallet..." >&2
+  wallet_sync "$WALLET_A" "$PASS_A"
+
+  if [ "$WORKERS" -gt 1 ]; then
+    echo "Funding worker wallets from miner..." >&2
+    funding_sends=0
+    for i in "${!WORKER_STORES[@]}"; do
+      worker_tx_count="${WORKER_TX_COUNTS[$i]}"
+      if [ "$worker_tx_count" -le 0 ]; then
+        continue
+      fi
+      fund_json="/tmp/hegemon-throughput-worker-fund-$((i + 1)).json"
+      fund_note_value=$((VALUE + FEE))
+      cat <<EOF > "$fund_json"
 [
   {
     "address": "${WORKER_ADDRS[$i]}",
@@ -864,47 +1377,63 @@ if [ "$WORKERS" -gt 1 ]; then
   }
 ]
 EOF
-    echo "  funding worker $((i + 1)) with ${worker_tx_count} note(s) of ${fund_note_value} units..." >&2
-    for j in $(seq 1 "$worker_tx_count"); do
-      # Funding must be mined deterministically before worker send loops begin.
-      # Use inline proof bytes here (proof_sidecar=0) so strict aggregation mode
-      # cannot defer these transfers as proofless sidecar calls.
-      wallet_send_with_retry "$WALLET_A" "$PASS_A" "$fund_json" 0 0
-      funding_sends=$((funding_sends + 1))
+      echo "  funding worker $((i + 1)) with ${worker_tx_count} note(s) of ${fund_note_value} units..." >&2
+      for j in $(seq 1 "$worker_tx_count"); do
+        # Funding must be mined deterministically before worker send loops begin.
+        # Use inline proof bytes here (proof_sidecar=0) so strict aggregation mode
+        # cannot defer these transfers as proofless sidecar calls.
+        wallet_send_with_retry "$WALLET_A" "$PASS_A" "$fund_json" 0 0
+        funding_sends=$((funding_sends + 1))
 
-      # Confirm each funding send before issuing the next one so the miner wallet
-      # never reuses a just-spent nullifier.
-      before_funding_mine="$(current_block_number)"
-      curl -s -H "Content-Type: application/json" \
-        -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
-        "$RPC_HTTP" >/dev/null
-      funding_target=$((before_funding_mine + 1))
-      current="$before_funding_mine"
-      for k in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
-        current="$(current_block_number)"
-        if [ "$current" -ge "$funding_target" ]; then
-          break
+        # Confirm each funding send before issuing the next one so the miner wallet
+        # never reuses a just-spent nullifier.
+        before_funding_mine="$(current_block_number)"
+        curl -s -H "Content-Type: application/json" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"hegemon_startMining\",\"params\":[{\"threads\":${MINE_THREADS}}],\"id\":1}" \
+          "$RPC_HTTP" >/dev/null
+        funding_target=$((before_funding_mine + 1))
+        current="$before_funding_mine"
+        for k in $(seq 1 "$MAX_BLOCK_WAIT_SECS"); do
+          current="$(current_block_number)"
+          if [ "$current" -ge "$funding_target" ]; then
+            break
+          fi
+          sleep 1
+        done
+        if [ "$current" -lt "$funding_target" ]; then
+          echo "Timed out while confirming worker funding transfer (target block ${funding_target}, got ${current})." >&2
+          exit 1
         fi
-        sleep 1
+        curl -s -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
+          "$RPC_HTTP" >/dev/null
+        wait_for_tip_quiescence 30 3
+
+        wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
       done
-      if [ "$current" -lt "$funding_target" ]; then
-        echo "Timed out while confirming worker funding transfer (target block ${funding_target}, got ${current})." >&2
-        exit 1
-      fi
-      curl -s -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[],"id":1}' \
-        "$RPC_HTTP" >/dev/null
-
-      wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
     done
-  done
 
-  echo "Completed worker funding sends: ${funding_sends}" >&2
+    echo "Completed worker funding sends: ${funding_sends}" >&2
 
-  echo "Syncing worker wallets..." >&2
-  for i in "${!WORKER_STORES[@]}"; do
-    wallet_sync "${WORKER_STORES[$i]}" "${WORKER_PASSES[$i]}" >/dev/null
-  done
+    echo "Syncing worker wallets..." >&2
+    for i in "${!WORKER_STORES[@]}"; do
+      wallet_sync "${WORKER_STORES[$i]}" "${WORKER_PASSES[$i]}" >/dev/null
+    done
+  fi
+else
+  echo "Reusing existing funded state; syncing wallets without bootstrap mining..." >&2
+  wallet_sync "$WALLET_A" "$PASS_A" >/dev/null
+  wallet_sync "$WALLET_B" "$PASS_B" >/dev/null
+  if [ "$WORKERS" -gt 1 ]; then
+    for i in "${!WORKER_STORES[@]}"; do
+      wallet_sync "${WORKER_STORES[$i]}" "${WORKER_PASSES[$i]}" >/dev/null
+    done
+  fi
+fi
+
+if [ "$PREPARE_SNAPSHOT_ONLY" = "1" ]; then
+  echo "Snapshot preparation complete; exiting before transfer submission." >&2
+  exit 0
 fi
 
 echo "Submitting ${TX_COUNT} transfers (proof_mode=${PROOF_MODE}, proof_sidecar=${SEND_PROOF_SIDECAR})..." >&2
@@ -913,7 +1442,7 @@ SEND_START_MS="$ROUND_START_MS"
 if [ "$WORKERS" -le 1 ]; then
   for i in $(seq 1 "$TX_COUNT"); do
     echo "  sending ${i}/${TX_COUNT}..." >&2
-    wallet_send_with_retry "$WALLET_A" "$PASS_A" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT"
+    wallet_send_with_metrics "$WALLET_A" "$PASS_A" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT" "$SEND_PROOF_SIDECAR" 1 "$i"
   done
 else
   pids=()
@@ -925,12 +1454,12 @@ else
     if [ "$worker_tx_count" -le 0 ]; then
       continue
     fi
-    (
+    {
       for j in $(seq 1 "$worker_tx_count"); do
         echo "  worker ${worker_id} sending ${j}/${worker_tx_count}..." >&2
-        wallet_send_with_retry "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT"
+        wallet_send_with_metrics "$worker_store" "$worker_pass" "$RECIPIENTS_JSON" "$SEND_NO_SYNC_DEFAULT" "$SEND_PROOF_SIDECAR" "$worker_id" "$j"
       done
-    ) &
+    } &
     pids+=("$!")
   done
 
@@ -948,6 +1477,8 @@ fi
 SEND_END_MS="$(now_ms)"
 SEND_TOTAL_MS=$((SEND_END_MS - SEND_START_MS))
 echo "Send stage complete: send_total_ms=${SEND_TOTAL_MS}" >&2
+READY_PENDING_COUNT_BEFORE_MINING="$(author_pending_extrinsic_count)"
+PREPARED_BUNDLES_BEFORE_MINING="$(prepared_bundle_count)"
 STRICT_WAIT_MS=0
 INCLUSION_TOTAL_MS=0
 ROUND_TOTAL_MS=0
@@ -964,8 +1495,15 @@ COMMITMENT_STAGE_MS=0
 AGGREGATION_STAGE_MS=0
 QUEUE_DEPTH=0
 QUEUE_WAIT_MS=0
+DISPATCH_WAIT_MS=0
+TOTAL_JOB_AGE_MS=0
 CACHE_HIT=""
 CACHE_BUILD_MS=0
+METRIC_BLOCK_NUMBER=0
+METRIC_TX_COUNT=0
+READY_PENDING_COUNT_AFTER_INCLUSION=0
+PREPARED_BUNDLES_AFTER_INCLUSION=0
+FINAL_BLOCK_NUMBER=0
 
 if [ "$STRICT_AGGREGATION" = "1" ]; then
   echo "Strict mode: waiting for local proven batch candidate before mining (min_prepared_txs=${MIN_PREPARED_TXS})..." >&2
@@ -1001,6 +1539,8 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
   echo "$PREPARED_LINE" >&2
   QUEUE_DEPTH="$(metric_from_line "$PREPARED_LINE" "queue_depth")"
   QUEUE_WAIT_MS="$(metric_from_line "$PREPARED_LINE" "queue_wait_ms")"
+  DISPATCH_WAIT_MS="$(metric_from_line "$PREPARED_LINE" "dispatch_wait_ms")"
+  TOTAL_JOB_AGE_MS="$(metric_from_line "$PREPARED_LINE" "total_job_age_ms")"
   STRICT_WAIT_END_MS="$(now_ms)"
   STRICT_WAIT_MS=$((STRICT_WAIT_END_MS - STRICT_WAIT_START_MS))
   echo "Prepared batch became ready in strict_wait_ms=${STRICT_WAIT_MS}" >&2
@@ -1013,7 +1553,7 @@ if [ "$STRICT_AGGREGATION" = "1" ]; then
     AGGREGATION_STAGE_MS="$(metric_from_line "$STAGE_LINE" "aggregation_stage_ms")"
     CACHE_HIT="$(bool_metric_from_line "$AGG_LINE" "cache_hit")"
     CACHE_BUILD_MS="$(metric_from_line "$AGG_LINE" "cache_build_ms")"
-    export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS CACHE_HIT CACHE_BUILD_MS
+    export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS DISPATCH_WAIT_MS TOTAL_JOB_AGE_MS CACHE_HIT CACHE_BUILD_MS SEND_DA_SIDECAR SEND_TRACE_FILE LOG_FILE READY_PENDING_COUNT_BEFORE_MINING READY_PENDING_COUNT_AFTER_INCLUSION PREPARED_BUNDLES_BEFORE_MINING PREPARED_BUNDLES_AFTER_INCLUSION INCLUSION_START_BLOCK FINAL_BLOCK_NUMBER
     emit_metrics_artifact "prewarm"
     echo "Prewarm-only mode: exiting before inclusion/mining stage." >&2
     echo "prewarm_metrics tx_count=${TX_COUNT} proof_mode=${PROOF_MODE} strict_wait_ms=${STRICT_WAIT_MS} min_prepared_txs=${MIN_PREPARED_TXS}" >&2
@@ -1159,6 +1699,11 @@ case "$TPS_EFFECTIVE_MODE" in
 esac
 
 BLOCK_NUMBER="$FOUND_BLOCK"
+FINAL_BLOCK_NUMBER="$BLOCK_NUMBER"
+METRIC_BLOCK_NUMBER="$BLOCK_NUMBER"
+METRIC_TX_COUNT="$FOUND_TX_COUNT"
+READY_PENDING_COUNT_AFTER_INCLUSION="$(author_pending_extrinsic_count)"
+PREPARED_BUNDLES_AFTER_INCLUSION="$(prepared_bundle_count)"
 
 VERIFY_LINE=""
 CONS_LINE=""
@@ -1223,18 +1768,32 @@ fi
 echo "" >&2
 echo "throughput_round_metrics tx_count=${TX_COUNT} included_tx_count=${INCLUDED_TX_COUNT} proof_mode=${PROOF_MODE} inclusion_target_mode=${INCLUSION_TARGET_MODE} send_proof_sidecar=${SEND_PROOF_SIDECAR} workers=${WORKERS} prover_workers=${PROVER_WORKERS} profile=${TP_PROFILE} tps_mode=${TPS_EFFECTIVE_MODE} send_total_ms=${SEND_TOTAL_MS} inclusion_total_ms=${INCLUSION_TOTAL_MS} round_total_ms=${ROUND_TOTAL_MS} submission_tps=${SUBMISSION_TPS} inclusion_tps=${INCLUSION_TPS} end_to_end_tps=${END_TO_END_TPS} effective_tps=${EFFECTIVE_TPS}" >&2
 
-PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate" | tail -n 1 || true)"
-CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context" | tail -n 1 || true)"
-STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts)" | tail -n 1 || true)"
-AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed)" | tail -n 1 || true)"
+PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate.*block_number=${BLOCK_NUMBER}.*key_tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$PREPARED_LINE_FINAL" ]; then
+  PREPARED_LINE_FINAL="$(search_log "Prepared proven batch candidate.*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
+CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context.*block_number=${BLOCK_NUMBER}.*tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$CONTEXT_LINE" ]; then
+  CONTEXT_LINE="$(search_log "prepare_block_proof_bundle: built shared candidate context.*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
+STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts).*block_number=${BLOCK_NUMBER}.*tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$STAGE_LINE" ]; then
+  STAGE_LINE="$(search_log "prepare_block_proof_bundle: built commitment and (aggregation proofs|bundle proof artifacts).*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
+AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed).*block_number=${BLOCK_NUMBER}.*tx_count=${FOUND_TX_COUNT}" | tail -n 1 || true)"
+if [ -z "$AGG_LINE" ]; then
+  AGG_LINE="$(search_log "(prepare_block_proof_bundle: aggregation stage complete|prove_aggregation completed).*block_number=${BLOCK_NUMBER}" | tail -n 1 || true)"
+fi
 QUEUE_DEPTH="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_depth")"
 QUEUE_WAIT_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "queue_wait_ms")"
+DISPATCH_WAIT_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "dispatch_wait_ms")"
+TOTAL_JOB_AGE_MS="$(metric_from_line "$PREPARED_LINE_FINAL" "total_job_age_ms")"
 CONTEXT_STAGE_MS="$(metric_from_line "$CONTEXT_LINE" "stage_ms")"
 COMMITMENT_STAGE_MS="$(metric_from_line "$STAGE_LINE" "commitment_stage_ms")"
 AGGREGATION_STAGE_MS="$(metric_from_line "$STAGE_LINE" "aggregation_stage_ms")"
 CACHE_HIT="$(bool_metric_from_line "$AGG_LINE" "cache_hit")"
 CACHE_BUILD_MS="$(metric_from_line "$AGG_LINE" "cache_build_ms")"
-export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS CACHE_HIT CACHE_BUILD_MS
+export RUN_ID RUN_TIMESTAMP_UTC GIT_COMMIT GENESIS_HASH TP_SEEDS TP_MAX_PEERS PROOF_MODE STRICT_AGGREGATION TX_COUNT WORKERS PROVER_WORKERS TP_PROFILE BATCH_QUEUE_CAPACITY SEND_TOTAL_MS INCLUSION_TOTAL_MS ROUND_TOTAL_MS STRICT_WAIT_MS CONTEXT_STAGE_MS COMMITMENT_STAGE_MS AGGREGATION_STAGE_MS INCLUDED_TX_COUNT SUBMISSION_TPS INCLUSION_TPS END_TO_END_TPS EFFECTIVE_TPS PAYLOAD_BYTES_PER_TX TX_PROOF_BYTES_TOTAL PROVEN_BATCH_BYTES_TOTAL QUEUE_DEPTH QUEUE_WAIT_MS DISPATCH_WAIT_MS TOTAL_JOB_AGE_MS CACHE_HIT CACHE_BUILD_MS METRIC_BLOCK_NUMBER METRIC_TX_COUNT SEND_DA_SIDECAR SEND_TRACE_FILE LOG_FILE READY_PENDING_COUNT_BEFORE_MINING READY_PENDING_COUNT_AFTER_INCLUSION PREPARED_BUNDLES_BEFORE_MINING PREPARED_BUNDLES_AFTER_INCLUSION INCLUSION_START_BLOCK FINAL_BLOCK_NUMBER
 emit_metrics_artifact "throughput"
 
 echo "Done. Node is still running in tmux." >&2

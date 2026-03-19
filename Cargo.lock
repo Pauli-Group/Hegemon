@@ -79,12 +79,19 @@ dependencies = [
  "consensus",
  "p3-air",
  "p3-batch-stark",
+ "p3-challenger",
  "p3-circuit",
  "p3-circuit-prover",
  "p3-commit",
+ "p3-dft",
  "p3-field",
+ "p3-fri",
+ "p3-goldilocks",
+ "p3-lookup",
  "p3-matrix",
+ "p3-merkle-tree",
  "p3-recursion",
+ "p3-symmetric",
  "p3-uni-stark",
  "postcard",
  "rayon",
@@ -1464,10 +1471,14 @@ dependencies = [
 name = "circuits-bench"
 version = "0.1.0"
 dependencies = [
+ "aggregation-circuit",
  "anyhow",
  "batch-circuit",
+ "bincode",
  "block-circuit",
  "clap",
+ "consensus",
+ "p3-field",
  "p3-goldilocks",
  "p3-uni-stark",
  "protocol-versioning",
@@ -1476,7 +1487,10 @@ dependencies = [
  "serde",
  "serde_json",
  "state-merkle",
+ "synthetic-crypto",
  "transaction-circuit",
+ "transaction-core",
+ "tx-proof-manifest",
 ]
 
 [[package]]
@@ -1604,10 +1618,17 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "p3-batch-stark",
+ "p3-challenger",
  "p3-circuit",
  "p3-circuit-prover",
+ "p3-dft",
  "p3-field",
+ "p3-fri",
+ "p3-goldilocks",
+ "p3-lookup",
+ "p3-merkle-tree",
  "p3-recursion",
+ "p3-symmetric",
  "p3-uni-stark",
  "parity-scale-codec",
  "parking_lot 0.12.5",
@@ -1630,6 +1651,7 @@ dependencies = [
  "tokio",
  "tracing",
  "transaction-circuit",
+ "tx-proof-manifest",
  "zstd 0.13.3",
 ]
 
@@ -3607,7 +3629,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hegemon-node"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "aggregation-circuit",
  "anyhow",
@@ -3636,11 +3658,13 @@ dependencies = [
  "p3-field",
  "pallet-archive-market",
  "pallet-coinbase",
+ "pallet-kernel",
  "pallet-shielded-pool",
  "pallet-timestamp",
  "parity-scale-codec",
  "parking_lot 0.12.5",
  "pq-noise",
+ "protocol-kernel",
  "protocol-versioning",
  "rand 0.8.5",
  "rayon",
@@ -3694,6 +3718,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transaction-circuit",
+ "tx-proof-manifest",
  "url",
  "wallet",
 ]
@@ -6920,6 +6945,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-kernel"
+version = "0.1.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "log",
+ "parity-scale-codec",
+ "protocol-kernel",
+ "protocol-versioning",
+ "scale-info",
+ "serde",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "pallet-observability"
 version = "0.1.0"
 dependencies = [
@@ -6982,6 +7025,8 @@ dependencies = [
  "pallet-balances",
  "pallet-coinbase",
  "parity-scale-codec",
+ "protocol-kernel",
+ "protocol-versioning",
  "scale-info",
  "serde",
  "sha2 0.10.9",
@@ -7837,6 +7882,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "protocol-kernel"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "parity-scale-codec",
+ "protocol-versioning",
+ "scale-info",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "protocol-versioning"
 version = "0.1.0"
 dependencies = [
@@ -8406,6 +8463,7 @@ dependencies = [
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "frame-benchmarking",
  "frame-executive",
  "frame-support",
@@ -8420,6 +8478,7 @@ dependencies = [
  "pallet-feature-flags",
  "pallet-fee-model",
  "pallet-identity",
+ "pallet-kernel",
  "pallet-observability",
  "pallet-oracles",
  "pallet-settlement",
@@ -8429,6 +8488,9 @@ dependencies = [
  "pallet-transaction-payment",
  "pallet-treasury",
  "parity-scale-codec",
+ "protocol-kernel",
+ "protocol-versioning",
+ "rand 0.8.5",
  "scale-info",
  "serde",
  "serde_json",
@@ -8447,6 +8509,9 @@ dependencies = [
  "sp-version",
  "substrate-wasm-builder",
  "synthetic-crypto",
+ "tempfile",
+ "transaction-circuit",
+ "wallet",
 ]
 
 [[package]]
@@ -11882,6 +11947,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-proof-manifest"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "p3-field",
+ "serde",
+ "thiserror 1.0.69",
+ "transaction-circuit",
+]
+
+[[package]]
 name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12154,7 +12231,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -12173,9 +12250,11 @@ dependencies = [
  "futures",
  "hex",
  "jsonrpsee",
+ "pallet-shielded-pool",
  "parity-scale-codec",
  "predicates",
  "proptest",
+ "protocol-kernel",
  "protocol-versioning",
  "rand 0.8.5",
  "rpassword",
@@ -12211,7 +12290,7 @@ dependencies = [
 
 [[package]]
 name = "walletd"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "chrono",

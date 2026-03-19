@@ -1,6 +1,6 @@
 # Event stream monitoring runbook
 
-This runbook describes how to watch runtime events and correlate them with node health signals. Use it during upgrades, incident response, and new pallet rollouts.
+This runbook describes how to watch runtime events and correlate them with node health signals. Use it during upgrades, incident response, and proof-native protocol rollouts.
 
 ## Tooling
 - **Node RPC/WebSocket:** connect to the validator or archival node for the target network.
@@ -11,15 +11,15 @@ This runbook describes how to watch runtime events and correlate them with node 
 1. Point the WebSocket client to the network endpoint (e.g., `wss://testnet1-rpc.synth/`).
 2. Subscribe to `chain_subscribeFinalizedHeads` and `state_subscribeStorage` for the keys:
    - `System::Events`
-   - `pallet-observability` metrics keys
-   - pallet-specific queues (`pallet-settlement` nullifiers, `pallet-identity` role updates)
+   - shielded-pool state relevant to active operations
+   - difficulty / block-production telemetry sources
 3. Record the subscription IDs and confirm heartbeats every 30 seconds.
 
 ## What to watch
 - **Upgrade events:** look for `system.CodeUpdated` and pallet-specific migration logs. Cross-check storage versions after the first finalized block.
-- **Settlement:** `Settlement::BatchSubmitted`, nullifier reuse attempts, and off-chain worker dispatch rates.
+- **Shielded pool:** `ShieldedTransfer`, `CoinbaseMinted`, `BatchShieldedTransfer`, and nullifier reuse attempts.
 - **Oracles:** feed update cadence per key and gaps longer than 2 minutes.
-- **Feature flags:** activation/deactivation events and cohort sizes to ensure staged rollouts.
+- **Version transitions:** commitment/version counts and any proof-binding activation events exposed by node telemetry.
 
 ## Alerting thresholds
 - Missing finalized heads for >60 seconds.

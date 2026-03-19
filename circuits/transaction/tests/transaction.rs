@@ -241,7 +241,11 @@ fn verification_fails_for_nullifier_mutation() {
     let err = verify(&proof, &verifying_key).expect_err("expected failure");
     // STARK proofs return generic constraint violation for any tampering
     assert!(
-        matches!(err, TransactionCircuitError::ConstraintViolation(_)),
+        matches!(
+            err,
+            TransactionCircuitError::ConstraintViolation(_)
+                | TransactionCircuitError::ConstraintViolationOwned(_)
+        ),
         "Expected STARK verification failure, got: {:?}",
         err
     );
@@ -264,7 +268,11 @@ fn verification_fails_for_stablecoin_policy_hash_mutation() {
     proof.stark_public_inputs = Some(stark_inputs);
     let err = verify(&proof, &verifying_key).expect_err("expected failure");
     assert!(
-        matches!(err, TransactionCircuitError::ConstraintViolation(_)),
+        matches!(
+            err,
+            TransactionCircuitError::ConstraintViolation(_)
+                | TransactionCircuitError::ConstraintViolationOwned(_)
+        ),
         "Expected STARK verification failure, got: {:?}",
         err
     );

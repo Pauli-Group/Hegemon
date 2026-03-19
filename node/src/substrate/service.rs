@@ -4,7 +4,7 @@
 //! Hegemon node, including:
 //! - Partial node components setup with full Substrate client
 //! - Full node service initialization
-//! - Block import pipeline configuration with Blake3 PoW
+//! - Block import pipeline configuration with SHA-256d PoW
 //! - Mining coordination with ProductionChainStateProvider
 //! - PQ-secure network transport
 //! - Network bridge for block/tx routing
@@ -33,7 +33,7 @@
 //! │  ┌─────────────────────────▼─────────────────────────────────────────┐  │
 //! │  │                    Block Import Pipeline                          │  │
 //! │  │  ┌────────────────┐   ┌──────────────────┐   ┌────────────────┐  │  │
-//! │  │  │  Import Queue  │──▶│  Blake3 PoW      │──▶│    Client      │  │  │
+//! │  │  │  Import Queue  │──▶│  SHA-256d PoW    │──▶│    Client      │  │  │
 //! │  │  │   (verifier)   │   │  Block Import    │   │   (backend)    │  │  │
 //! │  │  └────────────────┘   └──────────────────┘   └────────────────┘  │  │
 //! │  └───────────────────────────────────────────────────────────────────┘  │
@@ -124,45 +124,53 @@ use crate::substrate::mining_worker::{
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::prover_coordinator::{
-    BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
+    BundleMatchKey, FinalizeBundleInputs, PreparedBundle, ProverCoordinator,
+    ProverCoordinatorConfig, RootAggregationWorkData,
 };
 use crate::substrate::rpc::{
-    ArchiveApiServer, ArchiveRpc, BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer,
-    HegemonRpc, NodeConfigSnapshot, ProductionRpcService, ProverApiServer, ProverRpc,
-    ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
+    BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc, NodeConfigSnapshot,
+    ProductionRpcService, ProverApiServer, ProverRpc, ShieldedApiServer, ShieldedRpc,
+    WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use aggregation_circuit::prove_aggregation;
-use batch_circuit::{
-    prewarm_batch_verifier_cache, verify_batch_proof, verify_batch_proof_bytes, BatchPublicInputs,
-    BatchTransactionProver,
-};
+use batch_circuit::prewarm_batch_verifier_cache;
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
-    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes, Blake3Algorithm, Blake3Seal,
-    ParallelProofVerifier,
+    encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
+    merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
+    merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
+    ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
 use hyper::http::{header, Method};
 use network::{
-    PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
-    PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
+    BootstrapNode, PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent,
+    PqNetworkHandle, PqPeerIdentity, PqTransportConfig, SubstratePqTransport,
+    SubstratePqTransportConfig,
 };
-use p3_field::PrimeField64;
+use pallet_shielded_pool::family::ShieldedFamilyAction;
+use pallet_shielded_pool::family::{
+    build_envelope as build_shielded_kernel_envelope, EnableAggregationModeArgs, MintCoinbaseArgs,
+    SubmitCandidateArtifactArgs, ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE,
+    ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+};
+#[cfg(test)]
+use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
 use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
-use sp_api::{Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
+use sp_api::{ApiExt, Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
@@ -174,7 +182,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
@@ -185,16 +193,13 @@ use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
-use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::dimensions::ROWS_PER_TX;
-use transaction_circuit::hashing_pq::{
-    bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, Felt,
-};
-use transaction_circuit::p3_prover::TransactionProverP3;
-use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
+use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
+use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
-use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
-use transaction_circuit::witness::TransactionWitness;
+use transaction_circuit::public_inputs::{
+    BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs,
+};
+use tx_proof_manifest::{build_transaction_proof_manifest, TxProofManifestPublicInputs};
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
@@ -206,8 +211,6 @@ fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     out[37..69].copy_from_slice(&decoded.pk_auth);
     Some(out)
 }
-
-type ShieldedPoolCall = pallet_shielded_pool::Call<runtime::Runtime>;
 
 // Import jsonrpsee for RPC server
 use jsonrpsee::server::ServerBuilder;
@@ -1118,6 +1121,7 @@ fn build_stark_inputs(
     input_count: usize,
     output_count: usize,
     anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
     fee: u64,
     value_balance: i128,
     stablecoin: Option<&StablecoinPolicyBinding>,
@@ -1172,6 +1176,7 @@ fn build_stark_inputs(
         value_balance_sign,
         value_balance_magnitude,
         merkle_root: anchor,
+        balance_slot_asset_ids: balance_slot_asset_ids.to_vec(),
         stablecoin_enabled,
         stablecoin_asset_id,
         stablecoin_policy_version,
@@ -1183,12 +1188,61 @@ fn build_stark_inputs(
     })
 }
 
+fn canonical_balance_slots(
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
+    fee: u64,
+    value_balance: i128,
+    stablecoin: &StablecoinPolicyBinding,
+) -> Result<Vec<BalanceSlot>, String> {
+    if balance_slot_asset_ids[0] != NATIVE_ASSET_ID {
+        return Err("balance slot 0 must be the native asset".to_string());
+    }
+
+    let mut saw_padding = false;
+    let mut prev_asset = NATIVE_ASSET_ID;
+    for asset_id in balance_slot_asset_ids.iter().skip(1) {
+        if *asset_id == u64::MAX {
+            saw_padding = true;
+            continue;
+        }
+        if saw_padding {
+            return Err("balance slot asset ids must place padding at the end".to_string());
+        }
+        if *asset_id == NATIVE_ASSET_ID || *asset_id <= prev_asset {
+            return Err(
+                "balance slot asset ids must be strictly increasing after slot 0".to_string(),
+            );
+        }
+        prev_asset = *asset_id;
+    }
+
+    if stablecoin.enabled && !balance_slot_asset_ids[1..].contains(&stablecoin.asset_id) {
+        return Err("stablecoin asset must appear in a non-native balance slot".to_string());
+    }
+
+    let native_delta = i128::from(fee) - value_balance;
+    Ok(balance_slot_asset_ids
+        .into_iter()
+        .map(|asset_id| {
+            let delta = if asset_id == NATIVE_ASSET_ID {
+                native_delta
+            } else if stablecoin.enabled && asset_id == stablecoin.asset_id {
+                stablecoin.issuance_delta
+            } else {
+                0
+            };
+            BalanceSlot { asset_id, delta }
+        })
+        .collect())
+}
+
 fn build_transaction_proof(
     proof_bytes: Vec<u8>,
     nullifiers: Vec<[u8; 48]>,
     commitments: Vec<[u8; 48]>,
     ciphertexts: &[Vec<u8>],
     anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
@@ -1215,31 +1269,39 @@ fn build_transaction_proof(
         .as_ref()
         .map(convert_stablecoin_binding)
         .unwrap_or_default();
+    let balance_slots = canonical_balance_slots(
+        balance_slot_asset_ids,
+        fee,
+        value_balance,
+        &stablecoin_binding,
+    )?;
     let stark_public_inputs = build_stark_inputs(
         input_count,
         output_count,
         anchor,
+        balance_slot_asset_ids,
         fee,
         value_balance,
         stablecoin.as_ref().map(|_| &stablecoin_binding),
     )?;
-
-    let mut public_inputs = TransactionPublicInputs::default();
-    public_inputs.merkle_root = anchor;
-    public_inputs.nullifiers = padded_nullifiers.clone();
-    public_inputs.commitments = padded_commitments.clone();
-    public_inputs.ciphertext_hashes = padded_ciphertext_hashes.clone();
-    public_inputs.native_fee = fee;
-    public_inputs.value_balance = value_balance;
-    public_inputs.stablecoin = stablecoin_binding;
-    public_inputs.circuit_version = DEFAULT_VERSION_BINDING.circuit;
-    public_inputs.crypto_suite = DEFAULT_VERSION_BINDING.crypto;
+    let public_inputs = TransactionPublicInputs::new(
+        anchor,
+        padded_nullifiers.clone(),
+        padded_commitments.clone(),
+        padded_ciphertext_hashes.clone(),
+        balance_slots.clone(),
+        fee,
+        value_balance,
+        stablecoin_binding,
+        DEFAULT_VERSION_BINDING,
+    )
+    .map_err(|err| err.to_string())?;
 
     Ok(TransactionProof {
-        public_inputs: public_inputs.clone(),
+        public_inputs,
         nullifiers: padded_nullifiers,
         commitments: padded_commitments,
-        balance_slots: public_inputs.balance_slots.clone(),
+        balance_slots,
         stark_proof: proof_bytes,
         stark_public_inputs: Some(stark_public_inputs),
     })
@@ -1251,6 +1313,7 @@ fn build_transaction_proof_with_hashes(
     commitments: Vec<[u8; 48]>,
     ciphertext_hashes: &[[u8; 48]],
     anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
@@ -1273,31 +1336,39 @@ fn build_transaction_proof_with_hashes(
         .as_ref()
         .map(convert_stablecoin_binding)
         .unwrap_or_default();
+    let balance_slots = canonical_balance_slots(
+        balance_slot_asset_ids,
+        fee,
+        value_balance,
+        &stablecoin_binding,
+    )?;
     let stark_public_inputs = build_stark_inputs(
         input_count,
         output_count,
         anchor,
+        balance_slot_asset_ids,
         fee,
         value_balance,
         stablecoin.as_ref().map(|_| &stablecoin_binding),
     )?;
-
-    let mut public_inputs = TransactionPublicInputs::default();
-    public_inputs.merkle_root = anchor;
-    public_inputs.nullifiers = padded_nullifiers.clone();
-    public_inputs.commitments = padded_commitments.clone();
-    public_inputs.ciphertext_hashes = padded_ciphertext_hashes.clone();
-    public_inputs.native_fee = fee;
-    public_inputs.value_balance = value_balance;
-    public_inputs.stablecoin = stablecoin_binding;
-    public_inputs.circuit_version = DEFAULT_VERSION_BINDING.circuit;
-    public_inputs.crypto_suite = DEFAULT_VERSION_BINDING.crypto;
+    let public_inputs = TransactionPublicInputs::new(
+        anchor,
+        padded_nullifiers.clone(),
+        padded_commitments.clone(),
+        padded_ciphertext_hashes.clone(),
+        balance_slots.clone(),
+        fee,
+        value_balance,
+        stablecoin_binding,
+        DEFAULT_VERSION_BINDING,
+    )
+    .map_err(|err| err.to_string())?;
 
     Ok(TransactionProof {
-        public_inputs: public_inputs.clone(),
+        public_inputs,
         nullifiers: padded_nullifiers,
         commitments: padded_commitments,
-        balance_slots: public_inputs.balance_slots.clone(),
+        balance_slots,
         stark_proof: proof_bytes,
         stark_public_inputs: Some(stark_public_inputs),
     })
@@ -1380,44 +1451,29 @@ fn build_da_blob_from_extrinsics(
     let mut used_ciphertext_hashes = Vec::new();
 
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let ciphertexts = match call {
-            ShieldedPoolCall::shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
+        let ciphertexts = match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(encrypted_note_bytes)
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => Some(
-                ciphertexts
+            ShieldedFamilyAction::BatchTransfer { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(encrypted_note_bytes)
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
-                    .iter()
-                    .map(encrypted_note_bytes)
-                    .collect::<Vec<_>>(),
-            ),
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
                 let pending = pending_ciphertexts
                     .ok_or_else(|| "pending ciphertext store missing".to_string())?;
-                let hashes = ciphertext_hashes.as_slice();
+                let hashes = args.ciphertext_hashes.as_slice();
                 let ciphertexts = pending.get_many(hashes)?;
-                validate_ciphertexts_against_hashes(&ciphertexts, ciphertext_sizes, hashes)?;
+                validate_ciphertexts_against_hashes(&ciphertexts, &args.ciphertext_sizes, hashes)?;
                 used_ciphertext_hashes.extend_from_slice(hashes);
                 Some(ciphertexts)
             }
@@ -1549,15 +1605,59 @@ struct DaTxLayout {
 
 fn has_sidecar_transfers(extrinsics: &[runtime::UncheckedExtrinsic]) -> bool {
     extrinsics.iter().any(|extrinsic| {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-            return false;
-        };
         matches!(
-            call,
-            ShieldedPoolCall::shielded_transfer_sidecar { .. }
-                | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+            shielded_action_from_extrinsic(extrinsic),
+            Some((_, ShieldedFamilyAction::TransferSidecar { .. }))
         )
     })
+}
+
+fn shielded_action_from_runtime_call(
+    call: &runtime::RuntimeCall,
+) -> Option<(
+    protocol_kernel::types::KernelVersionBinding,
+    ShieldedFamilyAction,
+)> {
+    let runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope }) = call else {
+        return None;
+    };
+    let action = ShieldedFamilyAction::decode_envelope(envelope).ok()?;
+    Some((envelope.binding, action))
+}
+
+fn shielded_action_from_extrinsic(
+    extrinsic: &runtime::UncheckedExtrinsic,
+) -> Option<(
+    protocol_kernel::types::KernelVersionBinding,
+    ShieldedFamilyAction,
+)> {
+    shielded_action_from_runtime_call(&extrinsic.function)
+}
+
+fn kernel_shielded_runtime_call(
+    action_id: u16,
+    new_nullifiers: Vec<[u8; 48]>,
+    public_args: Vec<u8>,
+) -> runtime::RuntimeCall {
+    let envelope = build_shielded_kernel_envelope(
+        runtime::manifest::default_version_binding(),
+        action_id,
+        new_nullifiers,
+        public_args,
+    );
+    runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope })
+}
+
+fn kernel_shielded_extrinsic(
+    action_id: u16,
+    new_nullifiers: Vec<[u8; 48]>,
+    public_args: Vec<u8>,
+) -> runtime::UncheckedExtrinsic {
+    runtime::UncheckedExtrinsic::new_unsigned(kernel_shielded_runtime_call(
+        action_id,
+        new_nullifiers,
+        public_args,
+    ))
 }
 
 fn da_layout_from_extrinsics(
@@ -1565,36 +1665,25 @@ fn da_layout_from_extrinsics(
 ) -> Result<Vec<DaTxLayout>, String> {
     let mut layouts = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let sizes = match call {
-            ShieldedPoolCall::shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
+        let sizes = match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(|note| encrypted_note_bytes(note).len())
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => Some(
-                ciphertexts
+            ShieldedFamilyAction::BatchTransfer { args, .. } => Some(
+                args.ciphertexts
                     .iter()
                     .map(|note| encrypted_note_bytes(note).len())
                     .collect::<Vec<_>>(),
             ),
-            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => Some(
-                ciphertexts
-                    .iter()
-                    .map(|note| encrypted_note_bytes(note).len())
-                    .collect::<Vec<_>>(),
-            ),
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                ciphertext_sizes, ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                ciphertext_sizes, ..
-            } => Some(
-                ciphertext_sizes
+            ShieldedFamilyAction::TransferSidecar { args, .. } => Some(
+                args.ciphertext_sizes
                     .iter()
                     .map(|size| *size as usize)
                     .collect::<Vec<_>>(),
@@ -1680,16 +1769,15 @@ fn transfer_ciphertexts_from_extrinsics(
 ) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        match call {
-            ShieldedPoolCall::shielded_transfer { ciphertexts, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => {
-                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+        match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                out.extend(args.ciphertexts.iter().map(encrypted_note_bytes));
             }
-            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => {
-                out.extend(ciphertexts.iter().map(encrypted_note_bytes));
+            ShieldedFamilyAction::BatchTransfer { args, .. } => {
+                out.extend(args.ciphertexts.iter().map(encrypted_note_bytes));
             }
             _ => {}
         }
@@ -1702,16 +1790,16 @@ fn coinbase_ciphertexts_from_extrinsics(
 ) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        let ShieldedPoolCall::mint_coinbase { reward_bundle } = call else {
+        let ShieldedFamilyAction::MintCoinbase(args) = action else {
             continue;
         };
         out.push(encrypted_note_bytes(
-            &reward_bundle.miner_note.encrypted_note,
+            &args.reward_bundle.miner_note.encrypted_note,
         ));
-        if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
+        if let Some(prover_note) = args.reward_bundle.prover_note.as_ref() {
             out.push(encrypted_note_bytes(&prover_note.encrypted_note));
         }
     }
@@ -1721,15 +1809,15 @@ fn coinbase_ciphertexts_from_extrinsics(
 fn binding_hashes_from_extrinsics(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        match call {
-            ShieldedPoolCall::shielded_transfer { binding_hash, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { binding_hash, .. }
-            | ShieldedPoolCall::shielded_transfer_sidecar { binding_hash, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { binding_hash, .. } => {
-                out.push(binding_hash.data);
+        match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                out.push(args.binding_hash);
+            }
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
+                out.push(args.binding_hash);
             }
             _ => {}
         }
@@ -1742,6 +1830,7 @@ fn statement_hash_from_materialized_call(
     nullifiers: &[[u8; 48]],
     commitments: &[[u8; 48]],
     ciphertext_hashes: &[[u8; 48]],
+    balance_slot_asset_ids: &[u64; BALANCE_SLOTS],
     fee: u64,
     value_balance: i128,
     version: protocol_versioning::VersionBinding,
@@ -1772,6 +1861,9 @@ fn statement_hash_from_materialized_call(
         message.extend_from_slice(&[0u8; 48]);
     }
 
+    for asset_id in balance_slot_asset_ids {
+        message.extend_from_slice(&asset_id.to_le_bytes());
+    }
     message.extend_from_slice(&fee.to_le_bytes());
     message.extend_from_slice(&value_balance.to_le_bytes());
     message.extend_from_slice(&version.circuit.to_le_bytes());
@@ -1804,119 +1896,55 @@ fn statement_bindings_from_extrinsics(
     let mut bindings = Vec::new();
 
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((binding_version, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let version = DEFAULT_VERSION_BINDING;
-        let binding = match call {
-            ShieldedPoolCall::shielded_transfer {
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                stablecoin,
-                fee,
-                value_balance,
-                ..
-            } => {
-                let ciphertext_hashes = ciphertexts
+        let version: protocol_versioning::VersionBinding = binding_version.into();
+        let binding = match action {
+            ShieldedFamilyAction::TransferInline { nullifiers, args } => {
+                let ciphertext_hashes = args
+                    .ciphertexts
                     .iter()
                     .map(encrypted_note_bytes)
                     .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
                     .collect::<Vec<_>>();
                 consensus::types::TxStatementBinding {
                     statement_hash: statement_hash_from_materialized_call(
-                        anchor,
+                        &args.anchor,
                         nullifiers.as_slice(),
-                        commitments.as_slice(),
+                        args.commitments.as_slice(),
                         &ciphertext_hashes,
-                        *fee,
-                        *value_balance,
-                        version,
-                        stablecoin.as_ref(),
-                    ),
-                    anchor: *anchor,
-                    fee: *fee,
-                    circuit_version: u32::from(version.circuit),
-                }
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                nullifiers,
-                commitments,
-                ciphertexts,
-                anchor,
-                fee,
-                ..
-            } => {
-                let ciphertext_hashes = ciphertexts
-                    .iter()
-                    .map(encrypted_note_bytes)
-                    .map(|ciphertext| ciphertext_hash_bytes(&ciphertext))
-                    .collect::<Vec<_>>();
-                consensus::types::TxStatementBinding {
-                    statement_hash: statement_hash_from_materialized_call(
-                        anchor,
-                        nullifiers.as_slice(),
-                        commitments.as_slice(),
-                        &ciphertext_hashes,
-                        *fee,
+                        &args.balance_slot_asset_ids,
+                        args.fee,
                         0,
                         version,
-                        None,
+                        args.stablecoin.as_ref(),
                     ),
-                    anchor: *anchor,
-                    fee: *fee,
+                    anchor: args.anchor,
+                    fee: args.fee,
                     circuit_version: u32::from(version.circuit),
                 }
             }
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                nullifiers,
-                commitments,
-                ciphertext_hashes,
-                anchor,
-                stablecoin,
-                fee,
-                value_balance,
-                ..
-            } => consensus::types::TxStatementBinding {
-                statement_hash: statement_hash_from_materialized_call(
-                    anchor,
-                    nullifiers.as_slice(),
-                    commitments.as_slice(),
-                    ciphertext_hashes.as_slice(),
-                    *fee,
-                    *value_balance,
-                    version,
-                    stablecoin.as_ref(),
-                ),
-                anchor: *anchor,
-                fee: *fee,
-                circuit_version: u32::from(version.circuit),
-            },
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                nullifiers,
-                commitments,
-                ciphertext_hashes,
-                anchor,
-                fee,
-                ..
-            } => consensus::types::TxStatementBinding {
-                statement_hash: statement_hash_from_materialized_call(
-                    anchor,
-                    nullifiers.as_slice(),
-                    commitments.as_slice(),
-                    ciphertext_hashes.as_slice(),
-                    *fee,
-                    0,
-                    version,
-                    None,
-                ),
-                anchor: *anchor,
-                fee: *fee,
-                circuit_version: u32::from(version.circuit),
-            },
-            ShieldedPoolCall::batch_shielded_transfer { .. } => {
+            ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
+                consensus::types::TxStatementBinding {
+                    statement_hash: statement_hash_from_materialized_call(
+                        &args.anchor,
+                        nullifiers.as_slice(),
+                        args.commitments.as_slice(),
+                        args.ciphertext_hashes.as_slice(),
+                        &args.balance_slot_asset_ids,
+                        args.fee,
+                        0,
+                        version,
+                        args.stablecoin.as_ref(),
+                    ),
+                    anchor: args.anchor,
+                    fee: args.fee,
+                    circuit_version: u32::from(version.circuit),
+                }
+            }
+            ShieldedFamilyAction::BatchTransfer { .. } => {
                 return Err(
                     "batch shielded transfers are not supported in block proof generation".into(),
                 );
@@ -1932,32 +1960,18 @@ fn statement_bindings_from_extrinsics(
 fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        match call {
-            ShieldedPoolCall::shielded_transfer {
-                proof,
-                binding_hash,
-                ..
+        match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                if args.proof.is_empty() {
+                    out.push(args.binding_hash);
+                }
             }
-            | ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                binding_hash,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_sidecar {
-                proof,
-                binding_hash,
-                ..
-            }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof,
-                binding_hash,
-                ..
-            } => {
-                if proof.data.is_empty() {
-                    out.push(binding_hash.data);
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
+                if args.proof.is_empty() {
+                    out.push(args.binding_hash);
                 }
             }
             _ => {}
@@ -2329,6 +2343,8 @@ fn build_commitment_block_proof_from_materials(
     let mut sorted_nullifiers = nullifiers.clone();
     sorted_nullifiers.sort_unstable();
     let nullifier_root = nullifier_root_from_list(&nullifiers)?;
+    let starting_kernel_root = kernel_root_from_shielded_root(&starting_root);
+    let ending_kernel_root = kernel_root_from_shielded_root(&ending_root);
 
     let prover = CommitmentBlockProver::new();
     let proof = prover
@@ -2336,6 +2352,8 @@ fn build_commitment_block_proof_from_materials(
             statement_hashes,
             starting_root,
             ending_root,
+            starting_kernel_root,
+            ending_kernel_root,
             nullifier_root,
             da_root,
             nullifiers,
@@ -2344,6 +2362,184 @@ fn build_commitment_block_proof_from_materials(
         .map_err(|e| format!("commitment block proof failed: {e}"))?;
 
     Ok(Some(proof))
+}
+
+fn build_root_aggregation_work_data(
+    candidate_txs: &[Vec<u8>],
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<Option<RootAggregationWorkData>, String> {
+    let context = build_candidate_context(
+        candidate_txs,
+        da_params,
+        pending_ciphertexts,
+        pending_proofs,
+    )?;
+    let proofs = context.tx_proofs.as_ref();
+    if proofs.is_empty() {
+        return Ok(None);
+    }
+
+    let statement_hashes = context
+        .statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+
+    let tree_levels = merge_root_tree_levels_for_tx_count(proofs.len());
+    Ok(Some(RootAggregationWorkData {
+        statement_hashes,
+        tx_proofs: proofs.to_vec(),
+        tx_statements_commitment: context.tx_statements_commitment,
+        tree_levels,
+        root_level: tree_levels.saturating_sub(1),
+    }))
+}
+
+fn build_finalize_bundle_inputs(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    candidate_txs: &[Vec<u8>],
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<Option<FinalizeBundleInputs>, String> {
+    let context = build_candidate_context(
+        candidate_txs,
+        da_params,
+        pending_ciphertexts,
+        pending_proofs,
+    )?;
+    let proofs = context.tx_proofs.as_ref();
+    if proofs.is_empty() {
+        return Ok(None);
+    }
+
+    let statement_hashes = context
+        .statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+
+    let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
+    let starting_state_root = tree.root();
+    for (index, proof) in proofs.iter().enumerate() {
+        let anchor = proof.public_inputs.merkle_root;
+        if !tree.contains_root(&anchor) {
+            return Err(format!(
+                "transaction {index} anchor not found in commitment tree history"
+            ));
+        }
+        for &commitment in proof.commitments.iter().filter(|c| **c != [0u8; 48]) {
+            tree.append(commitment)
+                .map_err(|err| format!("commitment tree append failed: {err}"))?;
+        }
+    }
+    let ending_state_root = tree.root();
+
+    let mut nullifiers = Vec::new();
+    for proof in proofs {
+        nullifiers.extend_from_slice(&proof.nullifiers);
+    }
+    let mut sorted_nullifiers = nullifiers.clone();
+    sorted_nullifiers.sort_unstable();
+    let nullifier_root = nullifier_root_from_list(&nullifiers)?;
+    let starting_kernel_root = kernel_root_from_shielded_root(&starting_state_root);
+    let ending_kernel_root = kernel_root_from_shielded_root(&ending_state_root);
+
+    Ok(Some(FinalizeBundleInputs {
+        statement_hashes,
+        da_root: context.da_root,
+        da_chunk_count: context.da_chunk_count,
+        starting_state_root,
+        ending_state_root,
+        starting_kernel_root,
+        ending_kernel_root,
+        nullifier_root,
+        nullifiers,
+        sorted_nullifiers,
+    }))
+}
+
+fn finalize_merge_root_bundle_from_artifact(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    _block_number: u64,
+    candidate_txs: Vec<Vec<u8>>,
+    root_proof_bytes: Vec<u8>,
+    da_params: DaParams,
+    pending_ciphertexts: &PendingCiphertextStore,
+    pending_proofs: &PendingProofStore,
+) -> Result<PreparedBundle, String> {
+    let started = Instant::now();
+    let finalize_inputs = build_finalize_bundle_inputs(
+        client,
+        parent_hash,
+        &candidate_txs,
+        da_params,
+        pending_ciphertexts,
+        pending_proofs,
+    )?
+    .ok_or_else(|| "candidate tx set has no finalize bundle inputs".to_string())?;
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&finalize_inputs.statement_hashes)
+            .map_err(|err| format!("statement commitment derivation failed: {err}"))?;
+    let commitment_proof = CommitmentBlockProver::new()
+        .prove_from_statement_hashes_with_inputs(
+            &finalize_inputs.statement_hashes,
+            finalize_inputs.starting_state_root,
+            finalize_inputs.ending_state_root,
+            finalize_inputs.starting_kernel_root,
+            finalize_inputs.ending_kernel_root,
+            finalize_inputs.nullifier_root,
+            finalize_inputs.da_root,
+            finalize_inputs.nullifiers.clone(),
+            finalize_inputs.sorted_nullifiers.clone(),
+        )
+        .map_err(|err| format!("commitment proof generation failed: {err}"))?;
+    let merge_root = pallet_shielded_pool::types::MergeRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
+            encode_aggregation_proof_bytes(root_proof_bytes),
+        ),
+        metadata: pallet_shielded_pool::types::MergeRootMetadata {
+            tree_arity: merge_root_arity_from_env(),
+            tree_levels: merge_root_tree_levels_for_tx_count(candidate_txs.len()),
+            leaf_count: candidate_txs
+                .len()
+                .div_ceil(merge_root_leaf_fan_in_from_env()) as u32,
+            leaf_manifest_commitment: merge_root_leaf_manifest_commitment(
+                &finalize_inputs.statement_hashes,
+            )?,
+        },
+        diagnostics_leaf_proofs: Vec::new(),
+    };
+    let payload = pallet_shielded_pool::types::CandidateArtifact {
+        version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+        tx_count: candidate_txs.len() as u32,
+        tx_statements_commitment,
+        da_root: finalize_inputs.da_root,
+        da_chunk_count: finalize_inputs.da_chunk_count,
+        commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
+            commitment_proof.proof_bytes,
+        ),
+        proof_mode: pallet_shielded_pool::types::BlockProofMode::MergeRoot,
+        flat_batches: Vec::new(),
+        merge_root: Some(merge_root),
+        artifact_claim: None,
+    };
+    Ok(PreparedBundle {
+        key: BundleMatchKey {
+            parent_hash,
+            tx_statements_commitment,
+            tx_count: payload.tx_count,
+            proof_mode: payload.proof_mode,
+            artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(&payload),
+        },
+        payload,
+        candidate_txs,
+        build_ms: started.elapsed().as_millis(),
+    })
 }
 
 fn batch_slot_txs() -> usize {
@@ -2356,6 +2552,14 @@ fn batch_slot_txs() -> usize {
 
 fn batch_verifier_prewarm_sizes() -> Vec<usize> {
     if let Ok(raw) = std::env::var("HEGEMON_BATCH_VERIFY_PREWARM_TXS") {
+        let trimmed = raw.trim();
+        if trimmed == "0"
+            || trimmed.eq_ignore_ascii_case("off")
+            || trimmed.eq_ignore_ascii_case("false")
+            || trimmed.eq_ignore_ascii_case("disable")
+        {
+            return Vec::new();
+        }
         let mut parsed = raw
             .split(',')
             .filter_map(|part| part.trim().parse::<usize>().ok())
@@ -2406,56 +2610,66 @@ fn largest_power_of_two_at_most(value: usize) -> usize {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PreparedProofMode {
+    InlineTx,
+    #[allow(dead_code)]
     FlatBatches,
     MergeRoot,
 }
 
 fn prepared_proof_mode_from_env() -> PreparedProofMode {
     let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
+    if raw.is_empty()
+        || raw.eq_ignore_ascii_case("inline_tx")
+        || raw.eq_ignore_ascii_case("inline")
+        || raw.eq_ignore_ascii_case("raw")
+        || raw.eq_ignore_ascii_case("raw_active")
+    {
+        return PreparedProofMode::InlineTx;
+    }
+    if raw.eq_ignore_ascii_case("merge_root") || raw.eq_ignore_ascii_case("merge-root") {
+        return PreparedProofMode::MergeRoot;
+    }
     if raw.eq_ignore_ascii_case("flat")
         || raw.eq_ignore_ascii_case("flat_batches")
         || raw.eq_ignore_ascii_case("flatbatches")
     {
-        PreparedProofMode::FlatBatches
-    } else {
-        PreparedProofMode::MergeRoot
+        tracing::warn!(
+            "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to inline_tx"
+        );
+        return PreparedProofMode::InlineTx;
     }
-}
-
-fn merge_root_arity_from_env() -> u16 {
-    std::env::var("HEGEMON_MERGE_ARITY")
-        .ok()
-        .and_then(|raw| raw.parse::<u16>().ok())
-        .unwrap_or(8)
-        .max(2)
+    tracing::warn!(
+        mode = raw,
+        "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
+    );
+    PreparedProofMode::InlineTx
 }
 
 #[allow(dead_code)]
 fn build_flat_batch_proofs_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
-    witnesses: Arc<Vec<TransactionWitness>>,
+    statement_bindings: Arc<Vec<consensus::types::TxStatementBinding>>,
     slot_txs: usize,
 ) -> Result<Vec<pallet_shielded_pool::types::BatchProofItem>, String> {
     if proofs.is_empty() {
         return Ok(Vec::new());
     }
-    if witnesses.len() != proofs.len() {
+    if statement_bindings.len() != proofs.len() {
         return Err(format!(
-            "flat batch witness/proof count mismatch (witnesses {}, proofs {})",
-            witnesses.len(),
+            "flat batch statement/proof count mismatch (bindings {}, proofs {})",
+            statement_bindings.len(),
             proofs.len()
         ));
     }
-    let max_batch = batch_circuit::MAX_BATCH_SIZE;
-    let capped_slot_txs = slot_txs.clamp(1, max_batch);
+    let capped_slot_txs = slot_txs.max(1);
     let mut out = Vec::new();
     let mut start_tx_index: u32 = 0;
     let mut offset = 0usize;
     while offset < proofs.len() {
         let remaining = proofs.len() - offset;
-        let batch_len = largest_power_of_two_at_most(remaining.min(capped_slot_txs));
-        let witness_chunk = witnesses[offset..offset + batch_len].to_vec();
+        let batch_len = remaining.min(capped_slot_txs);
         let proof_chunk = proofs[offset..offset + batch_len].to_vec();
+        let binding_chunk = statement_bindings[offset..offset + batch_len].to_vec();
         let chunk_started = Instant::now();
         tracing::info!(
             start_tx_index,
@@ -2464,158 +2678,42 @@ fn build_flat_batch_proofs_from_materials(
             "build_flat_batch_proofs_from_materials: proving chunk"
         );
         let encoded = run_aggregation_prepare_job(move || {
-            if std::env::var("HEGEMON_BATCH_DEBUG_WITNESS")
-                .map(|value| value == "1")
-                .unwrap_or(false)
-            {
-                for (witness_index, witness) in witness_chunk.iter().enumerate() {
-                    let anchor_prefix = hex::encode(&witness.merkle_root[..8]);
-                    let input_positions = witness
-                        .inputs
-                        .iter()
-                        .map(|input| input.position)
-                        .collect::<Vec<_>>();
-                    tracing::info!(
-                        witness_index,
-                        inputs = witness.inputs.len(),
-                        outputs = witness.outputs.len(),
-                        fee = witness.fee,
-                        anchor_prefix = %anchor_prefix,
-                        input_positions = ?input_positions,
-                        "build_flat_batch_proofs_from_materials: witness diagnostics"
-                    );
-                }
-            }
-
-            if std::env::var("HEGEMON_BATCH_VALIDATE_SINGLE_TX")
-                .map(|value| value == "1")
-                .unwrap_or(false)
-            {
-                let single_prover = TransactionProverP3::new();
-                for (witness_index, witness) in witness_chunk.iter().enumerate() {
-                    let trace = single_prover.build_trace(witness).map_err(|err| {
-                        format!("single-tx trace build failed for witness {witness_index}: {err}")
-                    })?;
-                    let trace_height = trace.values.len() / trace.width;
-                    let pub_inputs = single_prover.public_inputs(witness).map_err(|err| {
-                        format!(
-                            "single-tx public input build failed for witness {witness_index}: {err}"
-                        )
-                    })?;
-                    let proof = single_prover.prove(trace, &pub_inputs);
-                    verify_transaction_proof_p3(&proof, &pub_inputs).map_err(|err| {
-                        format!(
-                            "single-tx proof verification failed for witness {witness_index}: {err}"
-                        )
-                    })?;
-                    tracing::info!(
-                        witness_index,
-                        trace_height,
-                        batch_slot_rows = ROWS_PER_TX,
-                        "build_flat_batch_proofs_from_materials: single-tx witness verified"
-                    );
-                }
-            }
-
-            let prover = BatchTransactionProver::new();
-            let (batch_proof, batch_public_inputs) = prover
-                .prove_batch(&witness_chunk)
-                .map_err(|err| format!("batch proof generation failed: {err}"))?;
-
-            if std::env::var("HEGEMON_BATCH_SELF_VERIFY")
-                .map(|value| value == "1")
-                .unwrap_or(false)
-            {
-                verify_batch_proof(&batch_proof, &batch_public_inputs).map_err(|err| {
-                    format!("batch proof self verification failed before payload encoding: {err}")
-                })?;
-            }
-
-            if batch_public_inputs.batch_size as usize != proof_chunk.len() {
-                return Err(format!(
-                    "batch public input size mismatch (proofs {}, public {})",
-                    proof_chunk.len(),
-                    batch_public_inputs.batch_size
-                ));
-            }
-
-            let mut expected_anchor: Option<[u8; 48]> = None;
-            let mut expected_fee: u128 = 0;
-            let mut expected_nullifiers =
-                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_INPUTS);
-            let mut expected_commitments =
-                Vec::with_capacity(batch_circuit::MAX_BATCH_SIZE * MAX_OUTPUTS);
-            for proof in &proof_chunk {
-                let anchor = proof.public_inputs.merkle_root;
-                if let Some(expected_anchor_value) = expected_anchor {
-                    if anchor != expected_anchor_value {
-                        return Err("batch proof chunk contains mixed anchors".to_string());
-                    }
-                } else {
-                    expected_anchor = Some(anchor);
-                }
-                expected_fee = expected_fee.saturating_add(proof.public_inputs.native_fee as u128);
-                expected_nullifiers.extend_from_slice(&proof.public_inputs.nullifiers);
-                expected_commitments.extend_from_slice(&proof.public_inputs.commitments);
-            }
-            for _ in proof_chunk.len()..batch_circuit::MAX_BATCH_SIZE {
-                expected_nullifiers.extend(std::iter::repeat_n([0u8; 48], MAX_INPUTS));
-                expected_commitments.extend(std::iter::repeat_n([0u8; 48], MAX_OUTPUTS));
-            }
-
-            let observed_anchor = felts_to_bytes48(&batch_public_inputs.anchor);
-            if expected_anchor.is_some() && Some(observed_anchor) != expected_anchor {
-                return Err("batch proof anchor mismatch with transaction proofs".to_string());
-            }
-            if batch_public_inputs.total_fee.as_canonical_u64() as u128 != expected_fee {
-                return Err("batch proof fee sum mismatch with transaction proofs".to_string());
-            }
-
-            let observed_nullifiers: Vec<[u8; 48]> = batch_public_inputs
-                .nullifiers
+            let (batch_proof_bytes, batch_public_inputs) =
+                build_transaction_proof_manifest(&proof_chunk)
+                    .map_err(|err| format!("tx-proof-manifest generation failed: {err}"))?;
+            let expected_statement_hashes: Vec<[u8; 48]> = binding_chunk
                 .iter()
-                .map(felts_to_bytes48)
+                .map(|binding| binding.statement_hash)
                 .collect();
-            if observed_nullifiers != expected_nullifiers {
-                return Err("batch proof nullifier list mismatch".to_string());
+            if batch_public_inputs.statement_hashes != expected_statement_hashes {
+                return Err("tx-proof-manifest statement hash mismatch".to_string());
             }
-            let observed_commitments: Vec<[u8; 48]> = batch_public_inputs
-                .commitments
-                .iter()
-                .map(felts_to_bytes48)
-                .collect();
-            if observed_commitments != expected_commitments {
-                return Err("batch proof commitment list mismatch".to_string());
-            }
-
-            let batch_proof_bytes = bincode::serialize(&batch_proof)
-                .map_err(|err| format!("batch proof serialization failed: {err}"))?;
             let batch_public_values = batch_public_inputs
-                .to_vec()
-                .iter()
-                .map(|value| value.as_canonical_u64())
-                .collect::<Vec<_>>();
-            let encoded = encode_flat_batch_proof_bytes(&batch_proof_bytes, &batch_public_values)
-                .map_err(|err| format!("flat batch proof encoding failed: {err}"))?;
+                .to_values()
+                .map_err(|err| format!("tx-proof-manifest public value encoding failed: {err}"))?;
+            let encoded = encode_flat_batch_proof_bytes_with_kind(
+                FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
+                &batch_proof_bytes,
+                &batch_public_values,
+            )
+            .map_err(|err| format!("tx-proof-manifest payload encoding failed: {err}"))?;
 
             if std::env::var("HEGEMON_BATCH_ROUNDTRIP_VERIFY")
                 .map(|value| value == "1")
                 .unwrap_or(false)
             {
                 let payload = decode_flat_batch_proof_bytes(&encoded)
-                    .map_err(|err| format!("flat batch proof roundtrip decode failed: {err}"))?;
-                let roundtrip_public_values: Vec<Felt> = payload
-                    .batch_public_values
-                    .iter()
-                    .map(|value| Felt::new(*value))
-                    .collect();
+                    .map_err(|err| format!("tx-proof-manifest roundtrip decode failed: {err}"))?;
                 let roundtrip_public_inputs =
-                    BatchPublicInputs::try_from_slice(&roundtrip_public_values).map_err(|err| {
-                        format!("flat batch public input roundtrip decode failed: {err}")
-                    })?;
-                verify_batch_proof_bytes(&payload.batch_proof, &roundtrip_public_inputs).map_err(
-                    |err| format!("flat batch proof roundtrip verification failed: {err}"),
-                )?;
+                    TxProofManifestPublicInputs::try_from_values(&payload.batch_public_values)
+                        .map_err(|err| {
+                            format!("tx-proof-manifest public input roundtrip decode failed: {err}")
+                        })?;
+                tx_proof_manifest::verify_tx_proof_manifest(
+                    &payload.batch_proof,
+                    &roundtrip_public_inputs,
+                )
+                .map_err(|err| format!("tx-proof-manifest roundtrip verification failed: {err}"))?;
             }
             Ok(encoded)
         })?;
@@ -2644,29 +2742,28 @@ fn build_flat_batch_proofs_from_materials(
 
 fn build_merge_root_proof_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
+    statement_hashes: Arc<Vec<[u8; 48]>>,
     tx_statements_commitment: [u8; 48],
 ) -> Result<pallet_shielded_pool::types::MergeRootProofPayload, String> {
     if proofs.is_empty() {
         return Err("candidate tx set has no merge-root proof material".to_string());
     }
+    let proofs_for_aggregation = Arc::clone(&proofs);
     let proof_bytes = run_aggregation_prepare_job(move || {
-        prove_aggregation(proofs.as_ref(), tx_statements_commitment)
+        prove_aggregation(proofs_for_aggregation.as_ref(), tx_statements_commitment)
     })
     .map_err(|err| format!("merge root proof generation failed: {err}"))?;
     let root_proof = encode_aggregation_proof_bytes(proof_bytes);
-
-    let mut manifest_material = Vec::with_capacity(48 + 2 + 8);
-    manifest_material.extend_from_slice(&tx_statements_commitment);
-    manifest_material.extend_from_slice(&merge_root_arity_from_env().to_le_bytes());
-    manifest_material.extend_from_slice(&(1u32).to_le_bytes());
-    let leaf_manifest_commitment = blake3_384(&manifest_material);
+    let leaf_count = proofs.len().div_ceil(merge_root_leaf_fan_in_from_env()) as u32;
+    let tree_levels = merge_root_tree_levels_for_tx_count(proofs.len());
+    let leaf_manifest_commitment = merge_root_leaf_manifest_commitment(statement_hashes.as_ref())?;
 
     Ok(pallet_shielded_pool::types::MergeRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(root_proof),
         metadata: pallet_shielded_pool::types::MergeRootMetadata {
             tree_arity: merge_root_arity_from_env(),
-            tree_levels: 1,
-            leaf_count: 1,
+            tree_levels,
+            leaf_count,
             leaf_manifest_commitment,
         },
         diagnostics_leaf_proofs: Vec::new(),
@@ -2675,6 +2772,7 @@ fn build_merge_root_proof_from_materials(
 
 #[derive(Clone, Debug)]
 enum PreparedAggregationArtifacts {
+    InlineTx,
     #[allow(dead_code)]
     Flat(Vec<pallet_shielded_pool::types::BatchProofItem>),
     Merge(pallet_shielded_pool::types::MergeRootProofPayload),
@@ -2835,6 +2933,7 @@ fn block_proof_payload_aggregation_bytes(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> usize {
     match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 0,
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
             .flat_batches
             .iter()
@@ -2852,6 +2951,7 @@ fn block_proof_payload_aggregation_uncompressed_bytes(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> usize {
     match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 0,
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
             .flat_batches
             .iter()
@@ -2933,6 +3033,7 @@ fn prepare_block_proof_bundle(
         .iter()
         .map(|binding| binding.statement_hash)
         .collect::<Vec<_>>();
+    let statement_bindings = Arc::new(context.statement_bindings.clone());
     let tx_statements_commitment = context.tx_statements_commitment;
     let tx_count = statement_hashes.len() as u32;
     if tx_count == 0 {
@@ -2976,6 +3077,7 @@ fn prepare_block_proof_bundle(
         });
 
         let aggregation_proofs = Arc::clone(&proofs_for_batching);
+        let aggregation_bindings = Arc::clone(&statement_bindings);
         let aggregation_handle = scope.spawn(move || {
             tracing::info!(
                 block_number,
@@ -2992,12 +3094,16 @@ fn prepare_block_proof_bundle(
                 Ok(cached)
             } else {
                 let built = match selected_mode {
-                    PreparedProofMode::FlatBatches => Err(
-                        "flat batch proof mode is disabled: witness sidecar uploads are blocked; use merge-root aggregation proofs"
-                            .to_string(),
-                    ),
+                    PreparedProofMode::InlineTx => Ok(PreparedAggregationArtifacts::InlineTx),
+                    PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
+                        aggregation_proofs,
+                        aggregation_bindings,
+                        batch_slot_txs,
+                    )
+                    .map(PreparedAggregationArtifacts::Flat),
                     PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
                         aggregation_proofs,
+                        Arc::new(statement_hashes.clone()),
                         tx_statements_commitment,
                     )
                     .map(PreparedAggregationArtifacts::Merge),
@@ -3079,12 +3185,17 @@ fn prepare_block_proof_bundle(
         commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
             commitment_proof.proof_bytes.clone(),
         ),
-        proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+        proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
         flat_batches: Vec::new(),
         merge_root: None,
-        prover_claim: None,
+        artifact_claim: None,
     };
     match aggregation_artifacts {
+        PreparedAggregationArtifacts::InlineTx => {
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::InlineTx;
+            payload.flat_batches.clear();
+            payload.merge_root = None;
+        }
         PreparedAggregationArtifacts::Flat(flat_batches) => {
             if flat_batches.is_empty() {
                 return Err("candidate tx set has no flat batch proof material".to_string());
@@ -3105,6 +3216,9 @@ fn prepare_block_proof_bundle(
         commitment_bytes = commitment_proof.proof_bytes.len(),
         aggregation_bytes = block_proof_payload_aggregation_bytes(&payload),
         batch_count = payload.flat_batches.len(),
+        merge_root_present = payload.merge_root.is_some(),
+        artifact_claim_present = payload.artifact_claim.is_some(),
+        da_chunk_count = payload.da_chunk_count,
         batch_slot_txs,
         proof_mode = ?payload.proof_mode,
         aggregation_cache_hit,
@@ -3119,6 +3233,8 @@ fn prepare_block_proof_bundle(
             parent_hash,
             tx_statements_commitment,
             tx_count,
+            proof_mode: payload.proof_mode,
+            artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(&payload),
         },
         payload,
         candidate_txs,
@@ -3162,6 +3278,10 @@ impl HeaderProofExt for SubstrateProofHeader {
     fn da_params(&self) -> consensus::DaParams {
         self.da_params
     }
+
+    fn kernel_root(&self) -> consensus::types::StateRoot {
+        [0u8; 48]
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3174,16 +3294,16 @@ fn extract_proven_batch_payload(
 ) -> Result<Option<ProvenBatchPayload>, String> {
     let mut found: Option<ProvenBatchPayload> = None;
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        if let ShieldedPoolCall::submit_proven_batch { payload } = call {
+        if let ShieldedFamilyAction::SubmitCandidateArtifact(args) = action {
             if found.is_some() {
-                return Err("multiple submit_proven_batch extrinsics in block".into());
+                return Err("multiple submit_candidate_artifact extrinsics in block".into());
             }
             found = Some(ProvenBatchPayload {
-                payload: payload.clone(),
+                payload: args.payload,
             });
         }
     }
@@ -3209,9 +3329,10 @@ fn extract_shielded_transfers_for_parallel_verification(
     let mut ciphertext_cursor = 0usize;
 
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((binding_version, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
+        let version: protocol_versioning::VersionBinding = binding_version.into();
 
         let mut next_resolved_ciphertexts = || -> Result<Option<Vec<Vec<u8>>>, String> {
             let resolved = match resolved_ciphertexts {
@@ -3226,217 +3347,53 @@ fn extract_shielded_transfers_for_parallel_verification(
             Ok(Some(ciphertexts))
         };
 
-        match call {
-            ShieldedPoolCall::mint_coinbase { .. } => {
+        match action {
+            ShieldedFamilyAction::MintCoinbase(_) => {
                 // Coinbase ciphertexts are stored separately from the DA blob.
             }
-            ShieldedPoolCall::shielded_transfer {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                value_balance,
-                ciphertexts,
-                ..
-            } => {
+            ShieldedFamilyAction::TransferInline { nullifiers, args } => {
                 let ciphertexts = match next_resolved_ciphertexts()? {
                     Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
+                    None => args
+                        .ciphertexts
                         .iter()
                         .map(encrypted_note_bytes)
                         .collect::<Vec<_>>(),
                 };
-                let proof_bytes = resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
-                let tx_proof = build_transaction_proof(
-                    proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
-                    &ciphertexts,
-                    *anchor,
-                    stablecoin.clone(),
-                    *fee,
-                    *value_balance,
-                )?;
-                let tx = crate::transaction::proof_to_transaction(
-                    &tx_proof,
-                    DEFAULT_VERSION_BINDING,
-                    ciphertexts,
-                );
-                transactions.push(tx);
-                proofs.push(tx_proof);
-                proof_binding_hashes.push(binding_hash.data);
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ciphertexts,
-                ..
-            } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
-                let ciphertexts = match next_resolved_ciphertexts()? {
-                    Some(ciphertexts) => ciphertexts,
-                    None => ciphertexts
-                        .iter()
-                        .map(encrypted_note_bytes)
-                        .collect::<Vec<_>>(),
+                let proof = pallet_shielded_pool::types::StarkProof::from_bytes(args.proof.clone());
+                let binding_hash = pallet_shielded_pool::types::BindingHash {
+                    data: args.binding_hash,
                 };
-                let proof_bytes = resolve_sidecar_proof_bytes(proof, binding_hash, pending_proofs)?;
+                let proof_bytes =
+                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
                 let tx_proof = build_transaction_proof(
                     proof_bytes,
-                    nullifiers.iter().copied().collect(),
-                    commitments.iter().copied().collect(),
+                    nullifiers.clone(),
+                    args.commitments.clone(),
                     &ciphertexts,
-                    *anchor,
-                    None,
-                    *fee,
+                    args.anchor,
+                    args.balance_slot_asset_ids,
+                    args.stablecoin.clone(),
+                    args.fee,
                     0,
                 )?;
-                let tx = crate::transaction::proof_to_transaction(
-                    &tx_proof,
-                    DEFAULT_VERSION_BINDING,
-                    ciphertexts,
-                );
+                let tx = crate::transaction::proof_to_transaction(&tx_proof, version, ciphertexts);
                 transactions.push(tx);
                 proofs.push(tx_proof);
-                proof_binding_hashes.push(binding_hash.data);
+                proof_binding_hashes.push(args.binding_hash);
             }
-            ShieldedPoolCall::shielded_transfer_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                value_balance,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                let nullifiers_vec = nullifiers.iter().copied().collect::<Vec<_>>();
-                let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
-                let hash_vec = ciphertext_hashes.to_vec();
+            ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
+                let nullifiers_vec = nullifiers.clone();
+                let commitments_vec = args.commitments.clone();
+                let hash_vec = args.ciphertext_hashes.clone();
                 let maybe_ciphertexts = next_resolved_ciphertexts()?;
+                let proof = pallet_shielded_pool::types::StarkProof::from_bytes(args.proof.clone());
+                let binding_hash = pallet_shielded_pool::types::BindingHash {
+                    data: args.binding_hash,
+                };
                 let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
-                    proof,
-                    binding_hash,
-                    pending_proofs,
-                ) {
-                    Ok(bytes) => Some(bytes),
-                    Err(err) if allow_missing_sidecar_proofs && proof.data.is_empty() => {
-                        tracing::debug!(
-                            binding_hash = %hex::encode(binding_hash.data),
-                            error = %err,
-                            "Missing sidecar proof bytes; continuing with statement-only transaction extraction"
-                        );
-                        None
-                    }
-                    Err(err) => return Err(err),
-                };
-                let tx_proof = match (maybe_proof_bytes, maybe_ciphertexts.as_ref()) {
-                    (Some(proof_bytes), Some(ciphertexts)) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
-                        )?;
-                        Some(build_transaction_proof(
-                            proof_bytes,
-                            nullifiers_vec.clone(),
-                            commitments_vec.clone(),
-                            ciphertexts,
-                            *anchor,
-                            stablecoin.clone(),
-                            *fee,
-                            *value_balance,
-                        )?)
-                    }
-                    (Some(proof_bytes), None) => Some(build_transaction_proof_with_hashes(
-                        proof_bytes,
-                        nullifiers_vec.clone(),
-                        commitments_vec.clone(),
-                        &hash_vec,
-                        *anchor,
-                        stablecoin.clone(),
-                        *fee,
-                        *value_balance,
-                    )?),
-                    (None, Some(ciphertexts)) => {
-                        validate_ciphertexts_against_hashes(
-                            ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
-                        )?;
-                        None
-                    }
-                    (None, None) => None,
-                };
-                let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
-                    (Some(proof), Some(ciphertexts)) => crate::transaction::proof_to_transaction(
-                        proof,
-                        DEFAULT_VERSION_BINDING,
-                        ciphertexts,
-                    ),
-                    (Some(proof), None) => consensus::types::Transaction::new_with_hashes(
-                        nullifiers_vec,
-                        commitments_vec,
-                        proof.public_inputs.balance_tag,
-                        DEFAULT_VERSION_BINDING,
-                        hash_vec,
-                    ),
-                    (None, Some(ciphertexts)) => consensus::types::Transaction::new(
-                        nullifiers_vec,
-                        commitments_vec,
-                        [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
-                        ciphertexts,
-                    ),
-                    (None, None) => consensus::types::Transaction::new_with_hashes(
-                        nullifiers_vec,
-                        commitments_vec,
-                        [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
-                        hash_vec,
-                    ),
-                };
-                transactions.push(tx);
-                if let Some(tx_proof) = tx_proof {
-                    proofs.push(tx_proof);
-                    proof_binding_hashes.push(binding_hash.data);
-                }
-            }
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof,
-                nullifiers,
-                commitments,
-                anchor,
-                binding_hash,
-                stablecoin,
-                fee,
-                ciphertext_hashes,
-                ciphertext_sizes,
-                ..
-            } => {
-                if stablecoin.is_some() {
-                    return Err("unsigned shielded transfer includes stablecoin binding".into());
-                }
-                let nullifiers_vec = nullifiers.iter().copied().collect::<Vec<_>>();
-                let commitments_vec = commitments.iter().copied().collect::<Vec<_>>();
-                let hash_vec = ciphertext_hashes.to_vec();
-                let maybe_ciphertexts = next_resolved_ciphertexts()?;
-                let maybe_proof_bytes = match resolve_sidecar_proof_bytes(
-                    proof,
-                    binding_hash,
+                    &proof,
+                    &binding_hash,
                     pending_proofs,
                 ) {
                     Ok(bytes) => Some(bytes),
@@ -3454,17 +3411,18 @@ fn extract_shielded_transfers_for_parallel_verification(
                     (Some(proof_bytes), Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
+                            &args.ciphertext_sizes,
+                            &args.ciphertext_hashes,
                         )?;
                         Some(build_transaction_proof(
                             proof_bytes,
                             nullifiers_vec.clone(),
                             commitments_vec.clone(),
                             ciphertexts,
-                            *anchor,
-                            None,
-                            *fee,
+                            args.anchor,
+                            args.balance_slot_asset_ids,
+                            args.stablecoin.clone(),
+                            args.fee,
                             0,
                         )?)
                     }
@@ -3473,56 +3431,55 @@ fn extract_shielded_transfers_for_parallel_verification(
                         nullifiers_vec.clone(),
                         commitments_vec.clone(),
                         &hash_vec,
-                        *anchor,
-                        None,
-                        *fee,
+                        args.anchor,
+                        args.balance_slot_asset_ids,
+                        args.stablecoin.clone(),
+                        args.fee,
                         0,
                     )?),
                     (None, Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
-                            ciphertext_sizes,
-                            ciphertext_hashes,
+                            &args.ciphertext_sizes,
+                            &args.ciphertext_hashes,
                         )?;
                         None
                     }
                     (None, None) => None,
                 };
                 let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
-                    (Some(proof), Some(ciphertexts)) => crate::transaction::proof_to_transaction(
-                        proof,
-                        DEFAULT_VERSION_BINDING,
-                        ciphertexts,
-                    ),
+                    (Some(proof), Some(ciphertexts)) => {
+                        crate::transaction::proof_to_transaction(proof, version, ciphertexts)
+                    }
                     (Some(proof), None) => consensus::types::Transaction::new_with_hashes(
                         nullifiers_vec,
                         commitments_vec,
                         proof.public_inputs.balance_tag,
-                        DEFAULT_VERSION_BINDING,
+                        version,
                         hash_vec,
                     ),
                     (None, Some(ciphertexts)) => consensus::types::Transaction::new(
                         nullifiers_vec,
                         commitments_vec,
                         [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
+                        version,
                         ciphertexts,
                     ),
                     (None, None) => consensus::types::Transaction::new_with_hashes(
                         nullifiers_vec,
                         commitments_vec,
                         [0u8; 48],
-                        DEFAULT_VERSION_BINDING,
+                        version,
                         hash_vec,
                     ),
                 };
                 transactions.push(tx);
                 if let Some(tx_proof) = tx_proof {
                     proofs.push(tx_proof);
-                    proof_binding_hashes.push(binding_hash.data);
+                    proof_binding_hashes.push(args.binding_hash);
                 }
             }
-            ShieldedPoolCall::batch_shielded_transfer { .. } => {
+            ShieldedFamilyAction::BatchTransfer { .. } => {
                 return Err(
                     "batch shielded transfers are not supported in block proof generation".into(),
                 );
@@ -3590,6 +3547,13 @@ fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], String>
     Ok(blake3_384(&data))
 }
 
+fn kernel_root_from_shielded_root(root: &[u8; 48]) -> [u8; 48] {
+    protocol_kernel::compute_kernel_global_root(vec![(
+        runtime::manifest::FAMILY_SHIELDED_POOL,
+        *root,
+    )])
+}
+
 fn hash_bytes_to_felts(bytes: &[u8; 48]) -> [Felt; 6] {
     let mut felts = [Felt::new(0); 6];
     for (idx, chunk) in bytes.chunks(8).enumerate() {
@@ -3615,6 +3579,8 @@ fn decode_nullifier_list(label: &str, nullifiers: &[[u8; 48]]) -> Result<Vec<[Fe
 fn derive_nullifier_challenges(
     starting_state_root: &[u8; 48],
     ending_state_root: &[u8; 48],
+    starting_kernel_root: &[u8; 48],
+    ending_kernel_root: &[u8; 48],
     nullifier_root: &[u8; 48],
     da_root: &[u8; 48],
     tx_count: u32,
@@ -3625,6 +3591,8 @@ fn derive_nullifier_challenges(
     hasher.update(b"blk-nullifier-perm-v1");
     hasher.update(starting_state_root);
     hasher.update(ending_state_root);
+    hasher.update(starting_kernel_root);
+    hasher.update(ending_kernel_root);
     hasher.update(nullifier_root);
     hasher.update(da_root);
     hasher.update(&tx_count.to_le_bytes());
@@ -3691,10 +3659,14 @@ fn derive_commitment_block_proof_from_bytes(
 
     let starting_state_root = parent_tree.root();
     let ending_state_root = tree.root();
+    let starting_kernel_root = kernel_root_from_shielded_root(&starting_state_root);
+    let ending_kernel_root = kernel_root_from_shielded_root(&ending_state_root);
     let tx_count = transactions.len() as u32;
     let (perm_alpha, perm_beta) = derive_nullifier_challenges(
         &starting_state_root,
         &ending_state_root,
+        &starting_kernel_root,
+        &ending_kernel_root,
         &nullifier_root,
         &da_root,
         tx_count,
@@ -3709,6 +3681,11 @@ fn derive_commitment_block_proof_from_bytes(
         )?,
         starting_state_root: bytes48_to_felts_checked("starting_state_root", &starting_state_root)?,
         ending_state_root: bytes48_to_felts_checked("ending_state_root", &ending_state_root)?,
+        starting_kernel_root: bytes48_to_felts_checked(
+            "starting_kernel_root",
+            &starting_kernel_root,
+        )?,
+        ending_kernel_root: bytes48_to_felts_checked("ending_kernel_root", &ending_kernel_root)?,
         nullifier_root: hash_bytes_to_felts(&nullifier_root),
         da_root: hash_bytes_to_felts(&da_root),
         tx_count,
@@ -3760,21 +3737,16 @@ fn verify_proof_carrying_block(
     let proof_policy = fetch_proof_availability_policy(client, parent_hash)?;
     let aggregation_mode_enabled = extrinsics.iter().any(|extrinsic| {
         matches!(
-            &extrinsic.function,
-            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+            shielded_action_from_extrinsic(extrinsic),
+            Some((_, ShieldedFamilyAction::EnableAggregationMode))
         )
     });
-    let verification_mode = if aggregation_mode_enabled
+    let self_contained_requested = aggregation_mode_enabled
         && matches!(
             proof_policy,
             pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
         )
-        && proven_batch_payload.is_some()
-    {
-        consensus::types::ProofVerificationMode::SelfContainedAggregation
-    } else {
-        consensus::types::ProofVerificationMode::InlineRequired
-    };
+        && proven_batch_payload.is_some();
 
     if transactions.is_empty() {
         if proven_batch_payload.is_some() {
@@ -3834,13 +3806,13 @@ fn verify_proof_carrying_block(
         if payload.tx_count != transactions.len() as u32 {
             return Err("proven batch tx_count mismatch".to_string());
         }
-        if let Some(claim) = payload.prover_claim.as_ref() {
+        if let Some(claim) = payload.artifact_claim.as_ref() {
             if !verify_prover_claim_signature(claim, &payload) {
                 return Err("invalid prover claim signature".to_string());
             }
         }
 
-        match payload.prover_claim.as_ref() {
+        match payload.artifact_claim.as_ref() {
             Some(claim) => {
                 let reward_bundle = reward_bundle.ok_or_else(|| {
                     "missing mint_coinbase extrinsic for prover claim".to_string()
@@ -3870,6 +3842,15 @@ fn verify_proof_carrying_block(
             }
         }
         let aggregation_payload_bytes = block_proof_payload_aggregation_bytes(&payload);
+        let verification_mode = if self_contained_requested
+            && !matches!(
+                payload.proof_mode,
+                pallet_shielded_pool::types::BlockProofMode::InlineTx
+            ) {
+            consensus::types::ProofVerificationMode::SelfContainedAggregation
+        } else {
+            consensus::types::ProofVerificationMode::InlineRequired
+        };
         if matches!(
             verification_mode,
             consensus::types::ProofVerificationMode::SelfContainedAggregation
@@ -3923,6 +3904,15 @@ fn verify_proof_carrying_block(
             da_params,
             Some(payload.da_root),
         )?;
+        if matches!(
+            payload.proof_mode,
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+        ) && transaction_proofs.is_none()
+        {
+            return Err(
+                "inline_tx candidate artifact requires inline transaction proof bytes".to_string(),
+            );
+        }
         let transaction_proofs = if matches!(
             verification_mode,
             consensus::types::ProofVerificationMode::SelfContainedAggregation
@@ -3967,6 +3957,9 @@ fn verify_proof_carrying_block(
                 da_chunk_count: payload.da_chunk_count,
                 commitment_proof: commitment_proof.clone(),
                 mode: match payload.proof_mode {
+                    pallet_shielded_pool::types::BlockProofMode::InlineTx => {
+                        consensus::types::ProvenBatchMode::InlineTx
+                    }
                     pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
                         consensus::types::ProvenBatchMode::FlatBatches
                     }
@@ -4054,7 +4047,7 @@ fn verify_proof_carrying_block(
         da_policy = ?da_policy,
         proof_policy = ?proof_policy,
         aggregation_mode_enabled,
-        verification_mode = ?verification_mode,
+        verification_mode = ?consensus::types::ProofVerificationMode::InlineRequired,
         "block_payload_size_metrics"
     );
 
@@ -4193,6 +4186,30 @@ fn load_min_ready_proven_batch_txs() -> usize {
         .max(1)
 }
 
+fn load_aggregation_proofs_enabled() -> bool {
+    std::env::var("HEGEMON_AGGREGATION_PROOFS")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn load_hold_mining_while_proving() -> bool {
+    std::env::var("HEGEMON_AGG_HOLD_MINING_WHILE_PROVING")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(true)
+}
+
 fn load_proofless_ready_wait() -> Duration {
     let wait_ms = env_usize("HEGEMON_PROOFLESS_READY_WAIT_MS")
         .unwrap_or(1_500)
@@ -4201,90 +4218,46 @@ fn load_proofless_ready_wait() -> Duration {
 }
 
 fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return false;
-    };
-
     matches!(
-        call,
-        ShieldedPoolCall::shielded_transfer { .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { .. }
-            | ShieldedPoolCall::shielded_transfer_sidecar { .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
-            | ShieldedPoolCall::batch_shielded_transfer { .. }
+        shielded_action_from_runtime_call(call),
+        Some((_, ShieldedFamilyAction::TransferInline { .. }))
+            | Some((_, ShieldedFamilyAction::TransferSidecar { .. }))
+            | Some((_, ShieldedFamilyAction::BatchTransfer { .. }))
     )
 }
 
 fn is_proofless_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return false;
-    };
-
-    match call {
-        ShieldedPoolCall::shielded_transfer { proof, .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned { proof, .. }
-        | ShieldedPoolCall::shielded_transfer_sidecar { proof, .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { proof, .. } => {
-            proof.data.is_empty()
-        }
+    match shielded_action_from_runtime_call(call) {
+        Some((_, ShieldedFamilyAction::TransferInline { args, .. })) => args.proof.is_empty(),
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, .. })) => args.proof.is_empty(),
         _ => false,
     }
 }
 
 fn is_sidecar_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return false;
-    };
-
     matches!(
-        call,
-        ShieldedPoolCall::shielded_transfer_sidecar { .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
+        shielded_action_from_runtime_call(call),
+        Some((_, ShieldedFamilyAction::TransferSidecar { .. }))
     )
 }
 
 fn proofless_binding_hash_from_call(call: &runtime::RuntimeCall) -> Option<[u8; 64]> {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return None;
-    };
-
-    match call {
-        ShieldedPoolCall::shielded_transfer {
-            proof,
-            binding_hash,
-            ..
+    match shielded_action_from_runtime_call(call) {
+        Some((_, ShieldedFamilyAction::TransferInline { args, .. })) => {
+            args.proof.is_empty().then_some(args.binding_hash)
         }
-        | ShieldedPoolCall::shielded_transfer_unsigned {
-            proof,
-            binding_hash,
-            ..
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, .. })) => {
+            args.proof.is_empty().then_some(args.binding_hash)
         }
-        | ShieldedPoolCall::shielded_transfer_sidecar {
-            proof,
-            binding_hash,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-            proof,
-            binding_hash,
-            ..
-        } => proof.data.is_empty().then_some(binding_hash.data),
         _ => None,
     }
 }
 
-fn sidecar_ciphertext_hashes_from_call(call: &runtime::RuntimeCall) -> Option<&[[u8; 48]]> {
-    let runtime::RuntimeCall::ShieldedPool(call) = call else {
-        return None;
-    };
-
-    match call {
-        ShieldedPoolCall::shielded_transfer_sidecar {
-            ciphertext_hashes, ..
+fn sidecar_ciphertext_hashes_from_call(call: &runtime::RuntimeCall) -> Option<Vec<[u8; 48]>> {
+    match shielded_action_from_runtime_call(call) {
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, .. })) => {
+            Some(args.ciphertext_hashes)
         }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-            ciphertext_hashes, ..
-        } => Some(ciphertext_hashes.as_slice()),
         _ => None,
     }
 }
@@ -4365,23 +4338,169 @@ fn ready_proofless_binding_hashes_for_preview(
     }
 }
 
-fn shielded_transfer_order_key(call: &ShieldedPoolCall) -> [u8; 32] {
-    sp_core::hashing::blake2_256(&call.encode())
+fn mining_pause_reason_for_pending_shielded_batch(
+    prover_coordinator: &ProverCoordinator,
+    parent_hash: H256,
+    candidate_txs: &[Vec<u8>],
+    min_ready_batch_txs: usize,
+    proof_mode: PreparedProofMode,
+) -> Result<Option<String>, String> {
+    if candidate_txs.is_empty() {
+        return Ok(None);
+    }
+
+    let mut decoded = Vec::with_capacity(candidate_txs.len());
+    for ext_bytes in candidate_txs {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
+        decoded.push(extrinsic);
+    }
+
+    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    let shielded_tx_count = statement_bindings.len() as u32;
+    if shielded_tx_count == 0 || shielded_tx_count < min_ready_batch_txs as u32 {
+        return Ok(None);
+    }
+
+    let missing = missing_proof_binding_hashes(&decoded);
+    if missing.is_empty() {
+        return Ok(None);
+    }
+
+    let statement_hashes = statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
+
+    if prover_coordinator
+        .lookup_prepared_bundle(parent_hash, tx_statements_commitment, shielded_tx_count)
+        .is_some()
+    {
+        return Ok(None);
+    }
+
+    let reason = match proof_mode {
+        PreparedProofMode::InlineTx => format!(
+            "inline_tx shielded batch waiting for prepared bundle (tx_count={})",
+            shielded_tx_count
+        ),
+        PreparedProofMode::MergeRoot => format!(
+            "proofless shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
+            shielded_tx_count,
+            missing.len()
+        ),
+        PreparedProofMode::FlatBatches => return Ok(None),
+    };
+    Ok(Some(reason))
+}
+
+#[derive(Clone, Debug)]
+struct ReadyBundleTrace {
+    bundle_id: String,
+    artifact_hash: [u8; 32],
+    tx_statements_commitment: [u8; 48],
+    tx_count: u32,
+    parent_hash: H256,
+    block_number: u64,
+}
+
+fn ready_bundle_trace_for_candidate(
+    prover_coordinator: &ProverCoordinator,
+    parent_hash: H256,
+    block_number: u64,
+    candidate_txs: &[Vec<u8>],
+    min_ready_batch_txs: usize,
+    _proof_mode: PreparedProofMode,
+) -> Result<Option<ReadyBundleTrace>, String> {
+    if candidate_txs.is_empty() {
+        return Ok(None);
+    }
+
+    let mut decoded = Vec::with_capacity(candidate_txs.len());
+    for ext_bytes in candidate_txs {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode candidate extrinsic: {e:?}"))?;
+        decoded.push(extrinsic);
+    }
+
+    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    let shielded_tx_count = statement_bindings.len() as u32;
+    if shielded_tx_count == 0 || shielded_tx_count < min_ready_batch_txs as u32 {
+        return Ok(None);
+    }
+
+    let missing = missing_proof_binding_hashes(&decoded);
+    if missing.is_empty() {
+        return Ok(None);
+    }
+
+    let statement_hashes = statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
+
+    let Some(ready_batch) = prover_coordinator.lookup_prepared_bundle(
+        parent_hash,
+        tx_statements_commitment,
+        shielded_tx_count,
+    ) else {
+        return Ok(None);
+    };
+
+    Ok(Some(ReadyBundleTrace {
+        bundle_id: ProverCoordinator::final_bundle_id(
+            parent_hash,
+            block_number,
+            tx_statements_commitment,
+            shielded_tx_count,
+        ),
+        artifact_hash: ready_batch.key.artifact_hash,
+        tx_statements_commitment,
+        tx_count: shielded_tx_count,
+        parent_hash,
+        block_number,
+    }))
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn shielded_transfer_order_key_material(
+    binding_hash: Option<[u8; 64]>,
+    nullifiers: &[[u8; 48]],
+) -> [u8; 32] {
+    let mut bytes = Vec::new();
+    if let Some(binding_hash) = binding_hash {
+        bytes.extend_from_slice(&binding_hash);
+    }
+    for nf in nullifiers {
+        bytes.extend_from_slice(nf);
+    }
+    sp_core::hashing::blake2_256(&bytes)
 }
 
 fn shielded_transfer_key_from_extrinsic(
     extrinsic: &runtime::UncheckedExtrinsic,
 ) -> Option<[u8; 32]> {
-    let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
-        return None;
-    };
-    match call {
-        ShieldedPoolCall::shielded_transfer { .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned { .. }
-        | ShieldedPoolCall::shielded_transfer_sidecar { .. }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { .. }
-        | ShieldedPoolCall::batch_shielded_transfer { .. } => {
-            Some(shielded_transfer_order_key(call))
+    match shielded_action_from_extrinsic(extrinsic) {
+        Some((_, ShieldedFamilyAction::TransferInline { args, nullifiers })) => Some(
+            shielded_transfer_order_key_material(Some(args.binding_hash), &nullifiers),
+        ),
+        Some((_, ShieldedFamilyAction::TransferSidecar { args, nullifiers })) => Some(
+            shielded_transfer_order_key_material(Some(args.binding_hash), &nullifiers),
+        ),
+        Some((_, ShieldedFamilyAction::BatchTransfer { nullifiers, .. })) => {
+            Some(shielded_transfer_order_key_material(None, &nullifiers))
         }
         _ => None,
     }
@@ -4450,32 +4569,11 @@ fn ensure_shielded_transfer_ordering(
 }
 
 fn ensure_forced_inclusions(
-    client: &HegemonFullClient,
-    parent_hash: H256,
-    block_number: u64,
-    extrinsics: &[runtime::UncheckedExtrinsic],
+    _client: &HegemonFullClient,
+    _parent_hash: H256,
+    _block_number: u64,
+    _extrinsics: &[runtime::UncheckedExtrinsic],
 ) -> Result<(), String> {
-    let api = client.runtime_api();
-    let pending = api
-        .forced_inclusions(parent_hash)
-        .map_err(|err| format!("forced inclusion query failed: {err}"))?;
-    if pending.is_empty() {
-        return Ok(());
-    }
-
-    let mut included = std::collections::HashSet::new();
-    for extrinsic in extrinsics {
-        if let Some(key) = shielded_transfer_key_from_extrinsic(extrinsic) {
-            included.insert(key);
-        }
-    }
-
-    for entry in pending {
-        if entry.expiry <= block_number && !included.contains(&entry.commitment) {
-            return Err("forced inclusion missing in block".to_string());
-        }
-    }
-
     Ok(())
 }
 
@@ -4527,38 +4625,27 @@ impl ShieldedConflictFilterStats {
     }
 }
 
-fn shielded_conflict_keys_from_call(
-    call: &ShieldedPoolCall,
+fn shielded_conflict_keys_from_action(
+    action: &ShieldedFamilyAction,
 ) -> Option<(Option<[u8; 64]>, Vec<[u8; 48]>)> {
-    match call {
-        ShieldedPoolCall::shielded_transfer {
-            binding_hash,
-            nullifiers,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned {
-            binding_hash,
-            nullifiers,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_sidecar {
-            binding_hash,
-            nullifiers,
-            ..
-        }
-        | ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-            binding_hash,
-            nullifiers,
-            ..
-        } => Some((
-            Some(binding_hash.data),
+    match action {
+        ShieldedFamilyAction::TransferInline { args, nullifiers } => Some((
+            Some(args.binding_hash),
             nullifiers
                 .iter()
                 .copied()
                 .filter(|nf| *nf != [0u8; 48])
                 .collect(),
         )),
-        ShieldedPoolCall::batch_shielded_transfer { nullifiers, .. } => Some((
+        ShieldedFamilyAction::TransferSidecar { args, nullifiers } => Some((
+            Some(args.binding_hash),
+            nullifiers
+                .iter()
+                .copied()
+                .filter(|nf| *nf != [0u8; 48])
+                .collect(),
+        )),
+        ShieldedFamilyAction::BatchTransfer { nullifiers, .. } => Some((
             None,
             nullifiers
                 .iter()
@@ -4590,8 +4677,8 @@ fn filter_conflicting_shielded_transfers(
         };
 
         let mut conflict = false;
-        if let runtime::RuntimeCall::ShieldedPool(call) = &decoded.function {
-            if let Some((binding_hash, nullifiers)) = shielded_conflict_keys_from_call(call) {
+        if let Some((_, action)) = shielded_action_from_extrinsic(&decoded) {
+            if let Some((binding_hash, nullifiers)) = shielded_conflict_keys_from_action(&action) {
                 if let Some(binding_hash) = binding_hash {
                     if !seen_binding_hashes.insert(binding_hash) {
                         stats.dropped_binding_conflicts =
@@ -4636,19 +4723,19 @@ fn split_shielded_fee_buckets_from_decoded(
 ) -> Result<BlockFeeBuckets, String> {
     let mut buckets = BlockFeeBuckets::default();
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
 
-        let (provided, prover_component) = match call {
-            ShieldedPoolCall::shielded_transfer { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_sidecar { fee, .. }
-            | ShieldedPoolCall::shielded_transfer_unsigned_sidecar { fee, .. } => {
-                (u128::from(*fee), fee_params.proof_fee)
+        let (provided, prover_component) = match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => {
+                (u128::from(args.fee), fee_params.proof_fee)
             }
-            ShieldedPoolCall::batch_shielded_transfer { total_fee, .. } => {
-                (*total_fee, fee_params.batch_proof_fee)
+            ShieldedFamilyAction::TransferSidecar { args, .. } => {
+                (u128::from(args.fee), fee_params.proof_fee)
+            }
+            ShieldedFamilyAction::BatchTransfer { args, .. } => {
+                (args.total_fee, fee_params.batch_proof_fee)
             }
             _ => continue,
         };
@@ -4673,14 +4760,14 @@ fn extract_block_reward_bundle(
 ) -> Result<Option<pallet_shielded_pool::types::BlockRewardBundle>, String> {
     let mut found: Option<pallet_shielded_pool::types::BlockRewardBundle> = None;
     for extrinsic in extrinsics {
-        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+        let Some((_, action)) = shielded_action_from_extrinsic(extrinsic) else {
             continue;
         };
-        if let ShieldedPoolCall::mint_coinbase { reward_bundle } = call {
+        if let ShieldedFamilyAction::MintCoinbase(args) = action {
             if found.is_some() {
                 return Err("multiple mint_coinbase extrinsics in block".to_string());
             }
-            found = Some(reward_bundle.clone());
+            found = Some(args.reward_bundle);
         }
     }
     Ok(found)
@@ -4790,9 +4877,7 @@ pub fn wire_block_builder_api(
     use sc_block_builder::BlockBuilderBuilder;
 
     let client_for_exec = client;
-    let aggregation_proofs_enabled = std::env::var("HEGEMON_AGGREGATION_PROOFS")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let aggregation_proofs_enabled = load_aggregation_proofs_enabled();
     let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
     let min_ready_proven_batch_txs = load_min_ready_proven_batch_txs();
     let proofless_ready_wait = load_proofless_ready_wait();
@@ -4879,6 +4964,19 @@ pub fn wire_block_builder_api(
             }
         };
 
+        let block_builder_api_version = client_for_exec
+            .runtime_api()
+            .api_version::<dyn sp_block_builder::BlockBuilder<runtime::Block>>(parent_substrate_hash)
+            .ok()
+            .flatten();
+
+        tracing::info!(
+            block_number,
+            block_builder_api_version = ?block_builder_api_version,
+            extrinsic_inclusion_mode = ?block_builder.extrinsic_inclusion_mode(),
+            "BlockBuilder created"
+        );
+
         // Create inherent extrinsics (timestamp, coinbase, etc.)
         let inherent_extrinsics = match block_builder.create_inherents(inherent_data.clone()) {
             Ok(exts) => {
@@ -4888,9 +4986,18 @@ pub fn wire_block_builder_api(
                     exts.len()
                 );
                 for (i, ext) in exts.iter().enumerate() {
+                    let inherent_kind = if matches!(
+                        &ext.function,
+                        runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { .. })
+                    ) {
+                        "timestamp"
+                    } else {
+                        "non_timestamp"
+                    };
                     let encoded = ext.encode();
                     tracing::info!(
                         index = i,
+                        inherent_kind,
                         encoded_len = encoded.len(),
                         first_bytes = %hex::encode(&encoded[..encoded.len().min(20)]),
                         "Inherent extrinsic {}", i
@@ -4907,6 +5014,30 @@ pub fn wire_block_builder_api(
         // Push inherent extrinsics
         let mut shielded_transfer_count = 0usize;
         let mut applied = Vec::new();
+        let has_timestamp_inherent = inherent_extrinsics.iter().any(|ext| {
+            matches!(
+                &ext.function,
+                runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { .. })
+            )
+        });
+        if !has_timestamp_inherent {
+            let now = timestamp_provider.timestamp().as_millis();
+            let timestamp_ext = runtime::UncheckedExtrinsic::new_unsigned(
+                runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { now }),
+            );
+            match block_builder.push(timestamp_ext.clone()) {
+                Ok(_) => {
+                    applied.push(timestamp_ext.encode());
+                    tracing::info!(now, "Injected explicit timestamp inherent");
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to push explicit timestamp inherent: {:?}",
+                        e
+                    ));
+                }
+            }
+        }
         for inherent_ext in inherent_extrinsics {
             let is_shielded = is_shielded_transfer_call(&inherent_ext.function);
             match block_builder.push(inherent_ext.clone()) {
@@ -4960,18 +5091,22 @@ pub fn wire_block_builder_api(
         }
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
+        let selected_proof_mode = prepared_proof_mode_from_env();
+        let merge_root_mode_enabled = matches!(selected_proof_mode, PreparedProofMode::MergeRoot);
         let mut defer_proofless_until_ready_batch = false;
         let mut aggregation_mode_required_for_block = false;
         let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
-        if aggregation_proofs_enabled {
+        if aggregation_proofs_enabled && merge_root_mode_enabled {
             let mut preview_extrinsics = Vec::new();
             for ext_bytes in &applied {
                 if let Ok(extrinsic) = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                     preview_extrinsics.push(extrinsic);
                 }
             }
-            preview_extrinsics.push(runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {}),
+            preview_extrinsics.push(kernel_shielded_extrinsic(
+                ACTION_ENABLE_AGGREGATION_MODE,
+                Vec::new(),
+                EnableAggregationModeArgs.encode(),
             ));
 
             let mut preview_shielded_count = shielded_transfer_count;
@@ -5059,9 +5194,11 @@ pub fn wire_block_builder_api(
             }
         }
 
-        if aggregation_proofs_enabled && aggregation_mode_required_for_block {
-            let enable_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {}),
+        if aggregation_proofs_enabled && merge_root_mode_enabled && aggregation_mode_required_for_block {
+            let enable_extrinsic = kernel_shielded_extrinsic(
+                ACTION_ENABLE_AGGREGATION_MODE,
+                Vec::new(),
+                EnableAggregationModeArgs.encode(),
             );
             match block_builder.push(enable_extrinsic.clone()) {
                 Ok(_) => {
@@ -5092,7 +5229,7 @@ pub fn wire_block_builder_api(
                     if let Some(ciphertext_hashes) =
                         sidecar_ciphertext_hashes_from_call(&extrinsic.function)
                     {
-                        if !pending_ciphertexts_for_filter.contains_all(ciphertext_hashes) {
+                        if !pending_ciphertexts_for_filter.contains_all(&ciphertext_hashes) {
                             deferred_missing_ciphertext_sidecar_count =
                                 deferred_missing_ciphertext_sidecar_count.saturating_add(1);
                             tracing::warn!(
@@ -5112,7 +5249,16 @@ pub fn wire_block_builder_api(
                         );
                         continue;
                     }
+                    if !merge_root_mode_enabled && is_proofless_sidecar {
+                        tracing::warn!(
+                            block_number,
+                            mode = ?selected_proof_mode,
+                            "Skipping proofless shielded transfer: raw inline_tx mode requires canonical inline tx proofs"
+                        );
+                        continue;
+                    }
                     if aggregation_proofs_enabled
+                        && merge_root_mode_enabled
                         && defer_proofless_until_ready_batch
                         && is_proofless_sidecar
                     {
@@ -5181,7 +5327,7 @@ pub fn wire_block_builder_api(
             }
         }
 
-        if aggregation_proofs_enabled && deferred_proofless_sidecar_count > 0 {
+        if aggregation_proofs_enabled && merge_root_mode_enabled && deferred_proofless_sidecar_count > 0 {
             tracing::info!(
                 block_number,
                 deferred_proofless_sidecar_count,
@@ -5219,8 +5365,8 @@ pub fn wire_block_builder_api(
         }
         let aggregation_mode_enabled = decoded_applied.iter().any(|extrinsic| {
             matches!(
-                &extrinsic.function,
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::enable_aggregation_mode {})
+                shielded_action_from_extrinsic(extrinsic),
+                Some((_, ShieldedFamilyAction::EnableAggregationMode))
             )
         });
         if !missing_proof_bindings.is_empty() {
@@ -5245,8 +5391,10 @@ pub fn wire_block_builder_api(
             .map(|binding| binding.statement_hash)
             .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
-        let requires_proven_batch = aggregation_mode_enabled && shielded_tx_count > 0;
-        let mut selected_prover_claim: Option<pallet_shielded_pool::types::ProverCompensationClaim> = None;
+    let requires_proven_batch = shielded_tx_count > 0
+        && (!missing_proof_bindings.is_empty() || aggregation_mode_enabled);
+        let mut selected_prover_claim: Option<pallet_shielded_pool::types::ArtifactClaim> = None;
+        let mut template_trace = None;
         if requires_proven_batch {
             let tx_statements_commitment =
                 CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
@@ -5266,11 +5414,14 @@ pub fn wire_block_builder_api(
                     + block_proof_payload_aggregation_bytes(&ready_batch.payload);
                 let proof_size_uncompressed =
                     block_proof_payload_aggregation_uncompressed_bytes(&ready_batch.payload);
-                selected_prover_claim = ready_batch.payload.prover_claim.clone();
-                let proven_batch_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                    runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::submit_proven_batch {
+                selected_prover_claim = ready_batch.payload.artifact_claim.clone();
+                let proven_batch_extrinsic = kernel_shielded_extrinsic(
+                    ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+                    Vec::new(),
+                    SubmitCandidateArtifactArgs {
                         payload: ready_batch.payload,
-                    }),
+                    }
+                    .encode(),
                 );
                 tracing::debug!(
                     block_number,
@@ -5293,6 +5444,20 @@ pub fn wire_block_builder_api(
                             current_parent = ?parent_substrate_hash,
                             "Proven batch extrinsic attached"
                         );
+                        template_trace = Some(consensus::MiningWorkTrace {
+                            template_id: String::new(),
+                            bundle_id: Some(ProverCoordinator::final_bundle_id(
+                                parent_substrate_hash,
+                                block_number,
+                                tx_statements_commitment,
+                                shielded_tx_count,
+                            )),
+                            artifact_hash: Some(hex::encode(ready_batch.key.artifact_hash)),
+                            tx_count: shielded_tx_count,
+                            tx_statements_commitment: Some(hex::encode(
+                                tx_statements_commitment,
+                            )),
+                        });
                     }
                     Err(e) => {
                         return Err(format!(
@@ -5379,10 +5544,10 @@ pub fn wire_block_builder_api(
                 has_prover_claim = selected_prover_claim.is_some(),
                 "Encrypting shielded block rewards"
             );
-            let coinbase_extrinsic = runtime::UncheckedExtrinsic::new_unsigned(
-                runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
-                    reward_bundle,
-                }),
+            let coinbase_extrinsic = kernel_shielded_extrinsic(
+                ACTION_MINT_COINBASE,
+                Vec::new(),
+                MintCoinbaseArgs { reward_bundle }.encode(),
             );
             match block_builder.push(coinbase_extrinsic.clone()) {
                 Ok(_) => {
@@ -5421,10 +5586,13 @@ pub fn wire_block_builder_api(
                                 format!("failed to encrypt fallback block reward bundle: {e}")
                             })?;
 
-                        let fallback_coinbase = runtime::UncheckedExtrinsic::new_unsigned(
-                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::mint_coinbase {
+                        let fallback_coinbase = kernel_shielded_extrinsic(
+                            ACTION_MINT_COINBASE,
+                            Vec::new(),
+                            MintCoinbaseArgs {
                                 reward_bundle: fallback_reward_bundle,
-                            }),
+                            }
+                            .encode(),
                         );
                         match block_builder.push(fallback_coinbase.clone()) {
                             Ok(_) => {
@@ -5492,6 +5660,7 @@ pub fn wire_block_builder_api(
             extrinsics_root,
             failed_count: failed,
             storage_changes: Some(storage_changes),
+            template_trace,
         })
     });
 
@@ -5506,11 +5675,11 @@ pub fn wire_block_builder_api(
 // import_fn callback. When a mined block needs to be imported, the callback
 // constructs a proper BlockImportParams and imports through PowBlockImport.
 //
-// The PowBlockImport verifies the Blake3 PoW seal before allowing the block
+// The PowBlockImport verifies the SHA-256d PoW seal before allowing the block
 // to be committed to the backend.
 
 use crate::substrate::mining_worker::BlockTemplate;
-use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult};
+use sc_consensus::{BlockImport, BlockImportParams, ImportResult};
 use sp_consensus::BlockOrigin;
 use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
@@ -5539,6 +5708,20 @@ fn finalize_imported_block(
     }
 }
 
+fn configure_pow_import_params(
+    import_params: &mut BlockImportParams<runtime::Block>,
+    seal_item: DigestItem,
+    post_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
+) {
+    import_params.post_digests.push(seal_item);
+    import_params.post_hash = Some(post_hash);
+
+    // Leave fork_choice unset so PowBlockImport applies cumulative-difficulty selection.
+    use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
+    let intermediate = PowIntermediate::<sp_core::U256> { difficulty: None };
+    import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
+}
+
 /// Wire the PoW block import pipeline to a ProductionChainStateProvider.
 ///
 /// This sets the `import_fn` callback on the chain state provider to use
@@ -5550,7 +5733,7 @@ fn finalize_imported_block(
 /// 1. Mining worker finds valid seal via `mine_round()`
 /// 2. Calls `chain_state.import_block(template, seal)`
 /// 3. `import_fn` callback constructs `BlockImportParams`
-/// 4. `PowBlockImport.import_block()` verifies the seal
+/// 4. `PowBlockImport.import_block()` verifies the seal and applies total-difficulty fork choice
 /// 5. If valid, block is committed to backend
 ///
 /// # Arguments
@@ -5580,7 +5763,7 @@ fn finalize_imported_block(
 ///
 /// // Now when mining finds a valid seal:
 /// let hash = chain_state.import_block(&template, &seal)?;
-/// // Block is imported directly (PoW already verified by mining worker)
+/// // Block is imported through PowBlockImport so best-chain selection uses total difficulty
 /// ```
 ///
 /// # State Persistence
@@ -5591,7 +5774,7 @@ fn finalize_imported_block(
 /// to the database after block import.
 fn wire_pow_block_import(
     chain_state: &Arc<ProductionChainStateProvider>,
-    _pow_block_import: ConcretePowBlockImport,
+    pow_block_import: ConcretePowBlockImport,
     client: Arc<HegemonFullClient>,
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
     pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
@@ -5602,18 +5785,16 @@ fn wire_pow_block_import(
     use codec::Encode;
     use sp_runtime::traits::Block as BlockT;
 
-    // Use the client directly for block import
-    // The mining worker already verified the PoW, so we don't need PowBlockImport
-    // to re-verify (which would fail due to pre_hash computation differences)
     let block_import = client;
+    let pow_block_import = pow_block_import;
     let proof_verification_enabled = proof_verification_enabled();
     let parallel_verifier = ParallelProofVerifier::new();
-    chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Blake3Seal| {
+    chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Sha256dSeal| {
         // Construct the block header from the template
         let parent_hash: sp_core::H256 = template.parent_hash.into();
 
         // Include the seal in the header's digest for storage
-        // Use our custom engine ID "bpow" for Blake3 PoW
+        // Use our custom engine ID "bpow" for SHA-256d PoW
         let seal_bytes = seal.encode();
         let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
         let digest = Digest {
@@ -5681,17 +5862,22 @@ fn wire_pow_block_import(
             .map_err(|err| format!("mined block proof verification failed: {err}"))?;
         }
 
-        // Construct the block with seal in header
-        let block = runtime::Block::new(header.clone(), encoded_extrinsics);
+        // Construct the block with seal in header so we can derive the final post-seal hash.
+        let block = runtime::Block::new(header.clone(), encoded_extrinsics.clone());
         let block_hash = block.hash();
         let mut block_hash_bytes = [0u8; 32];
         block_hash_bytes.copy_from_slice(block_hash.as_bytes());
 
-        // Construct BlockImportParams for direct client import
-        // No post_digests needed since seal is already in header
-        let mut import_params = BlockImportParams::new(BlockOrigin::Own, header);
-        import_params.body = Some(block.extrinsics().to_vec());
-        import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
+        // PowBlockImport expects the seal in post_digests, not in header.digest().
+        let mut header_without_seal = header.clone();
+        let seal_item = header_without_seal
+            .digest_mut()
+            .pop()
+            .ok_or_else(|| "mined block header missing PoW seal".to_string())?;
+
+        let mut import_params = BlockImportParams::new(BlockOrigin::Own, header_without_seal);
+        import_params.body = Some(encoded_extrinsics);
+        configure_pow_import_params(&mut import_params, seal_item, block_hash);
 
         // Apply StorageChanges if available.
         let storage_changes = match storage_changes_key {
@@ -5719,10 +5905,10 @@ fn wire_pow_block_import(
             import_params.state_action = sc_consensus::StateAction::Skip;
         }
 
-        // Import the block directly through the client
-        // This bypasses PowBlockImport verification since we already verified locally
+        // Import through PowBlockImport so local mining follows the same seal verification and
+        // cumulative-difficulty fork-choice path as network imports.
         let import_result = futures::executor::block_on(async {
-            let import = block_import.clone();
+            let import = pow_block_import.clone();
             import.import_block(import_params).await
         });
 
@@ -5817,6 +6003,25 @@ fn wire_pow_block_import(
                     block_number = template.number,
                     "Block imported successfully with state changes applied"
                 );
+                if let Some(trace) = template.trace.as_ref() {
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = unix_time_ms(),
+                        block_hash = %hex::encode(block_hash.as_bytes()),
+                        block_number = template.number,
+                        parent_hash = %hex::encode(template.parent_hash.as_bytes()),
+                        pre_hash = %hex::encode(template.pre_hash.as_bytes()),
+                        template_id = %trace.template_id,
+                        bundle_id = trace.bundle_id.as_deref().unwrap_or(""),
+                        artifact_hash = trace.artifact_hash.as_deref().unwrap_or(""),
+                        tx_count = trace.tx_count,
+                        tx_statements_commitment = trace
+                            .tx_statements_commitment
+                            .as_deref()
+                            .unwrap_or(""),
+                        "block_imported"
+                    );
+                }
                 Ok(block_hash)
             }
             Ok(ImportResult::AlreadyInChain) => {
@@ -5934,7 +6139,7 @@ fn wire_pow_block_import(
 
     tracing::info!("Block import wired with StorageChanges application");
     tracing::debug!("  - Mined blocks imported with state persistence");
-    tracing::debug!("  - Blake3 seals validated before commit");
+    tracing::debug!("  - SHA-256d seals validated before commit");
 }
 
 /// PQ network configuration for the node service
@@ -5944,8 +6149,8 @@ pub struct PqServiceConfig {
     pub verbose_logging: bool,
     /// Listen address for P2P
     pub listen_addr: std::net::SocketAddr,
-    /// Bootstrap nodes
-    pub bootstrap_nodes: Vec<std::net::SocketAddr>,
+    /// Bootstrap seeds plus resolved addresses
+    pub bootstrap_nodes: Vec<BootstrapNode>,
     /// Maximum peers
     pub max_peers: usize,
 }
@@ -6026,7 +6231,7 @@ impl PqServiceConfig {
         // Parse bootstrap/seed nodes from environment
         // Supports IP:port, hostname:port, and host/IP without port (defaults to 30333).
         const DEFAULT_P2P_PORT: u16 = 30333;
-        let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
+        let bootstrap_nodes: Vec<BootstrapNode> = std::env::var("HEGEMON_SEEDS")
             .map(|s| {
                 let mut nodes = Vec::new();
                 for addr in s.split(',') {
@@ -6034,13 +6239,29 @@ impl PqServiceConfig {
                     if addr.is_empty() {
                         continue;
                     }
+                    let normalized_seed =
+                        if let Ok(sock_addr) = addr.parse::<std::net::SocketAddr>() {
+                            sock_addr.to_string()
+                        } else if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
+                            std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT).to_string()
+                        } else if addr.contains(':') {
+                            addr.to_string()
+                        } else {
+                            format!("{addr}:{DEFAULT_P2P_PORT}")
+                        };
                     // First try direct parse (for IP:port)
-                    if let Ok(sock_addr) = addr.parse() {
-                        nodes.push(sock_addr);
+                    if let Ok(sock_addr) = addr.parse::<std::net::SocketAddr>() {
+                        nodes.push(BootstrapNode {
+                            seed: normalized_seed,
+                            addrs: vec![sock_addr],
+                        });
                         continue;
                     }
                     if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
-                        nodes.push(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
+                        nodes.push(BootstrapNode {
+                            seed: normalized_seed,
+                            addrs: vec![std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT)],
+                        });
                         continue;
                     }
                     // If that fails, try DNS resolution (for hostname[:port]). Keep all
@@ -6106,16 +6327,19 @@ impl PqServiceConfig {
                         continue;
                     }
                     // Prefer IPv4 routes first for environments where IPv6 egress is absent.
+                    resolved.sort();
+                    resolved.dedup();
                     resolved.sort_by_key(|socket| !socket.ip().is_ipv4());
                     tracing::info!(
                         addr = %addr,
                         resolved = ?resolved,
                         "Resolved seed hostname"
                     );
-                    nodes.extend(resolved);
+                    nodes.push(BootstrapNode {
+                        seed: normalized_seed,
+                        addrs: resolved,
+                    });
                 }
-                nodes.sort();
-                nodes.dedup();
                 nodes
             })
             .unwrap_or_default();
@@ -6478,20 +6702,20 @@ pub struct PartialComponentsWithClient {
     /// This is the production transaction pool that validates transactions
     /// against the runtime. It replaces MockTransactionPool for full client mode.
     pub transaction_pool: Arc<HegemonTransactionPool>,
-    /// Chain selection rule
+    /// Select-chain helper required by `PowBlockImport`.
     ///
-    /// Uses LongestChain which selects the chain with the most blocks.
-    /// This is the standard selection rule for PoW chains.
+    /// Canonical PoW best-chain selection still comes from `PowBlockImport`'s
+    /// cumulative-difficulty fork choice when imports leave `fork_choice` unset.
     pub select_chain: HegemonSelectChain,
     /// PoW block import wrapper
     ///
-    /// Wraps the client with PoW verification using Blake3Algorithm.
+    /// Wraps the client with PoW verification using Sha256dAlgorithm.
     /// All blocks imported through this wrapper are verified for valid PoW.
     pub pow_block_import: ConcretePowBlockImport,
-    /// Blake3 PoW algorithm
+    /// SHA-256d PoW algorithm
     ///
     /// The PoW algorithm implementation used for block verification and mining.
-    pub pow_algorithm: Blake3Algorithm<HegemonFullClient>,
+    pub pow_algorithm: Sha256dAlgorithm<HegemonFullClient>,
     /// Task manager for spawning async tasks
     pub task_manager: TaskManager,
     /// PoW mining handle
@@ -6633,17 +6857,19 @@ pub fn new_partial_with_client(
     // ==========================================================================
     //
     // The block import pipeline verifies PoW seals before importing blocks:
-    // 1. Create LongestChain for chain selection (standard PoW rule)
-    // 2. Create Blake3Algorithm with client reference for difficulty queries
+    // 1. Create the select-chain helper required by PowBlockImport
+    // 2. Create Sha256dAlgorithm with client reference for difficulty queries
     // 3. Wrap client in PowBlockImport for PoW verification
     //
     // Flow: Network → Import Queue → PowBlockImport → Client → Backend
 
-    // Create chain selection rule (LongestChain for PoW)
+    // PowBlockImport still needs a SelectChain implementation, but best-chain selection comes
+    // from PowBlockImport's total-difficulty fork-choice logic when import_params.fork_choice
+    // is left unset.
     let select_chain = sc_consensus::LongestChain::new(backend.clone());
 
-    // Create Blake3 PoW algorithm with client for difficulty queries
-    let pow_algorithm = Blake3Algorithm::new(client.clone());
+    // Create SHA-256d PoW algorithm with client for difficulty queries
+    let pow_algorithm = Sha256dAlgorithm::new(client.clone());
 
     // Create inherent data providers creator
     // Timestamp inherents are required for runtime validation during import.
@@ -6667,7 +6893,7 @@ pub fn new_partial_with_client(
     }
 
     // Create the PoW block import wrapper
-    // This verifies Blake3 PoW seals before allowing blocks to be imported
+    // This verifies SHA-256d PoW seals before allowing blocks to be imported
     //
     let pow_import_config = crate::substrate::block_import::BlockImportConfig::from_env();
 
@@ -6681,8 +6907,8 @@ pub fn new_partial_with_client(
     );
 
     tracing::info!("PoW block import pipeline created");
-    tracing::debug!("  - Blake3Algorithm for PoW verification");
-    tracing::debug!("  - LongestChain for chain selection");
+    tracing::debug!("  - Sha256dAlgorithm for PoW verification");
+    tracing::debug!("  - LongestChain helper for PowBlockImport");
     tracing::debug!("  - PowBlockImport wrapping full client");
 
     // Initialize PQ service configuration
@@ -6699,7 +6925,7 @@ pub fn new_partial_with_client(
         bootstrap_nodes: pq_service_config
             .bootstrap_nodes
             .iter()
-            .map(|addr| format!("/ip4/{}/tcp/{}", addr.ip(), addr.port()))
+            .map(|node| node.seed.clone())
             .collect(),
         enable_pq_transport: true,
         max_peers: pq_service_config.max_peers as u32,
@@ -6788,7 +7014,7 @@ pub fn new_partial_with_client(
 /// | Component | `new_full()` (scaffold) | `new_full_with_client()` (production) |
 /// |-----------|------------------------|--------------------------------------|
 /// | Client | Mock state | Real TFullClient |
-/// | State root | Blake3 hash of extrinsics | Runtime-computed |
+/// | State root | Scaffold placeholder | Runtime-computed |
 /// | Block import | BlockImportTracker | PowBlockImport |
 /// | Tx validation | No validation | Runtime validation |
 /// | Difficulty | Constant fallback | Runtime API query |
@@ -6804,7 +7030,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let PartialComponentsWithClient {
         client,
         backend: _backend,
-        keystore_container,
+        keystore_container: _keystore_container,
         transaction_pool,
         select_chain: _select_chain,
         pow_block_import,
@@ -6863,6 +7089,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Auto-start mining if HEGEMON_MINE=1 is set
     let mined_block_store = Arc::new(parking_lot::Mutex::new(Vec::<MinedBlockRecord>::new()));
     let mut prover_coordinator_for_rpc: Option<Arc<ProverCoordinator>> = None;
+    let prover_coordinator_shared: Arc<parking_lot::RwLock<Option<Arc<ProverCoordinator>>>> =
+        Arc::new(parking_lot::RwLock::new(None));
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         pow_handle.start_mining();
@@ -7094,6 +7322,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let client_for_network = client.clone();
                 let da_chunk_store_for_handler = Arc::clone(&da_chunk_store);
                 let da_request_tracker_for_handler = Arc::clone(&da_request_tracker);
+                let prover_coordinator_for_events = Arc::clone(&prover_coordinator_shared);
                 let peer_count_for_rpc = Arc::clone(&peer_count);
                 let peer_details_for_events = Arc::clone(&peer_details);
                 let peer_graph_reports_for_events = Arc::clone(&peer_graph_reports);
@@ -7527,8 +7756,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    }
                                     // Handle sync protocol messages
                                     use crate::substrate::network_bridge::{
-                                        BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,
-                                        DA_CHUNKS_PROTOCOL, SYNC_PROTOCOL,
+                                        ArtifactProtocolMessage, BlockAnnounce, DaChunkProtocolMessage,
+                                        ARTIFACTS_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL, DA_CHUNKS_PROTOCOL,
+                                        SYNC_PROTOCOL,
                                     };
                                     use crate::substrate::network_bridge::SyncMessage;
                                     // Handle sync protocol messages
@@ -7672,6 +7902,88 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     error = %e,
                                                     data_len = data.len(),
                                                     "Failed to decode DA chunk message"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    else if protocol == ARTIFACTS_PROTOCOL {
+                                        match ArtifactProtocolMessage::decode(&mut &data[..]) {
+                                            Ok(ArtifactProtocolMessage::Announcement {
+                                                artifact_hash,
+                                                ..
+                                            }) => {
+                                                let coordinator =
+                                                    prover_coordinator_for_events.read().clone();
+                                                if let Some(coordinator) = coordinator {
+                                                    if coordinator
+                                                        .lookup_prepared_bundle_by_hash(artifact_hash)
+                                                        .is_none()
+                                                    {
+                                                        let request = ArtifactProtocolMessage::Request {
+                                                            artifact_hash,
+                                                        };
+                                                        let _ = pq_handle_for_status
+                                                            .send_message(
+                                                                peer_id,
+                                                                ARTIFACTS_PROTOCOL.to_string(),
+                                                                request.encode(),
+                                                            )
+                                                            .await;
+                                                    }
+                                                }
+                                            }
+                                            Ok(ArtifactProtocolMessage::Request { artifact_hash }) => {
+                                                let coordinator =
+                                                    prover_coordinator_for_events.read().clone();
+                                                if let Some(coordinator) = coordinator {
+                                                    let response = if let Some(bundle) =
+                                                        coordinator.lookup_prepared_bundle_by_hash(
+                                                            artifact_hash,
+                                                        )
+                                                    {
+                                                        ArtifactProtocolMessage::Response {
+                                                            artifact_hash,
+                                                            payload: bundle.payload,
+                                                            candidate_txs: bundle.candidate_txs,
+                                                        }
+                                                    } else {
+                                                        ArtifactProtocolMessage::NotFound {
+                                                            artifact_hash,
+                                                        }
+                                                    };
+                                                    let _ = pq_handle_for_status
+                                                        .send_message(
+                                                            peer_id,
+                                                            ARTIFACTS_PROTOCOL.to_string(),
+                                                            response.encode(),
+                                                        )
+                                                        .await;
+                                                }
+                                            }
+                                            Ok(ArtifactProtocolMessage::Response {
+                                                artifact_hash: _,
+                                                payload,
+                                                candidate_txs,
+                                            }) => {
+                                                let coordinator =
+                                                    prover_coordinator_for_events.read().clone();
+                                                if let Some(coordinator) = coordinator {
+                                                    let parent_hash =
+                                                        client_for_network.chain_info().best_hash;
+                                                    coordinator.import_network_artifact(
+                                                        parent_hash,
+                                                        payload,
+                                                        candidate_txs,
+                                                    );
+                                                }
+                                            }
+                                            Ok(ArtifactProtocolMessage::NotFound { .. }) => {}
+                                            Err(e) => {
+                                                tracing::debug!(
+                                                    peer = %hex::encode(peer_id),
+                                                    protocol = %protocol,
+                                                    error = %e,
+                                                    "Failed to decode artifact protocol message"
                                                 );
                                             }
                                         }
@@ -7971,42 +8283,69 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         loop {
                             interval.tick().await;
 
-                            // Get ready transactions from pool
-                            let ready_txs: Vec<_> = transaction_pool_for_prop
-                                .ready()
-                                .map(|tx| {
-                                    let hash: sp_core::H256 = *InPoolTransaction::hash(&*tx);
-                                    let data = InPoolTransaction::data(&*tx).encode();
-                                    (hash, data)
-                                })
-                                .collect();
+                            // Get ready transactions from pool, plus futures as a fallback.
+                            // InlineTx relays are not authoring locally, so a wallet-submitted
+                            // transfer that temporarily sits in `future` still needs to reach the
+                            // actual mining node instead of waiting forever on the relay.
+                            let mut candidate_txs: Vec<(sp_core::H256, Vec<u8>)> =
+                                transaction_pool_for_prop
+                                    .ready()
+                                    .map(|tx| {
+                                        let hash: sp_core::H256 = *InPoolTransaction::hash(&*tx);
+                                        let data = InPoolTransaction::data(&*tx).encode();
+                                        (hash, data)
+                                    })
+                                    .collect();
+                            let mut seen_hashes: std::collections::HashSet<sp_core::H256> =
+                                candidate_txs.iter().map(|(hash, _)| *hash).collect();
+                            for tx in transaction_pool_for_prop.futures() {
+                                let hash: sp_core::H256 = *InPoolTransaction::hash(&tx);
+                                if !seen_hashes.insert(hash) {
+                                    continue;
+                                }
+                                let data = InPoolTransaction::data(&tx).encode();
+                                candidate_txs.push((hash, data));
+                            }
 
                             // Find transactions we haven't broadcast yet
-                            let new_tx_pairs: Vec<(sp_core::H256, Vec<u8>)> = ready_txs
+                            let new_tx_pairs: Vec<(sp_core::H256, Vec<u8>)> = candidate_txs
                                 .into_iter()
                                 .filter(|(hash, _)| !broadcast_txs.contains(hash))
                                 .collect();
 
-                            // Extract data for broadcast and mark as broadcast
-                            let new_txs: Vec<Vec<u8>> = new_tx_pairs
-                                .iter()
-                                .map(|(hash, data)| {
-                                    broadcast_txs.insert(*hash);
-                                    data.clone()
-                                })
-                                .collect();
+                            // Broadcast new transactions. Only mark them as delivered if at least
+                            // one connected peer actually received the message; otherwise retry on
+                            // the next poll instead of stranding the tx forever.
+                            if !new_tx_pairs.is_empty() {
+                                let peer_count = pq_handle_for_tx_prop.peer_count().await;
+                                if peer_count == 0 {
+                                    tracing::debug!(
+                                        tx_count = new_tx_pairs.len(),
+                                        "Skipping tx propagation tick because no peers are connected"
+                                    );
+                                    continue;
+                                }
 
-                            // Broadcast new transactions
-                            if !new_txs.is_empty() {
+                                let new_txs: Vec<Vec<u8>> =
+                                    new_tx_pairs.iter().map(|(_, data)| data.clone()).collect();
                                 let msg = TransactionMessage::new(new_txs.clone());
                                 let encoded = msg.encode();
 
                                 let failed = pq_handle_for_tx_prop
                                     .broadcast_to_all(TRANSACTIONS_PROTOCOL, encoded)
                                     .await;
+                                let delivered = peer_count.saturating_sub(failed.len());
+
+                                if delivered > 0 {
+                                    for (hash, _) in &new_tx_pairs {
+                                        broadcast_txs.insert(*hash);
+                                    }
+                                }
 
                                 tracing::info!(
                                     tx_count = new_txs.len(),
+                                    delivered_peers = delivered,
+                                    peer_count,
                                     failed_peers = failed.len(),
                                     "📡 Broadcast transactions to peers"
                                 );
@@ -8053,7 +8392,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     "block-import-handler",
                     Some("consensus"),
                     async move {
-                        use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy};
+                        use sc_consensus::{BlockImport, BlockImportParams};
                         use sp_consensus::BlockOrigin;
                         use sp_runtime::traits::Block as BlockT;
 
@@ -8394,7 +8733,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 };
 
                                 // Compute pre_hash (hash of header WITHOUT seal)
-                                // This is what Blake3Algorithm::verify will use to validate the PoW
+                                // This is what Sha256dAlgorithm::verify will use to validate the PoW
                                 let pre_hash = header.hash();
                                 tracing::info!(
                                     block_number,
@@ -8408,18 +8747,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkInitialSync, header);
                                 import_params.body = Some(extrinsics);
-                                import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
-                                import_params.post_digests.push(seal_item);
-                                import_params.post_hash = Some(post_hash);
-
-                                // Add PowIntermediate - difficulty will be computed from parent
-                                // PowBlockImport::import_block requires this intermediate with key "pow1"
-                                // Setting difficulty to None causes it to be queried from the algorithm
-                                use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
-                                let intermediate = PowIntermediate::<sp_core::U256> {
-                                    difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
-                                };
-                                import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
+                                configure_pow_import_params(&mut import_params, seal_item, post_hash);
 
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
@@ -8981,16 +9309,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let extrinsics_for_ciphertexts = extrinsics.clone();
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkBroadcast, header_mut);
                                 import_params.body = Some(extrinsics);
-                                import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
-                                import_params.post_digests.push(seal_item);
-                                import_params.post_hash = Some(post_hash);
-
-                                // Add PowIntermediate - difficulty will be computed from parent
-                                use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
-                                let intermediate = PowIntermediate::<sp_core::U256> {
-                                    difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
-                                };
-                                import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
+                                configure_pow_import_params(&mut import_params, seal_item, post_hash);
 
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
@@ -9409,22 +9728,227 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 },
             )
         };
-        let prover_coordinator = ProverCoordinator::new(
+        let root_aggregation_for_coord = {
+            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
+            let pending_proofs = Arc::clone(&pending_proof_store);
+            Arc::new(move |candidate_txs: Vec<Vec<u8>>| {
+                let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                if filter_stats.dropped_total() > 0 {
+                    tracing::warn!(
+                        total_candidates = filter_stats.total,
+                        kept_candidates = filter_stats.kept,
+                        dropped_decode_errors = filter_stats.dropped_decode_errors,
+                        dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                        dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                        "Filtered conflicting shielded transfers before root-aggregation work package publication"
+                    );
+                }
+                let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
+                let pending_proofs_snapshot = { pending_proofs.lock().clone() };
+                build_root_aggregation_work_data(
+                    &filtered,
+                    da_params,
+                    &pending_ciphertexts_snapshot,
+                    &pending_proofs_snapshot,
+                )
+            })
+        };
+        let finalize_bundle_for_coord = {
+            let client = client.clone();
+            let pending_ciphertexts = Arc::clone(&pending_ciphertext_store);
+            let pending_proofs = Arc::clone(&pending_proof_store);
+            Arc::new(
+                move |parent_hash: H256,
+                      block_number: u64,
+                      candidate_txs: Vec<Vec<u8>>,
+                      root_proof_bytes: Vec<u8>| {
+                    let ordered = reorder_shielded_transfers(&candidate_txs)?;
+                    let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+                    if filter_stats.dropped_total() > 0 {
+                        tracing::warn!(
+                            block_number,
+                            total_candidates = filter_stats.total,
+                            kept_candidates = filter_stats.kept,
+                            dropped_decode_errors = filter_stats.dropped_decode_errors,
+                            dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                            dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
+                            "Filtered conflicting shielded transfers before final bundle assembly"
+                        );
+                    }
+                    let pending_ciphertexts_snapshot = { pending_ciphertexts.lock().clone() };
+                    let pending_proofs_snapshot = { pending_proofs.lock().clone() };
+                    finalize_merge_root_bundle_from_artifact(
+                        client.as_ref(),
+                        parent_hash,
+                        block_number,
+                        filtered,
+                        root_proof_bytes,
+                        da_params,
+                        &pending_ciphertexts_snapshot,
+                        &pending_proofs_snapshot,
+                    )
+                },
+            )
+        };
+        let prover_coordinator = ProverCoordinator::new_with_recursive_builders(
             coordinator_cfg,
             best_for_coord,
             pending_for_coord,
             build_for_coord,
+            finalize_bundle_for_coord,
+            Some(root_aggregation_for_coord),
         );
         prover_coordinator.start();
         prover_coordinator_for_rpc = Some(Arc::clone(&prover_coordinator));
+        *prover_coordinator_shared.write() = Some(Arc::clone(&prover_coordinator));
+        if let Some(handle) = pq_network_handle.clone() {
+            let coordinator_for_broadcast = Arc::clone(&prover_coordinator);
+            task_manager.spawn_handle().spawn(
+                "artifact-announcement-broadcast",
+                Some("network"),
+                async move {
+                    use crate::substrate::network_bridge::{
+                        ArtifactProtocolMessage, ARTIFACTS_PROTOCOL,
+                    };
+                    use std::collections::HashSet;
+
+                    let mut announced = HashSet::<[u8; 32]>::new();
+                    let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+                    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                    loop {
+                        tick.tick().await;
+                        let announcements = coordinator_for_broadcast.list_artifact_announcements();
+                        for announcement in announcements {
+                            if !announced.insert(announcement.artifact_hash) {
+                                continue;
+                            }
+                            let msg = ArtifactProtocolMessage::Announcement {
+                                artifact_hash: announcement.artifact_hash,
+                                tx_statements_commitment: announcement.tx_statements_commitment,
+                                tx_count: announcement.tx_count,
+                                proof_mode: match announcement.proof_mode {
+                                    consensus::ProvenBatchMode::InlineTx => {
+                                        pallet_shielded_pool::types::BlockProofMode::InlineTx
+                                    }
+                                    consensus::ProvenBatchMode::FlatBatches => {
+                                        pallet_shielded_pool::types::BlockProofMode::FlatBatches
+                                    }
+                                    consensus::ProvenBatchMode::MergeRoot => {
+                                        pallet_shielded_pool::types::BlockProofMode::MergeRoot
+                                    }
+                                },
+                                claimed_payout_amount: announcement.claimed_payout_amount,
+                            };
+                            let _ = handle
+                                .broadcast_to_all(ARTIFACTS_PROTOCOL, msg.encode())
+                                .await;
+                        }
+                    }
+                },
+            );
+        }
 
         // =======================================================================
         // Wire pending_txs_fn to coordinator-selected transaction set
         // =======================================================================
         let coordinator_for_pending = Arc::clone(&prover_coordinator);
         chain_state.set_pending_txs_fn(move || {
-            coordinator_for_pending.pending_transactions(max_block_txs)
+            coordinator_for_pending.authoring_transactions(max_block_txs)
         });
+
+        let hold_mining_while_proving = load_hold_mining_while_proving();
+        let selected_proof_mode = prepared_proof_mode_from_env();
+        let prepared_bundle_required_while_proving =
+            matches!(selected_proof_mode, PreparedProofMode::MergeRoot);
+        if prepared_bundle_required_while_proving && hold_mining_while_proving {
+            let client_for_mining_pause = client.clone();
+            let coordinator_for_mining_pause = Arc::clone(&prover_coordinator);
+            let min_ready_batch_txs = load_min_ready_proven_batch_txs();
+            let mining_pause_active = Arc::new(ParkingMutex::new(false));
+            let mining_pause_active_for_callback = Arc::clone(&mining_pause_active);
+            chain_state.set_mining_pause_fn(move || {
+                let chain_info = client_for_mining_pause.chain_info();
+                let parent_hash = chain_info.best_hash;
+                let block_number = chain_info.best_number.saturating_add(1);
+                let candidate_txs =
+                    coordinator_for_mining_pause.pending_transactions(max_block_txs);
+                let reason = match mining_pause_reason_for_pending_shielded_batch(
+                    coordinator_for_mining_pause.as_ref(),
+                    parent_hash,
+                    &candidate_txs,
+                    min_ready_batch_txs,
+                    selected_proof_mode,
+                ) {
+                    Ok(reason) => reason,
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "Failed to evaluate mining hold state for pending proven batch"
+                        );
+                        None
+                    }
+                };
+                let ready_trace = if reason.is_none() {
+                    match ready_bundle_trace_for_candidate(
+                        coordinator_for_mining_pause.as_ref(),
+                        parent_hash,
+                        block_number,
+                        &candidate_txs,
+                        min_ready_batch_txs,
+                        selected_proof_mode,
+                    ) {
+                        Ok(trace) => trace,
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "Failed to derive ready bundle trace for mining handoff"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                let mut pause_active = mining_pause_active_for_callback.lock();
+                match (&reason, ready_trace.as_ref(), *pause_active) {
+                    (Some(_), _, false) => {
+                        *pause_active = true;
+                    }
+                    (None, Some(trace), true) => {
+                        tracing::info!(
+                            target: "prover::last_mile",
+                            trace_ts_ms = unix_time_ms(),
+                            bundle_id = %trace.bundle_id,
+                            artifact_hash = %hex::encode(trace.artifact_hash),
+                            parent_hash = ?trace.parent_hash,
+                            block_number = trace.block_number,
+                            tx_count = trace.tx_count,
+                            tx_statements_commitment =
+                                %hex::encode(trace.tx_statements_commitment),
+                            "mining_unpaused"
+                        );
+                        *pause_active = false;
+                    }
+                    (None, _, true) => {
+                        *pause_active = false;
+                    }
+                    _ => {}
+                }
+                reason
+            });
+            tracing::info!(
+                min_ready_proven_batch_txs = min_ready_batch_txs,
+                proof_mode = ?selected_proof_mode,
+                "Mining will pause while shielded batches wait for a ready prepared bundle"
+            );
+        } else if prepared_bundle_required_while_proving {
+            tracing::warn!(
+                proof_mode = ?selected_proof_mode,
+                "Mining hold while proving is disabled; parent-bound prepared bundles may churn on stale parents"
+            );
+        }
 
         // Wire post-import callback to clear mined transactions
         let pool_for_import = Arc::clone(&pool_bridge);
@@ -9582,6 +10106,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let mined_history = Arc::new(parking_lot::Mutex::new(Default::default()));
     let rpc_service = Arc::new(ProductionRpcService::new(
         client.clone(),
+        transaction_pool.clone(),
         Arc::clone(&peer_count),
         Arc::clone(&sync_status),
         Arc::clone(&peer_details),
@@ -9592,6 +10117,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         mined_block_store,
         mined_history,
         miner_recipient,
+        pq_network_handle.clone(),
     ));
     // Create RPC module with all extensions
     let rpc_module = {
@@ -9610,71 +10136,69 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             .register_method("rpc_methods", |_, _, _| {
                 // Return a static list of methods we support
                 // Polkadot.js Apps uses this to discover available methods
-                let result: Result<serde_json::Value, jsonrpsee::types::ErrorObjectOwned> =
-                    Ok(serde_json::json!({
-                        "methods": [
-                            "chain_getBlock",
-                            "chain_getBlockHash",
-                            "chain_getHeader",
-                            "chain_getFinalizedHead",
-                            "chain_subscribeNewHead",
-                            "chain_subscribeFinalizedHeads",
-                            "chain_unsubscribeNewHead",
-                            "chain_unsubscribeFinalizedHeads",
-                            "state_call",
-                            "state_getKeys",
-                            "state_getKeysPaged",
-                            "state_getMetadata",
-                            "state_getPairs",
-                            "state_getReadProof",
-                            "state_getRuntimeVersion",
-                            "state_getStorage",
-                            "state_getStorageAt",
-                            "state_getStorageHash",
-                            "state_getStorageHashAt",
-                            "state_getStorageSize",
-                            "state_getStorageSizeAt",
-                            "state_queryStorage",
-                            "state_queryStorageAt",
-                            "state_subscribeRuntimeVersion",
-                            "state_subscribeStorage",
-                            "state_unsubscribeRuntimeVersion",
-                            "state_unsubscribeStorage",
-                            "system_chain",
-                            "system_chainType",
-                            "system_health",
-                            "system_localListenAddresses",
-                            "system_localPeerId",
-                            "system_name",
-                            "system_nodeRoles",
-                            "system_peers",
-                            "system_properties",
-                            "system_version",
-                            "author_hasKey",
-                            "author_hasSessionKeys",
-                            "author_insertKey",
-                            "author_pendingExtrinsics",
-                            "author_rotateKeys",
-                            "author_submitAndWatchExtrinsic",
-                            "author_submitExtrinsic",
-                            "author_unwatchExtrinsic",
-                            "block_getCommitmentProof",
-                            "da_getChunk",
-                            "da_getParams",
-                            "prover_getWorkPackage",
-                            "prover_submitWorkResult",
-                            "prover_getWorkStatus",
-                            "prover_getMarketParams",
-                            "archive_listProviders",
-                            "archive_getProvider",
-                            "archive_providerCount",
-                            "archive_listContracts",
-                            "archive_getContract",
-                            "rpc_methods",
-                            "hegemon_peerList",
-                            "hegemon_peerGraph"
-                        ]
-                    }));
+                let result: Result<serde_json::Value, jsonrpsee::types::ErrorObjectOwned> = {
+                    let legacy_pool_rpc_enabled = std::env::var("HEGEMON_ENABLE_LEGACY_POOL_RPC")
+                        .map(|raw| raw == "1" || raw.eq_ignore_ascii_case("true"))
+                        .unwrap_or(false);
+                    let mut methods = vec![
+                        "chain_getBlock",
+                        "chain_getBlockHash",
+                        "chain_getHeader",
+                        "chain_getFinalizedHead",
+                        "chain_subscribeNewHead",
+                        "chain_subscribeFinalizedHeads",
+                        "chain_unsubscribeNewHead",
+                        "chain_unsubscribeFinalizedHeads",
+                        "state_call",
+                        "state_getKeys",
+                        "state_getKeysPaged",
+                        "state_getMetadata",
+                        "state_getPairs",
+                        "state_getReadProof",
+                        "state_getRuntimeVersion",
+                        "state_getStorage",
+                        "state_getStorageAt",
+                        "state_getStorageHash",
+                        "state_getStorageHashAt",
+                        "state_getStorageSize",
+                        "state_getStorageSizeAt",
+                        "state_queryStorage",
+                        "state_queryStorageAt",
+                        "state_subscribeRuntimeVersion",
+                        "state_subscribeStorage",
+                        "state_unsubscribeRuntimeVersion",
+                        "state_unsubscribeStorage",
+                        "system_chain",
+                        "system_chainType",
+                        "system_health",
+                        "system_localListenAddresses",
+                        "system_localPeerId",
+                        "system_name",
+                        "system_nodeRoles",
+                        "system_peers",
+                        "system_properties",
+                        "system_version",
+                        "block_getCommitmentProof",
+                        "da_getChunk",
+                        "da_getParams",
+                        "prover_getWorkPackage",
+                        "prover_getStageWorkPackage",
+                        "prover_submitWorkResult",
+                        "prover_submitStageWorkResult",
+                        "prover_getWorkStatus",
+                        "prover_getMarketParams",
+                        "prover_getStagePlanStatus",
+                        "rpc_methods",
+                        "hegemon_peerList",
+                        "hegemon_peerGraph",
+                    ];
+                    if legacy_pool_rpc_enabled {
+                        methods.push("hegemon_poolWork");
+                        methods.push("hegemon_submitPoolShare");
+                        methods.push("hegemon_poolStatus");
+                    }
+                    Ok(serde_json::json!({ "methods": methods }))
+                };
                 result
             })
             .expect("rpc_methods registration should not fail");
@@ -9709,27 +10233,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         }
         if let Err(e) = module.merge(child_state_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Child State RPC");
-        }
-
-        // =====================================================================
-        // Author RPC (author_submitExtrinsic, author_pendingExtrinsics)
-        // =====================================================================
-
-        // Add Author RPC for transaction submission
-        use sc_rpc::author::{Author, AuthorApiServer};
-
-        let author_rpc = Author::new(
-            client.clone(),
-            transaction_pool.clone(),
-            keystore_container.keystore(),
-            executor.clone(),
-        );
-        if let Err(e) = module.merge(author_rpc.into_rpc()) {
-            tracing::warn!(error = %e, "Failed to merge Author RPC");
-        } else {
-            tracing::info!(
-                "Author RPC wired (author_submitExtrinsic, author_pendingExtrinsics, etc.)"
-            );
         }
 
         // Add System RPC (system_name, system_version, system_chain, system_health, etc.)
@@ -9863,7 +10366,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             bootstrap_nodes: pq_service_config
                 .bootstrap_nodes
                 .iter()
-                .map(|addr| addr.to_string())
+                .map(|node| node.seed.clone())
                 .collect(),
             pq_verbose: pq_service_config.verbose_logging,
             max_peers: pq_service_config.max_peers as u32,
@@ -9932,14 +10435,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             }
         } else {
             tracing::info!("Prover RPC disabled (mining coordinator not active)");
-        }
-
-        // Add Archive RPC (provider registry)
-        let archive_rpc = ArchiveRpc::new(rpc_service);
-        if let Err(e) = module.merge(archive_rpc.into_rpc()) {
-            tracing::warn!(error = %e, "Failed to merge Archive RPC");
-        } else {
-            tracing::info!("Archive RPC wired (archive_listProviders, archive_getProvider)");
         }
 
         module
@@ -10118,32 +10613,82 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::MutexGuard as StdMutexGuard;
+
+    struct BlockProofModeGuard {
+        previous: Option<String>,
+        _guard: StdMutexGuard<'static, ()>,
+    }
+
+    impl Drop for BlockProofModeGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe {
+                    std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", value);
+                },
+                None => unsafe {
+                    std::env::remove_var("HEGEMON_BLOCK_PROOF_MODE");
+                },
+            }
+        }
+    }
+
+    fn set_block_proof_mode(mode: &str) -> BlockProofModeGuard {
+        let guard = crate::substrate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", mode);
+        }
+        BlockProofModeGuard {
+            previous,
+            _guard: guard,
+        }
+    }
+
+    #[test]
+    fn flat_mode_falls_back_to_inline_tx_after_tx_proof_manifest_removal() {
+        let _guard = set_block_proof_mode("flat");
+        assert_eq!(prepared_proof_mode_from_env(), PreparedProofMode::InlineTx);
+    }
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
-        let nullifiers =
-            frame_support::BoundedVec::try_from(vec![nullifier]).expect("bounded nullifiers");
-        let commitments = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
-            .expect("bounded commitments");
-        let ciphertext_hashes = frame_support::BoundedVec::try_from(vec![[binding_byte; 48]])
-            .expect("bounded ciphertext hashes");
-        let ciphertext_sizes =
-            frame_support::BoundedVec::try_from(vec![32u32]).expect("bounded ciphertext sizes");
-
-        runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::ShieldedPool(
-            ShieldedPoolCall::shielded_transfer_unsigned_sidecar {
-                proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
-                nullifiers,
-                commitments,
-                ciphertext_hashes,
-                ciphertext_sizes,
+        kernel_shielded_extrinsic(
+            ACTION_SHIELDED_TRANSFER_SIDECAR,
+            vec![nullifier],
+            ShieldedTransferSidecarArgs {
+                proof: Vec::new(),
+                commitments: vec![[binding_byte; 48]],
+                ciphertext_hashes: vec![[binding_byte; 48]],
+                ciphertext_sizes: vec![32u32],
                 anchor: [7u8; 48],
-                binding_hash: pallet_shielded_pool::types::BindingHash {
-                    data: [binding_byte; 64],
-                },
+                balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+                binding_hash: [binding_byte; 64],
                 stablecoin: None,
                 fee: 0,
-            },
-        ))
+            }
+            .encode(),
+        )
+        .encode()
+    }
+
+    fn test_inline_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
+        kernel_shielded_extrinsic(
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            vec![nullifier],
+            pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+                proof: vec![binding_byte],
+                commitments: vec![[binding_byte; 48]],
+                ciphertexts: vec![pallet_shielded_pool::types::EncryptedNote::default()],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+                binding_hash: [binding_byte; 64],
+                stablecoin: None,
+                fee: 0,
+            }
+            .encode(),
+        )
         .encode()
     }
 
@@ -10289,6 +10834,205 @@ mod tests {
         let len = proof_da_blob_len_from_manifest(&[a, b]).expect("len");
         assert_eq!(len, 155);
     }
+
+    #[test]
+    fn mining_pause_reason_requires_ready_bundle_for_proofless_batch() {
+        let parent_hash = H256::repeat_byte(0x41);
+        let coordinator = ProverCoordinator::new(
+            ProverCoordinatorConfig {
+                workers: 0,
+                target_txs: 1,
+                queue_capacity: 1,
+                max_inflight_per_level: 1,
+                liveness_lane: true,
+                adaptive_liveness_timeout: Duration::from_millis(0),
+                incremental_upsizing: false,
+                poll_interval: Duration::from_millis(50),
+                job_timeout: Duration::from_secs(30),
+                work_package_ttl: Duration::from_secs(30),
+                max_submissions_per_package: 16,
+                max_submissions_per_source: 32,
+                max_payload_bytes: 4 * 1024 * 1024,
+            },
+            Arc::new(move || (parent_hash, 7u64)),
+            Arc::new(|_max_txs| Vec::new()),
+            Arc::new(|_, _, _| Err("unused".to_string())),
+        );
+
+        let candidate_txs = vec![test_sidecar_transfer_extrinsic(9, [3u8; 48])];
+        let reason = mining_pause_reason_for_pending_shielded_batch(
+            coordinator.as_ref(),
+            parent_hash,
+            &candidate_txs,
+            1,
+            PreparedProofMode::MergeRoot,
+        )
+        .expect("pause reason evaluation succeeds");
+        assert!(
+            reason.is_some(),
+            "proofless batch without ready bundle should pause mining"
+        );
+
+        let decoded = runtime::UncheckedExtrinsic::decode(&mut &candidate_txs[0][..])
+            .expect("candidate decodes");
+        let statement_bindings =
+            statement_bindings_from_extrinsics(&[decoded]).expect("statement bindings");
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .expect("commitment");
+        coordinator.import_network_artifact(
+            parent_hash,
+            pallet_shielded_pool::types::CandidateArtifact {
+                version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment,
+                da_root: [0u8; 48],
+                da_chunk_count: 0,
+                commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                proof_mode: pallet_shielded_pool::types::BlockProofMode::MergeRoot,
+                flat_batches: Vec::new(),
+                merge_root: Some(pallet_shielded_pool::types::MergeRootProofPayload {
+                    root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                    metadata: pallet_shielded_pool::types::MergeRootMetadata {
+                        tree_arity: 8,
+                        tree_levels: 1,
+                        leaf_count: 1,
+                        leaf_manifest_commitment: [0u8; 48],
+                    },
+                    diagnostics_leaf_proofs: Vec::new(),
+                }),
+                artifact_claim: None,
+            },
+            candidate_txs.clone(),
+        );
+
+        let reason = mining_pause_reason_for_pending_shielded_batch(
+            coordinator.as_ref(),
+            parent_hash,
+            &candidate_txs,
+            1,
+            PreparedProofMode::MergeRoot,
+        )
+        .expect("pause reason evaluation succeeds");
+        assert!(
+            reason.is_none(),
+            "mining should resume once the matching prepared bundle exists"
+        );
+    }
+
+    #[test]
+    fn mining_pause_reason_skips_ready_bundle_for_inline_tx_batch_with_inline_proofs() {
+        let _guard = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(0x42);
+        let coordinator = ProverCoordinator::new(
+            ProverCoordinatorConfig {
+                workers: 0,
+                target_txs: 1,
+                queue_capacity: 1,
+                max_inflight_per_level: 1,
+                liveness_lane: true,
+                adaptive_liveness_timeout: Duration::from_millis(0),
+                incremental_upsizing: false,
+                poll_interval: Duration::from_millis(50),
+                job_timeout: Duration::from_secs(30),
+                work_package_ttl: Duration::from_secs(30),
+                max_submissions_per_package: 16,
+                max_submissions_per_source: 32,
+                max_payload_bytes: 4 * 1024 * 1024,
+            },
+            Arc::new(move || (parent_hash, 7u64)),
+            Arc::new(|_max_txs| Vec::new()),
+            Arc::new(|_, _, _| Err("unused".to_string())),
+        );
+
+        let candidate_txs = vec![test_inline_transfer_extrinsic(5, [4u8; 48])];
+        let reason = mining_pause_reason_for_pending_shielded_batch(
+            coordinator.as_ref(),
+            parent_hash,
+            &candidate_txs,
+            1,
+            PreparedProofMode::InlineTx,
+        )
+        .expect("pause reason evaluation succeeds");
+        assert!(
+            reason.is_none(),
+            "inline_tx batch with canonical inline proofs should not pause mining"
+        );
+    }
+
+    #[test]
+    fn ready_bundle_trace_skips_inline_tx_batch_with_inline_proofs() {
+        let _guard = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(0x43);
+        let block_number = 8u64;
+        let coordinator = ProverCoordinator::new(
+            ProverCoordinatorConfig {
+                workers: 0,
+                target_txs: 1,
+                queue_capacity: 1,
+                max_inflight_per_level: 1,
+                liveness_lane: true,
+                adaptive_liveness_timeout: Duration::from_millis(0),
+                incremental_upsizing: false,
+                poll_interval: Duration::from_millis(50),
+                job_timeout: Duration::from_secs(30),
+                work_package_ttl: Duration::from_secs(30),
+                max_submissions_per_package: 16,
+                max_submissions_per_source: 32,
+                max_payload_bytes: 4 * 1024 * 1024,
+            },
+            Arc::new(move || (parent_hash, 7u64)),
+            Arc::new(|_max_txs| Vec::new()),
+            Arc::new(|_, _, _| Err("unused".to_string())),
+        );
+
+        let candidate_txs = vec![test_inline_transfer_extrinsic(6, [5u8; 48])];
+        let decoded = runtime::UncheckedExtrinsic::decode(&mut &candidate_txs[0][..])
+            .expect("candidate decodes");
+        let statement_bindings =
+            statement_bindings_from_extrinsics(&[decoded]).expect("statement bindings");
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .expect("commitment");
+        coordinator.import_network_artifact(
+            parent_hash,
+            pallet_shielded_pool::types::CandidateArtifact {
+                version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment,
+                da_root: [0u8; 48],
+                da_chunk_count: 0,
+                commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                flat_batches: Vec::new(),
+                merge_root: None,
+                artifact_claim: None,
+            },
+            candidate_txs.clone(),
+        );
+
+        let trace = ready_bundle_trace_for_candidate(
+            coordinator.as_ref(),
+            parent_hash,
+            block_number,
+            &candidate_txs,
+            1,
+            PreparedProofMode::InlineTx,
+        )
+        .expect("trace evaluation succeeds");
+        assert!(
+            trace.is_none(),
+            "inline_tx batches with canonical inline proofs should not emit ready-bundle traces"
+        );
+    }
 }
 
 // =============================================================================
@@ -10431,7 +11175,7 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String>
+    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Sha256dSeal) -> Result<H256, String>
            + Send
            + Sync
            + 'static {
@@ -10468,7 +11212,7 @@ impl BlockImportTracker {
                 tracing::info!(
                     block_number = template.number,
                     block_hash = %hex::encode(block_hash.as_bytes()),
-                    nonce = seal.nonce,
+                    nonce = ?seal.nonce,
                     difficulty = seal.difficulty,
                     "Block imported via BlockImportTracker"
                 );
@@ -10531,6 +11275,9 @@ pub fn wire_import_tracker(
 mod import_tests {
     use super::*;
     use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
+    use sp_runtime::generic::Digest;
+    use sp_runtime::traits::Header as HeaderT;
+    use sp_runtime::DigestItem;
 
     #[test]
     fn test_full_block_import_config_default() {
@@ -10566,8 +11313,8 @@ mod import_tests {
         let callback = tracker.create_import_callback();
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
-        let seal = Blake3Seal {
-            nonce: 12345,
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
@@ -10592,8 +11339,8 @@ mod import_tests {
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         // Create invalid seal (work doesn't meet target)
-        let seal = Blake3Seal {
-            nonce: 0,
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(0),
             difficulty: 0x0300ffff,        // Very hard
             work: H256::repeat_byte(0xff), // Max value won't meet target
         };
@@ -10619,5 +11366,28 @@ mod import_tests {
         // Best block should come from tracker
         assert_eq!(provider.best_number(), 0);
         assert_eq!(provider.best_hash(), H256::zero());
+    }
+
+    #[test]
+    fn test_configure_pow_import_params_preserves_pow_fork_choice() {
+        let header = runtime::Header::new(
+            1,
+            H256::zero(),
+            H256::zero(),
+            H256::zero(),
+            Digest::default(),
+        );
+        let mut import_params = BlockImportParams::new(BlockOrigin::Own, header);
+        let post_hash = H256::repeat_byte(0x42);
+        let seal_item = DigestItem::Seal(*b"pow_", vec![1, 2, 3, 4]);
+
+        configure_pow_import_params(&mut import_params, seal_item, post_hash);
+
+        assert!(
+            import_params.fork_choice.is_none(),
+            "PowBlockImport must supply cumulative-difficulty fork choice"
+        );
+        assert_eq!(import_params.post_hash, Some(post_hash));
+        assert_eq!(import_params.post_digests.len(), 1);
     }
 }

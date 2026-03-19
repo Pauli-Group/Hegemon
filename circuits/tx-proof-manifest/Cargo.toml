@@ -1,0 +1,19 @@
+[package]
+name = "tx-proof-manifest"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pauli Group Inc."]
+license = "MIT"
+description = "Prototype proof-bytes batch lane for Hegemon prover recovery"
+repository = "https://github.com/Pauli-Group/Hegemon"
+
+[dependencies]
+bincode = "1"
+blake3 = "1.5"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+transaction-circuit = { path = "../transaction", default-features = false }
+p3-field = { workspace = true }
+
+[lints]
+workspace = true

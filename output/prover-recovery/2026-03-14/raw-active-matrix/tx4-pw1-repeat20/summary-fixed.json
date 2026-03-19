@@ -1,0 +1,64 @@
+{
+  "generated_utc": "2026-03-15T06:08:21.872478Z",
+  "trial_count_total": 20,
+  "trial_count_ok": 20,
+  "proof_plus_prepare_ms": {
+    "count": 20,
+    "min": 6081,
+    "median": 6301.5,
+    "mean": 6313.25,
+    "p90": 6576,
+    "max": 6596
+  },
+  "proof_production_ms": {
+    "count": 20,
+    "min": 5709,
+    "median": 5884.5,
+    "mean": 5926.1,
+    "p90": 6156,
+    "max": 6193
+  },
+  "prepare_ms": {
+    "count": 20,
+    "min": 243,
+    "median": 383.0,
+    "mean": 387.15,
+    "p90": 430,
+    "max": 440
+  },
+  "ready_to_template_active_ms": {
+    "count": 20,
+    "min": 362,
+    "median": 370.5,
+    "mean": 369.7,
+    "p90": 376,
+    "max": 380
+  },
+  "template_to_first_found_ms": {
+    "count": 20,
+    "min": 18246,
+    "median": 80293.5,
+    "mean": 117281.8,
+    "p90": 220037,
+    "max": 472945
+  },
+  "template_to_bundle_import_ms": {
+    "count": 20,
+    "min": 18313,
+    "median": 80358.5,
+    "mean": 117348.25,
+    "p90": 220103,
+    "max": 473013
+  },
+  "total_wall_ms": {
+    "count": 20,
+    "min": 25261,
+    "median": 87030.5,
+    "mean": 124031.2,
+    "p90": 226547,
+    "max": 479475
+  },
+  "first_eligible_block_included_bundle_yes": 20,
+  "first_eligible_block_included_bundle_no": 0,
+  "under_60s_proof_plus_prepare_count": 20
+}

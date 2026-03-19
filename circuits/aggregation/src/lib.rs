@@ -3,20 +3,22 @@
 //! This crate produces a single batch-STARK proof that attests a list of
 //! transaction proofs were verified inside a recursion circuit.
 
+mod v5;
+
 use p3_air::{Air, BaseAir};
 use p3_batch_stark::common::{GlobalPreprocessed, PreprocessedInstanceMeta};
 use p3_batch_stark::{CommonData, StarkGenericConfig};
-use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner, WitnessId};
+use p3_circuit::{Circuit, CircuitBuilder, CircuitError, CircuitRunner, Op, WitnessId};
 use p3_circuit_prover::common::get_airs_and_degrees_with_prep;
 use p3_circuit_prover::common::CircuitTableAir;
-use p3_circuit_prover::{config as circuit_config, BatchStarkProver, TablePacking};
+use p3_circuit_prover::{BatchStarkProver, TablePacking};
 use p3_commit::Pcs;
-use p3_field::{BasedVectorSpace, PrimeField64};
+use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
-use p3_recursion::{generate_challenges, verify_circuit};
+use p3_recursion::{generate_challenges, verify_circuit, Recursive};
 use p3_uni_stark::verify as verify_stark;
 use p3_uni_stark::SymbolicAirBuilder;
 use p3_uni_stark::Val as StarkVal;
@@ -30,13 +32,25 @@ use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 use thiserror::Error;
+use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+use transaction_circuit::keys::generate_keys;
+use transaction_circuit::note::{MerklePath, NoteData, OutputNoteWitness};
+use transaction_circuit::proof;
 use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
     p3_config::{
         config_with_fri, Challenge, Compress, Config, Hash, TransactionProofP3, Val, DIGEST_ELEMS,
         FRI_LOG_BLOWUP_FAST, FRI_LOG_BLOWUP_PROD, FRI_POW_BITS, POSEIDON2_RATE,
     },
-    TransactionAirP3, TransactionProof,
+    p3_prover::TransactionProofParams,
+    InputNoteWitness, StablecoinPolicyBinding, TransactionAirP3, TransactionProof,
+    TransactionWitness,
+};
+
+pub use v5::{
+    prewarm_thread_local_aggregation_cache_from_env, prove_aggregation, prove_leaf_aggregation,
+    prove_merge_aggregation, AggregationNodeKind, AggregationProofV5Payload,
+    AGGREGATION_PROOF_FORMAT_ID_V5, AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
 };
 
 type InnerFri = FriProofTargets<
@@ -54,6 +68,9 @@ type InnerFri = FriProofTargets<
 type InnerVerifierInputs =
     StarkVerifierInputsBuilder<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>;
 
+const DEFAULT_AGG_OUTER_LOG_BLOWUP: usize = 2;
+const DEFAULT_AGG_OUTER_NUM_QUERIES: usize = 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ProofShape {
     degree_bits: usize,
@@ -70,17 +87,23 @@ struct AggregationProverKey {
     shape: ProofShape,
 }
 
-type OuterWitnessMultiplicities = Vec<StarkVal<circuit_config::GoldilocksConfig>>;
+type OuterWitnessMultiplicities = Vec<StarkVal<Config>>;
 
 struct ProofWitnessAssignmentPlan {
+    value_positions: Vec<usize>,
     witness_ids: Vec<WitnessId>,
+}
+
+struct ProofWitnessAssignmentPlanSpec {
+    targets: Vec<p3_recursion::Target>,
 }
 
 struct AggregationProverCacheEntry {
     circuit: Circuit<Challenge>,
     verifier_inputs: Vec<InnerVerifierInputs>,
     witness_assignment_plans: Vec<ProofWitnessAssignmentPlan>,
-    common: Arc<CommonData<circuit_config::GoldilocksConfig>>,
+    airs: Vec<CircuitTableAir<Config, 2>>,
+    common: Arc<CommonData<Config>>,
     witness_multiplicities: OuterWitnessMultiplicities,
 }
 
@@ -97,7 +120,7 @@ thread_local! {
 
 #[derive(Default)]
 struct AggregationCommonCacheState {
-    entries: HashMap<AggregationProverKey, Arc<CommonData<circuit_config::GoldilocksConfig>>>,
+    entries: HashMap<AggregationProverKey, Arc<CommonData<Config>>>,
     in_progress: HashSet<AggregationProverKey>,
 }
 
@@ -133,11 +156,51 @@ fn aggregation_lookup_threads() -> usize {
         .max(1)
 }
 
+fn aggregation_outer_log_blowup() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_LOG_BLOWUP")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_AGG_OUTER_LOG_BLOWUP)
+        .max(1)
+}
+
+fn aggregation_outer_num_queries() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_NUM_QUERIES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_AGG_OUTER_NUM_QUERIES)
+        .max(1)
+}
+
+fn aggregation_outer_config() -> Config {
+    config_with_fri(
+        aggregation_outer_log_blowup(),
+        aggregation_outer_num_queries(),
+    )
+    .config
+}
+
+pub(crate) fn aggregation_table_packing() -> TablePacking {
+    let witness_lanes = std::env::var("HEGEMON_AGG_WITNESS_LANES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(4);
+    let add_lanes = std::env::var("HEGEMON_AGG_ADD_LANES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(4);
+    let mul_lanes = std::env::var("HEGEMON_AGG_MUL_LANES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1);
+    TablePacking::new(witness_lanes, add_lanes, mul_lanes)
+}
+
 fn build_common_data_parallel(
-    config: &circuit_config::GoldilocksConfig,
-    airs: &mut [CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
+    config: &Config,
+    airs: &mut [CircuitTableAir<Config, 2>],
     trace_ext_degree_bits: &[usize],
-) -> CommonData<circuit_config::GoldilocksConfig> {
+) -> CommonData<Config> {
     let started = Instant::now();
     let profile = std::env::var("HEGEMON_AGG_PROFILE")
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
@@ -181,7 +244,7 @@ fn build_common_data_parallel(
 
         let domain = <_ as Pcs<
             Challenge,
-            <circuit_config::GoldilocksConfig as StarkGenericConfig>::Challenger,
+            <Config as StarkGenericConfig>::Challenger,
         >>::natural_domain_for_degree(pcs, ext_degree);
         let matrix_index = domains_and_traces.len();
         domains_and_traces.push((domain, preprocessed));
@@ -207,7 +270,7 @@ fn build_common_data_parallel(
     } else {
         let (commitment, prover_data) = <_ as Pcs<
             Challenge,
-            <circuit_config::GoldilocksConfig as StarkGenericConfig>::Challenger,
+            <Config as StarkGenericConfig>::Challenger,
         >>::commit_preprocessing(pcs, domains_and_traces);
         Some(GlobalPreprocessed {
             commitment,
@@ -290,6 +353,8 @@ pub enum AggregationError {
     InvalidPublicInputs { index: usize, message: String },
     #[error("transaction proof {index} encoding invalid")]
     InvalidProofFormat { index: usize },
+    #[error("child proof {index} encoding invalid: {message}")]
+    InvalidChildProof { index: usize, message: String },
     #[error("transaction proof {index} shape invalid: {message}")]
     InvalidProofShape { index: usize, message: String },
     #[error(
@@ -302,8 +367,12 @@ pub enum AggregationError {
     },
     #[error("transaction proof {index} shape mismatch")]
     ProofShapeMismatch { index: usize },
+    #[error("child proof {index} shape mismatch: {message}")]
+    ChildProofShapeMismatch { index: usize, message: String },
     #[error("transaction proof final polynomial length invalid")]
     InvalidFinalPolynomialLength,
+    #[error("aggregation payload invalid: {0}")]
+    InvalidAggregationPayload(String),
     #[error("recursion circuit build failed: {0}")]
     CircuitBuild(String),
     #[error("recursion trace generation failed: {0}")]
@@ -390,171 +459,133 @@ fn infer_log_blowup_from_proof_shape(proof: &TransactionProofP3) -> Option<usize
     observed_log_max_height?.checked_sub(baseline)
 }
 
-fn collect_verifier_witness_targets(inputs: &InnerVerifierInputs) -> Vec<p3_recursion::Target> {
-    let mut targets = Vec::new();
-    let commitment_targets = &inputs.proof_targets.commitments_targets;
-    targets.extend(
-        commitment_targets
-            .trace_targets
-            .hash_targets
-            .iter()
-            .copied(),
-    );
-    targets.extend(
-        commitment_targets
-            .quotient_chunks_targets
-            .hash_targets
-            .iter()
-            .copied(),
-    );
-    if let Some(commit_targets) = commitment_targets.random_commit.as_ref() {
-        targets.extend(commit_targets.hash_targets.iter().copied());
-    }
-
-    let opened_targets = &inputs.proof_targets.opened_values_targets;
-    targets.extend(opened_targets.trace_local_targets.iter().copied());
-    targets.extend(opened_targets.trace_next_targets.iter().copied());
-    if let Some(preprocessed_targets) = opened_targets.preprocessed_local_targets.as_ref() {
-        targets.extend(preprocessed_targets.iter().copied());
-    }
-    if let Some(preprocessed_targets) = opened_targets.preprocessed_next_targets.as_ref() {
-        targets.extend(preprocessed_targets.iter().copied());
-    }
-    for chunk_targets in &opened_targets.quotient_chunks_targets {
-        targets.extend(chunk_targets.iter().copied());
-    }
-    if let Some(random_targets) = opened_targets.random_targets.as_ref() {
-        targets.extend(random_targets.iter().copied());
-    }
-
-    let fri_targets = &inputs.proof_targets.opening_proof;
-    for commit_targets in &fri_targets.commit_phase_commits {
-        targets.extend(commit_targets.hash_targets.iter().copied());
-    }
-    for pow_target in &fri_targets.commit_pow_witnesses {
-        targets.push(pow_target.witness);
-    }
-    targets.extend(fri_targets.final_poly.iter().copied());
-    targets.push(fri_targets.pow_witness.witness);
-
-    for query_targets in &fri_targets.query_proofs {
-        for batch_targets in &query_targets.input_proof {
-            for row_targets in &batch_targets.opened_values {
-                targets.extend(row_targets.iter().copied());
-            }
-            for hash_targets in &batch_targets.opening_proof.hash_proof_targets {
-                targets.extend(hash_targets.iter().copied());
-            }
-        }
-
-        for step_targets in &query_targets.commit_phase_openings {
-            targets.push(step_targets.sibling_value);
-            for hash_targets in &step_targets.opening_proof.hash_proof_targets {
-                targets.extend(hash_targets.iter().copied());
-            }
-        }
-    }
-    targets
-}
-
-fn build_witness_assignment_plans(
-    circuit: &Circuit<Challenge>,
+fn build_witness_assignment_plan_specs(
     verifier_inputs: &[InnerVerifierInputs],
-) -> Result<Vec<ProofWitnessAssignmentPlan>, AggregationError> {
+    representative_proof: &TransactionProofP3,
+) -> Result<Vec<ProofWitnessAssignmentPlanSpec>, AggregationError> {
     verifier_inputs
         .iter()
         .map(|inputs| {
-            let targets = collect_verifier_witness_targets(inputs);
-            let mut witness_ids = Vec::with_capacity(targets.len());
-            for target in targets {
-                let witness_id = circuit.expr_to_widx.get(&target).copied().ok_or_else(|| {
-                    AggregationError::CircuitBuild(
-                        "failed to resolve witness index for verifier target".to_string(),
-                    )
-                })?;
-                witness_ids.push(witness_id);
-            }
-            Ok(ProofWitnessAssignmentPlan { witness_ids })
+            let (targets, _values) = inputs.private_witness_inputs(representative_proof, &None);
+            Ok(ProofWitnessAssignmentPlanSpec { targets })
         })
         .collect()
 }
 
-fn collect_proof_witness_values(proof: &TransactionProofP3) -> Vec<Challenge> {
-    let mut values = Vec::new();
-    let proof_commitments = &proof.commitments;
-    values.extend(
-        proof_commitments
-            .trace
-            .as_ref()
+fn resolve_witness_assignment_plans(
+    circuit: &Circuit<Challenge>,
+    specs: &[ProofWitnessAssignmentPlanSpec],
+) -> Result<Vec<ProofWitnessAssignmentPlan>, AggregationError> {
+    let public_rows = circuit.public_rows.iter().copied().collect::<HashSet<_>>();
+    let witness_outputs = collect_witness_input_outputs(circuit);
+
+    let plans = specs.iter()
+        .enumerate()
+        .map(|(plan_index, spec)| {
+            let mut value_positions = Vec::new();
+            let mut witness_ids = Vec::new();
+            let mut filtered_public = 0usize;
+            let mut filtered_non_witness = 0usize;
+            let mut filtered_preview = Vec::new();
+
+            for (value_index, target) in spec.targets.iter().copied().enumerate() {
+                let witness_id = circuit
+                    .expr_to_widx
+                    .get(&target)
+                    .copied()
+                    .ok_or_else(|| {
+                        AggregationError::CircuitBuild(
+                            "failed to resolve private witness target after lowering".to_string(),
+                        )
+                    })?;
+                if public_rows.contains(&witness_id) {
+                    filtered_public += 1;
+                    continue;
+                }
+                if !witness_outputs.contains(&witness_id) {
+                    filtered_non_witness += 1;
+                    if filtered_preview.len() < 8 {
+                        filtered_preview.push((
+                            value_index,
+                            target.0,
+                            witness_id.0,
+                            describe_witness_origin(circuit, witness_id),
+                        ));
+                    }
+                    continue;
+                }
+
+                value_positions.push(value_index);
+                witness_ids.push(witness_id);
+            }
+
+            if std::env::var("HEGEMON_AGG_PROFILE")
+                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                eprintln!(
+                    "aggregation_profile stage=leaf_assignment_resolved plan_index={} witness_targets={} filtered_targets={} filtered_public={} filtered_non_witness={} filtered_preview={:?}",
+                    plan_index,
+                    witness_ids.len(),
+                    spec.targets.len().saturating_sub(witness_ids.len()),
+                    filtered_public,
+                    filtered_non_witness,
+                    filtered_preview
+                );
+            }
+
+            Ok(ProofWitnessAssignmentPlan {
+                value_positions,
+                witness_ids,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if std::env::var("HEGEMON_AGG_PROFILE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        let assigned = plans
             .iter()
+            .flat_map(|plan| plan.witness_ids.iter().copied())
+            .collect::<HashSet<_>>();
+        let missing = witness_outputs
+            .difference(&assigned)
             .copied()
-            .map(Challenge::from),
-    );
-    values.extend(
-        proof_commitments
-            .quotient_chunks
-            .as_ref()
-            .iter()
-            .copied()
-            .map(Challenge::from),
-    );
-    if let Some(random_commitment) = proof_commitments.random.as_ref() {
-        values.extend(
-            random_commitment
-                .as_ref()
-                .iter()
-                .copied()
-                .map(Challenge::from),
+            .collect::<Vec<_>>();
+        eprintln!(
+            "aggregation_profile stage=leaf_assignment_global witness_input_total={} assigned_total={} missing_total={} missing_preview={:?}",
+            witness_outputs.len(),
+            assigned.len(),
+            missing.len(),
+            missing.iter().take(8).collect::<Vec<_>>()
         );
     }
 
-    let opened_values = &proof.opened_values;
-    values.extend(opened_values.trace_local.iter().copied());
-    values.extend(opened_values.trace_next.iter().copied());
-    if let Some(preprocessed_values) = opened_values.preprocessed_local.as_ref() {
-        values.extend(preprocessed_values.iter().copied());
-    }
-    if let Some(preprocessed_values) = opened_values.preprocessed_next.as_ref() {
-        values.extend(preprocessed_values.iter().copied());
-    }
-    for chunk_values in &opened_values.quotient_chunks {
-        values.extend(chunk_values.iter().copied());
-    }
-    if let Some(random_values) = opened_values.random.as_ref() {
-        values.extend(random_values.iter().copied());
-    }
+    Ok(plans)
+}
 
-    let fri_proof = &proof.opening_proof;
-    for commit_values in &fri_proof.commit_phase_commits {
-        values.extend(commit_values.as_ref().iter().copied().map(Challenge::from));
-    }
-    values.extend(
-        fri_proof
-            .commit_pow_witnesses
-            .iter()
-            .copied()
-            .map(Challenge::from),
-    );
-    values.extend(fri_proof.final_poly.iter().copied());
-    values.push(Challenge::from(fri_proof.query_pow_witness));
+fn collect_witness_input_outputs(circuit: &Circuit<Challenge>) -> HashSet<WitnessId> {
+    circuit
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::NonPrimitiveOpWithExecutor {
+                executor, outputs, ..
+            } if executor
+                .op_type()
+                .eq(&p3_circuit::NonPrimitiveOpType::WitnessInput) =>
+            {
+                Some(outputs)
+            }
+            _ => None,
+        })
+        .flat_map(|outputs| outputs.iter().flatten().copied())
+        .collect()
+}
 
-    for query_proof in &fri_proof.query_proofs {
-        for batch_proof in &query_proof.input_proof {
-            for row_values in &batch_proof.opened_values {
-                values.extend(row_values.iter().copied().map(Challenge::from));
-            }
-            for hash_values in &batch_proof.opening_proof {
-                values.extend(hash_values.iter().copied().map(Challenge::from));
-            }
-        }
-        for step_proof in &query_proof.commit_phase_openings {
-            values.push(step_proof.sibling_value);
-            for hash_values in &step_proof.opening_proof {
-                values.extend(hash_values.iter().copied().map(Challenge::from));
-            }
-        }
-    }
-    values
+fn collect_proof_witness_values(proof: &TransactionProofP3) -> Vec<Challenge> {
+    p3_recursion::ProofTargets::<Config, HashTargets<Val, DIGEST_ELEMS>, InnerFri>::get_private_values(proof)
 }
 
 fn build_aggregation_prover_cache_entry(
@@ -620,10 +651,46 @@ fn build_aggregation_prover_cache_entry(
     }
 
     let circuit_build_started = Instant::now();
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=cache_circuit_build_start tx_count={} total_ms={}",
+            key.tx_count,
+            started.elapsed().as_millis()
+        );
+    }
+    let witness_assignment_specs =
+        build_witness_assignment_plan_specs(&verifier_inputs, representative_proof)?;
     let circuit = circuit_builder
         .build()
         .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
-    let witness_assignment_plans = build_witness_assignment_plans(&circuit, &verifier_inputs)?;
+    if profile {
+        let owned = collect_owned_witnesses(&circuit);
+        let unowned = (0..circuit.witness_count)
+            .map(WitnessId)
+            .filter(|witness_id| !owned.contains(witness_id))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "aggregation_profile stage=cache_circuit_build_done tx_count={} build_ms={} total_ms={} witness_count={} owned_count={} unowned_count={} unowned_preview={:?}",
+            key.tx_count,
+            circuit_build_started.elapsed().as_millis(),
+            started.elapsed().as_millis(),
+            circuit.witness_count,
+            owned.len(),
+            unowned.len(),
+            unowned.iter().take(8).collect::<Vec<_>>()
+        );
+    }
+    let witness_plan_started = Instant::now();
+    let witness_assignment_plans =
+        resolve_witness_assignment_plans(&circuit, &witness_assignment_specs)?;
+    if profile {
+        eprintln!(
+            "aggregation_profile stage=cache_witness_plan_build tx_count={} plan_ms={} total_ms={}",
+            key.tx_count,
+            witness_plan_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+    }
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_circuit_build tx_count={} build_ms={} total_ms={}",
@@ -633,14 +700,11 @@ fn build_aggregation_prover_cache_entry(
         );
     }
 
-    let table_packing = TablePacking::new(4, 4, 1);
+    let table_packing = aggregation_table_packing();
     let airs_setup_started = Instant::now();
-    let (airs_degrees, witness_multiplicities) = get_airs_and_degrees_with_prep::<
-        circuit_config::GoldilocksConfig,
-        _,
-        2,
-    >(&circuit, table_packing, None)
-    .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
+    let (airs_degrees, witness_multiplicities) =
+        get_airs_and_degrees_with_prep::<Config, _, 2>(&circuit, table_packing, None)
+            .map_err(|err| AggregationError::CircuitBuild(format!("{err:?}")))?;
     if profile {
         eprintln!(
             "aggregation_profile stage=cache_airs_setup tx_count={} setup_ms={} total_ms={}",
@@ -651,7 +715,7 @@ fn build_aggregation_prover_cache_entry(
     }
     let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
 
-    let outer_config = circuit_config::goldilocks().build();
+    let outer_config = aggregation_outer_config();
     let common_started = Instant::now();
     let common =
         get_or_build_aggregation_common_data(key, &outer_config, &mut airs, &degrees, profile);
@@ -668,6 +732,7 @@ fn build_aggregation_prover_cache_entry(
         circuit,
         verifier_inputs,
         witness_assignment_plans,
+        airs,
         common,
         witness_multiplicities,
     })
@@ -675,11 +740,11 @@ fn build_aggregation_prover_cache_entry(
 
 fn get_or_build_aggregation_common_data(
     key: AggregationProverKey,
-    outer_config: &circuit_config::GoldilocksConfig,
-    airs: &mut [CircuitTableAir<circuit_config::GoldilocksConfig, 2>],
+    outer_config: &Config,
+    airs: &mut [CircuitTableAir<Config, 2>],
     degrees: &[usize],
     profile: bool,
-) -> Arc<CommonData<circuit_config::GoldilocksConfig>> {
+) -> Arc<CommonData<Config>> {
     let cache = aggregation_common_cache();
     loop {
         let mut state = cache
@@ -700,6 +765,12 @@ fn get_or_build_aggregation_common_data(
             drop(state);
 
             let build_started = Instant::now();
+            if profile {
+                eprintln!(
+                    "aggregation_profile stage=cache_common_lookup_build_start tx_count={} total_ms=0",
+                    key.tx_count
+                );
+            }
             let built = Arc::new(build_common_data_parallel(outer_config, airs, degrees));
             let build_ms = build_started.elapsed().as_millis();
 
@@ -788,7 +859,14 @@ fn get_or_build_aggregation_prover_cache_entry(
 }
 
 fn aggregation_prewarm_max_txs() -> usize {
-    std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
+    if let Some(explicit) = std::env::var("HEGEMON_AGG_PREWARM_MAX_TXS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+    {
+        return explicit;
+    }
+
+    std::env::var("HEGEMON_BATCH_TARGET_TXS")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(0)
@@ -798,6 +876,26 @@ fn aggregation_prewarm_mode() -> String {
     std::env::var("HEGEMON_AGG_PREWARM_MODE")
         .map(|raw| raw.to_ascii_lowercase())
         .unwrap_or_else(|_| "checkpoint".to_string())
+}
+
+fn aggregation_liveness_lane_enabled() -> bool {
+    std::env::var("HEGEMON_PROVER_LIVENESS_LANE")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn aggregation_queue_capacity() -> usize {
+    std::env::var("HEGEMON_BATCH_QUEUE_CAPACITY")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(4)
+        .max(1)
 }
 
 fn checkpoint_warmup_targets(current_tx_count: usize, max_txs: usize) -> Vec<usize> {
@@ -813,6 +911,15 @@ fn checkpoint_warmup_targets(current_tx_count: usize, max_txs: usize) -> Vec<usi
         }
     }
     targets
+}
+
+fn default_warmup_targets(current_tx_count: usize, max_txs: usize) -> Vec<usize> {
+    let capped_max = max_txs.max(current_tx_count);
+    if !aggregation_liveness_lane_enabled() || aggregation_queue_capacity() <= 1 {
+        vec![capped_max]
+    } else {
+        checkpoint_warmup_targets(current_tx_count, capped_max)
+    }
 }
 
 fn aggregation_warmup_target_shapes() -> Vec<usize> {
@@ -831,6 +938,215 @@ fn aggregation_warmup_target_shapes() -> Vec<usize> {
         .unwrap_or_default()
 }
 
+fn compute_sample_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
+    let mut current = leaf;
+    let mut pos = position;
+    for sibling in path
+        .iter()
+        .take(transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH)
+    {
+        current = if pos & 1 == 0 {
+            merkle_node(current, *sibling)
+        } else {
+            merkle_node(*sibling, current)
+        };
+        pos >>= 1;
+    }
+    current
+}
+
+fn build_sample_merkle_paths(
+    leaf0: HashFelt,
+    leaf1: HashFelt,
+) -> (MerklePath, MerklePath, HashFelt) {
+    let mut siblings0 = vec![leaf1];
+    let mut siblings1 = vec![leaf0];
+    let mut current = merkle_node(leaf0, leaf1);
+
+    for _ in 1..transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH {
+        let zero = [Val::ZERO; 6];
+        siblings0.push(zero);
+        siblings1.push(zero);
+        current = merkle_node(current, zero);
+    }
+
+    (
+        MerklePath {
+            siblings: siblings0,
+        },
+        MerklePath {
+            siblings: siblings1,
+        },
+        current,
+    )
+}
+
+fn sample_witness_for_aggregation_cache() -> TransactionWitness {
+    let sk_spend = [42u8; 32];
+    let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+    let input_note_native = NoteData {
+        value: 8,
+        asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+        pk_recipient: [2u8; 32],
+        pk_auth,
+        rho: [3u8; 32],
+        r: [4u8; 32],
+    };
+    let input_note_asset = NoteData {
+        value: 5,
+        asset_id: 1,
+        pk_recipient: [5u8; 32],
+        pk_auth,
+        rho: [6u8; 32],
+        r: [7u8; 32],
+    };
+    let leaf0 = input_note_native.commitment();
+    let leaf1 = input_note_asset.commitment();
+    let (merkle_path0, merkle_path1, merkle_root) = build_sample_merkle_paths(leaf0, leaf1);
+    debug_assert_eq!(
+        compute_sample_merkle_root(leaf0, 0, &merkle_path0.siblings),
+        merkle_root
+    );
+    debug_assert_eq!(
+        compute_sample_merkle_root(leaf1, 1, &merkle_path1.siblings),
+        merkle_root
+    );
+
+    TransactionWitness {
+        inputs: vec![
+            InputNoteWitness {
+                note: input_note_native,
+                position: 0,
+                rho_seed: [9u8; 32],
+                merkle_path: merkle_path0,
+            },
+            InputNoteWitness {
+                note: input_note_asset,
+                position: 1,
+                rho_seed: [8u8; 32],
+                merkle_path: merkle_path1,
+            },
+        ],
+        outputs: vec![
+            OutputNoteWitness {
+                note: NoteData {
+                    value: 3,
+                    asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+                    pk_recipient: [11u8; 32],
+                    pk_auth: [111u8; 32],
+                    rho: [12u8; 32],
+                    r: [13u8; 32],
+                },
+            },
+            OutputNoteWitness {
+                note: NoteData {
+                    value: 5,
+                    asset_id: 1,
+                    pk_recipient: [21u8; 32],
+                    pk_auth: [121u8; 32],
+                    rho: [22u8; 32],
+                    r: [23u8; 32],
+                },
+            },
+        ],
+        ciphertext_hashes: vec![[0u8; 48]; 2],
+        sk_spend,
+        merkle_root: felts_to_bytes48(&merkle_root),
+        fee: 5,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    }
+}
+
+fn build_sample_representative_proof_with_params(
+    params: TransactionProofParams,
+) -> Result<TransactionProof, AggregationError> {
+    let witness = sample_witness_for_aggregation_cache();
+    let (proving_key, _verifying_key) = generate_keys();
+    proof::prove_with_params(&witness, &proving_key, params).map_err(|err| {
+        AggregationError::ProvingFailed(format!("sample tx proof generation failed: {err}"))
+    })
+}
+
+fn build_sample_representative_proof() -> Result<TransactionProof, AggregationError> {
+    build_sample_representative_proof_with_params(TransactionProofParams::production())
+}
+
+fn build_sample_recursion_representative_proof() -> Result<TransactionProof, AggregationError> {
+    build_sample_representative_proof_with_params(TransactionProofParams::recursion())
+}
+
+#[allow(dead_code)]
+fn legacy_v4_prewarm_thread_local_aggregation_cache_from_env() -> Result<(), AggregationError> {
+    let mut targets = aggregation_warmup_target_shapes();
+    if targets.is_empty() {
+        let max_txs = aggregation_prewarm_max_txs();
+        if max_txs == 0 {
+            return Ok(());
+        }
+        targets = default_warmup_targets(1, max_txs.max(1));
+    }
+    targets.retain(|value| *value > 0);
+    targets.sort_unstable();
+    targets.dedup();
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let started = Instant::now();
+    let representative = build_sample_representative_proof()?;
+    let pub_inputs = stark_public_inputs_p3(&representative).map_err(|err| {
+        AggregationError::InvalidPublicInputs {
+            index: 0,
+            message: err.to_string(),
+        }
+    })?;
+    let pub_inputs_vec = pub_inputs.to_vec();
+    let representative_inner_proof: TransactionProofP3 =
+        postcard::from_bytes(&representative.stark_proof)
+            .map_err(|_| AggregationError::InvalidProofFormat { index: 0 })?;
+    let query_count = representative_inner_proof.opening_proof.query_proofs.len();
+    let log_blowup = resolve_log_blowup(&representative_inner_proof, &pub_inputs_vec, query_count)
+        .map_err(|message| AggregationError::InvalidProofShape { index: 0, message })?;
+    let shape = ProofShape {
+        degree_bits: representative_inner_proof.degree_bits,
+        commit_phase_len: representative_inner_proof
+            .opening_proof
+            .commit_phase_commits
+            .len(),
+        final_poly_len: representative_inner_proof.opening_proof.final_poly.len(),
+        query_count,
+    };
+    let pub_inputs_len = pub_inputs_vec.len();
+
+    let mut built = 0usize;
+    let mut cache_hits = 0usize;
+    for tx_count in targets.iter().copied() {
+        let key = AggregationProverKey {
+            tx_count,
+            pub_inputs_len,
+            log_blowup,
+            shape,
+        };
+        let result = get_or_build_aggregation_prover_cache_entry(key, &representative_inner_proof)?;
+        if result.cache_hit {
+            cache_hits = cache_hits.saturating_add(1);
+        } else {
+            built = built.saturating_add(1);
+        }
+    }
+
+    tracing::info!(
+        ?targets,
+        built,
+        cache_hits,
+        total_ms = started.elapsed().as_millis(),
+        "aggregation prover thread-local cache prewarm complete"
+    );
+    Ok(())
+}
+
 fn maybe_prewarm_aggregation_cache(
     representative_proof: &TransactionProofP3,
     pub_inputs_len: usize,
@@ -845,13 +1161,12 @@ fn maybe_prewarm_aggregation_cache(
             return;
         }
         let mode = aggregation_prewarm_mode();
-        let capped_max = max_txs.max(current_tx_count);
         // Checkpoint mode is default to avoid O(target) shape churn in the hot
         // path. Operators can opt into legacy linear warmup explicitly.
         targets = if mode == "linear" {
-            (current_tx_count..=capped_max).collect()
+            (current_tx_count..=max_txs.max(current_tx_count)).collect()
         } else {
-            checkpoint_warmup_targets(current_tx_count, capped_max)
+            default_warmup_targets(current_tx_count, max_txs)
         };
     } else {
         targets.retain(|tx_count| *tx_count >= current_tx_count);
@@ -1042,7 +1357,8 @@ fn persist_cache_build_marker(
 ///
 /// The returned bytes are a postcard-serialized `BatchProof` that can be
 /// submitted via `submit_aggregation_proof`.
-pub fn prove_aggregation(
+#[allow(dead_code)]
+fn legacy_v4_prove_aggregation(
     transaction_proofs: &[TransactionProof],
     tx_statements_commitment: [u8; 48],
 ) -> Result<Vec<u8>, AggregationError> {
@@ -1339,7 +1655,7 @@ pub fn prove_aggregation(
         );
     }
 
-    let mut runner = cache_result.entry.circuit.clone().runner();
+    let mut runner = cache_result.entry.circuit.runner();
     let set_public_started = Instant::now();
     runner
         .set_public_inputs(&recursion_public_inputs)
@@ -1376,8 +1692,8 @@ pub fn prove_aggregation(
         );
     }
 
-    let outer_prover = BatchStarkProver::new(circuit_config::goldilocks().build())
-        .with_table_packing(TablePacking::new(4, 4, 1));
+    let outer_prover = BatchStarkProver::new(aggregation_outer_config())
+        .with_table_packing(aggregation_table_packing());
     let prove_started = Instant::now();
     let configured_threads = std::env::var("HEGEMON_AGG_PROVER_THREADS")
         .ok()
@@ -1502,8 +1818,104 @@ fn pack_recursion_public_values_v1(values: &[Challenge]) -> Vec<u64> {
     out
 }
 
+fn describe_witness_origin(circuit: &Circuit<Challenge>, witness_id: WitnessId) -> String {
+    let mut parts = Vec::new();
+    if let Some(public_pos) = circuit
+        .public_rows
+        .iter()
+        .position(|row| *row == witness_id)
+    {
+        parts.push(format!("public_row[{public_pos}]"));
+    }
+    for (op_index, op) in circuit.ops.iter().enumerate() {
+        match op {
+            Op::Const { out, .. } => {
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Const(out)"));
+                }
+            }
+            Op::Public { out, public_pos } => {
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Public({public_pos})"));
+                }
+            }
+            Op::Add { a, b, out } => {
+                if *a == witness_id {
+                    parts.push(format!("op[{op_index}]=Add(lhs)"));
+                }
+                if *b == witness_id {
+                    parts.push(format!("op[{op_index}]=Add(rhs)"));
+                }
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Add(out)"));
+                }
+            }
+            Op::Mul { a, b, out } => {
+                if *a == witness_id {
+                    parts.push(format!("op[{op_index}]=Mul(lhs)"));
+                }
+                if *b == witness_id {
+                    parts.push(format!("op[{op_index}]=Mul(rhs)"));
+                }
+                if *out == witness_id {
+                    parts.push(format!("op[{op_index}]=Mul(out)"));
+                }
+            }
+            Op::NonPrimitiveOpWithExecutor {
+                inputs,
+                executor,
+                outputs,
+                op_id,
+                ..
+            } => {
+                for (input_idx, group) in inputs.iter().enumerate() {
+                    if group.contains(&witness_id) {
+                        parts.push(format!(
+                            "op[{op_index}]=NonPrimitiveInput({:?}, op_id={}, input_idx={input_idx})",
+                            executor.op_type(),
+                            op_id.0
+                        ));
+                    }
+                }
+                for (output_idx, group) in outputs.iter().enumerate() {
+                    if group.contains(&witness_id) {
+                        parts.push(format!(
+                            "op[{op_index}]=NonPrimitive({:?}, op_id={}, output_idx={output_idx})",
+                            executor.op_type(),
+                            op_id.0
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if parts.is_empty() {
+        "unowned".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn collect_owned_witnesses(circuit: &Circuit<Challenge>) -> HashSet<WitnessId> {
+    let mut owned = circuit.public_rows.iter().copied().collect::<HashSet<_>>();
+    for op in &circuit.ops {
+        match op {
+            Op::Const { out, .. }
+            | Op::Public { out, .. }
+            | Op::Add { out, .. }
+            | Op::Mul { out, .. } => {
+                owned.insert(*out);
+            }
+            Op::NonPrimitiveOpWithExecutor { outputs, .. } => {
+                owned.extend(outputs.iter().flatten().copied());
+            }
+        }
+    }
+    owned
+}
+
 fn set_stark_verifier_witnesses_with_plans(
-    runner: &mut CircuitRunner<Challenge>,
+    runner: &mut CircuitRunner<'_, Challenge>,
     witness_assignment_plans: &[ProofWitnessAssignmentPlan],
     proofs: &[TransactionProofP3],
 ) -> Result<(), CircuitError> {
@@ -1515,18 +1927,23 @@ fn set_stark_verifier_witnesses_with_plans(
     }
     for (assignment_plan, proof) in witness_assignment_plans.iter().zip(proofs.iter()) {
         let values = collect_proof_witness_values(proof);
-        if assignment_plan.witness_ids.len() != values.len() {
+        if assignment_plan.value_positions.len() != assignment_plan.witness_ids.len() {
             return Err(CircuitError::PublicInputLengthMismatch {
                 expected: assignment_plan.witness_ids.len(),
-                got: values.len(),
+                got: assignment_plan.value_positions.len(),
             });
         }
-        for (witness_id, value) in assignment_plan
-            .witness_ids
+        for (&position, witness_id) in assignment_plan
+            .value_positions
             .iter()
-            .copied()
-            .zip(values.into_iter())
+            .zip(assignment_plan.witness_ids.iter().copied())
         {
+            let value = *values
+                .get(position)
+                .ok_or(CircuitError::PublicInputLengthMismatch {
+                    expected: position + 1,
+                    got: values.len(),
+                })?;
             runner.set_witness_value(witness_id, value)?;
         }
     }

@@ -249,6 +249,7 @@ pub mod pallet {
     #[pallet::genesis_config]
     #[derive(frame_support::DefaultNoBound)]
     pub struct GenesisConfig<T: Config> {
+        #[serde(skip)]
         pub _phantom: PhantomData<T>,
     }
 

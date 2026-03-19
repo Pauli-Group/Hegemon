@@ -2,6 +2,11 @@
 
 This directory contains configuration and tools for deploying the Hegemon testnet.
 
+For the fresh-testnet rollout on the laptop + `hegemon-ovh`,
+follow [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md)
+before starting any host. The laptop-created boot-wallet address is the payout
+address that should be configured everywhere for mining.
+
 ## Quick Start
 
 ### Prerequisites
@@ -26,6 +31,8 @@ docker build -t hegemon/node:latest .
 This creates:
 - `keys/boot1.key`, `keys/boot2.key`, `keys/boot3.key` - Node identity keys
 - `.env.testnet` - Environment file with peer IDs
+
+All miners should use the same approved `HEGEMON_SEEDS` list when joining the shared testnet. Divergent seed lists can reduce connectivity and increase fork risk. Enable NTP/chrony on every host because PoW timestamps are rejected if they exceed the future-skew bound.
 
 ### 3. Generate Chain Spec
 
@@ -57,7 +64,9 @@ docker-compose -f docker-compose.testnet.yml up -d
 
 ```bash
 # Check node health
-curl -s http://localhost:9944/health | jq
+curl -s -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+    http://localhost:9944 | jq '.result'
 
 # Check block height
 curl -s -X POST -H "Content-Type: application/json" \
@@ -66,8 +75,8 @@ curl -s -X POST -H "Content-Type: application/json" \
 
 # Check peer count
 curl -s -X POST -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
-    http://localhost:9944 | jq '. | length'
+    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+    http://localhost:9944 | jq '.result.peers'
 ```
 
 ## Services
@@ -124,13 +133,13 @@ The soak test monitors:
 To connect an external node to the testnet:
 
 ```bash
+HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 hegemon-node \
     --dev \
     --chain=config/testnet/testnet-raw.json \
     --base-path=/data/hegemon \
     --port=30333 \
     --rpc-port=9944 \
-    --bootnodes=/dns4/boot1.testnet.hegemon.network/tcp/30333/p2p/$BOOT1_PEER_ID \
     --name=my-node
 ```
 
@@ -181,7 +190,7 @@ Common issues:
 - Testnet keys in this directory are for testing only
 - Do not use testnet keys on mainnet
 - RPC is exposed with `--rpc-methods=safe` by default
-- PQ transport is required (`--require-pq`)
+- PQ transport is the default transport; no extra flag is required
 
 ## File Structure
 

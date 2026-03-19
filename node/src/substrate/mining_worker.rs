@@ -1,6 +1,6 @@
-//! Mining Worker for Blake3 PoW Block Production
+//! Mining Worker for SHA-256d PoW Block Production
 //!
-//! This module coordinates actual block production using the Blake3 PoW algorithm.
+//! This module coordinates actual block production using the SHA-256d PoW algorithm.
 //! It integrates with the Substrate service to:
 //!
 //! - Query current block templates from the runtime
@@ -23,7 +23,7 @@
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                                                                  │
 //! │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
-//! │  │   Client    │───▶│   Block     │───▶│   Blake3 PoW        │  │
+//! │  │   Client    │───▶│   Block     │───▶│   SHA-256d PoW      │  │
 //! │  │  (best_hash)│    │  Template   │    │   Mining Loop       │  │
 //! │  └─────────────┘    └─────────────┘    └─────────────────────┘  │
 //! │                            │                      │              │
@@ -55,7 +55,7 @@
 //!
 //! When a valid PoW solution is found:
 //! 1. Construct the complete block with seal
-//! 2. Verify locally with Blake3Algorithm
+//! 2. Verify locally with Sha256dAlgorithm
 //! 3. Import via the block import pipeline
 //! 4. Broadcast block announcement via PQ network
 
@@ -63,7 +63,7 @@ use crate::pow::PowHandle;
 use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
 use crate::substrate::service::StorageChangesHandle;
 use codec::Encode;
-use consensus::{Blake3Seal, MiningWork};
+use consensus::{MiningWork, MiningWorkTrace, Sha256dSeal};
 use sp_core::H256;
 use sp_runtime::generic::Digest;
 use sp_runtime::traits::Header as HeaderT;
@@ -72,7 +72,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Mining worker configuration
 #[derive(Clone, Debug)]
@@ -172,6 +172,8 @@ pub struct BlockTemplate {
     /// Task 11.5.5: Handle for cached StorageChanges for block import.
     /// This is set during block building when using sc_block_builder::BlockBuilder.
     pub storage_changes: Option<StorageChangesHandle>,
+    /// Optional trace metadata for last-mile block assembly and mining handoff.
+    pub trace: Option<MiningWorkTrace>,
 }
 
 impl BlockTemplate {
@@ -196,6 +198,7 @@ impl BlockTemplate {
             difficulty_bits,
             extrinsics: Vec::new(),
             storage_changes: None, // Task 11.5.5: Set during block building
+            trace: None,
         }
     }
 
@@ -215,6 +218,16 @@ impl BlockTemplate {
             &self.extrinsics_root,
             &self.state_root,
         );
+        self
+    }
+
+    pub fn with_trace(mut self, trace: Option<MiningWorkTrace>) -> Self {
+        self.trace = trace.map(|mut item| {
+            if item.template_id.is_empty() {
+                item.template_id = hex::encode(self.pre_hash.as_bytes());
+            }
+            item
+        });
         self
     }
 
@@ -263,6 +276,7 @@ impl BlockTemplate {
             pow_bits: self.difficulty_bits,
             height: self.number,
             parent_hash: self.parent_hash,
+            trace: self.trace.clone(),
         }
     }
 
@@ -274,7 +288,7 @@ impl BlockTemplate {
     /// - State root
     /// - Extrinsics root
     /// - Digest (containing the PoW seal)
-    pub fn encode_header(&self, seal: &Blake3Seal) -> Vec<u8> {
+    pub fn encode_header(&self, seal: &Sha256dSeal) -> Vec<u8> {
         // Create seal digest item with our engine ID "bpow"
         let seal_bytes = seal.encode();
         let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
@@ -489,8 +503,13 @@ pub trait ChainStateProvider: Send + Sync {
     /// Get pending transactions from the pool
     fn pending_transactions(&self) -> Vec<Vec<u8>>;
 
+    /// Return a short reason when local mining should temporarily pause.
+    fn mining_pause_reason(&self) -> Option<String> {
+        None
+    }
+
     /// Import a mined block
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String>;
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String>;
 
     /// Notify that chain state may have changed (e.g., new block from network)
     fn on_new_block(&self, block_hash: &H256, block_number: u64);
@@ -558,7 +577,7 @@ impl ChainStateProvider for MockChainStateProvider {
         Vec::new()
     }
 
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String> {
         // Compute block hash from seal
         let block_hash = H256::from_slice(seal.work.as_bytes());
 
@@ -746,6 +765,7 @@ where
         let mut last_pending_root = H256::zero();
         let mut was_syncing = false;
         let mut was_mining = false;
+        let mut last_pause_reason: Option<String> = None;
 
         loop {
             // Check if mining is enabled
@@ -756,6 +776,7 @@ where
                     last_pending_root = H256::zero();
                     was_mining = false;
                 }
+                last_pause_reason = None;
                 tokio::time::sleep(check_interval).await;
                 continue;
             }
@@ -782,6 +803,27 @@ where
                 was_syncing = false;
             }
 
+            if let Some(reason) = self.chain_state.mining_pause_reason() {
+                if last_pause_reason.as_deref() != Some(reason.as_str()) {
+                    tracing::info!(
+                        reason = %reason,
+                        "Mining paused while waiting for a ready proven batch"
+                    );
+                }
+                last_pause_reason = Some(reason);
+                self.pow_handle.clear_work();
+                current_template = None;
+                last_pending_root = H256::zero();
+                tokio::time::sleep(check_interval).await;
+                continue;
+            }
+            if let Some(reason) = last_pause_reason.take() {
+                tracing::info!(
+                    previous_reason = %reason,
+                    "Mining pause cleared; resuming block production"
+                );
+            }
+
             // Check for new work (best block changed)
             let best_hash = self.chain_state.best_hash();
             let pending_root = compute_extrinsics_root(&self.chain_state.pending_transactions());
@@ -798,6 +840,26 @@ where
 
                 // Update mining work
                 let work = template.to_mining_work();
+                if let Some(trace) = template.trace.as_ref() {
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = unix_time_ms(),
+                        block_number = template.number,
+                        parent_hash = %hex::encode(template.parent_hash.as_bytes()),
+                        pre_hash = %hex::encode(work.pre_hash.as_bytes()),
+                        template_id = %trace.template_id,
+                        bundle_id = trace.bundle_id.as_deref().unwrap_or(""),
+                        artifact_hash = trace.artifact_hash.as_deref().unwrap_or(""),
+                        tx_count = trace.tx_count,
+                        tx_statements_commitment = trace
+                            .tx_statements_commitment
+                            .as_deref()
+                            .unwrap_or(""),
+                        parent_changed,
+                        pending_changed,
+                        "block_template_installed"
+                    );
+                }
 
                 // DEBUG: Log the pre_hash being used for mining
                 tracing::info!(
@@ -810,12 +872,7 @@ where
                     "🔍 DEBUG: Mining work pre_hash (verifier must match this)"
                 );
 
-                self.pow_handle.update_work(
-                    work.pre_hash,
-                    work.pow_bits,
-                    work.height,
-                    work.parent_hash,
-                );
+                self.pow_handle.update_work(work);
 
                 if self.config.verbose {
                     tracing::debug!(
@@ -862,6 +919,26 @@ where
                     stats.blocks_mined += 1;
                 }
 
+                if let Some(trace) = template.trace.as_ref() {
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = unix_time_ms(),
+                        block_number = template.number,
+                        parent_hash = %hex::encode(template.parent_hash.as_bytes()),
+                        pre_hash = %hex::encode(template.pre_hash.as_bytes()),
+                        template_id = %trace.template_id,
+                        bundle_id = trace.bundle_id.as_deref().unwrap_or(""),
+                        artifact_hash = trace.artifact_hash.as_deref().unwrap_or(""),
+                        tx_count = trace.tx_count,
+                        tx_statements_commitment = trace
+                            .tx_statements_commitment
+                            .as_deref()
+                            .unwrap_or(""),
+                        nonce = ?solution.seal.nonce,
+                        "block_found"
+                    );
+                }
+
                 // Import the block
                 match self.chain_state.import_block(template, &solution.seal) {
                     Ok(block_hash) => {
@@ -869,7 +946,7 @@ where
                         tracing::info!(
                             block_number = template.number,
                             block_hash = %hex::encode(block_hash.as_bytes()),
-                            nonce = solution.seal.nonce,
+                            nonce = ?solution.seal.nonce,
                             "Block imported successfully"
                         );
 
@@ -938,6 +1015,13 @@ where
             tokio::task::yield_now().await;
         }
     }
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Create a mining worker for scaffold mode
@@ -1291,8 +1375,8 @@ mod tests {
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
 
         // Create a mock seal
-        let seal = Blake3Seal {
-            nonce: 12345,
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0x42),
         };
@@ -1420,8 +1504,8 @@ mod tests {
 
         // Import a block
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
-        let seal = Blake3Seal {
-            nonce: 12345,
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0xbb),
         };

@@ -1,0 +1,8 @@
+# Archived raw-lane compatibility check
+cargo run --release -p circuits-bench -- --json --iterations 8 --batch-size 0 --lane-batch-sizes 1,2,4,8 --warm --raw-only
+
+# First positive merge-root-active release run
+cargo run --release -p circuits-bench -- --json --iterations 1 --batch-size 0 --lane-batch-sizes 1 --warm
+
+# Attempted next step (stalled after several minutes; no archived JSON)
+cargo run --release -p circuits-bench -- --json --iterations 2 --batch-size 0 --lane-batch-sizes 2 --warm

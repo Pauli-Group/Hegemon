@@ -4,6 +4,7 @@ members = [
     "circuits/transaction",
     "circuits/transaction-core",
     "circuits/batch",
+    "circuits/tx-proof-manifest",
     "circuits/settlement",
     "circuits/block",
     "circuits/bench",
@@ -14,6 +15,7 @@ members = [
     "state/merkle",
     "consensus",
     "protocol/versioning",
+    "protocol/kernel",
     "network",
     "pq-noise",
     "wallet",
@@ -32,6 +34,7 @@ members = [
     "pallets/stablecoin-policy",
     "pallets/shielded-pool",
     "pallets/archive-market",
+    "pallets/kernel",
     "tests", "node",
     "runtime",
 ]
@@ -151,6 +154,7 @@ p3-commit = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-fri = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-dft = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
+p3-lookup = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }
 p3-poseidon2 = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }

@@ -1,16 +1,17 @@
 use crate::error::ProofError;
+mod v5;
 use block_circuit::CommitmentBlockProver;
 use crypto::hashes::blake3_384;
 use p3_batch_stark::{BatchProof, CommonData, verify_batch};
 use p3_circuit::CircuitBuilder;
+use p3_circuit_prover::TablePacking;
 use p3_circuit_prover::common::{CircuitTableAir, get_airs_and_degrees_with_prep};
-use p3_circuit_prover::{TablePacking, config as circuit_config};
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, PrimeField64};
 use p3_recursion::pcs::fri::{FriVerifierParams, HashTargets, InputProofTargets, RecValMmcs};
 use p3_recursion::pcs::{FriProofTargets, RecExtensionValMmcs, Witness};
 use p3_recursion::public_inputs::StarkVerifierInputsBuilder;
 use p3_recursion::verify_circuit;
-use p3_uni_stark::get_log_num_quotient_chunks;
+use p3_uni_stark::{get_log_num_quotient_chunks, verify as verify_stark};
 use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -58,9 +59,9 @@ struct AggregationVerifierKey {
 }
 
 struct AggregationVerifierCacheEntry {
-    outer_config: circuit_config::GoldilocksConfig,
-    airs: Vec<CircuitTableAir<circuit_config::GoldilocksConfig, 2>>,
-    common: CommonData<circuit_config::GoldilocksConfig>,
+    outer_config: Config,
+    airs: Vec<CircuitTableAir<Config, 2>>,
+    common: CommonData<Config>,
     public_table_indices: Vec<usize>,
 }
 
@@ -96,6 +97,8 @@ const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
 const MAX_AGGREGATION_SLOT_PADDING_FACTOR: usize = 16;
 const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
 const STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
+const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
+const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct AggregationProofV4Payload {
@@ -117,6 +120,38 @@ struct AggregationProofV4Payload {
 
 fn aggregation_verifier_cache() -> &'static AggregationVerifierCache {
     AGGREGATION_VERIFIER_CACHE.get_or_init(AggregationVerifierCache::default)
+}
+
+fn outer_batch_log_blowup() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_LOG_BLOWUP")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_LOG_BLOWUP)
+        .max(1)
+}
+
+fn outer_batch_num_queries() -> usize {
+    std::env::var("HEGEMON_AGG_OUTER_NUM_QUERIES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_OUTER_BATCH_NUM_QUERIES)
+        .max(1)
+}
+
+fn outer_batch_config() -> Config {
+    config_with_fri(outer_batch_log_blowup(), outer_batch_num_queries()).config
+}
+
+fn legacy_v4_enabled() -> bool {
+    std::env::var("HEGEMON_AGG_LEGACY_V4")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 struct AggregationCacheResult {
@@ -200,20 +235,17 @@ fn build_aggregation_verifier_cache_entry(
     })?;
 
     let table_packing = TablePacking::new(4, 4, 1);
-    let (airs_degrees, _) =
-        get_airs_and_degrees_with_prep::<circuit_config::GoldilocksConfig, _, 2>(
-            &circuit,
-            table_packing,
-            None,
-        )
-        .map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "aggregation AIR setup failed: {err:?}"
-            ))
-        })?;
+    let (airs_degrees, _) = get_airs_and_degrees_with_prep::<Config, _, 2>(
+        &circuit,
+        table_packing,
+        None,
+    )
+    .map_err(|err| {
+        ProofError::AggregationProofVerification(format!("aggregation AIR setup failed: {err:?}"))
+    })?;
     let (mut airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
 
-    let outer_config = circuit_config::goldilocks().build();
+    let outer_config = outer_batch_config();
     let common = CommonData::from_airs_and_degrees(&outer_config, &mut airs, &degrees);
 
     let public_table_indices = airs
@@ -239,6 +271,76 @@ fn build_aggregation_verifier_cache_entry(
 fn transaction_log_blowup_for_public_inputs(pub_inputs_len: usize) -> usize {
     let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
     FRI_LOG_BLOWUP.max(log_chunks)
+}
+
+fn resolve_log_blowup(
+    proof: &TransactionProofP3,
+    pub_inputs: &[Val],
+    query_count: usize,
+) -> Result<usize, String> {
+    if query_count == 0 {
+        return Err("proof has zero FRI queries".to_string());
+    }
+
+    let inferred = infer_log_blowup_from_proof_shape(proof);
+    let mut candidates = Vec::new();
+    let mut push_unique = |value: usize| {
+        if !candidates.contains(&value) {
+            candidates.push(value);
+        }
+    };
+
+    if let Some(log_blowup) = inferred {
+        push_unique(log_blowup);
+        for delta in 1..=2 {
+            push_unique(log_blowup.saturating_sub(delta));
+            push_unique(log_blowup.saturating_add(delta));
+        }
+    }
+    push_unique(FRI_LOG_BLOWUP);
+    for fallback in 0..=8 {
+        push_unique(fallback);
+    }
+
+    for log_blowup in candidates.iter().copied() {
+        let config = config_with_fri(log_blowup, query_count);
+        if verify_stark(&config.config, &TransactionAirP3, proof, pub_inputs).is_ok() {
+            return Ok(log_blowup);
+        }
+    }
+
+    Err(format!(
+        "unable to resolve FRI log_blowup (inferred={inferred:?}, attempted={candidates:?})"
+    ))
+}
+
+fn infer_log_blowup_from_proof_shape(proof: &TransactionProofP3) -> Option<usize> {
+    let final_poly_len = proof.opening_proof.final_poly.len();
+    if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
+        return None;
+    }
+    let log_final_poly_len = final_poly_len.ilog2() as usize;
+    let commit_phase_len = proof.opening_proof.commit_phase_commits.len();
+    let baseline = commit_phase_len + log_final_poly_len;
+
+    let mut observed_log_max_height: Option<usize> = None;
+    for query_proof in proof.opening_proof.query_proofs.iter() {
+        let query_max = query_proof
+            .input_proof
+            .iter()
+            .map(|batch| batch.opening_proof.len())
+            .max()?;
+        if query_max < baseline {
+            return None;
+        }
+        match observed_log_max_height {
+            Some(expected) if expected != query_max => return None,
+            Some(_) => {}
+            None => observed_log_max_height = Some(query_max),
+        }
+    }
+
+    observed_log_max_height?.checked_sub(baseline)
 }
 
 fn tree_levels_for_tx_count(tx_count: usize, arity: u16) -> u16 {
@@ -444,7 +546,7 @@ pub fn aggregation_proof_uncompressed_len(bytes: &[u8]) -> usize {
     length
 }
 
-fn decode_aggregation_proof_bytes(bytes: &[u8]) -> Result<Vec<u8>, ProofError> {
+pub fn decode_aggregation_proof_bytes(bytes: &[u8]) -> Result<Vec<u8>, ProofError> {
     if bytes.len() < AGGREGATION_PROOF_HEADER_LEN {
         return Ok(bytes.to_vec());
     }
@@ -750,6 +852,20 @@ pub fn warm_aggregation_cache_from_proof_bytes(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
+    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+        && payload_v5.version == 5
+    {
+        return v5::warm_aggregation_cache_from_payload(
+            &payload_v5,
+            tx_count,
+            expected_statement_commitment,
+        );
+    }
+    if !legacy_v4_enabled() {
+        return Err(ProofError::AggregationProofV5Decode(
+            "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
+        ));
+    }
     let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
         ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
@@ -850,6 +966,16 @@ pub fn verify_aggregation_proof_with_metrics(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
+    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+        && payload_v5.version == 5
+    {
+        return v5::verify_with_metrics(&payload_v5, tx_count, expected_statement_commitment);
+    }
+    if !legacy_v4_enabled() {
+        return Err(ProofError::AggregationProofV5Decode(
+            "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
+        ));
+    }
     let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
         ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
     })?;
@@ -951,7 +1077,7 @@ pub fn verify_aggregation_proof_with_metrics(
     let cache_result =
         get_or_build_aggregation_verifier_cache_entry(cache_key, &representative_proof)?;
 
-    let outer_proof: BatchProof<circuit_config::GoldilocksConfig> =
+    let outer_proof: BatchProof<Config> =
         postcard::from_bytes(&payload.outer_proof).map_err(|_| {
             ProofError::AggregationProofV4Decode(
                 "outer aggregation proof encoding invalid".to_string(),
@@ -1164,7 +1290,10 @@ mod tests {
         let encoded = postcard::to_allocvec(&payload).expect("encode");
         let err = verify_aggregation_proof(&encoded, 1, &commitment)
             .expect_err("legacy payload version must be rejected");
-        assert!(matches!(err, ProofError::AggregationProofV4Decode(_)));
+        assert!(matches!(
+            err,
+            ProofError::AggregationProofV4Decode(_) | ProofError::AggregationProofV5Decode(_)
+        ));
     }
 
     #[test]
@@ -1189,7 +1318,10 @@ mod tests {
         let encoded = postcard::to_allocvec(&payload).expect("encode");
         let err = verify_aggregation_proof(&encoded, 1, &commitment)
             .expect_err("legacy payload format id must be rejected");
-        assert!(matches!(err, ProofError::AggregationProofV4Decode(_)));
+        assert!(matches!(
+            err,
+            ProofError::AggregationProofV4Decode(_) | ProofError::AggregationProofV5Decode(_)
+        ));
     }
 
     #[test]

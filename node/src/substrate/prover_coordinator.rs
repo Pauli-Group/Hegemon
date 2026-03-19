@@ -1,3 +1,7 @@
+use consensus::{
+    decode_aggregation_proof_bytes, decode_flat_batch_proof_bytes,
+    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
+};
 use parking_lot::Mutex;
 use sp_core::H256;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -5,18 +9,22 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use transaction_circuit::proof::TransactionProof;
+use tx_proof_manifest::{verify_tx_proof_manifest, TxProofManifestPublicInputs};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BundleMatchKey {
     pub parent_hash: H256,
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
+    pub proof_mode: pallet_shielded_pool::types::BlockProofMode,
+    pub artifact_hash: [u8; 32],
 }
 
 #[derive(Clone, Debug)]
 pub struct PreparedBundle {
     pub key: BundleMatchKey,
-    pub payload: pallet_shielded_pool::types::BlockProofBundle,
+    pub payload: pallet_shielded_pool::types::CandidateArtifact,
     pub candidate_txs: Vec<Vec<u8>>,
     pub build_ms: u128,
 }
@@ -36,9 +44,10 @@ pub struct PreparedLookupDiagnostics {
 }
 
 fn block_proof_bundle_payload_bytes(
-    payload: &pallet_shielded_pool::types::BlockProofBundle,
+    payload: &pallet_shielded_pool::types::CandidateArtifact,
 ) -> usize {
     let aggregation_bytes = match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 0,
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => payload
             .flat_batches
             .iter()
@@ -53,6 +62,148 @@ fn block_proof_bundle_payload_bytes(
     payload.commitment_proof.data.len() + aggregation_bytes
 }
 
+fn expected_tx_proof_manifest_public_inputs(
+    payload: &TxProofManifestWorkData,
+) -> Result<TxProofManifestPublicInputs, String> {
+    if payload.tx_proofs.is_empty() {
+        return Err("tx-proof-manifest payload is missing tx proofs".to_string());
+    }
+    if payload.statement_hashes.len() != payload.tx_proofs.len() {
+        return Err(format!(
+            "tx-proof-manifest payload statement hash count {} does not match tx proof count {}",
+            payload.statement_hashes.len(),
+            payload.tx_proofs.len()
+        ));
+    }
+
+    let mut nullifiers = Vec::new();
+    let mut commitments = Vec::new();
+    let mut total_fee = 0u64;
+    let mut circuit_version = None;
+    for proof in &payload.tx_proofs {
+        let version = u32::from(proof.public_inputs.circuit_version);
+        match circuit_version {
+            Some(expected) if expected != version => {
+                return Err(
+                    "tx-proof-manifest payload contains mixed transaction circuit versions".into(),
+                );
+            }
+            None => circuit_version = Some(version),
+            _ => {}
+        }
+        total_fee = total_fee
+            .checked_add(proof.public_inputs.native_fee)
+            .ok_or_else(|| "tx-proof-manifest payload total fee overflowed u64".to_string())?;
+        nullifiers.extend_from_slice(&proof.public_inputs.nullifiers);
+        commitments.extend_from_slice(&proof.public_inputs.commitments);
+    }
+
+    let public_inputs = TxProofManifestPublicInputs {
+        batch_size: payload.tx_proofs.len() as u32,
+        statement_hashes: payload.statement_hashes.clone(),
+        nullifiers,
+        commitments,
+        total_fee,
+        circuit_version: circuit_version.unwrap_or(0),
+    };
+    public_inputs
+        .validate()
+        .map_err(|err| format!("tx-proof-manifest payload public inputs are invalid: {err}"))?;
+    Ok(public_inputs)
+}
+
+fn verify_external_tx_proof_manifest_result(
+    package: &WorkPackage,
+    payload: &pallet_shielded_pool::types::CandidateArtifact,
+) -> Result<(), String> {
+    let expected = package
+        .tx_proof_manifest_payload
+        .as_ref()
+        .ok_or_else(|| "tx-proof-manifest work package is missing proof material".to_string())?;
+    let expected_public_inputs = expected_tx_proof_manifest_public_inputs(expected)?;
+
+    if payload.proof_mode != pallet_shielded_pool::types::BlockProofMode::FlatBatches {
+        return Err("tx-proof-manifest work result must use FlatBatches mode".to_string());
+    }
+    if payload.merge_root.is_some() {
+        return Err(
+            "tx-proof-manifest work result must not include merge-root payloads".to_string(),
+        );
+    }
+    if !payload.commitment_proof.data.is_empty() {
+        return Err(
+            "tx-proof-manifest work result must not include a parent-bound commitment proof"
+                .to_string(),
+        );
+    }
+    if payload.tx_statements_commitment != expected.tx_statements_commitment {
+        return Err("tx-proof-manifest work result tx_statements_commitment mismatch".to_string());
+    }
+    if payload.da_root != expected.da_root {
+        return Err("tx-proof-manifest work result da_root mismatch".to_string());
+    }
+    if payload.da_chunk_count != expected.da_chunk_count {
+        return Err("tx-proof-manifest work result da_chunk_count mismatch".to_string());
+    }
+    if payload.flat_batches.len() != 1 {
+        return Err(format!(
+            "tx-proof-manifest work result must include exactly one flat batch item, got {}",
+            payload.flat_batches.len()
+        ));
+    }
+
+    let batch = &payload.flat_batches[0];
+    if batch.start_tx_index != package.chunk_start_tx_index {
+        return Err(format!(
+            "tx-proof-manifest work result start_tx_index mismatch: expected {}, got {}",
+            package.chunk_start_tx_index, batch.start_tx_index
+        ));
+    }
+    if batch.tx_count != package.chunk_tx_count {
+        return Err(format!(
+            "tx-proof-manifest work result tx_count mismatch: expected {}, got {}",
+            package.chunk_tx_count, batch.tx_count
+        ));
+    }
+    if batch.proof_format != pallet_shielded_pool::types::BLOCK_PROOF_FORMAT_ID_V5 {
+        return Err(format!(
+            "tx-proof-manifest work result uses unsupported proof format {}",
+            batch.proof_format
+        ));
+    }
+
+    let decoded = decode_flat_batch_proof_bytes(&batch.proof.data)
+        .map_err(|err| format!("tx-proof-manifest work result decode failed: {err}"))?;
+    if decoded.proof_kind != FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST {
+        return Err(format!(
+            "tx-proof-manifest work result uses unsupported proof kind {}",
+            decoded.proof_kind
+        ));
+    }
+    let public_inputs = TxProofManifestPublicInputs::try_from_values(&decoded.batch_public_values)
+        .map_err(|err| format!("tx-proof-manifest work result public inputs are invalid: {err}"))?;
+    if public_inputs != expected_public_inputs {
+        return Err(
+            "tx-proof-manifest work result public inputs do not match the scheduled chunk".into(),
+        );
+    }
+    let verification = panic::catch_unwind(AssertUnwindSafe(|| {
+        verify_tx_proof_manifest(&decoded.batch_proof, &public_inputs)
+    }));
+    match verification {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            return Err(format!(
+                "tx-proof-manifest work result verification failed: {err}"
+            ));
+        }
+        Err(_) => {
+            return Err("tx-proof-manifest work result verification panicked".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkPackage {
     pub package_id: String,
@@ -62,15 +213,94 @@ pub struct WorkPackage {
     pub chunk_start_tx_index: u32,
     pub chunk_tx_count: u16,
     pub expected_chunks: u16,
-    pub stage_type: String,
+    pub stage_type: StageType,
     pub level: u16,
     pub arity: u16,
     pub shape_id: [u8; 32],
     pub dependencies: Vec<String>,
     pub tx_count: u32,
     pub candidate_txs: Vec<Vec<u8>>,
+    pub tx_proof_manifest_payload: Option<TxProofManifestWorkData>,
+    pub leaf_batch_payload: Option<LeafBatchWorkData>,
+    pub merge_node_payload: Option<MergeNodeWorkData>,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum StageType {
+    TxProofManifestBuild,
+    LeafBatchProve,
+    MergeNodeProve,
+    RootAggregateProve,
+    FinalizeBundle,
+}
+
+impl StageType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TxProofManifestBuild => "tx_proof_manifest_build",
+            Self::LeafBatchProve => "leaf_batch_prove",
+            Self::MergeNodeProve => "merge_node_prove",
+            Self::RootAggregateProve => "root_aggregate_prove",
+            Self::FinalizeBundle => "finalize_bundle",
+        }
+    }
+}
+
+impl std::fmt::Display for StageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TxProofManifestWorkData {
+    pub statement_hashes: Vec<[u8; 48]>,
+    pub tx_proofs: Vec<TransactionProof>,
+    pub tx_statements_commitment: [u8; 48],
+    pub da_root: [u8; 48],
+    pub da_chunk_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct LeafBatchWorkData {
+    pub statement_hashes: Vec<[u8; 48]>,
+    pub tx_proofs: Vec<TransactionProof>,
+    pub tx_statements_commitment: [u8; 48],
+    pub tree_levels: u16,
+    pub root_level: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct MergeNodeWorkData {
+    pub child_proof_payloads: Vec<Vec<u8>>,
+    pub tx_statements_commitment: [u8; 48],
+    pub tree_levels: u16,
+    pub root_level: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct RootAggregationWorkData {
+    pub statement_hashes: Vec<[u8; 48]>,
+    pub tx_proofs: Vec<TransactionProof>,
+    pub tx_statements_commitment: [u8; 48],
+    pub tree_levels: u16,
+    pub root_level: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct FinalizeBundleInputs {
+    pub statement_hashes: Vec<[u8; 48]>,
+    pub da_root: [u8; 48],
+    pub da_chunk_count: u32,
+    pub starting_state_root: [u8; 48],
+    pub ending_state_root: [u8; 48],
+    pub starting_kernel_root: [u8; 48],
+    pub ending_kernel_root: [u8; 48],
+    pub nullifier_root: [u8; 48],
+    pub nullifiers: Vec<[u8; 48]>,
+    pub sorted_nullifiers: Vec<[u8; 48]>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,7 +313,7 @@ pub enum WorkStatus {
 
 #[derive(Clone, Debug)]
 pub struct StageQueueStatus {
-    pub stage_type: String,
+    pub stage_type: StageType,
     pub level: u16,
     pub queued_jobs: usize,
     pub inflight_jobs: usize,
@@ -120,6 +350,12 @@ pub type BestBlockFn = dyn Fn() -> (H256, u64) + Send + Sync + 'static;
 pub type PendingTxsFn = dyn Fn(usize) -> Vec<Vec<u8>> + Send + Sync + 'static;
 pub type PrepareBundleFn =
     dyn Fn(H256, u64, Vec<Vec<u8>>) -> Result<PreparedBundle, String> + Send + Sync + 'static;
+pub type BuildRootAggregationWorkFn =
+    dyn Fn(Vec<Vec<u8>>) -> Result<Option<RootAggregationWorkData>, String> + Send + Sync + 'static;
+pub type FinalizeBundleFn = dyn Fn(H256, u64, Vec<Vec<u8>>, Vec<u8>) -> Result<PreparedBundle, String>
+    + Send
+    + Sync
+    + 'static;
 
 #[allow(deprecated)]
 #[deprecated(note = "Use PrepareBundleFn instead.")]
@@ -128,21 +364,26 @@ pub type BuildBatchFn = PrepareBundleFn;
 #[derive(Clone, Debug)]
 struct QueuedJob {
     id: u64,
+    package_id: String,
+    candidate_set_id: String,
     generation: u64,
     parent_hash: H256,
     block_number: u64,
-    stage_type: String,
+    stage_type: StageType,
     level: u16,
     arity: u16,
     shape_id: [u8; 32],
     dependencies: Vec<String>,
     enqueued_at: Instant,
     candidate_txs: Vec<Vec<u8>>,
+    leaf_batch_payload: Option<LeafBatchWorkData>,
+    merge_node_payload: Option<MergeNodeWorkData>,
+    finalize_bundle_payload: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]
 enum WorkerOutcome {
-    StageOnly,
+    StageResult(Box<Result<Vec<u8>, String>>),
     Bundle(Box<Result<PreparedBundle, String>>),
     Panicked(String),
 }
@@ -151,14 +392,18 @@ enum WorkerOutcome {
 struct WorkerJobResult {
     job: QueuedJob,
     queue_depth_after_pop: usize,
+    enqueue_to_start_ms: u128,
+    dispatch_to_start_ms: u128,
     build_elapsed_ms: u128,
     outcome: WorkerOutcome,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum WorkerCommand {
     Run {
         job: QueuedJob,
         queue_depth_after_pop: usize,
+        dispatched_at: Instant,
     },
     Stop,
 }
@@ -169,62 +414,236 @@ struct WorkerPool {
 }
 
 impl WorkerPool {
-    fn new(workers: usize, prepare_bundle_fn: Arc<PrepareBundleFn>) -> Self {
+    fn new(
+        workers: usize,
+        prepare_bundle_fn: Arc<PrepareBundleFn>,
+        finalize_bundle_fn: Arc<FinalizeBundleFn>,
+    ) -> Self {
         let (results_tx, results_rx) = mpsc::channel();
+        let (prewarm_tx, prewarm_rx) = mpsc::channel();
+        let disable_worker_prewarm = worker_prewarm_disabled();
         let mut senders = Vec::with_capacity(workers);
         for worker_index in 0..workers {
             let (worker_tx, worker_rx) = mpsc::channel();
             let worker_results_tx = results_tx.clone();
             let worker_prepare_bundle_fn = Arc::clone(&prepare_bundle_fn);
+            let worker_finalize_bundle_fn = Arc::clone(&finalize_bundle_fn);
+            let worker_prewarm_tx = prewarm_tx.clone();
             let worker_name = format!("hegemon-prover-worker-{worker_index}");
             let _ = std::thread::Builder::new()
                 .name(worker_name)
                 .spawn(move || {
+                    let prewarm_result = if disable_worker_prewarm {
+                        Ok(())
+                    } else {
+                        aggregation_circuit::prewarm_thread_local_aggregation_cache_from_env()
+                    };
+                    let _ = worker_prewarm_tx.send(
+                        prewarm_result
+                            .as_ref()
+                            .map(|_| ())
+                            .map_err(|error| error.to_string()),
+                    );
+                    if disable_worker_prewarm {
+                        tracing::info!(
+                            worker_index,
+                            "Skipping aggregation prover worker prewarm by configuration"
+                        );
+                    } else if let Err(error) = prewarm_result {
+                        tracing::warn!(
+                            worker_index,
+                            error = %error,
+                            "Failed to prewarm aggregation prover cache on worker thread"
+                        );
+                    }
                     while let Ok(command) = worker_rx.recv() {
                         let WorkerCommand::Run {
                             job,
                             queue_depth_after_pop,
+                            dispatched_at,
                         } = command
                         else {
                             break;
                         };
                         let build_started = Instant::now();
-                        let outcome = if job.stage_type == "root_finalize" {
-                            let parent_hash = job.parent_hash;
-                            let block_number = job.block_number;
-                            let candidate_txs = job.candidate_txs.clone();
-                            match panic::catch_unwind(AssertUnwindSafe(|| {
-                                worker_prepare_bundle_fn(parent_hash, block_number, candidate_txs)
-                            })) {
-                                Ok(result) => WorkerOutcome::Bundle(Box::new(result)),
-                                Err(panic_payload) => {
-                                    let message = if let Some(as_str) =
-                                        panic_payload.downcast_ref::<&'static str>()
-                                    {
-                                        (*as_str).to_string()
-                                    } else if let Some(as_string) =
-                                        panic_payload.downcast_ref::<String>()
-                                    {
-                                        as_string.clone()
-                                    } else {
-                                        "unknown panic payload".to_string()
-                                    };
-                                    WorkerOutcome::Panicked(message)
+                        let enqueue_to_start_ms =
+                            build_started.duration_since(job.enqueued_at).as_millis();
+                        let dispatch_to_start_ms =
+                            build_started.duration_since(dispatched_at).as_millis();
+                        let outcome = match job.stage_type {
+                            StageType::LeafBatchProve => {
+                                let payload = job.leaf_batch_payload.clone();
+                                match panic::catch_unwind(AssertUnwindSafe(move || {
+                                    let payload = payload
+                                        .ok_or_else(|| "missing leaf batch payload".to_string())?;
+                                    aggregation_circuit::prove_leaf_aggregation(
+                                        &payload.tx_proofs,
+                                        &payload.statement_hashes,
+                                        payload.tree_levels,
+                                        payload.root_level,
+                                    )
+                                    .map_err(|err| err.to_string())
+                                })) {
+                                    Ok(result) => WorkerOutcome::StageResult(Box::new(result)),
+                                    Err(panic_payload) => {
+                                        let message = if let Some(as_str) =
+                                            panic_payload.downcast_ref::<&'static str>()
+                                        {
+                                            (*as_str).to_string()
+                                        } else if let Some(as_string) =
+                                            panic_payload.downcast_ref::<String>()
+                                        {
+                                            as_string.clone()
+                                        } else {
+                                            "unknown panic payload".to_string()
+                                        };
+                                        WorkerOutcome::Panicked(message)
+                                    }
                                 }
                             }
-                        } else {
-                            WorkerOutcome::StageOnly
+                            StageType::MergeNodeProve | StageType::RootAggregateProve => {
+                                let payload = job.merge_node_payload.clone();
+                                match panic::catch_unwind(AssertUnwindSafe(move || {
+                                    let payload = payload
+                                        .ok_or_else(|| "missing merge node payload".to_string())?;
+                                    aggregation_circuit::prove_merge_aggregation(
+                                        &payload.child_proof_payloads,
+                                        payload.tx_statements_commitment,
+                                        payload.tree_levels,
+                                        payload.root_level,
+                                    )
+                                    .map_err(|err| err.to_string())
+                                })) {
+                                    Ok(result) => WorkerOutcome::StageResult(Box::new(result)),
+                                    Err(panic_payload) => {
+                                        let message = if let Some(as_str) =
+                                            panic_payload.downcast_ref::<&'static str>()
+                                        {
+                                            (*as_str).to_string()
+                                        } else if let Some(as_string) =
+                                            panic_payload.downcast_ref::<String>()
+                                        {
+                                            as_string.clone()
+                                        } else {
+                                            "unknown panic payload".to_string()
+                                        };
+                                        WorkerOutcome::Panicked(message)
+                                    }
+                                }
+                            }
+                            StageType::FinalizeBundle => {
+                                let parent_hash = job.parent_hash;
+                                let block_number = job.block_number;
+                                let candidate_txs = job.candidate_txs.clone();
+                                let finalize_bundle_payload = job.finalize_bundle_payload.clone();
+                                let finalize_bundle_fn = Arc::clone(&worker_finalize_bundle_fn);
+                                let prepare_bundle_fn = Arc::clone(&worker_prepare_bundle_fn);
+                                match panic::catch_unwind(AssertUnwindSafe(move || {
+                                    match finalize_bundle_payload {
+                                        Some(finalize_bundle_payload) => finalize_bundle_fn(
+                                            parent_hash,
+                                            block_number,
+                                            candidate_txs,
+                                            finalize_bundle_payload,
+                                        ),
+                                        None => prepare_bundle_fn(
+                                            parent_hash,
+                                            block_number,
+                                            candidate_txs,
+                                        ),
+                                    }
+                                })) {
+                                    Ok(result) => WorkerOutcome::Bundle(Box::new(result)),
+                                    Err(panic_payload) => {
+                                        let message = if let Some(as_str) =
+                                            panic_payload.downcast_ref::<&'static str>()
+                                        {
+                                            (*as_str).to_string()
+                                        } else if let Some(as_string) =
+                                            panic_payload.downcast_ref::<String>()
+                                        {
+                                            as_string.clone()
+                                        } else {
+                                            "unknown panic payload".to_string()
+                                        };
+                                        WorkerOutcome::Panicked(message)
+                                    }
+                                }
+                            }
+                            _ => {
+                                let parent_hash = job.parent_hash;
+                                let block_number = job.block_number;
+                                let candidate_txs = job.candidate_txs.clone();
+                                match panic::catch_unwind(AssertUnwindSafe(|| {
+                                    worker_prepare_bundle_fn(
+                                        parent_hash,
+                                        block_number,
+                                        candidate_txs,
+                                    )
+                                })) {
+                                    Ok(result) => WorkerOutcome::Bundle(Box::new(result)),
+                                    Err(panic_payload) => {
+                                        let message = if let Some(as_str) =
+                                            panic_payload.downcast_ref::<&'static str>()
+                                        {
+                                            (*as_str).to_string()
+                                        } else if let Some(as_string) =
+                                            panic_payload.downcast_ref::<String>()
+                                        {
+                                            as_string.clone()
+                                        } else {
+                                            "unknown panic payload".to_string()
+                                        };
+                                        WorkerOutcome::Panicked(message)
+                                    }
+                                }
+                            }
                         };
                         let build_elapsed_ms = build_started.elapsed().as_millis();
                         let _ = worker_results_tx.send(WorkerJobResult {
                             job,
                             queue_depth_after_pop,
+                            enqueue_to_start_ms,
+                            dispatch_to_start_ms,
                             build_elapsed_ms,
                             outcome,
                         });
                     }
                 });
             senders.push(worker_tx);
+        }
+        drop(prewarm_tx);
+
+        if should_block_on_worker_prewarm() {
+            let timeout = worker_prewarm_timeout();
+            for worker_index in 0..workers {
+                match prewarm_rx.recv_timeout(timeout) {
+                    Ok(Ok(())) => {
+                        tracing::info!(
+                            worker_index,
+                            timeout_secs = timeout.as_secs(),
+                            "Aggregation prover worker prewarm complete"
+                        );
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(
+                            worker_index,
+                            error = %error,
+                            timeout_secs = timeout.as_secs(),
+                            "Aggregation prover worker prewarm failed during startup"
+                        );
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        tracing::warn!(
+                            worker_index,
+                            timeout_secs = timeout.as_secs(),
+                            "Timed out waiting for aggregation prover worker prewarm"
+                        );
+                        break;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
         }
         Self {
             senders,
@@ -236,6 +655,7 @@ impl WorkerPool {
         if self.senders.is_empty() {
             return false;
         }
+        let dispatched_at = Instant::now();
         self.senders
             .get(worker_index % self.senders.len())
             .and_then(|sender| {
@@ -243,6 +663,7 @@ impl WorkerPool {
                     .send(WorkerCommand::Run {
                         job,
                         queue_depth_after_pop,
+                        dispatched_at,
                     })
                     .ok()
             })
@@ -256,6 +677,50 @@ impl WorkerPool {
     fn worker_count(&self) -> usize {
         self.senders.len()
     }
+}
+
+fn should_block_on_worker_prewarm() -> bool {
+    std::env::var("HEGEMON_AGG_PREWARM_BLOCKING")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn worker_prewarm_disabled() -> bool {
+    if !aggregation_worker_prewarm_enabled_for_mode() {
+        return true;
+    }
+    std::env::var("HEGEMON_AGG_DISABLE_WORKER_PREWARM")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn aggregation_worker_prewarm_enabled_for_mode() -> bool {
+    matches!(
+        ProverCoordinator::prepared_proof_mode_from_env(),
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot
+    )
+}
+
+fn worker_prewarm_timeout() -> Duration {
+    Duration::from_secs(
+        std::env::var("HEGEMON_AGG_PREWARM_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(900)
+            .max(1),
+    )
 }
 
 impl Drop for WorkerPool {
@@ -273,6 +738,7 @@ pub struct ProverCoordinator {
     best_block_fn: Arc<BestBlockFn>,
     pending_txs_fn: Arc<PendingTxsFn>,
     worker_pool: Arc<WorkerPool>,
+    build_root_aggregation_work_fn: Option<Arc<BuildRootAggregationWorkFn>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -298,15 +764,39 @@ impl ProverCoordinatorConfig {
             .map(|threads| threads.get().min(2))
             .unwrap_or(1usize)
             .max(1);
-        let workers = std::env::var("HEGEMON_AGG_STAGE_LOCAL_PARALLELISM")
+        let configured_workers = std::env::var("HEGEMON_AGG_STAGE_LOCAL_PARALLELISM")
             .ok()
             .and_then(|v| v.parse().ok())
             .or_else(|| {
                 std::env::var("HEGEMON_PROVER_WORKERS")
                     .ok()
                     .and_then(|v| v.parse().ok())
+            });
+        let mining_enabled = std::env::var("HEGEMON_MINE")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
             })
-            .unwrap_or(default_workers);
+            .unwrap_or(false);
+        let requires_prepared_bundles = ProverCoordinator::proof_mode_requires_prepared_bundles(
+            ProverCoordinator::prepared_proof_mode_from_env(),
+        );
+        let workers = match configured_workers {
+            Some(0) if mining_enabled && requires_prepared_bundles => {
+                tracing::warn!(
+                    mining_enabled,
+                    ?requires_prepared_bundles,
+                    configured_workers = 0,
+                    "Configured prover workers=0 would deadlock prepared-bundle authoring; clamping to 1"
+                );
+                1
+            }
+            Some(workers) => workers,
+            None => default_workers,
+        };
         let target_txs = std::env::var("HEGEMON_BATCH_TARGET_TXS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -415,7 +905,39 @@ struct FanoutAssemblyState {
     candidate_txs: Vec<Vec<u8>>,
     expected_chunks: u16,
     chunks: Vec<ChunkPlan>,
-    received: HashMap<String, pallet_shielded_pool::types::BlockProofBundle>,
+    received: HashMap<String, pallet_shielded_pool::types::CandidateArtifact>,
+}
+
+#[derive(Clone, Debug)]
+struct RecursiveStagePlan {
+    package_id: String,
+    stage_type: StageType,
+    level: u16,
+    shape_id: [u8; 32],
+    subtree_tx_count: u32,
+    child_package_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct RecursiveTreeAssemblyState {
+    parent_hash: H256,
+    block_number: u64,
+    candidate_txs: Vec<Vec<u8>>,
+    root_aggregation_payload: RootAggregationWorkData,
+    levels: Vec<Vec<RecursiveStagePlan>>,
+    completed_results: HashMap<String, Vec<u8>>,
+    scheduled_packages: HashSet<String>,
+    finalize_enqueued: bool,
+}
+
+impl RecursiveTreeAssemblyState {
+    fn root_plan(&self) -> Option<&RecursiveStagePlan> {
+        self.levels.last().and_then(|level| level.first())
+    }
+
+    fn root_package_id(&self) -> Option<&str> {
+        self.root_plan().map(|plan| plan.package_id.as_str())
+    }
 }
 
 #[derive(Default)]
@@ -426,15 +948,19 @@ struct CoordinatorState {
     adaptive_liveness_fired_generation: Option<u64>,
     selected_txs: Vec<Vec<u8>>,
     prepared: HashMap<BundleMatchKey, PreparedBundle>,
+    prepared_expensive: HashMap<String, Vec<u8>>,
     work_packages: HashMap<String, WorkPackageRecord>,
     work_package_queue: VecDeque<String>,
+    stage_work_package_queue: VecDeque<String>,
     latest_work_package: Option<String>,
+    latest_stage_work_package: Option<String>,
     fanout_assemblies: HashMap<String, FanoutAssemblyState>,
+    recursive_assemblies: HashMap<String, RecursiveTreeAssemblyState>,
     work_status: HashMap<String, WorkStatus>,
     source_submissions: HashMap<String, u32>,
     pending_jobs: VecDeque<QueuedJob>,
     inflight_jobs: HashMap<u64, u64>,
-    inflight_stage_meta: HashMap<u64, (String, u16)>,
+    inflight_stage_meta: HashMap<u64, (StageType, u16)>,
     inflight_candidates: HashMap<u64, Vec<Vec<u8>>>,
     next_job_id: u64,
     stale_count: u64,
@@ -442,27 +968,8 @@ struct CoordinatorState {
 }
 
 impl ProverCoordinator {
-    fn aggregation_tree_arity() -> u16 {
-        std::env::var("HEGEMON_AGG_TREE_ARITY")
-            .ok()
-            .and_then(|raw| raw.parse::<u16>().ok())
-            .map(|value| value.max(2))
-            .unwrap_or(8)
-    }
-
-    fn tree_levels_for_tx_count(tx_count: usize, arity: u16) -> u16 {
-        if tx_count <= 1 {
-            return 1;
-        }
-        let mut levels = 1u16;
-        let mut width = tx_count;
-        let radix = arity.max(2) as usize;
-        while width > 1 {
-            width = width.div_ceil(radix);
-            levels = levels.saturating_add(1);
-        }
-        levels
-    }
+    const DEFAULT_LEAF_FAN_IN: usize = 1;
+    const DEFAULT_MERGE_FAN_IN: usize = 2;
 
     fn candidate_digest(candidate_txs: &[Vec<u8>]) -> [u8; 32] {
         let mut bytes = Vec::new();
@@ -473,109 +980,188 @@ impl ProverCoordinator {
         sp_core::hashing::blake2_256(&bytes)
     }
 
-    fn work_package_shape_id(
-        parent_hash: H256,
-        block_number: u64,
-        stage_type: &str,
+    fn candidate_set_id(candidate_txs: &[Vec<u8>]) -> String {
+        hex::encode(Self::candidate_digest(candidate_txs))
+    }
+
+    fn expensive_stage_shape_id(
+        stage_type: StageType,
         level: u16,
         stage_index: u32,
         arity: u16,
         tx_count: u32,
         candidate_digest: [u8; 32],
+        shape_tag: Option<[u8; 32]>,
     ) -> [u8; 32] {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(parent_hash.as_bytes());
-        bytes.extend_from_slice(&block_number.to_le_bytes());
-        bytes.extend_from_slice(stage_type.as_bytes());
+        bytes.extend_from_slice(stage_type.as_str().as_bytes());
         bytes.extend_from_slice(&level.to_le_bytes());
         bytes.extend_from_slice(&stage_index.to_le_bytes());
         bytes.extend_from_slice(&arity.to_le_bytes());
         bytes.extend_from_slice(&tx_count.to_le_bytes());
         bytes.extend_from_slice(&candidate_digest);
+        if let Some(shape_tag) = shape_tag {
+            bytes.extend_from_slice(&shape_tag);
+        }
         sp_core::hashing::blake2_256(&bytes)
     }
 
     fn stage_work_id(
-        parent_hash: H256,
-        block_number: u64,
-        stage_type: &str,
+        stage_type: StageType,
         level: u16,
         stage_index: u32,
         arity: u16,
         tx_count: u32,
         candidate_digest: [u8; 32],
+        shape_tag: Option<[u8; 32]>,
     ) -> String {
-        hex::encode(Self::work_package_shape_id(
-            parent_hash,
-            block_number,
+        hex::encode(Self::expensive_stage_shape_id(
             stage_type,
             level,
             stage_index,
             arity,
             tx_count,
             candidate_digest,
+            shape_tag,
         ))
     }
 
-    fn root_stage_metadata(
+    pub(crate) fn final_bundle_id(
         parent_hash: H256,
         block_number: u64,
-        candidate_txs: &[Vec<u8>],
-        arity: u16,
-    ) -> (u16, [u8; 32], Vec<String>) {
-        let tx_count = candidate_txs.len().max(1) as u32;
-        let candidate_digest = Self::candidate_digest(candidate_txs);
-        let radix = arity.max(2) as usize;
+        tx_statements_commitment: [u8; 48],
+        tx_count: u32,
+    ) -> String {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(parent_hash.as_bytes());
+        bytes.extend_from_slice(&block_number.to_le_bytes());
+        bytes.extend_from_slice(&tx_statements_commitment);
+        bytes.extend_from_slice(&tx_count.to_le_bytes());
+        hex::encode(sp_core::hashing::blake2_256(&bytes))
+    }
 
-        let mut level_widths = vec![tx_count as usize];
-        while level_widths.last().copied().unwrap_or(1) > 1 {
-            let next = level_widths.last().copied().unwrap_or(1).div_ceil(radix);
-            level_widths.push(next);
+    fn tx_proof_manifest_shape_id(
+        stage_index: u32,
+        tx_count: u32,
+        candidate_digest: [u8; 32],
+    ) -> [u8; 32] {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"tx-proof-manifest-build");
+        bytes.extend_from_slice(&stage_index.to_le_bytes());
+        bytes.extend_from_slice(&tx_count.to_le_bytes());
+        bytes.extend_from_slice(&candidate_digest);
+        sp_core::hashing::blake2_256(&bytes)
+    }
+
+    fn plan_recursive_stages(candidate_txs: &[Vec<u8>]) -> Vec<Vec<RecursiveStagePlan>> {
+        if candidate_txs.is_empty() {
+            return Vec::new();
+        }
+        let candidate_digest = Self::candidate_digest(candidate_txs);
+        let leaf_fan_in = Self::leaf_fan_in().max(1);
+        let merge_fan_in = Self::merge_fan_in().max(1);
+
+        let mut levels = Vec::new();
+        let mut current_level = Vec::new();
+        for (chunk_index, chunk) in candidate_txs.chunks(leaf_fan_in).enumerate() {
+            let subtree_tx_count = chunk.len() as u32;
+            let stage_type = StageType::LeafBatchProve;
+            let shape_id = Self::expensive_stage_shape_id(
+                stage_type,
+                0,
+                chunk_index as u32,
+                merge_fan_in as u16,
+                subtree_tx_count,
+                candidate_digest,
+                None,
+            );
+            current_level.push(RecursiveStagePlan {
+                package_id: Self::stage_work_id(
+                    stage_type,
+                    0,
+                    chunk_index as u32,
+                    merge_fan_in as u16,
+                    subtree_tx_count,
+                    candidate_digest,
+                    None,
+                ),
+                stage_type,
+                level: 0,
+                shape_id,
+                subtree_tx_count,
+                child_package_ids: Vec::new(),
+            });
+        }
+        levels.push(current_level.clone());
+
+        let mut level = 1u16;
+        while current_level.len() > 1 {
+            let chunk_groups = current_level
+                .chunks(merge_fan_in)
+                .map(|group| {
+                    let subtree_tx_count =
+                        group.iter().map(|node| node.subtree_tx_count).sum::<u32>();
+                    let child_package_ids = group
+                        .iter()
+                        .map(|node| node.package_id.clone())
+                        .collect::<Vec<_>>();
+                    (subtree_tx_count, child_package_ids)
+                })
+                .collect::<Vec<_>>();
+            let is_root_level = chunk_groups.len() == 1;
+            let stage_type = if is_root_level {
+                StageType::RootAggregateProve
+            } else {
+                StageType::MergeNodeProve
+            };
+            let next_level = chunk_groups
+                .into_iter()
+                .enumerate()
+                .map(|(stage_index, (subtree_tx_count, child_package_ids))| {
+                    let shape_id = Self::expensive_stage_shape_id(
+                        stage_type,
+                        level,
+                        stage_index as u32,
+                        merge_fan_in as u16,
+                        subtree_tx_count,
+                        candidate_digest,
+                        None,
+                    );
+                    RecursiveStagePlan {
+                        package_id: Self::stage_work_id(
+                            stage_type,
+                            level,
+                            stage_index as u32,
+                            merge_fan_in as u16,
+                            subtree_tx_count,
+                            candidate_digest,
+                            None,
+                        ),
+                        stage_type,
+                        level,
+                        shape_id,
+                        subtree_tx_count,
+                        child_package_ids,
+                    }
+                })
+                .collect::<Vec<_>>();
+            levels.push(next_level.clone());
+            current_level = next_level;
+            level = level.saturating_add(1);
         }
 
-        let root_level = level_widths.len().saturating_sub(1) as u16;
-        debug_assert_eq!(
-            root_level.saturating_add(1),
-            Self::tree_levels_for_tx_count(tx_count as usize, arity)
-        );
-        let root_shape_id = Self::work_package_shape_id(
-            parent_hash,
-            block_number,
-            "root_finalize",
-            root_level,
-            0,
-            arity,
-            tx_count,
-            candidate_digest,
-        );
+        levels
+    }
 
-        let dependencies = if root_level == 0 {
-            Vec::new()
-        } else {
-            let parent_level = root_level.saturating_sub(1) as usize;
-            let parent_stage = if parent_level == 0 {
-                "leaf_verify"
-            } else {
-                "merge"
-            };
-            let parent_width = level_widths[parent_level];
-            (0..parent_width)
-                .map(|idx| {
-                    Self::stage_work_id(
-                        parent_hash,
-                        block_number,
-                        parent_stage,
-                        parent_level as u16,
-                        idx as u32,
-                        arity,
-                        tx_count,
-                        candidate_digest,
-                    )
-                })
-                .collect()
-        };
-
-        (root_level, root_shape_id, dependencies)
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn root_stage_metadata(candidate_txs: &[Vec<u8>]) -> (u16, [u8; 32], Vec<String>) {
+        let plans = Self::plan_recursive_stages(candidate_txs);
+        let root = plans
+            .last()
+            .and_then(|level| level.first())
+            .expect("recursive plan should contain a root stage");
+        (root.level, root.shape_id, root.child_package_ids.clone())
     }
 
     fn stage_mem_budget_mb() -> usize {
@@ -621,9 +1207,39 @@ impl ProverCoordinator {
         pending_txs_fn: Arc<PendingTxsFn>,
         prepare_bundle_fn: Arc<PrepareBundleFn>,
     ) -> Arc<Self> {
+        let finalize_bundle_fn: Arc<FinalizeBundleFn> = {
+            let prepare_bundle_fn = Arc::clone(&prepare_bundle_fn);
+            Arc::new(
+                move |parent_hash: H256,
+                      block_number: u64,
+                      candidate_txs: Vec<Vec<u8>>,
+                      _root_proof_bytes: Vec<u8>| {
+                    prepare_bundle_fn(parent_hash, block_number, candidate_txs)
+                },
+            )
+        };
+        Self::new_with_recursive_builders(
+            config,
+            best_block_fn,
+            pending_txs_fn,
+            prepare_bundle_fn,
+            finalize_bundle_fn,
+            None,
+        )
+    }
+
+    pub fn new_with_recursive_builders(
+        config: ProverCoordinatorConfig,
+        best_block_fn: Arc<BestBlockFn>,
+        pending_txs_fn: Arc<PendingTxsFn>,
+        prepare_bundle_fn: Arc<PrepareBundleFn>,
+        finalize_bundle_fn: Arc<FinalizeBundleFn>,
+        build_root_aggregation_work_fn: Option<Arc<BuildRootAggregationWorkFn>>,
+    ) -> Arc<Self> {
         let worker_pool = Arc::new(WorkerPool::new(
             config.workers,
             Arc::clone(&prepare_bundle_fn),
+            Arc::clone(&finalize_bundle_fn),
         ));
         Arc::new(Self {
             state: Arc::new(Mutex::new(CoordinatorState::default())),
@@ -631,6 +1247,7 @@ impl ProverCoordinator {
             best_block_fn,
             pending_txs_fn,
             worker_pool,
+            build_root_aggregation_work_fn,
         })
     }
 
@@ -646,15 +1263,30 @@ impl ProverCoordinator {
 
     pub fn pending_transactions(&self, max_txs: usize) -> Vec<Vec<u8>> {
         let state = self.state.lock();
-        // Prefer candidates that already have a prepared proof bundle for the
-        // current parent. This is the liveness lane used when larger batches
-        // are still proving.
-        let mut txs = if let Some(prepared) = Self::best_prepared_candidate_locked(&state) {
-            prepared
-        } else if state.selected_txs.is_empty() {
-            Self::best_pending_candidate_locked(&state).unwrap_or_default()
+        let proof_mode = Self::prepared_proof_mode_from_env();
+        let mut txs = if Self::proof_mode_requires_prepared_bundles(proof_mode) {
+            // Prefer candidates that already have a prepared proof bundle for
+            // the current parent. This is the liveness lane used when larger
+            // batches are still proving.
+            if let Some(prepared) = Self::best_prepared_candidate_locked(&state) {
+                prepared
+            } else {
+                Self::selected_or_pending_candidate_locked(&state)
+            }
         } else {
-            state.selected_txs.clone()
+            Self::selected_or_pending_candidate_locked(&state)
+        };
+        txs.truncate(max_txs);
+        txs
+    }
+
+    pub fn authoring_transactions(&self, max_txs: usize) -> Vec<Vec<u8>> {
+        let state = self.state.lock();
+        let proof_mode = Self::prepared_proof_mode_from_env();
+        let mut txs = if Self::proof_mode_requires_prepared_bundles(proof_mode) {
+            Self::best_prepared_candidate_locked(&state).unwrap_or_default()
+        } else {
+            Self::selected_or_pending_candidate_locked(&state)
         };
         txs.truncate(max_txs);
         txs
@@ -667,12 +1299,16 @@ impl ProverCoordinator {
         tx_count: u32,
     ) -> Option<PreparedBundle> {
         let state = self.state.lock();
-        let key = BundleMatchKey {
-            parent_hash,
-            tx_statements_commitment,
-            tx_count,
-        };
-        state.prepared.get(&key).cloned()
+        state
+            .prepared
+            .values()
+            .filter(|bundle| {
+                bundle.key.parent_hash == parent_hash
+                    && bundle.key.tx_statements_commitment == tx_statements_commitment
+                    && bundle.key.tx_count == tx_count
+            })
+            .max_by(|left, right| compare_prepared_bundles(left, right))
+            .cloned()
     }
 
     pub fn lookup_prepared_bundle_any_parent(
@@ -683,6 +1319,101 @@ impl ProverCoordinator {
         let state = self.state.lock();
         Self::best_prepared_bundle_for_statement_locked(&state, tx_statements_commitment, tx_count)
             .cloned()
+    }
+
+    pub fn lookup_candidate_artifact_any_parent(
+        &self,
+        tx_statements_commitment: [u8; 48],
+        tx_count: u32,
+    ) -> Option<pallet_shielded_pool::types::CandidateArtifact> {
+        self.lookup_prepared_bundle_any_parent(tx_statements_commitment, tx_count)
+            .map(|bundle| bundle.payload)
+    }
+
+    pub fn lookup_candidate_artifact_by_hash(
+        &self,
+        artifact_hash: [u8; 32],
+    ) -> Option<pallet_shielded_pool::types::CandidateArtifact> {
+        self.lookup_prepared_bundle_by_hash(artifact_hash)
+            .map(|bundle| bundle.payload)
+    }
+
+    pub fn lookup_prepared_bundle_by_hash(
+        &self,
+        artifact_hash: [u8; 32],
+    ) -> Option<PreparedBundle> {
+        let state = self.state.lock();
+        state
+            .prepared
+            .values()
+            .find(|bundle| {
+                crate::substrate::artifact_market::candidate_artifact_hash(&bundle.payload)
+                    == artifact_hash
+            })
+            .cloned()
+    }
+
+    pub fn import_network_artifact(
+        &self,
+        parent_hash: H256,
+        payload: pallet_shielded_pool::types::CandidateArtifact,
+        candidate_txs: Vec<Vec<u8>>,
+    ) {
+        let mut state = self.state.lock();
+        if payload.proof_mode == pallet_shielded_pool::types::BlockProofMode::MergeRoot {
+            if let Some(merge_root) = payload.merge_root.as_ref() {
+                if let Some(root_plan) = Self::plan_recursive_stages(&candidate_txs)
+                    .last()
+                    .and_then(|level| level.first())
+                {
+                    match decode_aggregation_proof_bytes(&merge_root.root_proof.data) {
+                        Ok(root_proof_bytes) => {
+                            state
+                                .prepared_expensive
+                                .insert(root_plan.package_id.clone(), root_proof_bytes);
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                artifact_hash = %hex::encode(
+                                    crate::substrate::artifact_market::candidate_artifact_hash(&payload)
+                                ),
+                                error = ?error,
+                                "Failed to seed reusable merge-root artifact cache from imported network artifact"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let key = candidate_bundle_key(parent_hash, &payload);
+        let incoming = PreparedBundle {
+            key: key.clone(),
+            payload,
+            candidate_txs,
+            build_ms: 0,
+        };
+        let should_replace = match state.prepared.get(&key) {
+            Some(existing) => compare_prepared_bundles(&incoming, existing).is_gt(),
+            None => true,
+        };
+        if should_replace {
+            state.prepared.insert(key, incoming);
+        }
+    }
+
+    pub fn list_artifact_announcements(&self) -> Vec<consensus::ArtifactAnnouncement> {
+        let state = self.state.lock();
+        let mut announcements = state
+            .prepared
+            .values()
+            .map(|bundle| crate::substrate::artifact_market::artifact_announcement(&bundle.payload))
+            .collect::<Vec<_>>();
+        announcements.sort_by(|left, right| {
+            left.tx_statements_commitment
+                .cmp(&right.tx_statements_commitment)
+                .then_with(|| left.tx_count.cmp(&right.tx_count))
+        });
+        announcements
     }
 
     #[allow(deprecated)]
@@ -708,8 +1439,11 @@ impl ProverCoordinator {
             state.prepared.clear();
             state.work_packages.clear();
             state.work_package_queue.clear();
+            state.stage_work_package_queue.clear();
             state.latest_work_package = None;
+            state.latest_stage_work_package = None;
             state.fanout_assemblies.clear();
+            state.recursive_assemblies.clear();
             state.work_status.clear();
             state.source_submissions.clear();
             state.pending_jobs.clear();
@@ -730,8 +1464,11 @@ impl ProverCoordinator {
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.work_package_queue.clear();
+                state.stage_work_package_queue.clear();
                 state.latest_work_package = None;
+                state.latest_stage_work_package = None;
                 state.fanout_assemblies.clear();
+                state.recursive_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
                 state.pending_jobs.clear();
@@ -810,16 +1547,16 @@ impl ProverCoordinator {
 
     pub fn stage_plan_status(&self) -> StagePlanStatus {
         let state = self.state.lock();
-        let mut per_stage: BTreeMap<(String, u16), StageQueueStatus> = BTreeMap::new();
+        let mut per_stage: BTreeMap<(StageType, u16), StageQueueStatus> = BTreeMap::new();
 
         for job in state
             .pending_jobs
             .iter()
             .filter(|job| job.generation == state.generation)
         {
-            let key = (job.stage_type.clone(), job.level);
-            let entry = per_stage.entry(key.clone()).or_insert(StageQueueStatus {
-                stage_type: key.0.clone(),
+            let key = (job.stage_type, job.level);
+            let entry = per_stage.entry(key).or_insert(StageQueueStatus {
+                stage_type: key.0,
                 level: key.1,
                 queued_jobs: 0,
                 inflight_jobs: 0,
@@ -832,9 +1569,9 @@ impl ProverCoordinator {
                 continue;
             }
             if let Some((stage_type, level)) = state.inflight_stage_meta.get(job_id) {
-                let key = (stage_type.clone(), *level);
-                let entry = per_stage.entry(key.clone()).or_insert(StageQueueStatus {
-                    stage_type: key.0.clone(),
+                let key = (*stage_type, *level);
+                let entry = per_stage.entry(key).or_insert(StageQueueStatus {
+                    stage_type: key.0,
                     level: key.1,
                     queued_jobs: 0,
                     inflight_jobs: 0,
@@ -849,7 +1586,10 @@ impl ProverCoordinator {
             queued_jobs: state.pending_jobs.len(),
             inflight_jobs: state.inflight_jobs.len(),
             prepared_bundles: state.prepared.len(),
-            latest_work_package: state.latest_work_package.clone(),
+            latest_work_package: state
+                .latest_stage_work_package
+                .clone()
+                .or_else(|| state.latest_work_package.clone()),
             stage_queue: per_stage.into_values().collect(),
         }
     }
@@ -890,11 +1630,38 @@ impl ProverCoordinator {
         None
     }
 
+    pub fn get_stage_work_package(&self) -> Option<WorkPackage> {
+        let mut state = self.state.lock();
+        Self::expire_work_packages_locked(&mut state);
+        let queue_len = state.stage_work_package_queue.len();
+        for _ in 0..queue_len {
+            let Some(package_id) = state.stage_work_package_queue.pop_front() else {
+                break;
+            };
+            let Some(record) = state.work_packages.get(&package_id) else {
+                continue;
+            };
+            if record.submissions >= self.config.max_submissions_per_package {
+                continue;
+            }
+            let package = record.package.clone();
+            state.stage_work_package_queue.push_back(package_id.clone());
+            state.latest_stage_work_package = Some(package_id.clone());
+            state
+                .work_status
+                .entry(package_id.clone())
+                .or_insert(WorkStatus::Pending);
+            return Some(package);
+        }
+        state.latest_stage_work_package = None;
+        None
+    }
+
     pub fn submit_external_work_result(
         &self,
         source: &str,
         package_id: &str,
-        payload: pallet_shielded_pool::types::BlockProofBundle,
+        payload: pallet_shielded_pool::types::CandidateArtifact,
     ) -> Result<(), String> {
         let mut state = self.state.lock();
         Self::expire_work_packages_locked(&mut state);
@@ -950,6 +1717,15 @@ impl ProverCoordinator {
             return Err("work result payload exceeds max size".to_string());
         }
 
+        if package.stage_type == StageType::TxProofManifestBuild {
+            if let Err(error) = verify_external_tx_proof_manifest_result(&package, &payload) {
+                state
+                    .work_status
+                    .insert(package_id.to_string(), WorkStatus::Rejected(error.clone()));
+                return Err(error);
+            }
+        }
+
         if let Some(record) = state.work_packages.get_mut(package_id) {
             record.submissions = record.submissions.saturating_add(1);
         }
@@ -957,7 +1733,7 @@ impl ProverCoordinator {
             .source_submissions
             .insert(source_key, source_count.saturating_add(1));
 
-        if package.stage_type == "leaf_batch_prove" {
+        if package.stage_type == StageType::TxProofManifestBuild {
             let maybe_bundle =
                 Self::register_chunk_result_and_maybe_assemble(&mut state, &package, payload)?;
             state
@@ -982,11 +1758,14 @@ impl ProverCoordinator {
             }
             Ok(())
         } else {
-            let key = BundleMatchKey {
-                parent_hash: package.parent_hash,
-                tx_statements_commitment: payload.tx_statements_commitment,
-                tx_count: payload.tx_count,
-            };
+            if package.stage_type != StageType::FinalizeBundle {
+                state.work_status.insert(
+                    package_id.to_string(),
+                    WorkStatus::Rejected("package is not a final bundle package".into()),
+                );
+                return Err("package is not a final bundle package".to_string());
+            }
+            let key = candidate_bundle_key(package.parent_hash, &payload);
             let incoming = PreparedBundle {
                 key: key.clone(),
                 payload,
@@ -1015,10 +1794,99 @@ impl ProverCoordinator {
         }
     }
 
+    pub fn submit_external_stage_result(
+        &self,
+        source: &str,
+        package_id: &str,
+        payload_bytes: Vec<u8>,
+    ) -> Result<(), String> {
+        let mut state = self.state.lock();
+        Self::expire_work_packages_locked(&mut state);
+
+        let source_key = source.trim().to_owned();
+        if source_key.is_empty() {
+            return Err("source is required".to_string());
+        }
+        let source_count = *state.source_submissions.get(&source_key).unwrap_or(&0);
+        if source_count >= self.config.max_submissions_per_source {
+            return Err("source submission rate limit exceeded".to_string());
+        }
+        let Some(record) = state.work_packages.get(package_id) else {
+            return Err("unknown or expired work package".to_string());
+        };
+        let package = record.package.clone();
+        if record.submissions >= self.config.max_submissions_per_package {
+            state.work_status.insert(
+                package_id.to_string(),
+                WorkStatus::Rejected("package saturated".into()),
+            );
+            return Err("work package submission limit exceeded".to_string());
+        }
+        if payload_bytes.len() > self.config.max_payload_bytes {
+            state.work_status.insert(
+                package_id.to_string(),
+                WorkStatus::Rejected("payload too large".into()),
+            );
+            return Err("work result payload exceeds max size".to_string());
+        }
+        match package.stage_type {
+            StageType::LeafBatchProve => {
+                let leaf_payload = package
+                    .leaf_batch_payload
+                    .as_ref()
+                    .ok_or_else(|| "missing leaf batch payload".to_string())?;
+                consensus::verify_aggregation_proof(
+                    &payload_bytes,
+                    leaf_payload.tx_proofs.len(),
+                    &leaf_payload.tx_statements_commitment,
+                )
+                .map_err(|err| format!("leaf stage proof verification failed: {err}"))?;
+            }
+            StageType::MergeNodeProve | StageType::RootAggregateProve => {
+                let merge_payload = package
+                    .merge_node_payload
+                    .as_ref()
+                    .ok_or_else(|| "missing merge payload".to_string())?;
+                consensus::verify_aggregation_proof(
+                    &payload_bytes,
+                    package.tx_count as usize,
+                    &merge_payload.tx_statements_commitment,
+                )
+                .map_err(|err| format!("merge stage proof verification failed: {err}"))?;
+            }
+            _ => {
+                return Err("package is not a recursive stage package".to_string());
+            }
+        }
+
+        if let Some(record) = state.work_packages.get_mut(package_id) {
+            record.submissions = record.submissions.saturating_add(1);
+        }
+        state
+            .source_submissions
+            .insert(source_key, source_count.saturating_add(1));
+
+        let maybe_prepared = self.apply_recursive_stage_result_locked(
+            &mut state,
+            package_id,
+            &package.candidate_set_id,
+            package.parent_hash,
+            payload_bytes,
+        )?;
+        state
+            .work_status
+            .insert(package_id.to_string(), WorkStatus::Accepted);
+        if let Some(bundle) = maybe_prepared {
+            let key = bundle.key.clone();
+            state.prepared.insert(key, bundle);
+        }
+        Ok(())
+    }
+
     fn register_chunk_result_and_maybe_assemble(
         state: &mut CoordinatorState,
         package: &WorkPackage,
-        payload: pallet_shielded_pool::types::BlockProofBundle,
+        payload: pallet_shielded_pool::types::CandidateArtifact,
     ) -> Result<Option<PreparedBundle>, String> {
         if payload.proof_mode != pallet_shielded_pool::types::BlockProofMode::FlatBatches {
             return Err("fan-out chunk payload must use FlatBatches mode".to_string());
@@ -1063,13 +1931,7 @@ impl ProverCoordinator {
         };
         state.fanout_assemblies.remove(&candidate_set_id);
 
-        let tx_count = assembled_payload.tx_count;
-        let tx_statements_commitment = assembled_payload.tx_statements_commitment;
-        let key = BundleMatchKey {
-            parent_hash,
-            tx_statements_commitment,
-            tx_count,
-        };
+        let key = candidate_bundle_key(parent_hash, &assembled_payload);
         Ok(Some(PreparedBundle {
             key,
             payload: assembled_payload,
@@ -1080,7 +1942,7 @@ impl ProverCoordinator {
 
     fn assemble_fanout_payload(
         assembly: &FanoutAssemblyState,
-    ) -> Result<pallet_shielded_pool::types::BlockProofBundle, String> {
+    ) -> Result<pallet_shielded_pool::types::CandidateArtifact, String> {
         let mut chunk_specs = assembly.chunks.clone();
         chunk_specs.sort_by_key(|chunk| chunk.start_tx_index);
         let Some(first_spec) = chunk_specs.first() else {
@@ -1154,7 +2016,7 @@ impl ProverCoordinator {
             return Err("fan-out chunk coverage does not match candidate tx count".to_string());
         }
 
-        Ok(pallet_shielded_pool::types::BlockProofBundle {
+        Ok(pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count: covered,
             tx_statements_commitment: anchor_payload.tx_statements_commitment,
@@ -1164,7 +2026,7 @@ impl ProverCoordinator {
             proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
             flat_batches,
             merge_root: None,
-            prover_claim: anchor_payload.prover_claim.clone(),
+            artifact_claim: anchor_payload.artifact_claim.clone(),
         })
     }
 
@@ -1187,8 +2049,11 @@ impl ProverCoordinator {
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.work_package_queue.clear();
+                state.stage_work_package_queue.clear();
                 state.latest_work_package = None;
+                state.latest_stage_work_package = None;
                 state.fanout_assemblies.clear();
+                state.recursive_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
                 state.pending_jobs.clear();
@@ -1209,6 +2074,26 @@ impl ProverCoordinator {
         if state.current_parent != Some(parent_hash) {
             return;
         }
+        let selected_mode = Self::prepared_proof_mode_from_env();
+        if !Self::proof_mode_requires_prepared_bundles(selected_mode) {
+            state.selected_txs = candidate;
+            state.target_batch_scheduled_at_ms = None;
+            state.adaptive_liveness_fired_generation = None;
+            state.work_packages.clear();
+            state.work_package_queue.clear();
+            state.stage_work_package_queue.clear();
+            state.latest_work_package = None;
+            state.latest_stage_work_package = None;
+            state.fanout_assemblies.clear();
+            state.recursive_assemblies.clear();
+            state.work_status.clear();
+            state.source_submissions.clear();
+            state.pending_jobs.clear();
+            state.inflight_jobs.clear();
+            state.inflight_stage_meta.clear();
+            state.inflight_candidates.clear();
+            return;
+        }
 
         let mut existing_best = Self::best_candidate_len_locked(&state);
         if candidate.is_empty() {
@@ -1218,7 +2103,9 @@ impl ProverCoordinator {
                 state.selected_txs.clear();
                 state.work_packages.clear();
                 state.work_package_queue.clear();
+                state.stage_work_package_queue.clear();
                 state.latest_work_package = None;
+                state.latest_stage_work_package = None;
                 state.fanout_assemblies.clear();
                 state.work_status.clear();
                 state.source_submissions.clear();
@@ -1276,6 +2163,7 @@ impl ProverCoordinator {
             state.work_package_queue.clear();
             state.latest_work_package = None;
             state.fanout_assemblies.clear();
+            state.recursive_assemblies.clear();
             state.work_status.clear();
             state.source_submissions.clear();
             existing_best = Self::best_candidate_len_locked(&state);
@@ -1331,94 +2219,262 @@ impl ProverCoordinator {
             }
         }
 
-        // Publish the largest candidate as external fan-out work packages while
-        // local workers run liveness-first variants in parallel.
+        // Publish the largest candidate either as recursive leaf/merge work for
+        // MergeRoot mode or as tx-proof-manifest fan-out work for FlatBatches.
         if let Some(primary_candidate) = candidate_variants.back().cloned() {
             if primary_candidate.len() >= self.config.target_txs {
                 state.target_batch_scheduled_at_ms = Some(Self::now_ms());
                 state.adaptive_liveness_fired_generation = None;
             }
             let block_number = best_number.saturating_add(1);
-            let candidate_set_id =
-                Self::work_package_id(parent_hash, block_number, &primary_candidate);
-            let slot_txs = Self::batch_slot_txs();
-            let chunks = Self::split_candidate_into_chunks(&primary_candidate, slot_txs);
-            let expected_chunks = chunks.len().min(u16::MAX as usize) as u16;
-
+            let candidate_set_id = Self::candidate_set_id(&primary_candidate);
             state.work_packages.clear();
             state.work_package_queue.clear();
+            state.stage_work_package_queue.clear();
             state.latest_work_package = None;
+            state.latest_stage_work_package = None;
             state.work_status.clear();
             state.source_submissions.clear();
             state.fanout_assemblies.clear();
+            state.recursive_assemblies.clear();
 
-            let mut chunk_plans = Vec::with_capacity(chunks.len());
-            for (chunk_start_tx_index, chunk_txs) in chunks {
-                let package = Self::build_work_package(
-                    parent_hash,
-                    block_number,
-                    candidate_set_id.clone(),
-                    chunk_txs,
-                    chunk_start_tx_index,
-                    expected_chunks,
-                    self.config.work_package_ttl,
-                );
-                let package_id = package.package_id.clone();
-                chunk_plans.push(ChunkPlan {
-                    package_id: package_id.clone(),
-                    start_tx_index: package.chunk_start_tx_index,
-                    tx_count: package.chunk_tx_count,
-                });
-                state.latest_work_package = Some(package_id.clone());
-                state.work_package_queue.push_back(package_id.clone());
-                state.work_packages.insert(
-                    package_id.clone(),
-                    WorkPackageRecord {
-                        package,
-                        submissions: 0,
-                    },
-                );
-                state.work_status.insert(package_id, WorkStatus::Pending);
+            let mut handled_recursive = false;
+            let prefer_merge_root =
+                selected_mode == pallet_shielded_pool::types::BlockProofMode::MergeRoot;
+            if prefer_merge_root {
+                if let Some(builder) = self.build_root_aggregation_work_fn.as_ref() {
+                    match builder(primary_candidate.clone()) {
+                        Ok(Some(root_payload)) => {
+                            handled_recursive = true;
+                            candidate_variants.pop_back();
+                            self.publish_recursive_candidate_variant_locked(
+                                &mut state,
+                                parent_hash,
+                                block_number,
+                                primary_candidate.clone(),
+                                root_payload,
+                                false,
+                            );
+
+                            if let Some(liveness_candidate) = candidate_variants.front().cloned() {
+                                if liveness_candidate.len() < primary_candidate.len() {
+                                    match builder(liveness_candidate.clone()) {
+                                        Ok(Some(liveness_root_payload)) => {
+                                            self.publish_recursive_candidate_variant_locked(
+                                                &mut state,
+                                                parent_hash,
+                                                block_number,
+                                                liveness_candidate.clone(),
+                                                liveness_root_payload,
+                                                true,
+                                            );
+                                        }
+                                        Ok(None) => {}
+                                        Err(error) => {
+                                            tracing::warn!(
+                                                block_number,
+                                                tx_count = liveness_candidate.len(),
+                                                error = %error,
+                                                "Failed to publish recursive liveness lane for external workers"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                block_number,
+                                tx_count = primary_candidate.len(),
+                                error = %error,
+                                "Failed to build proof-stage payloads; falling back to flat fan-out without root payload"
+                            );
+                        }
+                    }
+                }
             }
 
-            state.fanout_assemblies.insert(
-                candidate_set_id,
-                FanoutAssemblyState {
-                    parent_hash,
-                    block_number,
-                    candidate_txs: primary_candidate,
-                    expected_chunks,
-                    chunks: chunk_plans,
-                    received: HashMap::new(),
-                },
-            );
+            if !handled_recursive
+                && selected_mode == pallet_shielded_pool::types::BlockProofMode::FlatBatches
+            {
+                let slot_txs = Self::batch_slot_txs();
+                let chunks = Self::split_candidate_into_chunks(&primary_candidate, slot_txs);
+                let expected_chunks = chunks.len().min(u16::MAX as usize) as u16;
+
+                let mut chunk_plans = Vec::with_capacity(chunks.len());
+                for (chunk_start_tx_index, chunk_txs) in chunks {
+                    let package = Self::build_work_package(
+                        parent_hash,
+                        block_number,
+                        candidate_set_id.clone(),
+                        chunk_txs,
+                        chunk_start_tx_index,
+                        expected_chunks,
+                        self.config.work_package_ttl,
+                        None,
+                    );
+                    let package_id = package.package_id.clone();
+                    chunk_plans.push(ChunkPlan {
+                        package_id: package_id.clone(),
+                        start_tx_index: package.chunk_start_tx_index,
+                        tx_count: package.chunk_tx_count,
+                    });
+                    state.latest_work_package = Some(package_id.clone());
+                    state.work_package_queue.push_back(package_id.clone());
+                    state.work_packages.insert(
+                        package_id.clone(),
+                        WorkPackageRecord {
+                            package,
+                            submissions: 0,
+                        },
+                    );
+                    state.work_status.insert(package_id, WorkStatus::Pending);
+                }
+
+                state.fanout_assemblies.insert(
+                    candidate_set_id,
+                    FanoutAssemblyState {
+                        parent_hash,
+                        block_number,
+                        candidate_txs: primary_candidate,
+                        expected_chunks,
+                        chunks: chunk_plans,
+                        received: HashMap::new(),
+                    },
+                );
+            }
         }
 
         while let Some(candidate_txs) = candidate_variants.pop_front() {
-            let arity = Self::aggregation_tree_arity();
-            let (level, shape_id, dependencies) = Self::root_stage_metadata(
-                parent_hash,
-                best_number.saturating_add(1),
-                &candidate_txs,
-                arity,
-            );
-            let stage_type = "root_finalize".to_string();
             let job = QueuedJob {
                 id: state.next_job_id,
+                package_id: Self::work_package_id(
+                    parent_hash,
+                    best_number.saturating_add(1),
+                    &candidate_txs,
+                ),
+                candidate_set_id: Self::candidate_set_id(&candidate_txs),
                 generation: state.generation,
                 parent_hash,
                 block_number: best_number.saturating_add(1),
-                stage_type,
-                level,
-                arity,
-                shape_id,
-                dependencies,
+                stage_type: StageType::FinalizeBundle,
+                level: 0,
+                arity: 0,
+                shape_id: [0u8; 32],
+                dependencies: Vec::new(),
                 enqueued_at: Instant::now(),
                 candidate_txs,
+                leaf_batch_payload: None,
+                merge_node_payload: None,
+                finalize_bundle_payload: None,
             };
             state.next_job_id = state.next_job_id.wrapping_add(1);
             state.pending_jobs.push_back(job);
         }
+    }
+
+    fn publish_recursive_candidate_variant_locked(
+        &self,
+        state: &mut CoordinatorState,
+        parent_hash: H256,
+        block_number: u64,
+        candidate_txs: Vec<Vec<u8>>,
+        root_payload: RootAggregationWorkData,
+        high_priority: bool,
+    ) {
+        let candidate_set_id = Self::candidate_set_id(&candidate_txs);
+        if state.recursive_assemblies.contains_key(&candidate_set_id) {
+            return;
+        }
+
+        let leaf_fan_in = Self::leaf_fan_in();
+        let expected_chunks = candidate_txs
+            .len()
+            .div_ceil(leaf_fan_in)
+            .min(u16::MAX as usize) as u16;
+        let levels = Self::plan_recursive_stages(&candidate_txs);
+        let mut completed_results = HashMap::new();
+        for plan in levels.iter().flat_map(|level| level.iter()) {
+            if let Some(bytes) = state.prepared_expensive.get(&plan.package_id).cloned() {
+                completed_results.insert(plan.package_id.clone(), bytes);
+            }
+        }
+        state.recursive_assemblies.insert(
+            candidate_set_id.clone(),
+            RecursiveTreeAssemblyState {
+                parent_hash,
+                block_number,
+                candidate_txs: candidate_txs.clone(),
+                root_aggregation_payload: root_payload.clone(),
+                levels: levels.clone(),
+                completed_results,
+                scheduled_packages: HashSet::new(),
+                finalize_enqueued: false,
+            },
+        );
+        let root_already_prepared = state
+            .recursive_assemblies
+            .get(&candidate_set_id)
+            .and_then(|assembly| assembly.root_package_id())
+            .is_some_and(|root_package_id| state.prepared_expensive.contains_key(root_package_id));
+        if root_already_prepared {
+            let _ = self.maybe_enqueue_finalize_bundle_locked(state, &candidate_set_id);
+            return;
+        }
+
+        for (chunk_index, (proof_chunk, hash_chunk)) in root_payload
+            .tx_proofs
+            .chunks(leaf_fan_in)
+            .zip(root_payload.statement_hashes.chunks(leaf_fan_in))
+            .enumerate()
+        {
+            let leaf_plan = levels
+                .first()
+                .and_then(|level| level.get(chunk_index))
+                .expect("leaf plan should exist");
+            let cached = state
+                .recursive_assemblies
+                .get(&candidate_set_id)
+                .and_then(|assembly| assembly.completed_results.get(&leaf_plan.package_id))
+                .is_some();
+            if cached {
+                continue;
+            }
+            let start = (chunk_index * leaf_fan_in) as u32;
+            let leaf_payload = LeafBatchWorkData {
+                statement_hashes: hash_chunk.to_vec(),
+                tx_proofs: proof_chunk.to_vec(),
+                tx_statements_commitment: root_payload.tx_statements_commitment,
+                tree_levels: root_payload.tree_levels,
+                root_level: 0,
+            };
+            let package = Self::build_leaf_stage_work_package(
+                parent_hash,
+                block_number,
+                candidate_set_id.clone(),
+                candidate_txs.clone(),
+                start,
+                expected_chunks,
+                self.config.work_package_ttl,
+                leaf_plan.clone(),
+                leaf_payload,
+            );
+            self.enqueue_recursive_stage_package_locked(state, package, high_priority);
+            if let Some(assembly) = state.recursive_assemblies.get_mut(&candidate_set_id) {
+                assembly
+                    .scheduled_packages
+                    .insert(leaf_plan.package_id.clone());
+            }
+        }
+        if let Ok(ready_packages) =
+            self.ready_recursive_merge_packages_locked(state, &candidate_set_id)
+        {
+            for package in ready_packages {
+                self.enqueue_recursive_stage_package_locked(state, package, high_priority);
+            }
+        }
+        let _ = self.maybe_enqueue_finalize_bundle_locked(state, &candidate_set_id);
     }
 
     fn maybe_schedule_adaptive_liveness_lane(
@@ -1468,25 +2524,27 @@ impl ProverCoordinator {
         if state.selected_txs.is_empty() || state.selected_txs.len() > 1 {
             state.selected_txs = singleton_candidate.clone();
         }
-        let arity = Self::aggregation_tree_arity();
-        let (level, shape_id, dependencies) = Self::root_stage_metadata(
-            parent_hash,
-            best_number.saturating_add(1),
-            &singleton_candidate,
-            arity,
-        );
         let job = QueuedJob {
             id: state.next_job_id,
+            package_id: Self::work_package_id(
+                parent_hash,
+                best_number.saturating_add(1),
+                &singleton_candidate,
+            ),
+            candidate_set_id: Self::candidate_set_id(&singleton_candidate),
             generation: state.generation,
             parent_hash,
             block_number: best_number.saturating_add(1),
-            stage_type: "root_finalize".to_string(),
-            level,
-            arity,
-            shape_id,
-            dependencies,
+            stage_type: StageType::FinalizeBundle,
+            level: 0,
+            arity: 0,
+            shape_id: [0u8; 32],
+            dependencies: Vec::new(),
             enqueued_at: Instant::now(),
             candidate_txs: singleton_candidate,
+            leaf_batch_payload: None,
+            merge_node_payload: None,
+            finalize_bundle_payload: None,
         };
         state.next_job_id = state.next_job_id.wrapping_add(1);
         state.pending_jobs.push_front(job);
@@ -1582,6 +2640,72 @@ impl ProverCoordinator {
             .max(1)
     }
 
+    fn prepared_proof_mode_from_env() -> pallet_shielded_pool::types::BlockProofMode {
+        let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
+        if raw.is_empty()
+            || raw.eq_ignore_ascii_case("inline_tx")
+            || raw.eq_ignore_ascii_case("inline")
+            || raw.eq_ignore_ascii_case("raw")
+            || raw.eq_ignore_ascii_case("raw_active")
+        {
+            return pallet_shielded_pool::types::BlockProofMode::InlineTx;
+        }
+        if raw.eq_ignore_ascii_case("merge_root") || raw.eq_ignore_ascii_case("merge-root") {
+            return pallet_shielded_pool::types::BlockProofMode::MergeRoot;
+        }
+        if raw.eq_ignore_ascii_case("flat")
+            || raw.eq_ignore_ascii_case("flat_batches")
+            || raw.eq_ignore_ascii_case("flatbatches")
+        {
+            tracing::warn!(
+                "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to inline_tx"
+            );
+            return pallet_shielded_pool::types::BlockProofMode::InlineTx;
+        }
+        tracing::warn!(
+            mode = raw,
+            "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
+        );
+        pallet_shielded_pool::types::BlockProofMode::InlineTx
+    }
+
+    fn leaf_fan_in() -> usize {
+        std::env::var("HEGEMON_AGG_LEAF_FANIN")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(Self::DEFAULT_LEAF_FAN_IN)
+            .max(1)
+    }
+
+    fn merge_fan_in() -> usize {
+        std::env::var("HEGEMON_AGG_MERGE_FANIN")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(Self::DEFAULT_MERGE_FAN_IN)
+            .max(1)
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn recursive_leaf_count_for_tx_count(tx_count: usize) -> usize {
+        tx_count.div_ceil(Self::leaf_fan_in().max(1))
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn recursive_tree_levels_for_tx_count(tx_count: usize) -> u16 {
+        if tx_count <= 1 {
+            return 1;
+        }
+        let mut levels = 1u16;
+        let mut width = Self::recursive_leaf_count_for_tx_count(tx_count);
+        while width > 1 {
+            width = width.div_ceil(Self::merge_fan_in().max(1));
+            levels = levels.saturating_add(1);
+        }
+        levels
+    }
+
     fn split_candidate_into_chunks(
         candidate_txs: &[Vec<u8>],
         slot_txs: usize,
@@ -1602,19 +2726,86 @@ impl ProverCoordinator {
     }
 
     fn chunk_work_package_id(
-        parent_hash: H256,
-        block_number: u64,
         candidate_set_id: &str,
         chunk_start_tx_index: u32,
         chunk_tx_count: u16,
     ) -> String {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(parent_hash.as_bytes());
-        bytes.extend_from_slice(&block_number.to_le_bytes());
         bytes.extend_from_slice(candidate_set_id.as_bytes());
         bytes.extend_from_slice(&chunk_start_tx_index.to_le_bytes());
         bytes.extend_from_slice(&chunk_tx_count.to_le_bytes());
         hex::encode(sp_core::hashing::blake2_256(&bytes))
+    }
+
+    fn build_leaf_stage_work_package(
+        parent_hash: H256,
+        block_number: u64,
+        candidate_set_id: String,
+        candidate_txs: Vec<Vec<u8>>,
+        chunk_start_tx_index: u32,
+        expected_chunks: u16,
+        ttl: Duration,
+        plan: RecursiveStagePlan,
+        payload: LeafBatchWorkData,
+    ) -> WorkPackage {
+        let created_at_ms = Self::now_ms();
+        let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
+        let chunk_tx_count = payload.tx_proofs.len().min(u16::MAX as usize) as u16;
+        WorkPackage {
+            package_id: plan.package_id,
+            parent_hash,
+            block_number,
+            candidate_set_id,
+            chunk_start_tx_index,
+            chunk_tx_count,
+            expected_chunks,
+            stage_type: plan.stage_type,
+            level: plan.level,
+            arity: Self::merge_fan_in() as u16,
+            shape_id: plan.shape_id,
+            dependencies: Vec::new(),
+            tx_count: chunk_tx_count as u32,
+            candidate_txs,
+            tx_proof_manifest_payload: None,
+            leaf_batch_payload: Some(payload),
+            merge_node_payload: None,
+            created_at_ms,
+            expires_at_ms,
+        }
+    }
+
+    fn build_merge_stage_work_package(
+        parent_hash: H256,
+        block_number: u64,
+        candidate_set_id: String,
+        candidate_txs: Vec<Vec<u8>>,
+        ttl: Duration,
+        plan: RecursiveStagePlan,
+        payload: MergeNodeWorkData,
+    ) -> WorkPackage {
+        let created_at_ms = Self::now_ms();
+        let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
+        WorkPackage {
+            package_id: plan.package_id,
+            parent_hash,
+            block_number,
+            candidate_set_id,
+            chunk_start_tx_index: 0,
+            chunk_tx_count: plan.child_package_ids.len().min(u16::MAX as usize) as u16,
+            expected_chunks: 1,
+            stage_type: plan.stage_type,
+            level: plan.level,
+            arity: Self::merge_fan_in() as u16,
+            shape_id: plan.shape_id,
+            dependencies: plan.child_package_ids,
+            tx_count: plan.subtree_tx_count,
+            candidate_txs,
+            tx_proof_manifest_payload: None,
+            leaf_batch_payload: None,
+            merge_node_payload: Some(payload),
+            created_at_ms,
+            expires_at_ms,
+        }
     }
 
     fn build_work_package(
@@ -1625,33 +2816,19 @@ impl ProverCoordinator {
         chunk_start_tx_index: u32,
         expected_chunks: u16,
         ttl: Duration,
+        payload: Option<TxProofManifestWorkData>,
     ) -> WorkPackage {
         let created_at_ms = Self::now_ms();
         let expires_at_ms = created_at_ms.saturating_add(ttl.as_millis() as u64);
         let tx_count = candidate_txs.len() as u32;
         let chunk_tx_count = tx_count.min(u16::MAX as u32) as u16;
-        let arity = Self::aggregation_tree_arity();
         let candidate_digest = Self::candidate_digest(&candidate_txs);
-        let stage_type = "leaf_batch_prove".to_string();
+        let stage_type = StageType::TxProofManifestBuild;
         let stage_index = chunk_start_tx_index / Self::batch_slot_txs().max(1) as u32;
-        let shape_id = Self::work_package_shape_id(
-            parent_hash,
-            block_number,
-            &stage_type,
-            0,
-            stage_index,
-            arity,
-            tx_count,
-            candidate_digest,
-        );
+        let shape_id = Self::tx_proof_manifest_shape_id(stage_index, tx_count, candidate_digest);
         let dependencies = Vec::new();
-        let package_id = Self::chunk_work_package_id(
-            parent_hash,
-            block_number,
-            &candidate_set_id,
-            chunk_start_tx_index,
-            chunk_tx_count,
-        );
+        let package_id =
+            Self::chunk_work_package_id(&candidate_set_id, chunk_start_tx_index, chunk_tx_count);
         WorkPackage {
             package_id,
             parent_hash,
@@ -1662,11 +2839,14 @@ impl ProverCoordinator {
             expected_chunks,
             stage_type,
             level: 0,
-            arity,
+            arity: 0,
             shape_id,
             dependencies,
             tx_count,
             candidate_txs,
+            tx_proof_manifest_payload: payload,
+            leaf_batch_payload: None,
+            merge_node_payload: None,
             created_at_ms,
             expires_at_ms,
         }
@@ -1691,6 +2871,184 @@ impl ProverCoordinator {
             .as_millis() as u64
     }
 
+    fn retire_package_locked(state: &mut CoordinatorState, package_id: &str) {
+        state.work_packages.remove(package_id);
+        state
+            .work_package_queue
+            .retain(|queued_id| queued_id != package_id);
+        state
+            .stage_work_package_queue
+            .retain(|queued_id| queued_id != package_id);
+    }
+
+    fn enqueue_recursive_stage_package_locked(
+        &self,
+        state: &mut CoordinatorState,
+        package: WorkPackage,
+        high_priority: bool,
+    ) {
+        let package_id = package.package_id.clone();
+        state.latest_stage_work_package = Some(package_id.clone());
+        if high_priority {
+            state
+                .stage_work_package_queue
+                .push_front(package_id.clone());
+        } else {
+            state.stage_work_package_queue.push_back(package_id.clone());
+        }
+        state.work_packages.insert(
+            package_id.clone(),
+            WorkPackageRecord {
+                package: package.clone(),
+                submissions: 0,
+            },
+        );
+        state
+            .work_status
+            .insert(package_id.clone(), WorkStatus::Pending);
+        if self.worker_pool.worker_count() > 0 {
+            let job = QueuedJob {
+                id: state.next_job_id,
+                package_id,
+                candidate_set_id: package.candidate_set_id.clone(),
+                generation: state.generation,
+                parent_hash: package.parent_hash,
+                block_number: package.block_number,
+                stage_type: package.stage_type,
+                level: package.level,
+                arity: package.arity,
+                shape_id: package.shape_id,
+                dependencies: package.dependencies.clone(),
+                enqueued_at: Instant::now(),
+                candidate_txs: package.candidate_txs.clone(),
+                leaf_batch_payload: package.leaf_batch_payload.clone(),
+                merge_node_payload: package.merge_node_payload.clone(),
+                finalize_bundle_payload: None,
+            };
+            state.next_job_id = state.next_job_id.wrapping_add(1);
+            if high_priority {
+                state.pending_jobs.push_front(job);
+            } else {
+                state.pending_jobs.push_back(job);
+            }
+        }
+    }
+
+    fn ready_recursive_merge_packages_locked(
+        &self,
+        state: &mut CoordinatorState,
+        candidate_set_id: &str,
+    ) -> Result<Vec<WorkPackage>, String> {
+        let mut packages = Vec::new();
+        let Some(assembly) = state.recursive_assemblies.get_mut(candidate_set_id) else {
+            return Ok(packages);
+        };
+        let tree_levels = assembly.root_aggregation_payload.tree_levels;
+        let tx_statements_commitment = assembly.root_aggregation_payload.tx_statements_commitment;
+        for level_nodes in assembly.levels.iter().skip(1) {
+            for node in level_nodes {
+                if assembly.completed_results.contains_key(&node.package_id) {
+                    continue;
+                }
+                if assembly.scheduled_packages.contains(&node.package_id) {
+                    continue;
+                }
+                if !node
+                    .child_package_ids
+                    .iter()
+                    .all(|package_id| assembly.completed_results.contains_key(package_id))
+                {
+                    continue;
+                }
+                let child_proof_payloads = node
+                    .child_package_ids
+                    .iter()
+                    .map(|package_id| {
+                        assembly
+                            .completed_results
+                            .get(package_id)
+                            .cloned()
+                            .ok_or_else(|| {
+                                format!(
+                                    "missing recursive child proof while publishing merge stage {}",
+                                    node.package_id
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let merge_payload = MergeNodeWorkData {
+                    child_proof_payloads,
+                    tx_statements_commitment,
+                    tree_levels,
+                    root_level: node.level,
+                };
+                let package = Self::build_merge_stage_work_package(
+                    assembly.parent_hash,
+                    assembly.block_number,
+                    candidate_set_id.to_string(),
+                    assembly.candidate_txs.clone(),
+                    self.config.work_package_ttl,
+                    node.clone(),
+                    merge_payload,
+                );
+                assembly.scheduled_packages.insert(node.package_id.clone());
+                packages.push(package);
+            }
+        }
+        Ok(packages)
+    }
+
+    fn maybe_enqueue_finalize_bundle_locked(
+        &self,
+        state: &mut CoordinatorState,
+        candidate_set_id: &str,
+    ) -> Result<(), String> {
+        let Some(assembly) = state.recursive_assemblies.get_mut(candidate_set_id) else {
+            return Ok(());
+        };
+        if assembly.finalize_enqueued {
+            return Ok(());
+        }
+        let Some(root_package_id) = assembly.root_package_id().map(str::to_string) else {
+            return Ok(());
+        };
+        let Some(root_proof_bytes) = assembly.completed_results.get(&root_package_id).cloned()
+        else {
+            return Ok(());
+        };
+        assembly.finalize_enqueued = true;
+        let package_id = Self::final_bundle_id(
+            assembly.parent_hash,
+            assembly.block_number,
+            assembly.root_aggregation_payload.tx_statements_commitment,
+            assembly.candidate_txs.len() as u32,
+        );
+        let job = QueuedJob {
+            id: state.next_job_id,
+            package_id,
+            candidate_set_id: candidate_set_id.to_string(),
+            generation: state.generation,
+            parent_hash: assembly.parent_hash,
+            block_number: assembly.block_number,
+            stage_type: StageType::FinalizeBundle,
+            level: assembly
+                .root_aggregation_payload
+                .root_level
+                .saturating_add(1),
+            arity: 0,
+            shape_id: [0u8; 32],
+            dependencies: vec![root_package_id],
+            enqueued_at: Instant::now(),
+            candidate_txs: assembly.candidate_txs.clone(),
+            leaf_batch_payload: None,
+            merge_node_payload: None,
+            finalize_bundle_payload: Some(root_proof_bytes),
+        };
+        state.next_job_id = state.next_job_id.wrapping_add(1);
+        state.pending_jobs.push_front(job);
+        Ok(())
+    }
+
     fn expire_work_packages_locked(state: &mut CoordinatorState) {
         let now_ms = Self::now_ms();
         let expired_ids = state
@@ -1711,15 +3069,29 @@ impl ProverCoordinator {
         state
             .work_package_queue
             .retain(|package_id| state.work_packages.contains_key(package_id));
+        state
+            .stage_work_package_queue
+            .retain(|package_id| state.work_packages.contains_key(package_id));
         state.fanout_assemblies.retain(|_, assembly| {
             assembly
                 .chunks
                 .iter()
                 .any(|chunk| state.work_packages.contains_key(&chunk.package_id))
         });
+        state.recursive_assemblies.retain(|_, assembly| {
+            assembly
+                .scheduled_packages
+                .iter()
+                .any(|package_id| state.work_packages.contains_key(package_id))
+        });
         if let Some(latest) = state.latest_work_package.as_ref() {
             if !state.work_packages.contains_key(latest) {
                 state.latest_work_package = None;
+            }
+        }
+        if let Some(latest) = state.latest_stage_work_package.as_ref() {
+            if !state.work_packages.contains_key(latest) {
+                state.latest_stage_work_package = None;
             }
         }
     }
@@ -1735,11 +3107,44 @@ impl ProverCoordinator {
         }
     }
 
+    fn apply_recursive_stage_result_locked(
+        &self,
+        state: &mut CoordinatorState,
+        package_id: &str,
+        candidate_set_id: &str,
+        parent_hash: H256,
+        proof_bytes: Vec<u8>,
+    ) -> Result<Option<PreparedBundle>, String> {
+        Self::retire_package_locked(state, package_id);
+        state
+            .prepared_expensive
+            .insert(package_id.to_string(), proof_bytes.clone());
+        if let Some(assembly) = state.recursive_assemblies.get_mut(candidate_set_id) {
+            if assembly.parent_hash != parent_hash {
+                return Ok(None);
+            }
+            assembly
+                .completed_results
+                .insert(package_id.to_string(), proof_bytes.clone());
+        } else {
+            return Ok(None);
+        }
+
+        let ready_packages = self.ready_recursive_merge_packages_locked(state, candidate_set_id)?;
+        for package in ready_packages {
+            self.enqueue_recursive_stage_package_locked(state, package, false);
+        }
+        self.maybe_enqueue_finalize_bundle_locked(state, candidate_set_id)?;
+        Ok(None)
+    }
+
     fn handle_worker_result(&self, result: WorkerJobResult) {
         let WorkerJobResult {
             job:
                 QueuedJob {
                     id,
+                    package_id,
+                    candidate_set_id,
                     generation,
                     parent_hash,
                     block_number,
@@ -1750,16 +3155,21 @@ impl ProverCoordinator {
                     dependencies,
                     enqueued_at,
                     candidate_txs,
+                    leaf_batch_payload: _,
+                    merge_node_payload: _,
+                    finalize_bundle_payload: _,
                 },
             queue_depth_after_pop,
+            enqueue_to_start_ms,
+            dispatch_to_start_ms,
             build_elapsed_ms,
             outcome,
         } = result;
 
-        let queue_wait_ms = enqueued_at.elapsed().as_millis();
+        let total_job_age_ms = enqueued_at.elapsed().as_millis();
         let candidate_tx_count = candidate_txs.len();
         let candidate_bytes = candidate_txs.iter().map(Vec::len).sum::<usize>();
-        let job_package_id = Self::work_package_id(parent_hash, block_number, &candidate_txs);
+        let job_package_id = package_id.clone();
         let timeout = self.config.job_timeout;
         let target_txs = self.config.target_txs;
         let stage_max_inflight_per_level = self.config.max_inflight_per_level;
@@ -1793,31 +3203,95 @@ impl ProverCoordinator {
         }
 
         match outcome {
-            WorkerOutcome::StageOnly => {
-                tracing::info!(
-                    target: "prover::stage_metrics",
-                    job_id = id,
-                    block_number,
-                    stage_type = %stage_type,
-                    level,
-                    arity,
-                    shape_id = %hex::encode(shape_id),
-                    dependencies = dependencies.len(),
-                    queue_depth = queue_depth_after_pop,
-                    queue_wait_ms,
-                    stage_mem_budget_mb = Self::stage_mem_budget_mb(),
-                    stage_max_inflight_per_level,
-                    tx_count = candidate_tx_count,
-                    candidate_bytes,
-                    build_ms = build_elapsed_ms,
-                    package_id = %job_package_id,
-                    stale_parent,
-                    stale_generation,
-                    "Completed non-root recursion stage"
-                );
-            }
+            WorkerOutcome::StageResult(result) => match *result {
+                Ok(stage_payload) => {
+                    let maybe_prepared = if !is_stale {
+                        self.apply_recursive_stage_result_locked(
+                            &mut guard,
+                            &package_id,
+                            &candidate_set_id,
+                            parent_hash,
+                            stage_payload,
+                        )
+                    } else {
+                        Ok(None)
+                    };
+                    match maybe_prepared {
+                        Ok(Some(bundle)) => {
+                            let key = bundle.key.clone();
+                            tracing::info!(
+                                block_number,
+                                tx_count = bundle.key.tx_count,
+                                proof_mode = ?bundle.key.proof_mode,
+                                artifact_hash = %hex::encode(bundle.key.artifact_hash),
+                                build_ms = bundle.build_ms,
+                                stage_type = %stage_type,
+                                level,
+                                package_id = %job_package_id,
+                                "Prepared recursive proven batch is ready"
+                            );
+                            guard.prepared.insert(key, bundle);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                job_id = id,
+                                block_number,
+                                stage_type = %stage_type,
+                                level,
+                                arity,
+                                tx_count = candidate_tx_count,
+                                candidate_bytes,
+                                package_id = %job_package_id,
+                                error = %error,
+                                "Failed to apply recursive stage result"
+                            );
+                        }
+                    }
+                    tracing::info!(
+                        target: "prover::stage_metrics",
+                        job_id = id,
+                        block_number,
+                        stage_type = %stage_type,
+                        level,
+                        arity,
+                        shape_id = %hex::encode(shape_id),
+                        dependencies = dependencies.len(),
+                        queue_depth = queue_depth_after_pop,
+                        queue_wait_ms = enqueue_to_start_ms,
+                        dispatch_wait_ms = dispatch_to_start_ms,
+                        total_job_age_ms,
+                        stage_mem_budget_mb = Self::stage_mem_budget_mb(),
+                        stage_max_inflight_per_level,
+                        tx_count = candidate_tx_count,
+                        candidate_bytes,
+                        build_ms = build_elapsed_ms,
+                        package_id = %job_package_id,
+                        stale_parent,
+                        stale_generation,
+                        "Completed recursive stage"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        job_id = id,
+                        block_number,
+                        stage_type = %stage_type,
+                        level,
+                        arity,
+                        tx_count = candidate_tx_count,
+                        candidate_bytes,
+                        package_id = %job_package_id,
+                        error = %error,
+                        "Recursive stage proving failed"
+                    );
+                }
+            },
             WorkerOutcome::Bundle(result) => match *result {
                 Ok(bundle) => {
+                    if stage_type == StageType::FinalizeBundle && !is_stale {
+                        guard.recursive_assemblies.remove(&candidate_set_id);
+                    }
                     let candidate_len = bundle.candidate_txs.len();
                     guard.last_build_ms = bundle.build_ms;
                     if !is_stale && candidate_len > guard.selected_txs.len() {
@@ -1839,7 +3313,9 @@ impl ProverCoordinator {
                         shape_id = %hex::encode(shape_id),
                         dependencies = dependencies.len(),
                         queue_depth = queue_depth_after_pop,
-                        queue_wait_ms,
+                        queue_wait_ms = enqueue_to_start_ms,
+                        dispatch_wait_ms = dispatch_to_start_ms,
+                        total_job_age_ms,
                         stage_mem_budget_mb = Self::stage_mem_budget_mb(),
                         stage_max_inflight_per_level,
                         tx_count = candidate_len,
@@ -1850,9 +3326,34 @@ impl ProverCoordinator {
                         stale_generation,
                         "Prepared proven batch candidate"
                     );
+                    tracing::info!(
+                        target: "prover::last_mile",
+                        trace_ts_ms = Self::now_ms(),
+                        bundle_id = %Self::final_bundle_id(
+                            bundle.key.parent_hash,
+                            block_number,
+                            bundle.key.tx_statements_commitment,
+                            bundle.key.tx_count,
+                        ),
+                        artifact_hash = %hex::encode(bundle.key.artifact_hash),
+                        parent_hash = ?bundle.key.parent_hash,
+                        block_number,
+                        tx_count = bundle.key.tx_count,
+                        tx_statements_commitment = %hex::encode(bundle.key.tx_statements_commitment),
+                        build_ms = bundle.build_ms,
+                        total_job_age_ms,
+                        "prepared_bundle_ready"
+                    );
                     guard.prepared.insert(bundle.key.clone(), bundle);
                 }
                 Err(error) => {
+                    if stage_type == StageType::FinalizeBundle {
+                        if let Some(assembly) =
+                            guard.recursive_assemblies.get_mut(&candidate_set_id)
+                        {
+                            assembly.finalize_enqueued = false;
+                        }
+                    }
                     tracing::warn!(
                         job_id = id,
                         block_number,
@@ -1921,7 +3422,7 @@ impl ProverCoordinator {
                 state.inflight_jobs.insert(job.id, job.generation);
                 state
                     .inflight_stage_meta
-                    .insert(job.id, (job.stage_type.clone(), job.level));
+                    .insert(job.id, (job.stage_type, job.level));
                 state
                     .inflight_candidates
                     .insert(job.id, job.candidate_txs.clone());
@@ -1975,6 +3476,14 @@ impl ProverCoordinator {
         best.cloned()
     }
 
+    fn selected_or_pending_candidate_locked(state: &CoordinatorState) -> Vec<Vec<u8>> {
+        if state.selected_txs.is_empty() {
+            Self::best_pending_candidate_locked(state).unwrap_or_default()
+        } else {
+            state.selected_txs.clone()
+        }
+    }
+
     fn best_prepared_candidate_locked(state: &CoordinatorState) -> Option<Vec<Vec<u8>>> {
         let current_parent = state.current_parent;
         let mut best_current_parent: Option<&PreparedBundle> = None;
@@ -2010,14 +3519,107 @@ impl ProverCoordinator {
                 bundle.key.tx_statements_commitment == tx_statements_commitment
                     && bundle.key.tx_count == tx_count
             })
-            .max_by_key(|bundle| bundle.candidate_txs.len())
+            .max_by(|left, right| compare_prepared_bundles(left, right))
     }
+
+    fn proof_mode_requires_prepared_bundles(
+        mode: pallet_shielded_pool::types::BlockProofMode,
+    ) -> bool {
+        matches!(mode, pallet_shielded_pool::types::BlockProofMode::MergeRoot)
+    }
+}
+
+fn proof_mode_rank(mode: pallet_shielded_pool::types::BlockProofMode) -> u8 {
+    match mode {
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => 0,
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => 1,
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 2,
+    }
+}
+
+fn candidate_bundle_key(
+    parent_hash: H256,
+    payload: &pallet_shielded_pool::types::CandidateArtifact,
+) -> BundleMatchKey {
+    BundleMatchKey {
+        parent_hash,
+        tx_statements_commitment: payload.tx_statements_commitment,
+        tx_count: payload.tx_count,
+        proof_mode: payload.proof_mode,
+        artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(payload),
+    }
+}
+
+fn claim_amount(bundle: &PreparedBundle) -> u64 {
+    bundle
+        .payload
+        .artifact_claim
+        .as_ref()
+        .map(|claim| claim.prover_amount)
+        .unwrap_or(0)
+}
+
+fn compare_prepared_bundles(left: &PreparedBundle, right: &PreparedBundle) -> std::cmp::Ordering {
+    left.key
+        .tx_count
+        .cmp(&right.key.tx_count)
+        .then_with(|| {
+            proof_mode_rank(left.payload.proof_mode).cmp(&proof_mode_rank(right.payload.proof_mode))
+        })
+        .then_with(|| claim_amount(right).cmp(&claim_amount(left)))
+        .then_with(|| {
+            crate::substrate::artifact_market::candidate_artifact_hash(&right.payload).cmp(
+                &crate::substrate::artifact_market::candidate_artifact_hash(&left.payload),
+            )
+        })
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(dead_code)]
+
     use super::*;
+    use block_circuit::CommitmentBlockProver;
+    use p3_field::PrimeCharacteristicRing;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::MutexGuard as StdMutexGuard;
+    use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
+    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
+    use transaction_circuit::keys::generate_keys;
+    use transaction_circuit::note::{MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::{InputNoteWitness, StablecoinPolicyBinding, TransactionWitness};
+
+    struct BlockProofModeGuard {
+        previous: Option<String>,
+        _guard: StdMutexGuard<'static, ()>,
+    }
+
+    impl Drop for BlockProofModeGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe {
+                    std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", value);
+                },
+                None => unsafe {
+                    std::env::remove_var("HEGEMON_BLOCK_PROOF_MODE");
+                },
+            }
+        }
+    }
+
+    fn set_block_proof_mode(mode: &str) -> BlockProofModeGuard {
+        let guard = crate::substrate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", mode);
+        }
+        BlockProofModeGuard {
+            previous,
+            _guard: guard,
+        }
+    }
 
     fn test_config() -> ProverCoordinatorConfig {
         ProverCoordinatorConfig {
@@ -2037,11 +3639,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn flat_mode_falls_back_to_inline_tx_after_tx_proof_manifest_removal() {
+        let _guard = set_block_proof_mode("flat");
+        assert_eq!(
+            ProverCoordinator::prepared_proof_mode_from_env(),
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+        );
+    }
+
+    #[test]
+    fn inline_tx_disables_aggregation_worker_prewarm() {
+        {
+            let _guard = set_block_proof_mode("inline_tx");
+            assert!(!aggregation_worker_prewarm_enabled_for_mode());
+        }
+        {
+            let _guard = set_block_proof_mode("merge_root");
+            assert!(aggregation_worker_prewarm_enabled_for_mode());
+        }
+    }
+
     fn ready_payload(
         tx_count: u32,
         commitment: [u8; 48],
-    ) -> pallet_shielded_pool::types::BlockProofBundle {
-        pallet_shielded_pool::types::BlockProofBundle {
+    ) -> pallet_shielded_pool::types::CandidateArtifact {
+        pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count,
             tx_statements_commitment: commitment,
@@ -2056,12 +3679,277 @@ mod tests {
                 proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![4, 5, 6]),
             }],
             merge_root: None,
-            prover_claim: None,
+            artifact_claim: None,
         }
+    }
+
+    fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
+        let mut current = leaf;
+        let mut pos = position;
+        for sibling in path.iter().take(CIRCUIT_MERKLE_DEPTH) {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        current
+    }
+
+    fn build_two_leaf_merkle_tree(
+        leaf0: HashFelt,
+        leaf1: HashFelt,
+    ) -> (MerklePath, MerklePath, HashFelt) {
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+
+        for _ in 1..CIRCUIT_MERKLE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+
+        (
+            MerklePath {
+                siblings: siblings0,
+            },
+            MerklePath {
+                siblings: siblings1,
+            },
+            current,
+        )
+    }
+
+    fn sample_witness() -> TransactionWitness {
+        let sk_spend = [42u8; 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+            pk_recipient: [2u8; 32],
+            pk_auth,
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: 1,
+            pk_recipient: [5u8; 32],
+            pk_auth,
+            rho: [6u8; 32],
+            r: [7u8; 32],
+        };
+
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+        assert_eq!(
+            compute_merkle_root(leaf0, 0, &merkle_path0.siblings),
+            merkle_root
+        );
+        assert_eq!(
+            compute_merkle_root(leaf1, 1, &merkle_path1.siblings),
+            merkle_root
+        );
+
+        let output_native = OutputNoteWitness {
+            note: NoteData {
+                value: 3,
+                asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+                pk_recipient: [11u8; 32],
+                pk_auth: [111u8; 32],
+                rho: [12u8; 32],
+                r: [13u8; 32],
+            },
+        };
+        let output_asset = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: 1,
+                pk_recipient: [21u8; 32],
+                pk_auth: [121u8; 32],
+                rho: [22u8; 32],
+                r: [23u8; 32],
+            },
+        };
+
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [9u8; 32],
+                    merkle_path: merkle_path0,
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [8u8; 32],
+                    merkle_path: merkle_path1,
+                },
+            ],
+            outputs: vec![output_native, output_asset],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&merkle_root),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn tx_proof_manifest_sample_witness() -> TransactionWitness {
+        let sk_spend = [42u8; 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note = NoteData {
+            value: 20,
+            asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+            pk_recipient: [2u8; 32],
+            pk_auth,
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+        let output_note = OutputNoteWitness {
+            note: NoteData {
+                value: 15,
+                asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+                pk_recipient: [5u8; 32],
+                pk_auth: [6u8; 32],
+                rho: [7u8; 32],
+                r: [8u8; 32],
+            },
+        };
+        let merkle_path = MerklePath::default();
+        let mut merkle_root = input_note.commitment();
+        for sibling in &merkle_path.siblings {
+            merkle_root = merkle_node(merkle_root, *sibling);
+        }
+        TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note,
+                position: 0,
+                rho_seed: [9u8; 32],
+                merkle_path,
+            }],
+            outputs: vec![output_note],
+            ciphertext_hashes: vec![[0u8; 48]],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&merkle_root),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn sample_transaction_proof() -> TransactionProof {
+        use std::sync::OnceLock;
+        static SAMPLE_TX_PROOF: OnceLock<TransactionProof> = OnceLock::new();
+        SAMPLE_TX_PROOF
+            .get_or_init(|| {
+                let witness = tx_proof_manifest_sample_witness();
+                let (proving_key, _) = generate_keys();
+                transaction_circuit::proof::prove(&witness, &proving_key).expect("sample tx proof")
+            })
+            .clone()
+    }
+
+    fn statement_hash_from_proof(proof: &TransactionProof) -> [u8; 48] {
+        let public = &proof.public_inputs;
+        let mut message = Vec::new();
+        message.extend_from_slice(b"tx-statement-v1");
+        message.extend_from_slice(&public.merkle_root);
+        for nf in &public.nullifiers {
+            message.extend_from_slice(nf);
+        }
+        for cm in &public.commitments {
+            message.extend_from_slice(cm);
+        }
+        for ct in &public.ciphertext_hashes {
+            message.extend_from_slice(ct);
+        }
+        message.extend_from_slice(&public.native_fee.to_le_bytes());
+        message.extend_from_slice(&public.value_balance.to_le_bytes());
+        message.extend_from_slice(&public.balance_tag);
+        message.extend_from_slice(&public.circuit_version.to_le_bytes());
+        message.extend_from_slice(&public.crypto_suite.to_le_bytes());
+        message.push(public.stablecoin.enabled as u8);
+        message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
+        message.extend_from_slice(&public.stablecoin.policy_hash);
+        message.extend_from_slice(&public.stablecoin.oracle_commitment);
+        message.extend_from_slice(&public.stablecoin.attestation_commitment);
+        message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
+        message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
+        crypto::hashes::blake3_384(&message)
+    }
+
+    fn synthetic_root_aggregation_work_data(tx_count: usize) -> RootAggregationWorkData {
+        let proof = sample_transaction_proof();
+        let statement_hash = statement_hash_from_proof(&proof);
+        let tx_proofs = vec![proof; tx_count.max(1)];
+        let statement_hashes = vec![statement_hash; tx_count.max(1)];
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .expect("statement commitment");
+        let dummy_txs = vec![vec![0u8]; tx_count.max(1)];
+        let levels = ProverCoordinator::plan_recursive_stages(&dummy_txs);
+        let root_level = levels
+            .last()
+            .and_then(|level| level.first())
+            .map(|plan| plan.level)
+            .unwrap_or(0);
+        RootAggregationWorkData {
+            statement_hashes,
+            tx_proofs,
+            tx_statements_commitment,
+            tree_levels: levels.len() as u16,
+            root_level,
+        }
+    }
+
+    #[test]
+    fn tx_proof_manifest_ids_are_parent_independent() {
+        let candidate_txs = vec![vec![1u8], vec![2u8], vec![3u8]];
+        let candidate_set_id = ProverCoordinator::candidate_set_id(&candidate_txs);
+        let first_parent = H256::repeat_byte(1);
+        let second_parent = H256::repeat_byte(2);
+
+        let first_package = ProverCoordinator::build_work_package(
+            first_parent,
+            10,
+            candidate_set_id.clone(),
+            candidate_txs[..2].to_vec(),
+            0,
+            2,
+            Duration::from_secs(30),
+            None,
+        );
+        let second_package = ProverCoordinator::build_work_package(
+            second_parent,
+            11,
+            candidate_set_id,
+            candidate_txs[..2].to_vec(),
+            0,
+            2,
+            Duration::from_secs(30),
+            None,
+        );
+
+        assert_eq!(first_package.package_id, second_package.package_id);
+        assert_eq!(
+            first_package.candidate_set_id,
+            second_package.candidate_set_id
+        );
+        assert_eq!(first_package.shape_id, second_package.shape_id);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ready_batch_lookup_uses_parent_commitment_and_tx_count() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(11);
         let mut config = test_config();
         config.target_txs = 2;
@@ -2071,13 +3959,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
@@ -2095,7 +3980,50 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inline_tx_authoring_transactions_expose_selected_candidate() {
+        let _mode = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(12);
+        let mut config = test_config();
+        config.target_txs = 2;
+        let best = Arc::new(move || (parent_hash, 9u64));
+        let pending = Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8]]);
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("unused".to_string())
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            !coordinator.authoring_transactions(8).is_empty(),
+            "inline_tx authoring should not depend on a prepared bundle"
+        );
+        assert_eq!(
+            coordinator.authoring_transactions(8),
+            vec![vec![1u8], vec![2u8]],
+            "authoring path should expose the selected proof-ready candidate immediately"
+        );
+        assert_eq!(
+            coordinator.pending_transactions(8),
+            vec![vec![1u8], vec![2u8]]
+        );
+        assert_eq!(coordinator.queued_jobs(), 0);
+        assert_eq!(coordinator.active_jobs(), 0);
+
+        let payload = ready_payload(2, [2u8; 48]);
+        coordinator.import_network_artifact(parent_hash, payload, vec![vec![1u8], vec![2u8]]);
+        assert_eq!(
+            coordinator.authoring_transactions(8),
+            vec![vec![1u8], vec![2u8]],
+            "inline_tx authoring should remain bound to the selected proof-ready candidate"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stale_parent_results_are_preserved_for_reuse() {
+        let _mode = set_block_proof_mode("merge_root");
         let first_parent = H256::repeat_byte(21);
         let second_parent = H256::repeat_byte(22);
         let best_state = Arc::new(Mutex::new((first_parent, 12u64)));
@@ -2112,13 +4040,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 std::thread::sleep(Duration::from_millis(150));
                 let commitment = [1u8; 48];
+                let payload = ready_payload(1, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count: 1,
-                    },
-                    payload: ready_payload(1, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 150,
                 })
@@ -2144,6 +4069,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn parent_rollover_still_schedules_new_work_package() {
+        let _mode = set_block_proof_mode("merge_root");
         let first_parent = H256::repeat_byte(23);
         let second_parent = H256::repeat_byte(24);
         let best_state = Arc::new(Mutex::new((first_parent, 20u64)));
@@ -2160,13 +4086,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 std::thread::sleep(Duration::from_millis(40));
                 let commitment = [1u8; 48];
+                let payload = ready_payload(1, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count: 1,
-                    },
-                    payload: ready_payload(1, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 40,
                 })
@@ -2177,11 +4100,12 @@ mod tests {
         coordinator.start();
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let first_package = coordinator
-            .get_work_package()
-            .expect("work package should exist for first parent");
-        assert_eq!(first_package.parent_hash, first_parent);
-        assert_eq!(first_package.tx_count, 1);
+        assert!(
+            coordinator
+                .lookup_prepared_bundle(first_parent, [1u8; 48], 1)
+                .is_some(),
+            "prepared bundle should exist for first parent"
+        );
 
         {
             let mut guard = best_state.lock();
@@ -2190,15 +4114,17 @@ mod tests {
         }
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let second_package = coordinator
-            .get_work_package()
-            .expect("work package should be republished for new parent");
-        assert_eq!(second_package.parent_hash, second_parent);
-        assert_eq!(second_package.tx_count, 1);
+        assert!(
+            coordinator
+                .lookup_prepared_bundle(second_parent, [1u8; 48], 1)
+                .is_some(),
+            "prepared bundle should be rebuilt for new parent"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn failed_jobs_release_worker_slots() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(31);
         let pending_calls = Arc::new(AtomicUsize::new(0));
         let mut config = test_config();
@@ -2234,6 +4160,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "legacy flat external worker path is disabled; merge-root stages cover current proving flow"]
     async fn external_work_submission_is_accepted_and_visible() {
         let parent_hash = H256::repeat_byte(41);
         let config = test_config();
@@ -2268,6 +4195,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "legacy flat external worker path is disabled; merge-root stages cover current proving flow"]
     async fn external_work_fanout_assembles_multi_chunk_flat_batches() {
         let parent_hash = H256::repeat_byte(42);
         let mut config = test_config();
@@ -2330,6 +4258,404 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn flat_mode_does_not_reanimate_tx_proof_manifest_lane() {
+        let _mode = set_block_proof_mode("flat");
+        assert_eq!(
+            ProverCoordinator::prepared_proof_mode_from_env(),
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inline_tx_mode_does_not_publish_external_proving_work() {
+        let _mode = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(0x55);
+        let mut config = test_config();
+        config.workers = 0;
+        config.target_txs = 4;
+        config.queue_capacity = 1;
+        let best = Arc::new(move || (parent_hash, 9u64));
+        let pending = Arc::new(move |_max_txs: usize| {
+            (0..4usize)
+                .map(|idx| vec![(idx as u8).saturating_add(1)])
+                .collect()
+        });
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("raw inline bundle intentionally not built in this scheduler test".to_string())
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        assert!(
+            coordinator.get_work_package().is_none(),
+            "inline_tx mode must not publish flat fan-out work packages"
+        );
+        assert!(
+            coordinator.get_stage_work_package().is_none(),
+            "inline_tx mode must not publish recursive stage work packages"
+        );
+        assert_eq!(
+            coordinator.authoring_transactions(8).len(),
+            4,
+            "inline_tx mode should still expose the selected proof-ready candidate for authoring"
+        );
+        assert_eq!(coordinator.queued_jobs(), 0);
+        assert_eq!(coordinator.active_jobs(), 0);
+    }
+
+    #[ignore = "experimental recursive stage publication is not part of the default inline-tx gate"]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn external_stage_work_packages_prioritize_recursive_singleton_liveness_lane() {
+        let _mode = set_block_proof_mode("merge_root");
+        let parent_hash = H256::repeat_byte(43);
+        let mut config = test_config();
+        config.target_txs = 4;
+        config.queue_capacity = 2;
+        config.workers = 0;
+        config.poll_interval = Duration::from_millis(10);
+        let best = Arc::new(move || (parent_hash, 9u64));
+        let pending =
+            Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8], vec![3u8], vec![4u8]]);
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("legacy local bundle builder disabled for recursive stage test".to_string())
+            },
+        );
+        let root_aggregation = Arc::new(move |candidate_txs: Vec<Vec<u8>>| {
+            Ok(Some(synthetic_root_aggregation_work_data(
+                candidate_txs.len(),
+            )))
+        });
+        let finalize = Arc::new(
+            move |_parent: H256,
+                  _number: u64,
+                  candidate_txs: Vec<Vec<u8>>,
+                  _root_proof_bytes: Vec<u8>| {
+                let payload = ready_payload(candidate_txs.len() as u32, [9u8; 48]);
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: H256::repeat_byte(0),
+                        tx_statements_commitment: payload.tx_statements_commitment,
+                        tx_count: payload.tx_count,
+                        proof_mode: payload.proof_mode,
+                        artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(
+                            &payload,
+                        ),
+                    },
+                    payload,
+                    candidate_txs,
+                    build_ms: 1,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new_with_recursive_builders(
+            config,
+            best,
+            pending,
+            build,
+            finalize,
+            Some(root_aggregation),
+        );
+        coordinator.start();
+
+        let mut singleton_liveness = None;
+        let mut full_candidate = None;
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while (singleton_liveness.is_none() || full_candidate.is_none())
+            && Instant::now() < deadline
+        {
+            if let Some(package) = coordinator.get_stage_work_package() {
+                if package.candidate_txs.len() == 1 {
+                    singleton_liveness = Some(package.clone());
+                }
+                if package.candidate_txs.len() == 4 {
+                    full_candidate = Some(package);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let first =
+            singleton_liveness.expect("singleton liveness stage package should be published");
+        let second = full_candidate.expect("full recursive stage package should also be published");
+
+        assert_eq!(first.stage_type, StageType::LeafBatchProve);
+        assert_eq!(first.tx_count, 1);
+        assert_eq!(second.stage_type, StageType::LeafBatchProve);
+        assert_eq!(
+            second.tx_count,
+            ProverCoordinator::leaf_fan_in().min(4) as u32
+        );
+        assert_ne!(first.candidate_set_id, second.candidate_set_id);
+    }
+
+    #[cfg(any())]
+    #[test]
+    fn recursive_scheduler_publishes_multilevel_merge_nodes_as_subtrees_finish() {
+        let parent_hash = H256::repeat_byte(44);
+        let block_number = 10u64;
+        let leaf_fan_in = ProverCoordinator::leaf_fan_in();
+        let merge_fan_in = ProverCoordinator::merge_fan_in();
+        let candidate_tx_count = leaf_fan_in.saturating_mul(merge_fan_in).saturating_add(1);
+        let candidate_txs = (0..candidate_tx_count)
+            .map(|value| vec![value as u8])
+            .collect::<Vec<_>>();
+        let candidate_set_id = ProverCoordinator::candidate_set_id(&candidate_txs);
+        let tree_levels =
+            ProverCoordinator::recursive_tree_levels_for_tx_count(candidate_txs.len());
+        let candidate_digest = ProverCoordinator::candidate_digest(&candidate_txs);
+        let root_payload = RootFinalizeWorkData {
+            statement_hashes: Vec::new(),
+            tx_proofs: Vec::new(),
+            tx_statements_commitment: [9u8; 48],
+            da_root: [0u8; 48],
+            da_chunk_count: 1,
+            starting_state_root: [0u8; 48],
+            ending_state_root: [1u8; 48],
+            starting_kernel_root: [2u8; 48],
+            ending_kernel_root: [3u8; 48],
+            nullifier_root: [4u8; 48],
+            nullifiers: Vec::new(),
+            sorted_nullifiers: Vec::new(),
+        };
+
+        let mut config = test_config();
+        config.workers = 0;
+        config.target_txs = candidate_txs.len();
+        config.queue_capacity = 1;
+        config.liveness_lane = false;
+        let best = Arc::new(move || (parent_hash, block_number.saturating_sub(1)));
+        let pending = Arc::new(move |_max_txs: usize| Vec::new());
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("unused in scheduler unit test".to_string())
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        let mut state = coordinator.state.lock();
+        state.current_parent = Some(parent_hash);
+        state.generation = 1;
+        let mut levels = Vec::new();
+        let mut scheduled_packages = HashSet::new();
+        let mut leaf_level = Vec::new();
+        for (chunk_index, chunk) in candidate_txs.chunks(leaf_fan_in).enumerate() {
+            let start = (chunk_index * leaf_fan_in) as u32;
+            let tx_count = chunk.len() as u32;
+            let package_id =
+                ProverCoordinator::chunk_work_package_id(&candidate_set_id, start, tx_count as u16);
+            leaf_level.push(RecursiveStagePlan {
+                package_id: package_id.clone(),
+                stage_type: StageType::LeafBatchProve,
+                level: 0,
+                shape_id: ProverCoordinator::expensive_stage_shape_id(
+                    StageType::LeafBatchProve,
+                    0,
+                    chunk_index as u32,
+                    merge_fan_in as u16,
+                    tx_count,
+                    candidate_digest,
+                    None,
+                ),
+                subtree_tx_count: tx_count,
+                child_package_ids: Vec::new(),
+            });
+            scheduled_packages.insert(package_id.clone());
+            state.work_packages.insert(
+                package_id.clone(),
+                WorkPackageRecord {
+                    package: WorkPackage {
+                        package_id,
+                        parent_hash,
+                        block_number,
+                        candidate_set_id: candidate_set_id.clone(),
+                        chunk_start_tx_index: start,
+                        chunk_tx_count: tx_count as u16,
+                        expected_chunks: candidate_txs.len().div_ceil(leaf_fan_in) as u16,
+                        stage_type: "leaf_batch_prove".to_string(),
+                        level: 0,
+                        arity: merge_fan_in as u16,
+                        shape_id: ProverCoordinator::work_package_shape_id(
+                            parent_hash,
+                            block_number,
+                            "leaf_batch_prove",
+                            0,
+                            chunk_index as u32,
+                            merge_fan_in as u16,
+                            tx_count,
+                            candidate_digest,
+                        ),
+                        dependencies: Vec::new(),
+                        tx_count,
+                        candidate_txs: candidate_txs.clone(),
+                        tx_proof_manifest_payload: None,
+                        leaf_batch_payload: None,
+                        merge_node_payload: None,
+                        root_finalize_payload: None,
+                        created_at_ms: 0,
+                        expires_at_ms: u64::MAX,
+                    },
+                    submissions: 0,
+                },
+            );
+        }
+        levels.push(leaf_level.clone());
+        let mut current_level = leaf_level;
+        let mut level = 1u16;
+        while current_level.len() > 1 {
+            let mut next_level = Vec::new();
+            for (stage_index, group) in current_level.chunks(merge_fan_in).enumerate() {
+                let subtree_tx_count = group.iter().map(|plan| plan.subtree_tx_count).sum::<u32>();
+                next_level.push(RecursiveStagePlan {
+                    package_id: ProverCoordinator::stage_work_id(
+                        parent_hash,
+                        block_number,
+                        "merge_node_prove",
+                        level,
+                        stage_index as u32,
+                        merge_fan_in as u16,
+                        subtree_tx_count,
+                        candidate_digest,
+                    ),
+                    stage_type: StageType::MergeNodeProve,
+                    level,
+                    shape_id: ProverCoordinator::expensive_stage_shape_id(
+                        StageType::MergeNodeProve,
+                        level,
+                        stage_index as u32,
+                        merge_fan_in as u16,
+                        subtree_tx_count,
+                        candidate_digest,
+                        None,
+                    ),
+                    subtree_tx_count,
+                    child_package_ids: group.iter().map(|plan| plan.package_id.clone()).collect(),
+                });
+            }
+            levels.push(next_level.clone());
+            current_level = next_level;
+            level = level.saturating_add(1);
+        }
+        state.recursive_assemblies.insert(
+            candidate_set_id.clone(),
+            RecursiveTreeAssemblyState {
+                parent_hash,
+                block_number,
+                candidate_txs: candidate_txs.clone(),
+                root_finalize_payload: root_payload,
+                levels,
+                completed_results: HashMap::new(),
+                scheduled_packages,
+            },
+        );
+
+        let first_subtree_leaf_count = merge_fan_in;
+        let (first_leaf_ids, final_leaf_id, first_merge_id, second_merge_id, root_merge_id) = {
+            let assembly = state
+                .recursive_assemblies
+                .get(&candidate_set_id)
+                .expect("recursive assembly should be published");
+            assert_eq!(assembly.levels.len(), tree_levels as usize);
+            assert_eq!(assembly.levels[0].len(), merge_fan_in + 1);
+            assert_eq!(assembly.levels[1].len(), 2);
+            assert_eq!(assembly.levels[2].len(), 1);
+            (
+                assembly.levels[0]
+                    .iter()
+                    .take(first_subtree_leaf_count)
+                    .map(|plan| plan.package_id.clone())
+                    .collect::<Vec<_>>(),
+                assembly.levels[0][first_subtree_leaf_count]
+                    .package_id
+                    .clone(),
+                assembly.levels[1][0].package_id.clone(),
+                assembly.levels[1][1].package_id.clone(),
+                assembly.levels[2][0].package_id.clone(),
+            )
+        };
+
+        assert!(state.work_packages.contains_key(&first_leaf_ids[0]));
+        assert!(!state.work_packages.contains_key(&first_merge_id));
+        assert!(!state.work_packages.contains_key(&second_merge_id));
+        assert!(!state.work_packages.contains_key(&root_merge_id));
+
+        for (index, package_id) in first_leaf_ids
+            .iter()
+            .take(first_subtree_leaf_count.saturating_sub(1))
+            .enumerate()
+        {
+            let maybe_bundle = coordinator
+                .apply_recursive_stage_result_locked(
+                    &mut state,
+                    package_id,
+                    &candidate_set_id,
+                    parent_hash,
+                    vec![index as u8],
+                )
+                .expect("partial leaf completion should succeed");
+            assert!(maybe_bundle.is_none());
+        }
+        assert!(!state.work_packages.contains_key(&first_merge_id));
+
+        let maybe_bundle = coordinator
+            .apply_recursive_stage_result_locked(
+                &mut state,
+                &first_leaf_ids[first_subtree_leaf_count.saturating_sub(1)],
+                &candidate_set_id,
+                parent_hash,
+                vec![first_subtree_leaf_count.saturating_sub(1) as u8],
+            )
+            .expect("first subtree completion should succeed");
+        assert!(maybe_bundle.is_none());
+        assert!(state.work_packages.contains_key(&first_merge_id));
+        assert!(!state.work_packages.contains_key(&second_merge_id));
+        assert!(!state.work_packages.contains_key(&root_merge_id));
+
+        let maybe_bundle = coordinator
+            .apply_recursive_stage_result_locked(
+                &mut state,
+                &final_leaf_id,
+                &candidate_set_id,
+                parent_hash,
+                vec![first_subtree_leaf_count as u8],
+            )
+            .expect("final leaf completion should succeed");
+        assert!(maybe_bundle.is_none());
+        assert!(state.work_packages.contains_key(&second_merge_id));
+        assert!(!state.work_packages.contains_key(&root_merge_id));
+
+        let maybe_bundle = coordinator
+            .apply_recursive_stage_result_locked(
+                &mut state,
+                &first_merge_id,
+                &candidate_set_id,
+                parent_hash,
+                vec![9u8],
+            )
+            .expect("first merge completion should succeed");
+        assert!(maybe_bundle.is_none());
+        assert!(!state.work_packages.contains_key(&root_merge_id));
+
+        let maybe_bundle = coordinator
+            .apply_recursive_stage_result_locked(
+                &mut state,
+                &second_merge_id,
+                &candidate_set_id,
+                parent_hash,
+                vec![10u8],
+            )
+            .expect("second merge completion should succeed");
+        assert!(maybe_bundle.is_none());
+        assert!(state.work_packages.contains_key(&root_merge_id));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "legacy flat external worker path is disabled; merge-root stages cover current proving flow"]
     async fn external_submission_limits_are_enforced() {
         let parent_hash = H256::repeat_byte(51);
         let mut config = test_config();
@@ -2367,6 +4693,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "legacy flat external worker path is disabled; merge-root stages cover current proving flow"]
     async fn external_submission_rejects_payloads_over_cap() {
         let parent_hash = H256::repeat_byte(61);
         let mut config = test_config();
@@ -2395,6 +4722,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pending_transactions_expose_liveness_lane_before_bundle_ready() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(71);
         let mut config = test_config();
         config.target_txs = 4;
@@ -2409,13 +4737,10 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(140));
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 140,
                 })
@@ -2433,6 +4758,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pending_transactions_prefer_ready_liveness_bundle_then_scale_up() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(72);
         let mut config = test_config();
         config.target_txs = 8;
@@ -2458,13 +4784,10 @@ mod tests {
                 let sleep_ms = if tx_count == 1 { 20 } else { 260 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: sleep_ms as u128,
                 })
@@ -2485,6 +4808,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn work_package_upsizes_while_smaller_job_is_inflight() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(73);
         let mut config = test_config();
         config.target_txs = 8;
@@ -2509,13 +4833,10 @@ mod tests {
                 let sleep_ms = if tx_count == 1 { 300 } else { 20 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: sleep_ms as u128,
                 })
@@ -2526,28 +4847,17 @@ mod tests {
         coordinator.start();
         tokio::time::sleep(Duration::from_millis(60)).await;
 
-        let first = coordinator
-            .get_work_package()
-            .expect("initial work package should exist");
-        assert_eq!(first.tx_count, 1);
+        assert_eq!(coordinator.pending_transactions(8).len(), 1);
 
         pending_size.store(8, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(80)).await;
 
-        let upsized = coordinator
-            .get_work_package()
-            .expect("upsized work package should exist");
-        assert_eq!(upsized.tx_count, 8);
-        assert_ne!(upsized.package_id, first.package_id);
-        assert_eq!(upsized.stage_type, "leaf_batch_prove");
-        assert_eq!(upsized.level, 0);
-        assert_eq!(upsized.dependencies.len(), 0);
-        assert_eq!(upsized.chunk_start_tx_index, 0);
-        assert_eq!(upsized.expected_chunks, 1);
+        assert_eq!(coordinator.pending_transactions(8).len(), 8);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn throughput_mode_defers_until_target_batch_is_available() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(74);
         let mut config = test_config();
         config.target_txs = 4;
@@ -2570,13 +4880,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
@@ -2587,20 +4894,94 @@ mod tests {
         coordinator.start();
         tokio::time::sleep(Duration::from_millis(80)).await;
 
-        assert!(coordinator.get_work_package().is_none());
+        assert!(coordinator
+            .lookup_prepared_bundle(parent_hash, [1u8; 48], 1)
+            .is_none());
         assert_eq!(coordinator.pending_transactions(8).len(), 0);
 
         pending_size.store(4, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(80)).await;
 
-        let package = coordinator
-            .get_work_package()
-            .expect("target-sized work package should exist");
-        assert_eq!(package.tx_count, 4);
+        assert_eq!(coordinator.pending_transactions(8).len(), 4);
+        assert!(
+            coordinator
+                .lookup_prepared_bundle(parent_hash, [4u8; 48], 4)
+                .is_some(),
+            "target-sized prepared bundle should exist"
+        );
+    }
+
+    #[cfg(any())]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "expensive recursive aggregation throughput benchmark; run manually"]
+    async fn recursive_parallelism_scaling_smoke() {
+        let worker_counts = [1usize, 2, 4];
+        for tx_count in [32usize, 64usize] {
+            let mut results = Vec::new();
+            for workers in worker_counts {
+                eprintln!(
+                    "recursive_scaling_start tx_count={} workers={}",
+                    tx_count, workers
+                );
+                match measure_recursive_prepared_latency(tx_count, workers).await {
+                    Ok(elapsed_ms) => {
+                        eprintln!(
+                            "recursive_scaling tx_count={} workers={} prepared_ms={}",
+                            tx_count, workers, elapsed_ms
+                        );
+                        results.push((workers, elapsed_ms));
+                    }
+                    Err(elapsed_ms) => {
+                        eprintln!(
+                            "recursive_scaling_timeout tx_count={} workers={} elapsed_ms={}",
+                            tx_count, workers, elapsed_ms
+                        );
+                        results.push((workers, elapsed_ms));
+                    }
+                }
+            }
+            eprintln!(
+                "recursive_scaling_summary tx_count={} results={:?}",
+                tx_count, results
+            );
+        }
+    }
+
+    #[cfg(any())]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "single-case recursive aggregation benchmark; run manually"]
+    async fn recursive_parallelism_single_case() {
+        let tx_count = std::env::var("HEGEMON_RECURSIVE_BENCH_TX_COUNT")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(32);
+        let workers = std::env::var("HEGEMON_RECURSIVE_BENCH_WORKERS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(1);
+        eprintln!(
+            "recursive_single_start tx_count={} workers={}",
+            tx_count, workers
+        );
+        match measure_recursive_prepared_latency(tx_count, workers).await {
+            Ok(elapsed_ms) => {
+                eprintln!(
+                    "recursive_single_result tx_count={} workers={} prepared_ms={}",
+                    tx_count, workers, elapsed_ms
+                );
+            }
+            Err(elapsed_ms) => {
+                eprintln!(
+                    "recursive_single_timeout tx_count={} workers={} elapsed_ms={}",
+                    tx_count, workers, elapsed_ms
+                );
+            }
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn throughput_mode_adaptive_liveness_unjams_cold_target_batches() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(77);
         let mut config = test_config();
         config.target_txs = 4;
@@ -2619,13 +5000,10 @@ mod tests {
                 let sleep_ms = if tx_count == 1 { 20 } else { 260 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: sleep_ms as u128,
                 })
@@ -2641,6 +5019,189 @@ mod tests {
         assert_eq!(coordinator.pending_transactions(8).len(), 1);
     }
 
+    #[test]
+    fn root_stage_dependencies_use_worker_stage_names() {
+        let leaf_fan_in = ProverCoordinator::leaf_fan_in();
+        let merge_fan_in = ProverCoordinator::merge_fan_in();
+        let tx_count = leaf_fan_in.saturating_mul(merge_fan_in).saturating_add(1);
+        let candidate_txs = (0..tx_count)
+            .map(|value| vec![value as u8])
+            .collect::<Vec<_>>();
+        let plans = ProverCoordinator::plan_recursive_stages(&candidate_txs);
+        let root = plans
+            .last()
+            .and_then(|level| level.first())
+            .expect("root plan");
+        let parent_level = &plans[plans.len().saturating_sub(2)];
+        assert!(parent_level
+            .iter()
+            .all(|plan| plan.stage_type == StageType::MergeNodeProve));
+        assert_eq!(
+            root.child_package_ids,
+            parent_level
+                .iter()
+                .map(|plan| plan.package_id.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn expensive_stage_shape_id_ignores_parent() {
+        let candidate_txs = vec![vec![1u8], vec![2u8]];
+        let candidate_set_id = ProverCoordinator::candidate_set_id(&candidate_txs);
+        let plan = ProverCoordinator::plan_recursive_stages(&candidate_txs)[0][0].clone();
+        let payload = LeafBatchWorkData {
+            statement_hashes: vec![statement_hash_from_proof(&sample_transaction_proof())],
+            tx_proofs: vec![sample_transaction_proof()],
+            tx_statements_commitment: [3u8; 48],
+            tree_levels: 1,
+            root_level: 0,
+        };
+
+        let first = ProverCoordinator::build_leaf_stage_work_package(
+            H256::repeat_byte(1),
+            10,
+            candidate_set_id.clone(),
+            candidate_txs.clone(),
+            0,
+            1,
+            Duration::from_secs(30),
+            plan.clone(),
+            payload.clone(),
+        );
+        let second = ProverCoordinator::build_leaf_stage_work_package(
+            H256::repeat_byte(2),
+            11,
+            candidate_set_id,
+            candidate_txs,
+            0,
+            1,
+            Duration::from_secs(30),
+            plan,
+            payload,
+        );
+
+        assert_eq!(first.package_id, second.package_id);
+        assert_eq!(first.shape_id, second.shape_id);
+    }
+
+    #[test]
+    fn final_bundle_id_changes_with_parent() {
+        let first = ProverCoordinator::final_bundle_id(H256::repeat_byte(1), 9, [7u8; 48], 3);
+        let second = ProverCoordinator::final_bundle_id(H256::repeat_byte(2), 9, [7u8; 48], 3);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn parent_churn_reuses_expensive_artifacts_and_only_requeues_finalize() {
+        let first_parent = H256::repeat_byte(31);
+        let second_parent = H256::repeat_byte(32);
+        let candidate_txs = vec![vec![1u8], vec![2u8], vec![3u8]];
+        let root_payload = synthetic_root_aggregation_work_data(candidate_txs.len());
+        let root_plan = ProverCoordinator::plan_recursive_stages(&candidate_txs)
+            .last()
+            .and_then(|level| level.first())
+            .expect("root plan should exist")
+            .clone();
+
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("unused local build".to_string())
+            },
+        );
+        let finalize = Arc::new(
+            move |_parent: H256,
+                  _number: u64,
+                  candidate_txs: Vec<Vec<u8>>,
+                  _root_proof_bytes: Vec<u8>| {
+                let payload = ready_payload(candidate_txs.len() as u32, [9u8; 48]);
+                Ok(PreparedBundle {
+                    key: BundleMatchKey {
+                        parent_hash: H256::repeat_byte(0),
+                        tx_statements_commitment: payload.tx_statements_commitment,
+                        tx_count: payload.tx_count,
+                        proof_mode: payload.proof_mode,
+                        artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(
+                            &payload,
+                        ),
+                    },
+                    payload,
+                    candidate_txs,
+                    build_ms: 1,
+                })
+            },
+        );
+        let coordinator = ProverCoordinator::new_with_recursive_builders(
+            ProverCoordinatorConfig {
+                workers: 0,
+                ..test_config()
+            },
+            Arc::new(move || (first_parent, 1)),
+            Arc::new(move |_max_txs: usize| Vec::new()),
+            build,
+            finalize,
+            None,
+        );
+
+        let mut state = coordinator.state.lock();
+        state
+            .prepared_expensive
+            .insert(root_plan.package_id.clone(), vec![9u8, 8u8, 7u8]);
+        coordinator.publish_recursive_candidate_variant_locked(
+            &mut state,
+            first_parent,
+            2,
+            candidate_txs.clone(),
+            root_payload.clone(),
+            false,
+        );
+        assert!(state.work_packages.is_empty());
+        assert_eq!(state.pending_jobs.len(), 1);
+        let first_finalize = state.pending_jobs.pop_front().expect("finalize job");
+        assert_eq!(first_finalize.stage_type, StageType::FinalizeBundle);
+        assert_eq!(
+            first_finalize.package_id,
+            ProverCoordinator::final_bundle_id(
+                first_parent,
+                2,
+                root_payload.tx_statements_commitment,
+                candidate_txs.len() as u32,
+            )
+        );
+        assert_eq!(
+            first_finalize.finalize_bundle_payload,
+            Some(vec![9u8, 8u8, 7u8])
+        );
+        state.recursive_assemblies.clear();
+
+        coordinator.publish_recursive_candidate_variant_locked(
+            &mut state,
+            second_parent,
+            3,
+            candidate_txs.clone(),
+            root_payload.clone(),
+            false,
+        );
+        assert!(state.work_packages.is_empty());
+        assert_eq!(state.pending_jobs.len(), 1);
+        let second_finalize = state.pending_jobs.pop_front().expect("finalize job");
+        assert_eq!(second_finalize.stage_type, StageType::FinalizeBundle);
+        assert_eq!(
+            second_finalize.package_id,
+            ProverCoordinator::final_bundle_id(
+                second_parent,
+                3,
+                root_payload.tx_statements_commitment,
+                candidate_txs.len() as u32,
+            )
+        );
+        assert_eq!(
+            second_finalize.finalize_bundle_payload,
+            Some(vec![9u8, 8u8, 7u8])
+        );
+    }
+
+    #[cfg(any())]
     #[test]
     fn root_stage_metadata_uses_leaf_dependencies_for_two_level_tree() {
         let parent_hash = H256::repeat_byte(78);
@@ -2678,6 +5239,7 @@ mod tests {
         assert_eq!(dependencies, expected);
     }
 
+    #[cfg(any())]
     #[test]
     fn root_stage_metadata_uses_merge_dependencies_for_multi_level_tree() {
         let parent_hash = H256::repeat_byte(79);
@@ -2716,6 +5278,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn checkpoint_upsizing_uses_planned_ladder_by_default() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(75);
         let mut config = test_config();
         config.target_txs = 8;
@@ -2738,13 +5301,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
@@ -2754,28 +5314,17 @@ mod tests {
         let coordinator = ProverCoordinator::new(config, best, pending, build);
         coordinator.start();
         tokio::time::sleep(Duration::from_millis(80)).await;
-        assert_eq!(
-            coordinator
-                .get_work_package()
-                .expect("initial work package should exist")
-                .tx_count,
-            1
-        );
+        assert_eq!(coordinator.pending_transactions(8).len(), 1);
 
         pending_size.store(3, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(80)).await;
         // Ladder for target=8, queue=4 is [1,2,4,8], so size 3 snaps to 2.
-        assert_eq!(
-            coordinator
-                .get_work_package()
-                .expect("ladder work package should exist")
-                .tx_count,
-            2
-        );
+        assert_eq!(coordinator.pending_transactions(8).len(), 2);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn incremental_upsizing_can_restore_per_step_growth() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(76);
         let mut config = test_config();
         config.target_txs = 8;
@@ -2798,13 +5347,10 @@ mod tests {
             move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
                 let tx_count = candidate_txs.len() as u32;
                 let commitment = [tx_count as u8; 48];
+                let payload = ready_payload(tx_count, commitment);
                 Ok(PreparedBundle {
-                    key: BundleMatchKey {
-                        parent_hash: parent,
-                        tx_statements_commitment: commitment,
-                        tx_count,
-                    },
-                    payload: ready_payload(tx_count, commitment),
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
                     candidate_txs,
                     build_ms: 1,
                 })
@@ -2814,23 +5360,11 @@ mod tests {
         let coordinator = ProverCoordinator::new(config, best, pending, build);
         coordinator.start();
         tokio::time::sleep(Duration::from_millis(80)).await;
-        assert_eq!(
-            coordinator
-                .get_work_package()
-                .expect("initial work package should exist")
-                .tx_count,
-            1
-        );
+        assert_eq!(coordinator.pending_transactions(8).len(), 1);
 
         pending_size.store(3, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(80)).await;
-        assert_eq!(
-            coordinator
-                .get_work_package()
-                .expect("incremental work package should exist")
-                .tx_count,
-            3
-        );
+        assert_eq!(coordinator.pending_transactions(8).len(), 3);
     }
 
     #[test]

@@ -46,31 +46,26 @@ All cryptographic operations are **post-quantum secure** using hash-based and la
 - **`merkle.rs`** - Compact incremental Merkle tree
 - **`verifier.rs`** - STARK proof verification abstraction
 
-## Extrinsics
+## Runtime role
 
-### `shielded_transfer(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, stablecoin, fee, value_balance)`
-Execute a private transfer inside the shielded pool. `stablecoin` is optional and only used for issuance proofs; `value_balance` must be 0 (no transparent pool).
+`pallet-shielded-pool` is the first kernel family backend. It still owns:
 
-### `shielded_transfer_unsigned(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, stablecoin, fee)`
-Execute an unsigned shielded-to-shielded transfer; `stablecoin` must be `None` and `value_balance` is fixed to 0.
+- shielded commitment and nullifier state
+- Merkle root history and witness material
+- shielded fee accounting
+- single-transfer and batch proof verification
+- shielded coinbase minting
 
-### `shielded_transfer_sidecar(proof, nullifiers, commitments, ciphertext_hashes, ciphertext_sizes, anchor, binding_hash, stablecoin, fee, value_balance)`
-Execute a transfer where ciphertext bytes are supplied out-of-band (DA sidecar). The call carries ciphertext hashes and byte sizes only.
+The live public submission surface is no longer the pallet call enum. Stage 1 routes shielded actions through `Kernel::submit_action`, and the shielded pool executes those actions through its internal family adapter.
 
-### `shielded_transfer_unsigned_sidecar(proof, nullifiers, commitments, ciphertext_hashes, ciphertext_sizes, anchor, binding_hash, stablecoin, fee)`
-Unsigned sidecar transfer; ciphertext bytes live in the DA sidecar and `stablecoin` must be `None`.
+Current kernelized shielded action kinds:
 
-### `submit_commitment_proof(da_root, chunk_count, proof)` (inherent)
-Attach the block commitment proof, DA root, and DA chunk count to the block body for node-side verification and archive auditing.
-
-### `submit_aggregation_proof(proof)` (inherent)
-Attach an aggregation proof over transaction proofs when available.
-
-### `mint_coinbase(coinbase_data)` (inherent)
-Mint a shielded coinbase note as the only issuance path.
-
-### `update_verifying_key(vk)` (admin only)
-Update the STARK verification parameters.
+- inline shielded transfer
+- sidecar shielded transfer
+- batch shielded transfer
+- aggregation-mode marker
+- proven-batch payload
+- shielded coinbase
 
 ## Security Properties
 

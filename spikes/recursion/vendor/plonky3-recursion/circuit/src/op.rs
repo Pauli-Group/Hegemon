@@ -202,6 +202,8 @@ impl<F: Field + PartialEq> PartialEq for Op<F> {
 pub enum NonPrimitiveOpType {
     /// Poseidon2 permutation operation (one Poseidon2 call / table row).
     Poseidon2Perm(Poseidon2Config),
+    /// External witness input operation, used for prover-populated private inputs.
+    WitnessInput,
     /// Unconstrained operation, used to set outputs to non-deterministic advices.
     Unconstrained,
 }

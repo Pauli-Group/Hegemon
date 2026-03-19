@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use codec::Decode;
 use frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed};
 use scale_info::{PortableRegistry, TypeDef};
@@ -12,34 +14,17 @@ pub struct RuntimeCallIndex {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShieldedPoolCallIndices {
-    pub shielded_transfer: RuntimeCallIndex,
     pub shielded_transfer_unsigned: RuntimeCallIndex,
     pub shielded_transfer_unsigned_sidecar: RuntimeCallIndex,
     pub batch_shielded_transfer: RuntimeCallIndex,
 }
 
 pub fn lookup_shielded_pool_call_indices(
-    metadata_bytes: &[u8],
+    _metadata_bytes: &[u8],
 ) -> Result<ShieldedPoolCallIndices, WalletError> {
-    let metadata = decode_metadata(metadata_bytes)?;
-    Ok(ShieldedPoolCallIndices {
-        shielded_transfer: lookup_call_index(&metadata, "ShieldedPool", "shielded_transfer")?,
-        shielded_transfer_unsigned: lookup_call_index(
-            &metadata,
-            "ShieldedPool",
-            "shielded_transfer_unsigned",
-        )?,
-        shielded_transfer_unsigned_sidecar: lookup_call_index(
-            &metadata,
-            "ShieldedPool",
-            "shielded_transfer_unsigned_sidecar",
-        )?,
-        batch_shielded_transfer: lookup_call_index(
-            &metadata,
-            "ShieldedPool",
-            "batch_shielded_transfer",
-        )?,
-    })
+    Err(WalletError::InvalidState(
+        "direct ShieldedPool call indices are removed; submit kernel actions via Hegemon RPC",
+    ))
 }
 
 pub fn lookup_call_index(

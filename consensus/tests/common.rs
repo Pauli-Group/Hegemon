@@ -149,6 +149,7 @@ pub fn assemble_bft_block(
         timestamp_ms,
         parent_hash,
         state_root,
+        kernel_root: kernel_root_from_shielded_root(&state_root),
         nullifier_root,
         proof_commitment,
         da_root,
@@ -230,6 +231,7 @@ pub fn assemble_pow_block(
         timestamp_ms,
         parent_hash,
         state_root,
+        kernel_root: kernel_root_from_shielded_root(&state_root),
         nullifier_root,
         proof_commitment,
         da_root,
@@ -261,6 +263,14 @@ pub fn assemble_pow_block(
         new_nullifiers,
         tree,
     ))
+}
+
+fn kernel_root_from_shielded_root(root: &[u8; 48]) -> [u8; 48] {
+    let mut bytes = Vec::with_capacity(24 + 2 + 48);
+    bytes.extend_from_slice(b"hegemon-kernel-root-v1");
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(root);
+    blake3_384(&bytes)
 }
 
 #[allow(dead_code)]

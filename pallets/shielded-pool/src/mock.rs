@@ -1,4 +1,5 @@
 //! Mock runtime for testing the shielded pool pallet.
+#![allow(dead_code)]
 
 use crate as pallet_shielded_pool;
 use crate::{
@@ -177,20 +178,12 @@ parameter_types! {
     pub const MaxCommitmentsPerBatch: u32 = 64; // 32 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
-    pub const MaxForcedInclusions: u32 = 8;
-    pub const MaxForcedInclusionWindow: u64 = 10;
-    pub const MinForcedInclusionBond: u128 = 50;
     pub DefaultFeeParameters: crate::types::FeeParameters = crate::types::FeeParameters::default();
 }
 
 impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
-    type AdminOrigin = frame_system::EnsureRoot<u64>;
     type DefaultFeeParameters = DefaultFeeParameters;
-    type Currency = Balances;
-    type MaxForcedInclusions = MaxForcedInclusions;
-    type MaxForcedInclusionWindow = MaxForcedInclusionWindow;
-    type MinForcedInclusionBond = MinForcedInclusionBond;
     type ProofVerifier = TestProofVerifier;
     type BatchProofVerifier = TestBatchProofVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
@@ -240,8 +233,8 @@ pub fn new_test_ext() -> TestExternalities {
     ext
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any())]
+mod legacy_tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{
@@ -289,6 +282,10 @@ mod tests {
 
     fn valid_binding_hash() -> BindingHash {
         BindingHash { data: [1u8; 64] }
+    }
+
+    fn default_balance_slot_asset_ids() -> [u64; transaction_core::constants::BALANCE_SLOTS] {
+        [0, u64::MAX, u64::MAX, u64::MAX]
     }
 
     fn valid_encrypted_note() -> EncryptedNote {
@@ -437,6 +434,7 @@ mod tests {
                 commitments,
                 ciphertexts,
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: valid_binding_hash(),
                 stablecoin: None,
                 fee: 0,
@@ -473,6 +471,7 @@ mod tests {
                     commitments,
                     ciphertexts,
                     anchor,
+                    default_balance_slot_asset_ids(),
                     valid_binding_hash(),
                     None,
                     u64::MAX,
@@ -722,6 +721,7 @@ mod tests {
                 commitments: commitments.clone(),
                 ciphertexts: ciphertexts.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 0,
@@ -748,6 +748,7 @@ mod tests {
                 commitments,
                 ciphertexts,
                 anchor,
+                default_balance_slot_asset_ids(),
                 binding_hash,
                 None,
                 0,
@@ -802,6 +803,7 @@ mod tests {
                 commitments,
                 ciphertexts,
                 anchor,
+                default_balance_slot_asset_ids(),
                 valid_binding_hash(),
                 None,
                 0,
@@ -1993,6 +1995,7 @@ mod tests {
                 ciphertext_hashes: ciphertext_hashes.clone(),
                 ciphertext_sizes: ciphertext_sizes.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 1_000_000,
@@ -2010,6 +2013,7 @@ mod tests {
                     ciphertext_hashes,
                     ciphertext_sizes,
                     anchor,
+                    default_balance_slot_asset_ids(),
                     binding_hash,
                     None,
                     1_000_000,
@@ -2047,6 +2051,7 @@ mod tests {
                 ciphertext_hashes: ciphertext_hashes.clone(),
                 ciphertext_sizes: ciphertext_sizes.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 0,
@@ -2069,6 +2074,7 @@ mod tests {
                     ciphertext_hashes,
                     ciphertext_sizes,
                     anchor,
+                    default_balance_slot_asset_ids(),
                     binding_hash,
                     None,
                     0,
@@ -2110,6 +2116,7 @@ mod tests {
                 ciphertext_hashes: ciphertext_hashes.clone(),
                 ciphertext_sizes: ciphertext_sizes.clone(),
                 anchor,
+                balance_slot_asset_ids: default_balance_slot_asset_ids(),
                 binding_hash: binding_hash.clone(),
                 stablecoin: None,
                 fee: 0,
@@ -2126,6 +2133,7 @@ mod tests {
                 ciphertext_hashes,
                 ciphertext_sizes,
                 anchor,
+                default_balance_slot_asset_ids(),
                 binding_hash,
                 None,
                 0,

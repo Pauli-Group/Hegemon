@@ -44,6 +44,8 @@ pub const SYNC_PROTOCOL: &str = SYNC_PQ;
 pub const SYNC_PROTOCOL_VERSION: u32 = 1;
 /// Data-availability chunk request/response protocol (PQ version).
 pub const DA_CHUNKS_PROTOCOL: &str = "/hegemon/da/chunks/pq/1";
+/// Candidate artifact announcement/fetch protocol (PQ version).
+pub const ARTIFACTS_PROTOCOL: &str = "/hegemon/artifacts/pq/1";
 
 /// Block state for announcements
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
@@ -120,6 +122,30 @@ pub enum DaChunkProtocolMessage {
     },
     /// Indicate missing chunks for a requested DA root.
     NotFound { root: [u8; 48], indices: Vec<u32> },
+}
+
+/// Candidate-artifact protocol messages for builder-to-builder distribution.
+#[derive(Debug, Clone, Encode, Decode)]
+#[allow(clippy::large_enum_variant)]
+pub enum ArtifactProtocolMessage {
+    Announcement {
+        artifact_hash: [u8; 32],
+        tx_statements_commitment: [u8; 48],
+        tx_count: u32,
+        proof_mode: pallet_shielded_pool::types::BlockProofMode,
+        claimed_payout_amount: u64,
+    },
+    Request {
+        artifact_hash: [u8; 32],
+    },
+    Response {
+        artifact_hash: [u8; 32],
+        payload: pallet_shielded_pool::types::CandidateArtifact,
+        candidate_txs: Vec<Vec<u8>>,
+    },
+    NotFound {
+        artifact_hash: [u8; 32],
+    },
 }
 
 impl TransactionMessage {
@@ -496,7 +522,7 @@ impl NetworkBridge {
                 let tx_count = msg.len();
                 self.stats.transactions_received += tx_count as u64;
 
-                tracing::debug!(
+                tracing::info!(
                     peer_id = %hex::encode(peer_id),
                     tx_count = tx_count,
                     "Received transactions"

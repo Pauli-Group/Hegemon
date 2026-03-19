@@ -1,5 +1,7 @@
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::types::{CoinbaseData, CoinbaseSource, ConsensusBlock, DaParams, Transaction};
+use pallet_shielded_pool::family::FAMILY_SHIELDED_POOL;
+use protocol_kernel::types::compute_kernel_global_root;
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,8 @@ struct StoredHeader {
     timestamp_ms: u64,
     parent_hash: [u8; 32],
     state_root: [u8; 48],
+    #[serde(default)]
+    kernel_root: [u8; 48],
     nullifier_root: [u8; 48],
     proof_commitment: Vec<u8>,
     da_root: [u8; 48],
@@ -101,6 +105,7 @@ impl From<&ConsensusBlock> for StoredBlock {
             timestamp_ms: block.header.timestamp_ms,
             parent_hash: block.header.parent_hash,
             state_root: block.header.state_root,
+            kernel_root: block.header.kernel_root,
             nullifier_root: block.header.nullifier_root,
             proof_commitment: block.header.proof_commitment.to_vec(),
             da_root: block.header.da_root,
@@ -165,6 +170,11 @@ impl StoredBlock {
             timestamp_ms: self.header.timestamp_ms,
             parent_hash: self.header.parent_hash,
             state_root: self.header.state_root,
+            kernel_root: if self.header.kernel_root == [0u8; 48] {
+                kernel_root_from_shielded_root(&self.header.state_root)
+            } else {
+                self.header.kernel_root
+            },
             nullifier_root: self.header.nullifier_root,
             proof_commitment,
             da_root: self.header.da_root,
@@ -247,6 +257,7 @@ impl From<&BlockHeader> for StoredHeader {
             timestamp_ms: header.timestamp_ms,
             parent_hash: header.parent_hash,
             state_root: header.state_root,
+            kernel_root: header.kernel_root,
             nullifier_root: header.nullifier_root,
             proof_commitment: header.proof_commitment.to_vec(),
             da_root: header.da_root,
@@ -281,6 +292,11 @@ impl StoredHeader {
             timestamp_ms: self.timestamp_ms,
             parent_hash: self.parent_hash,
             state_root: self.state_root,
+            kernel_root: if self.kernel_root == [0u8; 48] {
+                kernel_root_from_shielded_root(&self.state_root)
+            } else {
+                self.kernel_root
+            },
             nullifier_root: self.nullifier_root,
             proof_commitment,
             da_root: self.da_root,
@@ -301,6 +317,10 @@ impl StoredHeader {
             }),
         })
     }
+}
+
+fn kernel_root_from_shielded_root(root: &[u8; 48]) -> [u8; 48] {
+    compute_kernel_global_root([(FAMILY_SHIELDED_POOL, *root)])
 }
 
 impl From<&Transaction> for StoredTransaction {

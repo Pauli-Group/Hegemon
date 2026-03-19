@@ -1,0 +1,244 @@
+{
+  "blocks": {
+    "count_until_full_inclusion": 1,
+    "final_block_number": 79,
+    "inclusion_start_block": 78,
+    "missed_target_block": false,
+    "progression": [
+      {
+        "aggregation_proof_bytes": 0,
+        "aggregation_verify_ms": 0,
+        "block_number": 79,
+        "commitment_proof_bytes": 280412,
+        "commitment_verify_ms": 162,
+        "proven_batch_bytes": 280412,
+        "proven_batch_present": true,
+        "total_verify_ms": 230,
+        "tx_count": 16,
+        "tx_verify_ms": 67,
+        "verify_ms": 230
+      }
+    ],
+    "proven_batch_blocks": 1
+  },
+  "config": {
+    "batch_queue_capacity": 4,
+    "profile": "safe",
+    "proof_mode": "single",
+    "prover_workers": 1,
+    "send_da_sidecar": 0,
+    "strict_aggregation": 0,
+    "target_txs": 16,
+    "tx_count_requested": 16,
+    "workers": 8
+  },
+  "genesis_hash": "0x900c8f5331e5e8156d7dcb64a04be2fcac09517edf44b400daabd39c7bd409a3",
+  "git_commit": "bd45648a427fed65698f387e04dfaf00f8a29a21",
+  "mempool": {
+    "ready_pending_extrinsics_after_inclusion": 0,
+    "ready_pending_extrinsics_before_mining": 0
+  },
+  "metrics": {
+    "cache_build_ms": null,
+    "cache_hit": "",
+    "commitment_verify_total_ms": 162,
+    "consensus_verify_total_ms": 230,
+    "dispatch_wait_ms": 0,
+    "effective_tps": 0.888149,
+    "end_to_end_tps": 0.419035,
+    "import_verify_total_ms": 230,
+    "included_tx_count": 16,
+    "inclusion_tps": 0.888149,
+    "payload_bytes_per_tx": 372457.81,
+    "proven_batch_bytes_total": 280412,
+    "queue_depth": 0,
+    "queue_wait_ms": 0,
+    "submission_tps": 0.797289,
+    "total_job_age_ms": 1029,
+    "tx_proof_bytes_total": 5678913,
+    "tx_verify_total_ms": 67
+  },
+  "mode": "throughput",
+  "network": {
+    "max_peers": 0,
+    "seeds": ""
+  },
+  "prepare": {
+    "aggregation_stage_ms": 0,
+    "artifact_failures": [],
+    "bundle_total_ms": 801,
+    "commitment_stage_ms": 797,
+    "context_stage_ms": 3,
+    "prepared_bundle_build_ms": 801
+  },
+  "prepared": {
+    "bundles_after_inclusion": 1,
+    "bundles_before_mining": 3
+  },
+  "proof_ready": {
+    "per_tx": [
+      {
+        "duration_ms": 9342,
+        "end_block": 78,
+        "end_ms": 1773595253914,
+        "start_block": 78,
+        "start_ms": 1773595244572,
+        "tx_ordinal": 1,
+        "worker_id": 1
+      },
+      {
+        "duration_ms": 9392,
+        "end_block": 78,
+        "end_ms": 1773595253965,
+        "start_block": 78,
+        "start_ms": 1773595244573,
+        "tx_ordinal": 1,
+        "worker_id": 2
+      },
+      {
+        "duration_ms": 9387,
+        "end_block": 78,
+        "end_ms": 1773595253964,
+        "start_block": 78,
+        "start_ms": 1773595244577,
+        "tx_ordinal": 1,
+        "worker_id": 8
+      },
+      {
+        "duration_ms": 9442,
+        "end_block": 78,
+        "end_ms": 1773595254026,
+        "start_block": 78,
+        "start_ms": 1773595244584,
+        "tx_ordinal": 1,
+        "worker_id": 3
+      },
+      {
+        "duration_ms": 9525,
+        "end_block": 78,
+        "end_ms": 1773595254099,
+        "start_block": 78,
+        "start_ms": 1773595244574,
+        "tx_ordinal": 1,
+        "worker_id": 5
+      },
+      {
+        "duration_ms": 9520,
+        "end_block": 78,
+        "end_ms": 1773595254102,
+        "start_block": 78,
+        "start_ms": 1773595244582,
+        "tx_ordinal": 1,
+        "worker_id": 6
+      },
+      {
+        "duration_ms": 9720,
+        "end_block": 78,
+        "end_ms": 1773595254311,
+        "start_block": 78,
+        "start_ms": 1773595244591,
+        "tx_ordinal": 1,
+        "worker_id": 7
+      },
+      {
+        "duration_ms": 10228,
+        "end_block": 78,
+        "end_ms": 1773595254803,
+        "start_block": 78,
+        "start_ms": 1773595244575,
+        "tx_ordinal": 1,
+        "worker_id": 4
+      },
+      {
+        "duration_ms": 9481,
+        "end_block": 78,
+        "end_ms": 1773595263553,
+        "start_block": 78,
+        "start_ms": 1773595254072,
+        "tx_ordinal": 2,
+        "worker_id": 1
+      },
+      {
+        "duration_ms": 9475,
+        "end_block": 78,
+        "end_ms": 1773595263680,
+        "start_block": 78,
+        "start_ms": 1773595254205,
+        "tx_ordinal": 2,
+        "worker_id": 5
+      },
+      {
+        "duration_ms": 9525,
+        "end_block": 78,
+        "end_ms": 1773595263736,
+        "start_block": 78,
+        "start_ms": 1773595254211,
+        "tx_ordinal": 2,
+        "worker_id": 6
+      },
+      {
+        "duration_ms": 9835,
+        "end_block": 78,
+        "end_ms": 1773595263908,
+        "start_block": 78,
+        "start_ms": 1773595254073,
+        "tx_ordinal": 2,
+        "worker_id": 8
+      },
+      {
+        "duration_ms": 9823,
+        "end_block": 78,
+        "end_ms": 1773595263967,
+        "start_block": 78,
+        "start_ms": 1773595254144,
+        "tx_ordinal": 2,
+        "worker_id": 3
+      },
+      {
+        "duration_ms": 9933,
+        "end_block": 78,
+        "end_ms": 1773595264000,
+        "start_block": 78,
+        "start_ms": 1773595254067,
+        "tx_ordinal": 2,
+        "worker_id": 2
+      },
+      {
+        "duration_ms": 9818,
+        "end_block": 78,
+        "end_ms": 1773595264224,
+        "start_block": 78,
+        "start_ms": 1773595254406,
+        "tx_ordinal": 2,
+        "worker_id": 7
+      },
+      {
+        "duration_ms": 9647,
+        "end_block": 78,
+        "end_ms": 1773595264545,
+        "start_block": 78,
+        "start_ms": 1773595254898,
+        "tx_ordinal": 2,
+        "worker_id": 4
+      }
+    ],
+    "send_trace_file": "/tmp/hegemon-inline-tx-scaling/run-tx16-pw8/artifacts/tx16-pw8.send-trace.tsv",
+    "stats": {
+      "avg_ms": 9630.812,
+      "count": 16,
+      "max_ms": 10228,
+      "min_ms": 9342
+    }
+  },
+  "run_id": "tx16-pw8",
+  "timestamp_utc": "2026-03-15T17:19:56Z",
+  "timings_ms": {
+    "aggregation_stage_ms": 0,
+    "commitment_stage_ms": 797,
+    "context_stage_ms": 3,
+    "inclusion_total_ms": 18015,
+    "round_total_ms": 38183,
+    "send_total_ms": 20068,
+    "strict_wait_ms": 0
+  }
+}

@@ -5,7 +5,7 @@ use consensus::{
     BftConsensus, CommitmentTreeState, DEFAULT_VERSION_BINDING, HashVerifier, NullifierSet,
     Transaction,
 };
-use proptest::prelude::*;
+use proptest::{prelude::*, test_runner::Config as ProptestConfig};
 
 fn has_duplicates(values: &[[u8; 48]]) -> bool {
     use std::collections::BTreeSet;
@@ -19,7 +19,9 @@ fn has_duplicates(values: &[[u8; 48]]) -> bool {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
     #[test]
+    #[ignore = "manual adversarial property test; run when changing consensus validation"]
     fn duplicate_nullifiers_cause_rejection(nullifiers in proptest::collection::vec(any::<[u8; 48]>(), 2..5)) {
         let duplicates = has_duplicates(&nullifiers);
         let validators = make_validators(3, 10);

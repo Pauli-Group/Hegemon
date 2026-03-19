@@ -13,10 +13,11 @@ use crate::reward::{
 };
 use crate::types::{
     CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId, ValidatorSetCommitment,
+    kernel_root_from_shielded_root,
 };
 use crate::version_policy::VersionSchedule;
 use crypto::hashes::{blake3_384, sha256};
-use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
+use crypto::ml_dsa::MlDsaPublicKey;
 use crypto::traits::VerifyKey;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
@@ -171,23 +172,6 @@ impl<V: ProofVerifier> PowConsensus<V> {
             .pow
             .as_ref()
             .ok_or(ConsensusError::InvalidHeader("pow seal missing"))?;
-        let miner_commitment = block.header.validator_set_commitment;
-        let (miner_id, miner_key) = self
-            .miners
-            .get(&miner_commitment)
-            .ok_or(ConsensusError::ValidatorSetMismatch)?;
-        if block.header.signature_aggregate.len() != ML_DSA_SIGNATURE_LEN {
-            return Err(ConsensusError::InvalidHeader("pow signature length"));
-        }
-        let signature = MlDsaSignature::from_bytes(&block.header.signature_aggregate)
-            .map_err(|_| ConsensusError::InvalidHeader("invalid pow signature"))?;
-        let signing_hash = block.header.signing_hash()?;
-        miner_key.verify(&signing_hash, &signature).map_err(|_| {
-            ConsensusError::SignatureVerificationFailed {
-                validator: *miner_id,
-            }
-        })?;
-
         let parent_hash = block.header.parent_hash;
         let parent_node = self
             .nodes
@@ -274,6 +258,10 @@ impl<V: ProofVerifier> PowConsensus<V> {
         let computed_state_root = commitment_tree.root();
         if computed_state_root != block.header.state_root {
             return Err(ConsensusError::InvalidHeader("state root mismatch"));
+        }
+        let computed_kernel_root = kernel_root_from_shielded_root(&computed_state_root);
+        if computed_kernel_root != block.header.kernel_root {
+            return Err(ConsensusError::InvalidHeader("kernel root mismatch"));
         }
 
         let block_hash = block.header.hash()?;

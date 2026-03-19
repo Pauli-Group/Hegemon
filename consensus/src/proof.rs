@@ -2,25 +2,36 @@ use crate::aggregation::{
     aggregation_proof_uncompressed_len, verify_aggregation_proof_with_metrics,
     warm_aggregation_cache_from_proof_bytes,
 };
-use crate::batch_proof::decode_flat_batch_proof_bytes;
+use crate::batch_proof::{
+    FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
+    decode_flat_batch_proof_bytes,
+};
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
+use crate::merge_root_layout::{
+    merge_root_leaf_fan_in_from_env, merge_root_leaf_manifest_commitment,
+    merge_root_tree_levels_for_tx_count,
+};
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofVerificationMode, ProvenBatchMode,
-    StarkCommitment, TxStatementBinding, VersionCommitment, compute_fee_commitment,
-    compute_proof_commitment, compute_version_commitment, da_root,
+    StarkCommitment, StateRoot, TxStatementBinding, VersionCommitment, compute_fee_commitment,
+    compute_proof_commitment, compute_version_commitment, da_root, kernel_root_from_shielded_root,
 };
 use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use crypto::hashes::blake3_384;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use rayon::prelude::*;
+use std::any::Any;
 use std::collections::BTreeSet;
+use std::panic::{self, AssertUnwindSafe};
 use std::time::Instant;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify as verify_transaction_proof;
+#[cfg(test)]
+use tx_proof_manifest::TxProofManifestPublicInputs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentNullifierLists {
@@ -139,9 +150,118 @@ pub fn verify_commitment_proof_payload(
         ));
     }
 
-    verify_block_commitment(proof)
-        .map_err(|err| ProofError::CommitmentProofVerification(err.to_string()))?;
+    let proof_starting_kernel_root = felts_to_bytes48(&proof.public_inputs.starting_kernel_root);
+    let expected_starting_kernel_root =
+        kernel_root_from_shielded_root(&parent_commitment_tree.root());
+    if proof_starting_kernel_root != expected_starting_kernel_root {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "starting kernel root mismatch".to_string(),
+        ));
+    }
+
+    let proof_ending_kernel_root = felts_to_bytes48(&proof.public_inputs.ending_kernel_root);
+    let expected_ending_kernel_root = kernel_root_from_shielded_root(&expected_tree.root());
+    if proof_ending_kernel_root != expected_ending_kernel_root {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "ending kernel root mismatch".to_string(),
+        ));
+    }
+
+    run_verifier(
+        "commitment proof verification".to_string(),
+        || verify_block_commitment(proof),
+        |err| ProofError::CommitmentProofVerification(err.to_string()),
+    )?;
     Ok(())
+}
+
+fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
+    match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => match payload.downcast::<&'static str>() {
+            Ok(message) => (*message).to_string(),
+            Err(_) => "non-string panic payload".to_string(),
+        },
+    }
+}
+
+fn run_verifier<T, E, F, M>(context: String, verifier: F, map_err: M) -> Result<T, ProofError>
+where
+    F: FnOnce() -> Result<T, E>,
+    M: FnOnce(E) -> ProofError,
+{
+    match panic::catch_unwind(AssertUnwindSafe(verifier)) {
+        Ok(result) => result.map_err(map_err),
+        Err(payload) => Err(ProofError::VerifierPanicked(format!(
+            "{context}: {}",
+            panic_payload_to_string(payload)
+        ))),
+    }
+}
+
+fn verify_transaction_proof_safely(
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    index: usize,
+    proof: &transaction_circuit::TransactionProof,
+) -> Result<(), ProofError> {
+    run_verifier(
+        format!("transaction proof verification at index {index}"),
+        || verify_transaction_proof(proof, verifying_key),
+        |err| ProofError::TransactionProofVerification {
+            index,
+            message: err.to_string(),
+        },
+    )?;
+    Ok(())
+}
+
+fn verify_batch_proof_bytes_safely(
+    proof_bytes: &[u8],
+    batch_public_inputs: &BatchPublicInputs,
+    start: usize,
+    end: usize,
+) -> Result<(), ProofError> {
+    run_verifier(
+        format!("flat batch STARK verification at tx range [{start}, {end})"),
+        || verify_batch_proof_bytes(proof_bytes, batch_public_inputs),
+        |err| {
+            ProofError::AggregationProofVerification(format!(
+                "flat batch STARK verification failed at tx range [{start}, {end}): {err}"
+            ))
+        },
+    )
+}
+
+fn warm_aggregation_cache_safely(
+    proof_bytes: &[u8],
+    tx_count: usize,
+    expected_commitment: &[u8; 48],
+) -> Result<crate::aggregation::AggregationCacheWarmup, ProofError> {
+    run_verifier(
+        format!("aggregation cache prewarm for {tx_count} txs"),
+        || warm_aggregation_cache_from_proof_bytes(proof_bytes, tx_count, expected_commitment),
+        |err| {
+            ProofError::AggregationProofVerification(format!(
+                "aggregation cache prewarm failed: {err}"
+            ))
+        },
+    )
+}
+
+fn verify_aggregation_proof_safely(
+    proof_bytes: &[u8],
+    tx_count: usize,
+    expected_commitment: &[u8; 48],
+) -> Result<crate::aggregation::AggregationVerifyMetrics, ProofError> {
+    run_verifier(
+        format!("aggregation proof verification for {tx_count} txs"),
+        || verify_aggregation_proof_with_metrics(proof_bytes, tx_count, expected_commitment),
+        |err| {
+            ProofError::AggregationProofVerification(format!(
+                "aggregation proof verification failed: {err}"
+            ))
+        },
+    )
 }
 
 pub trait ProofVerifier: Send + Sync {
@@ -271,12 +391,7 @@ impl ProofVerifier for ParallelProofVerifier {
                 .par_iter()
                 .enumerate()
                 .try_for_each(|(index, proof)| {
-                    verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
-                        ProofError::TransactionProofVerification {
-                            index,
-                            message: err.to_string(),
-                        }
-                    })?;
+                    verify_transaction_proof_safely(&self.verifying_key, index, proof)?;
                     Ok::<_, ProofError>(())
                 })?;
             let tx_verify_ms = start_tx.elapsed().as_millis();
@@ -405,6 +520,7 @@ impl ProofVerifier for ParallelProofVerifier {
         let mut aggregation_cache_prewarm_total_ms = None;
         let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
             match proven_batch.mode {
+                ProvenBatchMode::InlineTx => (false, 0u128, 0u128),
                 ProvenBatchMode::FlatBatches => {
                     let statement_bindings = resolved_statement_bindings
                         .as_deref()
@@ -426,12 +542,44 @@ impl ProofVerifier for ParallelProofVerifier {
                             "missing merge_root payload for MergeRoot mode".to_string(),
                         )
                     })?;
+                    let statement_bindings = resolved_statement_bindings
+                        .as_deref()
+                        .ok_or(ProofError::MissingTransactionStatementBindings)?;
+                    let statement_hashes = statement_bindings
+                        .iter()
+                        .map(|binding| binding.statement_hash)
+                        .collect::<Vec<_>>();
+                    let expected_leaf_count = statement_hashes
+                        .len()
+                        .div_ceil(merge_root_leaf_fan_in_from_env())
+                        as u32;
+                    if merge_root.metadata.leaf_count != expected_leaf_count {
+                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                            "merge-root leaf_count mismatch (payload {}, expected {})",
+                            merge_root.metadata.leaf_count, expected_leaf_count
+                        )));
+                    }
+                    let expected_tree_levels = merge_root_tree_levels_for_tx_count(tx_count);
+                    if merge_root.metadata.tree_levels != expected_tree_levels {
+                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                            "merge-root tree_levels mismatch (payload {}, expected {})",
+                            merge_root.metadata.tree_levels, expected_tree_levels
+                        )));
+                    }
+                    let expected_leaf_manifest =
+                        merge_root_leaf_manifest_commitment(&statement_hashes)
+                            .map_err(ProofError::AggregationProofInputsMismatch)?;
+                    if merge_root.metadata.leaf_manifest_commitment != expected_leaf_manifest {
+                        return Err(ProofError::ProvenBatchBindingMismatch(
+                            "merge-root leaf_manifest_commitment mismatch".to_string(),
+                        ));
+                    }
                     if merge_root.root_proof.is_empty() {
                         return Err(ProofError::MissingAggregationProofForSelfContainedMode);
                     }
 
                     let prewarm_start = Instant::now();
-                    match warm_aggregation_cache_from_proof_bytes(
+                    match warm_aggregation_cache_safely(
                         &merge_root.root_proof,
                         tx_count,
                         &expected_commitment,
@@ -451,7 +599,7 @@ impl ProofVerifier for ParallelProofVerifier {
                     }
                     aggregation_cache_prewarm_total_ms = Some(prewarm_start.elapsed().as_millis());
 
-                    let verify_metrics = verify_aggregation_proof_with_metrics(
+                    let verify_metrics = verify_aggregation_proof_safely(
                         &merge_root.root_proof,
                         tx_count,
                         &expected_commitment,
@@ -476,12 +624,7 @@ impl ProofVerifier for ParallelProofVerifier {
                         .par_iter()
                         .enumerate()
                         .try_for_each(|(index, proof)| {
-                            verify_transaction_proof(proof, &self.verifying_key).map_err(
-                                |err| ProofError::TransactionProofVerification {
-                                    index,
-                                    message: err.to_string(),
-                                },
-                            )?;
+                            verify_transaction_proof_safely(&self.verifying_key, index, proof)?;
                             Ok::<_, ProofError>(())
                         })?;
                     tx_verify_ms = start_tx.elapsed().as_millis();
@@ -550,6 +693,7 @@ pub trait HeaderProofExt {
     fn version_commitment(&self) -> VersionCommitment;
     fn da_root(&self) -> DaRoot;
     fn da_params(&self) -> DaParams;
+    fn kernel_root(&self) -> StateRoot;
 }
 
 impl HeaderProofExt for crate::header::BlockHeader {
@@ -575,6 +719,10 @@ impl HeaderProofExt for crate::header::BlockHeader {
 
     fn da_params(&self) -> DaParams {
         self.da_params
+    }
+
+    fn kernel_root(&self) -> StateRoot {
+        self.kernel_root
     }
 }
 
@@ -641,6 +789,7 @@ fn commitment_from_statement_bindings(
 
 fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
     match batch.mode {
+        ProvenBatchMode::InlineTx => 0,
         ProvenBatchMode::FlatBatches => {
             batch.flat_batches.iter().map(|item| item.proof.len()).sum()
         }
@@ -654,6 +803,7 @@ fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
 
 fn total_batch_proof_uncompressed_bytes(batch: &crate::types::ProvenBatch) -> usize {
     match batch.mode {
+        ProvenBatchMode::InlineTx => 0,
         ProvenBatchMode::FlatBatches => {
             batch.flat_batches.iter().map(|item| item.proof.len()).sum()
         }
@@ -727,90 +877,49 @@ fn verify_flat_batch_payload(
             )));
         }
 
-        let payload = decode_flat_batch_proof_bytes(&item.proof)?;
-        let batch_public_inputs = decode_batch_public_inputs(&payload.batch_public_values)?;
-
-        if batch_public_inputs.batch_size as usize != (end - start) {
-            return Err(ProofError::FlatBatchCoverage(format!(
-                "flat batch public input tx_count mismatch: expected {}, got {}",
-                end - start,
-                batch_public_inputs.batch_size
-            )));
-        }
-
         let binding_subset = &statement_bindings[start..end];
-        verify_flat_batch_public_inputs_binding(&batch_public_inputs, binding_subset, start, end)?;
-
-        verify_batch_proof_bytes(&payload.batch_proof, &batch_public_inputs).map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "flat batch STARK verification failed at tx range [{start}, {end}): {err}"
-            ))
-        })?;
-
         let tx_subset = &transactions[start..end];
-        let expected_nullifiers = padded_nullifiers_from_transactions(tx_subset);
-        let expected_commitments = padded_commitments_from_transactions(tx_subset);
-        let active_nullifier_len = (end - start) * MAX_INPUTS;
-        let active_commitment_len = (end - start) * MAX_OUTPUTS;
+        let payload = decode_flat_batch_proof_bytes(&item.proof)?;
+        match payload.proof_kind {
+            FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK => {
+                let batch_public_inputs = decode_batch_public_inputs(&payload.batch_public_values)?;
+                if batch_public_inputs.batch_size as usize != (end - start) {
+                    return Err(ProofError::FlatBatchCoverage(format!(
+                        "flat batch public input tx_count mismatch: expected {}, got {}",
+                        end - start,
+                        batch_public_inputs.batch_size
+                    )));
+                }
 
-        if batch_public_inputs.nullifiers.len() < active_nullifier_len {
-            return Err(ProofError::FlatBatchCoverage(format!(
-                "flat batch public nullifier vector too short: expected at least {}, got {}",
-                active_nullifier_len,
-                batch_public_inputs.nullifiers.len()
-            )));
-        }
-        if batch_public_inputs.commitments.len() < active_commitment_len {
-            return Err(ProofError::FlatBatchCoverage(format!(
-                "flat batch public commitment vector too short: expected at least {}, got {}",
-                active_commitment_len,
-                batch_public_inputs.commitments.len()
-            )));
-        }
-
-        let observed_active_nullifiers: Vec<[u8; 48]> = batch_public_inputs
-            .nullifiers
-            .iter()
-            .take(active_nullifier_len)
-            .map(felts_to_bytes48)
-            .collect();
-        if observed_active_nullifiers != expected_nullifiers {
-            return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                "flat batch nullifier mismatch in tx range [{start}, {end})"
-            )));
-        }
-
-        let observed_active_commitments: Vec<[u8; 48]> = batch_public_inputs
-            .commitments
-            .iter()
-            .take(active_commitment_len)
-            .map(felts_to_bytes48)
-            .collect();
-        if observed_active_commitments != expected_commitments {
-            return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                "flat batch commitment mismatch in tx range [{start}, {end})"
-            )));
-        }
-
-        if batch_public_inputs
-            .nullifiers
-            .iter()
-            .skip(active_nullifier_len)
-            .any(|value| felts_to_bytes48(value) != [0u8; 48])
-        {
-            return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                "flat batch inactive nullifier tail is non-zero in tx range [{start}, {end})"
-            )));
-        }
-        if batch_public_inputs
-            .commitments
-            .iter()
-            .skip(active_commitment_len)
-            .any(|value| felts_to_bytes48(value) != [0u8; 48])
-        {
-            return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                "flat batch inactive commitment tail is non-zero in tx range [{start}, {end})"
-            )));
+                verify_flat_batch_public_inputs_binding(
+                    &batch_public_inputs,
+                    binding_subset,
+                    start,
+                    end,
+                )?;
+                verify_batch_proof_bytes_safely(
+                    &payload.batch_proof,
+                    &batch_public_inputs,
+                    start,
+                    end,
+                )?;
+                verify_flat_batch_bindings_against_transactions(
+                    &batch_public_inputs,
+                    tx_subset,
+                    start,
+                    end,
+                )?;
+            }
+            FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST => {
+                return Err(ProofError::FlatBatchProofDecodeFailed(
+                    "tx-proof-manifest flat batches were removed after the local lane benchmark showed raw tx-proof shipping wins".to_string(),
+                ));
+            }
+            unsupported => {
+                return Err(ProofError::FlatBatchProofDecodeFailed(format!(
+                    "unsupported flat batch proof kind {unsupported}"
+                )));
+            }
         }
 
         all_statement_hashes.extend(binding_subset.iter().map(|binding| binding.statement_hash));
@@ -921,6 +1030,129 @@ fn verify_flat_batch_public_inputs_binding(
     if batch_public_inputs.circuit_version != expected_circuit_version {
         return Err(ProofError::ProvenBatchBindingMismatch(format!(
             "flat batch circuit version mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn verify_tx_proof_manifest_public_inputs_binding(
+    batch_public_inputs: &TxProofManifestPublicInputs,
+    bindings: &[TxStatementBinding],
+    start: usize,
+    end: usize,
+) -> Result<(), ProofError> {
+    let expected_fee = bindings.iter().fold(0u128, |acc, binding| {
+        acc.saturating_add(u128::from(binding.fee))
+    });
+    if expected_fee > u64::MAX as u128 {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "tx-proof-manifest total fee overflows u64 in tx range [{start}, {end})"
+        )));
+    }
+    if batch_public_inputs.total_fee != expected_fee as u64 {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "tx-proof-manifest total fee mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    let expected_circuit_version = bindings.first().map(|binding| binding.circuit_version);
+    if bindings
+        .iter()
+        .any(|binding| Some(binding.circuit_version) != expected_circuit_version)
+    {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "tx-proof-manifest statement bindings contain mixed circuit versions in tx range [{start}, {end})"
+        )));
+    }
+    if batch_public_inputs.circuit_version != expected_circuit_version.unwrap_or(0) {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "tx-proof-manifest circuit version mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    let expected_statement_hashes: Vec<[u8; 48]> = bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect();
+    if batch_public_inputs.statement_hashes != expected_statement_hashes {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "tx-proof-manifest statement hash mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    Ok(())
+}
+
+fn verify_flat_batch_bindings_against_transactions(
+    batch_public_inputs: &BatchPublicInputs,
+    transactions: &[crate::types::Transaction],
+    start: usize,
+    end: usize,
+) -> Result<(), ProofError> {
+    let expected_nullifiers = padded_nullifiers_from_transactions(transactions);
+    let expected_commitments = padded_commitments_from_transactions(transactions);
+    let active_nullifier_len = (end - start) * MAX_INPUTS;
+    let active_commitment_len = (end - start) * MAX_OUTPUTS;
+
+    if batch_public_inputs.nullifiers.len() < active_nullifier_len {
+        return Err(ProofError::FlatBatchCoverage(format!(
+            "flat batch public nullifier vector too short: expected at least {}, got {}",
+            active_nullifier_len,
+            batch_public_inputs.nullifiers.len()
+        )));
+    }
+    if batch_public_inputs.commitments.len() < active_commitment_len {
+        return Err(ProofError::FlatBatchCoverage(format!(
+            "flat batch public commitment vector too short: expected at least {}, got {}",
+            active_commitment_len,
+            batch_public_inputs.commitments.len()
+        )));
+    }
+
+    let observed_active_nullifiers: Vec<[u8; 48]> = batch_public_inputs
+        .nullifiers
+        .iter()
+        .take(active_nullifier_len)
+        .map(felts_to_bytes48)
+        .collect();
+    if observed_active_nullifiers != expected_nullifiers {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch nullifier mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    let observed_active_commitments: Vec<[u8; 48]> = batch_public_inputs
+        .commitments
+        .iter()
+        .take(active_commitment_len)
+        .map(felts_to_bytes48)
+        .collect();
+    if observed_active_commitments != expected_commitments {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch commitment mismatch in tx range [{start}, {end})"
+        )));
+    }
+
+    if batch_public_inputs
+        .nullifiers
+        .iter()
+        .skip(active_nullifier_len)
+        .any(|value| felts_to_bytes48(value) != [0u8; 48])
+    {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch inactive nullifier tail is non-zero in tx range [{start}, {end})"
+        )));
+    }
+    if batch_public_inputs
+        .commitments
+        .iter()
+        .skip(active_commitment_len)
+        .any(|value| felts_to_bytes48(value) != [0u8; 48])
+    {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "flat batch inactive commitment tail is non-zero in tx range [{start}, {end})"
         )));
     }
 
@@ -1128,6 +1360,7 @@ mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
     use transaction_circuit::hashing_pq::bytes48_to_felts;
+    use tx_proof_manifest::TxProofManifestPublicInputs;
 
     fn tx_with_commitments(commitments: Vec<[u8; 48]>) -> crate::types::Transaction {
         crate::types::Transaction::new(
@@ -1223,6 +1456,21 @@ mod tests {
         inputs
     }
 
+    fn tx_proof_manifest_inputs(
+        statement_hash: [u8; 48],
+        fee: u64,
+        circuit_version: u32,
+    ) -> TxProofManifestPublicInputs {
+        TxProofManifestPublicInputs {
+            batch_size: 1,
+            statement_hashes: vec![statement_hash],
+            nullifiers: vec![[0u8; 48]; MAX_INPUTS],
+            commitments: vec![[0u8; 48]; MAX_OUTPUTS],
+            total_fee: fee,
+            circuit_version,
+        }
+    }
+
     #[test]
     fn flat_batch_binding_rejects_anchor_mismatch() {
         let inputs = batch_inputs([1u8; 48], 10, 1);
@@ -1257,5 +1505,36 @@ mod tests {
         let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 2)
             .expect_err("mixed anchor context should fail");
         assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn tx_proof_manifest_binding_rejects_statement_hash_mismatch() {
+        let inputs = tx_proof_manifest_inputs([1u8; 48], 10, 1);
+        let bindings = vec![binding([9u8; 48], 10, 1)];
+        let err = verify_tx_proof_manifest_public_inputs_binding(&inputs, &bindings, 0, 1)
+            .expect_err("statement hash mismatch should fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn tx_proof_manifest_binding_rejects_fee_mismatch() {
+        let inputs = tx_proof_manifest_inputs([5u8; 48], 11, 1);
+        let bindings = vec![binding([1u8; 48], 10, 1)];
+        let err = verify_tx_proof_manifest_public_inputs_binding(&inputs, &bindings, 0, 1)
+            .expect_err("fee mismatch should fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn verifier_panic_is_captured() {
+        let err = run_verifier(
+            "test verifier".to_string(),
+            || -> Result<(), &'static str> { panic!("boom") },
+            |_| unreachable!("panic path should bypass the error mapper"),
+        )
+        .expect_err("panic should be captured");
+        assert!(
+            matches!(err, ProofError::VerifierPanicked(message) if message.contains("test verifier") && message.contains("boom"))
+        );
     }
 }

@@ -55,7 +55,8 @@
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
-use consensus::Blake3Seal;
+use consensus::MiningWorkTrace;
+use consensus::{Sha256dAlgorithm, Sha256dSeal};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -100,15 +101,16 @@ pub type FullTransactionPool<Client> = sc_transaction_pool::BasicPool<
 pub type HegemonTransactionPool =
     sc_transaction_pool::TransactionPoolHandle<runtime::Block, HegemonFullClient>;
 
-/// Type alias for the chain selection rule (Task 11.4.5)
+/// Type alias for the select-chain helper used by `PowBlockImport` (Task 11.4.5).
 ///
-/// Uses `LongestChain` which selects the chain with the most blocks.
-/// This is the standard selection rule for PoW chains.
+/// `PowBlockImport` still requires a `SelectChain` implementation from the backend, but
+/// canonical best-chain selection comes from the PoW engine's cumulative-difficulty fork choice
+/// when callers leave `BlockImportParams.fork_choice` unset.
 pub type HegemonSelectChain = sc_consensus::LongestChain<FullBackend, runtime::Block>;
 
 /// Type alias for the PoW block import wrapper (Task 11.4.5)
 ///
-/// This wraps the client with PoW verification using our Blake3Algorithm.
+/// This wraps the client with PoW verification using our Sha256dAlgorithm.
 /// All blocks imported through this wrapper are verified for valid PoW
 /// before being committed to the backend.
 ///
@@ -117,7 +119,7 @@ pub type HegemonSelectChain = sc_consensus::LongestChain<FullBackend, runtime::B
 /// - `Arc<HegemonFullClient>`: The inner block import (implements BlockImport)
 /// - `HegemonFullClient`: Client for runtime API queries
 /// - `HegemonSelectChain`: Chain selection rule
-/// - `Blake3Algorithm<HegemonFullClient>`: Our PoW algorithm
+/// - `Sha256dAlgorithm<HegemonFullClient>`: Our PoW algorithm
 /// - CIDP: A function type for creating inherent data providers
 ///
 /// For our PoW chain, CIDP supplies timestamp inherent data so imports
@@ -127,7 +129,7 @@ pub type HegemonPowBlockImport<CIDP> = sc_consensus_pow::PowBlockImport<
     Arc<HegemonFullClient>,
     HegemonFullClient,
     HegemonSelectChain,
-    consensus::Blake3Algorithm<HegemonFullClient>,
+    Sha256dAlgorithm<HegemonFullClient>,
     CIDP,
 >;
 
@@ -307,7 +309,7 @@ impl ChainStateProvider for SubstrateChainStateProvider {
         self.pending_txs.read().clone()
     }
 
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String> {
         // Compute block hash from seal work
         let block_hash = H256::from_slice(seal.work.as_bytes());
 
@@ -318,7 +320,7 @@ impl ChainStateProvider for SubstrateChainStateProvider {
         tracing::info!(
             block_number = template.number,
             block_hash = %hex::encode(block_hash.as_bytes()),
-            nonce = seal.nonce,
+            nonce = ?seal.nonce,
             "Block imported to SubstrateChainStateProvider (full import via PowBlockImport pending - Task 10.3)"
         );
 
@@ -468,7 +470,7 @@ pub struct ProductionChainStateProvider {
     pending_txs_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> Vec<Vec<u8>> + Send + Sync>>>,
     /// Callback to import a block
     import_fn: parking_lot::RwLock<
-        Option<Box<dyn Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync>>,
+        Option<Box<dyn Fn(&BlockTemplate, &Sha256dSeal) -> Result<H256, String> + Send + Sync>>,
     >,
     /// Callback called after successful block import (Task 11.3)
     /// Used to clear included transactions from the pool
@@ -484,6 +486,8 @@ pub struct ProductionChainStateProvider {
             >,
         >,
     >,
+    /// Callback that can temporarily hold local mining while a ready proven batch is pending.
+    mining_pause_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> Option<String> + Send + Sync>>>,
     /// Fallback state for when callbacks aren't set
     pub fallback_state: SubstrateChainStateProvider,
     /// Configuration
@@ -510,6 +514,8 @@ pub struct StateExecutionResult {
     /// If Some, storage changes were captured and can be applied during import.
     /// If None, block import will use StateAction::Skip (scaffold mode).
     pub storage_changes: Option<StorageChangesHandle>,
+    /// Optional last-mile trace metadata to attach to the mined template.
+    pub template_trace: Option<MiningWorkTrace>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -527,6 +533,10 @@ impl std::fmt::Debug for ProductionChainStateProvider {
                 "has_execute_extrinsics_fn",
                 &self.execute_extrinsics_fn.read().is_some(),
             )
+            .field(
+                "has_mining_pause_fn",
+                &self.mining_pause_fn.read().is_some(),
+            )
             .field("fallback_state", &"<SubstrateChainStateProvider>")
             .field("config", &self.config)
             .finish()
@@ -543,6 +553,7 @@ impl ProductionChainStateProvider {
             import_fn: parking_lot::RwLock::new(None),
             on_import_success_fn: parking_lot::RwLock::new(None),
             execute_extrinsics_fn: parking_lot::RwLock::new(None),
+            mining_pause_fn: parking_lot::RwLock::new(None),
             fallback_state: SubstrateChainStateProvider::new(),
             config,
         }
@@ -585,7 +596,7 @@ impl ProductionChainStateProvider {
     /// Set the callback for importing blocks
     pub fn set_import_fn<F>(&self, f: F)
     where
-        F: Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync + 'static,
+        F: Fn(&BlockTemplate, &Sha256dSeal) -> Result<H256, String> + Send + Sync + 'static,
     {
         *self.import_fn.write() = Some(Box::new(f));
     }
@@ -654,6 +665,14 @@ impl ProductionChainStateProvider {
         *self.execute_extrinsics_fn.write() = Some(Box::new(f));
     }
 
+    /// Set the callback for temporarily pausing local mining.
+    pub fn set_mining_pause_fn<F>(&self, f: F)
+    where
+        F: Fn() -> Option<String> + Send + Sync + 'static,
+    {
+        *self.mining_pause_fn.write() = Some(Box::new(f));
+    }
+
     /// Execute extrinsics and get state root (Task 11.4)
     ///
     /// If execute_extrinsics_fn is set, uses it to execute against real runtime.
@@ -705,6 +724,7 @@ impl ProductionChainStateProvider {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None, // No storage changes in mock mode
+                template_trace: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -770,7 +790,11 @@ impl ChainStateProvider for ProductionChainStateProvider {
         }
     }
 
-    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
+    fn mining_pause_reason(&self) -> Option<String> {
+        self.mining_pause_fn.read().as_ref().and_then(|f| f())
+    }
+
+    fn import_block(&self, template: &BlockTemplate, seal: &Sha256dSeal) -> Result<H256, String> {
         if let Some(ref f) = *self.import_fn.read() {
             let result = f(template, seal);
             if self.config.verbose {
@@ -846,12 +870,22 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         "Block template built with state execution (Task 11.4 + 11.5.5)"
                     );
                 }
-                template.with_executed_state(
-                    result.applied_extrinsics,
-                    result.state_root,
-                    result.extrinsics_root,
-                    result.storage_changes,
-                )
+                let StateExecutionResult {
+                    applied_extrinsics,
+                    state_root,
+                    extrinsics_root,
+                    failed_count: _,
+                    storage_changes,
+                    template_trace,
+                } = result;
+                template
+                    .with_executed_state(
+                        applied_extrinsics,
+                        state_root,
+                        extrinsics_root,
+                        storage_changes,
+                    )
+                    .with_trace(template_trace)
             }
             Err(mut e) => {
                 if !pending.is_empty() && Self::is_missing_ready_proven_batch_error(&e) {
@@ -886,12 +920,22 @@ impl ChainStateProvider for ProductionChainStateProvider {
                                         "Block template built after waiting for ready proven batch"
                                     );
                                 }
-                                return template.with_executed_state(
-                                    result.applied_extrinsics,
-                                    result.state_root,
-                                    result.extrinsics_root,
-                                    result.storage_changes,
-                                );
+                                let StateExecutionResult {
+                                    applied_extrinsics,
+                                    state_root,
+                                    extrinsics_root,
+                                    failed_count: _,
+                                    storage_changes,
+                                    template_trace,
+                                } = result;
+                                return template
+                                    .with_executed_state(
+                                        applied_extrinsics,
+                                        state_root,
+                                        extrinsics_root,
+                                        storage_changes,
+                                    )
+                                    .with_trace(template_trace);
                             }
                             Err(retry_err)
                                 if Self::is_missing_ready_proven_batch_error(&retry_err) =>
@@ -947,12 +991,22 @@ impl ChainStateProvider for ProductionChainStateProvider {
                                     "Block template built with fallback state execution (empty pending set)"
                                 );
                             }
-                            template.with_executed_state(
-                                result.applied_extrinsics,
-                                result.state_root,
-                                result.extrinsics_root,
-                                result.storage_changes,
-                            )
+                            let StateExecutionResult {
+                                applied_extrinsics,
+                                state_root,
+                                extrinsics_root,
+                                failed_count: _,
+                                storage_changes,
+                                template_trace,
+                            } = result;
+                            template
+                                .with_executed_state(
+                                    applied_extrinsics,
+                                    state_root,
+                                    extrinsics_root,
+                                    storage_changes,
+                                )
+                                .with_trace(template_trace)
                         }
                         Err(retry_err) => {
                             tracing::error!(
@@ -1126,8 +1180,8 @@ mod tests {
         provider.add_pending_tx(vec![1, 2, 3]);
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
-        let seal = Blake3Seal {
-            nonce: 12345,
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
@@ -1208,8 +1262,8 @@ mod tests {
         provider.set_import_fn(move |_, _| Ok(import_hash));
 
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
-        let seal = Blake3Seal {
-            nonce: 12345,
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(12_345),
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
@@ -1235,6 +1289,16 @@ mod tests {
     }
 
     #[test]
+    fn test_production_provider_mining_pause_callback() {
+        let provider = ProductionChainStateProvider::with_defaults();
+        provider.set_mining_pause_fn(|| Some("waiting for ready proven batch".to_string()));
+        assert_eq!(
+            provider.mining_pause_reason(),
+            Some("waiting for ready proven batch".to_string())
+        );
+    }
+
+    #[test]
     fn test_production_provider_on_new_block() {
         let provider = ProductionChainStateProvider::with_defaults();
 
@@ -1249,7 +1313,7 @@ mod tests {
     #[test]
     fn test_production_provider_on_import_success() {
         use crate::substrate::mining_worker::BlockTemplate;
-        use consensus::Blake3Seal;
+        use consensus::Sha256dSeal;
 
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
 
@@ -1282,8 +1346,8 @@ mod tests {
         let template = BlockTemplate::new(parent, 6, 0x1f_00_ff_ff)
             .with_extrinsics(vec![tx1.clone(), tx2.clone()]);
 
-        let seal = Blake3Seal {
-            nonce: 1,
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(1),
             difficulty: 0x1f_00_ff_ff,
             work: H256::zero(),
         };
@@ -1352,6 +1416,7 @@ mod tests {
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
+                template_trace: None,
             })
         });
 
@@ -1383,6 +1448,7 @@ mod tests {
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
                 storage_changes: None,
+                template_trace: None,
             })
         });
 
@@ -1418,6 +1484,7 @@ mod tests {
                     extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                     failed_count: 0,
                     storage_changes: None,
+                    template_trace: None,
                 })
             } else {
                 // First failure should trigger pending proven-batch retry path; second failure
@@ -1462,9 +1529,47 @@ mod tests {
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
                 storage_changes: None,
+                template_trace: None,
             })
         });
 
         assert!(provider.has_state_execution());
+    }
+
+    #[test]
+    fn test_production_provider_empty_template_requires_timestamp_inherent() {
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+
+        let parent = H256::repeat_byte(0x22);
+        provider.set_best_block_fn(move || (parent, 0));
+        provider.set_difficulty_fn(|| 0x1d00ffff);
+        provider.set_pending_txs_fn(Vec::new);
+
+        let saw_empty_pending = Arc::new(std::sync::Mutex::new(false));
+        let saw_empty_pending_clone = Arc::clone(&saw_empty_pending);
+        provider.set_execute_extrinsics_fn(move |_parent, number, extrinsics| {
+            assert_eq!(number, 1);
+            assert!(
+                extrinsics.is_empty(),
+                "empty template regression should execute with no pending txs"
+            );
+            *saw_empty_pending_clone.lock().unwrap() = true;
+            Ok(StateExecutionResult {
+                applied_extrinsics: Vec::new(),
+                state_root: H256::repeat_byte(0x33),
+                extrinsics_root: H256::repeat_byte(0x44),
+                failed_count: 0,
+                storage_changes: None,
+                template_trace: None,
+            })
+        });
+
+        let template = provider.build_block_template();
+        assert_eq!(template.number, 1);
+        assert!(
+            *saw_empty_pending.lock().unwrap(),
+            "state execution callback should run for empty templates"
+        );
+        assert_eq!(template.state_root, H256::repeat_byte(0x33));
     }
 }

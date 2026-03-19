@@ -2,11 +2,14 @@
 
 Use this runbook to stand up mining nodes and verify they are producing blocks with the Substrate-based `hegemon-node` binary. Block rewards are minted directly to the shielded pool for privacy-preserving mining.
 
+For fresh-testnet bring-up, if you are following [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md), use the laptop-created `hegemon-boot-wallet` address as both `HEGEMON_MINER_ADDRESS` and `HEGEMON_PROVER_REWARD_ADDRESS` on every mining/proving host.
+
 ## 1. Prerequisites
 
 - Run `make setup` on a fresh clone to install toolchains and baseline dependencies.
 - Build the binaries:
   ```bash
+  make setup
   make node
   cargo build --release -p walletd
   ```
@@ -62,16 +65,16 @@ HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
 To avoid forks caused by low peer counts, configure multiple reachable seeds. Use a comma-separated list in `HEGEMON_SEEDS`:
 
 ```bash
-export HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333"
+export HEGEMON_SEEDS="hegemon.pauli.group:30333"
 ```
 
-Ensure TCP/31333 is open on each seed and that every miner shares the same seed list. Avoid single-point seeds.
+Ensure TCP/30333 is open on each approved seed and that every miner shares the same seed list. For the first public bootnode after a fresh reset, leave `HEGEMON_SEEDS` unset or exclude the node's own public address until the node is already live.
 
 ### 4b. Ensure time sync (recommended)
 
 PoW blocks reject timestamps more than 90 seconds in the future. Enable NTP/chrony on every miner to prevent timestamp rejection.
 
-The `--dev` flag pre-funds test accounts and enables fast block times. Block rewards (~4.98 HEG per block) are minted as shielded notes only your wallet can spend.
+The `--dev` flag enables local-development settings and fast iteration. Block rewards (~4.98 HEG per block) are minted as shielded notes only your wallet can spend.
 
 ## 5. Verify the node is running
 

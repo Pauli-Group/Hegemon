@@ -422,22 +422,27 @@ where
     let zeta = challenger.sample_algebra_element();
 
     // TODO: Update to support ZK.
-    let ext_trace_domains: Vec<_> = degree_bits
+    let (trace_domains, ext_trace_domains): (Vec<_>, Vec<_>) = degree_bits
         .iter()
-        .map(|&ext_db| pcs.natural_domain_for_degree(1 << ext_db))
-        .collect();
+        .map(|&ext_db| {
+            let base_db = ext_db - config.is_zk();
+            (
+                pcs.natural_domain_for_degree(1 << base_db),
+                pcs.natural_domain_for_degree(1 << ext_db),
+            )
+        })
+        .unzip();
 
     let mut coms_to_verify = Vec::new();
 
     let trace_round = ext_trace_domains
         .iter()
         .zip(opened_values.instances.iter())
-        .map(|(ext_dom, inst)| {
-            let zeta_next = ext_dom
-                .next_point(zeta)
-                .ok_or(GenerationError::InvalidProofShape(
-                    "trace domain lacks next point",
-                ))?;
+        .enumerate()
+        .map(|(i, (ext_dom, inst))| {
+            let zeta_next = trace_domains[i].next_point(zeta).ok_or(
+                GenerationError::InvalidProofShape("trace domain lacks next point"),
+            )?;
             Ok((
                 *ext_dom,
                 vec![
@@ -513,7 +518,7 @@ where
 
             let base_db = meta.degree_bits;
             let pre_domain = pcs.natural_domain_for_degree(1 << base_db);
-            let zeta_next_i = ext_trace_domains[inst_idx].next_point(zeta).ok_or(
+            let zeta_next_i = trace_domains[inst_idx].next_point(zeta).ok_or(
                 GenerationError::InvalidProofShape("Preprocessed domain lacks next point"),
             )?;
 
@@ -529,8 +534,8 @@ where
     if is_lookup {
         let permutation_commit = commitments.permutation.clone().unwrap();
         let mut permutation_round = Vec::new();
-        for (ext_dom, inst_opened_vals) in
-            ext_trace_domains.iter().zip(opened_values.instances.iter())
+        for (i, (ext_dom, inst_opened_vals)) in
+            ext_trace_domains.iter().zip(opened_values.instances.iter()).enumerate()
         {
             if inst_opened_vals.permutation_local.len() != inst_opened_vals.permutation_next.len() {
                 return Err(GenerationError::InvalidProofShape(
@@ -538,12 +543,11 @@ where
                 ));
             }
             if !inst_opened_vals.permutation_local.is_empty() {
-                let zeta_next =
-                    ext_dom
-                        .next_point(zeta)
-                        .ok_or(GenerationError::InvalidProofShape(
-                            "Missing preprocessed instance metadata",
-                        ))?;
+                let zeta_next = trace_domains[i].next_point(zeta).ok_or(
+                    GenerationError::InvalidProofShape(
+                        "Missing preprocessed instance metadata",
+                    ),
+                )?;
                 permutation_round.push((
                     *ext_dom,
                     vec![

@@ -12,7 +12,7 @@
 //! This module is used by the node service to set up the PoW block import
 //! pipeline and manage mining operations.
 
-use consensus::{Blake3Seal, MiningCoordinator, MiningSolution, MiningWork};
+use consensus::{MiningCoordinator, MiningSolution, MiningWork, Sha256dSeal};
 use sp_core::H256;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -64,7 +64,7 @@ pub enum PowEvent {
     /// A new work template is being mined
     NewWork { height: u64, difficulty: u32 },
     /// A solution was found
-    SolutionFound { height: u64, nonce: u64 },
+    SolutionFound { height: u64, nonce: [u8; 32] },
     /// Mining hashrate update
     HashrateUpdate { hashrate: f64 },
 }
@@ -130,22 +130,19 @@ impl PowHandle {
     }
 
     /// Update the work template for mining
-    pub fn update_work(&self, pre_hash: H256, pow_bits: u32, height: u64, parent_hash: H256) {
-        let work = MiningWork {
-            pre_hash,
-            pow_bits,
-            height,
-            parent_hash,
-        };
-
+    pub fn update_work(&self, work: MiningWork) {
         let coordinator = self.coordinator.lock();
-        coordinator.update_work(work);
+        coordinator.update_work(work.clone());
 
-        debug!(height, difficulty = pow_bits, "New mining work");
+        debug!(
+            height = work.height,
+            difficulty = work.pow_bits,
+            "New mining work"
+        );
 
         let _ = self.event_tx.send(PowEvent::NewWork {
-            height,
-            difficulty: pow_bits,
+            height: work.height,
+            difficulty: work.pow_bits,
         });
     }
 
@@ -163,7 +160,7 @@ impl PowHandle {
         if let Some(ref sol) = solution {
             info!(
                 height = sol.work.height,
-                nonce = sol.seal.nonce,
+                nonce = ?sol.seal.nonce,
                 "Found PoW solution"
             );
 
@@ -174,6 +171,31 @@ impl PowHandle {
         }
 
         solution
+    }
+
+    /// Submit a solution discovered outside the local mining threads.
+    pub fn submit_external_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        let coordinator = self.coordinator.lock();
+        coordinator.submit_solution(solution.clone())?;
+
+        info!(
+            height = solution.work.height,
+            nonce = ?solution.seal.nonce,
+            "Accepted external PoW solution"
+        );
+
+        let _ = self.event_tx.send(PowEvent::SolutionFound {
+            height: solution.work.height,
+            nonce: solution.seal.nonce,
+        });
+
+        Ok(())
+    }
+
+    /// Snapshot the current work template if one is active.
+    pub fn current_work(&self) -> Option<MiningWork> {
+        let coordinator = self.coordinator.lock();
+        coordinator.current_work()
     }
 
     /// Check if mining is active
@@ -234,6 +256,14 @@ impl crate::substrate::rpc::MiningHandle for PowHandle {
     fn thread_count(&self) -> u32 {
         self.config.threads as u32
     }
+
+    fn current_work(&self) -> Option<MiningWork> {
+        PowHandle::current_work(self)
+    }
+
+    fn submit_solution(&self, solution: MiningSolution) -> Result<(), String> {
+        PowHandle::submit_external_solution(self, solution)
+    }
 }
 
 /// Block import result for PoW blocks
@@ -264,7 +294,7 @@ impl PowVerifier {
     }
 
     /// Verify a PoW seal
-    pub fn verify(&self, pre_hash: &H256, seal: &Blake3Seal) -> Result<(), PowVerifyError> {
+    pub fn verify(&self, pre_hash: &H256, seal: &Sha256dSeal) -> Result<(), PowVerifyError> {
         // Check difficulty matches expected
         if seal.difficulty != self.expected_difficulty {
             return Err(PowVerifyError::DifficultyMismatch {

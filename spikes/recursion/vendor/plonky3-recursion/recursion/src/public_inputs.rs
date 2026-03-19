@@ -358,9 +358,6 @@ where
         // 3. Add preprocessed commitment values.
         builder.add_proof_values(self.preprocessed);
 
-        // 4. Add all challenges in the order provided.
-        builder.add_challenges(self.challenges.iter().copied());
-
         builder.build()
     }
 }
@@ -401,9 +398,6 @@ where
 
     // Add common_data values.
     builder.add_proof_values(common_data.iter().copied());
-
-    // Add all shared challenges.
-    builder.add_challenges(challenges.iter().copied());
 
     builder.build()
 }
@@ -572,6 +566,25 @@ where
         }
         .build()
     }
+
+    /// Returns witness-only targets and values in canonical matching order.
+    pub fn private_witness_inputs(
+        &self,
+        proof: &Proof<SC>,
+        preprocessed_commit: &Option<Com<SC>>,
+    ) -> (Vec<crate::Target>, Vec<SC::Challenge>) {
+        let mut targets = self.proof_targets.get_private_targets();
+        if let Some(preprocessed) = &self.preprocessed_commit {
+            targets.extend(preprocessed.get_private_targets());
+        }
+
+        let mut values = ProofTargets::<SC, Comm, OpeningProof>::get_private_values(proof);
+        if let Some(preprocessed) = preprocessed_commit {
+            values.extend(Comm::get_private_values(preprocessed));
+        }
+
+        (targets, values)
+    }
 }
 
 /// Two-phase builder for batch (multi-instance) STARK verification circuits.
@@ -689,6 +702,21 @@ where
             &common_data,
             challenges,
         )
+    }
+
+    /// Returns witness-only targets and values in canonical matching order.
+    pub fn private_witness_inputs(
+        &self,
+        proof: &BatchProof<SC>,
+        common: &CommonData<SC>,
+    ) -> (Vec<crate::Target>, Vec<SC::Challenge>) {
+        let mut targets = self.proof_targets.get_private_targets();
+        targets.extend(self.common_data.get_private_targets());
+
+        let mut values = BatchProofTargets::<SC, Comm, OpeningProof>::get_private_values(proof);
+        values.extend(CommonDataTargets::<SC, Comm>::get_private_values(common));
+
+        (targets, values)
     }
 }
 

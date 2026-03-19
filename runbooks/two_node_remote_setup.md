@@ -51,8 +51,10 @@ which curl jq  # Both must be installed
 ```bash
 cd /path/to/hegemon
 
-# Build the Substrate-based node
-cargo build --release -p hegemon-node --features substrate
+# Fresh-clone baseline
+make setup
+make node
+cargo build --release -p walletd
 
 # Verify the binary exists
 ls -la target/release/hegemon-node
@@ -132,15 +134,13 @@ mkdir -p /tmp/my-hegemon-node
 
 # Start your mining node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" \
-cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
+./target/release/hegemon-node \
   --dev \
   --base-path /tmp/my-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
-  --name "MyNode" \
-  --require-pq
+  --name "MyNode"
 ```
 
 **Wait for the node to start.** You'll see output like:
@@ -177,7 +177,7 @@ Share your bootnode address with your friend:
 
 ## Step 6: Second Node Connects
 
-Your friend runs this command with the same approved seed list:
+Your friend runs this command with the shared seed list for your two-node network:
 
 ```bash
 # Create a data directory
@@ -185,18 +185,17 @@ mkdir -p /tmp/friend-hegemon-node
 
 # Start the node, connecting to the bootnode
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" \
-cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
+HEGEMON_SEEDS="<YOUR_PUBLIC_IP>:30333" \
+./target/release/hegemon-node \
   --dev \
   --base-path /tmp/friend-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
-  --name "FriendNode" \
-  --require-pq
+  --name "FriendNode"
 ```
 
-Use the same approved `HEGEMON_SEEDS` list on every miner. Diverging seed lists can partition peers and cause forks.
+Use the same agreed `HEGEMON_SEEDS` list on every miner. Diverging seed lists can partition peers and cause forks. If you are joining the shared public fresh testnet instead of bootstrapping your own two-node network, the current approved public join seed is `hegemon.pauli.group:30333`.
 
 ---
 
@@ -253,14 +252,13 @@ For more robust connectivity, update both nodes to know about each other.
 ```bash
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 HEGEMON_SEEDS="<FRIEND_PUBLIC_IP>:30333" \
-cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
+./target/release/hegemon-node \
   --dev \
   --base-path /tmp/my-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
-  --name "MyNode" \
-  --require-pq
+  --name "MyNode"
 ```
 
 This ensures both nodes can reconnect if either restarts.
@@ -370,7 +368,7 @@ sudo iptables -L -n
 **4. Enable verbose PQ logging:**
 
 ```bash
-HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate -- --dev ...
+HEGEMON_PQ_VERBOSE=1 ./target/release/hegemon-node --dev ...
 ```
 
 ### No Blocks Being Mined

@@ -1,16 +1,18 @@
 use aggregation_circuit::{
-    prove_aggregation, AggregationProofV4Payload, AGGREGATION_PROOF_FORMAT_ID_V4,
-    AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+    prove_aggregation, prove_leaf_aggregation, prove_merge_aggregation, AggregationNodeKind,
+    AggregationProofV5Payload, AGGREGATION_PROOF_FORMAT_ID_V5,
+    AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
 };
 use block_circuit::CommitmentBlockProver;
 use consensus::verify_aggregation_proof;
 use crypto::hashes::blake3_384;
 use p3_field::PrimeCharacteristicRing;
-use sp_core::hashing::blake2_256;
+use std::time::Instant;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
+use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionProof,
     TransactionWitness,
@@ -137,39 +139,30 @@ fn sample_witness() -> TransactionWitness {
 
 fn statement_hash_from_proof(proof: &TransactionProof) -> [u8; 48] {
     let public = &proof.public_inputs;
-    let mut binding_message = Vec::new();
-    binding_message.extend_from_slice(&public.merkle_root);
-    for nf in &public.nullifiers {
-        binding_message.extend_from_slice(nf);
-    }
-    for cm in &public.commitments {
-        binding_message.extend_from_slice(cm);
-    }
-    for ct in &public.ciphertext_hashes {
-        binding_message.extend_from_slice(ct);
-    }
-    binding_message.extend_from_slice(&public.native_fee.to_le_bytes());
-    binding_message.extend_from_slice(&public.value_balance.to_le_bytes());
-
-    let mut msg0 = Vec::new();
-    msg0.extend_from_slice(b"binding-hash-v1");
-    msg0.push(0);
-    msg0.extend_from_slice(&binding_message);
-    let hash0 = blake2_256(&msg0);
-
-    let mut msg1 = Vec::new();
-    msg1.extend_from_slice(b"binding-hash-v1");
-    msg1.push(1);
-    msg1.extend_from_slice(&binding_message);
-    let hash1 = blake2_256(&msg1);
-
-    let mut binding_hash = [0u8; 64];
-    binding_hash[..32].copy_from_slice(&hash0);
-    binding_hash[32..].copy_from_slice(&hash1);
-
     let mut statement_message = Vec::new();
     statement_message.extend_from_slice(b"tx-statement-v1");
-    statement_message.extend_from_slice(&binding_hash);
+    statement_message.extend_from_slice(&public.merkle_root);
+    for nf in &public.nullifiers {
+        statement_message.extend_from_slice(nf);
+    }
+    for cm in &public.commitments {
+        statement_message.extend_from_slice(cm);
+    }
+    for ct in &public.ciphertext_hashes {
+        statement_message.extend_from_slice(ct);
+    }
+    statement_message.extend_from_slice(&public.native_fee.to_le_bytes());
+    statement_message.extend_from_slice(&public.value_balance.to_le_bytes());
+    statement_message.extend_from_slice(&public.balance_tag);
+    statement_message.extend_from_slice(&public.circuit_version.to_le_bytes());
+    statement_message.extend_from_slice(&public.crypto_suite.to_le_bytes());
+    statement_message.push(public.stablecoin.enabled as u8);
+    statement_message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
+    statement_message.extend_from_slice(&public.stablecoin.policy_hash);
+    statement_message.extend_from_slice(&public.stablecoin.oracle_commitment);
+    statement_message.extend_from_slice(&public.stablecoin.attestation_commitment);
+    statement_message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
+    statement_message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
     blake3_384(&statement_message)
 }
 
@@ -182,13 +175,78 @@ fn tx_statements_commitment_from_proofs(proofs: &[TransactionProof]) -> [u8; 48]
         .expect("statement commitment")
 }
 
+fn statement_hashes_from_proofs(proofs: &[TransactionProof]) -> Vec<[u8; 48]> {
+    proofs.iter().map(statement_hash_from_proof).collect()
+}
+
+fn configured_leaf_fanin() -> usize {
+    std::env::var("HEGEMON_AGG_LEAF_FANIN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(1)
+}
+
+fn configured_merge_fanin() -> usize {
+    std::env::var("HEGEMON_AGG_MERGE_FANIN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(1)
+}
+
+fn configured_active_children() -> usize {
+    std::env::var("HEGEMON_AGG_ACTIVE_CHILDREN")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
 #[test]
-#[ignore = "expensive end-to-end aggregation proof generation; run manually"]
-fn aggregation_proof_roundtrip() {
+#[ignore = "expensive transaction proof profiling run; use on target hardware"]
+fn transaction_recursion_cold_warm_profile() {
     let witness = sample_witness();
     let (proving_key, _verifying_key) = generate_keys();
-    let proof = transaction_circuit::proof::prove(&witness, &proving_key)
-        .expect("generate transaction proof");
+
+    let cold_started = Instant::now();
+    let cold = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("cold transaction proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+
+    let warm_started = Instant::now();
+    let warm = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("warm transaction proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+
+    eprintln!(
+        "transaction_recursion_cold_warm_profile cold_ms={} warm_ms={} cold_bytes={} warm_bytes={}",
+        cold_ms,
+        warm_ms,
+        cold.stark_proof.len(),
+        warm.stark_proof.len()
+    );
+}
+
+#[test]
+#[ignore = "expensive end-to-end aggregation proof generation; run manually"]
+fn aggregation_v5_leaf_roundtrip() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
 
     let proofs = vec![proof];
     let tx_statements_commitment = tx_statements_commitment_from_proofs(&proofs);
@@ -198,7 +256,7 @@ fn aggregation_proof_roundtrip() {
     verify_aggregation_proof(&aggregation_bytes, proofs.len(), &tx_statements_commitment)
         .expect("verify aggregation proof");
 
-    let mut corrupted_payload: aggregation_circuit::AggregationProofV4Payload =
+    let mut corrupted_payload: aggregation_circuit::AggregationProofV5Payload =
         postcard::from_bytes(&aggregation_bytes).expect("decode payload");
     corrupted_payload.outer_proof[0] ^= 0x01;
     let corrupted_bytes = postcard::to_allocvec(&corrupted_payload).expect("encode payload");
@@ -212,20 +270,23 @@ fn aggregation_proof_roundtrip() {
 }
 
 #[test]
-fn aggregation_payload_validation_rejects_invalid_encodings() {
+fn aggregation_v5_payload_validation_rejects_invalid_encodings() {
     let expected_commitment = [0u8; 48];
-    let payload = AggregationProofV4Payload {
-        version: AGGREGATION_PROOF_FORMAT_ID_V4,
-        proof_format: AGGREGATION_PROOF_FORMAT_ID_V4,
+    let payload = AggregationProofV5Payload {
+        version: AGGREGATION_PROOF_FORMAT_ID_V5,
+        proof_format: AGGREGATION_PROOF_FORMAT_ID_V5,
+        node_kind: AggregationNodeKind::Leaf,
+        fan_in: 8,
+        child_count: 1,
+        subtree_tx_count: 1,
         tree_arity: 8,
         tree_levels: 1,
         root_level: 0,
         shape_id: [0u8; 32],
-        tx_count: 1,
         tx_statements_commitment: expected_commitment.to_vec(),
-        public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+        public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
         inner_public_inputs_len: 1,
-        representative_proof: vec![0xAA], // intentionally invalid postcard proof bytes
+        representative_child_proof: vec![0xAA], // intentionally invalid postcard proof bytes
         packed_public_values: vec![0, 0],
         outer_proof: vec![0xBB], // intentionally invalid postcard proof bytes
     };
@@ -234,7 +295,185 @@ fn aggregation_payload_validation_rejects_invalid_encodings() {
         .expect_err("invalid proof encoding must be rejected");
     assert!(matches!(
         err,
-        consensus::ProofError::AggregationProofV4Decode(_)
-            | consensus::ProofError::AggregationProofV4Binding(_)
+        consensus::ProofError::AggregationProofV5Decode(_)
+            | consensus::ProofError::AggregationProofV5Binding(_)
     ));
+}
+
+#[test]
+fn aggregation_v5_singleton_root_skips_outer_proof() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+    let proofs = vec![proof];
+    let tx_statements_commitment = tx_statements_commitment_from_proofs(&proofs);
+
+    let aggregation_bytes =
+        prove_aggregation(&proofs, tx_statements_commitment).expect("generate aggregation proof");
+    let payload: AggregationProofV5Payload =
+        postcard::from_bytes(&aggregation_bytes).expect("decode payload");
+
+    assert_eq!(payload.node_kind, AggregationNodeKind::Leaf);
+    assert_eq!(payload.fan_in, 1);
+    assert_eq!(payload.child_count, 1);
+    assert!(payload.outer_proof.is_empty());
+
+    verify_aggregation_proof(&aggregation_bytes, proofs.len(), &tx_statements_commitment)
+        .expect("verify singleton aggregation proof");
+}
+
+#[test]
+#[ignore = "expensive leaf-only profiling run; use HEGEMON_AGG_PROFILE=1 on target hardware"]
+fn aggregation_v5_leaf_fanin8_profile_roundtrip() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+    let proofs = vec![proof; configured_leaf_fanin()];
+    let statement_hashes = statement_hashes_from_proofs(&proofs);
+    let commitment = tx_statements_commitment_from_proofs(&proofs);
+
+    let leaf_bytes =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("generate leaf proof");
+    verify_aggregation_proof(&leaf_bytes, proofs.len(), &commitment).expect("verify leaf proof");
+}
+
+#[test]
+#[ignore = "expensive leaf cold/warm profiling run; use HEGEMON_AGG_PROFILE=1 on target hardware"]
+fn aggregation_v5_leaf_fanin8_cold_warm_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+    let fan_in = configured_leaf_fanin();
+    let proofs = vec![proof; fan_in];
+    let statement_hashes = statement_hashes_from_proofs(&proofs);
+    let cold_started = Instant::now();
+    let _cold_leaf =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("cold leaf proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+
+    let warm_started = Instant::now();
+    let _warm_leaf =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("warm leaf proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+
+    eprintln!(
+        "leaf_cold_warm_profile fan_in={} cold_ms={} warm_ms={}",
+        fan_in, cold_ms, warm_ms
+    );
+}
+
+#[test]
+#[ignore = "expensive partial leaf profiling run; use HEGEMON_AGG_ACTIVE_CHILDREN on target hardware"]
+fn aggregation_v5_leaf_partial_cold_warm_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+
+    let fan_in = configured_leaf_fanin();
+    let active_children = configured_active_children().min(fan_in);
+    let proofs = vec![proof; active_children];
+    let statement_hashes = statement_hashes_from_proofs(&proofs);
+
+    let cold_started = Instant::now();
+    let cold =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("cold partial leaf proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+
+    let warm_started = Instant::now();
+    let warm =
+        prove_leaf_aggregation(&proofs, &statement_hashes, 1, 0).expect("warm partial leaf proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+
+    let commitment = tx_statements_commitment_from_proofs(&proofs);
+    verify_aggregation_proof(&cold, proofs.len(), &commitment).expect("verify cold partial leaf");
+    verify_aggregation_proof(&warm, proofs.len(), &commitment).expect("verify warm partial leaf");
+
+    eprintln!(
+        "leaf_partial_cold_warm_profile fan_in={} active_children={} cold_ms={} warm_ms={} cold_bytes={} warm_bytes={}",
+        fan_in,
+        active_children,
+        cold_ms,
+        warm_ms,
+        cold.len(),
+        warm.len()
+    );
+}
+
+#[test]
+#[ignore = "expensive merge cold/warm profiling run; use HEGEMON_AGG_PROFILE=1 on target hardware"]
+fn aggregation_v5_merge_cold_warm_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = transaction_circuit::proof::prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams::recursion(),
+    )
+    .expect("generate transaction proof");
+    let leaf_fanin = configured_leaf_fanin();
+    let merge_fanin = configured_merge_fanin();
+    let leaf_proofs = vec![proof; leaf_fanin];
+    let leaf_statement_hashes = statement_hashes_from_proofs(&leaf_proofs);
+    let leaf_payload =
+        prove_leaf_aggregation(&leaf_proofs, &leaf_statement_hashes, 2, 0).expect("leaf proof");
+    let child_payloads = vec![leaf_payload; merge_fanin];
+
+    let all_proofs = std::iter::repeat_n(leaf_proofs.clone(), merge_fanin)
+        .flatten()
+        .collect::<Vec<_>>();
+    let commitment = tx_statements_commitment_from_proofs(&all_proofs);
+    let tx_count = all_proofs.len();
+    let tree_levels: usize = if tx_count <= configured_leaf_fanin() {
+        1
+    } else {
+        2
+    };
+    let root_level: usize = tree_levels.saturating_sub(1);
+
+    let cold_started = Instant::now();
+    let cold_merge = prove_merge_aggregation(
+        &child_payloads,
+        commitment,
+        tree_levels as u16,
+        root_level as u16,
+    )
+    .expect("cold merge proof");
+    let cold_ms = cold_started.elapsed().as_millis();
+    verify_aggregation_proof(&cold_merge, tx_count, &commitment).expect("verify cold merge proof");
+
+    let warm_started = Instant::now();
+    let warm_merge = prove_merge_aggregation(
+        &child_payloads,
+        commitment,
+        tree_levels as u16,
+        root_level as u16,
+    )
+    .expect("warm merge proof");
+    let warm_ms = warm_started.elapsed().as_millis();
+    verify_aggregation_proof(&warm_merge, tx_count, &commitment).expect("verify warm merge proof");
+
+    eprintln!(
+        "merge_cold_warm_profile leaf_fan_in={} merge_fan_in={} tx_count={} cold_ms={} warm_ms={}",
+        leaf_fanin, merge_fanin, tx_count, cold_ms, warm_ms
+    );
 }

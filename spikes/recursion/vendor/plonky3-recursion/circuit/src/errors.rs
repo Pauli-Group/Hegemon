@@ -55,6 +55,24 @@ pub enum CircuitError {
     #[error("Missing private data for non-primitive operation {operation_index}")]
     NonPrimitiveOpMissingPrivateData { operation_index: NonPrimitiveOpId },
 
+    /// Non-primitive operation execution failed.
+    #[error(
+        "Non-primitive operation {operation_index} ({op:?}) execution failed: {message}"
+    )]
+    NonPrimitiveExecutionFailed {
+        operation_index: NonPrimitiveOpId,
+        op: NonPrimitiveOpType,
+        message: String,
+    },
+
+    /// Primitive operation execution failed.
+    #[error("Primitive operation {operation_index} ({op}) execution failed: {message}")]
+    PrimitiveExecutionFailed {
+        operation_index: usize,
+        op: String,
+        message: String,
+    },
+
     /// Division by zero encountered.
     #[error("Division by zero encountered")]
     DivisionByZero,

@@ -31,7 +31,7 @@ pub mod shielded_coinbase;
 ///
 /// This module contains the Substrate-based node implementation
 /// with full blockchain functionality including:
-/// - Blake3 PoW consensus
+/// - SHA-256d PoW consensus
 /// - WASM runtime with DifficultyApi
 /// - Real transaction pool
 /// - State persistence via RocksDB

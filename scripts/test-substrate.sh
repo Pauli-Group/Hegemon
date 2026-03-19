@@ -12,6 +12,7 @@
 #   pq          - Run PQ network tests (19 tests)
 #   security    - Run security pipeline tests
 #   single-node - Run single node mining test (semi-automated)
+#   restart-recovery - Run OVH/prover restart-recovery harness (automated)
 #   two-node    - Start two-node test environment (manual)
 #   three-node  - Start three-node test environment (manual)
 #   partition   - Guide for partition recovery test (manual)
@@ -87,6 +88,11 @@ check_prerequisites() {
     
     if ! command -v jq &> /dev/null; then
         log_error "jq not found. Install jq."
+        missing=1
+    fi
+
+    if ! command -v python3 &> /dev/null; then
+        log_error "python3 not found. Install Python 3."
         missing=1
     fi
     
@@ -194,17 +200,23 @@ wait_for_rpc() {
 # Helper: Get block number from RPC
 get_block_number() {
     local port=$1
-    curl -s -X POST -H "Content-Type: application/json" \
+    local number
+    number=$(curl -s -X POST -H "Content-Type: application/json" \
         -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
-        "http://127.0.0.1:$port" 2>/dev/null | jq -r '.result.number // "null"'
+        "http://127.0.0.1:$port" 2>/dev/null | jq -r '.result.number // "null"')
+    if [ "$number" = "null" ]; then
+        echo "null"
+    else
+        printf '%d\n' "$number" 2>/dev/null || echo "null"
+    fi
 }
 
 # Helper: Get block hash from RPC
 get_block_hash() {
     local port=$1
     curl -s -X POST -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
-        "http://127.0.0.1:$port" 2>/dev/null | jq -r '.result.hash // "null"'
+        -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[],"id":1}' \
+        "http://127.0.0.1:$port" 2>/dev/null | jq -r '.result // "null"'
 }
 
 # Helper: Get peer count from RPC
@@ -213,6 +225,171 @@ get_peer_count() {
     curl -s -X POST -H "Content-Type: application/json" \
         -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
         "http://127.0.0.1:$port" 2>/dev/null | jq -r '.result | length // 0'
+}
+
+# Helper: Wait for a node to mine or import at least one new block
+wait_for_block_advance() {
+    local port=$1
+    local start_block=$2
+    local timeout=$3
+    local label=$4
+    local elapsed=0
+
+    while [ $elapsed -lt $timeout ]; do
+        local current_block
+        current_block=$(get_block_number "$port")
+        if [ "$current_block" != "null" ] && [ "$current_block" -gt "$start_block" ]; then
+            log_success "$label advanced from $start_block to $current_block"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    log_error "$label did not advance past $start_block within ${timeout}s"
+    return 1
+}
+
+# Helper: Wait for a node to report the requested peer count
+wait_for_min_peers() {
+    local port=$1
+    local min_peers=$2
+    local timeout=$3
+    local label=$4
+    local elapsed=0
+
+    while [ $elapsed -lt $timeout ]; do
+        local peers
+        peers=$(get_peer_count "$port")
+        if [ "$peers" -ge "$min_peers" ]; then
+            log_success "$label reached $peers peer(s)"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    log_error "$label did not reach $min_peers peer(s) within ${timeout}s"
+    return 1
+}
+
+# Helper: Wait for two nodes to converge to the same best hash
+wait_for_equal_tip() {
+    local port_a=$1
+    local port_b=$2
+    local timeout=$3
+    local label_a=$4
+    local label_b=$5
+    local elapsed=0
+
+    while [ $elapsed -lt $timeout ]; do
+        local hash_a
+        local hash_b
+        hash_a=$(get_block_hash "$port_a")
+        hash_b=$(get_block_hash "$port_b")
+        if [ "$hash_a" != "null" ] && [ "$hash_a" = "$hash_b" ]; then
+            local block_a
+            local block_b
+            block_a=$(get_block_number "$port_a")
+            block_b=$(get_block_number "$port_b")
+            log_success "$label_a and $label_b converged at block $block_a/$block_b with hash $hash_a"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    log_error "$label_a and $label_b did not converge within ${timeout}s"
+    return 1
+}
+
+# Helper: deterministically solve the current compact job and submit a full-target block
+mine_compact_block() {
+    local port=$1
+    local worker_name=$2
+    local label=$3
+    local before_block
+    before_block=$(get_block_number "$port")
+
+    local job_json=""
+    local available="false"
+    local elapsed=0
+    while [ $elapsed -lt 60 ]; do
+        job_json=$(curl -s -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"hegemon_compactJob","params":[{}],"id":1}' \
+            "http://127.0.0.1:$port")
+        available=$(echo "$job_json" | jq -r '.result.available // false')
+        if [ "$available" = "true" ]; then
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if [ "$available" != "true" ]; then
+        log_error "$label has no compact job available"
+        return 1
+    fi
+
+    local job_id
+    local pre_hash
+    local network_bits
+    job_id=$(echo "$job_json" | jq -r '.result.job_id')
+    pre_hash=$(echo "$job_json" | jq -r '.result.pre_hash')
+    network_bits=$(echo "$job_json" | jq -r '.result.network_bits')
+
+    local nonce
+    nonce=$(python3 - "$pre_hash" "$network_bits" <<'PY'
+import hashlib
+import sys
+
+pre_hash = bytes.fromhex(sys.argv[1].removeprefix("0x"))
+bits = int(sys.argv[2])
+
+def compact_to_target(bits: int) -> int:
+    exponent = bits >> 24
+    mantissa = bits & 0x00FFFFFF
+    if mantissa == 0:
+        raise SystemExit("compact target has zero mantissa")
+    if exponent > 32:
+        return (1 << 256) - 1
+    if exponent > 3:
+        return mantissa << (8 * (exponent - 3))
+    return mantissa >> (8 * (3 - exponent))
+
+target = compact_to_target(bits)
+counter = 0
+while True:
+    nonce = counter.to_bytes(8, "little") + b"\x00" * 24
+    work = hashlib.sha256(hashlib.sha256(pre_hash + nonce).digest()).digest()
+    if int.from_bytes(work, "big") <= target:
+        print("0x" + nonce.hex())
+        break
+    counter += 1
+PY
+)
+
+    local submit_payload
+    submit_payload=$(jq -n \
+        --arg worker_name "$worker_name" \
+        --arg job_id "$job_id" \
+        --arg nonce "$nonce" \
+        '{jsonrpc:"2.0", method:"hegemon_submitCompactSolution", params:[{worker_name:$worker_name, job_id:$job_id, nonce:$nonce}], id:1}')
+    local submit_json
+    submit_json=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d "$submit_payload" \
+        "http://127.0.0.1:$port")
+
+    local accepted
+    local block_candidate
+    accepted=$(echo "$submit_json" | jq -r '.result.accepted // false')
+    block_candidate=$(echo "$submit_json" | jq -r '.result.block_candidate // false')
+    if [ "$accepted" != "true" ] || [ "$block_candidate" != "true" ]; then
+        log_error "$label full-target compact solution was not accepted"
+        echo "$submit_json"
+        return 1
+    fi
+
+    wait_for_block_advance "$port" "$before_block" 30 "$label after compact solution"
 }
 
 # Clean up any running nodes
@@ -301,6 +478,213 @@ cmd_single_node() {
         log_error "SINGLE NODE MINING TEST FAILED - No blocks mined"
         return 1
     fi
+}
+
+# Automated OVH/prover restart-recovery harness
+cmd_restart_recovery() {
+    log_section "OVH/Prover Restart-Recovery Harness"
+
+    check_prerequisites
+
+    local node_bin="target/release/hegemon-node"
+    local worker_bin="target/release/hegemon-prover-worker"
+    if [ ! -x "$node_bin" ] || [ ! -x "$worker_bin" ]; then
+        log_info "Release binaries missing; building hegemon-node package..."
+        cargo build --release -p hegemon-node --features substrate
+    fi
+
+    if [ ! -x "$node_bin" ] || [ ! -x "$worker_bin" ]; then
+        log_error "Required binaries not found after build"
+        exit 1
+    fi
+
+    local ovh_rpc_port=19944
+    local prover_rpc_port=19945
+    local ovh_p2p_port=39333
+    local prover_p2p_port=39334
+    local tmp_root
+    tmp_root=$(mktemp -d /tmp/hegemon-restart-harness.XXXXXX)
+    local ovh_log="$tmp_root/ovh.log"
+    local prover_log="$tmp_root/prover.log"
+    local worker_log="$tmp_root/worker.log"
+    local harness_spec="$tmp_root/restart-harness-chainspec.json"
+    local ovh_base="$tmp_root/ovh-base"
+    local prover_base="$tmp_root/prover-base"
+    local ovh_pid=""
+    local prover_pid=""
+    local worker_pid=""
+    local difficulty_bits_key="0x7d15dd66fbf0cbda1d3a651b5e606df2fbc97b050ba98067c6d1bdd855ff03b8"
+    local difficulty_value_key="0x7d15dd66fbf0cbda1d3a651b5e606df27d15dd66fbf0cbda1d3a651b5e606df2"
+    local payout_address=""
+
+    cleanup_restart_recovery() {
+        for pid in "$worker_pid" "$prover_pid" "$ovh_pid"; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                wait "$pid" 2>/dev/null || true
+            fi
+        done
+        rm -rf "$tmp_root"
+    }
+
+    trap cleanup_restart_recovery EXIT
+
+    if [ -f "config/testnet-config" ]; then
+        # shellcheck disable=SC1091
+        source "config/testnet-config"
+        payout_address="${HEGEMON_BOOT_ADDRESS:-}"
+    fi
+
+    jq --arg bits_key "$difficulty_bits_key" \
+        --arg value_key "$difficulty_value_key" \
+        '.name = "Hegemon Restart Harness"
+        | .id = "hegemon-restart-harness"
+        | .chainType = "Development"
+        | .bootNodes = []
+        | .genesis.raw.top[$bits_key] = "0xffff0021"
+        | .genesis.raw.top[$value_key] = "0x0100000000000000000000000000000000000000000000000000000000000000"' \
+        config/dev-chainspec.json > "$harness_spec"
+
+    for port in "$ovh_rpc_port" "$prover_rpc_port" "$ovh_p2p_port" "$prover_p2p_port"; do
+        if port_in_use "$port"; then
+            log_error "Harness port $port is already in use"
+            exit 1
+        fi
+    done
+
+    log_info "Starting OVH-like public node on 127.0.0.1:$ovh_rpc_port / $ovh_p2p_port"
+    HEGEMON_MINE=1 \
+    HEGEMON_MINE_THREADS=1 \
+    HEGEMON_MINER_ADDRESS="$payout_address" \
+    HEGEMON_PROVER_REWARD_ADDRESS="$payout_address" \
+    HEGEMON_PROVER_WORKERS=0 \
+    HEGEMON_BATCH_VERIFY_PREWARM_TXS=0 \
+    HEGEMON_PQ_STRICT_COMPATIBILITY=1 \
+    "$node_bin" \
+        --dev \
+        --chain "$harness_spec" \
+        --base-path "$ovh_base" \
+        --rpc-port "$ovh_rpc_port" \
+        --port "$ovh_p2p_port" \
+        --rpc-methods safe \
+        --name "RestartHarnessOVH" \
+        >"$ovh_log" 2>&1 &
+    ovh_pid=$!
+
+    if ! wait_for_rpc "$ovh_rpc_port" 60; then
+        log_error "OVH-like node RPC failed to start"
+        exit 1
+    fi
+    if ! mine_compact_block "$ovh_rpc_port" "restart-harness-ovh" "OVH-like node"; then
+        exit 1
+    fi
+
+    log_info "Starting prover-like private node on 127.0.0.1:$prover_rpc_port / $prover_p2p_port"
+    HEGEMON_MINE=0 \
+    HEGEMON_MINER_ADDRESS="$payout_address" \
+    HEGEMON_PROVER_REWARD_ADDRESS="$payout_address" \
+    HEGEMON_PROVER_WORKERS=0 \
+    HEGEMON_BATCH_VERIFY_PREWARM_TXS=0 \
+    HEGEMON_SEEDS="127.0.0.1:$ovh_p2p_port" \
+    HEGEMON_PQ_STRICT_COMPATIBILITY=1 \
+    "$node_bin" \
+        --dev \
+        --chain "$harness_spec" \
+        --base-path "$prover_base" \
+        --rpc-port "$prover_rpc_port" \
+        --port "$prover_p2p_port" \
+        --rpc-methods safe \
+        --name "RestartHarnessProver" \
+        >"$prover_log" 2>&1 &
+    prover_pid=$!
+
+    if ! wait_for_rpc "$prover_rpc_port" 60; then
+        log_error "Prover-like node RPC failed to start"
+        exit 1
+    fi
+    if ! wait_for_equal_tip "$ovh_rpc_port" "$prover_rpc_port" 90 "OVH-like node" "Prover-like node"; then
+        exit 1
+    fi
+
+    log_info "Starting external prover worker against OVH-like RPC"
+    HEGEMON_PROVER_RPC_URL="http://127.0.0.1:$ovh_rpc_port" \
+    HEGEMON_PROVER_SOURCE="restart-recovery-harness" \
+    "$worker_bin" \
+        --poll-ms 250 \
+        >"$worker_log" 2>&1 &
+    worker_pid=$!
+    sleep 2
+    if ! kill -0 "$worker_pid" 2>/dev/null; then
+        log_error "Prover worker exited immediately"
+        exit 1
+    fi
+
+    local before_shutdown_block
+    before_shutdown_block=$(get_block_number "$ovh_rpc_port")
+    log_info "Stopping prover stack at OVH height $before_shutdown_block"
+    kill "$worker_pid" 2>/dev/null || true
+    wait "$worker_pid" 2>/dev/null || true
+    worker_pid=""
+    kill "$prover_pid" 2>/dev/null || true
+    wait "$prover_pid" 2>/dev/null || true
+    prover_pid=""
+
+    if ! mine_compact_block "$ovh_rpc_port" "restart-harness-ovh" "OVH-like node while prover stack is down"; then
+        exit 1
+    fi
+
+    log_info "Restarting prover stack"
+    HEGEMON_MINE=0 \
+    HEGEMON_MINER_ADDRESS="$payout_address" \
+    HEGEMON_PROVER_REWARD_ADDRESS="$payout_address" \
+    HEGEMON_PROVER_WORKERS=0 \
+    HEGEMON_BATCH_VERIFY_PREWARM_TXS=0 \
+    HEGEMON_SEEDS="127.0.0.1:$ovh_p2p_port" \
+    HEGEMON_PQ_STRICT_COMPATIBILITY=1 \
+    "$node_bin" \
+        --dev \
+        --chain "$harness_spec" \
+        --base-path "$prover_base" \
+        --rpc-port "$prover_rpc_port" \
+        --port "$prover_p2p_port" \
+        --rpc-methods safe \
+        --name "RestartHarnessProver" \
+        >>"$prover_log" 2>&1 &
+    prover_pid=$!
+
+    if ! wait_for_rpc "$prover_rpc_port" 60; then
+        log_error "Restarted prover-like node RPC failed to start"
+        exit 1
+    fi
+
+    HEGEMON_PROVER_RPC_URL="http://127.0.0.1:$ovh_rpc_port" \
+    HEGEMON_PROVER_SOURCE="restart-recovery-harness" \
+    "$worker_bin" \
+        --poll-ms 250 \
+        >>"$worker_log" 2>&1 &
+    worker_pid=$!
+    sleep 2
+    if ! kill -0 "$worker_pid" 2>/dev/null; then
+        log_error "Restarted prover worker exited immediately"
+        exit 1
+    fi
+
+    if ! wait_for_equal_tip "$ovh_rpc_port" "$prover_rpc_port" 90 "OVH-like node" "Restarted prover-like node"; then
+        exit 1
+    fi
+
+    local market_params
+    market_params=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"prover_getMarketParams","params":[],"id":1}' \
+        "http://127.0.0.1:$ovh_rpc_port" 2>/dev/null | jq -r '.result.package_ttl_ms // "null"')
+    if [ "$market_params" = "null" ]; then
+        log_error "OVH-like node did not answer prover_getMarketParams"
+        exit 1
+    fi
+
+    cleanup_restart_recovery
+    trap - EXIT
+    log_success "RESTART-RECOVERY HARNESS PASSED"
 }
 
 # Two node sync test (manual setup helper)
@@ -649,6 +1033,14 @@ cmd_all() {
         log_error "Single node test: FAILED"
         failed=$((failed + 1))
     fi
+
+    log_info "Running restart-recovery harness..."
+    if cmd_restart_recovery; then
+        log_success "Restart-recovery harness: PASSED"
+    else
+        log_error "Restart-recovery harness: FAILED"
+        failed=$((failed + 1))
+    fi
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
@@ -708,6 +1100,7 @@ cmd_help() {
     echo "  pq                 Run PQ network tests (19 tests)"
     echo "  security           Run security pipeline tests"
     echo "  single-node        Run single node mining test (semi-automated)"
+    echo "  restart-recovery   Run OVH/prover restart-recovery harness"
     echo "  two-node           Setup instructions for two-node test (manual)"
     echo "  three-node         Setup instructions for three-node test (manual)"
     echo "  partition          Guide for partition recovery test (manual)"
@@ -746,6 +1139,9 @@ main() {
             ;;
         single-node)
             cmd_single_node
+            ;;
+        restart-recovery)
+            cmd_restart_recovery
             ;;
         two-node)
             cmd_two_node

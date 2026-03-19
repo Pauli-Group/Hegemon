@@ -5,7 +5,7 @@ use crate::error::{ConsensusError, SlashingEvidence};
 use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
 use crate::proof::{ProofVerifier, verify_commitments};
-use crate::types::{ConsensusBlock, ValidatorId};
+use crate::types::{ConsensusBlock, ValidatorId, kernel_root_from_shielded_root};
 use crate::validator::ValidatorSet;
 use crate::version_policy::VersionSchedule;
 
@@ -200,6 +200,10 @@ impl<V: ProofVerifier> BftConsensus<V> {
         let computed_state_root = commitment_tree.root();
         if computed_state_root != block.header.state_root {
             return Err(ConsensusError::InvalidHeader("state root mismatch"));
+        }
+        let computed_kernel_root = kernel_root_from_shielded_root(&computed_state_root);
+        if computed_kernel_root != block.header.kernel_root {
+            return Err(ConsensusError::InvalidHeader("kernel root mismatch"));
         }
 
         let block_hash = block.header.hash()?;
