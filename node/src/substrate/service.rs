@@ -113,13 +113,13 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
-    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
-    DEFAULT_DIFFICULTY_BITS,
+    DEFAULT_DIFFICULTY_BITS, FullBackend, HegemonFullClient, HegemonPowBlockImport,
+    HegemonSelectChain, HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
+    StateExecutionResult,
 };
 use crate::substrate::mining_worker::{
-    create_production_mining_worker, create_production_mining_worker_mock_broadcast,
-    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig, create_production_mining_worker,
+    create_production_mining_worker_mock_broadcast,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -142,31 +142,31 @@ use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
+    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST, ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal,
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
     encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
     merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
     merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
-    ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
-use hyper::http::{header, Method};
+use hyper::http::{Method, header};
 use network::{
     PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
     PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use pallet_shielded_pool::family::ShieldedFamilyAction;
 use pallet_shielded_pool::family::{
-    build_envelope as build_shielded_kernel_envelope, EnableAggregationModeArgs, MintCoinbaseArgs,
-    SubmitCandidateArtifactArgs, ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE,
-    ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+    ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE, ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+    EnableAggregationModeArgs, MintCoinbaseArgs, SubmitCandidateArtifactArgs,
+    build_envelope as build_shielded_kernel_envelope,
 };
 #[cfg(test)]
-use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
-use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
-use rand::{rngs::OsRng, RngCore};
-use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
-use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
+use pallet_shielded_pool::family::{ACTION_SHIELDED_TRANSFER_SIDECAR, ShieldedTransferSidecarArgs};
+use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE, FeeParameters};
+use rand::{RngCore, rngs::OsRng};
+use sc_client_api::{BlockBackend, BlockchainEvents, backend::Finalizer};
+use sc_service::{Configuration, KeystoreContainer, TaskManager, error::Error as ServiceError};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ApiExt, Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
@@ -178,11 +178,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 use wallet::address::ShieldedAddress;
@@ -193,12 +193,12 @@ use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
-use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
+use transaction_circuit::hashing_pq::{Felt, bytes48_to_felts, ciphertext_hash_bytes};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{
     BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs,
 };
-use tx_proof_manifest::{build_transaction_proof_manifest, TxProofManifestPublicInputs};
+use tx_proof_manifest::{TxProofManifestPublicInputs, build_transaction_proof_manifest};
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
@@ -1993,11 +1993,7 @@ const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
     let shards = len.div_ceil(chunk_size);
-    if shards == 0 {
-        1
-    } else {
-        shards
-    }
+    if shards == 0 { 1 } else { shards }
 }
 
 fn da_parity_shards_for_data(data_shards: usize) -> usize {
@@ -3215,6 +3211,9 @@ fn prepare_block_proof_bundle(
         commitment_bytes = commitment_proof.proof_bytes.len(),
         aggregation_bytes = block_proof_payload_aggregation_bytes(&payload),
         batch_count = payload.flat_batches.len(),
+        merge_root_present = payload.merge_root.is_some(),
+        artifact_claim_present = payload.artifact_claim.is_some(),
+        da_chunk_count = payload.da_chunk_count,
         batch_slot_txs,
         proof_mode = ?payload.proof_mode,
         aggregation_cache_hit,
@@ -4359,7 +4358,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
     }
 
     let missing = missing_proof_binding_hashes(&decoded);
-    if matches!(proof_mode, PreparedProofMode::MergeRoot) && missing.is_empty() {
+    if missing.is_empty() {
         return Ok(None);
     }
 
@@ -5387,9 +5386,8 @@ pub fn wire_block_builder_api(
             .map(|binding| binding.statement_hash)
             .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
-        let requires_proven_batch = shielded_tx_count > 0
-            && (matches!(selected_proof_mode, PreparedProofMode::InlineTx)
-                || aggregation_mode_enabled);
+    let requires_proven_batch = shielded_tx_count > 0
+        && (!missing_proof_bindings.is_empty() || aggregation_mode_enabled);
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ArtifactClaim> = None;
         let mut template_trace = None;
         if requires_proven_batch {
@@ -5678,8 +5676,8 @@ pub fn wire_block_builder_api(
 use crate::substrate::mining_worker::BlockTemplate;
 use sc_consensus::{BlockImport, BlockImportParams, ImportResult};
 use sp_consensus::BlockOrigin;
-use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
+use sp_runtime::generic::Digest;
 
 fn finalize_imported_block(
     client: &Arc<HegemonFullClient>,
@@ -5714,7 +5712,7 @@ fn configure_pow_import_params(
     import_params.post_hash = Some(post_hash);
 
     // Leave fork_choice unset so PowBlockImport applies cumulative-difficulty selection.
-    use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
+    use sc_consensus_pow::{INTERMEDIATE_KEY, PowIntermediate};
     let intermediate = PowIntermediate::<sp_core::U256> { difficulty: None };
     import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
 }
@@ -8154,7 +8152,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
                         use crate::substrate::network_bridge::{
-                            SyncMessage, SyncRequestEnvelope, SYNC_PROTOCOL,
+                            SYNC_PROTOCOL, SyncMessage, SyncRequestEnvelope,
                         };
 
                         let mut interval =
@@ -9787,7 +9785,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 Some("network"),
                 async move {
                     use crate::substrate::network_bridge::{
-                        ArtifactProtocolMessage, ARTIFACTS_PROTOCOL,
+                        ARTIFACTS_PROTOCOL, ArtifactProtocolMessage,
                     };
                     use std::collections::HashSet;
 
@@ -10102,10 +10100,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
+        use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
         use sc_rpc::state::{ChildStateApiServer, StateApiServer};
         use sc_rpc::system::{System, SystemApiServer};
-        use sc_rpc::SubscriptionTaskExecutor;
         use sc_utils::mpsc::tracing_unbounded;
 
         let mut module = RpcModule::new(());
@@ -10905,7 +10903,7 @@ mod tests {
     }
 
     #[test]
-    fn mining_pause_reason_requires_ready_bundle_for_inline_tx_batch() {
+    fn mining_pause_reason_skips_ready_bundle_for_inline_tx_batch_with_inline_proofs() {
         let _guard = set_block_proof_mode("inline_tx");
         let parent_hash = H256::repeat_byte(0x42);
         let coordinator = ProverCoordinator::new(
@@ -10939,49 +10937,8 @@ mod tests {
         )
         .expect("pause reason evaluation succeeds");
         assert!(
-            reason.is_some(),
-            "inline_tx batch without ready bundle should pause mining"
-        );
-
-        let decoded = runtime::UncheckedExtrinsic::decode(&mut &candidate_txs[0][..])
-            .expect("candidate decodes");
-        let statement_bindings =
-            statement_bindings_from_extrinsics(&[decoded]).expect("statement bindings");
-        let statement_hashes = statement_bindings
-            .iter()
-            .map(|binding| binding.statement_hash)
-            .collect::<Vec<_>>();
-        let tx_statements_commitment =
-            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-                .expect("commitment");
-        coordinator.import_network_artifact(
-            parent_hash,
-            pallet_shielded_pool::types::CandidateArtifact {
-                version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
-                tx_count: 1,
-                tx_statements_commitment,
-                da_root: [0u8; 48],
-                da_chunk_count: 0,
-                commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
-                proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
-                flat_batches: Vec::new(),
-                merge_root: None,
-                artifact_claim: None,
-            },
-            candidate_txs.clone(),
-        );
-
-        let reason = mining_pause_reason_for_pending_shielded_batch(
-            coordinator.as_ref(),
-            parent_hash,
-            &candidate_txs,
-            1,
-            PreparedProofMode::InlineTx,
-        )
-        .expect("pause reason evaluation succeeds");
-        assert!(
             reason.is_none(),
-            "mining should resume once the matching inline_tx prepared bundle exists"
+            "inline_tx batch with canonical inline proofs should not pause mining"
         );
     }
 }
@@ -11126,10 +11083,13 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Sha256dSeal) -> Result<H256, String>
-           + Send
-           + Sync
-           + 'static {
+    ) -> impl Fn(
+        &crate::substrate::mining_worker::BlockTemplate,
+        &Sha256dSeal,
+    ) -> Result<H256, String>
+    + Send
+    + Sync
+    + 'static {
         let stats = self.stats.clone();
         let best_number = self.best_number.clone();
         let best_hash = self.best_hash.clone();
@@ -11226,9 +11186,9 @@ pub fn wire_import_tracker(
 mod import_tests {
     use super::*;
     use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
+    use sp_runtime::DigestItem;
     use sp_runtime::generic::Digest;
     use sp_runtime::traits::Header as HeaderT;
-    use sp_runtime::DigestItem;
 
     #[test]
     fn test_full_block_import_config_default() {

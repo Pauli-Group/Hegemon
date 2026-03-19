@@ -774,20 +774,25 @@ impl SubstrateRpcClient {
             binding_hash: hex::encode(bundle.binding_hash),
             fee: bundle.fee,
             value_balance: bundle.value_balance,
-            stablecoin: bundle.stablecoin.enabled.then(|| ShieldedStablecoinPolicyBindingRequest {
-                asset_id: bundle.stablecoin.asset_id,
-                policy_hash: hex::encode(bundle.stablecoin.policy_hash),
-                oracle_commitment: hex::encode(bundle.stablecoin.oracle_commitment),
-                attestation_commitment: hex::encode(bundle.stablecoin.attestation_commitment),
-                issuance_delta: bundle.stablecoin.issuance_delta,
-                policy_version: bundle.stablecoin.policy_version,
-            }),
+            stablecoin: bundle
+                .stablecoin
+                .enabled
+                .then(|| ShieldedStablecoinPolicyBindingRequest {
+                    asset_id: bundle.stablecoin.asset_id,
+                    policy_hash: hex::encode(bundle.stablecoin.policy_hash),
+                    oracle_commitment: hex::encode(bundle.stablecoin.oracle_commitment),
+                    attestation_commitment: hex::encode(bundle.stablecoin.attestation_commitment),
+                    issuance_delta: bundle.stablecoin.issuance_delta,
+                    policy_version: bundle.stablecoin.policy_version,
+                }),
         };
 
         let response: ShieldedTransferResponse = client
             .request("hegemon_submitShieldedTransfer", rpc_params![request])
             .await
-            .map_err(|e| WalletError::Rpc(format!("hegemon_submitShieldedTransfer failed: {}", e)))?;
+            .map_err(|e| {
+                WalletError::Rpc(format!("hegemon_submitShieldedTransfer failed: {}", e))
+            })?;
 
         if !response.success {
             return Err(WalletError::Http(format!(
@@ -798,9 +803,9 @@ impl SubstrateRpcClient {
             )));
         }
 
-        let tx_hash = response
-            .tx_hash
-            .ok_or_else(|| WalletError::Rpc("Missing tx_hash in shielded transfer response".to_string()))?;
+        let tx_hash = response.tx_hash.ok_or_else(|| {
+            WalletError::Rpc("Missing tx_hash in shielded transfer response".to_string())
+        })?;
 
         hex_to_array(&tx_hash)
     }

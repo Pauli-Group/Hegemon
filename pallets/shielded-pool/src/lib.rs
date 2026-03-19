@@ -959,30 +959,77 @@ pub mod pallet {
             payload: &types::CandidateArtifact,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if ProvenBatchProcessed::<T>::get() {
+                warn!(
+                    target: "shielded-pool",
+                    "submit_candidate_artifact rejected: stale (already processed this block) tx_count={} proof_mode={:?}",
+                    payload.tx_count,
+                    payload.proof_mode,
+                );
                 return Err(InvalidTransaction::Stale);
             }
             if payload.version != types::BLOCK_PROOF_BUNDLE_SCHEMA {
+                warn!(
+                    target: "shielded-pool",
+                    "submit_candidate_artifact rejected: schema mismatch version={} expected={}",
+                    payload.version,
+                    types::BLOCK_PROOF_BUNDLE_SCHEMA,
+                );
                 return Err(InvalidTransaction::BadProof);
             }
             if payload.tx_count == 0 {
+                warn!(
+                    target: "shielded-pool",
+                    "submit_candidate_artifact rejected: zero tx_count"
+                );
                 return Err(InvalidTransaction::Custom(10));
             }
             if payload.commitment_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                warn!(
+                    target: "shielded-pool",
+                    "submit_candidate_artifact rejected: commitment proof too large bytes={} limit={}",
+                    payload.commitment_proof.data.len(),
+                    crate::types::STARK_PROOF_MAX_SIZE,
+                );
                 return Err(InvalidTransaction::ExhaustsResources);
             }
-            if Self::validate_block_proof_bundle_mode(payload).is_err() {
+            if let Err(err) = Self::validate_block_proof_bundle_mode(payload) {
+                warn!(
+                    target: "shielded-pool",
+                    "submit_candidate_artifact rejected: invalid proof-mode payload err={:?} proof_mode={:?} flat_batches={} merge_root_present={} da_chunk_count={} artifact_claim_present={}",
+                    err,
+                    payload.proof_mode,
+                    payload.flat_batches.len(),
+                    payload.merge_root.is_some(),
+                    payload.da_chunk_count,
+                    payload.artifact_claim.is_some(),
+                );
                 return Err(InvalidTransaction::BadProof);
             }
             if Self::total_block_proof_bytes(payload)
                 > types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES
             {
+                warn!(
+                    target: "shielded-pool",
+                    "submit_candidate_artifact rejected: total proof bytes {} exceed limit {}",
+                    Self::total_block_proof_bytes(payload),
+                    types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES,
+                );
                 return Err(InvalidTransaction::ExhaustsResources);
             }
             if payload.da_chunk_count == 0 {
+                warn!(
+                    target: "shielded-pool",
+                    "submit_candidate_artifact rejected: zero da_chunk_count"
+                );
                 return Err(InvalidTransaction::Custom(10));
             }
             if let Some(claim) = payload.artifact_claim.as_ref() {
                 if !Self::verify_prover_claim_signature(claim, payload) {
+                    warn!(
+                        target: "shielded-pool",
+                        "submit_candidate_artifact rejected: invalid prover claim signature prover_amount={}",
+                        claim.prover_amount,
+                    );
                     return Err(InvalidTransaction::BadProof);
                 }
             }
@@ -1008,18 +1055,34 @@ pub mod pallet {
             reward_bundle: &types::BlockRewardBundle,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if CoinbaseProcessed::<T>::get() {
+                warn!(target: "shielded-pool", "mint_coinbase rejected: stale");
                 return Err(InvalidTransaction::Stale);
             }
             if Self::ensure_coinbase_subsidy(reward_bundle.miner_note.amount).is_err() {
+                warn!(
+                    target: "shielded-pool",
+                    "mint_coinbase rejected: miner subsidy exceeds cap amount={}",
+                    reward_bundle.miner_note.amount,
+                );
                 return Err(InvalidTransaction::Custom(9));
             }
             let expected_commitment = Self::expected_coinbase_commitment(&reward_bundle.miner_note);
             if reward_bundle.miner_note.commitment != expected_commitment {
+                warn!(
+                    target: "shielded-pool",
+                    "mint_coinbase rejected: miner commitment mismatch amount={}",
+                    reward_bundle.miner_note.amount,
+                );
                 return Err(InvalidTransaction::BadProof);
             }
             if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
                 let expected_prover_commitment = Self::expected_coinbase_commitment(prover_note);
                 if prover_note.commitment != expected_prover_commitment {
+                    warn!(
+                        target: "shielded-pool",
+                        "mint_coinbase rejected: prover commitment mismatch amount={}",
+                        prover_note.amount,
+                    );
                     return Err(InvalidTransaction::BadProof);
                 }
             }
@@ -2090,7 +2153,7 @@ pub mod pallet {
             Ok(total)
         }
 
-        fn total_block_proof_bytes(bundle: &types::BlockProofBundle) -> usize {
+        pub(crate) fn total_block_proof_bytes(bundle: &types::BlockProofBundle) -> usize {
             let flat_batches_bytes = bundle
                 .flat_batches
                 .iter()
@@ -2116,7 +2179,7 @@ pub mod pallet {
             bundle.commitment_proof.data.len() + aggregation_bytes
         }
 
-        fn validate_block_proof_bundle_mode(
+        pub(crate) fn validate_block_proof_bundle_mode(
             bundle: &types::BlockProofBundle,
         ) -> Result<(), Error<T>> {
             match bundle.proof_mode {
@@ -2217,7 +2280,7 @@ pub mod pallet {
             payload
         }
 
-        fn verify_prover_claim_signature(
+        pub(crate) fn verify_prover_claim_signature(
             claim: &types::ProverCompensationClaim,
             bundle: &types::BlockProofBundle,
         ) -> bool {

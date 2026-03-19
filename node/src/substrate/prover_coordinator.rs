@@ -764,15 +764,41 @@ impl ProverCoordinatorConfig {
             .map(|threads| threads.get().min(2))
             .unwrap_or(1usize)
             .max(1);
-        let workers = std::env::var("HEGEMON_AGG_STAGE_LOCAL_PARALLELISM")
+        let configured_workers = std::env::var("HEGEMON_AGG_STAGE_LOCAL_PARALLELISM")
             .ok()
             .and_then(|v| v.parse().ok())
             .or_else(|| {
                 std::env::var("HEGEMON_PROVER_WORKERS")
                     .ok()
                     .and_then(|v| v.parse().ok())
+            });
+        let mining_enabled = std::env::var("HEGEMON_MINE")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
             })
-            .unwrap_or(default_workers);
+            .unwrap_or(false);
+        let requires_prepared_bundles = matches!(
+            ProverCoordinator::prepared_proof_mode_from_env(),
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+                | pallet_shielded_pool::types::BlockProofMode::MergeRoot
+        );
+        let workers = match configured_workers {
+            Some(0) if mining_enabled && requires_prepared_bundles => {
+                tracing::warn!(
+                    mining_enabled,
+                    ?requires_prepared_bundles,
+                    configured_workers = 0,
+                    "Configured prover workers=0 would deadlock prepared-bundle authoring; clamping to 1"
+                );
+                1
+            }
+            Some(workers) => workers,
+            None => default_workers,
+        };
         let target_txs = std::env::var("HEGEMON_BATCH_TARGET_TXS")
             .ok()
             .and_then(|v| v.parse().ok())

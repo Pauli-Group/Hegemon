@@ -522,7 +522,7 @@ impl NetworkBridge {
                 let tx_count = msg.len();
                 self.stats.transactions_received += tx_count as u64;
 
-                tracing::debug!(
+                tracing::info!(
                     peer_id = %hex::encode(peer_id),
                     tx_count = tx_count,
                     "Received transactions"

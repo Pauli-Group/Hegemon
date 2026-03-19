@@ -146,12 +146,28 @@ impl ShieldedFamilyAction {
             ACTION_ENABLE_AGGREGATION_MODE => Ok(Self::EnableAggregationMode),
             ACTION_SUBMIT_CANDIDATE_ARTIFACT => {
                 let args = SubmitCandidateArtifactArgs::decode(&mut &envelope.public_args[..])
-                    .map_err(|_| DispatchError::Other("bad-candidate-artifact-args"))?;
+                    .map_err(|err| {
+                        log::warn!(
+                            target: "shielded-pool",
+                            "failed to decode candidate artifact args: public_args_len={} err={:?}",
+                            envelope.public_args.len(),
+                            err,
+                        );
+                        DispatchError::Other("bad-candidate-artifact-args")
+                    })?;
                 Ok(Self::SubmitCandidateArtifact(args))
             }
             ACTION_MINT_COINBASE => {
-                let args = MintCoinbaseArgs::decode(&mut &envelope.public_args[..])
-                    .map_err(|_| DispatchError::Other("bad-coinbase-args"))?;
+                let args =
+                    MintCoinbaseArgs::decode(&mut &envelope.public_args[..]).map_err(|err| {
+                        log::warn!(
+                            target: "shielded-pool",
+                            "failed to decode coinbase args: public_args_len={} err={:?}",
+                            envelope.public_args.len(),
+                            err,
+                        );
+                        DispatchError::Other("bad-coinbase-args")
+                    })?;
                 Ok(Self::MintCoinbase(args))
             }
             _ => Err(DispatchError::Other("unsupported-shielded-action")),
@@ -329,12 +345,76 @@ pub fn validate_action<T: Config>(
                 .map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
         ShieldedFamilyAction::SubmitCandidateArtifact(args) => {
-            Pallet::<T>::validate_submit_candidate_artifact_action(&args.payload)
-                .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            match Pallet::<T>::validate_submit_candidate_artifact_action(&args.payload) {
+                Ok(meta) => Ok(meta),
+                Err(err) => {
+                    let detail = if crate::pallet::ProvenBatchProcessed::<T>::get() {
+                        "candidate-artifact-stale"
+                    } else if args.payload.version != crate::types::BLOCK_PROOF_BUNDLE_SCHEMA {
+                        "candidate-artifact-schema"
+                    } else if args.payload.tx_count == 0 {
+                        "candidate-artifact-zero-tx-count"
+                    } else if args.payload.commitment_proof.data.len()
+                        > crate::types::STARK_PROOF_MAX_SIZE
+                    {
+                        "candidate-artifact-commitment-proof-too-large"
+                    } else if let Err(mode_err) =
+                        Pallet::<T>::validate_block_proof_bundle_mode(&args.payload)
+                    {
+                        match mode_err {
+                            crate::pallet::Error::<T>::InvalidProofFormat => {
+                                "candidate-artifact-proof-mode-format"
+                            }
+                            crate::pallet::Error::<T>::ProofTooLarge => {
+                                "candidate-artifact-proof-mode-size"
+                            }
+                            _ => "candidate-artifact-proof-mode",
+                        }
+                    } else if Pallet::<T>::total_block_proof_bytes(&args.payload)
+                        > crate::types::BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES
+                    {
+                        "candidate-artifact-total-proof-bytes"
+                    } else if args.payload.da_chunk_count == 0 {
+                        "candidate-artifact-zero-da-chunks"
+                    } else if let Some(claim) = args.payload.artifact_claim.as_ref() {
+                        if !Pallet::<T>::verify_prover_claim_signature(claim, &args.payload) {
+                            "candidate-artifact-bad-claim-signature"
+                        } else {
+                            "candidate-artifact-invalid"
+                        }
+                    } else {
+                        "candidate-artifact-invalid"
+                    };
+                    log::warn!(
+                        target: "shielded-pool",
+                        "kernel submit-candidate-artifact validation failed: detail={} err={:?} version={} tx_count={} proof_mode={:?} commitment_proof_bytes={} flat_batches={} merge_root_present={} da_chunk_count={} artifact_claim_present={}",
+                        detail,
+                        err,
+                        args.payload.version,
+                        args.payload.tx_count,
+                        args.payload.proof_mode,
+                        args.payload.commitment_proof.data.len(),
+                        args.payload.flat_batches.len(),
+                        args.payload.merge_root.is_some(),
+                        args.payload.da_chunk_count,
+                        args.payload.artifact_claim.is_some(),
+                    );
+                    Err(DispatchError::Other(detail))
+                }
+            }
         }
         ShieldedFamilyAction::MintCoinbase(args) => {
-            Pallet::<T>::validate_mint_coinbase_action(&args.reward_bundle)
-                .map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            let result = Pallet::<T>::validate_mint_coinbase_action(&args.reward_bundle);
+            if let Err(ref err) = result {
+                log::warn!(
+                    target: "shielded-pool",
+                    "kernel mint-coinbase validation failed: err={:?} miner_amount={} prover_present={}",
+                    err,
+                    args.reward_bundle.miner_note.amount,
+                    args.reward_bundle.prover_note.is_some(),
+                );
+            }
+            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
         }
     }
 }

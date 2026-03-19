@@ -293,7 +293,8 @@ where
         }
         let mut out = [0u8; 32];
         out.copy_from_slice(tx_hash.as_ref());
-        self.broadcast_submitted_transaction(out, extrinsic_bytes).await;
+        self.broadcast_submitted_transaction(out, extrinsic_bytes)
+            .await;
         tracing::info!(
             tx_hash = %hex::encode(out),
             tracked_ready,
@@ -864,7 +865,8 @@ where
 
         let mut out = [0u8; 32];
         out.copy_from_slice(tx_hash.as_ref());
-        self.broadcast_submitted_transaction(out, extrinsic_bytes).await;
+        self.broadcast_submitted_transaction(out, extrinsic_bytes)
+            .await;
         tracing::info!(
             nullifiers = nullifier_count,
             commitments = commitment_count,
