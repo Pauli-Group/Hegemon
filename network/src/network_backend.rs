@@ -534,11 +534,9 @@ impl PqNetworkBackend {
                         // If we're already connected to any address for this bootstrap seed, just wait.
                         let already_connected = {
                             let peers_guard = peers.read().await;
-                            peers_guard
-                                .values()
-                                .any(|p| {
-                                    p.info.is_outbound && bootstrap.addrs.contains(&p.info.addr)
-                                })
+                            peers_guard.values().any(|p| {
+                                p.info.is_outbound && bootstrap.addrs.contains(&p.info.addr)
+                            })
                         };
                         if already_connected {
                             backoff = BOOTSTRAP_RECONNECT_BASE;

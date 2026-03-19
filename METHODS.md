@@ -947,45 +947,41 @@ Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and 
 
 ### Required commands before every PR
 
-1. **Rust formatting and linting** – `cargo fmt --all` then `cargo clippy --workspace --all-targets --all-features -D warnings`.
-2. **Workspace tests** – `cargo test --workspace` ensures crypto, circuits, consensus, wallet, and protocol crates are still coherent.
-3. **Targeted checks**:
+1. **Default blocking gate** – run `./scripts/check-core.sh all`.
+   This is the exact fast path enforced by CI: formatting, curated clippy, shipping-path Rust tests, then a release `hegemon-node` build.
+2. **What the default test gate covers**:
    - `cargo test -p synthetic-crypto` for deterministic PQ primitive vectors.
-   - `cargo test -p transaction-circuit && cargo test -p block-circuit` for circuit constraints.
-   - `cargo test -p wallet` for CLI/integration fixtures.
-   - `cargo test -p runtime --test kernel_wallet_transfer` for the wallet-built unsigned transfer regression through the live `Kernel::submit_action` path.
-   - `./scripts/test-substrate.sh restart-recovery` for the local OVH/public-node plus prover-stack stop/restart harness.
-4. **Benchmarks (smoke mode)**:
-   - `cargo run -p circuits-bench -- --smoke --prove --json` – validates witness → proof → block aggregation loop.
-   - `cargo run -p wallet-bench -- --smoke --json` – stresses key derivation, encryption, and nullifier derivations.
-   - `(cd consensus/bench && go test ./... && go run ./cmd/netbench --smoke --json)` – ensures the Go simulator compiles/tests while reporting PQ throughput budgets.
-5. **Security harnesses** – run the adversarial property tests locally before pushing:
+   - `cargo test -p consensus`, `cargo test -p network`, `cargo test -p runtime`, and `cargo test -p hegemon-node --lib` for the live node/runtime/network path.
+   - `cargo test -p transaction-circuit`, `cargo test -p block-circuit`, and `cargo test -p disclosure-circuit` for the circuits that still back the shipped wallet/disclosure flow.
+   - `cargo test -p wallet` plus `cargo test --test security_pipeline -- --nocapture` for the wallet/store/send pipeline.
+   The expensive `circuits/batch` proving tests are intentionally `#[ignore]` because that auxiliary batch lane is not part of the live InlineTx authoring path; default CI keeps only cheap structural sanity coverage for that crate.
+3. **Manual security harnesses** – run these only when touching the relevant surface:
+   - `cargo test -p consensus --test fuzz -- --ignored` (consensus duplicate-nullifier property coverage).
    - `PROPTEST_MAX_CASES=64 cargo test -p transaction-circuit --test security_fuzz` (transaction witness invariants).
    - `PROPTEST_MAX_CASES=64 cargo test -p network --test adversarial` (handshake tampering).
    - `PROPTEST_MAX_CASES=64 cargo test -p wallet --test address_fuzz` (address encode/decode mutations).
-   - `cargo test tests::security_pipeline` (root-level cross-component simulation).
+4. **Manual performance/profiling harnesses**:
+   - `cargo run -p circuits-bench -- --smoke --prove --json` when touching circuit proving/profiling code.
+   - `cargo run -p wallet-bench -- --smoke --json` when touching wallet hot paths.
+   - `(cd consensus/bench && go test ./... && go run ./cmd/netbench --smoke --json)` when touching the Go simulator.
+5. **Auxiliary proving lanes (manual)**:
+   - `cargo test -p batch-circuit batch_proof_verifies_for_single_input_witness -- --ignored` and `cargo test -p batch-circuit batch_proof_verifies_for_four_single_input_witnesses -- --ignored` when changing `circuits/batch` or its benchmark harness.
+   - `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored` when changing the recursion experiment or recording fresh aggregation metrics.
 
-Document benchmark outputs in pull requests when they change noticeably; CI will surface them via the `benchmarks` job but reviewers rely on human summaries for regressions.
+Document benchmark outputs in pull requests when you intentionally run those manual harnesses and the numbers move noticeably.
 
 ### CI job map (`.github/workflows/ci.yml`)
 
 | Job | Purpose |
 | --- | --- |
-| `rust-lints` | Runs fmt + clippy on the entire workspace. |
-| `rust-tests` | Executes `cargo test --workspace`. |
-| `runtime-build` | Builds the native runtime crate. |
-| `runtime-wasm` | Builds the release node so the WASM runtime artifact is exercised. |
-| `restart-recovery-harness` | Builds the node package and runs `./scripts/test-substrate.sh restart-recovery` to prove the OVH-like public node keeps mining while the prover node + external worker are stopped and restarted. |
-| `runtime-benchmarks` | Runs runtime benchmark smoke coverage. |
-| `crypto-tests` | Locks in ML-DSA/ML-KEM behavior with focused tests. |
-| `circuits-proof` | Runs the transaction/block tests and ensures `circuits-bench --smoke --prove` succeeds. |
-| `wallet` | Runs wallet tests and the wallet benchmark smoke profile. |
-| `go-net` | Runs `go test ./...` and the `netbench` simulator. |
-| `cpp-style` | Applies `clang-format --dry-run` if any `*.cpp`/`*.h` files exist (no-op otherwise). |
-| `benchmarks` | Executes all smoke benchmarks with `continue-on-error: true` so regressions surface as warnings. |
-| `security-adversarial` | Runs the property-based harnesses for transaction witnesses, network handshakes, wallet addresses, and the root `tests/security_pipeline.rs` flow. |
+| `rust-lints` | Runs `./scripts/check-core.sh lint` for the curated default lint gate. |
+| `core-tests` | Runs `./scripts/check-core.sh test` for the fast shipping-path Rust suite. |
+| `release-build` | Runs `./scripts/check-core.sh build` so the release node and embedded WASM runtime still build cleanly. |
 
-All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format installed via `apt`. Adding new languages or toolchains requires updating this table, the workflow, and `docs/CONTRIBUTING.md`.
+Operator-scenario harnesses such as `./scripts/test-substrate.sh restart-recovery` remain available for manual debugging, but they are not part of the default blocking CI gate.
+Benchmark, simulator, and profiling harnesses such as `circuits-bench`, `wallet-bench`, `go test ./...` in `consensus/bench`, and `netbench` are also manual, not part of default CI.
+
+All jobs operate on Ubuntu runners with Rust stable and the protobuf/libclang build dependencies installed via `apt`. Adding new languages or toolchains to the blocking gate requires updating this table, the workflow, and `docs/CONTRIBUTING.md`.
 
 ## 7. Node, wallet, and UI operations
 

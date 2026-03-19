@@ -113,13 +113,13 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    DEFAULT_DIFFICULTY_BITS, FullBackend, HegemonFullClient, HegemonPowBlockImport,
-    HegemonSelectChain, HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
-    StateExecutionResult,
+    FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
+    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
+    DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
-    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig, create_production_mining_worker,
-    create_production_mining_worker_mock_broadcast,
+    create_production_mining_worker, create_production_mining_worker_mock_broadcast,
+    ChainStateProvider, MinedBlockRecord, MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -142,32 +142,32 @@ use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{
-    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST, ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal,
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
     encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
     merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
     merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
+    ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
 };
 use crypto::hashes::blake3_384;
 use futures::StreamExt;
-use hyper::http::{Method, header};
+use hyper::http::{header, Method};
 use network::{
     BootstrapNode, PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent,
-    PqNetworkHandle,
-    PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
+    PqNetworkHandle, PqPeerIdentity, PqTransportConfig, SubstratePqTransport,
+    SubstratePqTransportConfig,
 };
 use pallet_shielded_pool::family::ShieldedFamilyAction;
 use pallet_shielded_pool::family::{
-    ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE, ACTION_SUBMIT_CANDIDATE_ARTIFACT,
-    EnableAggregationModeArgs, MintCoinbaseArgs, SubmitCandidateArtifactArgs,
-    build_envelope as build_shielded_kernel_envelope,
+    build_envelope as build_shielded_kernel_envelope, EnableAggregationModeArgs, MintCoinbaseArgs,
+    SubmitCandidateArtifactArgs, ACTION_ENABLE_AGGREGATION_MODE, ACTION_MINT_COINBASE,
+    ACTION_SUBMIT_CANDIDATE_ARTIFACT,
 };
 #[cfg(test)]
-use pallet_shielded_pool::family::{ACTION_SHIELDED_TRANSFER_SIDECAR, ShieldedTransferSidecarArgs};
-use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE, FeeParameters};
-use rand::{RngCore, rngs::OsRng};
-use sc_client_api::{BlockBackend, BlockchainEvents, backend::Finalizer};
-use sc_service::{Configuration, KeystoreContainer, TaskManager, error::Error as ServiceError};
+use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
+use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
+use rand::{rngs::OsRng, RngCore};
+use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
+use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ApiExt, Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
@@ -179,11 +179,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 use wallet::address::ShieldedAddress;
@@ -194,12 +194,12 @@ use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
-use transaction_circuit::hashing_pq::{Felt, bytes48_to_felts, ciphertext_hash_bytes};
+use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{
     BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs,
 };
-use tx_proof_manifest::{TxProofManifestPublicInputs, build_transaction_proof_manifest};
+use tx_proof_manifest::{build_transaction_proof_manifest, TxProofManifestPublicInputs};
 
 fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
     let address = std::env::var("HEGEMON_MINER_ADDRESS").ok()?;
@@ -1994,7 +1994,11 @@ const DA_MAX_SHARDS: usize = 255;
 
 fn da_data_shards_for_len(len: usize, chunk_size: usize) -> usize {
     let shards = len.div_ceil(chunk_size);
-    if shards == 0 { 1 } else { shards }
+    if shards == 0 {
+        1
+    } else {
+        shards
+    }
 }
 
 fn da_parity_shards_for_data(data_shards: usize) -> usize {
@@ -5677,8 +5681,8 @@ pub fn wire_block_builder_api(
 use crate::substrate::mining_worker::BlockTemplate;
 use sc_consensus::{BlockImport, BlockImportParams, ImportResult};
 use sp_consensus::BlockOrigin;
-use sp_runtime::DigestItem;
 use sp_runtime::generic::Digest;
+use sp_runtime::DigestItem;
 
 fn finalize_imported_block(
     client: &Arc<HegemonFullClient>,
@@ -5713,7 +5717,7 @@ fn configure_pow_import_params(
     import_params.post_hash = Some(post_hash);
 
     // Leave fork_choice unset so PowBlockImport applies cumulative-difficulty selection.
-    use sc_consensus_pow::{INTERMEDIATE_KEY, PowIntermediate};
+    use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
     let intermediate = PowIntermediate::<sp_core::U256> { difficulty: None };
     import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
 }
@@ -6235,15 +6239,16 @@ impl PqServiceConfig {
                     if addr.is_empty() {
                         continue;
                     }
-                    let normalized_seed = if let Ok(sock_addr) = addr.parse::<std::net::SocketAddr>() {
-                        sock_addr.to_string()
-                    } else if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
-                        std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT).to_string()
-                    } else if addr.contains(':') {
-                        addr.to_string()
-                    } else {
-                        format!("{addr}:{DEFAULT_P2P_PORT}")
-                    };
+                    let normalized_seed =
+                        if let Ok(sock_addr) = addr.parse::<std::net::SocketAddr>() {
+                            sock_addr.to_string()
+                        } else if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
+                            std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT).to_string()
+                        } else if addr.contains(':') {
+                            addr.to_string()
+                        } else {
+                            format!("{addr}:{DEFAULT_P2P_PORT}")
+                        };
                     // First try direct parse (for IP:port)
                     if let Ok(sock_addr) = addr.parse::<std::net::SocketAddr>() {
                         nodes.push(BootstrapNode {
@@ -6911,17 +6916,17 @@ pub fn new_partial_with_client(
     let pq_service_config = PqServiceConfig::from_config(config);
 
     // Initialize PQ network configuration
-        let pq_network_config = PqNetworkConfig {
-            listen_addresses: vec![format!(
-                "/ip4/{}/tcp/{}",
-                pq_service_config.listen_addr.ip(),
-                pq_service_config.listen_addr.port()
-            )],
-            bootstrap_nodes: pq_service_config
-                .bootstrap_nodes
-                .iter()
-                .map(|node| node.seed.clone())
-                .collect(),
+    let pq_network_config = PqNetworkConfig {
+        listen_addresses: vec![format!(
+            "/ip4/{}/tcp/{}",
+            pq_service_config.listen_addr.ip(),
+            pq_service_config.listen_addr.port()
+        )],
+        bootstrap_nodes: pq_service_config
+            .bootstrap_nodes
+            .iter()
+            .map(|node| node.seed.clone())
+            .collect(),
         enable_pq_transport: true,
         max_peers: pq_service_config.max_peers as u32,
         connection_timeout_secs: 30,
@@ -8171,7 +8176,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     .spawn_handle()
                     .spawn("chain-sync-tick", Some("sync"), async move {
                         use crate::substrate::network_bridge::{
-                            SYNC_PROTOCOL, SyncMessage, SyncRequestEnvelope,
+                            SyncMessage, SyncRequestEnvelope, SYNC_PROTOCOL,
                         };
 
                         let mut interval =
@@ -9804,7 +9809,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 Some("network"),
                 async move {
                     use crate::substrate::network_bridge::{
-                        ARTIFACTS_PROTOCOL, ArtifactProtocolMessage,
+                        ArtifactProtocolMessage, ARTIFACTS_PROTOCOL,
                     };
                     use std::collections::HashSet;
 
@@ -10117,10 +10122,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
-        use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
         use sc_rpc::state::{ChildStateApiServer, StateApiServer};
         use sc_rpc::system::{System, SystemApiServer};
+        use sc_rpc::SubscriptionTaskExecutor;
         use sc_utils::mpsc::tracing_unbounded;
 
         let mut module = RpcModule::new(());
@@ -11170,13 +11175,10 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(
-        &crate::substrate::mining_worker::BlockTemplate,
-        &Sha256dSeal,
-    ) -> Result<H256, String>
-    + Send
-    + Sync
-    + 'static {
+    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Sha256dSeal) -> Result<H256, String>
+           + Send
+           + Sync
+           + 'static {
         let stats = self.stats.clone();
         let best_number = self.best_number.clone();
         let best_hash = self.best_hash.clone();
@@ -11273,9 +11275,9 @@ pub fn wire_import_tracker(
 mod import_tests {
     use super::*;
     use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
-    use sp_runtime::DigestItem;
     use sp_runtime::generic::Digest;
     use sp_runtime::traits::Header as HeaderT;
+    use sp_runtime::DigestItem;
 
     #[test]
     fn test_full_block_import_config_default() {

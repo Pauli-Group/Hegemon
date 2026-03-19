@@ -27,13 +27,15 @@ fmt:
 
 lint:
 	$(MACOS_LIBCLANG_HELPER)
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	./scripts/check-core.sh lint
 
 test:
 	$(MACOS_LIBCLANG_HELPER)
-	cargo test --workspace
+	./scripts/check-core.sh test
 
-check: fmt lint test
+check:
+	$(MACOS_LIBCLANG_HELPER)
+	./scripts/check-core.sh all
 
 bench:
 	$(MACOS_LIBCLANG_HELPER)

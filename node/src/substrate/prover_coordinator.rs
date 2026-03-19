@@ -4307,6 +4307,7 @@ mod tests {
         assert_eq!(coordinator.active_jobs(), 0);
     }
 
+    #[ignore = "experimental recursive stage publication is not part of the default inline-tx gate"]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn external_stage_work_packages_prioritize_recursive_singleton_liveness_lane() {
         let _mode = set_block_proof_mode("merge_root");

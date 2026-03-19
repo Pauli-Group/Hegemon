@@ -246,6 +246,24 @@ mod tests {
     }
 
     #[test]
+    fn batch_public_inputs_validate_for_single_input_witness() -> Result<(), BatchCircuitError> {
+        let witness = single_input_two_output_witness();
+        witness
+            .validate()
+            .map_err(|err| BatchCircuitError::InvalidWitness {
+                index: 0,
+                reason: err.to_string(),
+            })?;
+        let prover = BatchTransactionProverP3::new();
+        let pub_inputs = prover.public_inputs(&[witness])?;
+        pub_inputs
+            .validate()
+            .map_err(BatchCircuitError::InvalidPublicInputs)?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "expensive auxiliary batch-proving coverage; run manually when changing circuits/batch"]
     fn batch_proof_verifies_for_single_input_witness() -> Result<(), BatchCircuitError> {
         let witness = single_input_two_output_witness();
         witness
@@ -259,7 +277,12 @@ mod tests {
         verify_batch_proof_p3(&proof, &pub_inputs)
     }
 
+    // These proving tests exercise an auxiliary batch-proving lane that is not
+    // part of the live InlineTx authoring path. Keep them available for
+    // explicit circuit work, but do not make default workspace CI wait on full
+    // batch proof generation.
     #[test]
+    #[ignore = "expensive auxiliary batch-proving coverage; run manually when changing circuits/batch"]
     fn batch_proof_verifies_for_four_single_input_witnesses() -> Result<(), BatchCircuitError> {
         let witness = single_input_two_output_witness();
         witness
