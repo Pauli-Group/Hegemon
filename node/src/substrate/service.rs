@@ -166,7 +166,7 @@ use pallet_shielded_pool::family::{
 use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
-use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
+use sc_client_api::{BlockBackend, BlockchainEvents};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
@@ -216,7 +216,7 @@ fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
 use jsonrpsee::server::ServerBuilder;
 
 // Import sync service
-use crate::substrate::sync::ChainSyncService;
+use crate::substrate::sync::{ChainSyncService, DownloadedBlock};
 
 // =============================================================================
 // Storage Changes Cache
@@ -5684,28 +5684,20 @@ use sp_consensus::BlockOrigin;
 use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
 
-fn finalize_imported_block(
-    client: &Arc<HegemonFullClient>,
-    block_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
-    block_number: u64,
-    source: &'static str,
-) {
-    if let Err(err) = client.finalize_block(block_hash, None, true) {
-        tracing::warn!(
-            block_number,
-            block_hash = %hex::encode(block_hash.as_bytes()),
-            source,
-            error = ?err,
-            "Failed to finalize imported block"
-        );
-    } else {
-        tracing::debug!(
-            block_number,
-            block_hash = %hex::encode(block_hash.as_bytes()),
-            source,
-            "Finalized imported block"
-        );
-    }
+fn is_retryable_sync_parent_state_error(error: &str) -> bool {
+    error.contains("UnknownBlock")
+}
+
+fn collect_deferred_downloaded_tail<I>(
+    current: DownloadedBlock,
+    remaining: I,
+) -> Vec<DownloadedBlock>
+where
+    I: IntoIterator<Item = DownloadedBlock>,
+{
+    let mut deferred = vec![current];
+    deferred.extend(remaining);
+    deferred
 }
 
 fn configure_pow_import_params(
@@ -5907,6 +5899,9 @@ fn wire_pow_block_import(
 
         // Import through PowBlockImport so local mining follows the same seal verification and
         // cumulative-difficulty fork-choice path as network imports.
+        //
+        // Do not explicitly finalize PoW imports here. Immediate finalization pins the current
+        // tip as irreversible and breaks ordinary longest-chain reorg recovery.
         let import_result = futures::executor::block_on(async {
             let import = pow_block_import.clone();
             import.import_block(import_params).await
@@ -5914,7 +5909,6 @@ fn wire_pow_block_import(
 
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
-                finalize_imported_block(&block_import, block_hash, template.number, "local_mining");
                 let mut store = da_chunk_store.lock();
                 let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
@@ -6025,12 +6019,6 @@ fn wire_pow_block_import(
                 Ok(block_hash)
             }
             Ok(ImportResult::AlreadyInChain) => {
-                finalize_imported_block(
-                    &block_import,
-                    block_hash,
-                    template.number,
-                    "local_already_in_chain",
-                );
                 let mut store = da_chunk_store.lock();
                 let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
@@ -8430,8 +8418,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                             let mut downloaded_blocks = downloaded_blocks;
                             downloaded_blocks.sort_by_key(|block| block.number);
+                            let mut downloaded_iter = downloaded_blocks.into_iter();
+                            let mut deferred_downloads: Vec<DownloadedBlock> = Vec::new();
 
-                            for downloaded in downloaded_blocks {
+                            while let Some(downloaded) = downloaded_iter.next() {
                                 // Decode the header
                                 let mut header = match runtime::Header::decode(&mut &downloaded.header[..]) {
                                     Ok(h) => h,
@@ -8461,13 +8451,18 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 match block_import_client.header(parent_hash) {
                                     Ok(Some(_)) => {}
                                     Ok(None) => {
+                                        deferred_downloads = collect_deferred_downloaded_tail(
+                                            downloaded,
+                                            downloaded_iter.by_ref(),
+                                        );
                                         tracing::debug!(
-                                            peer = %hex::encode(&downloaded.from_peer),
+                                            peer = %hex::encode(&deferred_downloads[0].from_peer),
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
-                                            "Dropping synced block with unknown parent; sync service will re-request canonical range"
+                                            deferred = deferred_downloads.len(),
+                                            "Deferring synced block tail until parent header becomes visible"
                                         );
-                                        continue;
+                                        break;
                                     }
                                     Err(err) => {
                                         tracing::warn!(
@@ -8631,15 +8626,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         ) {
                                             Ok(policy) => policy,
                                             Err(err) => {
-                                                if err.contains("UnknownBlock") {
+                                                if is_retryable_sync_parent_state_error(&err) {
+                                                    deferred_downloads = collect_deferred_downloaded_tail(
+                                                        downloaded,
+                                                        downloaded_iter.by_ref(),
+                                                    );
                                                     tracing::debug!(
-                                                        peer = %hex::encode(&downloaded.from_peer),
+                                                        peer = %hex::encode(&deferred_downloads[0].from_peer),
                                                         block_number,
                                                         parent = %hex::encode(parent_hash.as_bytes()),
                                                         error = %err,
-                                                        "Dropping synced block (parent state not ready for proof availability policy)"
+                                                        deferred = deferred_downloads.len(),
+                                                        "Deferring synced block tail until parent state is ready for proof availability policy"
                                                     );
-                                                    continue;
+                                                    break;
                                                 }
                                                 tracing::warn!(
                                                     peer = %hex::encode(&downloaded.from_peer),
@@ -8682,15 +8682,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
-                                            if err.contains("UnknownBlock") {
+                                            if is_retryable_sync_parent_state_error(&err) {
+                                                deferred_downloads = collect_deferred_downloaded_tail(
+                                                    downloaded,
+                                                    downloaded_iter.by_ref(),
+                                                );
                                                 tracing::debug!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    peer = %hex::encode(&deferred_downloads[0].from_peer),
                                                     block_number,
                                                     parent = %hex::encode(parent_hash.as_bytes()),
                                                     error = %err,
-                                                    "Dropping synced block (parent state not ready)"
+                                                    deferred = deferred_downloads.len(),
+                                                    "Deferring synced block tail until parent state is ready"
                                                 );
-                                                continue;
+                                                break;
                                             }
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
@@ -8754,12 +8759,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_initial_sync",
-                                        );
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
                                         {
@@ -8854,12 +8853,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_initial_sync_already_in_chain",
-                                        );
                                         // Treat AlreadyInChain as progress for the sync cursor, so a node that
                                         // reconnects after mining on a fork can still advance without stalling.
                                         {
@@ -8946,18 +8939,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::UnknownParent) => {
+                                        deferred_downloads = collect_deferred_downloaded_tail(
+                                            downloaded,
+                                            downloaded_iter.by_ref(),
+                                        );
                                         tracing::debug!(
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
-                                            "Synced block has unknown parent - out of order?"
+                                            deferred = deferred_downloads.len(),
+                                            "Deferring synced block tail until parent import completes"
                                         );
+                                        break;
                                     }
                                     Ok(sc_consensus::ImportResult::MissingState) => {
-                                        blocks_failed += 1;
+                                        deferred_downloads = collect_deferred_downloaded_tail(
+                                            downloaded,
+                                            downloaded_iter.by_ref(),
+                                        );
                                         tracing::warn!(
                                             block_number,
-                                            "Missing state for synced block parent"
+                                            deferred = deferred_downloads.len(),
+                                            "Deferring synced block tail until parent state becomes available"
                                         );
+                                        break;
                                     }
                                     Err(e) => {
                                         blocks_failed += 1;
@@ -8969,6 +8973,23 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                 }
+                            }
+
+                            if !deferred_downloads.is_empty() {
+                                let deferred_count = deferred_downloads.len();
+                                let first_number = deferred_downloads.first().map(|block| block.number).unwrap_or(0);
+                                let last_number = deferred_downloads
+                                    .last()
+                                    .map(|block| block.number)
+                                    .unwrap_or(first_number);
+                                let mut sync = sync_service_for_import.lock().await;
+                                sync.requeue_downloaded(deferred_downloads);
+                                tracing::info!(
+                                    deferred = deferred_count,
+                                    first_number,
+                                    last_number,
+                                    "Deferred synced block tail requeued for retry"
+                                );
                             }
 
                             // ============================================================
@@ -9316,12 +9337,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_broadcast",
-                                        );
                                         blocks_imported += 1;
                                         let mut store = da_chunk_store_for_import.lock();
                                         let mut ciphertexts = if let Some(build) = da_build.take() {
@@ -9397,12 +9412,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_broadcast_already_in_chain",
-                                        );
                                         let mut store = da_chunk_store_for_import.lock();
                                         let mut ciphertexts = if let Some(build) = da_build.take() {
                                             let da_root = build.encoding.root();
@@ -11389,5 +11398,46 @@ mod import_tests {
         );
         assert_eq!(import_params.post_hash, Some(post_hash));
         assert_eq!(import_params.post_digests.len(), 1);
+    }
+
+    #[test]
+    fn test_retryable_sync_parent_state_error_matches_unknown_block() {
+        assert!(is_retryable_sync_parent_state_error(
+            "UnknownBlock: parent state not ready"
+        ));
+        assert!(!is_retryable_sync_parent_state_error(
+            "Proof verification failed"
+        ));
+    }
+
+    #[test]
+    fn test_collect_deferred_downloaded_tail_preserves_order() {
+        let current = DownloadedBlock {
+            number: 10,
+            hash: [0x10; 32],
+            header: vec![0x10],
+            body: vec![vec![0x10]],
+            from_peer: [0x10; 32],
+        };
+        let remaining = vec![
+            DownloadedBlock {
+                number: 11,
+                hash: [0x11; 32],
+                header: vec![0x11],
+                body: vec![vec![0x11]],
+                from_peer: [0x11; 32],
+            },
+            DownloadedBlock {
+                number: 12,
+                hash: [0x12; 32],
+                header: vec![0x12],
+                body: vec![vec![0x12]],
+                from_peer: [0x12; 32],
+            },
+        ];
+
+        let deferred = collect_deferred_downloaded_tail(current, remaining);
+        let numbers: Vec<u64> = deferred.into_iter().map(|block| block.number).collect();
+        assert_eq!(numbers, vec![10, 11, 12]);
     }
 }
