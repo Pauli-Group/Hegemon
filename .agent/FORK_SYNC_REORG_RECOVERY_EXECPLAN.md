@@ -20,6 +20,12 @@ The user-visible proof is a regression test that reproduces the sibling-fork sce
 - [x] (2026-03-19 23:34Z) Removed explicit post-import finalization for PoW blocks so longest-chain reorgs remain possible after same-height sibling races.
 - [x] (2026-03-19 23:34Z) Added automated regression coverage for a same-height sibling race in `node/src/substrate/sync.rs` plus helper coverage for deferred download requeueing in `node/src/substrate/service.rs`.
 - [x] (2026-03-19 23:35Z) Ran focused and broad `hegemon-node` library tests and recorded the passing evidence below.
+- [x] (2026-03-20 00:37Z) Confirmed the remaining live failure was persisted finalized-head state from the pre-fix bug: local `chain_getFinalizedHead` was still the losing `1199` sibling while peers had finalized far ahead on the winning branch.
+- [x] (2026-03-20 00:37Z) Added runtime recovery so sync import treats `NotInFinalizedChain` as a poisoned-finality case, reverts one finalized block through the backend, resets the sync cursor to the new local best, and retries the deferred branch.
+- [x] (2026-03-20 00:37Z) Rebuilt the release binary after the poisoned-finality recovery patch.
+- [x] (2026-03-20 00:59Z) Confirmed the next live wedge was a sync/import deadlock: deferred blocks `1200..1214` stayed in the download queue while `tick()` refused to request the missing peer `1199`.
+- [x] (2026-03-20 00:59Z) Added cursor rewind on missing-parent deferrals plus gap-fetch behavior so sync can request the missing ancestor height even when higher deferred blocks remain queued.
+- [x] (2026-03-20 01:08Z) Re-ran focused sync/service tests, the full `hegemon-node` test suite, and rebuilt the release binary with the ancestor-gap recovery patch.
 
 ## Surprises & Discoveries
 
@@ -37,6 +43,12 @@ The user-visible proof is a regression test that reproduces the sibling-fork sce
 
 - Observation: Immediate finalization is hostile to ordinary PoW fork choice because finalization marks the current tip as irreversible before the node has any finality mechanism or canonicality proof beyond cumulative work.
   Evidence: the production failure signature was a node pinned to the losing sibling at height `1199` even though it knew about the longer branch and Substrate PoW import was still being used.
+
+- Observation: Removing explicit finalization fixed future reorg safety, but an already-poisoned database still cannot follow the winning branch because Substrate refuses to import competing blocks at or below the stale finalized height.
+  Evidence: after restarting on the patched binary, the laptop still reported `chain_getFinalizedHead = 0x32173a2c...` (local losing `1199`) and sync import failed with `Potential long-range attack: block not in finalized chain.`
+
+- Observation: After fixing poisoned finality, the node could still deadlock if the import loop requeued downloaded blocks above the fork point while the sync tick refused to send any new request until the queue emptied.
+  Evidence: the live console repeated `Deferred synced block tail requeued for retry deferred=15 first_number=1200 last_number=1214` while local height remained `1199` and the peer stayed at `1290`; `chain_getHeader(0xed3cc8dc...)` on the laptop returned `null`, proving the peer's sibling `1199` had never been imported.
 
 ## Decision Log
 
@@ -56,6 +68,14 @@ The user-visible proof is a regression test that reproduces the sibling-fork sce
   Rationale: During sibling-fork recovery the parent header or parent state may become visible only after earlier imports complete. Preserving the tail of the downloaded range is safer than discarding it and hoping later polling reconstructs the exact branch.
   Date/Author: 2026-03-19 / Codex
 
+- Decision: When sync import hits `NotInFinalizedChain` on this PoW node, perform a one-block unsafe backend revert and retry instead of leaving the operator wedged on poisoned finality.
+  Rationale: This error means historical finality metadata is blocking the reorg. Comparable longest-chain nodes recover by walking back the stale branch to the common ancestor; on Substrate this requires an explicit backend revert because finalized metadata survives restart.
+  Date/Author: 2026-03-20 / Codex
+
+- Decision: When import defers a downloaded block because its parent is missing locally, rewind the sync cursor to `child_number - 2` and let `tick()` fetch the missing ancestor even if higher deferred blocks are still buffered.
+  Rationale: Requeueing `1200+` without rewinding leaves the downloader asking for nothing, because the queue is non-empty and the missing peer `1199` never arrives. Comparable chain sync must keep ancestor discovery moving while preserving the deferred tail.
+  Date/Author: 2026-03-20 / Codex
+
 ## Outcomes & Retrospective
 
 Implementation completed for the two failure points that matched the production signature.
@@ -64,7 +84,11 @@ First, the service-layer import path no longer explicitly finalizes PoW blocks a
 
 Second, the downloaded sync import loop now preserves and requeues the current block plus the remaining downloaded tail whenever the parent header or parent state is temporarily unavailable. That keeps the sync cursor moving through the winning branch instead of silently dropping blocks and waiting for operator intervention.
 
-The new regression test in `node/src/substrate/sync.rs` proves the sync state machine backtracks from a losing local `1199` sibling to the common ancestor and then requests `1199` on the competing branch. The service-side helper tests prove deferred download tails are preserved in order and that `UnknownBlock`-style parent-state failures are treated as retryable.
+Third, the node now recovers from already-poisoned finalized metadata left behind by the old bug. If sync import encounters `NotInFinalizedChain`, the service reverts one finalized block through the backend, resets the sync cursor to the new local best, and retries the deferred branch. This lets an existing stuck node walk itself back to the common ancestor instead of requiring a wipe.
+
+Fourth, the sync/import boundary now breaks the deferred-tail deadlock discovered in live validation. When import sees that block `N` is missing its parent locally, it rewinds the sync cursor to `N-2`; `tick()` is now allowed to request `N-1` even if the import queue already contains `N..`. This preserves the deferred tail without blocking ancestor fetches.
+
+The new regression tests in `node/src/substrate/sync.rs` prove both behaviors: the sync state machine backtracks from a losing local `1199` sibling to the common ancestor and then requests `1199` on the competing branch, and a queued deferred block at `1200` does not prevent the node from requesting the missing `1199`. The service-side helper tests continue to prove deferred download tails are preserved in order and that `UnknownBlock`-style parent-state failures are treated as retryable.
 
 The remaining gap is live multi-node validation against a running fork race after redeploy. Unit and library tests are green, but I have not yet re-run the original laptop-versus-OVH scenario end to end with the patched binary.
 
@@ -144,7 +168,31 @@ Observed validation on 2026-03-19:
 5. `cargo test -p hegemon-node`
    Result: package tests passed; library tests, bin test harnesses, and doc-tests all completed without failures.
 6. `make node`
-   Result: release `hegemon-node` rebuilt successfully with the patch in `target/release/hegemon-node`.
+   Result: release `hegemon-node` rebuilt successfully with the first reorg-recovery patch in `target/release/hegemon-node`.
+7. `cargo test -p hegemon-node --lib substrate::sync::tests::test_on_local_revert_resets_downloading_cursor_to_local_best -- --exact`
+   Result: passed.
+8. `cargo test -p hegemon-node --lib substrate::service::import_tests::test_finalized_chain_conflict_error_matches_not_in_finalized_chain -- --exact`
+   Result: passed.
+9. `cargo test -p hegemon-node --lib substrate::sync::tests::`
+   Result: 6 passed, 0 failed.
+10. `cargo test -p hegemon-node --lib substrate::service::import_tests::`
+    Result: 10 passed, 0 failed.
+11. `cargo test -p hegemon-node`
+    Result: 193 passed, 0 failed, 5 ignored after adding poisoned-finality recovery.
+12. `make node`
+    Result: release `hegemon-node` rebuilt successfully with the poisoned-finality recovery patch in `target/release/hegemon-node`.
+13. `cargo test -p hegemon-node --lib substrate::sync::tests::test_on_downloaded_parent_missing_rewinds_cursor_to_missing_parent_height -- --exact`
+    Result: passed.
+14. `cargo test -p hegemon-node --lib substrate::sync::tests::test_tick_requests_missing_height_even_with_deferred_queue -- --exact`
+    Result: passed.
+15. `cargo test -p hegemon-node --lib substrate::sync::tests::`
+    Result: 8 passed, 0 failed.
+16. `cargo test -p hegemon-node --lib substrate::service::import_tests::`
+    Result: 10 passed, 0 failed.
+17. `cargo test -p hegemon-node`
+    Result: 195 passed, 0 failed, 5 ignored after adding ancestor-gap recovery.
+18. `make node`
+    Result: release `hegemon-node` rebuilt successfully with the ancestor-gap recovery patch in `target/release/hegemon-node`.
 
 If a manual proof is needed, start two miners on the same chainspec, force a sibling block at the same height, extend one branch, and observe the lagging node’s `hegemon_consensusStatus.height` rise beyond the fork height while the original process remains alive.
 

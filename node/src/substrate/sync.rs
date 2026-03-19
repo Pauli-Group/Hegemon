@@ -525,6 +525,19 @@ where
         );
     }
 
+    fn rewind_download_cursor_to_height(
+        &self,
+        mut height: u64,
+        mut hash: [u8; 32],
+        target_height: u64,
+    ) -> Option<(u64, [u8; 32])> {
+        while height > target_height {
+            hash = self.parent_of_hash(hash)?;
+            height = height.saturating_sub(1);
+        }
+        Some((height, hash))
+    }
+
     /// Get our best block number
     pub fn best_number(&self) -> u64 {
         let info = self.client.info();
@@ -1565,6 +1578,124 @@ where
         }
     }
 
+    /// Reset the sync cursor to our local best block after an unsafe backend revert.
+    ///
+    /// This is used to recover from a poisoned finalized head on a losing PoW fork:
+    /// once the backend rolls back the conflicting finalized block, sync should resume
+    /// from the new local best rather than the stale pre-revert cursor.
+    pub fn on_local_revert(&mut self) {
+        let our_best = self.best_number();
+        let best_hash = self.best_hash_bytes();
+        let mut transition_to_synced = false;
+
+        match &mut self.state {
+            SyncState::Downloading {
+                target_height,
+                current_height,
+                current_hash,
+                requested_height,
+                request_pending,
+                last_request_time,
+                ..
+            } => {
+                *current_height = our_best;
+                *current_hash = best_hash;
+                *requested_height = our_best;
+                *request_pending = false;
+                *last_request_time = None;
+
+                if our_best >= *target_height {
+                    transition_to_synced = true;
+                }
+
+                tracing::info!(
+                    our_best,
+                    target_height = *target_height,
+                    "Reset sync cursor to local best after backend revert"
+                );
+            }
+            SyncState::TipPolling {
+                current_height,
+                current_hash,
+                request_pending,
+                last_request_time,
+                ..
+            } => {
+                *current_height = our_best;
+                *current_hash = best_hash;
+                *request_pending = false;
+                *last_request_time = None;
+                tracing::info!(
+                    our_best,
+                    "Reset tip-poll cursor to local best after backend revert"
+                );
+            }
+            SyncState::Idle | SyncState::ProbingCompatibility { .. } | SyncState::Synced => {}
+        }
+
+        if transition_to_synced {
+            self.state = SyncState::Synced;
+        }
+    }
+
+    /// Rewind the sync cursor when import discovers the next downloaded block is missing
+    /// its parent locally.
+    ///
+    /// This happens when we buffered blocks from a competing branch ahead of the fork point.
+    /// The next network request must fetch the missing parent height, even if higher-numbered
+    /// deferred blocks are still sitting in the import queue.
+    pub fn on_downloaded_parent_missing(&mut self, child_number: u64) {
+        let target_height = child_number.saturating_sub(2);
+        let snapshot = match &self.state {
+            SyncState::Downloading {
+                current_height,
+                current_hash,
+                ..
+            } => Some((*current_height, *current_hash)),
+            _ => None,
+        };
+
+        let Some((start_height, start_hash)) = snapshot else {
+            return;
+        };
+
+        let Some((rewound_height, rewound_hash)) =
+            self.rewind_download_cursor_to_height(start_height, start_hash, target_height)
+        else {
+            tracing::warn!(
+                child_number,
+                start_height,
+                hash = %hex::encode(start_hash),
+                "Failed to rewind sync cursor for missing parent; resetting to idle"
+            );
+            self.state = SyncState::Idle;
+            return;
+        };
+
+        if let SyncState::Downloading {
+            current_height,
+            current_hash,
+            requested_height,
+            request_pending,
+            last_request_time,
+            ..
+        } = &mut self.state
+        {
+            *current_height = rewound_height;
+            *current_hash = rewound_hash;
+            *requested_height = rewound_height;
+            *request_pending = false;
+            *last_request_time = None;
+
+            tracing::info!(
+                child_number,
+                start_height,
+                rewound_height,
+                "Rewound sync cursor to refetch missing parent branch"
+            );
+        }
+    }
+
     /// Create a sync request to send to a peer
     pub fn create_headers_request(&mut self, from_hash: [u8; 32], count: u32) -> SyncRequest {
         SyncRequest::BlockHeaders {
@@ -1912,14 +2043,24 @@ where
                     return None;
                 }
 
-                // Don't overwhelm - only request if queue has room
-                if !self.downloaded_blocks.is_empty() {
-                    tracing::trace!("Download queue not empty, waiting for imports");
-                    return None;
-                }
-
                 // Request the next batch of blocks
                 let next_height = current_height + 1;
+                if let Some(front) = self.downloaded_blocks.front() {
+                    if front.number <= next_height {
+                        tracing::trace!(
+                            queue_first = front.number,
+                            next_height,
+                            "Download queue already contains the next height, waiting for imports"
+                        );
+                        return None;
+                    }
+
+                    tracing::info!(
+                        queue_first = front.number,
+                        next_height,
+                        "Deferred queue starts above the missing height; fetching ancestor gap"
+                    );
+                }
                 tracing::info!(
                     peer = %hex::encode(peer),
                     next_height = next_height,
@@ -2360,6 +2501,148 @@ mod tests {
         let next = sync
             .tick()
             .expect("sync should request the sibling fork height");
+        assert_eq!(next.0, peer_id);
+        match next.2 {
+            SyncRequest::GetBlocks { start_height, .. } => assert_eq!(start_height, 1199),
+            other => panic!("expected GetBlocks request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_on_local_revert_resets_downloading_cursor_to_local_best() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let header_1198 = header_with_marker(1198u64, H256::repeat_byte(0x10), 0x20);
+        let hash_1198 = header_1198.hash();
+        let local_1199 = header_with_marker(1199u64, hash_1198, 0x30);
+        let local_1199_hash = local_1199.hash();
+
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![header_1198.clone(), local_1199.clone()],
+            hash_1198,
+            1198u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client);
+        let peer_id = [0x55u8; 32];
+
+        sync.state = SyncState::Downloading {
+            target_height: 1243,
+            peer: peer_id,
+            current_height: 1199,
+            current_hash: hash_bytes(local_1199_hash),
+            requested_height: 1215,
+            request_pending: true,
+            last_request_time: Some(Instant::now()),
+        };
+
+        sync.on_local_revert();
+
+        match &sync.state {
+            SyncState::Downloading {
+                current_height,
+                current_hash,
+                requested_height,
+                request_pending,
+                ..
+            } => {
+                assert_eq!(*current_height, 1198);
+                assert_eq!(*current_hash, hash_bytes(hash_1198));
+                assert_eq!(*requested_height, 1198);
+                assert!(!request_pending);
+            }
+            other => panic!("expected downloading state after local revert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_on_downloaded_parent_missing_rewinds_cursor_to_missing_parent_height() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let header_1198 = header_with_marker(1198u64, H256::repeat_byte(0x10), 0x20);
+        let hash_1198 = header_1198.hash();
+        let local_1199 = header_with_marker(1199u64, hash_1198, 0x30);
+        let local_1199_hash = local_1199.hash();
+
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![header_1198.clone(), local_1199.clone()],
+            local_1199_hash,
+            1199u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client);
+        let peer_id = [0x44u8; 32];
+
+        sync.state = SyncState::Downloading {
+            target_height: 1243,
+            peer: peer_id,
+            current_height: 1199,
+            current_hash: hash_bytes(local_1199_hash),
+            requested_height: 1215,
+            request_pending: true,
+            last_request_time: Some(Instant::now()),
+        };
+
+        sync.on_downloaded_parent_missing(1200);
+
+        match &sync.state {
+            SyncState::Downloading {
+                current_height,
+                current_hash,
+                requested_height,
+                request_pending,
+                ..
+            } => {
+                assert_eq!(*current_height, 1198);
+                assert_eq!(*current_hash, hash_bytes(hash_1198));
+                assert_eq!(*requested_height, 1198);
+                assert!(!request_pending);
+            }
+            other => {
+                panic!("expected downloading state after parent-missing rewind, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_tick_requests_missing_height_even_with_deferred_queue() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let header_1198 = header_with_marker(1198u64, H256::repeat_byte(0x10), 0x20);
+        let hash_1198 = header_1198.hash();
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![header_1198.clone()],
+            hash_1198,
+            1198u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client);
+        let peer_id = [0x99u8; 32];
+        sync.on_peer_connected(peer_id);
+        {
+            let peer = sync.peers.get_mut(&peer_id).expect("peer connected");
+            peer.compatibility = PeerCompatibility::Compatible;
+            peer.best_height = 1243;
+            peer.best_hash = [0x55; 32];
+        }
+
+        sync.state = SyncState::Downloading {
+            target_height: 1243,
+            peer: peer_id,
+            current_height: 1198,
+            current_hash: hash_bytes(hash_1198),
+            requested_height: 1198,
+            request_pending: false,
+            last_request_time: None,
+        };
+        sync.requeue_downloaded(vec![DownloadedBlock {
+            number: 1200,
+            hash: [0x77; 32],
+            header: vec![0x01],
+            body: Vec::new(),
+            from_peer: peer_id,
+        }]);
+
+        let next = sync
+            .tick()
+            .expect("sync should request the missing parent height");
         assert_eq!(next.0, peer_id);
         match next.2 {
             SyncRequest::GetBlocks { start_height, .. } => assert_eq!(start_height, 1199),

@@ -166,7 +166,7 @@ use pallet_shielded_pool::family::{
 use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
-use sc_client_api::{BlockBackend, BlockchainEvents};
+use sc_client_api::{Backend as ClientBackend, BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
@@ -5688,6 +5688,11 @@ fn is_retryable_sync_parent_state_error(error: &str) -> bool {
     error.contains("UnknownBlock")
 }
 
+fn is_finalized_chain_conflict_error(error: &str) -> bool {
+    error.contains("Potential long-range attack: block not in finalized chain")
+        || error.contains("NotInFinalizedChain")
+}
+
 fn collect_deferred_downloaded_tail<I>(
     current: DownloadedBlock,
     remaining: I,
@@ -7017,7 +7022,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create full Substrate client components
     let PartialComponentsWithClient {
         client,
-        backend: _backend,
+        backend,
         keystore_container: _keystore_container,
         transaction_pool,
         select_chain: _select_chain,
@@ -8365,6 +8370,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let block_import_bridge = Arc::clone(&network_bridge);
                 let block_import_pow = pow_block_import.clone();
                 let block_import_client = client.clone();
+                let backend_for_import = backend.clone();
                 let sync_service_for_import = Arc::clone(&sync_service);
                 let da_chunk_store_for_import = Arc::clone(&da_chunk_store);
                 let commitment_block_proof_store_for_import =
@@ -8420,6 +8426,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             downloaded_blocks.sort_by_key(|block| block.number);
                             let mut downloaded_iter = downloaded_blocks.into_iter();
                             let mut deferred_downloads: Vec<DownloadedBlock> = Vec::new();
+                            let mut reset_sync_after_revert = false;
+                            let mut rewind_sync_to_missing_parent: Option<u64> = None;
 
                             while let Some(downloaded) = downloaded_iter.next() {
                                 // Decode the header
@@ -8455,6 +8463,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             downloaded,
                                             downloaded_iter.by_ref(),
                                         );
+                                        rewind_sync_to_missing_parent = Some(block_number as u64);
                                         tracing::debug!(
                                             peer = %hex::encode(&deferred_downloads[0].from_peer),
                                             block_number,
@@ -8943,6 +8952,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             downloaded,
                                             downloaded_iter.by_ref(),
                                         );
+                                        rewind_sync_to_missing_parent = Some(block_number as u64);
                                         tracing::debug!(
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
@@ -8956,6 +8966,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             downloaded,
                                             downloaded_iter.by_ref(),
                                         );
+                                        rewind_sync_to_missing_parent = Some(block_number as u64);
                                         tracing::warn!(
                                             block_number,
                                             deferred = deferred_downloads.len(),
@@ -8964,6 +8975,78 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         break;
                                     }
                                     Err(e) => {
+                                        let error_text = e.to_string();
+                                        if is_finalized_chain_conflict_error(&error_text) {
+                                            let info_before = backend_for_import.blockchain().info();
+                                            let finalized_before: u64 =
+                                                info_before.finalized_number.try_into().unwrap_or(0);
+                                            if finalized_before > 0 {
+                                                match ClientBackend::revert(
+                                                    backend_for_import.as_ref(),
+                                                    1u64,
+                                                    true,
+                                                ) {
+                                                    Ok((reverted_blocks, reverted_finalized)) => {
+                                                        let reverted_blocks: u64 = reverted_blocks
+                                                            .try_into()
+                                                            .unwrap_or(0);
+                                                        if reverted_blocks > 0 {
+                                                            let info_after = backend_for_import
+                                                                .blockchain()
+                                                                .info();
+                                                            let finalized_after: u64 = info_after
+                                                                .finalized_number
+                                                                .try_into()
+                                                                .unwrap_or(0);
+                                                            let best_after: u64 = info_after
+                                                                .best_number
+                                                                .try_into()
+                                                                .unwrap_or(0);
+                                                            deferred_downloads =
+                                                                collect_deferred_downloaded_tail(
+                                                                    downloaded,
+                                                                    downloaded_iter.by_ref(),
+                                                                );
+                                                            reset_sync_after_revert = true;
+                                                            tracing::warn!(
+                                                                peer = %hex::encode(&deferred_downloads[0].from_peer),
+                                                                block_number,
+                                                                finalized_before,
+                                                                finalized_after,
+                                                                best_after,
+                                                                reverted_blocks,
+                                                                reverted_finalized = reverted_finalized.len(),
+                                                                deferred = deferred_downloads.len(),
+                                                                "Recovered poisoned finalized head after sync import hit NotInFinalizedChain"
+                                                            );
+                                                            break;
+                                                        }
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&downloaded.from_peer),
+                                                            block_number,
+                                                            finalized_before,
+                                                            "Unsafe revert returned zero blocks after finalized-chain conflict"
+                                                        );
+                                                    }
+                                                    Err(revert_err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&downloaded.from_peer),
+                                                            block_number,
+                                                            finalized_before,
+                                                            error = %revert_err,
+                                                            "Failed to revert poisoned finalized head after sync import conflict"
+                                                        );
+                                                    }
+                                                }
+                                            } else {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    error = %error_text,
+                                                    "Finalized-chain conflict reported at genesis finalized head"
+                                                );
+                                            }
+                                        }
                                         blocks_failed += 1;
                                         tracing::warn!(
                                             peer = %hex::encode(&downloaded.from_peer),
@@ -8983,6 +9066,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     .map(|block| block.number)
                                     .unwrap_or(first_number);
                                 let mut sync = sync_service_for_import.lock().await;
+                                if reset_sync_after_revert {
+                                    sync.on_local_revert();
+                                }
+                                if let Some(child_number) = rewind_sync_to_missing_parent {
+                                    sync.on_downloaded_parent_missing(child_number);
+                                }
                                 sync.requeue_downloaded(deferred_downloads);
                                 tracing::info!(
                                     deferred = deferred_count,
@@ -11406,6 +11495,19 @@ mod import_tests {
             "UnknownBlock: parent state not ready"
         ));
         assert!(!is_retryable_sync_parent_state_error(
+            "Proof verification failed"
+        ));
+    }
+
+    #[test]
+    fn test_finalized_chain_conflict_error_matches_not_in_finalized_chain() {
+        assert!(is_finalized_chain_conflict_error(
+            "Potential long-range attack: block not in finalized chain."
+        ));
+        assert!(is_finalized_chain_conflict_error(
+            "ClientImport(NotInFinalizedChain)"
+        ));
+        assert!(!is_finalized_chain_conflict_error(
             "Proof verification failed"
         ));
     }
