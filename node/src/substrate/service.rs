@@ -4408,7 +4408,7 @@ fn ready_bundle_trace_for_candidate(
     block_number: u64,
     candidate_txs: &[Vec<u8>],
     min_ready_batch_txs: usize,
-    proof_mode: PreparedProofMode,
+    _proof_mode: PreparedProofMode,
 ) -> Result<Option<ReadyBundleTrace>, String> {
     if candidate_txs.is_empty() {
         return Ok(None);
@@ -4428,7 +4428,7 @@ fn ready_bundle_trace_for_candidate(
     }
 
     let missing = missing_proof_binding_hashes(&decoded);
-    if matches!(proof_mode, PreparedProofMode::MergeRoot) && missing.is_empty() {
+    if missing.is_empty() {
         return Ok(None);
     }
 
@@ -9836,10 +9836,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         let hold_mining_while_proving = load_hold_mining_while_proving();
         let selected_proof_mode = prepared_proof_mode_from_env();
-        let prepared_bundle_required_while_proving = matches!(
-            selected_proof_mode,
-            PreparedProofMode::InlineTx | PreparedProofMode::MergeRoot
-        );
+        let prepared_bundle_required_while_proving =
+            matches!(selected_proof_mode, PreparedProofMode::MergeRoot);
         if prepared_bundle_required_while_proving && hold_mining_while_proving {
             let client_for_mining_pause = client.clone();
             let coordinator_for_mining_pause = Arc::clone(&prover_coordinator);
@@ -10939,6 +10937,76 @@ mod tests {
         assert!(
             reason.is_none(),
             "inline_tx batch with canonical inline proofs should not pause mining"
+        );
+    }
+
+    #[test]
+    fn ready_bundle_trace_skips_inline_tx_batch_with_inline_proofs() {
+        let _guard = set_block_proof_mode("inline_tx");
+        let parent_hash = H256::repeat_byte(0x43);
+        let block_number = 8u64;
+        let coordinator = ProverCoordinator::new(
+            ProverCoordinatorConfig {
+                workers: 0,
+                target_txs: 1,
+                queue_capacity: 1,
+                max_inflight_per_level: 1,
+                liveness_lane: true,
+                adaptive_liveness_timeout: Duration::from_millis(0),
+                incremental_upsizing: false,
+                poll_interval: Duration::from_millis(50),
+                job_timeout: Duration::from_secs(30),
+                work_package_ttl: Duration::from_secs(30),
+                max_submissions_per_package: 16,
+                max_submissions_per_source: 32,
+                max_payload_bytes: 4 * 1024 * 1024,
+            },
+            Arc::new(move || (parent_hash, 7u64)),
+            Arc::new(|_max_txs| Vec::new()),
+            Arc::new(|_, _, _| Err("unused".to_string())),
+        );
+
+        let candidate_txs = vec![test_inline_transfer_extrinsic(6, [5u8; 48])];
+        let decoded = runtime::UncheckedExtrinsic::decode(&mut &candidate_txs[0][..])
+            .expect("candidate decodes");
+        let statement_bindings =
+            statement_bindings_from_extrinsics(&[decoded]).expect("statement bindings");
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .expect("commitment");
+        coordinator.import_network_artifact(
+            parent_hash,
+            pallet_shielded_pool::types::CandidateArtifact {
+                version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment,
+                da_root: [0u8; 48],
+                da_chunk_count: 0,
+                commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                flat_batches: Vec::new(),
+                merge_root: None,
+                artifact_claim: None,
+            },
+            candidate_txs.clone(),
+        );
+
+        let trace = ready_bundle_trace_for_candidate(
+            coordinator.as_ref(),
+            parent_hash,
+            block_number,
+            &candidate_txs,
+            1,
+            PreparedProofMode::InlineTx,
+        )
+        .expect("trace evaluation succeeds");
+        assert!(
+            trace.is_none(),
+            "inline_tx batches with canonical inline proofs should not emit ready-bundle traces"
         );
     }
 }

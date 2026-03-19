@@ -781,10 +781,8 @@ impl ProverCoordinatorConfig {
                 )
             })
             .unwrap_or(false);
-        let requires_prepared_bundles = matches!(
+        let requires_prepared_bundles = ProverCoordinator::proof_mode_requires_prepared_bundles(
             ProverCoordinator::prepared_proof_mode_from_env(),
-            pallet_shielded_pool::types::BlockProofMode::InlineTx
-                | pallet_shielded_pool::types::BlockProofMode::MergeRoot
         );
         let workers = match configured_workers {
             Some(0) if mining_enabled && requires_prepared_bundles => {
@@ -1265,15 +1263,18 @@ impl ProverCoordinator {
 
     pub fn pending_transactions(&self, max_txs: usize) -> Vec<Vec<u8>> {
         let state = self.state.lock();
-        // Prefer candidates that already have a prepared proof bundle for the
-        // current parent. This is the liveness lane used when larger batches
-        // are still proving.
-        let mut txs = if let Some(prepared) = Self::best_prepared_candidate_locked(&state) {
-            prepared
-        } else if state.selected_txs.is_empty() {
-            Self::best_pending_candidate_locked(&state).unwrap_or_default()
+        let proof_mode = Self::prepared_proof_mode_from_env();
+        let mut txs = if Self::proof_mode_requires_prepared_bundles(proof_mode) {
+            // Prefer candidates that already have a prepared proof bundle for
+            // the current parent. This is the liveness lane used when larger
+            // batches are still proving.
+            if let Some(prepared) = Self::best_prepared_candidate_locked(&state) {
+                prepared
+            } else {
+                Self::selected_or_pending_candidate_locked(&state)
+            }
         } else {
-            state.selected_txs.clone()
+            Self::selected_or_pending_candidate_locked(&state)
         };
         txs.truncate(max_txs);
         txs
@@ -1281,16 +1282,11 @@ impl ProverCoordinator {
 
     pub fn authoring_transactions(&self, max_txs: usize) -> Vec<Vec<u8>> {
         let state = self.state.lock();
-        let mut txs = match Self::prepared_proof_mode_from_env() {
-            pallet_shielded_pool::types::BlockProofMode::InlineTx
-            | pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
-                Self::best_prepared_candidate_locked(&state).unwrap_or_default()
-            }
-            pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
-                Self::best_prepared_candidate_locked(&state)
-                    .or_else(|| Self::best_pending_candidate_locked(&state))
-                    .unwrap_or_default()
-            }
+        let proof_mode = Self::prepared_proof_mode_from_env();
+        let mut txs = if Self::proof_mode_requires_prepared_bundles(proof_mode) {
+            Self::best_prepared_candidate_locked(&state).unwrap_or_default()
+        } else {
+            Self::selected_or_pending_candidate_locked(&state)
         };
         txs.truncate(max_txs);
         txs
@@ -2078,6 +2074,26 @@ impl ProverCoordinator {
         if state.current_parent != Some(parent_hash) {
             return;
         }
+        let selected_mode = Self::prepared_proof_mode_from_env();
+        if !Self::proof_mode_requires_prepared_bundles(selected_mode) {
+            state.selected_txs = candidate;
+            state.target_batch_scheduled_at_ms = None;
+            state.adaptive_liveness_fired_generation = None;
+            state.work_packages.clear();
+            state.work_package_queue.clear();
+            state.stage_work_package_queue.clear();
+            state.latest_work_package = None;
+            state.latest_stage_work_package = None;
+            state.fanout_assemblies.clear();
+            state.recursive_assemblies.clear();
+            state.work_status.clear();
+            state.source_submissions.clear();
+            state.pending_jobs.clear();
+            state.inflight_jobs.clear();
+            state.inflight_stage_meta.clear();
+            state.inflight_candidates.clear();
+            return;
+        }
 
         let mut existing_best = Self::best_candidate_len_locked(&state);
         if candidate.is_empty() {
@@ -2222,7 +2238,6 @@ impl ProverCoordinator {
             state.fanout_assemblies.clear();
             state.recursive_assemblies.clear();
 
-            let selected_mode = Self::prepared_proof_mode_from_env();
             let mut handled_recursive = false;
             let prefer_merge_root =
                 selected_mode == pallet_shielded_pool::types::BlockProofMode::MergeRoot;
@@ -3461,6 +3476,14 @@ impl ProverCoordinator {
         best.cloned()
     }
 
+    fn selected_or_pending_candidate_locked(state: &CoordinatorState) -> Vec<Vec<u8>> {
+        if state.selected_txs.is_empty() {
+            Self::best_pending_candidate_locked(state).unwrap_or_default()
+        } else {
+            state.selected_txs.clone()
+        }
+    }
+
     fn best_prepared_candidate_locked(state: &CoordinatorState) -> Option<Vec<Vec<u8>>> {
         let current_parent = state.current_parent;
         let mut best_current_parent: Option<&PreparedBundle> = None;
@@ -3497,6 +3520,12 @@ impl ProverCoordinator {
                     && bundle.key.tx_count == tx_count
             })
             .max_by(|left, right| compare_prepared_bundles(left, right))
+    }
+
+    fn proof_mode_requires_prepared_bundles(
+        mode: pallet_shielded_pool::types::BlockProofMode,
+    ) -> bool {
+        matches!(mode, pallet_shielded_pool::types::BlockProofMode::MergeRoot)
     }
 }
 
@@ -3920,6 +3949,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ready_batch_lookup_uses_parent_commitment_and_tx_count() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(11);
         let mut config = test_config();
         config.target_txs = 2;
@@ -3950,10 +3980,11 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn inline_tx_authoring_transactions_require_prepared_bundle() {
+    async fn inline_tx_authoring_transactions_expose_selected_candidate() {
         let _mode = set_block_proof_mode("inline_tx");
         let parent_hash = H256::repeat_byte(12);
-        let config = test_config();
+        let mut config = test_config();
+        config.target_txs = 2;
         let best = Arc::new(move || (parent_hash, 9u64));
         let pending = Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8]]);
         let build = Arc::new(
@@ -3965,27 +3996,34 @@ mod tests {
         let coordinator = ProverCoordinator::new(config, best, pending, build);
         coordinator.start();
         tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            !coordinator.authoring_transactions(8).is_empty(),
+            "inline_tx authoring should not depend on a prepared bundle"
+        );
+        assert_eq!(
+            coordinator.authoring_transactions(8),
+            vec![vec![1u8], vec![2u8]],
+            "authoring path should expose the selected proof-ready candidate immediately"
+        );
         assert_eq!(
             coordinator.pending_transactions(8),
-            vec![vec![1u8]],
-            "planning path should still expose the current liveness candidate"
+            vec![vec![1u8], vec![2u8]]
         );
-        assert!(
-            coordinator.authoring_transactions(8).is_empty(),
-            "authoring path must stay empty until a prepared bundle exists"
-        );
+        assert_eq!(coordinator.queued_jobs(), 0);
+        assert_eq!(coordinator.active_jobs(), 0);
 
         let payload = ready_payload(2, [2u8; 48]);
         coordinator.import_network_artifact(parent_hash, payload, vec![vec![1u8], vec![2u8]]);
         assert_eq!(
             coordinator.authoring_transactions(8),
             vec![vec![1u8], vec![2u8]],
-            "authoring path should expose only prepared inline_tx candidates"
+            "inline_tx authoring should remain bound to the selected proof-ready candidate"
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stale_parent_results_are_preserved_for_reuse() {
+        let _mode = set_block_proof_mode("merge_root");
         let first_parent = H256::repeat_byte(21);
         let second_parent = H256::repeat_byte(22);
         let best_state = Arc::new(Mutex::new((first_parent, 12u64)));
@@ -4031,6 +4069,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn parent_rollover_still_schedules_new_work_package() {
+        let _mode = set_block_proof_mode("merge_root");
         let first_parent = H256::repeat_byte(23);
         let second_parent = H256::repeat_byte(24);
         let best_state = Arc::new(Mutex::new((first_parent, 20u64)));
@@ -4085,6 +4124,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn failed_jobs_release_worker_slots() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(31);
         let pending_calls = Arc::new(AtomicUsize::new(0));
         let mut config = test_config();
@@ -4258,6 +4298,13 @@ mod tests {
             coordinator.get_stage_work_package().is_none(),
             "inline_tx mode must not publish recursive stage work packages"
         );
+        assert_eq!(
+            coordinator.authoring_transactions(8).len(),
+            4,
+            "inline_tx mode should still expose the selected proof-ready candidate for authoring"
+        );
+        assert_eq!(coordinator.queued_jobs(), 0);
+        assert_eq!(coordinator.active_jobs(), 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4674,6 +4721,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pending_transactions_expose_liveness_lane_before_bundle_ready() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(71);
         let mut config = test_config();
         config.target_txs = 4;
@@ -4709,6 +4757,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pending_transactions_prefer_ready_liveness_bundle_then_scale_up() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(72);
         let mut config = test_config();
         config.target_txs = 8;
@@ -4758,6 +4807,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn work_package_upsizes_while_smaller_job_is_inflight() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(73);
         let mut config = test_config();
         config.target_txs = 8;
@@ -4806,6 +4856,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn throughput_mode_defers_until_target_batch_is_available() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(74);
         let mut config = test_config();
         config.target_txs = 4;
@@ -4929,6 +4980,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn throughput_mode_adaptive_liveness_unjams_cold_target_batches() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(77);
         let mut config = test_config();
         config.target_txs = 4;
@@ -5225,6 +5277,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn checkpoint_upsizing_uses_planned_ladder_by_default() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(75);
         let mut config = test_config();
         config.target_txs = 8;
@@ -5270,6 +5323,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn incremental_upsizing_can_restore_per_step_growth() {
+        let _mode = set_block_proof_mode("merge_root");
         let parent_hash = H256::repeat_byte(76);
         let mut config = test_config();
         config.target_txs = 8;
