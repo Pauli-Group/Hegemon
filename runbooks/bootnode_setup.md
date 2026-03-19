@@ -223,8 +223,7 @@ ExecStart=/usr/local/bin/hegemon-node \
     --prometheus-external \
     --name "Hegemon-Boot-1" \
     --base-path /var/lib/hegemon \
-    --no-mdns \
-    --bootnodes ""
+    --no-mdns
 
 # Process limits
 LimitNOFILE=65536

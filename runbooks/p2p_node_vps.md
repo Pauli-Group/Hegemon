@@ -1,6 +1,6 @@
 # VPS node operations runbook (Substrate node)
 
-Use this playbook to provision a virtual private server (VPS), expose the peer-to-peer and RPC ports, start the Substrate-based `hegemon-node` binary, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
+Use this playbook to provision a virtual private server (VPS), expose the peer-to-peer port, start the Substrate-based `hegemon-node` binary, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
 
 > **Note:** The node currently refuses to start without `--dev` (non-dev profiles are disabled). This runbook includes `--dev` on startup until non-dev mode is re-enabled.
 
@@ -8,7 +8,7 @@ Use this playbook to provision a virtual private server (VPS), expose the peer-t
 
 - Minimum shape: 2 vCPUs, 4 GB RAM, 40 GB SSD. Enable auto-restart on host failure.
 - Choose an image with current security updates (Ubuntu 22.04 LTS) and add your SSH key at creation time.
-- Allocate an IPv4 address. If the provider supports firewall groups or security lists, allow TCP for the P2P port (default: 30333) and the RPC port (default: 9944).
+- Allocate an IPv4 address. If the provider supports firewall groups or security lists, allow TCP for the P2P port (default: 30333). Keep RPC private unless you have an explicit remote-access requirement.
 - Record the public IP (e.g., `203.0.113.45`) and DNS name if assigned; operators share seed endpoints as `host:30333`.
 
 ## 2. Prepare the OS and user
@@ -28,7 +28,7 @@ sudo chown node:node /var/lib/hegemon-node
 
 If you copy a prebuilt binary instead of compiling, place it in `/usr/local/bin/hegemon-node` and ensure it is executable. For source installs, run `make node` and copy `target/release/hegemon-node` into `/usr/local/bin/`.
 
-## 3. Open the P2P and RPC ports
+## 3. Open the P2P port
 
 Use UFW for a simple host firewall. Replace the ports if you pick different values.
 
@@ -36,13 +36,12 @@ Use UFW for a simple host firewall. Replace the ports if you pick different valu
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 30333/tcp   # P2P (PQ transport)
-sudo ufw allow 9944/tcp    # RPC (restrict if only local access is needed)
 sudo ufw allow 9615/tcp    # Prometheus metrics (optional)
 sudo ufw enable
 sudo ufw status
 ```
 
-If your cloud provider also enforces security groups, mirror these rules there.
+If your cloud provider also enforces security groups, mirror these rules there. Do not open TCP/9944 unless you deliberately want remote RPC access.
 
 ## 4. Persistent node configuration
 
@@ -56,14 +55,14 @@ NODE_BASE_PATH=/var/lib/hegemon-node
 NODE_PORT=30333
 NODE_RPC_PORT=9944
 # Approved shared seed list. All miners/operators should use the same value.
-HEGEMON_SEEDS=hegemon.pauli.group:30333,158.69.222.121:30333
+HEGEMON_SEEDS=hegemon.pauli.group:30333
 # Set to 1 to mine on this host.
 HEGEMON_MINE=0
 ENV
 sudo chown node:node /etc/default/hegemon-node
 ```
 
-- `HEGEMON_SEEDS` must match the approved list used by other miners to avoid forks/partitions.
+- `HEGEMON_SEEDS` must match the approved list used by other miners to avoid forks/partitions. If this host is the first public authoring node after a fresh reset, leave `HEGEMON_SEEDS` empty until the node is already live.
 - Keep chrony/NTP healthy on every mining host so timestamps stay valid.
 
 ## 5. Systemd unit
@@ -86,8 +85,7 @@ ExecStart=/usr/local/bin/hegemon-node \
   --base-path ${NODE_BASE_PATH} \
   --port ${NODE_PORT} \
   --rpc-port ${NODE_RPC_PORT} \
-  --rpc-external \
-  --rpc-cors all
+  --rpc-methods safe
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536

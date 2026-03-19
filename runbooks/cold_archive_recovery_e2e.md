@@ -6,6 +6,7 @@ after hot DA retention has pruned them from the consensus node.
 ## 1) Build binaries
 
 ```bash
+make setup
 make node
 cargo build --release -p walletd
 ```
@@ -24,25 +25,15 @@ RUST_LOG=info HEGEMON_MINE=1 \
   --rpc-port 9944 --listen-addr /ip4/127.0.0.1/tcp/30333 --name HegemonConsumer
 ```
 
-Fetch the consumer peer id:
-
-```bash
-curl -s -H "Content-Type: application/json" \
-  -d '{"id":1,"jsonrpc":"2.0","method":"system_localPeerId","params":[]}' \
-  http://127.0.0.1:9944 | jq -r '.result'
-```
-
 ## 3) Start the archive provider node (long retention)
-
-Replace `<PEER_ID>` with the value from the previous step.
 
 ```bash
 RUST_LOG=info \
   HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS=2048 \
   HEGEMON_DA_STORE_CAPACITY=512 \
+  HEGEMON_SEEDS="127.0.0.1:30333" \
   ./target/release/hegemon-node --dev --base-path /tmp/hegemon-archive \
   --rpc-port 9945 --listen-addr /ip4/127.0.0.1/tcp/30334 \
-  --bootnodes /ip4/127.0.0.1/tcp/30333/p2p/<PEER_ID> \
   --name HegemonArchive
 ```
 

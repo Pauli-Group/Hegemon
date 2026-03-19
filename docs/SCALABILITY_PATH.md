@@ -26,13 +26,13 @@ The current deployment target is simple:
 - any number of **full nodes** that sync, verify, relay, and optionally run wallets;
 - users proving transactions locally or through private infrastructure they trust.
 
-Current approved seed list for miners and full nodes:
+Current approved public join seed list for miners and full nodes:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333"
+HEGEMON_SEEDS="hegemon.pauli.group:30333"
 ```
 
-All miners and verifiers in the same testnet must use the same approved `HEGEMON_SEEDS` value to avoid peer partitions and forks. All mining hosts must keep NTP/chrony time sync enabled because PoW headers beyond the future-skew bound are rejected.
+All miners and verifiers in the same testnet must use the same approved `HEGEMON_SEEDS` value to avoid peer partitions and forks. The first public authoring node after a full reset should not seed itself; bring it up first, then use the join seed list on every other node. All mining hosts must keep NTP/chrony time sync enabled because PoW headers beyond the future-skew bound are rejected.
 
 ## What scales now
 

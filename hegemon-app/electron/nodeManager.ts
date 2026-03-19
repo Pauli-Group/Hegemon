@@ -10,7 +10,12 @@ import { resolveBinaryPath } from './binPaths';
 const DEFAULT_RPC_PORT = 9944;
 const CANONICAL_TESTNET_P2P_PORT = 30333;
 const LEGACY_TESTNET_P2P_PORT = 31333;
-const APPROVED_SEEDS = 'hegemon.pauli.group:30333,158.69.222.121:30333';
+const APPROVED_SEEDS = 'hegemon.pauli.group:30333';
+const LEGACY_SEED_ALIASES: Record<string, string> = {
+  'hegemon.pauli.group:31333': 'hegemon.pauli.group:30333',
+  '158.69.222.121:31333': 'hegemon.pauli.group:30333',
+  '158.69.222.121:30333': 'hegemon.pauli.group:30333'
+};
 const DEFAULT_LOCAL_BASE_PATH = '~/.hegemon-node';
 const DEFAULT_TESTNET_BASE_PATH = '~/.hegemon-node-testnet';
 const DESKTOP_LIVENESS_ENV_DEFAULTS: Record<string, string> = {
@@ -31,12 +36,19 @@ type RpcRequest = {
   params?: unknown[];
 };
 
-const normalizeSeedList = (value?: string | null) =>
-  (value ?? '')
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean)
-    .join(',');
+const normalizeSeedList = (value?: string | null) => {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of (value ?? '').split(',')) {
+    const candidate = LEGACY_SEED_ALIASES[entry.trim().toLowerCase()] ?? entry.trim().toLowerCase();
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    normalized.push(candidate);
+  }
+  return normalized.join(',');
+};
 
 const normalizeListenAddr = (listenAddr?: string) => {
   if (!listenAddr) {

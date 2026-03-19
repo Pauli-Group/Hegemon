@@ -152,7 +152,8 @@ use crypto::hashes::blake3_384;
 use futures::StreamExt;
 use hyper::http::{Method, header};
 use network::{
-    PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
+    BootstrapNode, PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent,
+    PqNetworkHandle,
     PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use pallet_shielded_pool::family::ShieldedFamilyAction;
@@ -6144,8 +6145,8 @@ pub struct PqServiceConfig {
     pub verbose_logging: bool,
     /// Listen address for P2P
     pub listen_addr: std::net::SocketAddr,
-    /// Bootstrap nodes
-    pub bootstrap_nodes: Vec<std::net::SocketAddr>,
+    /// Bootstrap seeds plus resolved addresses
+    pub bootstrap_nodes: Vec<BootstrapNode>,
     /// Maximum peers
     pub max_peers: usize,
 }
@@ -6226,7 +6227,7 @@ impl PqServiceConfig {
         // Parse bootstrap/seed nodes from environment
         // Supports IP:port, hostname:port, and host/IP without port (defaults to 30333).
         const DEFAULT_P2P_PORT: u16 = 30333;
-        let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
+        let bootstrap_nodes: Vec<BootstrapNode> = std::env::var("HEGEMON_SEEDS")
             .map(|s| {
                 let mut nodes = Vec::new();
                 for addr in s.split(',') {
@@ -6234,13 +6235,28 @@ impl PqServiceConfig {
                     if addr.is_empty() {
                         continue;
                     }
+                    let normalized_seed = if let Ok(sock_addr) = addr.parse::<std::net::SocketAddr>() {
+                        sock_addr.to_string()
+                    } else if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
+                        std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT).to_string()
+                    } else if addr.contains(':') {
+                        addr.to_string()
+                    } else {
+                        format!("{addr}:{DEFAULT_P2P_PORT}")
+                    };
                     // First try direct parse (for IP:port)
-                    if let Ok(sock_addr) = addr.parse() {
-                        nodes.push(sock_addr);
+                    if let Ok(sock_addr) = addr.parse::<std::net::SocketAddr>() {
+                        nodes.push(BootstrapNode {
+                            seed: normalized_seed,
+                            addrs: vec![sock_addr],
+                        });
                         continue;
                     }
                     if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
-                        nodes.push(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
+                        nodes.push(BootstrapNode {
+                            seed: normalized_seed,
+                            addrs: vec![std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT)],
+                        });
                         continue;
                     }
                     // If that fails, try DNS resolution (for hostname[:port]). Keep all
@@ -6306,16 +6322,19 @@ impl PqServiceConfig {
                         continue;
                     }
                     // Prefer IPv4 routes first for environments where IPv6 egress is absent.
+                    resolved.sort();
+                    resolved.dedup();
                     resolved.sort_by_key(|socket| !socket.ip().is_ipv4());
                     tracing::info!(
                         addr = %addr,
                         resolved = ?resolved,
                         "Resolved seed hostname"
                     );
-                    nodes.extend(resolved);
+                    nodes.push(BootstrapNode {
+                        seed: normalized_seed,
+                        addrs: resolved,
+                    });
                 }
-                nodes.sort();
-                nodes.dedup();
                 nodes
             })
             .unwrap_or_default();
@@ -6892,17 +6911,17 @@ pub fn new_partial_with_client(
     let pq_service_config = PqServiceConfig::from_config(config);
 
     // Initialize PQ network configuration
-    let pq_network_config = PqNetworkConfig {
-        listen_addresses: vec![format!(
-            "/ip4/{}/tcp/{}",
-            pq_service_config.listen_addr.ip(),
-            pq_service_config.listen_addr.port()
-        )],
-        bootstrap_nodes: pq_service_config
-            .bootstrap_nodes
-            .iter()
-            .map(|addr| format!("/ip4/{}/tcp/{}", addr.ip(), addr.port()))
-            .collect(),
+        let pq_network_config = PqNetworkConfig {
+            listen_addresses: vec![format!(
+                "/ip4/{}/tcp/{}",
+                pq_service_config.listen_addr.ip(),
+                pq_service_config.listen_addr.port()
+            )],
+            bootstrap_nodes: pq_service_config
+                .bootstrap_nodes
+                .iter()
+                .map(|node| node.seed.clone())
+                .collect(),
         enable_pq_transport: true,
         max_peers: pq_service_config.max_peers as u32,
         connection_timeout_secs: 30,
@@ -10342,7 +10361,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             bootstrap_nodes: pq_service_config
                 .bootstrap_nodes
                 .iter()
-                .map(|addr| addr.to_string())
+                .map(|node| node.seed.clone())
                 .collect(),
             pq_verbose: pq_service_config.verbose_logging,
             max_peers: pq_service_config.max_peers as u32,

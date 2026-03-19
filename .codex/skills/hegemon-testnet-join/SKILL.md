@@ -4,14 +4,14 @@ description: Join the Hegemon testnet using the shared chainspec, verify genesis
 compatibility: Requires ./target/release/hegemon-node, ./target/release/walletd, network access to hegemon.pauli.group:30333, and a shared chainspec at config/dev-chainspec.json.
 metadata:
   repo: Reflexivity/Hegemon
-  version: "1.2"
+  version: "1.3"
 ---
 
 # Goal
 Connect a new node to the Hegemon testnet, verify it is on the canonical chain, and mine only after sync completes.
 
 # Defaults
-- Approved public seed list: hegemon.pauli.group:30333,158.69.222.121:30333
+- Approved public join seed list: hegemon.pauli.group:30333
 - Chain spec: config/dev-chainspec.json
 - Chainspec SHA-256: 455f552ec9e73bb07ad95ac8b9bf03c72461acc16ffd9afe738b70c31cce3cc1
 - RPC port: 9944
@@ -31,7 +31,7 @@ Connect a new node to the Hegemon testnet, verify it is on the canonical chain, 
      | jq -r '.result.primaryAddress')
 4. Start the node with the shared chainspec and seed:
    - HEGEMON_MINE=1 \
-     HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333" \
+     HEGEMON_SEEDS="hegemon.pauli.group:30333" \
      HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
      HEGEMON_PQ_STRICT_COMPATIBILITY=1 \
      ./target/release/hegemon-node \
@@ -44,6 +44,7 @@ Connect a new node to the Hegemon testnet, verify it is on the canonical chain, 
        --rpc-methods safe \
        --name "TestnetNode"
    - This is the live InlineTx path. Do not provision `hegemon-prover`, `hegemon-prover-worker`, or proof-sidecar / recursive flags for a normal testnet join.
+   - If you are bringing up the first public authoring node after a fresh reset, omit `HEGEMON_SEEDS` or exclude the node's own public address until that first node is already live.
 5. Monitor sync status and height. Mining pauses while syncing and resumes once caught up.
    - curl -s -H "Content-Type: application/json" \
      -d '{"id":1,"jsonrpc":"2.0","method":"system_health"}' \
@@ -65,6 +66,7 @@ Connect a new node to the Hegemon testnet, verify it is on the canonical chain, 
 
 # Notes
 - All miners should use the exact same `HEGEMON_SEEDS` list to avoid accidental forks/partitions. Keep private peer IPs out of public docs.
+- The canonical public join seed is `hegemon.pauli.group:30333`. Do not list the raw OVH IP separately as fake redundancy if it resolves to the same host.
 - Keep host clock sync enabled (NTP/chrony). PoW import rejects future-skewed timestamps.
 - If the genesis hash or chainspec differ, stop the node and wipe the base path before restarting.
 - Keep RPC access locked down if you expose it beyond localhost.

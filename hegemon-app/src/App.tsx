@@ -19,10 +19,11 @@ import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
 const canonicalTestnetP2pPort = 30333;
-const approvedSeeds = 'hegemon.pauli.group:30333,158.69.222.121:30333';
+const approvedSeeds = 'hegemon.pauli.group:30333';
 const legacySeedAliases: Record<string, string> = {
   'hegemon.pauli.group:31333': 'hegemon.pauli.group:30333',
-  '158.69.222.121:31333': '158.69.222.121:30333'
+  '158.69.222.121:31333': 'hegemon.pauli.group:30333',
+  '158.69.222.121:30333': 'hegemon.pauli.group:30333'
 };
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';

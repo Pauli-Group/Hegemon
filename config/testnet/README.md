@@ -133,7 +133,7 @@ The soak test monitors:
 To connect an external node to the testnet:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333" \
+HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 hegemon-node \
     --dev \
     --chain=config/testnet/testnet-raw.json \
@@ -190,7 +190,7 @@ Common issues:
 - Testnet keys in this directory are for testing only
 - Do not use testnet keys on mainnet
 - RPC is exposed with `--rpc-methods=safe` by default
-- PQ transport is required (`--require-pq`)
+- PQ transport is the default transport; no extra flag is required
 
 ## File Structure
 

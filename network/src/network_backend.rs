@@ -58,13 +58,22 @@ const BOOTSTRAP_RECONNECT_MAX: Duration = Duration::from_secs(30);
 const BOOTSTRAP_CONNECTED_POLL: Duration = Duration::from_secs(1);
 const BOOTSTRAP_IDLE_POLL: Duration = Duration::from_secs(5);
 
+/// A configured bootstrap seed plus all socket addresses it currently resolves to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BootstrapNode {
+    /// Operator-facing seed label, e.g. `hegemon.pauli.group:30333`.
+    pub seed: String,
+    /// Resolved dial targets for this seed, ordered by preference.
+    pub addrs: Vec<SocketAddr>,
+}
+
 /// PQ Network Backend configuration
 #[derive(Clone, Debug)]
 pub struct PqNetworkBackendConfig {
     /// Listen address
     pub listen_addr: SocketAddr,
-    /// Bootstrap nodes to connect to
-    pub bootstrap_nodes: Vec<SocketAddr>,
+    /// Bootstrap seeds to connect to
+    pub bootstrap_nodes: Vec<BootstrapNode>,
     /// Maximum number of peers
     pub max_peers: usize,
     /// Connection timeout
@@ -506,7 +515,7 @@ impl PqNetworkBackend {
             let shutdown_flag = self.shutdown_flag.clone();
             let shutdown_notify = self.shutdown_notify.clone();
 
-            for addr in bootstrap_nodes {
+            for bootstrap in bootstrap_nodes {
                 let peers = peers.clone();
                 let transport = transport.clone();
                 let event_tx = event_tx.clone();
@@ -515,18 +524,21 @@ impl PqNetworkBackend {
 
                 tokio::spawn(async move {
                     let mut backoff = BOOTSTRAP_RECONNECT_BASE;
+                    let mut next_addr_idx = 0usize;
 
                     loop {
                         if shutdown_flag.load(Ordering::Relaxed) {
                             break;
                         }
 
-                        // If we're already connected to this bootstrap address, just wait.
+                        // If we're already connected to any address for this bootstrap seed, just wait.
                         let already_connected = {
                             let peers_guard = peers.read().await;
                             peers_guard
                                 .values()
-                                .any(|p| p.info.is_outbound && p.info.addr == addr)
+                                .any(|p| {
+                                    p.info.is_outbound && bootstrap.addrs.contains(&p.info.addr)
+                                })
                         };
                         if already_connected {
                             backoff = BOOTSTRAP_RECONNECT_BASE;
@@ -546,55 +558,81 @@ impl PqNetworkBackend {
                             continue;
                         }
 
-                        let connect_result = tokio::select! {
-                            res = Self::connect_outbound_inner(
-                                transport.clone(),
-                                peers.clone(),
-                                event_tx.clone(),
-                                addr,
-                                connection_timeout,
-                                max_peers,
-                            ) => res,
-                            _ = shutdown_notify.notified() => break,
-                        };
+                        let addr_count = bootstrap.addrs.len();
+                        if addr_count == 0 {
+                            tracing::warn!(seed = %bootstrap.seed, "Bootstrap seed has no dialable addresses");
+                            break;
+                        }
 
-                        match connect_result {
-                            Ok(peer_id) => {
-                                backoff = BOOTSTRAP_RECONNECT_BASE;
-                                // Wait until the peer disappears from the connection map, then reconnect.
-                                loop {
-                                    if shutdown_flag.load(Ordering::Relaxed) {
-                                        return;
-                                    }
-                                    if !peers.read().await.contains_key(&peer_id) {
-                                        break;
-                                    }
-                                    tokio::select! {
-                                        _ = sleep(BOOTSTRAP_CONNECTED_POLL) => {}
-                                        _ = shutdown_notify.notified() => return,
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                if e == "Self peer connection" {
-                                    tracing::info!(
-                                        addr = %addr,
-                                        "Skipping bootstrap node because it resolves to the local peer"
-                                    );
+                        let mut connected_peer_id = None;
+                        let mut attempt_errors = Vec::new();
+
+                        for offset in 0..addr_count {
+                            let idx = (next_addr_idx + offset) % addr_count;
+                            let addr = bootstrap.addrs[idx];
+                            let connect_result = tokio::select! {
+                                res = Self::connect_outbound_inner(
+                                    transport.clone(),
+                                    peers.clone(),
+                                    event_tx.clone(),
+                                    addr,
+                                    connection_timeout,
+                                    max_peers,
+                                ) => res,
+                                _ = shutdown_notify.notified() => return,
+                            };
+
+                            match connect_result {
+                                Ok(peer_id) => {
+                                    next_addr_idx = (idx + 1) % addr_count;
+                                    connected_peer_id = Some(peer_id);
                                     break;
                                 }
-                                tracing::warn!(
-                                    addr = %addr,
-                                    error = %e,
-                                    backoff_secs = backoff.as_secs(),
-                                    "Failed to connect to bootstrap node; retrying"
-                                );
-                                tokio::select! {
-                                    _ = sleep(backoff) => {}
-                                    _ = shutdown_notify.notified() => break,
+                                Err(e) if e == "Self peer connection" => {
+                                    tracing::info!(
+                                        seed = %bootstrap.seed,
+                                        resolved = ?bootstrap.addrs,
+                                        "Skipping bootstrap seed because it resolves to the local peer"
+                                    );
+                                    return;
                                 }
-                                backoff = (backoff * 2).min(BOOTSTRAP_RECONNECT_MAX);
+                                Err(e) => {
+                                    attempt_errors.push(format!("{addr}: {e}"));
+                                }
                             }
+                        }
+
+                        if let Some(peer_id) = connected_peer_id {
+                            backoff = BOOTSTRAP_RECONNECT_BASE;
+                            // Wait until the peer disappears from the connection map, then reconnect.
+                            loop {
+                                if shutdown_flag.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                if !peers.read().await.contains_key(&peer_id) {
+                                    break;
+                                }
+                                tokio::select! {
+                                    _ = sleep(BOOTSTRAP_CONNECTED_POLL) => {}
+                                    _ = shutdown_notify.notified() => return,
+                                }
+                            }
+                            continue;
+                        }
+
+                        if !attempt_errors.is_empty() {
+                            next_addr_idx = (next_addr_idx + 1) % addr_count;
+                            tracing::warn!(
+                                seed = %bootstrap.seed,
+                                attempts = %attempt_errors.join("; "),
+                                backoff_secs = backoff.as_secs(),
+                                "Failed to connect to bootstrap seed; retrying"
+                            );
+                            tokio::select! {
+                                _ = sleep(backoff) => {}
+                                _ = shutdown_notify.notified() => break,
+                            }
+                            backoff = (backoff * 2).min(BOOTSTRAP_RECONNECT_MAX);
                         }
                     }
                 });

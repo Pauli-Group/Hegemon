@@ -9,6 +9,7 @@ For fresh-testnet bring-up, if you are following [config/testnet-initialization.
 - Run `make setup` on a fresh clone to install toolchains and baseline dependencies.
 - Build the binaries:
   ```bash
+  make setup
   make node
   cargo build --release -p walletd
   ```
@@ -64,10 +65,10 @@ HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
 To avoid forks caused by low peer counts, configure multiple reachable seeds. Use a comma-separated list in `HEGEMON_SEEDS`:
 
 ```bash
-export HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333"
+export HEGEMON_SEEDS="hegemon.pauli.group:30333"
 ```
 
-Ensure TCP/30333 is open on each seed and that every miner shares the same seed list. Avoid single-point seeds.
+Ensure TCP/30333 is open on each approved seed and that every miner shares the same seed list. For the first public bootnode after a fresh reset, leave `HEGEMON_SEEDS` unset or exclude the node's own public address until the node is already live.
 
 ### 4b. Ensure time sync (recommended)
 

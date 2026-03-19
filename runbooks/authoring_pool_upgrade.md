@@ -21,8 +21,10 @@ Before doing any server work, follow [config/testnet-initialization.md](/Users/p
 All mining hosts must share the same approved bootstrap seeds:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333,158.69.222.121:30333"
+HEGEMON_SEEDS="hegemon.pauli.group:30333"
 ```
+
+If you are bringing up the first public authoring node after a full reset, do not seed it to itself. Start that first node with `HEGEMON_SEEDS` unset, then use the approved public join seed list on every other miner and relay.
 
 All mining hosts must also keep NTP/chrony time sync healthy. PoW headers beyond the future-skew bound are rejected.
 

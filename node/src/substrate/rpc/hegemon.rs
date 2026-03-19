@@ -203,7 +203,7 @@ pub struct NodeConfigSnapshot {
     pub rpc_methods: String,
     /// Whether RPC is exposed beyond localhost
     pub rpc_external: bool,
-    /// PQ bootstrap nodes (ip:port)
+    /// Configured PQ bootstrap seed entries
     pub bootstrap_nodes: Vec<String>,
     /// PQ handshake verbose logging enabled
     pub pq_verbose: bool,
