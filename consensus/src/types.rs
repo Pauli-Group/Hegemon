@@ -22,6 +22,15 @@ pub type NullifierRoot = [u8; 48];
 pub type SupplyDigest = u128;
 pub type Amount = u64;
 pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
+pub const STAGE1_SHIELDED_POOL_FAMILY_ID: u16 = 1;
+
+pub fn kernel_root_from_shielded_root(root: &StateRoot) -> StateRoot {
+    let mut bytes = Vec::with_capacity(24 + 2 + 48);
+    bytes.extend_from_slice(b"hegemon-kernel-root-v1");
+    bytes.extend_from_slice(&STAGE1_SHIELDED_POOL_FAMILY_ID.to_le_bytes());
+    bytes.extend_from_slice(root);
+    blake3_384(&bytes)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transaction {
@@ -214,6 +223,7 @@ impl Default for ProofVerificationMode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProvenBatchMode {
+    InlineTx,
     FlatBatches,
     MergeRoot,
 }
@@ -252,6 +262,32 @@ pub struct ProvenBatch {
     pub mode: ProvenBatchMode,
     pub flat_batches: Vec<BatchProofItem>,
     pub merge_root: Option<MergeRootProofPayload>,
+}
+
+/// Consensus-facing artifact claim for the prover or artifact publisher
+/// whose proof object is included in the winning block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactClaim {
+    pub payout_account: [u8; 32],
+    pub payout_amount: u64,
+}
+
+/// Parent-agnostic proof object over an exact ordered transaction set.
+///
+/// The current fresh-testnet implementation reuses the existing self-contained
+/// aggregation payload shape while the node and operator surfaces migrate to
+/// the new artifact-market naming.
+pub type CandidateArtifact = ProvenBatch;
+
+/// Public metadata that lets builders discover and compare reusable candidate
+/// artifacts without downloading the full payload immediately.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactAnnouncement {
+    pub artifact_hash: [u8; 32],
+    pub tx_statements_commitment: [u8; 48],
+    pub tx_count: u32,
+    pub proof_mode: ProvenBatchMode,
+    pub claimed_payout_amount: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

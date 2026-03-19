@@ -1,0 +1,21 @@
+run	label	status	first_tx_submitted_ms	last_tx_proof_ready_ms	prepared_bundle_ready_ms	template_installed_ms	hashing_started_ms	first_block_found_after_template_ms	bundle_block_imported_ms	first_eligible_block_included_bundle	proof_production_ms	prepare_ms	ready_to_template_active_ms	template_to_first_found_ms	template_to_bundle_import_ms	total_wall_ms	included_block	inclusion_start_block	missed_target_block	send_total_ms	prepared_bundle_build_ms	inclusion_total_ms	round_total_ms	import_verify_total_ms	tx_verify_total_ms	commitment_verify_total_ms	payload_bytes_per_tx	tx_proof_bytes_total	commitment_proof_bytes	error
+1	run01	ok	1773551482573	1773551488755	1773551489169	1773551489544	1773551489549	1773551547043	1773551547112	True	6182	414	375	57499	57568	64539	14	13	False	6267	209	58621	64987	60	16	43	415082.0	1432252	228076	
+2	run02	ok	1773551594373	1773551600247	1773551600650	1773551601020	1773551601020	1773551630427	1773551630493	True	5874	403	370	29407	29473	36120	14	13	False	5943	190	30406	36442	60	16	43	415048.0	1432116	228076	
+3	run03	failed																												missing matching block_template_installed
+4	run04	failed																												missing matching block_template_installed
+5	run05	failed																												missing matching block_template_installed
+6	run06	ok	1773552279385	1773552285496	1773552285880	1773552286254	1773552286256	1773552317941	1773552318017	True	6111	384	374	31687	31763	38632	14	13	False	6184	201	32589	38875	68	20	47	414956.75	1431751	228076	
+7	run07	failed																												missing matching block_template_installed
+8	run08	failed																												missing matching block_template_installed
+9	run09	failed																												missing matching block_template_installed
+10	run10	failed																												missing matching block_template_installed
+11	run11	ok	1773552896171	1773552901907	1773552902286	1773552902651	1773552902652	1773553010935	1773553010999	True	5736	379	365	108284	108348	114828	14	13	False	5802	188	109387	115279	58	16	41	415106.75	1432351	228076	
+12	run12	failed																												missing matching block_template_installed
+13	run13	ok	1773553330479	1773553336215	1773553336598	1773553336962	1773553336962	1773553420273	1773553420337	True	5736	383	364	83311	83375	89858	14	13	False	5800	187	84408	90295	58	16	41	415050.75	1432127	228076	
+14	run14	failed																												missing matching block_template_installed
+15	run15	ok	1773553652366	1773553658099	1773553658529	1773553658894	1773553658894	1773553877579	1773553877644	True	5733	430	365	218685	218750	225278	14	13	False	5797	186	219870	225750	58	16	42	414871.0	1431408	228076	
+16	run16	failed																												missing matching block_template_installed
+17	run17	ok	1773554020331	1773554026050	1773554026430	1773554026793	1773554026796	1773554499738	1773554499806	True	5719	380	363	472945	473013	479475	14	13	False	5784	188	473994	479866	61	16	43	415164.75	1432583	228076	
+18	run18	failed																												missing matching block_template_installed
+19	run19	failed																												missing matching block_template_installed
+20	run20	failed																												missing matching block_template_installed

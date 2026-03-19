@@ -229,8 +229,11 @@ impl<F: Field> Circuit<F> {
 }
 
 impl<F: CircuitField> Circuit<F> {
-    /// Create a circuit runner for execution and trace generation
-    pub fn runner(self) -> CircuitRunner<F> {
+    /// Create a circuit runner for execution and trace generation.
+    ///
+    /// The runner borrows the immutable circuit metadata so repeated executions do
+    /// not deep-clone the compiled operation graph.
+    pub fn runner(&self) -> CircuitRunner<'_, F> {
         CircuitRunner::new(self)
     }
 }

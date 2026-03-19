@@ -1,0 +1,1 @@
+cargo run --release -p circuits-bench -- --json --iterations 8 --batch-size 0 --lane-batch-sizes 1,2,4,8

@@ -7,7 +7,7 @@ This document defines how we commission third-party reviews for the post-quantum
 We currently rely on:
 
 - **ML-DSA-65** (Dilithium3 profile) for miner rig identities, pool controller signatures, and block announcements.
-- **SLH-DSA** (SPHINCS+-SHA2-128f) for governance keys and long-lived pool treasury authorizations.
+- **SLH-DSA** (SPHINCS+-SHA2-128f) for long-lived trust roots and protocol-release artifact signing.
 - **ML-KEM-1024** (Kyber) for encryption and key agreement on miner <-> pool control channels.
 - **Poseidon2-384** inside the STARK AIR for commitments/nullifiers/Merkle hashing (48-byte digests), plus SHA-256/BLAKE3 externally for protocol hashes and identifiers.
 

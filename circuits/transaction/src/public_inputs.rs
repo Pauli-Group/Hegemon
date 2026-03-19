@@ -66,8 +66,8 @@ impl Default for TransactionPublicInputs {
         let commitments = vec![[0u8; 48]; MAX_OUTPUTS];
         let ciphertext_hashes = vec![[0u8; 48]; MAX_OUTPUTS];
         let balance_slots = (0..BALANCE_SLOTS)
-            .map(|_| BalanceSlot {
-                asset_id: u64::MAX,
+            .map(|idx| BalanceSlot {
+                asset_id: if idx == 0 { NATIVE_ASSET_ID } else { u64::MAX },
                 delta: 0,
             })
             .collect();

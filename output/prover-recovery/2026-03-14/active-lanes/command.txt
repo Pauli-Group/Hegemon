@@ -1,0 +1,15 @@
+Archived commands for the active-lane comparison:
+
+  cargo run --release -p circuits-bench -- --json --iterations 1 --lane-batch-sizes 1 --warm > output/prover-recovery/2026-03-14/active-lanes/benchmark-k1.json
+
+  cargo run --release -p circuits-bench -- --json --iterations 1 --lane-batch-sizes 1 --warm --skip-merge-root > output/prover-recovery/2026-03-14/active-lanes/raw-active-k1.json
+
+  cargo run --release -p circuits-bench -- --json --iterations 2 --lane-batch-sizes 2 --warm --skip-merge-root > output/prover-recovery/2026-03-14/active-lanes/raw-active-k2.json
+
+  cargo run --release -p circuits-bench -- --json --iterations 4 --lane-batch-sizes 4 --warm --skip-merge-root > output/prover-recovery/2026-03-14/active-lanes/raw-active-k4.json
+
+  cargo run --release -p circuits-bench -- --json --iterations 8 --lane-batch-sizes 8 --warm --skip-merge-root > output/prover-recovery/2026-03-14/active-lanes/raw-active-k8.json
+
+The timed-stall artifact was produced by wrapping a 65-second wall-clock budget around:
+
+  cargo run --release -p circuits-bench -- --json --iterations 2 --lane-batch-sizes 2 --warm

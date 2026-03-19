@@ -1,0 +1,6 @@
+dataset	batch_size	tx_count	bytes_per_tx	tx_proof_bytes_avg	leaf_prove_ns	merge_prove_ns	root_prove_ns	commitment_prove_ns	agg_verify_ns	commitment_verify_ns	total_active_path_prove_ns	total_active_path_verify_ns	error
+raw_compat	1	8	354195	352790	-	-	-	-	-	67095625	-	-	
+raw_compat	2	8	354191	352790	-	-	-	-	-	63619335	-	-	
+raw_compat	4	8	354189	352790	-	-	-	-	-	61874168	-	-	
+raw_compat	8	8	354188	352790	-	-	-	-	-	60809542	-	-	
+merge_root_active	1	1	536258	352809	8649541	0	0	73457875	17000000	11057042	82107416	28301959	

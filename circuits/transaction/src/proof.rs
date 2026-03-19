@@ -16,6 +16,7 @@ use crate::{
     witness::TransactionWitness,
 };
 
+use crate::p3_prover::TransactionProofParams;
 use crate::p3_prover::TransactionProverP3;
 use crate::p3_verifier::verify_transaction_proof_bytes_p3;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
@@ -57,6 +58,8 @@ pub struct SerializedStarkInputs {
     pub value_balance_magnitude: u64,
     #[serde(with = "crate::public_inputs::serde_bytes48")]
     pub merkle_root: Commitment,
+    #[serde(default)]
+    pub balance_slot_asset_ids: Vec<u64>,
     #[serde(default)]
     pub stablecoin_enabled: u8,
     #[serde(default)]
@@ -169,6 +172,26 @@ pub fn stark_public_inputs_p3(
     .ok_or(TransactionCircuitError::ConstraintViolation(
         "invalid stablecoin attestation commitment encoding",
     ))?;
+    let balance_slot_asset_ids = if stark_inputs.balance_slot_asset_ids.is_empty() {
+        proof
+            .balance_slots
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect()
+    } else {
+        stark_inputs.balance_slot_asset_ids.clone()
+    };
+    if balance_slot_asset_ids.len() != BALANCE_SLOTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid balance slot asset count",
+        ));
+    }
+    let balance_slot_assets = [
+        Goldilocks::from_u64(balance_slot_asset_ids[0]),
+        Goldilocks::from_u64(balance_slot_asset_ids[1]),
+        Goldilocks::from_u64(balance_slot_asset_ids[2]),
+        Goldilocks::from_u64(balance_slot_asset_ids[3]),
+    ];
 
     Ok(TransactionPublicInputsP3 {
         input_flags,
@@ -180,6 +203,7 @@ pub fn stark_public_inputs_p3(
         value_balance_sign: Goldilocks::from_u64(stark_inputs.value_balance_sign as u64),
         value_balance_magnitude: Goldilocks::from_u64(stark_inputs.value_balance_magnitude),
         merkle_root,
+        balance_slot_assets,
         stablecoin_enabled: Goldilocks::from_u64(stark_inputs.stablecoin_enabled as u64),
         stablecoin_asset: Goldilocks::from_u64(stark_inputs.stablecoin_asset_id),
         stablecoin_policy_version: Goldilocks::from_u64(
@@ -202,6 +226,14 @@ pub fn prove(
     witness: &TransactionWitness,
     _proving_key: &ProvingKey,
 ) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_with_params(witness, _proving_key, TransactionProofParams::production())
+}
+
+pub fn prove_with_params(
+    witness: &TransactionWitness,
+    _proving_key: &ProvingKey,
+    params: TransactionProofParams,
+) -> Result<TransactionProof, TransactionCircuitError> {
     witness.validate()?;
 
     let trace = TransactionTrace::from_witness(witness)?;
@@ -212,7 +244,7 @@ pub fn prove(
         TransactionCircuitError::ConstraintViolationOwned(format!("Trace building failed: {}", e))
     })?;
     let stark_pub_inputs = prover.public_inputs(witness)?;
-    let stark_proof = prover.prove_bytes(stark_trace, &stark_pub_inputs)?;
+    let stark_proof = prover.prove_bytes_with_params(stark_trace, &stark_pub_inputs, params)?;
 
     let serialized_inputs = serialize_p3_inputs(&stark_pub_inputs);
     let nullifiers = public_inputs.nullifiers.clone();
@@ -300,6 +332,11 @@ fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStar
         value_balance_sign: pub_inputs.value_balance_sign.as_canonical_u64() as u8,
         value_balance_magnitude: pub_inputs.value_balance_magnitude.as_canonical_u64(),
         merkle_root: hash_to_bytes48(&pub_inputs.merkle_root),
+        balance_slot_asset_ids: pub_inputs
+            .balance_slot_assets
+            .iter()
+            .map(|asset| asset.as_canonical_u64())
+            .collect(),
         stablecoin_enabled: pub_inputs.stablecoin_enabled.as_canonical_u64() as u8,
         stablecoin_asset_id: pub_inputs.stablecoin_asset.as_canonical_u64(),
         stablecoin_policy_version: pub_inputs.stablecoin_policy_version.as_canonical_u64() as u32,

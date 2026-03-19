@@ -1,44 +1,52 @@
 # Chain specification guide
 
-This guide tracks the chain specifications we ship for coordinated testing and pre-mainnet rehearsals. Each spec lists the bootstrapping keys required to finalize genesis.
+This guide tracks the chain-spec assumptions we ship after the proof-native cut. The live runtime is a PoW shielded chain with no public balance pallet, no treasury, and no account-funded bootstrap lane. A valid chain spec should therefore describe mining, networking, and protocol defaults, not pre-funded accounts or governance seats.
 
-## Testnet0
-- **Goal:** Single-validator smoke tests for block production, PoW/PoS hand-off plumbing, and dashboard telemetry.
-- **Genesis authorities:**
-  - Aura/Grandpa: development key derived from `//Alice` (replace with hardware-backed authority before external distribution).
-- **Bootstrapping keys:** Bundle a faucet account seeded with 10^12 units and expose its mnemonic only in the internal secrets vault. Preload observability keys so `pallet-observability` emits metrics immediately.
-- **Governance note:** No council/technical committee seats are seeded in this spec.
+## Shared rules
 
-## Testnet1
-- **Goal:** Multi-validator adversarial testing (latency, equivocation handling, oracles).
-- **Genesis authorities:**
-  - Aura/Grandpa: 3 validators backed by HSM-derived sr25519 keys (``//Validator0``, ``//Validator1``, ``//Validator2`` derivations stored in vault).
-- **Bootstrapping keys:**
-  - Faucet split into three 10^11 tranches controlled by separate operators.
-  - Oracle operators: pre-register feed keys for FX and rates pallets, pinned in `pallet-oracles` genesis config.
-- **Governance note:** No council/technical committee seats are seeded in this spec.
+Every shipped spec should follow these rules:
 
-## Testnet2
-- **Goal:** Governance cadence, fee-model rehearsals, and end-to-end wallet flows with real exchanges.
-- **Genesis authorities:**
-  - Aura/Grandpa: 5 validators (mix of HSM + YubiHSM), keys escrowed in the shared custody vault with change-control tickets.
-- **Bootstrapping keys:**
-  - Treasury multisig: 3-of-5 accounts funded from genesis with 10^11 units each; include the treasury stash address in the spec to pre-fund fee subsidies.
-  - Settlement verifier keys: populate `pallet-settlement` with the default verification key and STARK parameters matching Testnet2 constraints.
-- **Governance note:** No council/technical committee seats are seeded in this spec.
+- no `balances` genesis section
+- shielded-pool defaults come from `runtime::manifest::ProtocolManifest`
+- version schedules and proof defaults are release artifacts, not ad-hoc JSON knobs
+- operators must share the same approved `HEGEMON_SEEDS` list to avoid forks
+- operators must keep NTP/chrony enabled because PoW timestamps are future-skew bounded
 
-## Pre-mainnet (candidate)
-- **Goal:** Dress rehearsal for mainnet launch with governance, treasury, and observability mirrors of production.
-- **Genesis authorities:**
-  - Aura/Grandpa: 7 validators (2 security team, 5 community), each with backup keys sealed in tamper-evident HSM exports.
-- **Bootstrapping keys:**
-  - Faucet removed; genesis allocations sent to custodial wallets and fee-relayer accounts only.
-  - Oracle and settlement verifier keys registered with rotation schedules and on-chain expirations.
-  - Observability: inject Prometheus/Grafana endpoints in the spec and pre-approve WebSocket telemetry signing keys.
-- **Governance note:** No council/technical committee seats are seeded in this spec.
+## Dev / local spec
+
+Purpose:
+- quick local mining and wallet testing
+- temporary databases and resettable state
+
+Expected behavior:
+- no public allocations at genesis
+- shielded coinbase is the only issuance path
+- standard chain/state/system RPC is available for inspection
+- Hegemon RPC is the supported submission surface
+
+## Testnet spec
+
+Purpose:
+- multi-node mining tests
+- sync and proof-availability rehearsals
+- wallet interoperability and version-schedule rollout drills
+
+Expected content:
+- bootnode and seed configuration
+- PQ network identity material
+- difficulty defaults
+- shielded-pool verifying key and fee/policy defaults derived from the protocol manifest
+- any version schedule changes required for the testnet release
+
+What not to include:
+- treasury multisigs
+- faucet accounts funded from genesis
+- settlement or archive-market genesis configuration
+- feature-flag or observability rollout state
 
 ## Authoring notes
-- Keep these specs synchronized with `DESIGN.md` network parameters and the governance procedures in `METHODS.md`.
-- When generating JSON specs, commit the signed authority keys to the internal registry and link the digest here.
-- Include the expected `spec_version` and `state_version` bumps in release notes so node operators can validate binaries before joining.
-- Any protocol-breaking commitment/nullifier encoding change (e.g., switching to 6-limb 384-bit encodings) requires operators to delete `node.db` and wallet store files before joining the new chain spec.
+
+- Keep chain-spec JSON synchronized with `runtime/src/manifest.rs`, `runtime/src/chain_spec.rs`, and `node/src/substrate/chain_spec.rs`.
+- If protocol defaults change, regenerate the chain spec from the new release build rather than editing old JSON by hand.
+- Treat chain specs as release artifacts for a fresh network. Do not assume in-place migration from an older account-based dev chain.
+- When documenting testnet setup, always publish the exact approved `HEGEMON_SEEDS` list and remind miners to use the same list.

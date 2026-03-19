@@ -15,6 +15,13 @@ have_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
+ensure_macos_libclang() {
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        return
+    fi
+    "$(dirname "$0")/ensure-macos-libclang.sh"
+}
+
 print_tool_version() {
     local label=$1
     shift
@@ -207,6 +214,7 @@ ensure_node() {
 }
 
 main() {
+    ensure_macos_libclang
     ensure_apt_packages
     install_rustup
     install_rust_toolchain

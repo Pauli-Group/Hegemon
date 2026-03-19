@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 use alloc::format;
 use core::marker::PhantomData;
@@ -73,7 +74,7 @@ impl<
             .collect();
 
         let final_poly = circuit
-            .alloc_witness_inputs(input.final_poly.len(), "FRI final polynomial coefficients");
+            .alloc_proof_inputs(input.final_poly.len(), "FRI final polynomial coefficients");
 
         Self {
             commit_phase_commits,
@@ -88,6 +89,40 @@ impl<
         // FRI proof payloads are witness-only in recursion circuits.
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        let mut values = Vec::new();
+        for commit in &input.commit_phase_commits {
+            values.extend(RecMmcs::Commitment::get_private_values(commit));
+        }
+        for witness in &input.commit_pow_witnesses {
+            values.extend(Witness::get_private_values(witness));
+        }
+        for query in &input.query_proofs {
+            values.extend(QueryProofTargets::<F, EF, InputProof, RecMmcs>::get_private_values(
+                query,
+            ));
+        }
+        values.extend(input.final_poly.iter().copied());
+        values.extend(Witness::get_private_values(&input.query_pow_witness));
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        let mut targets = Vec::new();
+        for commit in &self.commit_phase_commits {
+            targets.extend(commit.get_private_targets());
+        }
+        for witness in &self.commit_pow_witnesses {
+            targets.extend(witness.get_private_targets());
+        }
+        for query in &self.query_proofs {
+            targets.extend(query.get_private_targets());
+        }
+        targets.extend(self.final_poly.iter().copied());
+        targets.extend(self.pow_witness.get_private_targets());
+        targets
     }
 }
 
@@ -132,6 +167,24 @@ impl<
         let _ = input;
         Vec::new()
     }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        let mut values = InputProof::get_private_values(&input.input_proof);
+        for opening in &input.commit_phase_openings {
+            values.extend(
+                CommitPhaseProofStepTargets::<F, EF, RecMmcs>::get_private_values(opening),
+            );
+        }
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        let mut targets = self.input_proof.get_private_targets();
+        for opening in &self.commit_phase_openings {
+            targets.extend(opening.get_private_targets());
+        }
+        targets
+    }
 }
 
 /// `Recursive` version of `CommitPhaseProofStepTargets`.
@@ -153,7 +206,7 @@ impl<F: Field, EF: ExtensionField<F>, RecMmcs: RecursiveExtensionMmcs<F, EF>> Re
     type Input = CommitPhaseProofStep<EF, RecMmcs::Input>;
 
     fn new(circuit: &mut CircuitBuilder<EF>, input: &Self::Input) -> Self {
-        let sibling_value = circuit.alloc_witness_input("FRI commit phase sibling value");
+        let sibling_value = circuit.alloc_proof_input("FRI commit phase sibling value");
         let opening_proof = RecMmcs::Proof::new(circuit, &input.opening_proof);
         Self {
             sibling_value,
@@ -166,6 +219,18 @@ impl<F: Field, EF: ExtensionField<F>, RecMmcs: RecursiveExtensionMmcs<F, EF>> Re
         // Commit-phase openings live inside query proofs and are witness-only.
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        let mut values = vec![input.sibling_value];
+        values.extend(RecMmcs::Proof::get_private_values(&input.opening_proof));
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        let mut targets = vec![self.sibling_value];
+        targets.extend(self.opening_proof.get_private_targets());
+        targets
     }
 }
 
@@ -187,7 +252,7 @@ impl<F: Field, EF: ExtensionField<F>, Inner: RecursiveMmcs<F, EF>> Recursive<EF>
         let opened_values = input
             .opened_values
             .iter()
-            .map(|values| circuit.alloc_witness_inputs(values.len(), "batch opened values"))
+            .map(|values| circuit.alloc_proof_inputs(values.len(), "batch opened values"))
             .collect();
 
         let opening_proof = Inner::Proof::new(circuit, &input.opening_proof);
@@ -202,6 +267,24 @@ impl<F: Field, EF: ExtensionField<F>, Inner: RecursiveMmcs<F, EF>> Recursive<EF>
         // Batch openings are witness-only inputs used inside FRI query proofs.
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        let mut values = Vec::new();
+        for row in &input.opened_values {
+            values.extend(row.iter().copied().map(EF::from));
+        }
+        values.extend(Inner::Proof::get_private_values(&input.opening_proof));
+        values
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        let mut targets = Vec::new();
+        for row in &self.opened_values {
+            targets.extend(row.iter().copied());
+        }
+        targets.extend(self.opening_proof.get_private_targets());
+        targets
     }
 }
 
@@ -230,7 +313,7 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
 
     fn new(circuit: &mut CircuitBuilder<EF>, _input: &Self::Input) -> Self {
         Self {
-            hash_targets: circuit.alloc_witness_input_array("MMCS commitment digest"),
+            hash_targets: circuit.alloc_proof_input_array("MMCS commitment digest"),
             _phantom: PhantomData,
         }
     }
@@ -239,6 +322,14 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
         // Commitment digests are witness-only.
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        input.as_ref().iter().copied().map(EF::from).collect()
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        self.hash_targets.to_vec()
     }
 }
 
@@ -259,7 +350,7 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
         let proof_len = input.len();
         let mut proof = Vec::with_capacity(proof_len);
         for _ in 0..proof_len {
-            proof.push(circuit.alloc_witness_input_array("Merkle proof hash"));
+            proof.push(circuit.alloc_proof_input_array("Merkle proof hash"));
         }
 
         Self {
@@ -272,6 +363,19 @@ impl<F: Field, EF: ExtensionField<F>, const DIGEST_ELEMS: usize> Recursive<EF>
         // Merkle proofs are witness-only.
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        input.iter()
+            .flat_map(|digest| digest.iter().copied().map(EF::from))
+            .collect()
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        self.hash_proof_targets
+            .iter()
+            .flat_map(|digest| digest.iter().copied())
+            .collect()
     }
 }
 
@@ -286,7 +390,7 @@ impl<F: Field, EF: ExtensionField<F>> Recursive<EF> for Witness<F> {
 
     fn new(circuit: &mut CircuitBuilder<EF>, _input: &Self::Input) -> Self {
         Self {
-            witness: circuit.alloc_witness_input("FRI proof-of-work witness"),
+            witness: circuit.alloc_proof_input("FRI proof-of-work witness"),
             _phantom: PhantomData,
         }
     }
@@ -295,6 +399,14 @@ impl<F: Field, EF: ExtensionField<F>> Recursive<EF> for Witness<F> {
         // PoW witnesses are witness-only.
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        vec![EF::from(*input)]
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        vec![self.witness]
     }
 }
 
@@ -423,6 +535,18 @@ impl<F: Field, EF: ExtensionField<F>, Inner: RecursiveMmcs<F, EF>> Recursive<EF>
         // Input proofs are witness-only (they are the Merkle openings queried by FRI).
         let _ = input;
         Vec::new()
+    }
+
+    fn get_private_values(input: &Self::Input) -> Vec<EF> {
+        input.iter()
+            .flat_map(BatchOpeningTargets::<F, EF, Inner>::get_private_values)
+            .collect()
+    }
+
+    fn get_private_targets(&self) -> Vec<Target> {
+        self.iter()
+            .flat_map(BatchOpeningTargets::<F, EF, Inner>::get_private_targets)
+            .collect()
     }
 }
 

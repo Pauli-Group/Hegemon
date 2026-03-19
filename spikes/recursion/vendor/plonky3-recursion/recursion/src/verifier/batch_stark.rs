@@ -462,9 +462,10 @@ where
     let trace_round: Vec<_> = ext_trace_domains
         .iter()
         .zip(instances.iter())
-        .map(|(ext_dom, inst)| {
-            let first_point = pcs.first_point(ext_dom);
-            let next_point = ext_dom.next_point(first_point).ok_or_else(|| {
+        .enumerate()
+        .map(|(i, (ext_dom, inst))| {
+            let first_point = pcs.first_point(&trace_domains[i]);
+            let next_point = trace_domains[i].next_point(first_point).ok_or_else(|| {
                 VerificationError::InvalidProofShape(
                     "Trace domain does not provide next point".to_string(),
                 )
@@ -566,10 +567,9 @@ where
                 ));
             }
 
-            let ext_dom = &ext_trace_domains[inst_idx];
-
-            let first_point = pcs.first_point(ext_dom);
-            let next_point = ext_dom.next_point(first_point).ok_or_else(|| {
+            let pre_domain = pcs.natural_domain_for_degree(1 << meta.degree_bits);
+            let first_point = pcs.first_point(&trace_domains[inst_idx]);
+            let next_point = trace_domains[inst_idx].next_point(first_point).ok_or_else(|| {
                 VerificationError::InvalidProofShape(
                     "Trace domain does not provide next point".to_string(),
                 )
@@ -579,7 +579,7 @@ where
             let zeta_next = circuit.mul(zeta, generator_const);
 
             pre_round.push((
-                *ext_dom,
+                pre_domain,
                 vec![(zeta, local.clone()), (zeta_next, next.clone())],
             ));
         }
@@ -608,8 +608,8 @@ where
             }
 
             if !permutation_local.is_empty() {
-                let first_point = pcs.first_point(ext_dom);
-                let next_point = ext_dom.next_point(first_point).ok_or_else(|| {
+                let first_point = pcs.first_point(&trace_domains[i]);
+                let next_point = trace_domains[i].next_point(first_point).ok_or_else(|| {
                     VerificationError::InvalidProofShape(
                         "Trace domain does not provide next point".to_string(),
                     )

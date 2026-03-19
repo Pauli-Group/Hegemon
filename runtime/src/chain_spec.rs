@@ -1,10 +1,9 @@
 use sp_core::H256;
 
 use crate::{
-    AccountId, Balance, BalancesConfig, DifficultyConfig, PowDifficulty, RuntimeGenesisConfig,
-    ShieldedPoolConfig, SystemConfig,
+    manifest, AccountId, Balance, DifficultyConfig, KernelConfig, PowDifficulty,
+    RuntimeGenesisConfig, ShieldedPoolConfig, SystemConfig,
 };
-use pallet_shielded_pool::verifier::StarkVerifier;
 
 /// Structured chain spec describing PoW parameters, telemetry defaults, and genesis state.
 pub struct ChainSpec {
@@ -22,15 +21,21 @@ const DEFAULT_DA_CHUNK_SIZE: u32 = 65536;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 
 fn base_genesis(endowed: &[(AccountId, Balance)]) -> RuntimeGenesisConfig {
+    let _ = endowed;
+    let manifest = manifest::protocol_manifest();
     RuntimeGenesisConfig {
         system: SystemConfig::default(),
-        balances: BalancesConfig {
-            balances: endowed.to_vec(),
-            dev_accounts: None,
-        },
         difficulty: DifficultyConfig::default(),
+        kernel: KernelConfig {
+            family_roots: manifest::kernel_family_roots(),
+            _phantom: Default::default(),
+        },
         shielded_pool: ShieldedPoolConfig {
-            verifying_key: Some(StarkVerifier::create_verifying_key(0)),
+            verifying_key: Some(manifest::shielded_verifying_key()),
+            fee_parameters: Some(manifest.fee_parameters),
+            da_policy: Some(manifest.da_policy),
+            ciphertext_policy: Some(manifest.ciphertext_policy),
+            proof_availability_policy: Some(manifest.proof_availability_policy),
             ..Default::default()
         },
         ..Default::default()

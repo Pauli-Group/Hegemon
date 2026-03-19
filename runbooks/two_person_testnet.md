@@ -2,18 +2,21 @@
 
 This guide walks through setting up a two-node Hegemon network where both participants can mine blocks, earn coinbase rewards directly to their shielded wallets, and send private transactions to each other using walletd.
 
+For the fresh-testnet rollout that uses the laptop + `hegemon-ovh` topology, follow [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md) first and use the laptop-created boot-wallet address as the payout address on every mining host.
+
 ## Prerequisites
 
 Both participants need:
-- The `hegemon-node` and `walletd` binaries (build with `cargo build -p hegemon-node -p walletd --release`)
+- The `hegemon-node` and `walletd` binaries (`make setup`, `make node`, and `cargo build --release -p walletd`)
 - Port 30333 TCP forwarded if behind NAT
 - `jq` for parsing walletd JSON output
 - Time sync (NTP/chrony) enabled (PoW blocks reject timestamps that exceed the future-skew bound)
 
 ## Network Info
 
-- **Boot Node (Alice):** `hegemon.pauli.group:31333`
-- **Approved seed list (`HEGEMON_SEEDS`):** `hegemon.pauli.group:31333,158.69.222.121:31333`
+- **Boot Node (Alice):** `<ALICE_PUBLIC_IP>:30333`
+- **Shared seed list for a private two-person network:** `<ALICE_PUBLIC_IP>:30333`
+- **Current approved public join seed for the shared fresh testnet:** `hegemon.pauli.group:30333`
 - **Chain:** Shared chainspec file (see below)
 - **Block time:** ~60 seconds (1 minute)
 - **Coinbase reward:** ~4.98 HEG per block (halves every ~4 years / 2.1M blocks)
@@ -101,14 +104,16 @@ The script will:
 To connect to the boot node, set `BOOTNODE` before running:
 
 ```bash
-BOOTNODE="hegemon.pauli.group:31333" ./scripts/start-mining.sh
+BOOTNODE="<ALICE_PUBLIC_IP>:30333" ./scripts/start-mining.sh
 ```
 
-For real testnet mining, use the approved seed list so all miners share the same bootstrap peers:
+For a private two-person network, use the same agreed seed list on both nodes:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" ./scripts/start-mining.sh
+HEGEMON_SEEDS="<ALICE_PUBLIC_IP>:30333" ./scripts/start-mining.sh
 ```
+
+If you are joining the shared public fresh testnet instead of bootstrapping your own pair, replace the value above with `HEGEMON_SEEDS="hegemon.pauli.group:30333"`.
 
 ### ⚠️ Ciphertext Retention (Required on Testnet)
 
@@ -180,7 +185,7 @@ Look for `primaryAddress` (`shca1...`) and your balances.
 
 Bob just needs your public IP and port. No peer ID is required (the network uses PQ-Noise, not libp2p).
 
-Your bootnode address: `hegemon.pauli.group:31333`
+Your bootnode address: `<ALICE_PUBLIC_IP>:30333`
 
 ### 5. Monitor Mining
 
@@ -202,7 +207,9 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_health"}' \
 
 Either build from source or get the binary from Alice:
 ```bash
-cargo build -p hegemon-node -p walletd --release
+make setup
+make node
+cargo build --release -p walletd
 ```
 
 ### 2. Initialize Wallet
@@ -218,7 +225,7 @@ printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_SEEDS="hegemon.pauli.group:31333,158.69.222.121:31333" \
+HEGEMON_SEEDS="<ALICE_PUBLIC_IP>:30333" \
 HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
   | jq -r '.result.primaryAddress') \
@@ -339,7 +346,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 ### Bob can't connect
 - Verify port 30333 is forwarded on Alice's router
 - Check firewall allows inbound TCP 30333 (macOS: add hegemon-node to allowed apps)
-- Ensure `HEGEMON_SEEDS` uses the approved seed list: `hegemon.pauli.group:31333,158.69.222.121:31333`
+- Ensure `HEGEMON_SEEDS` uses the shared agreed list for your network, or `hegemon.pauli.group:30333` when joining the shared public fresh testnet
 - Ensure all miners share the same seed list to avoid partitions/forks
 
 ### Blocks not syncing

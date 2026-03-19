@@ -1,6 +1,6 @@
 [package]
 name = "hegemon-node"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2021"
 authors = ["Pauli Group Inc."]
 description = "Hegemon PQ-secure blockchain node"
@@ -26,6 +26,7 @@ parking_lot = "0.12"
 rayon = "1"
 pq-noise = { path = "../pq-noise" }
 protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning" }
+protocol-kernel = { path = "../protocol/kernel", package = "protocol-kernel" }
 rcgen = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -41,6 +42,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
 batch-circuit = { path = "../circuits/batch", optional = true }
+tx-proof-manifest = { path = "../circuits/tx-proof-manifest", optional = true }
 aggregation-circuit = { path = "../circuits/aggregation", optional = true }
 block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
@@ -52,6 +54,7 @@ rpassword = "7.4.0"
 atty = "0.2.14"
 url = "2"
 base64 = "0.22"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
 # Substrate SDK dependencies (optional, enabled with "substrate" feature)
 # Using polkadot-sdk git dependencies for version alignment
@@ -98,6 +101,7 @@ runtime = { path = "../runtime", optional = true }
 
 # Shielded pool pallet (for RPC types)
 pallet-shielded-pool = { path = "../pallets/shielded-pool", optional = true }
+pallet-kernel = { path = "../pallets/kernel", optional = true }
 
 # Archive market pallet (for RPC types)
 pallet-archive-market = { path = "../pallets/archive-market", optional = true }
@@ -115,7 +119,7 @@ fast-proofs = ["block-circuit?/fast-proofs"]
 # This provides:
 # - CLI scaffolding (sc-cli)
 # - Node service framework (sc-service)
-# - Blake3 PoW consensus (sc-consensus-pow)
+# - SHA-256d PoW consensus (sc-consensus-pow)
 # - Mining coordination
 # - Runtime with WASM binary and DifficultyApi
 #
@@ -161,6 +165,7 @@ substrate = [
     "dep:pallet-timestamp",
     "dep:pallet-coinbase",
     "dep:pallet-shielded-pool",
+    "dep:pallet-kernel",
     "dep:pallet-archive-market",
     "dep:frame-support",
     "dep:tower",
@@ -169,6 +174,7 @@ substrate = [
     "dep:block-circuit",
     "dep:aggregation-circuit",
     "dep:batch-circuit",
+    "dep:tx-proof-manifest",
     "consensus/substrate",
     "dep:p3-field",
 ]
@@ -176,13 +182,17 @@ substrate = [
 [dev-dependencies]
 rand = "0.8"
 tempfile = "3.8"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 
 # Substrate-based node binary
 [[bin]]
 name = "hegemon-node"
 path = "src/bin/substrate_node.rs"
+required-features = ["substrate"]
+
+[[bin]]
+name = "hegemon-prover-worker"
+path = "src/bin/prover_worker.rs"
 required-features = ["substrate"]
 
 [lints]

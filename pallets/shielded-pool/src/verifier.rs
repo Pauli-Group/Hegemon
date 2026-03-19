@@ -79,6 +79,8 @@ pub struct ShieldedTransferInputs {
     pub commitments: Vec<[u8; 48]>,
     /// Ciphertext hashes for new notes.
     pub ciphertext_hashes: Vec<[u8; 48]>,
+    /// Asset ids for the four fixed balance slots used by the transaction proof.
+    pub balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
     /// Native fee encoded in the circuit.
     pub fee: u64,
     /// Net value balance (transparent component).
@@ -297,6 +299,10 @@ impl StarkVerifier {
         encoded.push(Self::encode_u8(sign));
         encoded.push(Self::encode_u64(magnitude));
 
+        for asset_id in inputs.balance_slot_asset_ids {
+            encoded.push(Self::encode_u64(asset_id));
+        }
+
         let (
             stablecoin_enabled,
             stablecoin_asset,
@@ -419,6 +425,32 @@ impl StarkVerifier {
         transaction_core::hashing_pq::is_canonical_bytes48(bytes)
     }
 
+    fn canonical_balance_slot_asset_ids(
+        asset_ids: &[u64; transaction_core::constants::BALANCE_SLOTS],
+    ) -> bool {
+        if asset_ids[0] != transaction_core::constants::NATIVE_ASSET_ID {
+            return false;
+        }
+
+        let mut saw_padding = false;
+        let mut prev_asset = transaction_core::constants::NATIVE_ASSET_ID;
+        for asset_id in asset_ids.iter().skip(1) {
+            if *asset_id == u64::MAX {
+                saw_padding = true;
+                continue;
+            }
+            if saw_padding {
+                return false;
+            }
+            if *asset_id == transaction_core::constants::NATIVE_ASSET_ID || *asset_id <= prev_asset
+            {
+                return false;
+            }
+            prev_asset = *asset_id;
+        }
+        true
+    }
+
     fn validate_public_inputs(inputs: &ShieldedTransferInputs) -> bool {
         if inputs.nullifiers.len() > Self::MAX_INPUTS {
             return false;
@@ -430,6 +462,9 @@ impl StarkVerifier {
             return false;
         }
         if inputs.ciphertext_hashes.len() != inputs.commitments.len() {
+            return false;
+        }
+        if !Self::canonical_balance_slot_asset_ids(&inputs.balance_slot_asset_ids) {
             return false;
         }
         if inputs.nullifiers.is_empty() && inputs.commitments.is_empty() {
@@ -469,6 +504,9 @@ impl StarkVerifier {
             if binding.asset_id == transaction_core::constants::NATIVE_ASSET_ID
                 || binding.asset_id == u64::MAX
             {
+                return false;
+            }
+            if !inputs.balance_slot_asset_ids[1..].contains(&binding.asset_id) {
                 return false;
             }
             if !Self::is_canonical_felt(&binding.policy_hash)
@@ -601,6 +639,9 @@ impl StarkVerifier {
         }
         message.extend_from_slice(&inputs.fee.to_le_bytes());
         message.extend_from_slice(&inputs.value_balance.to_le_bytes());
+        for asset_id in inputs.balance_slot_asset_ids {
+            message.extend_from_slice(&asset_id.to_le_bytes());
+        }
         message
     }
 
@@ -732,6 +773,12 @@ impl StarkVerifier {
             value_balance_sign,
             value_balance_magnitude,
             merkle_root,
+            balance_slot_assets: [
+                transaction_core::Felt::from_u64(inputs.balance_slot_asset_ids[0]),
+                transaction_core::Felt::from_u64(inputs.balance_slot_asset_ids[1]),
+                transaction_core::Felt::from_u64(inputs.balance_slot_asset_ids[2]),
+                transaction_core::Felt::from_u64(inputs.balance_slot_asset_ids[3]),
+            ],
             stablecoin_enabled,
             stablecoin_asset,
             stablecoin_policy_version,
@@ -1057,6 +1104,7 @@ mod tests {
             nullifiers: vec![canonical_byte(2), canonical_byte(3)],
             commitments: vec![canonical_byte(4), canonical_byte(5)],
             ciphertext_hashes: vec![canonical_byte(6), canonical_byte(7)],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             fee: 0,
             value_balance: 0,
             stablecoin: None,
@@ -1115,6 +1163,7 @@ mod tests {
             + inputs.nullifiers.len()
             + inputs.commitments.len()
             + inputs.ciphertext_hashes.len()
+            + transaction_core::constants::BALANCE_SLOTS
             + 1 // fee
             + 2 // value balance (sign + magnitude)
             + 8; // stablecoin metadata fields
@@ -1306,6 +1355,7 @@ mod tests {
             nullifiers: vec![], // Empty
             commitments: vec![[4u8; 48]],
             ciphertext_hashes: vec![[5u8; 48]],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             fee: 0,
             value_balance: 1000, // Minting 1000
             stablecoin: None,
@@ -1328,6 +1378,7 @@ mod tests {
             nullifiers: vec![[2u8; 48]],
             commitments: vec![[4u8; 48]],
             ciphertext_hashes: vec![[5u8; 48]],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             fee: 0,
             value_balance: i128::MAX,
             stablecoin: None,
@@ -1338,6 +1389,7 @@ mod tests {
             nullifiers: vec![[2u8; 48]],
             commitments: vec![[4u8; 48]],
             ciphertext_hashes: vec![[5u8; 48]],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             fee: 0,
             value_balance: i128::MIN,
             stablecoin: None,

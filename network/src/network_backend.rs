@@ -58,13 +58,22 @@ const BOOTSTRAP_RECONNECT_MAX: Duration = Duration::from_secs(30);
 const BOOTSTRAP_CONNECTED_POLL: Duration = Duration::from_secs(1);
 const BOOTSTRAP_IDLE_POLL: Duration = Duration::from_secs(5);
 
+/// A configured bootstrap seed plus all socket addresses it currently resolves to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BootstrapNode {
+    /// Operator-facing seed label, e.g. `hegemon.pauli.group:30333`.
+    pub seed: String,
+    /// Resolved dial targets for this seed, ordered by preference.
+    pub addrs: Vec<SocketAddr>,
+}
+
 /// PQ Network Backend configuration
 #[derive(Clone, Debug)]
 pub struct PqNetworkBackendConfig {
     /// Listen address
     pub listen_addr: SocketAddr,
-    /// Bootstrap nodes to connect to
-    pub bootstrap_nodes: Vec<SocketAddr>,
+    /// Bootstrap seeds to connect to
+    pub bootstrap_nodes: Vec<BootstrapNode>,
     /// Maximum number of peers
     pub max_peers: usize,
     /// Connection timeout
@@ -157,6 +166,7 @@ struct PeerConnection {
 enum PeerAdmission {
     Inserted,
     Duplicate,
+    SelfPeer,
     MaxPeersReached,
 }
 
@@ -189,10 +199,14 @@ pub struct PqNetworkBackend {
 impl PqNetworkBackend {
     async fn admit_peer(
         peers: &Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
+        local_peer_id: [u8; 32],
         peer_id: [u8; 32],
         connection: PeerConnection,
         max_peers: usize,
     ) -> PeerAdmission {
+        if peer_id == local_peer_id {
+            return PeerAdmission::SelfPeer;
+        }
         let mut peers_guard = peers.write().await;
         if peers_guard.contains_key(&peer_id) {
             return PeerAdmission::Duplicate;
@@ -319,6 +333,7 @@ impl PqNetworkBackend {
                                                 let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
                                                 let admission = Self::admit_peer(
                                                     &peers,
+                                                    transport.local_peer_id(),
                                                     peer_id,
                                                     PeerConnection {
                                                         info: info.clone(),
@@ -333,6 +348,14 @@ impl PqNetworkBackend {
                                                             peer_id = %hex::encode(peer_id),
                                                             addr = %addr,
                                                             "Duplicate inbound peer connection; dropping"
+                                                        );
+                                                        return;
+                                                    }
+                                                    PeerAdmission::SelfPeer => {
+                                                        tracing::debug!(
+                                                            peer_id = %hex::encode(peer_id),
+                                                            addr = %addr,
+                                                            "Rejecting inbound self-peer connection"
                                                         );
                                                         return;
                                                     }
@@ -492,7 +515,7 @@ impl PqNetworkBackend {
             let shutdown_flag = self.shutdown_flag.clone();
             let shutdown_notify = self.shutdown_notify.clone();
 
-            for addr in bootstrap_nodes {
+            for bootstrap in bootstrap_nodes {
                 let peers = peers.clone();
                 let transport = transport.clone();
                 let event_tx = event_tx.clone();
@@ -501,18 +524,19 @@ impl PqNetworkBackend {
 
                 tokio::spawn(async move {
                     let mut backoff = BOOTSTRAP_RECONNECT_BASE;
+                    let mut next_addr_idx = 0usize;
 
                     loop {
                         if shutdown_flag.load(Ordering::Relaxed) {
                             break;
                         }
 
-                        // If we're already connected to this bootstrap address, just wait.
+                        // If we're already connected to any address for this bootstrap seed, just wait.
                         let already_connected = {
                             let peers_guard = peers.read().await;
-                            peers_guard
-                                .values()
-                                .any(|p| p.info.is_outbound && p.info.addr == addr)
+                            peers_guard.values().any(|p| {
+                                p.info.is_outbound && bootstrap.addrs.contains(&p.info.addr)
+                            })
                         };
                         if already_connected {
                             backoff = BOOTSTRAP_RECONNECT_BASE;
@@ -532,48 +556,81 @@ impl PqNetworkBackend {
                             continue;
                         }
 
-                        let connect_result = tokio::select! {
-                            res = Self::connect_outbound_inner(
-                                transport.clone(),
-                                peers.clone(),
-                                event_tx.clone(),
-                                addr,
-                                connection_timeout,
-                                max_peers,
-                            ) => res,
-                            _ = shutdown_notify.notified() => break,
-                        };
+                        let addr_count = bootstrap.addrs.len();
+                        if addr_count == 0 {
+                            tracing::warn!(seed = %bootstrap.seed, "Bootstrap seed has no dialable addresses");
+                            break;
+                        }
 
-                        match connect_result {
-                            Ok(peer_id) => {
-                                backoff = BOOTSTRAP_RECONNECT_BASE;
-                                // Wait until the peer disappears from the connection map, then reconnect.
-                                loop {
-                                    if shutdown_flag.load(Ordering::Relaxed) {
-                                        return;
-                                    }
-                                    if !peers.read().await.contains_key(&peer_id) {
-                                        break;
-                                    }
-                                    tokio::select! {
-                                        _ = sleep(BOOTSTRAP_CONNECTED_POLL) => {}
-                                        _ = shutdown_notify.notified() => return,
-                                    }
+                        let mut connected_peer_id = None;
+                        let mut attempt_errors = Vec::new();
+
+                        for offset in 0..addr_count {
+                            let idx = (next_addr_idx + offset) % addr_count;
+                            let addr = bootstrap.addrs[idx];
+                            let connect_result = tokio::select! {
+                                res = Self::connect_outbound_inner(
+                                    transport.clone(),
+                                    peers.clone(),
+                                    event_tx.clone(),
+                                    addr,
+                                    connection_timeout,
+                                    max_peers,
+                                ) => res,
+                                _ = shutdown_notify.notified() => return,
+                            };
+
+                            match connect_result {
+                                Ok(peer_id) => {
+                                    next_addr_idx = (idx + 1) % addr_count;
+                                    connected_peer_id = Some(peer_id);
+                                    break;
+                                }
+                                Err(e) if e == "Self peer connection" => {
+                                    tracing::info!(
+                                        seed = %bootstrap.seed,
+                                        resolved = ?bootstrap.addrs,
+                                        "Skipping bootstrap seed because it resolves to the local peer"
+                                    );
+                                    return;
+                                }
+                                Err(e) => {
+                                    attempt_errors.push(format!("{addr}: {e}"));
                                 }
                             }
-                            Err(e) => {
-                                tracing::warn!(
-                                    addr = %addr,
-                                    error = %e,
-                                    backoff_secs = backoff.as_secs(),
-                                    "Failed to connect to bootstrap node; retrying"
-                                );
+                        }
+
+                        if let Some(peer_id) = connected_peer_id {
+                            backoff = BOOTSTRAP_RECONNECT_BASE;
+                            // Wait until the peer disappears from the connection map, then reconnect.
+                            loop {
+                                if shutdown_flag.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                if !peers.read().await.contains_key(&peer_id) {
+                                    break;
+                                }
                                 tokio::select! {
-                                    _ = sleep(backoff) => {}
-                                    _ = shutdown_notify.notified() => break,
+                                    _ = sleep(BOOTSTRAP_CONNECTED_POLL) => {}
+                                    _ = shutdown_notify.notified() => return,
                                 }
-                                backoff = (backoff * 2).min(BOOTSTRAP_RECONNECT_MAX);
                             }
+                            continue;
+                        }
+
+                        if !attempt_errors.is_empty() {
+                            next_addr_idx = (next_addr_idx + 1) % addr_count;
+                            tracing::warn!(
+                                seed = %bootstrap.seed,
+                                attempts = %attempt_errors.join("; "),
+                                backoff_secs = backoff.as_secs(),
+                                "Failed to connect to bootstrap seed; retrying"
+                            );
+                            tokio::select! {
+                                _ = sleep(backoff) => {}
+                                _ = shutdown_notify.notified() => break,
+                            }
+                            backoff = (backoff * 2).min(BOOTSTRAP_RECONNECT_MAX);
                         }
                     }
                 });
@@ -620,6 +677,7 @@ impl PqNetworkBackend {
         let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
         let admission = Self::admit_peer(
             &peers,
+            transport.local_peer_id(),
             peer_id,
             PeerConnection {
                 info: info.clone(),
@@ -636,6 +694,14 @@ impl PqNetworkBackend {
                     "Duplicate outbound peer connection; dropping"
                 );
                 return Ok(peer_id);
+            }
+            PeerAdmission::SelfPeer => {
+                tracing::debug!(
+                    peer_id = %hex::encode(peer_id),
+                    addr = %addr,
+                    "Rejecting outbound self-peer connection"
+                );
+                return Err("Self peer connection".to_string());
             }
             PeerAdmission::MaxPeersReached => {
                 return Err("Max peers reached".to_string());
@@ -1138,17 +1204,45 @@ mod tests {
         };
 
         assert_eq!(
-            PqNetworkBackend::admit_peer(&peers, [1u8; 32], make_conn([1u8; 32]), 2).await,
+            PqNetworkBackend::admit_peer(&peers, [9u8; 32], [1u8; 32], make_conn([1u8; 32]), 2)
+                .await,
             PeerAdmission::Inserted
         );
         assert_eq!(
-            PqNetworkBackend::admit_peer(&peers, [2u8; 32], make_conn([2u8; 32]), 2).await,
+            PqNetworkBackend::admit_peer(&peers, [9u8; 32], [2u8; 32], make_conn([2u8; 32]), 2)
+                .await,
             PeerAdmission::Inserted
         );
         assert_eq!(
-            PqNetworkBackend::admit_peer(&peers, [3u8; 32], make_conn([3u8; 32]), 2).await,
+            PqNetworkBackend::admit_peer(&peers, [9u8; 32], [3u8; 32], make_conn([3u8; 32]), 2)
+                .await,
             PeerAdmission::MaxPeersReached
         );
         assert_eq!(peers.read().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_admit_peer_rejects_self_peer() {
+        let peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let (msg_tx, _msg_rx) = mpsc::channel::<Vec<u8>>(8);
+        let peer_id = [7u8; 32];
+        let connection = PeerConnection {
+            info: PqConnectionInfo {
+                peer_id,
+                addr: "127.0.0.1:30333".parse().unwrap(),
+                is_outbound: false,
+                bytes_sent: 0,
+                bytes_received: 0,
+                protocol: "/hegemon/pq/1".to_string(),
+            },
+            msg_tx,
+        };
+
+        assert_eq!(
+            PqNetworkBackend::admit_peer(&peers, peer_id, peer_id, connection, 2).await,
+            PeerAdmission::SelfPeer
+        );
+        assert_eq!(peers.read().await.len(), 0);
     }
 }

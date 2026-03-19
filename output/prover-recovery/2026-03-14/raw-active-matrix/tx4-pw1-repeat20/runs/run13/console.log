@@ -1,0 +1,41 @@
+Disabling strict aggregation checks for HEGEMON_TP_PROOF_MODE=single.
+Wallet send config: workers=1 wallet_rayon=4 wallet_rpc_timeout_s=180 send_retries=4
+Wallet substrate-send --no-sync support: 1
+Worker distribution: workers=1 tx_count=4 counts=4
+Throughput profile: safe (host_threads=8 host_mem_gib=24)
+Thread config: node_rayon=2 cargo_jobs=1 mine_threads=1 agg_prepare_threads=2 agg_prover_threads=1
+Batch config: target_txs=4 min_prepared_txs=4 min_ready_batch_txs=4 liveness_lane=1 queue_capacity=4 adaptive_liveness_ms=default
+Aggregation recursion config: leaf_fanin=4 merge_fanin=8 tx_recursion_queries=2 tx_recursion_log_blowup=2 outer_queries=2 outer_log_blowup=2 prover_workers=1
+Aggregation packing config: witness_lanes=default add_lanes=default mul_lanes=default
+Aggregation prewarm config: include_merge=default max_txs=default(target_txs)
+Aggregation timeout budget: strict_prepare_timeout_secs=180 batch_job_timeout_ms=180000 work_package_ttl_ms=180000 leaf_jobs=0
+Network config: seeds='' max_peers=0
+Mode flags: proof_mode=single aggregation_enabled=0 send_proof_sidecar=0 send_da_sidecar=0 send_no_sync=0 inclusion_target_mode=cumulative prewarm_only=0 incremental_upsize=0
+Artifacts: run_id=tx4-pw1-r13 json=/tmp/hegemon-tx4-pw1-repeat20/run13/artifacts/tx4-pw1-r13.json
+Starting node in tmux session 'raw-active-tx4-pw1-r13' (logs: /tmp/raw-active-tx4-pw1-r13.log)...
+Waiting for RPC to respond...
+Stopping mining immediately on reused funded state...
+Reusing existing funded state; syncing wallets without bootstrap mining...
+Submitting 4 transfers (proof_mode=single, proof_sidecar=0)...
+  sending 1/4...
+  sending 2/4...
+  sending 3/4...
+  sending 4/4...
+Send stage complete: send_total_ms=5800
+Starting mining to include the queued transfers... (start_block=13)
+Waiting for size + verify metrics in logs...
+
+=== Latest payload size metrics ===
+2026-03-14 23:43:40 block_payload_size_metrics block_number=14 tx_count=4 extrinsics_bytes_total=1681178 da_blob_bytes_estimate=17228 tx_proof_bytes_total=1432127 proven_batch_present=true proven_batch_bytes=228076 proven_batch_build_ms=0 proven_batch_stale_count=0 commitment_proof_bytes=228076 aggregation_proof_bytes=0 da_chunk_count=2 da_root=58c04d1b3b2116dce5dd9a717304145f3ac70b0a0f31b7037fdfeeb9df535df95a16d81cf086d05ae63fdc75229d298f da_policy=FullFetch proof_policy=SelfContained aggregation_mode_enabled=false verification_mode=InlineRequired
+payload_cost_metrics included_tx_count=4 tx_proof_bytes_total=1432127 proven_batch_bytes=228076 payload_bytes_per_tx=415050.75
+=== Latest import verify time ===
+2026-03-14 23:43:40 block_import_verify_time_ms block_number=14 verify_ms=58 proven_batch_present=true
+=== Latest consensus breakdown ===
+2026-03-14 23:43:40 block_proof_verification_metrics tx_count=4 tx_proof_bytes_total=1432127 commitment_proof_bytes=228076 aggregation_proof_bytes=0 aggregation_proof_uncompressed_bytes=0 ciphertext_bytes_total=17176 commitment_verify_ms=41 aggregation_verify_ms=0 aggregation_verify_batch_ms=0 aggregation_cache_hit=false aggregation_cache_build_ms=0 aggregation_cache_prewarm_hit=false aggregation_cache_prewarm_build_ms=0 aggregation_cache_prewarm_total_ms=0 tx_verify_ms=16 total_verify_ms=58 aggregation_verified=false
+
+throughput_round_metrics tx_count=4 included_tx_count=4 proof_mode=single inclusion_target_mode=cumulative send_proof_sidecar=0 workers=1 prover_workers=1 profile=safe tps_mode=inclusion send_total_ms=5800 inclusion_total_ms=84408 round_total_ms=90295 submission_tps=0.689655 inclusion_tps=0.047389 end_to_end_tps=0.044299 effective_tps=0.047389
+metrics_artifact_path=/tmp/hegemon-tx4-pw1-repeat20/run13/artifacts/tx4-pw1-r13.json
+Done. Node is still running in tmux.
+  Attach: tmux attach -t raw-active-tx4-pw1-r13
+  Logs:   /tmp/raw-active-tx4-pw1-r13.log
+  Kill:   tmux kill-session -t raw-active-tx4-pw1-r13

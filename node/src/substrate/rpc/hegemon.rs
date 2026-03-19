@@ -17,11 +17,17 @@
 //! | `hegemon_storageFootprint`| Get storage usage statistics             |
 //! | `hegemon_nodeConfig`      | Get node config snapshot                 |
 
+use crate::substrate::template_builder::compact_job_from_work;
+use consensus::{compute_work, seal_meets_target, MiningSolution, MiningWork, Sha256dSeal};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
+use parking_lot::Mutex;
+use protocol_kernel::types::{ActionEnvelope, AuthorizationBundle, ObjectRef, SignatureEnvelope};
 use serde::{Deserialize, Serialize};
+use sp_core::H256;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Mining status response
@@ -197,12 +203,149 @@ pub struct NodeConfigSnapshot {
     pub rpc_methods: String,
     /// Whether RPC is exposed beyond localhost
     pub rpc_external: bool,
-    /// PQ bootstrap nodes (ip:port)
+    /// Configured PQ bootstrap seed entries
     pub bootstrap_nodes: Vec<String>,
     /// PQ handshake verbose logging enabled
     pub pq_verbose: bool,
     /// Maximum peers allowed
     pub max_peers: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActionObjectRefRequest {
+    pub family_id: u16,
+    pub object_id: String,
+    pub expected_root: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActionSignatureRequest {
+    pub key_id: String,
+    pub signature_scheme: u16,
+    pub signature_bytes: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitActionRequest {
+    pub binding_circuit: u16,
+    pub binding_crypto: u16,
+    pub family_id: u16,
+    pub action_id: u16,
+    #[serde(default)]
+    pub object_refs: Vec<ActionObjectRefRequest>,
+    #[serde(default)]
+    pub new_nullifiers: Vec<String>,
+    pub public_args: String,
+    #[serde(default)]
+    pub authorization_proof: Option<String>,
+    #[serde(default)]
+    pub authorization_signatures: Vec<ActionSignatureRequest>,
+    #[serde(default)]
+    pub aux_data: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitActionResponse {
+    pub success: bool,
+    pub tx_hash: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PoolAuthParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PoolWorkResponse {
+    pub available: bool,
+    pub height: Option<u64>,
+    pub pre_hash: Option<String>,
+    pub parent_hash: Option<String>,
+    pub network_difficulty: Option<u32>,
+    pub share_difficulty: Option<u32>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompactJobResponse {
+    pub available: bool,
+    pub job_id: Option<String>,
+    pub height: Option<u64>,
+    pub pre_hash: Option<String>,
+    pub parent_hash: Option<String>,
+    pub network_bits: Option<u32>,
+    pub share_bits: Option<u32>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitPoolShareRequest {
+    pub worker_name: String,
+    pub nonce: String,
+    pub pre_hash: String,
+    pub parent_hash: String,
+    pub height: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitCompactSolutionRequest {
+    pub worker_name: String,
+    pub job_id: String,
+    pub nonce: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitPoolShareResponse {
+    pub accepted: bool,
+    pub block_candidate: bool,
+    pub network_target_met: bool,
+    pub error: Option<String>,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub worker_accepted_shares: u64,
+    pub worker_rejected_shares: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PoolStatusResponse {
+    pub available: bool,
+    pub network_difficulty: Option<u32>,
+    pub share_difficulty: Option<u32>,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub worker_count: usize,
+    pub workers: Vec<PoolWorkerStatusEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PoolWorkerStatusEntry {
+    pub worker_name: String,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub block_candidates: u64,
+    pub payout_fraction_ppm: u64,
+    pub last_share_at_ms: Option<u64>,
+}
+
+#[derive(Default)]
+struct WorkerShareStats {
+    accepted: u64,
+    rejected: u64,
+    block_candidates: u64,
+    last_share_at_ms: Option<u64>,
+}
+
+#[derive(Default)]
+struct PoolShareStats {
+    accepted: u64,
+    rejected: u64,
+    workers: HashMap<String, WorkerShareStats>,
 }
 
 /// Hegemon RPC API trait definition
@@ -286,6 +429,36 @@ pub trait HegemonApi {
     /// Get peer graph details (direct peers + reported peers).
     #[method(name = "peerGraph")]
     async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot>;
+
+    /// Submit a kernel action envelope.
+    #[method(name = "submitAction")]
+    async fn submit_action(&self, request: SubmitActionRequest) -> RpcResult<SubmitActionResponse>;
+
+    /// Get the current authoring work template for pool workers.
+    #[method(name = "poolWork")]
+    async fn pool_work(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolWorkResponse>;
+
+    /// Get the current compact mining job.
+    #[method(name = "compactJob")]
+    async fn compact_job(&self, params: Option<PoolAuthParams>) -> RpcResult<CompactJobResponse>;
+
+    /// Submit a pool share or full-target solution for the current template.
+    #[method(name = "submitPoolShare")]
+    async fn submit_pool_share(
+        &self,
+        request: SubmitPoolShareRequest,
+    ) -> RpcResult<SubmitPoolShareResponse>;
+
+    /// Submit a compact-job solution using an explicit `job_id` and 32-byte nonce.
+    #[method(name = "submitCompactSolution")]
+    async fn submit_compact_solution(
+        &self,
+        request: SubmitCompactSolutionRequest,
+    ) -> RpcResult<SubmitPoolShareResponse>;
+
+    /// Get aggregate share status for the current process.
+    #[method(name = "poolStatus")]
+    async fn pool_status(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolStatusResponse>;
 }
 
 /// Trait for mining handle operations
@@ -305,6 +478,10 @@ pub trait MiningHandle: Send + Sync {
     fn blocks_found(&self) -> u64;
     /// Get thread count
     fn thread_count(&self) -> u32;
+    /// Snapshot the current work template, if one exists.
+    fn current_work(&self) -> Option<MiningWork>;
+    /// Submit an externally discovered solution.
+    fn submit_solution(&self, solution: MiningSolution) -> Result<(), String>;
 }
 
 /// Trait for node service operations
@@ -330,6 +507,8 @@ pub trait HegemonService: Send + Sync {
     fn peer_list(&self) -> Vec<PeerDetail>;
     /// Get peer graph details (direct peers + reported peers).
     fn peer_graph(&self) -> PeerGraphSnapshot;
+    /// Submit a generic kernel action.
+    fn submit_action(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>;
 }
 
 /// Hegemon RPC implementation
@@ -339,6 +518,9 @@ pub struct HegemonRpc<S, P> {
     config_snapshot: NodeConfigSnapshot,
     deny_unsafe: sc_rpc::DenyUnsafe,
     mining_control_auth_token: Option<String>,
+    pool_auth_token: Option<String>,
+    legacy_pool_rpc_enabled: bool,
+    pool_share_stats: Arc<Mutex<PoolShareStats>>,
 }
 
 impl<S, P> HegemonRpc<S, P>
@@ -357,12 +539,22 @@ where
             .ok()
             .map(|token| token.trim().to_string())
             .filter(|token| !token.is_empty());
+        let pool_auth_token = std::env::var("HEGEMON_POOL_RPC_TOKEN")
+            .ok()
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty());
+        let legacy_pool_rpc_enabled = std::env::var("HEGEMON_ENABLE_LEGACY_POOL_RPC")
+            .map(|raw| raw == "1" || raw.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         Self {
             service,
             pow_handle,
             config_snapshot,
             deny_unsafe,
             mining_control_auth_token,
+            pool_auth_token,
+            legacy_pool_rpc_enabled,
+            pool_share_stats: Arc::new(Mutex::new(PoolShareStats::default())),
         }
     }
 
@@ -387,6 +579,125 @@ where
         }
 
         Ok(())
+    }
+
+    fn ensure_pool_access_allowed(&self, provided_token: Option<&str>) -> RpcResult<()> {
+        if let Some(expected) = self.pool_auth_token.as_deref() {
+            let provided = provided_token.unwrap_or_default().trim();
+            if provided.is_empty() || provided != expected {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    "invalid or missing pool auth token",
+                    None::<()>,
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn ensure_legacy_pool_rpc_enabled(&self) -> RpcResult<()> {
+        if self.legacy_pool_rpc_enabled {
+            return Ok(());
+        }
+        Err(ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            "legacy pool RPC is disabled; use hegemon_compactJob/hegemon_submitCompactSolution or set HEGEMON_ENABLE_LEGACY_POOL_RPC=1",
+            None::<()>,
+        ))
+    }
+
+    fn pool_share_bits_for_work(&self, work: &MiningWork) -> u32 {
+        std::env::var("HEGEMON_POOL_SHARE_BITS")
+            .ok()
+            .and_then(|raw| {
+                let trimmed = raw.trim();
+                if let Some(hex) = trimmed.strip_prefix("0x") {
+                    u32::from_str_radix(hex, 16).ok()
+                } else {
+                    trimmed.parse::<u32>().ok()
+                }
+            })
+            .filter(|bits| *bits != 0)
+            .unwrap_or(work.pow_bits)
+    }
+
+    fn submit_share_for_work(
+        &self,
+        worker_name: &str,
+        work: &MiningWork,
+        nonce: [u8; 32],
+    ) -> RpcResult<SubmitPoolShareResponse> {
+        let seal = Sha256dSeal {
+            nonce,
+            difficulty: work.pow_bits,
+            work: compute_work(&work.pre_hash, nonce),
+        };
+        let share_bits = self.pool_share_bits_for_work(work);
+        let share_target_met = seal_meets_target(&seal.work, share_bits);
+        let network_target_met = seal_meets_target(&seal.work, work.pow_bits);
+
+        let mut stats = self.pool_share_stats.lock();
+        if !share_target_met {
+            stats.rejected = stats.rejected.saturating_add(1);
+            let (worker_accepted_shares, worker_rejected_shares) = {
+                let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+                worker_stats.rejected = worker_stats.rejected.saturating_add(1);
+                worker_stats.last_share_at_ms = Some(current_time_ms());
+                (worker_stats.accepted, worker_stats.rejected)
+            };
+            let accepted_shares = stats.accepted;
+            let rejected_shares = stats.rejected;
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("share does not meet configured pool target".to_string()),
+                accepted_shares,
+                rejected_shares,
+                worker_accepted_shares,
+                worker_rejected_shares,
+            });
+        }
+
+        stats.accepted = stats.accepted.saturating_add(1);
+        let (worker_accepted_shares, worker_rejected_shares) = {
+            let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+            worker_stats.accepted = worker_stats.accepted.saturating_add(1);
+            if network_target_met {
+                worker_stats.block_candidates = worker_stats.block_candidates.saturating_add(1);
+            }
+            worker_stats.last_share_at_ms = Some(current_time_ms());
+            (worker_stats.accepted, worker_stats.rejected)
+        };
+        let accepted_shares = stats.accepted;
+        let rejected_shares = stats.rejected;
+        drop(stats);
+
+        if network_target_met {
+            let solution = MiningSolution {
+                seal,
+                work: work.clone(),
+            };
+            self.pow_handle.submit_solution(solution).map_err(|err| {
+                ErrorObjectOwned::owned(
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                    format!("failed to forward full-difficulty solution: {err}"),
+                    None::<()>,
+                )
+            })?;
+        }
+
+        Ok(SubmitPoolShareResponse {
+            accepted: true,
+            block_candidate: network_target_met,
+            network_target_met,
+            error: None,
+            accepted_shares,
+            rejected_shares,
+            worker_accepted_shares,
+            worker_rejected_shares,
+        })
     }
 }
 
@@ -498,11 +809,434 @@ where
     async fn peer_graph(&self) -> RpcResult<PeerGraphSnapshot> {
         Ok(self.service.peer_graph())
     }
+
+    async fn submit_action(&self, request: SubmitActionRequest) -> RpcResult<SubmitActionResponse> {
+        let object_refs = request
+            .object_refs
+            .into_iter()
+            .map(|item| {
+                Ok(ObjectRef {
+                    family_id: item.family_id,
+                    object_id: hex_to_array32(&item.object_id)?,
+                    expected_root: hex_to_array48(&item.expected_root)?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>();
+        let object_refs = match object_refs {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(err),
+                })
+            }
+        };
+
+        let new_nullifiers = request
+            .new_nullifiers
+            .into_iter()
+            .map(|value| hex_to_array48(&value))
+            .collect::<Result<Vec<_>, _>>();
+        let new_nullifiers = match new_nullifiers {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(err),
+                })
+            }
+        };
+
+        let public_args = match base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &request.public_args,
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(format!("invalid public_args encoding: {err}")),
+                })
+            }
+        };
+
+        let proof_bytes = match request.authorization_proof {
+            Some(value) => {
+                match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &value) {
+                    Ok(decoded) => decoded,
+                    Err(err) => {
+                        return Ok(SubmitActionResponse {
+                            success: false,
+                            tx_hash: None,
+                            error: Some(format!("invalid authorization_proof encoding: {err}")),
+                        })
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+
+        let signatures = request
+            .authorization_signatures
+            .into_iter()
+            .map(|sig| {
+                Ok(SignatureEnvelope {
+                    key_id: hex_to_array32(&sig.key_id)?,
+                    signature_scheme: sig.signature_scheme,
+                    signature_bytes: base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &sig.signature_bytes,
+                    )
+                    .map_err(|e| format!("invalid signature_bytes encoding: {e}"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>();
+        let signatures = match signatures {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(SubmitActionResponse {
+                    success: false,
+                    tx_hash: None,
+                    error: Some(err),
+                })
+            }
+        };
+
+        let aux_data = match request.aux_data {
+            Some(value) => {
+                match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &value) {
+                    Ok(decoded) => decoded,
+                    Err(err) => {
+                        return Ok(SubmitActionResponse {
+                            success: false,
+                            tx_hash: None,
+                            error: Some(format!("invalid aux_data encoding: {err}")),
+                        })
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+
+        let envelope = ActionEnvelope {
+            binding: protocol_kernel::types::KernelVersionBinding {
+                circuit: request.binding_circuit,
+                crypto: request.binding_crypto,
+            },
+            family_id: request.family_id,
+            action_id: request.action_id,
+            object_refs,
+            new_nullifiers,
+            public_args,
+            authorization: AuthorizationBundle {
+                proof_bytes,
+                signatures,
+            },
+            aux_data,
+        };
+
+        match self.service.submit_action(envelope) {
+            Ok(tx_hash) => Ok(SubmitActionResponse {
+                success: true,
+                tx_hash: Some(format!("0x{}", hex::encode(tx_hash))),
+                error: None,
+            }),
+            Err(err) => Ok(SubmitActionResponse {
+                success: false,
+                tx_hash: None,
+                error: Some(err),
+            }),
+        }
+    }
+
+    async fn pool_work(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolWorkResponse> {
+        self.ensure_legacy_pool_rpc_enabled()?;
+        self.ensure_pool_access_allowed(
+            params
+                .as_ref()
+                .and_then(|value| value.auth_token.as_deref()),
+        )?;
+
+        let Some(work) = self.pow_handle.current_work() else {
+            return Ok(PoolWorkResponse {
+                available: false,
+                height: None,
+                pre_hash: None,
+                parent_hash: None,
+                network_difficulty: None,
+                share_difficulty: None,
+                reason: Some("no active mining work template".to_string()),
+            });
+        };
+
+        Ok(PoolWorkResponse {
+            available: true,
+            height: Some(work.height),
+            pre_hash: Some(format!("0x{}", hex::encode(work.pre_hash.as_bytes()))),
+            parent_hash: Some(format!("0x{}", hex::encode(work.parent_hash.as_bytes()))),
+            network_difficulty: Some(work.pow_bits),
+            share_difficulty: Some(self.pool_share_bits_for_work(&work)),
+            reason: None,
+        })
+    }
+
+    async fn compact_job(&self, params: Option<PoolAuthParams>) -> RpcResult<CompactJobResponse> {
+        self.ensure_pool_access_allowed(
+            params
+                .as_ref()
+                .and_then(|value| value.auth_token.as_deref()),
+        )?;
+
+        let Some(work) = self.pow_handle.current_work() else {
+            return Ok(CompactJobResponse {
+                available: false,
+                job_id: None,
+                height: None,
+                pre_hash: None,
+                parent_hash: None,
+                network_bits: None,
+                share_bits: None,
+                reason: Some("no active mining work template".to_string()),
+            });
+        };
+
+        let job = compact_job_from_work(&work, self.pool_share_bits_for_work(&work));
+        Ok(CompactJobResponse {
+            available: true,
+            job_id: Some(format!("0x{}", hex::encode(job.job_id))),
+            height: Some(job.height),
+            pre_hash: Some(format!("0x{}", hex::encode(job.pre_hash.as_bytes()))),
+            parent_hash: Some(format!("0x{}", hex::encode(job.parent_hash.as_bytes()))),
+            network_bits: Some(job.network_bits),
+            share_bits: Some(job.share_bits),
+            reason: None,
+        })
+    }
+
+    async fn submit_pool_share(
+        &self,
+        request: SubmitPoolShareRequest,
+    ) -> RpcResult<SubmitPoolShareResponse> {
+        self.ensure_legacy_pool_rpc_enabled()?;
+        self.ensure_pool_access_allowed(request.auth_token.as_deref())?;
+
+        let worker_name = request.worker_name.trim();
+        if worker_name.is_empty() {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                "worker_name is required",
+                None::<()>,
+            ));
+        }
+
+        let Some(work) = self.pow_handle.current_work() else {
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("no active mining work template".to_string()),
+                accepted_shares: 0,
+                rejected_shares: 0,
+                worker_accepted_shares: 0,
+                worker_rejected_shares: 0,
+            });
+        };
+
+        let requested_pre_hash = H256::from(
+            hex_to_array32(&request.pre_hash)
+                .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?,
+        );
+        let requested_parent_hash = H256::from(
+            hex_to_array32(&request.parent_hash)
+                .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?,
+        );
+        if request.height != work.height
+            || requested_pre_hash != work.pre_hash
+            || requested_parent_hash != work.parent_hash
+        {
+            let mut stats = self.pool_share_stats.lock();
+            stats.rejected = stats.rejected.saturating_add(1);
+            let (worker_accepted_shares, worker_rejected_shares) = {
+                let worker_stats = stats.workers.entry(worker_name.to_string()).or_default();
+                worker_stats.rejected = worker_stats.rejected.saturating_add(1);
+                worker_stats.last_share_at_ms = Some(current_time_ms());
+                (worker_stats.accepted, worker_stats.rejected)
+            };
+            let accepted_shares = stats.accepted;
+            let rejected_shares = stats.rejected;
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("stale or mismatched work submission".to_string()),
+                accepted_shares,
+                rejected_shares,
+                worker_accepted_shares,
+                worker_rejected_shares,
+            });
+        }
+
+        let nonce = hex_to_array32(&request.nonce)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+        self.submit_share_for_work(worker_name, &work, nonce)
+    }
+
+    async fn submit_compact_solution(
+        &self,
+        request: SubmitCompactSolutionRequest,
+    ) -> RpcResult<SubmitPoolShareResponse> {
+        self.ensure_pool_access_allowed(request.auth_token.as_deref())?;
+
+        let worker_name = request.worker_name.trim();
+        if worker_name.is_empty() {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                "worker_name is required",
+                None::<()>,
+            ));
+        }
+
+        let Some(work) = self.pow_handle.current_work() else {
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("no active mining work template".to_string()),
+                accepted_shares: 0,
+                rejected_shares: 0,
+                worker_accepted_shares: 0,
+                worker_rejected_shares: 0,
+            });
+        };
+
+        let job = compact_job_from_work(&work, self.pool_share_bits_for_work(&work));
+        let requested_job_id = hex_to_array32(&request.job_id)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+        if requested_job_id != job.job_id {
+            return Ok(SubmitPoolShareResponse {
+                accepted: false,
+                block_candidate: false,
+                network_target_met: false,
+                error: Some("stale or mismatched compact job".to_string()),
+                accepted_shares: self.pool_share_stats.lock().accepted,
+                rejected_shares: self.pool_share_stats.lock().rejected,
+                worker_accepted_shares: 0,
+                worker_rejected_shares: 0,
+            });
+        }
+
+        let nonce = hex_to_array32(&request.nonce)
+            .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
+        self.submit_share_for_work(worker_name, &work, nonce)
+    }
+
+    async fn pool_status(&self, params: Option<PoolAuthParams>) -> RpcResult<PoolStatusResponse> {
+        self.ensure_legacy_pool_rpc_enabled()?;
+        self.ensure_pool_access_allowed(
+            params
+                .as_ref()
+                .and_then(|value| value.auth_token.as_deref()),
+        )?;
+
+        let current_work = self.pow_handle.current_work();
+        let stats = self.pool_share_stats.lock();
+        let accepted_total = stats.accepted.max(1);
+        let mut workers = stats
+            .workers
+            .iter()
+            .map(|(worker_name, worker)| PoolWorkerStatusEntry {
+                worker_name: worker_name.clone(),
+                accepted_shares: worker.accepted,
+                rejected_shares: worker.rejected,
+                block_candidates: worker.block_candidates,
+                payout_fraction_ppm: ((worker.accepted as u128) * 1_000_000u128
+                    / accepted_total as u128) as u64,
+                last_share_at_ms: worker.last_share_at_ms,
+            })
+            .collect::<Vec<_>>();
+        workers.sort_by(|left, right| {
+            right
+                .accepted_shares
+                .cmp(&left.accepted_shares)
+                .then_with(|| left.worker_name.cmp(&right.worker_name))
+        });
+        Ok(PoolStatusResponse {
+            available: current_work.is_some(),
+            network_difficulty: current_work.as_ref().map(|work| work.pow_bits),
+            share_difficulty: current_work
+                .as_ref()
+                .map(|work| self.pool_share_bits_for_work(work)),
+            accepted_shares: stats.accepted,
+            rejected_shares: stats.rejected,
+            worker_count: stats.workers.len(),
+            workers,
+        })
+    }
+}
+
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+fn hex_to_array32(value: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(value.trim_start_matches("0x")).map_err(|e| e.to_string())?;
+    if bytes.len() != 32 {
+        return Err(format!("expected 32 bytes, got {}", bytes.len()));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn hex_to_array48(value: &str) -> Result<[u8; 48], String> {
+    let bytes = hex::decode(value.trim_start_matches("0x")).map_err(|e| e.to_string())?;
+    if bytes.len() != 48 {
+        return Err(format!("expected 48 bytes, got {}", bytes.len()));
+    }
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use consensus::counter_to_nonce;
+    struct LegacyPoolRpcGuard {
+        previous: Option<String>,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for LegacyPoolRpcGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.previous.take() {
+                    Some(value) => std::env::set_var("HEGEMON_ENABLE_LEGACY_POOL_RPC", value),
+                    None => std::env::remove_var("HEGEMON_ENABLE_LEGACY_POOL_RPC"),
+                }
+            }
+        }
+    }
+
+    fn enable_legacy_pool_rpc() -> LegacyPoolRpcGuard {
+        let guard = crate::substrate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("HEGEMON_ENABLE_LEGACY_POOL_RPC").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_ENABLE_LEGACY_POOL_RPC", "1");
+        }
+        LegacyPoolRpcGuard {
+            previous,
+            _guard: guard,
+        }
+    }
 
     #[derive(Clone)]
     struct MockMiningHandle {
@@ -547,6 +1281,20 @@ mod tests {
 
         fn thread_count(&self) -> u32 {
             self.threads
+        }
+
+        fn current_work(&self) -> Option<MiningWork> {
+            Some(MiningWork {
+                pre_hash: H256::repeat_byte(0x11),
+                pow_bits: 0x207fffff,
+                height: 42,
+                parent_hash: H256::repeat_byte(0x22),
+                trace: None,
+            })
+        }
+
+        fn submit_solution(&self, _solution: MiningSolution) -> Result<(), String> {
+            Ok(())
         }
     }
 
@@ -639,6 +1387,10 @@ mod tests {
                     }],
                 }],
             }
+        }
+
+        fn submit_action(&self, _envelope: ActionEnvelope) -> Result<[u8; 32], String> {
+            Ok([0xabu8; 32])
         }
     }
 
@@ -847,5 +1599,126 @@ mod tests {
             err.message().contains("--rpc-methods=unsafe"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_pool_work_exposes_current_template() {
+        let _legacy = enable_legacy_pool_rpc();
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
+
+        let work = rpc.pool_work(None).await.unwrap();
+        assert!(work.available);
+        assert_eq!(work.height, Some(42));
+        assert_eq!(work.network_difficulty, Some(0x207fffff));
+        assert_eq!(work.share_difficulty, Some(0x207fffff));
+    }
+
+    #[tokio::test]
+    async fn test_compact_job_exposes_current_template() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
+
+        let job = rpc.compact_job(None).await.unwrap();
+        assert!(job.available);
+        assert!(job.job_id.is_some());
+        assert_eq!(job.height, Some(42));
+        assert_eq!(job.network_bits, Some(0x207fffff));
+        assert_eq!(job.share_bits, Some(0x207fffff));
+    }
+
+    #[tokio::test]
+    async fn test_submit_pool_share_accepts_full_target_solution() {
+        let _legacy = enable_legacy_pool_rpc();
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(
+            service,
+            handle.clone(),
+            mock_config(),
+            sc_rpc::DenyUnsafe::No,
+        );
+        let work = handle.current_work().expect("mock work");
+        let nonce = (0..u64::MAX)
+            .map(counter_to_nonce)
+            .find(|nonce| seal_meets_target(&compute_work(&work.pre_hash, *nonce), work.pow_bits))
+            .expect("mock work should admit a valid nonce");
+
+        let response = rpc
+            .submit_pool_share(SubmitPoolShareRequest {
+                worker_name: "alpha".to_string(),
+                nonce: format!("0x{}", hex::encode(nonce)),
+                pre_hash: format!("0x{}", hex::encode(work.pre_hash.as_bytes())),
+                parent_hash: format!("0x{}", hex::encode(work.parent_hash.as_bytes())),
+                height: work.height,
+                auth_token: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(response.accepted);
+        assert!(response.block_candidate);
+        assert!(response.network_target_met);
+        assert_eq!(response.accepted_shares, 1);
+        assert_eq!(response.worker_accepted_shares, 1);
+    }
+
+    #[tokio::test]
+    async fn test_submit_pool_share_rejects_stale_work() {
+        let _legacy = enable_legacy_pool_rpc();
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config(), sc_rpc::DenyUnsafe::No);
+
+        let response = rpc
+            .submit_pool_share(SubmitPoolShareRequest {
+                worker_name: "alpha".to_string(),
+                nonce: format!("0x{}", hex::encode(counter_to_nonce(0))),
+                pre_hash: format!("0x{}", hex::encode([0u8; 32])),
+                parent_hash: format!("0x{}", hex::encode([0u8; 32])),
+                height: 7,
+                auth_token: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(!response.accepted);
+        assert!(response.error.unwrap_or_default().contains("stale"));
+        assert_eq!(response.rejected_shares, 1);
+        assert_eq!(response.worker_rejected_shares, 1);
+    }
+
+    #[tokio::test]
+    async fn test_submit_compact_solution_accepts_full_target_solution() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(
+            service,
+            handle.clone(),
+            mock_config(),
+            sc_rpc::DenyUnsafe::No,
+        );
+        let work = handle.current_work().expect("mock work");
+        let nonce = (0..u64::MAX)
+            .map(counter_to_nonce)
+            .find(|nonce| seal_meets_target(&compute_work(&work.pre_hash, *nonce), work.pow_bits))
+            .expect("mock work should admit a valid nonce");
+        let job = rpc.compact_job(None).await.unwrap();
+
+        let response = rpc
+            .submit_compact_solution(SubmitCompactSolutionRequest {
+                worker_name: "alpha".to_string(),
+                job_id: job.job_id.expect("job id"),
+                nonce: format!("0x{}", hex::encode(nonce)),
+                auth_token: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(response.accepted);
+        assert!(response.block_candidate);
+        assert!(response.network_target_met);
     }
 }

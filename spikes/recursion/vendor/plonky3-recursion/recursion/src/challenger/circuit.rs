@@ -370,7 +370,7 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
             .expect("output buffer should be non-empty after duplex")
     }
 
-    fn sample_algebra_public<BF: PrimeField64, F: ExtensionField<BF>>(
+    fn sample_algebra_internal<BF: PrimeField64, F: ExtensionField<BF>>(
         &mut self,
         circuit: &mut CircuitBuilder<F>,
     ) -> Target {
@@ -378,23 +378,17 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
         for _ in 0..self.extension_degree {
             coeffs.push(self.sample_base_value::<BF, F>(circuit));
         }
-        let expected = self.compose_from_base_coeffs::<BF, F>(circuit, &coeffs);
-        let sampled = circuit.alloc_public_input("sampled challenge");
-        circuit.connect(sampled, expected);
-        sampled
+        self.compose_from_base_coeffs::<BF, F>(circuit, &coeffs)
     }
 
-    fn sample_base_public<BF: PrimeField64, F: ExtensionField<BF>>(
+    fn sample_base_internal<BF: PrimeField64, F: ExtensionField<BF>>(
         &mut self,
         circuit: &mut CircuitBuilder<F>,
     ) -> Target {
-        let expected = self.sample_base_value::<BF, F>(circuit);
-        let sampled = circuit.alloc_public_input("sampled base challenge");
-        circuit.connect(sampled, expected);
-        sampled
+        self.sample_base_value::<BF, F>(circuit)
     }
 
-    /// Sample a `bits`-bit value using native `sample_bits` semantics and expose it as one target.
+    /// Sample a `bits`-bit value using native `sample_bits` semantics and return it as an internal target.
     pub fn sample_bits_public<BF: PrimeField64, F: ExtensionField<BF>>(
         &mut self,
         circuit: &mut CircuitBuilder<F>,
@@ -409,10 +403,7 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
         }
         let sampled_base = self.sample_base_value::<BF, F>(circuit);
         let sampled_bits = circuit.decompose_to_bits::<BF>(sampled_base, self.base_field_bits)?;
-        let truncated = circuit.reconstruct_index_from_bits::<BF>(&sampled_bits[..bits])?;
-        let sampled = circuit.alloc_public_input("sampled challenge bits");
-        circuit.connect(sampled, truncated);
-        Ok(sampled)
+        circuit.reconstruct_index_from_bits::<BF>(&sampled_bits[..bits])
     }
 
     /// Check PoW witness bits using native base-field sampling semantics.
@@ -423,7 +414,7 @@ impl<const RATE: usize> CircuitChallenger<RATE> {
         witness: Target,
     ) -> Result<(), CircuitBuilderError> {
         self.observe_base::<BF, F>(circuit, witness)?;
-        let sampled_base = self.sample_base_public::<BF, F>(circuit);
+        let sampled_base = self.sample_base_internal::<BF, F>(circuit);
         let sampled_bits = circuit.decompose_to_bits::<BF>(sampled_base, self.base_field_bits)?;
         for bit in sampled_bits.into_iter().take(witness_bits) {
             circuit.assert_zero(bit);
@@ -597,7 +588,7 @@ where
     }
 
     fn sample(&mut self, circuit: &mut CircuitBuilder<F>) -> Target {
-        self.sample_algebra_public::<<F as ChallengerField>::Base, F>(circuit)
+        self.sample_algebra_internal::<<F as ChallengerField>::Base, F>(circuit)
     }
 
     fn clear(&mut self) {
@@ -614,14 +605,30 @@ where
 
 #[cfg(test)]
 mod tests {
-    use p3_field::PrimeCharacteristicRing;
+    use p3_challenger::{CanObserve, CanSampleBits, FieldChallenger};
+    use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
     use p3_goldilocks::Goldilocks;
+    use p3_poseidon2::ExternalLayerConstants;
 
     use super::*;
+    use p3_challenger::DuplexChallenger;
+    use p3_goldilocks::Poseidon2Goldilocks;
 
     type Challenge = p3_field::extension::BinomialExtensionField<Goldilocks, 2>;
+    type Perm = Poseidon2Goldilocks<POSEIDON2_WIDTH>;
+    type NativeChallenger = DuplexChallenger<Goldilocks, Perm, POSEIDON2_WIDTH, DEFAULT_CHALLENGER_RATE>;
 
     const DEFAULT_CHALLENGER_RATE: usize = 6;
+
+    fn native_perm() -> Perm {
+        let external_constants =
+            ExternalLayerConstants::<Goldilocks, POSEIDON2_WIDTH>::new_from_saved_array(
+                EXTERNAL_ROUND_CONSTANTS,
+                Goldilocks::new_array,
+            );
+        let internal_constants = Goldilocks::new_array(INTERNAL_ROUND_CONSTANTS).to_vec();
+        Perm::new(external_constants, internal_constants)
+    }
 
     #[test]
     fn test_circuit_challenger_observe_sample() {
@@ -663,5 +670,60 @@ mod tests {
         assert!(challenger.state.is_empty());
         assert!(challenger.input_buffer.is_empty());
         assert!(challenger.output_buffer.is_empty());
+    }
+
+    #[test]
+    fn circuit_challenger_matches_native_goldilocks_poseidon2() {
+        let mut circuit = CircuitBuilder::<Challenge>::new();
+        let mut circuit_challenger = CircuitChallenger::<DEFAULT_CHALLENGER_RATE>::new();
+        let mut native = NativeChallenger::new(native_perm());
+
+        let base_1 = circuit.add_const(Challenge::from(Goldilocks::from_u64(3)));
+        let base_2 = circuit.add_const(Challenge::from(Goldilocks::from_u64(5)));
+        let alg = circuit.add_const(
+            Challenge::from_basis_coefficients_slice(&[
+                Goldilocks::from_u64(7),
+                Goldilocks::from_u64(11),
+            ])
+            .unwrap(),
+        );
+
+        circuit_challenger
+            .observe_base::<Goldilocks, Challenge>(&mut circuit, base_1)
+            .unwrap();
+        native.observe(Goldilocks::from_u64(3));
+
+        circuit_challenger
+            .observe_base::<Goldilocks, Challenge>(&mut circuit, base_2)
+            .unwrap();
+        native.observe(Goldilocks::from_u64(5));
+
+        circuit_challenger
+            .observe_algebra::<Goldilocks, Challenge>(&mut circuit, alg)
+            .unwrap();
+        native.observe_algebra_element(
+            Challenge::from_basis_coefficients_slice(&[
+                Goldilocks::from_u64(7),
+                Goldilocks::from_u64(11),
+            ])
+            .unwrap(),
+        );
+
+        let sampled = circuit_challenger.sample(&mut circuit);
+        circuit.tag(sampled, "sampled").unwrap();
+        let expected_sample = native.sample_algebra_element::<Challenge>();
+
+        let sampled_bits = circuit_challenger
+            .sample_bits_public::<Goldilocks, Challenge>(&mut circuit, 9)
+            .unwrap();
+        circuit.tag(sampled_bits, "sampled-bits").unwrap();
+        let expected_bits = Goldilocks::from_u64(native.sample_bits(9) as u64);
+
+        let traces = circuit.build().unwrap().runner().run().unwrap();
+        assert_eq!(traces.probe("sampled"), Some(&expected_sample));
+        assert_eq!(
+            traces.probe("sampled-bits"),
+            Some(&Challenge::from(expected_bits))
+        );
     }
 }

@@ -5,6 +5,7 @@ use transaction_core::p3_air::TransactionPublicInputsP3;
 pub use transaction_core::p3_verifier::InferredFriProfileP3;
 use transaction_core::p3_verifier::{
     infer_fri_profile_from_proof_p3,
+    prewarm_transaction_verifier_cache_p3 as core_prewarm_transaction_verifier_cache_p3,
     verify_transaction_proof_bytes_p3 as core_verify_transaction_proof_bytes_p3,
     verify_transaction_proof_p3 as core_verify_transaction_proof_p3,
     TransactionVerifyErrorP3 as CoreTransactionVerifyErrorP3,
@@ -28,6 +29,12 @@ pub fn infer_transaction_fri_profile_p3(
     proof: &TransactionProofP3,
 ) -> Result<InferredFriProfileP3, TransactionVerifyErrorP3> {
     infer_fri_profile_from_proof_p3(proof).map_err(Into::into)
+}
+
+pub fn prewarm_transaction_verifier_cache_p3(
+    fri: InferredFriProfileP3,
+) -> Result<(), TransactionVerifyErrorP3> {
+    core_prewarm_transaction_verifier_cache_p3(fri).map_err(Into::into)
 }
 
 #[derive(Debug, Clone)]

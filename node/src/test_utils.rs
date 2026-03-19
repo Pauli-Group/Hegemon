@@ -6,7 +6,9 @@ use consensus::reward::INITIAL_SUBSIDY;
 use consensus::types::{da_root, ConsensusBlock, DaParams};
 use crypto::hashes::{blake3_384, sha256};
 use crypto::traits::{SigningKey, VerifyKey};
+use pallet_shielded_pool::family::FAMILY_SHIELDED_POOL;
 use parking_lot::Mutex;
+use protocol_kernel::types::compute_kernel_global_root;
 use wallet::rpc::TransactionBundle;
 
 use crate::config::NodeConfig;
@@ -155,6 +157,7 @@ impl LegacyNode {
             timestamp_ms: current_time_ms(),
             parent_hash: state.best_hash,
             state_root: [0u8; 48],
+            kernel_root: kernel_root_from_shielded_root(&[0u8; 48]),
             nullifier_root: [0u8; 48],
             proof_commitment: state.proof_commitment,
             da_root,
@@ -285,6 +288,10 @@ impl LegacyNode {
     pub fn mempool_ids(&self) -> Vec<[u8; 32]> {
         self.state.lock().mempool.clone()
     }
+}
+
+fn kernel_root_from_shielded_root(root: &[u8; 48]) -> [u8; 48] {
+    compute_kernel_global_root([(FAMILY_SHIELDED_POOL, *root)])
 }
 
 fn miner_id(config: &NodeConfig) -> [u8; 48] {

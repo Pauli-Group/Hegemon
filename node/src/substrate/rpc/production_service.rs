@@ -60,7 +60,6 @@
 //! let rpc_module = rpc::create_full(rpc_deps)?;
 //! ```
 
-use super::archive::ArchiveMarketService;
 use super::hegemon::{
     BlockTimestamp, ConsensusStatus, HegemonService, PeerDetail, PeerGraphPeer,
     PeerGraphReportSnapshot, PeerGraphSnapshot, StorageFootprint, TelemetrySnapshot,
@@ -69,14 +68,22 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::{Decode, Encode};
 use network::PeerId;
+use network::PqNetworkHandle;
+use pallet_shielded_pool::family::{
+    build_envelope as build_shielded_kernel_envelope, MintCoinbaseArgs, ShieldedFamilyAction,
+    ShieldedTransferInlineArgs, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
+    FAMILY_SHIELDED_POOL,
+};
 use pallet_shielded_pool::types::{
-    BindingHash, EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding, StarkProof,
+    EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding,
 };
 use pallet_timestamp;
 use parking_lot::Mutex as ParkingMutex;
-use runtime::apis::{ArchiveMarketApi, ConsensusApi, ShieldedPoolApi};
-use runtime::AccountId;
+use protocol_kernel::types::ActionEnvelope;
+use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sc_client_api::BlockBackend;
+use sc_transaction_pool_api::TransactionPool;
+use sc_transaction_pool_api::TransactionSource;
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block as BlockT;
@@ -87,9 +94,10 @@ use std::sync::{
     Arc,
 };
 use std::time::Instant;
-use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
+use crate::substrate::client::HegemonTransactionPool;
 use crate::substrate::mining_worker::MinedBlockRecord;
+use crate::substrate::network_bridge::{TransactionMessage, TRANSACTIONS_PROTOCOL};
 use crate::substrate::service::PeerGraphReport;
 use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
@@ -113,10 +121,12 @@ where
 {
     /// Reference to the Substrate client
     client: Arc<C>,
+    /// Reference to the real Substrate transaction pool
+    transaction_pool: Arc<HegemonTransactionPool>,
     /// DA chunk store for ciphertext retrieval
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
     /// Pending ciphertext store for sidecar submissions
-    pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
+    _pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>>,
     /// Connected peer count snapshot
     peer_count: Arc<AtomicUsize>,
     /// Connected peer detail snapshots
@@ -135,6 +145,8 @@ where
     mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
     /// Miner recipient address bytes (if configured)
     miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
+    /// PQ network handle for immediate tx relay to connected peers.
+    pq_network_handle: Option<PqNetworkHandle>,
     /// Phantom data for the block type
     _phantom: PhantomData<Block>,
 }
@@ -158,6 +170,7 @@ where
     /// * `client` - Reference to the Substrate client
     pub fn new(
         client: Arc<C>,
+        transaction_pool: Arc<HegemonTransactionPool>,
         peer_count: Arc<AtomicUsize>,
         sync_status: Arc<AtomicBool>,
         peer_details: Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
@@ -168,20 +181,23 @@ where
         mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
         mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
         miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
+        pq_network_handle: Option<PqNetworkHandle>,
     ) -> Self {
         Self {
             client,
+            transaction_pool,
             peer_count,
             sync_status,
             peer_details,
             peer_graph_reports,
             local_peer_id,
             da_chunk_store,
-            pending_ciphertext_store,
+            _pending_ciphertext_store: pending_ciphertext_store,
             start_time: Instant::now(),
             mined_blocks,
             mined_history,
             miner_recipient,
+            pq_network_handle,
             _phantom: PhantomData,
         }
     }
@@ -201,6 +217,92 @@ where
     fn best_number(&self) -> u64 {
         self.client.info().best_number.try_into().unwrap_or(0)
     }
+
+    async fn broadcast_submitted_transaction(&self, tx_hash: [u8; 32], extrinsic: Vec<u8>) {
+        let Some(handle) = self.pq_network_handle.clone() else {
+            return;
+        };
+
+        let peer_count = handle.peer_count().await;
+        if peer_count == 0 {
+            tracing::warn!(
+                tx_hash = %hex::encode(tx_hash),
+                "Accepted local tx but skipped immediate relay broadcast because no peers are connected"
+            );
+            return;
+        }
+
+        let encoded = TransactionMessage::new(vec![extrinsic]).encode();
+        let failed = handle
+            .broadcast_to_all(TRANSACTIONS_PROTOCOL, encoded)
+            .await;
+        let delivered = peer_count.saturating_sub(failed.len());
+
+        if delivered == 0 {
+            tracing::warn!(
+                tx_hash = %hex::encode(tx_hash),
+                peer_count,
+                failed_peers = failed.len(),
+                "Accepted local tx but immediate relay broadcast reached no peers"
+            );
+        } else {
+            tracing::info!(
+                tx_hash = %hex::encode(tx_hash),
+                peer_count,
+                delivered_peers = delivered,
+                failed_peers = failed.len(),
+                "Immediately relayed accepted local tx to connected peers"
+            );
+        }
+    }
+
+    fn submitted_tx_tracking_state(&self, tx_hash: &sp_core::H256) -> (bool, bool) {
+        use sc_transaction_pool_api::{InPoolTransaction, TransactionPool as ScTransactionPool};
+
+        let ready = self
+            .transaction_pool
+            .ready()
+            .any(|tx| *InPoolTransaction::hash(&*tx) == *tx_hash);
+        let future = self
+            .transaction_pool
+            .futures()
+            .into_iter()
+            .any(|tx| *InPoolTransaction::hash(&tx) == *tx_hash);
+        (ready, future)
+    }
+
+    async fn submit_kernel_action_inner(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>
+    where
+        Block::Hash: Into<sp_core::H256>,
+    {
+        let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
+        let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
+        let extrinsic_bytes = extrinsic.encode();
+        let at: sp_core::H256 = self.best_hash().into();
+        let tx_hash = self
+            .transaction_pool
+            .submit_one(at, TransactionSource::Local, extrinsic)
+            .await
+            .map_err(|e| format!("transaction pool rejected kernel action: {e:?}"))?;
+        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        if !tracked_ready && !tracked_future {
+            return Err(format!(
+                "kernel action disappeared after local submission (tx_hash=0x{})",
+                hex::encode(tx_hash.as_ref())
+            ));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(tx_hash.as_ref());
+        self.broadcast_submitted_transaction(out, extrinsic_bytes)
+            .await;
+        tracing::info!(
+            tx_hash = %hex::encode(out),
+            tracked_ready,
+            tracked_future,
+            "Submitted kernel action via Hegemon RPC"
+        );
+        Ok(out)
+    }
 }
 
 // =============================================================================
@@ -216,6 +318,7 @@ where
         + Send
         + Sync
         + 'static,
+    Block::Hash: Into<sp_core::H256>,
     sp_runtime::traits::NumberFor<Block>: From<u64>,
     C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
 {
@@ -451,6 +554,22 @@ where
             reports: report_entries,
         }
     }
+
+    fn submit_action(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String> {
+        if envelope.family_id != FAMILY_SHIELDED_POOL {
+            return Err("stage-1 kernel RPC only accepts shielded family actions".to_string());
+        }
+        match envelope.action_id {
+            ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR => {}
+            _ => {
+                return Err(format!(
+                    "unsupported public shielded kernel action id {}",
+                    envelope.action_id
+                ));
+            }
+        }
+        futures::executor::block_on(self.submit_kernel_action_inner(envelope))
+    }
 }
 
 fn extract_block_timestamp<Block: BlockT>(block: &Block) -> Option<u64> {
@@ -490,9 +609,15 @@ fn try_decode_coinbase_recipient<Block: BlockT>(
     let bytes = extrinsic.encode();
     let decoded = runtime::UncheckedExtrinsic::decode(&mut bytes.as_slice()).ok()?;
     match decoded.function {
-        runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::mint_coinbase {
-            reward_bundle,
-        }) => Some(reward_bundle.miner_note.recipient_address),
+        runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope }) => {
+            let action = ShieldedFamilyAction::decode_envelope(&envelope).ok()?;
+            match action {
+                ShieldedFamilyAction::MintCoinbase(MintCoinbaseArgs { reward_bundle }) => {
+                    Some(reward_bundle.miner_note.recipient_address)
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -594,10 +719,7 @@ where
         _proof: Vec<u8>,
         _ciphertexts: Vec<Vec<u8>>,
     ) -> Result<[u8; 32], String> {
-        Err(
-            "Transaction submission requires extrinsic construction. Use author_submitExtrinsic."
-                .to_string(),
-        )
+        Err("Generic transaction submission is disabled; use Hegemon shielded RPC.".to_string())
     }
 
     fn generate_proof(
@@ -623,31 +745,27 @@ where
 // ShieldedPoolService Implementation
 // =============================================================================
 
+#[jsonrpsee::core::async_trait]
 impl<C, Block> ShieldedPoolService for ProductionRpcService<C, Block>
 where
     Block: BlockT,
     C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
-    C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block> + ArchiveMarketApi<Block>,
+    C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
+    Block::Hash: Into<sp_core::H256>,
 {
-    fn submit_shielded_transfer(
+    async fn submit_shielded_transfer(
         &self,
         proof: Vec<u8>,
         nullifiers: Vec<[u8; 48]>,
         commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 48],
+        balance_slot_asset_ids: [u64; 4],
         binding_hash: [u8; 64],
         stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
-        // Task 11.7.3: Build the shielded transfer call for the pallet
-        //
-        // The shielded_transfer extrinsic requires a signed origin (the sender's account).
-        // This RPC builds the encoded call data that can be:
-        // 1. Signed client-side and submitted via author_submitExtrinsic
-        // 2. Used directly if the transaction pool accepts unsigned extrinsics (future)
-
         if value_balance != 0 {
             return Err("Transparent pool disabled: value_balance must be 0".to_string());
         }
@@ -669,9 +787,7 @@ where
         let nullifier_count = nullifiers.len();
         let commitment_count = commitments.len();
 
-        // Convert proof to StarkProof
-        let stark_proof = StarkProof::from_bytes(proof);
-        if stark_proof.is_empty() {
+        if proof.is_empty() {
             return Err("Empty proof provided".to_string());
         }
 
@@ -687,10 +803,8 @@ where
                 .try_into()
                 .map_err(|_| "Failed to convert commitments")?;
 
-        // Convert encrypted notes to ciphertext hashes + sizes for sidecar submission.
-        let mut ciphertext_hashes = Vec::with_capacity(encrypted_notes.len());
-        let mut ciphertext_sizes = Vec::with_capacity(encrypted_notes.len());
-        let mut ciphertext_bytes = Vec::with_capacity(encrypted_notes.len());
+        // Decode the pallet ciphertext container for inline unsigned submission.
+        let mut pallet_ciphertexts = Vec::with_capacity(encrypted_notes.len());
         for note_bytes in encrypted_notes {
             let mut cursor = &note_bytes[..];
             let note = EncryptedNote::decode(&mut cursor)
@@ -698,82 +812,70 @@ where
             if !cursor.is_empty() {
                 return Err("Encrypted note has trailing bytes".to_string());
             }
-
-            let mut bytes = Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
-            bytes.extend_from_slice(&note.ciphertext);
-            bytes.extend_from_slice(note.kem_ciphertext.as_ref());
-            if bytes.len() > pallet_shielded_pool::types::MAX_CIPHERTEXT_BYTES {
+            let note_len = note.ciphertext.len() + note.kem_ciphertext.len();
+            if note_len > pallet_shielded_pool::types::MAX_CIPHERTEXT_BYTES {
                 return Err("Encrypted note exceeds max ciphertext size".to_string());
             }
-
-            let hash = ciphertext_hash_bytes(&bytes);
-            ciphertext_hashes.push(hash);
-            ciphertext_sizes.push(bytes.len() as u32);
-            ciphertext_bytes.push((hash, bytes));
+            pallet_ciphertexts.push(note);
         }
 
-        let bounded_ciphertext_hashes: frame_support::BoundedVec<
-            [u8; 48],
-            runtime::MaxCommitmentsPerTx,
-        > = ciphertext_hashes
+        let bounded_ciphertexts: frame_support::BoundedVec<
+            EncryptedNote,
+            runtime::MaxEncryptedNotesPerTx,
+        > = pallet_ciphertexts
             .try_into()
-            .map_err(|_| "Failed to convert ciphertext hashes")?;
+            .map_err(|_| "Failed to convert encrypted notes")?;
 
-        let bounded_ciphertext_sizes: frame_support::BoundedVec<u32, runtime::MaxCommitmentsPerTx> =
-            ciphertext_sizes
-                .try_into()
-                .map_err(|_| "Failed to convert ciphertext sizes")?;
-
-        {
-            let mut pending = self.pending_ciphertext_store.lock();
-            for (hash, bytes) in ciphertext_bytes {
-                pending.insert(hash, bytes);
-            }
+        let public_args = ShieldedTransferInlineArgs {
+            proof,
+            commitments: bounded_commitments.into_inner(),
+            ciphertexts: bounded_ciphertexts.into_inner(),
+            anchor,
+            balance_slot_asset_ids,
+            binding_hash,
+            stablecoin,
+            fee,
         }
+        .encode();
 
-        // Convert binding hash
-        let binding = BindingHash { data: binding_hash };
-
-        // Build the pallet call
-        let call = runtime::RuntimeCall::ShieldedPool(
-            pallet_shielded_pool::Call::shielded_transfer_sidecar {
-                proof: stark_proof,
-                nullifiers: bounded_nullifiers,
-                commitments: bounded_commitments,
-                ciphertext_hashes: bounded_ciphertext_hashes,
-                ciphertext_sizes: bounded_ciphertext_sizes,
-                anchor,
-                binding_hash: binding,
-                stablecoin,
-                fee,
-                value_balance,
-            },
+        let envelope = build_shielded_kernel_envelope(
+            runtime::manifest::default_version_binding(),
+            ACTION_SHIELDED_TRANSFER_INLINE,
+            bounded_nullifiers.into_inner(),
+            public_args,
         );
 
-        // Encode the call
-        let encoded_call = call.encode();
+        let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
+        let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
+        let extrinsic_bytes = extrinsic.encode();
+        let at: sp_core::H256 = self.best_hash().into();
 
-        // Return hash of the encoded call
-        // The client should sign this and submit via author_submitExtrinsic
-        use sp_core::hashing::blake2_256;
-        let call_hash = blake2_256(&encoded_call);
+        let tx_hash = self
+            .transaction_pool
+            .submit_one(at, TransactionSource::Local, extrinsic)
+            .await
+            .map_err(|e| format!("transaction pool rejected unsigned shielded transfer: {e:?}"))?;
+        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        if !tracked_ready && !tracked_future {
+            return Err(format!(
+                "unsigned shielded transfer disappeared after local submission (tx_hash=0x{})",
+                hex::encode(tx_hash.as_ref())
+            ));
+        }
 
-        // Log for debugging
+        let mut out = [0u8; 32];
+        out.copy_from_slice(tx_hash.as_ref());
+        self.broadcast_submitted_transaction(out, extrinsic_bytes)
+            .await;
         tracing::info!(
             nullifiers = nullifier_count,
             commitments = commitment_count,
-            call_size = encoded_call.len(),
-            call_hash = %hex::encode(call_hash),
-            "Built shielded_transfer_sidecar call (Task 11.7.3)"
+            tx_hash = %hex::encode(out),
+            tracked_ready,
+            tracked_future,
+            "Submitted unsigned shielded transfer via Hegemon RPC"
         );
-
-        // Return the encoded call as hex in the "error" field for client to use
-        // This is a workaround since the actual submission requires signing
-        Err(format!(
-            "CALL_DATA:0x{}|CALL_HASH:0x{}|NOTE:Sign this call and submit via author_submitExtrinsic",
-            hex::encode(&encoded_call),
-            hex::encode(call_hash)
-        ))
+        Ok(out)
     }
 
     fn get_encrypted_notes(
@@ -905,73 +1007,7 @@ where
     fn forced_inclusions(
         &self,
     ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.forced_inclusions(best_hash)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
-    }
-}
-
-// =============================================================================
-// ArchiveMarketService Implementation
-// =============================================================================
-
-impl<C, Block> ArchiveMarketService for ProductionRpcService<C, Block>
-where
-    Block: BlockT,
-    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
-    C::Api: ArchiveMarketApi<Block>,
-{
-    fn provider_count(&self) -> Result<u32, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.archive_provider_count(best_hash)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
-    }
-
-    fn provider(
-        &self,
-        provider: AccountId,
-    ) -> Result<Option<pallet_archive_market::ProviderInfo<runtime::Runtime>>, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.archive_provider(best_hash, provider)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
-    }
-
-    fn providers(
-        &self,
-    ) -> Result<
-        Vec<(
-            AccountId,
-            pallet_archive_market::ProviderInfo<runtime::Runtime>,
-        )>,
-        String,
-    > {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.archive_providers(best_hash)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
-    }
-
-    fn contract(
-        &self,
-        contract_id: u64,
-    ) -> Result<Option<pallet_archive_market::ArchiveContract<runtime::Runtime>>, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.archive_contract(best_hash, contract_id)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
-    }
-
-    fn contracts(
-        &self,
-        provider: AccountId,
-    ) -> Result<Vec<pallet_archive_market::ArchiveContract<runtime::Runtime>>, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.archive_contracts(best_hash, provider)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
+        Ok(Vec::new())
     }
 }
 

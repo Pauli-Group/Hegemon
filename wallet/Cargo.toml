@@ -1,6 +1,6 @@
 [package]
 name = "wallet"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2021"
 
 [dependencies]
@@ -35,6 +35,8 @@ disclosure-circuit = { path = "../circuits/disclosure" }
 batch-circuit = { path = "../circuits/batch", default-features = false, features = ["plonky3"], optional = true }
 synthetic-crypto = { path = "../crypto" }
 protocol-versioning = { path = "../protocol/versioning" }
+protocol-kernel = { path = "../protocol/kernel" }
+pallet-shielded-pool = { path = "../pallets/shielded-pool", default-features = false, features = ["std"] }
 twox-hash = "1.6"
 zeroize = { version = "1.8", features = ["derive"] }
 

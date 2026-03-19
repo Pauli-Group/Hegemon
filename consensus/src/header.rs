@@ -13,6 +13,7 @@ pub struct BlockHeader {
     pub timestamp_ms: u64,
     pub parent_hash: BlockHash,
     pub state_root: StateRoot,
+    pub kernel_root: StateRoot,
     pub nullifier_root: NullifierRoot,
     pub proof_commitment: StarkCommitment,
     pub da_root: DaRoot,
@@ -92,6 +93,7 @@ fn encode_signing_fields(header: &BlockHeader) -> Vec<u8> {
     data.extend_from_slice(&header.timestamp_ms.to_le_bytes());
     data.extend_from_slice(&header.parent_hash);
     data.extend_from_slice(&header.state_root);
+    data.extend_from_slice(&header.kernel_root);
     data.extend_from_slice(&header.nullifier_root);
     data.extend_from_slice(&header.proof_commitment);
     data.extend_from_slice(&header.da_root);

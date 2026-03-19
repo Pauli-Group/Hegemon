@@ -12,6 +12,12 @@ pub struct InferredFriProfileP3 {
     pub num_queries: usize,
 }
 
+pub fn prewarm_transaction_verifier_cache_p3(
+    _fri: InferredFriProfileP3,
+) -> Result<(), TransactionVerifyErrorP3> {
+    Ok(())
+}
+
 pub fn infer_fri_profile_from_proof_p3(
     proof: &TransactionProofP3,
 ) -> Result<InferredFriProfileP3, TransactionVerifyErrorP3> {

@@ -449,7 +449,7 @@ fn aggregate_single_transaction_proof() {
     let outer_config = config::goldilocks().build();
     let common = CommonData::from_airs_and_degrees(&outer_config, &mut airs, &degrees);
 
-    let mut runner = circuit.clone().runner();
+    let mut runner = circuit.runner();
     runner
         .set_public_inputs(&public_inputs)
         .expect("set public inputs");

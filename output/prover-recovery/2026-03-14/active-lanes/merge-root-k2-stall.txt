@@ -1,0 +1,3 @@
+timed_stall_seconds=65
+status=killed_after_budget
+command=cargo run --release -p circuits-bench -- --json --iterations 2 --lane-batch-sizes 2 --warm

@@ -5,6 +5,7 @@ import type {
   DialogOpenOptions,
   NodeConnection,
   NodeManagedStatus,
+  NodeParticipationRole,
   NodeSummary,
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
@@ -17,7 +18,13 @@ import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
-const approvedSeeds = 'hegemon.pauli.group:31333,158.69.222.121:31333';
+const canonicalTestnetP2pPort = 30333;
+const approvedSeeds = 'hegemon.pauli.group:30333';
+const legacySeedAliases: Record<string, string> = {
+  'hegemon.pauli.group:31333': 'hegemon.pauli.group:30333',
+  '158.69.222.121:31333': 'hegemon.pauli.group:30333',
+  '158.69.222.121:30333': 'hegemon.pauli.group:30333'
+};
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
@@ -26,7 +33,7 @@ const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
 const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 const minWalletPassphraseLength = 12;
 const defaultRpcPort = 9944;
-const defaultP2pPort = 30333;
+const defaultP2pPort = canonicalTestnetP2pPort;
 const defaultMineThreads = (() => {
   const hardwareConcurrency =
     typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency)
@@ -35,6 +42,43 @@ const defaultMineThreads = (() => {
   const target = Math.floor(hardwareConcurrency / 2);
   return Math.max(1, Math.min(16, target || hardwareConcurrency || 1));
 })();
+
+const participationRoleLabels: Record<NodeParticipationRole, string> = {
+  full_node: 'Relay node',
+  authoring_pool: 'Mining node'
+};
+
+const participationRoleMeta: Record<
+  NodeParticipationRole,
+  {
+    statusLabel?: string;
+    statusTone: 'ok' | 'warn';
+    summary: string;
+    guidance: string;
+  }
+> = {
+  full_node: {
+    statusTone: 'ok',
+    summary: 'Verifies the network, serves wallet traffic, and relays chain state without local block production.',
+    guidance:
+      'Use this for wallets, verification, and relaying. Switch to Mining node only if this machine should build and mine blocks.'
+  },
+  authoring_pool: {
+    statusLabel: 'Operator only',
+    statusTone: 'warn',
+    summary:
+      'Runs the public block author. This node accepts proof-ready transactions, builds the commitment proof, mines locally, and broadcasts final blocks.',
+    guidance:
+      'Use this only on the machine that should mine blocks. Everyone else should stay on Relay node.'
+  }
+};
+
+const inferParticipationRole = (connection: NodeConnection): NodeParticipationRole => {
+  if (connection.participationRole === 'full_node' || connection.participationRole === 'authoring_pool') {
+    return connection.participationRole;
+  }
+  return connection.miningIntent || connection.minerAddress ? 'authoring_pool' : 'full_node';
+};
 
 const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -47,12 +91,27 @@ const normalizeTxId = (value: string | null | undefined) => {
   return trimmed.replace(/^0x/i, '').toLowerCase();
 };
 
-const normalizeSeedsValue = (value: string | null | undefined) =>
-  (value ?? '')
-    .split(',')
-    .map((seed) => seed.trim().toLowerCase())
-    .filter(Boolean)
-    .join(',');
+const canonicalizeSeedEntry = (seed: string) => {
+  const normalized = seed.trim().toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+  return legacySeedAliases[normalized] ?? normalized;
+};
+
+const normalizeSeedsValue = (value: string | null | undefined) => {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawSeed of (value ?? '').split(',')) {
+    const seed = canonicalizeSeedEntry(rawSeed);
+    if (!seed || seen.has(seed)) {
+      continue;
+    }
+    seen.add(seed);
+    normalized.push(seed);
+  }
+  return normalized.join(',');
+};
 
 const makeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -401,6 +460,34 @@ const normalizeRpcPort = (value?: number): number | undefined => {
   return value;
 };
 
+const parseListenAddrPort = (value?: string | null): number | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const parts = value.trim().split('/');
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (parts[index] !== 'tcp') {
+      continue;
+    }
+    const port = Number.parseInt(parts[index + 1], 10);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+      return port;
+    }
+  }
+  return undefined;
+};
+
+const rewriteListenAddrPort = (value: string, port: number): string => {
+  const parts = value.trim().split('/');
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (parts[index] === 'tcp') {
+      parts[index + 1] = String(port);
+      return parts.join('/');
+    }
+  }
+  return value;
+};
+
 const isLoopbackWsEndpoint = (value: string): boolean =>
   value.startsWith('ws://127.0.0.1:') || value.startsWith('ws://localhost:') || value.startsWith('ws://[::1]:');
 
@@ -552,6 +639,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   id: makeId(),
   label: 'Local node',
   mode: 'local',
+  participationRole: 'full_node',
   wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
   httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: true,
@@ -575,6 +663,7 @@ const buildTestnetConnection = (): NodeConnection => ({
   id: makeId(),
   label: 'Testnet node',
   mode: 'local',
+  participationRole: 'full_node',
   wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
   httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: false,
@@ -597,31 +686,72 @@ const buildTestnetConnection = (): NodeConnection => ({
 const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
 
 const normalizeConnection = (connection: NodeConnection): NodeConnection => {
+  const {
+    operatorEndpoint: _operatorEndpoint,
+    workerName: _workerName,
+    payoutAddress: _payoutAddress,
+    poolAuthToken: _poolAuthToken,
+    poolShareBits: _poolShareBits,
+    ...sanitizedConnection
+  } = connection as NodeConnection & {
+    operatorEndpoint?: string;
+    workerName?: string;
+    payoutAddress?: string;
+    poolAuthToken?: string;
+    poolShareBits?: number;
+  };
   const isDefaultLocal =
-    connection.mode === 'local' &&
-    connection.label === 'Local node' &&
-    (!connection.basePath || connection.basePath === '~/.hegemon-node');
+    sanitizedConnection.mode === 'local' &&
+    sanitizedConnection.label === 'Local node' &&
+    (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node');
   const isDefaultTestnet =
-    connection.mode === 'local' &&
-    connection.label === 'Testnet node' &&
-    (!connection.basePath || connection.basePath === '~/.hegemon-node-testnet');
+    sanitizedConnection.mode === 'local' &&
+    sanitizedConnection.label === 'Testnet node' &&
+    (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node-testnet');
 
-  let next = normalizeLocalConnectionEndpoints(connection);
+  let next = normalizeLocalConnectionEndpoints(sanitizedConnection);
+  const inferredParticipationRole = inferParticipationRole(next);
+  if (next.participationRole !== inferredParticipationRole) {
+    next = { ...next, participationRole: inferredParticipationRole };
+  }
   if (next.mode === 'remote' && !next.httpUrl?.trim()) {
     next = { ...next, httpUrl: deriveHttpUrl(next.wsUrl) };
   }
 
-  if (isDefaultLocal && connection.dev && !connection.chainSpecPath) {
+  if (isDefaultLocal && sanitizedConnection.dev && !sanitizedConnection.chainSpecPath) {
     next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
   }
 
+  const currentSeeds = (next.seeds ?? '').trim();
   const normalizedSeeds = normalizeSeedsValue(next.seeds);
-  if ((isDefaultLocal || isDefaultTestnet) && normalizedSeeds === '') {
-    next = { ...next, seeds: approvedSeeds };
+  if (currentSeeds && normalizedSeeds !== currentSeeds.toLowerCase()) {
+    next = { ...next, seeds: normalizedSeeds };
+  }
+  if (isDefaultLocal || isDefaultTestnet) {
+    if (normalizedSeeds !== approvedSeeds) {
+      next = { ...next, seeds: approvedSeeds };
+    }
+  }
+
+  if (next.mode === 'local') {
+    if (next.p2pPort === 31333) {
+      next = { ...next, p2pPort: canonicalTestnetP2pPort };
+    }
+    const listenAddrPort = parseListenAddrPort(next.listenAddr);
+    if (listenAddrPort === 31333 && next.listenAddr) {
+      next = {
+        ...next,
+        listenAddr: rewriteListenAddrPort(next.listenAddr, canonicalTestnetP2pPort)
+      };
+    }
   }
 
   if ((isDefaultLocal || isDefaultTestnet) && (!next.mineThreads || next.mineThreads === 1)) {
     next = { ...next, mineThreads: defaultMineThreads };
+  }
+
+  if (inferredParticipationRole !== 'authoring_pool' && next.miningIntent) {
+    next = { ...next, miningIntent: false };
   }
 
   return next;
@@ -955,6 +1085,9 @@ export default function App() {
   }, [openDialogPath, storePath]);
 
   const activeSummary = activeConnection ? nodeSummaries[activeConnection.id] : null;
+  const activeParticipationRole = activeConnection ? inferParticipationRole(activeConnection) : 'full_node';
+  const activeParticipationMeta = participationRoleMeta[activeParticipationRole];
+  const roleAllowsLocalMining = activeParticipationRole === 'authoring_pool';
 
   const healthLabel = useMemo(() => {
     if (!activeSummary) {
@@ -1065,11 +1198,6 @@ export default function App() {
             hashRate: null,
             blocksFound: null,
             difficulty: null,
-            aggregationProofFormat: null,
-            proverStageType: null,
-            proverStageLevel: null,
-            proverStageArity: null,
-            proverReadyBundleAgeMs: null,
             blockHeight: null,
             supplyDigest: null,
             storage: null,
@@ -1195,6 +1323,7 @@ export default function App() {
       return;
     }
     const normalizedConnection = normalizeLocalConnectionEndpoints(activeConnection);
+    const normalizedRole = inferParticipationRole(normalizedConnection);
     const rpcPort = inferRpcPort(normalizedConnection);
     if (normalizedConnection !== activeConnection) {
       updateActiveConnection({
@@ -1203,7 +1332,11 @@ export default function App() {
         rpcPort: rpcPort
       });
     }
-    if (normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
+    if (normalizedRole !== 'authoring_pool' && normalizedConnection.miningIntent) {
+      setNodeError('Local mining is reserved for the Mining node role. Switch roles or disable Auto-start mining.');
+      return;
+    }
+    if (normalizedRole === 'authoring_pool' && normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
       setNodeError('Set a miner address before enabling mining.');
       return;
     }
@@ -1235,9 +1368,9 @@ export default function App() {
         rpcPort,
         p2pPort: normalizedConnection.p2pPort,
         listenAddr: normalizedConnection.listenAddr || undefined,
-        minerAddress: normalizedConnection.minerAddress || undefined,
-        mineThreads: normalizedConnection.mineThreads,
-        mineOnStart: normalizedConnection.miningIntent,
+        minerAddress: normalizedRole === 'authoring_pool' ? normalizedConnection.minerAddress || undefined : undefined,
+        mineThreads: normalizedRole === 'authoring_pool' ? normalizedConnection.mineThreads : undefined,
+        mineOnStart: normalizedRole === 'authoring_pool' ? normalizedConnection.miningIntent : false,
         seeds: normalizedConnection.seeds || undefined,
         maxPeers: normalizedConnection.maxPeers,
         rpcExternal: normalizedConnection.rpcExternal,
@@ -1291,6 +1424,32 @@ export default function App() {
     return trimmed;
   };
 
+  const invalidateWalletSession = useCallback(
+    (message: string, storePathOverride?: string) => {
+      const targetStorePath = (storePathOverride ?? storePath).trim();
+      setWalletStatus(null);
+      setWalletError(message);
+      setActiveUnlockToken(null);
+      setWalletSyncQueued(false);
+      setDisclosureRecords([]);
+      if (!targetStorePath) {
+        return;
+      }
+      setSendAttempts((prev) =>
+        prev.map((entry) =>
+          entry.storePath === targetStorePath && entry.status === 'pending'
+            ? {
+                ...entry,
+                status: 'failed',
+                error: entry.error ?? message
+              }
+            : entry
+        )
+      );
+    },
+    [storePath]
+  );
+
   const requireActiveUnlockToken = () => {
     if (!activeUnlockToken) {
       throw new Error('Wallet is locked. Open or init the store first.');
@@ -1298,45 +1457,66 @@ export default function App() {
     return activeUnlockToken;
   };
 
-  const refreshWalletStatus = async (overrideUnlockToken?: string) => {
-    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
-    if (!unlockToken) {
-      setWalletStatus(null);
-      return;
-    }
-    try {
-      const resolvedStorePath = resolveStorePath();
-      const status = await window.hegemon.wallet.status(resolvedStorePath, unlockToken, true);
-      setWalletStatus(status);
-      setWalletError(null);
-    } catch (error) {
-      setWalletError(error instanceof Error ? error.message : 'Wallet status failed.');
-    }
-  };
+  const refreshWalletStatus = useCallback(
+    async (overrideUnlockToken?: string) => {
+      const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+      if (!unlockToken) {
+        setWalletStatus(null);
+        return;
+      }
+      let resolvedStorePath = '';
+      try {
+        resolvedStorePath = resolveStorePath();
+        const status = await window.hegemon.wallet.status(resolvedStorePath, unlockToken, true);
+        setWalletStatus(status);
+        setWalletError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Wallet status failed.';
+        const normalized = message.toLowerCase();
+        if (
+          normalized.includes('walletd process not running') ||
+          normalized.includes('walletd stopped') ||
+          normalized.includes('walletd stdin not available') ||
+          normalized.includes('wallet is locked') ||
+          normalized.includes('wallet unlock token') ||
+          normalized.includes('expired')
+        ) {
+          invalidateWalletSession(message, resolvedStorePath || storePath);
+          return;
+        }
+        setWalletStatus(null);
+        setWalletError(message);
+      }
+    },
+    [activeUnlockToken, invalidateWalletSession, storePath]
+  );
 
-  const refreshDisclosureRecords = async (overrideUnlockToken?: string) => {
-    const unlockToken = overrideUnlockToken ?? activeUnlockToken;
-    if (!unlockToken) {
-      setDisclosureRecords([]);
-      return;
-    }
-    setDisclosureListBusy(true);
-    try {
-      const resolvedStorePath = resolveStorePath();
-      const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, unlockToken);
-      setDisclosureRecords(records);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Disclosure list failed.';
-      const code = (error as { code?: string }).code;
-      if (code === 'unknown_method' || message.includes('unknown method disclosure.list')) {
+  const refreshDisclosureRecords = useCallback(
+    async (overrideUnlockToken?: string) => {
+      const unlockToken = overrideUnlockToken ?? activeUnlockToken;
+      if (!unlockToken) {
         setDisclosureRecords([]);
         return;
       }
-      setWalletError(message);
-    } finally {
-      setDisclosureListBusy(false);
-    }
-  };
+      setDisclosureListBusy(true);
+      try {
+        const resolvedStorePath = resolveStorePath();
+        const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, unlockToken);
+        setDisclosureRecords(records);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Disclosure list failed.';
+        const code = (error as { code?: string }).code;
+        if (code === 'unknown_method' || message.includes('unknown method disclosure.list')) {
+          setDisclosureRecords([]);
+          return;
+        }
+        setWalletError(message);
+      } finally {
+        setDisclosureListBusy(false);
+      }
+    },
+    [activeUnlockToken]
+  );
 
   const handleWalletInit = async () => {
     setWalletBusy(true);
@@ -1441,6 +1621,21 @@ export default function App() {
       window.clearInterval(interval);
     };
   }, [autoLockEnabled, activeUnlockToken, autoLockMinutes, handleWalletLock, walletBusy]);
+
+  useEffect(() => {
+    if (!activeUnlockToken) {
+      return;
+    }
+    if (!walletBusy) {
+      void refreshWalletStatus();
+    }
+    const interval = window.setInterval(() => {
+      if (!walletBusy) {
+        void refreshWalletStatus();
+      }
+    }, 10_000);
+    return () => window.clearInterval(interval);
+  }, [activeUnlockToken, refreshWalletStatus, walletBusy]);
 
   const handleCopyAddress = async () => {
     if (!walletStatus?.primaryAddress) {
@@ -1589,7 +1784,18 @@ export default function App() {
       if (genesisMismatch) {
         throw new Error('Genesis mismatch between wallet and node. Switch nodes or force a rescan before sending.');
       }
-      if (walletSummary?.reachable === false) {
+      const liveHttpUrl = deriveHttpUrl(wsUrl, activeConnection?.httpUrl);
+      if (liveHttpUrl) {
+        const liveSummary = await window.hegemon.node.summary({
+          connectionId: 'wallet-send',
+          label: 'Wallet send target',
+          isLocal: false,
+          httpUrl: liveHttpUrl
+        });
+        if (!liveSummary.reachable) {
+          throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
+        }
+      } else if (walletSummary?.reachable === false) {
         throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
       }
 
@@ -1894,9 +2100,13 @@ export default function App() {
     }
     void handleNodeStart();
   };
+  const effectiveMiningActive = Boolean(activeSummary?.mining);
+  const effectiveMiningHashRate = activeSummary?.hashRate;
   const miningHint = activeSummary?.mining
-    ? 'Mining is active. To change mining settings, stop the node, update Auto-start mining under Advanced settings, then restart.'
-    : 'Mining is configured at launch. Enable Auto-start mining under Advanced settings and restart the node to mine.';
+    ? 'Mining mode is active. To change local mining settings, stop the node, update Mining + retention, then restart.'
+    : activeParticipationRole === 'authoring_pool'
+      ? 'This connection is configured as a mining node. Enable Auto-start mining under Mining + retention and restart the node to mine locally.'
+      : 'This connection is configured as a relay node. It verifies and relays the network without local block production.';
   const walletConnectionTone =
     walletSummary?.reachable === true ? 'ok' : walletSummary?.reachable === false ? 'error' : 'neutral';
   const walletConnectionLabel =
@@ -1958,7 +2168,15 @@ export default function App() {
     const attemptEntries: ActivityEntry[] = sortedAttempts.map((attempt, index) => {
       const windowEnd = index > 0 ? sortedAttempts[index - 1]?.createdAt : null;
       const pending = attempt.txId ? pendingByTxId.get(attempt.txId) : null;
-      const status = pending ? (pending.status === 'confirmed' ? 'confirmed' : 'pending') : attempt.status;
+      const missingWalletPending =
+        attempt.status === 'pending' && !pending && walletUnlocked && !walletError;
+      const status = pending
+        ? pending.status === 'confirmed'
+          ? 'confirmed'
+          : 'pending'
+        : missingWalletPending
+          ? 'failed'
+          : attempt.status;
       const expectedSteps = attempt.consolidationExpected ?? 0;
       const matchingSteps = consolidationEntries
         .filter((entry) => parseTimestamp(entry.createdAt) >= parseTimestamp(attempt.createdAt))
@@ -2005,7 +2223,9 @@ export default function App() {
         status,
         txId: normalizeTxId(pending?.txId) ?? attempt.txId,
         confirmations: pending?.confirmations,
-        error: attempt.error,
+        error: missingWalletPending
+          ? attempt.error ?? 'Submission never appeared in wallet pending state.'
+          : attempt.error,
         notesNeeded: attempt.notesNeeded,
         walletNoteCount: attempt.walletNoteCount,
         maxInputs: attempt.maxInputs,
@@ -2029,7 +2249,7 @@ export default function App() {
     ];
     merged.sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
     return merged;
-  }, [attemptsForStore, pendingTransactions, pendingByTxId]);
+  }, [attemptsForStore, pendingTransactions, pendingByTxId, walletError, walletUnlocked]);
 
   const sendInFlight = attemptsForStore.some((attempt) => attempt.status === 'processing');
 
@@ -2110,15 +2330,6 @@ export default function App() {
             Version {activeSummary?.nodeVersion ?? 'N/A'}
             {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? ' · External RPC (not managed by app)' : ''}
           </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">
-            Proof format {activeSummary?.aggregationProofFormat ?? 'N/A'}
-            {activeSummary?.proverStageType
-              ? ` · Stage ${activeSummary.proverStageType} (L${activeSummary.proverStageLevel ?? 0}, k${activeSummary.proverStageArity ?? 0})`
-              : ''}
-            {typeof activeSummary?.proverReadyBundleAgeMs === 'number'
-              ? ` · Bundle age ${formatNumber(activeSummary.proverReadyBundleAgeMs)} ms`
-              : ''}
-          </p>
         </div>
         <div className="status-group">
           <p className="label">Wallet</p>
@@ -2144,9 +2355,9 @@ export default function App() {
             <span className="text-xs text-surfaceMuted/80 mono">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
           </div>
           <p className="text-xs text-surfaceMuted/70 mt-1">
-            Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Supply {formatHash(activeSummary?.supplyDigest)}
+            Mining {effectiveMiningActive ? 'Active' : 'Idle'} · Supply {formatHash(activeSummary?.supplyDigest)}
           </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">Hash rate {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">Hash rate {formatHashRate(effectiveMiningHashRate)}</p>
         </div>
       </div>
     </div>
@@ -2180,7 +2391,7 @@ export default function App() {
             </div>
             <p>Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}</p>
             <p>
-              Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Hash rate {formatHashRate(activeSummary?.hashRate)}
+              Mining {effectiveMiningActive ? 'Active' : 'Idle'} · Hash rate {formatHashRate(effectiveMiningHashRate)}
             </p>
             <p className="mono text-xs">Supply digest {formatHash(activeSummary?.supplyDigest)}</p>
           </div>
@@ -2229,7 +2440,7 @@ export default function App() {
                   : 'N/A'}
               </span>
             </p>
-            <p>Mining {activeSummary?.mining ? 'Active' : 'Idle'}</p>
+            <p>Mining {effectiveMiningActive ? 'Active' : 'Idle'}</p>
           </div>
         </section>
       </div>
@@ -2264,7 +2475,7 @@ export default function App() {
           {sendBlockedReason ? <p className="text-xs text-amber">{sendBlockedReason}</p> : null}
           {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? (
             <p className="text-xs text-amber">
-              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.9.0 node on a different RPC
+              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.9.1 node on a different RPC
               port (e.g. 9955) and update this connection’s URLs to regain start/stop control.
             </p>
           ) : null}
@@ -2322,7 +2533,7 @@ export default function App() {
           >
             {connections.map((connection) => (
               <option key={connection.id} value={connection.id}>
-                {connection.label} ({connection.mode})
+                {connection.label} ({connection.mode} · {participationRoleLabels[inferParticipationRole(connection)]})
               </option>
             ))}
           </select>
@@ -2345,6 +2556,22 @@ export default function App() {
           </select>
         </label>
         <label className="space-y-2">
+          <span className="label">Node role</span>
+          <select
+            value={activeParticipationRole}
+            onChange={(event) => {
+              const nextRole = event.target.value as NodeParticipationRole;
+              updateActiveConnection((connection) => ({
+                participationRole: nextRole,
+                miningIntent: nextRole === 'authoring_pool' ? connection.miningIntent : false
+              }));
+            }}
+          >
+            <option value="full_node">Relay node</option>
+            <option value="authoring_pool">Mining node</option>
+          </select>
+        </label>
+        <label className="space-y-2">
           <span className="label">WebSocket URL</span>
           <input
             value={activeConnection?.wsUrl ?? ''}
@@ -2359,17 +2586,27 @@ export default function App() {
             placeholder="http://127.0.0.1:9944"
           />
         </label>
-        {activeConnection?.mode === 'remote' ? (
-          <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-            <input
-              type="checkbox"
-              checked={Boolean(activeConnection.allowRemoteMining)}
-              onChange={(event) => updateActiveConnection({ allowRemoteMining: event.target.checked })}
-            />
-            Allow remote mining control
-          </label>
+        {activeConnection?.mode === 'remote' && activeParticipationRole === 'authoring_pool' ? (
+          <p className="text-xs text-surfaceMuted md:col-span-2">
+            Remote mining profiles are read-only in the desktop app. Start/stop and mining control stay on the operator host.
+          </p>
         ) : null}
       </div>
+      {activeConnection ? (
+        <div className="panel space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="label">Node role</p>
+              <h3 className="text-base font-semibold">{participationRoleLabels[activeParticipationRole]}</h3>
+            </div>
+            {activeParticipationMeta.statusLabel ? (
+              <span className={`status-pill ${activeParticipationMeta.statusTone}`}>{activeParticipationMeta.statusLabel}</span>
+            ) : null}
+          </div>
+          <p className="text-sm text-surfaceMuted">{activeParticipationMeta.summary}</p>
+          <p className="text-xs text-surfaceMuted/80">{activeParticipationMeta.guidance}</p>
+        </div>
+      ) : null}
       {activeConnection?.mode === 'remote' ? (
         <p className="text-sm text-surfaceMuted">
           Remote RPC should be restricted and authenticated. Review runbooks/two_person_testnet.md before exposing RPC.
@@ -2525,27 +2762,39 @@ export default function App() {
           <div className="panel space-y-4">
             <div>
               <p className="label">Mining + retention</p>
-              <p className="text-sm text-surfaceMuted/80">Mining controls and DA retention policies.</p>
+              <p className="text-sm text-surfaceMuted/80">
+                {roleAllowsLocalMining
+                  ? 'Local mining controls and DA retention policies.'
+                  : 'Relay-node notes and DA retention policies.'}
+              </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2 md:col-span-2">
-                <span className="label">Miner address</span>
-                <input
-                  value={activeConnection.minerAddress ?? ''}
-                  onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
-                  placeholder="shca1..."
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="label">Mine threads</span>
-                <input
-                  value={activeConnection.mineThreads?.toString() ?? ''}
-                  onChange={(event) => {
-                    const nextValue = Number.parseInt(event.target.value, 10);
-                    updateActiveConnection({ mineThreads: Number.isNaN(nextValue) ? undefined : nextValue });
-                  }}
-                />
-              </label>
+              {roleAllowsLocalMining ? (
+                <>
+                  <label className="space-y-2 md:col-span-2">
+                    <span className="label">Miner address</span>
+                    <input
+                      value={activeConnection.minerAddress ?? ''}
+                      onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
+                      placeholder="shca1..."
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="label">Mine threads</span>
+                    <input
+                      value={activeConnection.mineThreads?.toString() ?? ''}
+                      onChange={(event) => {
+                        const nextValue = Number.parseInt(event.target.value, 10);
+                        updateActiveConnection({ mineThreads: Number.isNaN(nextValue) ? undefined : nextValue });
+                      }}
+                    />
+                  </label>
+                </>
+              ) : (
+                <p className="text-xs text-surfaceMuted md:col-span-2">
+                  Relay node mode keeps local mining disabled. Switch the node role to Mining node to reveal local mining controls.
+                </p>
+              )}
               <label className="space-y-2">
                 <span className="label">Ciphertext retention (blocks)</span>
                 <input
@@ -2600,14 +2849,16 @@ export default function App() {
                   />
                   Temp storage
                 </label>
-                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(activeConnection.miningIntent)}
-                    onChange={(event) => updateActiveConnection({ miningIntent: event.target.checked })}
-                  />
-                  Auto-start mining
-                </label>
+                {roleAllowsLocalMining ? (
+                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(activeConnection.miningIntent)}
+                      onChange={(event) => updateActiveConnection({ miningIntent: event.target.checked })}
+                    />
+                    Auto-start mining
+                  </label>
+                ) : null}
                 <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
                     type="checkbox"
@@ -2697,7 +2948,14 @@ export default function App() {
       </div>
       <p className="text-sm text-surfaceMuted">{miningHint}</p>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="panel">
+          <p className="label">Role</p>
+          <p className="text-lg font-medium">{participationRoleLabels[activeParticipationRole]}</p>
+          {activeParticipationMeta.statusLabel ? (
+            <p className="text-xs text-surfaceMuted">{activeParticipationMeta.statusLabel}</p>
+          ) : null}
+        </div>
         <div className="panel">
           <p className="label">Health</p>
           <div className="flex items-center gap-2">
@@ -2733,7 +2991,7 @@ export default function App() {
                 ? 'Active'
                 : 'Idle'}
           </p>
-          <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(effectiveMiningHashRate)}</p>
         </div>
         <div className="panel">
           <p className="label">Storage</p>
@@ -2746,7 +3004,7 @@ export default function App() {
         <div className="panel">
           <p className="label">Mining details</p>
           <p className="text-sm text-surfaceMuted">Threads: {activeSummary?.miningThreads ?? 'N/A'}</p>
-          <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(effectiveMiningHashRate)}</p>
           <p className="text-sm text-surfaceMuted">Blocks found: {formatNumber(activeSummary?.blocksFound)}</p>
           <p className="text-sm text-surfaceMuted">Difficulty: {formatNumber(activeSummary?.difficulty)}</p>
           <p className="text-sm text-surfaceMuted">Block height: {formatNumber(activeSummary?.blockHeight)}</p>
@@ -2843,6 +3101,7 @@ export default function App() {
         {connections.map((connection) => {
           const summary = nodeSummaries[connection.id];
           const isOnline = Boolean(summary?.reachable);
+          const role = inferParticipationRole(connection);
           return (
             <div key={connection.id} className="panel">
               <div className="flex items-center justify-between gap-3">
@@ -2852,6 +3111,7 @@ export default function App() {
                 </span>
               </div>
               <p className="text-sm text-surfaceMuted">Mode: {connection.mode}</p>
+              <p className="text-sm text-surfaceMuted">Role: {participationRoleLabels[role]}</p>
               <p className="text-sm text-surfaceMuted">Height: {formatNumber(summary?.bestNumber)}</p>
               <p className="text-sm text-surfaceMuted">Peers: {formatNumber(summary?.peers)}</p>
             </div>
@@ -3769,7 +4029,9 @@ export default function App() {
       <header className="space-y-3">
         <p className="label">Node</p>
         <h1 className="text-headline font-semibold tracking-tight">Operate + Observe</h1>
-        <p className="text-surfaceMuted max-w-2xl">Run local nodes, manage connections, and monitor telemetry.</p>
+        <p className="text-surfaceMuted max-w-2xl">
+          Run relay or mining nodes and monitor telemetry.
+        </p>
       </header>
       <div className="grid gap-6 2xl:grid-cols-[minmax(480px,1fr)_minmax(0,2fr)]">
         <div className="space-y-6">

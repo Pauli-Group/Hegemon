@@ -9,6 +9,7 @@ batch-circuit = { path = "../circuits/batch" }
 bincode = "1"
 blake3 = "1.5"
 block-circuit = { path = "../circuits/block" }
+tx-proof-manifest = { path = "../circuits/tx-proof-manifest" }
 codec = { workspace = true }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
@@ -16,10 +17,17 @@ num-bigint = "0.4"
 num-traits = "0.2"
 parking_lot = "0.12"
 p3-batch-stark = { workspace = true }
+p3-challenger = { workspace = true }
 p3-circuit = { workspace = true }
 p3-circuit-prover = { workspace = true }
+p3-dft = { workspace = true }
 p3-field = { workspace = true }
+p3-fri = { workspace = true }
+p3-goldilocks = { workspace = true }
+p3-lookup = { workspace = true }
+p3-merkle-tree = { workspace = true }
 p3-recursion = { workspace = true }
+p3-symmetric = { workspace = true }
 p3-uni-stark = { workspace = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 rayon = "1"

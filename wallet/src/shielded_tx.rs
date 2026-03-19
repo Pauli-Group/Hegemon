@@ -38,6 +38,7 @@
 
 use std::time::{Duration, Instant};
 
+use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
@@ -297,8 +298,21 @@ impl<'a> ShieldedTxBuilder<'a> {
             &proof_result.nullifiers,
             &proof_result.commitments,
             &ciphertext_hashes,
+            proof_result.balance_slot_asset_ids,
             proof_result.fee,
             proof_result.value_balance,
+            if witness.stablecoin.enabled {
+                Some(pallet_shielded_pool::types::StablecoinPolicyBinding {
+                    asset_id: witness.stablecoin.asset_id,
+                    policy_hash: witness.stablecoin.policy_hash,
+                    oracle_commitment: witness.stablecoin.oracle_commitment,
+                    attestation_commitment: witness.stablecoin.attestation_commitment,
+                    issuance_delta: witness.stablecoin.issuance_delta,
+                    policy_version: witness.stablecoin.policy_version,
+                })
+            } else {
+                None
+            },
         );
         // Build transaction bundle
         let bundle = TransactionBundle::new(
@@ -308,6 +322,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             &ciphertexts,
             proof_result.anchor,
             binding_hash,
+            proof_result.balance_slot_asset_ids,
             proof_result.fee,
             proof_result.value_balance,
             witness.stablecoin.clone(),
@@ -521,39 +536,22 @@ impl<'a> ShieldedTxBuilder<'a> {
         nullifiers: &[[u8; 48]],
         commitments: &[[u8; 48]],
         ciphertext_hashes: &[[u8; 48]],
+        balance_slot_asset_ids: [u64; 4],
         fee: u64,
         value_balance: i128,
+        stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     ) -> [u8; 64] {
-        let mut data = Vec::new();
-        data.extend_from_slice(anchor);
-        for nf in nullifiers {
-            data.extend_from_slice(nf);
-        }
-        for cm in commitments {
-            data.extend_from_slice(cm);
-        }
-        for ct in ciphertext_hashes {
-            data.extend_from_slice(ct);
-        }
-        data.extend_from_slice(&fee.to_le_bytes());
-        data.extend_from_slice(&value_balance.to_le_bytes());
-        const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
-        let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
-        msg0.extend_from_slice(BINDING_HASH_DOMAIN);
-        msg0.push(0);
-        msg0.extend_from_slice(&data);
-        let hash0 = synthetic_crypto::hashes::blake2_256(&msg0);
-
-        let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
-        msg1.extend_from_slice(BINDING_HASH_DOMAIN);
-        msg1.push(1);
-        msg1.extend_from_slice(&data);
-        let hash1 = synthetic_crypto::hashes::blake2_256(&msg1);
-
-        let mut out = [0u8; 64];
-        out[..32].copy_from_slice(&hash0);
-        out[32..].copy_from_slice(&hash1);
-        out
+        StarkVerifier::compute_binding_hash(&ShieldedTransferInputs {
+            anchor: *anchor,
+            nullifiers: nullifiers.to_vec(),
+            commitments: commitments.to_vec(),
+            ciphertext_hashes: ciphertext_hashes.to_vec(),
+            balance_slot_asset_ids,
+            fee,
+            value_balance,
+            stablecoin,
+        })
+        .data
     }
 
     /// Compute nullifiers for the spent notes.

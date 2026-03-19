@@ -1,0 +1,39 @@
+{
+  "generated_utc": "2026-03-15T17:24:51.063779Z",
+  "case_count": 6,
+  "ok_count": 6,
+  "proof_plus_prepare_ms": {
+    "count": 6,
+    "min": 6076,
+    "median": 16373.0,
+    "mean": 22731,
+    "p90": 37752,
+    "max": 53262
+  },
+  "ready_to_template_active_ms": {
+    "count": 6,
+    "min": 355,
+    "median": 1026.0,
+    "mean": 1364.6666666666667,
+    "p90": 2634,
+    "max": 2774
+  },
+  "template_to_first_found_ms": {
+    "count": 6,
+    "min": 1586,
+    "median": 12418.5,
+    "mean": 10705.166666666666,
+    "p90": 15165,
+    "max": 15870
+  },
+  "total_wall_ms": {
+    "count": 6,
+    "min": 19158,
+    "median": 30405.0,
+    "mean": 35044.666666666664,
+    "p90": 42441,
+    "max": 67369
+  },
+  "all_under_60s_proof_plus_prepare": true,
+  "all_first_eligible_block_included": true
+}

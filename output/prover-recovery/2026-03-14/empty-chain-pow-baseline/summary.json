@@ -1,0 +1,158 @@
+{
+  "block_count": 30,
+  "first_block": 1,
+  "last_block": 30,
+  "imported_timestamps": [
+    {
+      "block_number": 1,
+      "timestamp": "2026-03-14 22:04:53"
+    },
+    {
+      "block_number": 2,
+      "timestamp": "2026-03-14 22:07:56"
+    },
+    {
+      "block_number": 3,
+      "timestamp": "2026-03-14 22:09:01"
+    },
+    {
+      "block_number": 4,
+      "timestamp": "2026-03-14 22:09:11"
+    },
+    {
+      "block_number": 5,
+      "timestamp": "2026-03-14 22:10:05"
+    },
+    {
+      "block_number": 6,
+      "timestamp": "2026-03-14 22:14:08"
+    },
+    {
+      "block_number": 7,
+      "timestamp": "2026-03-14 22:17:44"
+    },
+    {
+      "block_number": 8,
+      "timestamp": "2026-03-14 22:23:39"
+    },
+    {
+      "block_number": 9,
+      "timestamp": "2026-03-14 22:27:29"
+    },
+    {
+      "block_number": 10,
+      "timestamp": "2026-03-14 22:27:39"
+    },
+    {
+      "block_number": 11,
+      "timestamp": "2026-03-14 22:27:39"
+    },
+    {
+      "block_number": 12,
+      "timestamp": "2026-03-14 22:31:32"
+    },
+    {
+      "block_number": 13,
+      "timestamp": "2026-03-14 22:32:32"
+    },
+    {
+      "block_number": 14,
+      "timestamp": "2026-03-14 22:33:40"
+    },
+    {
+      "block_number": 15,
+      "timestamp": "2026-03-14 22:34:50"
+    },
+    {
+      "block_number": 16,
+      "timestamp": "2026-03-14 22:34:59"
+    },
+    {
+      "block_number": 17,
+      "timestamp": "2026-03-14 22:38:26"
+    },
+    {
+      "block_number": 18,
+      "timestamp": "2026-03-14 22:39:20"
+    },
+    {
+      "block_number": 19,
+      "timestamp": "2026-03-14 22:42:51"
+    },
+    {
+      "block_number": 20,
+      "timestamp": "2026-03-14 22:45:15"
+    },
+    {
+      "block_number": 21,
+      "timestamp": "2026-03-14 22:47:03"
+    },
+    {
+      "block_number": 22,
+      "timestamp": "2026-03-14 22:48:49"
+    },
+    {
+      "block_number": 23,
+      "timestamp": "2026-03-14 22:53:44"
+    },
+    {
+      "block_number": 24,
+      "timestamp": "2026-03-14 22:57:54"
+    },
+    {
+      "block_number": 25,
+      "timestamp": "2026-03-14 23:04:08"
+    },
+    {
+      "block_number": 26,
+      "timestamp": "2026-03-14 23:05:08"
+    },
+    {
+      "block_number": 27,
+      "timestamp": "2026-03-14 23:05:16"
+    },
+    {
+      "block_number": 28,
+      "timestamp": "2026-03-14 23:07:19"
+    },
+    {
+      "block_number": 29,
+      "timestamp": "2026-03-14 23:08:16"
+    },
+    {
+      "block_number": 30,
+      "timestamp": "2026-03-14 23:09:55"
+    }
+  ],
+  "inter_block_seconds": [
+    183,
+    65,
+    10,
+    54,
+    243,
+    216,
+    355,
+    230,
+    10,
+    0,
+    233,
+    60,
+    68,
+    70,
+    9,
+    207,
+    54,
+    211,
+    144,
+    108,
+    106,
+    295,
+    250,
+    374,
+    60,
+    8,
+    123,
+    57,
+    99
+  ]
+}

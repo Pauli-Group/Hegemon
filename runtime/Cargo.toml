@@ -28,6 +28,9 @@ sp-block-builder = { workspace = true }
 sp-transaction-pool = { workspace = true }
 sp-inherents = { workspace = true }
 sp-genesis-builder = { workspace = true }
+blake3 = { version = "1", default-features = false }
+protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning", default-features = false }
+protocol-kernel = { path = "../protocol/kernel", default-features = false }
 
 crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
 # serde is required unconditionally because polkadot-sdk crates (sp-staking, bounded-collections)
@@ -56,6 +59,7 @@ pallet-observability = { path = "../pallets/observability", default-features = f
 pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
 pallet-archive-market = { path = "../pallets/archive-market", default-features = false }
 pallet-shielded-pool = { path = "../pallets/shielded-pool", default-features = false, features = ["production"] }
+pallet-kernel = { path = "../pallets/kernel", default-features = false }
 
 [dev-dependencies]
 sp-runtime = { workspace = true, features = ["std"] }
@@ -63,6 +67,10 @@ frame-support = { workspace = true, features = ["std"] }
 frame-system = { workspace = true, features = ["std"] }
 sp-io = { workspace = true, features = ["std"] }
 pallet-coinbase = { path = "../pallets/coinbase", features = ["std"] }
+rand = "0.8"
+tempfile = "3"
+transaction-circuit = { path = "../circuits/transaction" }
+wallet = { path = "../wallet" }
 
 [features]
 default = ["std"]
@@ -82,6 +90,7 @@ std = [
     "sp-inherents/std",
     "sp-session/std",
     "sp-genesis-builder/std",
+    "blake3/std",
     "frame-support/std",
     "frame-system/std",
     "frame-executive/std",
@@ -106,7 +115,10 @@ std = [
     "serde/std",
     "dep:serde_json",
     "serde_json/std",
+    "protocol_versioning/std",
+    "protocol-kernel/std",
     "substrate-wasm-builder",
+    "pallet-kernel/std",
 ]
 runtime-tests = []
 production = [

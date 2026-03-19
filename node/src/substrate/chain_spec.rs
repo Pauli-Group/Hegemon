@@ -2,7 +2,7 @@
 //!
 //! ONE chain spec. Difficulty retargeting handles hashrate differences.
 
-use pallet_shielded_pool::verifier::StarkVerifier;
+use runtime::manifest;
 use runtime::WASM_BINARY;
 use sc_service::ChainType;
 
@@ -18,6 +18,7 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 /// Retargeting adjusts automatically based on actual hashrate.
 pub fn chain_spec() -> Result<ChainSpec, String> {
     let wasm_binary = WASM_BINARY.ok_or("WASM binary not available")?;
+    let protocol_manifest = manifest::protocol_manifest();
 
     let mut properties = sc_chain_spec::Properties::new();
     properties.insert("tokenSymbol".into(), "HGM".into());
@@ -26,43 +27,27 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
     properties.insert("daChunkSize".into(), DEFAULT_DA_CHUNK_SIZE.into());
     properties.insert("daSampleCount".into(), DEFAULT_DA_SAMPLE_COUNT.into());
 
-    let verifying_key = StarkVerifier::create_verifying_key(0);
+    let verifying_key = manifest::shielded_verifying_key();
     let verifying_key_value = serde_json::to_value(&verifying_key)
         .map_err(|e| format!("Failed to serialize shielded verifying key: {e}"))?;
 
     let genesis_config = serde_json::json!({
         "system": {},
-        "balances": {
-            // No pre-mine. All issuance from mining rewards only.
-            "balances": [],
-            "devAccounts": null
-        },
         "difficulty": {
             // GENESIS_BITS = 0x1d1ad7f2 encodes target = MAX_U256 / 160,000,000
             // For 5-second blocks at ~32 MH/s (4 threads on M-series MacBook)
             "initialDifficulty": "0x9896800",
             "initialBits": 0x1d1a_d7f2_u32
         },
+        "kernel": {
+            "familyRoots": manifest::kernel_family_roots()
+        },
         "shieldedPool": {
             "verifyingKey": verifying_key_value,
-            "proofAvailabilityPolicy": "SelfContained"
-        },
-        "stablecoinPolicy": {
-            "policies": [
-                {
-                    "assetId": 1001,
-                    "oracleFeeds": [1],
-                    "attestationId": 1,
-                    "minCollateralRatioPpm": 1500000,
-                    "maxMintPerEpoch": 1000000000,
-                    "oracleMaxAge": 120,
-                    "policyVersion": 1,
-                    "active": false
-                }
-            ]
-        },
-        "archiveMarket": {
-            "phantom": null
+            "feeParameters": protocol_manifest.fee_parameters,
+            "daPolicy": protocol_manifest.da_policy,
+            "ciphertextPolicy": protocol_manifest.ciphertext_policy,
+            "proofAvailabilityPolicy": protocol_manifest.proof_availability_policy
         }
     });
 

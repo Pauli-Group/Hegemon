@@ -2,7 +2,7 @@
 //!
 //! These tests verify that multiple Substrate-based Hegemon nodes can:
 //! - Form a PQ-secure P2P network
-//! - Mine blocks using Blake3 PoW
+//! - Mine blocks using SHA-256d PoW
 //! - Propagate blocks via PQ channels
 //! - Maintain consensus across nodes
 //!
@@ -76,7 +76,7 @@ mod substrate_tests {
     /// Test: Production provider import callback is invoked
     #[tokio::test]
     async fn test_production_provider_import_callback() {
-        use consensus::Blake3Seal;
+        use consensus::{counter_to_nonce, Sha256dSeal};
         use hegemon_node::substrate::client::{ProductionChainStateProvider, ProductionConfig};
         use hegemon_node::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 
@@ -93,8 +93,8 @@ mod substrate_tests {
         });
 
         let template = BlockTemplate::new(H256::zero(), 1, TEST_DIFFICULTY_BITS);
-        let seal = Blake3Seal {
-            nonce: 12345,
+        let seal = Sha256dSeal {
+            nonce: counter_to_nonce(12_345),
             difficulty: TEST_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
@@ -221,7 +221,7 @@ mod substrate_tests {
     /// Test: Multiple concurrent imports to production provider
     #[tokio::test]
     async fn test_concurrent_imports() {
-        use consensus::Blake3Seal;
+        use consensus::{counter_to_nonce, Sha256dSeal};
         use hegemon_node::substrate::client::{ProductionChainStateProvider, ProductionConfig};
         use hegemon_node::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
         use std::sync::atomic::AtomicU64;
@@ -245,8 +245,8 @@ mod substrate_tests {
             let provider = Arc::clone(&provider_arc);
             handles.push(tokio::spawn(async move {
                 let template = BlockTemplate::new(H256::zero(), i as u64, TEST_DIFFICULTY_BITS);
-                let seal = Blake3Seal {
-                    nonce: i as u64,
+                let seal = Sha256dSeal {
+                    nonce: counter_to_nonce(i as u64),
                     difficulty: TEST_DIFFICULTY_BITS,
                     work: H256::repeat_byte(i as u8),
                 };
@@ -429,7 +429,7 @@ mod substrate_tests {
     /// Test: Full block production flow with all callbacks (Task 11.4.7)
     #[tokio::test]
     async fn test_full_block_production_flow() {
-        use consensus::Blake3Seal;
+        use consensus::{counter_to_nonce, Sha256dSeal};
         use hegemon_node::substrate::client::{
             ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
         };
@@ -495,8 +495,8 @@ mod substrate_tests {
         assert!(execute_calls.load(Ordering::SeqCst) >= 1);
 
         // Simulate mining found a valid seal
-        let seal = Blake3Seal {
-            nonce: 99999,
+        let seal = Sha256dSeal {
+            nonce: counter_to_nonce(99_999),
             difficulty: TEST_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xdd),
         };

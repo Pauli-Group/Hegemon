@@ -36,6 +36,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     keys::{generate_keys, ProvingKey, VerifyingKey},
+    p3_prover::TransactionProofParams,
     proof,
     witness::TransactionWitness,
 };
@@ -69,6 +70,9 @@ pub struct StarkProverConfig {
     /// Note: proof generation is not currently cancellable; exceeding this budget does not abort
     /// proving. The prover may emit a debug warning when the budget is exceeded.
     pub max_proving_time: Duration,
+    /// Whether to emit a recursion-friendly tx proof profile instead of the
+    /// heavier production tx proof profile.
+    pub recursion_profile: bool,
 }
 
 impl Default for StarkProverConfig {
@@ -83,6 +87,7 @@ impl Default for StarkProverConfig {
             } else {
                 Duration::from_secs(60)
             },
+            recursion_profile: false,
         }
     }
 }
@@ -96,6 +101,7 @@ impl StarkProverConfig {
             enable_grinding: false,
             grinding_bits: 0,
             max_proving_time: Duration::from_secs(30),
+            recursion_profile: false,
         }
     }
 
@@ -107,6 +113,7 @@ impl StarkProverConfig {
             enable_grinding: true,
             grinding_bits: 16,
             max_proving_time: Duration::from_secs(120),
+            recursion_profile: false,
         }
     }
 
@@ -118,6 +125,18 @@ impl StarkProverConfig {
             enable_grinding: false,
             grinding_bits: 0,
             max_proving_time: Duration::from_secs(180),
+            recursion_profile: false,
+        }
+    }
+
+    pub fn recursion() -> Self {
+        Self {
+            blowup_factor: 8,
+            num_queries: 8,
+            enable_grinding: false,
+            grinding_bits: 0,
+            max_proving_time: Duration::from_secs(60),
+            recursion_profile: true,
         }
     }
 
@@ -143,9 +162,15 @@ impl StarkProverConfig {
         let allow_fast = std::env::var("HEGEMON_WALLET_PROVER_FAST")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        let allow_recursion = std::env::var("HEGEMON_WALLET_PROVER_RECURSION")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         if !cfg!(debug_assertions) && !allow_fast {
             cfg.num_queries = cfg.num_queries.max(32);
             cfg.blowup_factor = cfg.blowup_factor.max(16);
+        }
+        if allow_recursion {
+            cfg.recursion_profile = true;
         }
 
         cfg
@@ -204,7 +229,12 @@ impl StarkProver {
 
         let start = Instant::now();
 
-        let proof = proof::prove(witness, &self.proving_key).map_err(|e| {
+        let params = if self.config.recursion_profile {
+            TransactionProofParams::recursion()
+        } else {
+            TransactionProofParams::production()
+        };
+        let proof = proof::prove_with_params(witness, &self.proving_key, params).map_err(|e| {
             WalletError::Serialization(format!("STARK proof generation failed: {e}"))
         })?;
 
@@ -245,6 +275,12 @@ impl StarkProver {
             nullifiers,
             commitments,
             anchor: proof.public_inputs.merkle_root,
+            balance_slot_asset_ids: [
+                proof.public_inputs.balance_slots[0].asset_id,
+                proof.public_inputs.balance_slots[1].asset_id,
+                proof.public_inputs.balance_slots[2].asset_id,
+                proof.public_inputs.balance_slots[3].asset_id,
+            ],
             proving_time,
             fee: proof.public_inputs.native_fee,
             value_balance: proof.public_inputs.value_balance,
@@ -298,6 +334,8 @@ pub struct ProofResult {
     pub commitments: Vec<[u8; 48]>,
     /// Merkle root anchor (48-byte array).
     pub anchor: [u8; 48],
+    /// Asset ids for the fixed four balance slots.
+    pub balance_slot_asset_ids: [u64; 4],
     /// Time taken to generate the proof.
     pub proving_time: Duration,
     /// Native fee encoded in the proof.
@@ -395,6 +433,7 @@ mod tests {
             nullifiers: vec![],
             commitments: vec![],
             anchor: [0u8; 48],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             proving_time: Duration::from_millis(500),
             fee: 0,
             value_balance: 0,

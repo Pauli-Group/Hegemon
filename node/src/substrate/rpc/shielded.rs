@@ -1,7 +1,7 @@
 //! Shielded Transaction RPC Endpoints
 //!
 //! This module provides RPC endpoints for shielded transactions:
-//! - Submit shielded transfers with STARK proofs
+//! - Submit shielded transfers through the deprecated shielded-send adapter
 //! - Get encrypted notes for scanning
 //! - Get Merkle witnesses for note spending
 //!
@@ -9,7 +9,7 @@
 //!
 //! | Method                          | Description                              |
 //! |---------------------------------|------------------------------------------|
-//! | `hegemon_submitShieldedTransfer`| Submit a shielded transfer with STARK proof |
+//! | `hegemon_submitShieldedTransfer`| Deprecated adapter for shielded transfer submission |
 //! | `hegemon_getEncryptedNotes`     | Fetch ML-KEM encrypted notes             |
 //! | `hegemon_getMerkleWitness`      | Get Poseidon Merkle path for a note      |
 //! | `hegemon_getShieldedPoolStatus` | Get shielded pool statistics             |
@@ -41,6 +41,8 @@ pub struct ShieldedTransferRequest {
     pub encrypted_notes: Vec<String>,
     /// Merkle root anchor (hex encoded)
     pub anchor: String,
+    /// Asset ids for the four fixed balance slots.
+    pub balance_slot_asset_ids: [u64; 4],
     /// Binding hash (hex encoded)
     pub binding_hash: String,
     /// Native fee encoded in the proof
@@ -273,15 +275,17 @@ pub trait ShieldedApi {
 }
 
 /// Trait for shielded pool service operations
+#[jsonrpsee::core::async_trait]
 pub trait ShieldedPoolService: Send + Sync {
     /// Submit a shielded transfer
-    fn submit_shielded_transfer(
+    async fn submit_shielded_transfer(
         &self,
         proof: Vec<u8>,
         nullifiers: Vec<[u8; 48]>,
         commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 48],
+        balance_slot_asset_ids: [u64; 4],
         binding_hash: [u8; 64],
         stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
@@ -524,17 +528,22 @@ where
         }
 
         // Submit to service
-        match self.service.submit_shielded_transfer(
-            proof,
-            nullifiers,
-            commitments,
-            encrypted_notes,
-            anchor,
-            binding_hash,
-            stablecoin,
-            request.fee,
-            request.value_balance,
-        ) {
+        match self
+            .service
+            .submit_shielded_transfer(
+                proof,
+                nullifiers,
+                commitments,
+                encrypted_notes,
+                anchor,
+                request.balance_slot_asset_ids,
+                binding_hash,
+                stablecoin,
+                request.fee,
+                request.value_balance,
+            )
+            .await
+        {
             Ok(tx_hash) => Ok(ShieldedTransferResponse {
                 success: true,
                 tx_hash: Some(hex::encode(tx_hash)),
@@ -717,14 +726,16 @@ mod tests {
 
     struct MockShieldedService;
 
+    #[jsonrpsee::core::async_trait]
     impl ShieldedPoolService for MockShieldedService {
-        fn submit_shielded_transfer(
+        async fn submit_shielded_transfer(
             &self,
             _proof: Vec<u8>,
             _nullifiers: Vec<[u8; 48]>,
             _commitments: Vec<[u8; 48]>,
             _encrypted_notes: Vec<Vec<u8>>,
             _anchor: [u8; 48],
+            _balance_slot_asset_ids: [u64; 4],
             _binding_hash: [u8; 64],
             _stablecoin: Option<StablecoinPolicyBinding>,
             _fee: u64,
@@ -890,6 +901,7 @@ mod tests {
                 &[1, 2, 3, 4],
             )],
             anchor: hex::encode([0x33u8; 48]),
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -915,6 +927,7 @@ mod tests {
             commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 48]),
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -943,6 +956,7 @@ mod tests {
             commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 48]),
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,

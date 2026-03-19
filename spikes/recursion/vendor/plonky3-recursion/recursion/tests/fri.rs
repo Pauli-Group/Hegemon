@@ -464,7 +464,7 @@ fn run_fri_test(setup: FriSetup, build_only: bool) {
         result_1.index_bits_per_query.clone(),
         result_1.commitments_with_points,
     );
-    let mut runner1 = circuit.clone().runner();
+    let mut runner1 = circuit.runner();
     runner1.set_public_inputs(&pub_inputs1).unwrap();
     runner1.run().unwrap();
 
