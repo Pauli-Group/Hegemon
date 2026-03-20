@@ -224,6 +224,18 @@ impl AsyncWalletSyncEngine {
                 }
             }
 
+            if let Err(err) = self.store.validate_notes_internal_consistency() {
+                if attempt == 0 {
+                    eprintln!(
+                        "Wallet note witness data is internally inconsistent; resetting wallet sync state..."
+                    );
+                    self.store.reset_sync_state()?;
+                    self.store.set_genesis_hash(metadata.genesis_hash)?;
+                    continue;
+                }
+                return Err(err);
+            }
+
             // Sync ciphertexts and attempt decryption
             let mut ciphertext_cursor = self.store.next_ciphertext_index()?;
             if ciphertext_cursor > note_status.next_index {

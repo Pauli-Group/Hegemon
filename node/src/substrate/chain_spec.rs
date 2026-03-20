@@ -63,6 +63,18 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codec::Decode;
+    use pallet_shielded_pool::verifier::VerifyingKey;
+    use sp_core::twox_128;
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    fn shielded_vk_storage_key() -> String {
+        let mut key = Vec::with_capacity(32);
+        key.extend_from_slice(&twox_128(b"ShieldedPool"));
+        key.extend_from_slice(&twox_128(b"VerifyingKeyStorage"));
+        format!("0x{}", hex::encode(key))
+    }
 
     #[test]
     fn chain_spec_works() {
@@ -71,5 +83,37 @@ mod tests {
         } else {
             assert!(chain_spec().is_err());
         }
+    }
+
+    #[test]
+    fn dev_chainspec_json_shielded_vk_matches_runtime_manifest() {
+        let chainspec_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/dev-chainspec.json");
+        let json = fs::read_to_string(&chainspec_path).expect("read config/dev-chainspec.json");
+        let spec: serde_json::Value =
+            serde_json::from_str(&json).expect("parse config/dev-chainspec.json");
+
+        let top: BTreeMap<String, String> = serde_json::from_value(
+            spec.get("genesis")
+                .and_then(|genesis| genesis.get("raw"))
+                .and_then(|raw| raw.get("top"))
+                .cloned()
+                .expect("chainspec raw top map"),
+        )
+        .expect("decode raw top map");
+
+        let encoded = top
+            .get(&shielded_vk_storage_key())
+            .expect("shielded verifying key storage entry present");
+        let encoded = hex::decode(encoded.trim_start_matches("0x"))
+            .expect("decode verifying key storage value");
+        let json_vk =
+            VerifyingKey::decode(&mut encoded.as_slice()).expect("decode verifying key storage");
+        let runtime_vk = runtime::manifest::shielded_verifying_key();
+
+        assert_eq!(
+            json_vk, runtime_vk,
+            "config/dev-chainspec.json carries a stale shielded verifying key"
+        );
     }
 }

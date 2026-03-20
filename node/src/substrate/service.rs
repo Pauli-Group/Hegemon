@@ -6693,9 +6693,7 @@ struct LegacyPowRepairOutcome {
 
 struct LegacyParityDbAdapter(parity_db::Db);
 
-fn maybe_repair_legacy_pow_finality_metadata(
-    config: &Configuration,
-) -> Result<(), ServiceError> {
+fn maybe_repair_legacy_pow_finality_metadata(config: &Configuration) -> Result<(), ServiceError> {
     let Some(db) = open_legacy_metadata_database(&config.database)? else {
         return Ok(());
     };
@@ -6846,10 +6844,8 @@ fn repair_legacy_pow_finality_metadata_in_db(
     let Some(genesis_hash_bytes) = db.get(LEGACY_META_COLUMN, LEGACY_META_GENESIS_HASH_KEY) else {
         return Ok(LegacyPowRepairOutcome::default());
     };
-    let genesis_hash = decode_legacy_meta_hash(
-        &genesis_hash_bytes,
-        "legacy PoW genesis hash metadata",
-    )?;
+    let genesis_hash =
+        decode_legacy_meta_hash(&genesis_hash_bytes, "legacy PoW genesis hash metadata")?;
     let genesis_lookup = legacy_lookup_key(0, genesis_hash)?;
 
     let Some(finalized_lookup) = db.get(LEGACY_META_COLUMN, LEGACY_META_FINALIZED_BLOCK_KEY) else {
@@ -6867,7 +6863,11 @@ fn repair_legacy_pow_finality_metadata_in_db(
 
     if !finalized_already_at_genesis || !finalized_state_matches_genesis {
         if db.get(LEGACY_META_COLUMN, LEGACY_META_TYPE_KEY).is_none() {
-            transaction.set(LEGACY_META_COLUMN, LEGACY_META_TYPE_KEY, LEGACY_DB_TYPE_FULL);
+            transaction.set(
+                LEGACY_META_COLUMN,
+                LEGACY_META_TYPE_KEY,
+                LEGACY_DB_TYPE_FULL,
+            );
         }
         transaction.set_from_vec(
             LEGACY_META_COLUMN,
@@ -6879,26 +6879,25 @@ fn repair_legacy_pow_finality_metadata_in_db(
             LEGACY_META_FINALIZED_STATE_KEY,
             genesis_lookup.clone(),
         );
-        outcome.finalized_repair =
-            Some((previous_finalized_number, previous_finalized_hash));
+        outcome.finalized_repair = Some((previous_finalized_number, previous_finalized_hash));
     }
 
     let finalized_effectively_at_genesis =
         finalized_already_at_genesis || outcome.finalized_repair.is_some();
 
-    if let Some(rewind) = maybe_prepare_legacy_pow_tip_state_rewind(
-        db,
-        finalized_effectively_at_genesis,
-    )? {
+    if let Some(rewind) =
+        maybe_prepare_legacy_pow_tip_state_rewind(db, finalized_effectively_at_genesis)?
+    {
         transaction.set_from_vec(
             LEGACY_DB_STATE_META_COLUMN,
             LEGACY_STATE_META_LAST_CANONICAL_KEY,
             encode_legacy_state_last_canonical(rewind.rewound_to_hash, rewind.rewound_to_number),
         );
 
-        if let Some(last_pruned_bytes) =
-            db.get(LEGACY_DB_STATE_META_COLUMN, LEGACY_STATE_META_LAST_PRUNED_KEY)
-        {
+        if let Some(last_pruned_bytes) = db.get(
+            LEGACY_DB_STATE_META_COLUMN,
+            LEGACY_STATE_META_LAST_PRUNED_KEY,
+        ) {
             let last_pruned = decode_legacy_state_last_pruned(
                 &last_pruned_bytes,
                 "legacy PoW last pruned state metadata",
@@ -6945,9 +6944,10 @@ fn maybe_prepare_legacy_pow_tip_state_rewind(
         return Ok(None);
     }
 
-    let Some(last_canonical_bytes) =
-        db.get(LEGACY_DB_STATE_META_COLUMN, LEGACY_STATE_META_LAST_CANONICAL_KEY)
-    else {
+    let Some(last_canonical_bytes) = db.get(
+        LEGACY_DB_STATE_META_COLUMN,
+        LEGACY_STATE_META_LAST_CANONICAL_KEY,
+    ) else {
         return Ok(None);
     };
     let (last_canonical_hash, last_canonical_number) = decode_legacy_state_last_canonical(
@@ -6963,11 +6963,12 @@ fn maybe_prepare_legacy_pow_tip_state_rewind(
     let Some(best_header_bytes) = db.get(LEGACY_DB_HEADER_COLUMN, &best_lookup_key) else {
         return Ok(None);
     };
-    let best_header = runtime::Header::decode(&mut best_header_bytes.as_slice()).map_err(|error| {
-        ServiceError::Other(format!(
-            "failed to decode legacy PoW best header for state rewind: {error}"
-        ))
-    })?;
+    let best_header =
+        runtime::Header::decode(&mut best_header_bytes.as_slice()).map_err(|error| {
+            ServiceError::Other(format!(
+                "failed to decode legacy PoW best header for state rewind: {error}"
+            ))
+        })?;
 
     let header_number = *best_header.number();
     if header_number != u64::from(best_number) {
@@ -7009,26 +7010,20 @@ fn decode_legacy_lookup_key(value: &[u8], label: &str) -> Result<(u32, H256), Se
 }
 
 fn decode_legacy_state_last_canonical(
-    value: &[u8],
+    mut value: &[u8],
     label: &str,
 ) -> Result<(H256, u64), ServiceError> {
-    <(H256, u64)>::decode(&mut value.as_ref()).map_err(|error| {
-        ServiceError::Other(format!(
-            "failed to decode {label}: {error}"
-        ))
-    })
+    <(H256, u64)>::decode(&mut value)
+        .map_err(|error| ServiceError::Other(format!("failed to decode {label}: {error}")))
 }
 
 fn encode_legacy_state_last_canonical(hash: H256, number: u64) -> Vec<u8> {
     (hash, number).encode()
 }
 
-fn decode_legacy_state_last_pruned(value: &[u8], label: &str) -> Result<u64, ServiceError> {
-    u64::decode(&mut value.as_ref()).map_err(|error| {
-        ServiceError::Other(format!(
-            "failed to decode {label}: {error}"
-        ))
-    })
+fn decode_legacy_state_last_pruned(mut value: &[u8], label: &str) -> Result<u64, ServiceError> {
+    u64::decode(&mut value)
+        .map_err(|error| ServiceError::Other(format!("failed to decode {label}: {error}")))
 }
 
 fn legacy_lookup_key(number: u64, hash: H256) -> Result<Vec<u8>, ServiceError> {
@@ -7043,19 +7038,27 @@ fn legacy_lookup_key(number: u64, hash: H256) -> Result<Vec<u8>, ServiceError> {
 }
 
 fn legacy_parity_ref_counted_column(column: u32) -> bool {
-    matches!(column, LEGACY_DB_STATE_COLUMN | LEGACY_DB_TRANSACTION_COLUMN)
+    matches!(
+        column,
+        LEGACY_DB_STATE_COLUMN | LEGACY_DB_TRANSACTION_COLUMN
+    )
 }
 
 impl<H> sp_database::Database<H> for LegacyParityDbAdapter
 where
     H: Clone + AsRef<[u8]>,
 {
-    fn commit(&self, transaction: DbTransaction<H>) -> Result<(), sp_database::error::DatabaseError> {
+    fn commit(
+        &self,
+        transaction: DbTransaction<H>,
+    ) -> Result<(), sp_database::error::DatabaseError> {
         let mut invalid_columns = Vec::new();
         self.0
             .commit(transaction.0.into_iter().filter_map(|change| {
                 Some(match change {
-                    sp_database::Change::Set(column, key, value) => (column as u8, key, Some(value)),
+                    sp_database::Change::Set(column, key, value) => {
+                        (column as u8, key, Some(value))
+                    }
                     sp_database::Change::Remove(column, key) => (column as u8, key, None),
                     sp_database::Change::Store(column, key, value) => {
                         if legacy_parity_ref_counted_column(column) {
@@ -7069,11 +7072,8 @@ where
                     }
                     sp_database::Change::Reference(column, key) => {
                         if legacy_parity_ref_counted_column(column) {
-                            let value = <Self as sp_database::Database<H>>::get(
-                                self,
-                                column,
-                                key.as_ref(),
-                            );
+                            let value =
+                                <Self as sp_database::Database<H>>::get(self, column, key.as_ref());
                             (column as u8, key.as_ref().to_vec(), value)
                         } else {
                             if !invalid_columns.contains(&column) {
@@ -7117,7 +7117,9 @@ where
     fn contains(&self, column: sp_database::ColumnId, key: &[u8]) -> bool {
         match self.0.get_size(column as u8, key) {
             Ok(value) => value.is_some(),
-            Err(error) => panic!("critical parity-db contains failure during legacy repair: {error:?}"),
+            Err(error) => {
+                panic!("critical parity-db contains failure during legacy repair: {error:?}")
+            }
         }
     }
 
@@ -11440,12 +11442,7 @@ mod tests {
             .expect("legacy state meta write succeeds");
     }
 
-    fn put_legacy_header(
-        db: &MemDb,
-        number: u64,
-        hash: H256,
-        parent_hash: H256,
-    ) {
+    fn put_legacy_header(db: &MemDb, number: u64, hash: H256, parent_hash: H256) {
         let header = runtime::Header::new(
             number,
             H256::repeat_byte(0x55),
@@ -11459,7 +11456,8 @@ mod tests {
             &legacy_lookup_key(number, hash).expect("lookup key encodes"),
             header.encode(),
         );
-        db.commit(transaction).expect("legacy header write succeeds");
+        db.commit(transaction)
+            .expect("legacy header write succeeds");
     }
 
     fn get_legacy_meta_value(db: &MemDb, key: &[u8]) -> Option<Vec<u8>> {
@@ -11485,8 +11483,8 @@ mod tests {
         put_legacy_lookup(&db, LEGACY_META_FINALIZED_BLOCK_KEY, 1199, poisoned_hash);
         put_legacy_lookup(&db, LEGACY_META_FINALIZED_STATE_KEY, 1199, poisoned_hash);
 
-        let outcome = repair_legacy_pow_finality_metadata_in_db(&db)
-            .expect("legacy repair should succeed");
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
 
         assert_eq!(
             outcome,
@@ -11520,8 +11518,8 @@ mod tests {
         put_legacy_meta_value(&db, LEGACY_META_FINALIZED_BLOCK_KEY, genesis_lookup.clone());
         put_legacy_meta_value(&db, LEGACY_META_FINALIZED_STATE_KEY, genesis_lookup);
 
-        let outcome = repair_legacy_pow_finality_metadata_in_db(&db)
-            .expect("legacy repair should succeed");
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
 
         assert_eq!(outcome, LegacyPowRepairOutcome::default());
     }
@@ -11539,8 +11537,8 @@ mod tests {
         );
         put_legacy_lookup(&db, LEGACY_META_FINALIZED_BLOCK_KEY, 0, genesis_hash);
 
-        let outcome = repair_legacy_pow_finality_metadata_in_db(&db)
-            .expect("legacy repair should succeed");
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
 
         assert_eq!(
             outcome,
@@ -11576,15 +11574,11 @@ mod tests {
             LEGACY_STATE_META_LAST_CANONICAL_KEY,
             encode_legacy_state_last_canonical(best_hash, 1199),
         );
-        put_legacy_state_meta_value(
-            &db,
-            LEGACY_STATE_META_LAST_PRUNED_KEY,
-            900u64.encode(),
-        );
+        put_legacy_state_meta_value(&db, LEGACY_STATE_META_LAST_PRUNED_KEY, 900u64.encode());
         put_legacy_header(&db, 1199, best_hash, parent_hash);
 
-        let outcome = repair_legacy_pow_finality_metadata_in_db(&db)
-            .expect("legacy repair should succeed");
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
 
         assert_eq!(
             outcome,

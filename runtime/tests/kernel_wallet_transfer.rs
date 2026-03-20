@@ -30,10 +30,9 @@ fn sync_kernel_roots() {
     pallet_kernel::pallet::KernelGlobalRoot::<Runtime>::put(global_root);
 }
 
-fn seed_wallet_note(store: &WalletStore, value: u64) {
+fn seed_wallet_note_with_plaintext(store: &WalletStore, note: NotePlaintext) {
     let mut rng = StdRng::seed_from_u64(7);
     let address = store.primary_address().expect("primary address");
-    let note = NotePlaintext::random(value, NATIVE_ASSET_ID, MemoPlaintext::default(), &mut rng);
     let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).expect("encrypt note");
     let recovered = store
         .full_viewing_key()
@@ -63,7 +62,7 @@ fn seed_wallet_note(store: &WalletStore, value: u64) {
     pallet_shielded_pool::pallet::Commitments::<Runtime>::insert(0, commitment);
     pallet_shielded_pool::pallet::EncryptedNotes::<Runtime>::insert(0, encrypted_note);
     pallet_shielded_pool::pallet::CommitmentIndex::<Runtime>::put(1);
-    pallet_shielded_pool::pallet::PoolBalance::<Runtime>::put(value as u128);
+    pallet_shielded_pool::pallet::PoolBalance::<Runtime>::put(note.value as u128);
 
     let mut tree = pallet_shielded_pool::pallet::MerkleTree::<Runtime>::get();
     tree.append(commitment).expect("append merkle leaf");
@@ -78,6 +77,14 @@ fn seed_wallet_note(store: &WalletStore, value: u64) {
     }
 
     sync_kernel_roots();
+}
+
+fn seed_wallet_note(store: &WalletStore, value: u64) {
+    let mut rng = StdRng::seed_from_u64(7);
+    seed_wallet_note_with_plaintext(
+        store,
+        NotePlaintext::random(value, NATIVE_ASSET_ID, MemoPlaintext::default(), &mut rng),
+    );
 }
 
 #[test]
@@ -161,5 +168,150 @@ fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
                 "runtime should record submitted nullifier"
             );
         }
+    });
+}
+
+#[test]
+fn kernel_wallet_unsigned_transfer_spends_coinbase_note() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+
+        let dir = tempdir().expect("tempdir");
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "sender-pass").expect("sender wallet");
+        let recipient =
+            WalletStore::create_full(&recipient_path, "recipient-pass").expect("recipient wallet");
+
+        seed_wallet_note_with_plaintext(&sender, NotePlaintext::coinbase(250_000_000, &[7u8; 32]));
+
+        let built = build_transaction(
+            &sender,
+            &[Recipient {
+                address: recipient.primary_address().expect("recipient address"),
+                value: 100_000_000,
+                asset_id: NATIVE_ASSET_ID,
+                memo: MemoPlaintext::new(b"coinbase spend regression".to_vec()),
+            }],
+            0,
+        )
+        .expect("wallet build_transaction");
+
+        let ciphertexts = built
+            .bundle
+            .decode_notes()
+            .expect("decode built notes")
+            .into_iter()
+            .map(|note| {
+                let bytes = note.to_pallet_bytes().expect("note to pallet bytes");
+                pallet_shielded_pool::types::EncryptedNote::decode(&mut bytes.as_slice())
+                    .expect("decode note")
+            })
+            .collect::<Vec<_>>();
+
+        let args = pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+            proof: built.bundle.proof_bytes.clone(),
+            commitments: built.bundle.commitments.clone(),
+            ciphertexts,
+            anchor: built.bundle.anchor,
+            balance_slot_asset_ids: built.bundle.balance_slot_asset_ids,
+            binding_hash: built.bundle.binding_hash,
+            stablecoin: None,
+            fee: built.bundle.fee,
+        };
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            built.bundle.nullifiers.clone(),
+            args.encode(),
+        );
+
+        let call = pallet_kernel::Call::<Runtime>::submit_action {
+            envelope: envelope.clone(),
+        };
+        let validity =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
+        assert!(
+            validity.is_ok(),
+            "wallet-built kernel action should validate for coinbase notes"
+        );
+
+        assert_ok!(Kernel::submit_action(RuntimeOrigin::none(), envelope));
+    });
+}
+
+#[test]
+fn kernel_wallet_unsigned_transfer_with_nonzero_fee_survives_kernel_validate_and_apply() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+
+        let dir = tempdir().expect("tempdir");
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "sender-pass").expect("sender wallet");
+        let recipient =
+            WalletStore::create_full(&recipient_path, "recipient-pass").expect("recipient wallet");
+
+        seed_wallet_note(&sender, 500_000_000);
+
+        let fee = 10_000_000;
+        let built = build_transaction(
+            &sender,
+            &[Recipient {
+                address: recipient.primary_address().expect("recipient address"),
+                value: 100_000_000,
+                asset_id: NATIVE_ASSET_ID,
+                memo: MemoPlaintext::new(b"nonzero fee regression".to_vec()),
+            }],
+            fee,
+        )
+        .expect("wallet build_transaction");
+
+        let ciphertexts = built
+            .bundle
+            .decode_notes()
+            .expect("decode built notes")
+            .into_iter()
+            .map(|note| {
+                let bytes = note.to_pallet_bytes().expect("note to pallet bytes");
+                pallet_shielded_pool::types::EncryptedNote::decode(&mut bytes.as_slice())
+                    .expect("decode note")
+            })
+            .collect::<Vec<_>>();
+
+        let args = pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+            proof: built.bundle.proof_bytes.clone(),
+            commitments: built.bundle.commitments.clone(),
+            ciphertexts,
+            anchor: built.bundle.anchor,
+            balance_slot_asset_ids: built.bundle.balance_slot_asset_ids,
+            binding_hash: built.bundle.binding_hash,
+            stablecoin: None,
+            fee: built.bundle.fee,
+        };
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            built.bundle.nullifiers.clone(),
+            args.encode(),
+        );
+
+        let call = pallet_kernel::Call::<Runtime>::submit_action {
+            envelope: envelope.clone(),
+        };
+        let validity =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
+        assert!(
+            validity.is_ok(),
+            "wallet-built kernel action should validate with nonzero fee"
+        );
+
+        assert_ok!(Kernel::submit_action(RuntimeOrigin::none(), envelope));
     });
 }

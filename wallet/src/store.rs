@@ -636,6 +636,46 @@ impl WalletStore {
         })
     }
 
+    /// Validate that tracked notes are internally self-consistent.
+    ///
+    /// This catches poisoned local wallet state where the persisted plaintext note fields no
+    /// longer match the stored witness data, which can otherwise produce `BadProof` submissions
+    /// even when the commitment tree root still matches the chain.
+    pub fn validate_notes_internal_consistency(&self) -> Result<(), WalletError> {
+        self.with_state(|state| {
+            for note in &state.notes {
+                let expected_note_data = note.note.note.to_note_data(
+                    note.note.note_data.pk_recipient,
+                    note.note.note_data.pk_auth,
+                );
+                if expected_note_data.value != note.note.note_data.value
+                    || expected_note_data.asset_id != note.note.note_data.asset_id
+                    || expected_note_data.pk_recipient != note.note.note_data.pk_recipient
+                    || expected_note_data.pk_auth != note.note.note_data.pk_auth
+                    || expected_note_data.rho != note.note.note_data.rho
+                    || expected_note_data.r != note.note.note_data.r
+                {
+                    return Err(WalletError::InvalidState(
+                        "tracked note plaintext does not match stored witness data",
+                    ));
+                }
+
+                if let (Some(fvk), Some(stored_nullifier)) =
+                    (state.full_viewing_key.as_ref(), note.nullifier)
+                {
+                    let expected_nullifier =
+                        fvk.compute_nullifier(&note.note.note.rho, note.position);
+                    if stored_nullifier != expected_nullifier {
+                        return Err(WalletError::InvalidState(
+                            "tracked note nullifier does not match stored plaintext",
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
     pub fn find_commitment_index(
         &self,
         commitment: Commitment,
@@ -1474,5 +1514,33 @@ mod tests {
         let updated = store.repair_note_positions().unwrap();
         assert_eq!(updated, 1);
         assert!(store.validate_notes_against_commitments().is_ok());
+    }
+
+    #[test]
+    fn validate_notes_internal_consistency_rejects_plaintext_mismatch() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = store.primary_address().unwrap();
+        let mut rng = StdRng::seed_from_u64(12);
+
+        let note = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+
+        store.append_commitments(&[(0, commitment)]).unwrap();
+        store.register_ciphertext_index(0).unwrap();
+        store.record_recovered_note(recovered, 0, 0).unwrap();
+
+        store
+            .with_mut(|state| {
+                state.notes[0].note.note.rho[0] ^= 1;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(store.validate_notes_internal_consistency().is_err());
     }
 }
