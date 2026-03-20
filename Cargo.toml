@@ -135,6 +135,7 @@ sp-blockchain = { git = "https://github.com/paritytech/polkadot-sdk", tag = "pol
 sp-consensus = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 sp-keystore = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 sp-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
+sp-database = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 
 # --- Build Dependencies ---
 substrate-wasm-builder = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
