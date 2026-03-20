@@ -79,6 +79,7 @@ sp-blockchain = { workspace = true, optional = true }
 sp-consensus = { workspace = true, optional = true }
 sp-keystore = { workspace = true, optional = true }
 sp-timestamp = { workspace = true, optional = true }
+sp-database = { workspace = true, optional = true }
 sp-runtime = { workspace = true, features = ["std"], optional = true }
 sp-api = { workspace = true, features = ["std"], optional = true }
 sp-io = { workspace = true, features = ["std"], optional = true }
@@ -86,6 +87,8 @@ sp-block-builder = { workspace = true, features = ["std"], optional = true }
 sp-inherents = { workspace = true, features = ["std"], optional = true }
 p3-field = { workspace = true, optional = true }
 codec = { workspace = true, optional = true }
+kvdb-rocksdb = { version = "0.20.1", optional = true }
+parity-db = { version = "0.4.13", optional = true }
 
 # Pallet dependencies for inherent creation
 pallet-timestamp = { workspace = true, features = ["std"], optional = true }
@@ -154,6 +157,7 @@ substrate = [
     "dep:sp-consensus",
     "dep:sp-keystore",
     "dep:sp-timestamp",
+    "dep:sp-database",
     "dep:sp-runtime",
     "dep:sp-api",
     "dep:sp-io",
@@ -177,6 +181,8 @@ substrate = [
     "dep:tx-proof-manifest",
     "consensus/substrate",
     "dep:p3-field",
+    "dep:kvdb-rocksdb",
+    "dep:parity-db",
 ]
 
 [dev-dependencies]

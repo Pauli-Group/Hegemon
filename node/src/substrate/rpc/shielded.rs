@@ -723,8 +723,44 @@ fn hex_to_array64(hex_str: &str) -> Result<[u8; 64], String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use parking_lot::Mutex;
+    use rand::{rngs::StdRng, SeedableRng};
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use transaction_circuit::constants::NATIVE_ASSET_ID;
+    use transaction_circuit::hashing_pq::felts_to_bytes48;
+    use wallet::{
+        build_transaction, MemoPlaintext, NoteCiphertext, NotePlaintext, Recipient, WalletStore,
+    };
 
     struct MockShieldedService;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CapturedSubmit {
+        proof: Vec<u8>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
+        encrypted_notes: Vec<Vec<u8>>,
+        anchor: [u8; 48],
+        balance_slot_asset_ids: [u64; 4],
+        binding_hash: [u8; 64],
+        stablecoin: Option<StablecoinPolicyBinding>,
+        fee: u64,
+        value_balance: i128,
+    }
+
+    struct CapturingShieldedService {
+        captured: Arc<Mutex<Option<CapturedSubmit>>>,
+    }
+
+    impl CapturingShieldedService {
+        fn new() -> Self {
+            Self {
+                captured: Arc::new(Mutex::new(None)),
+            }
+        }
+    }
 
     #[jsonrpsee::core::async_trait]
     impl ShieldedPoolService for MockShieldedService {
@@ -824,6 +860,160 @@ mod tests {
         ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
             Ok(Vec::new())
         }
+    }
+
+    #[jsonrpsee::core::async_trait]
+    impl ShieldedPoolService for CapturingShieldedService {
+        async fn submit_shielded_transfer(
+            &self,
+            proof: Vec<u8>,
+            nullifiers: Vec<[u8; 48]>,
+            commitments: Vec<[u8; 48]>,
+            encrypted_notes: Vec<Vec<u8>>,
+            anchor: [u8; 48],
+            balance_slot_asset_ids: [u64; 4],
+            binding_hash: [u8; 64],
+            stablecoin: Option<StablecoinPolicyBinding>,
+            fee: u64,
+            value_balance: i128,
+        ) -> Result<[u8; 32], String> {
+            *self.captured.lock() = Some(CapturedSubmit {
+                proof,
+                nullifiers,
+                commitments,
+                encrypted_notes,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin,
+                fee,
+                value_balance,
+            });
+            Ok([0xcd; 32])
+        }
+
+        fn get_encrypted_notes(
+            &self,
+            _start: u64,
+            _limit: usize,
+            _from_block: Option<u64>,
+            _to_block: Option<u64>,
+        ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 48])>, String> {
+            Ok(Vec::new())
+        }
+
+        fn encrypted_note_count(&self) -> u64 {
+            0
+        }
+
+        fn get_merkle_witness(
+            &self,
+            _position: u64,
+        ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
+            Ok((Vec::new(), Vec::new(), [0u8; 48]))
+        }
+
+        fn get_pool_status(&self) -> ShieldedPoolStatus {
+            ShieldedPoolStatus {
+                total_notes: 0,
+                total_nullifiers: 0,
+                merkle_root: format!("0x{}", hex::encode([0u8; 48])),
+                tree_depth: 32,
+                pool_balance: 0,
+                last_update_block: 0,
+            }
+        }
+
+        fn is_nullifier_spent(&self, _nullifier: &[u8; 48]) -> bool {
+            false
+        }
+
+        fn is_valid_anchor(&self, _anchor: &[u8; 48]) -> bool {
+            true
+        }
+
+        fn chain_height(&self) -> u64 {
+            0
+        }
+
+        fn fee_parameters(&self) -> Result<pallet_shielded_pool::types::FeeParameters, String> {
+            Ok(pallet_shielded_pool::types::FeeParameters::default())
+        }
+
+        fn fee_quote(
+            &self,
+            _ciphertext_bytes: u64,
+            _proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<u128, String> {
+            Ok(0)
+        }
+
+        fn fee_quote_breakdown(
+            &self,
+            _ciphertext_bytes: u64,
+            _proof_kind: pallet_shielded_pool::types::FeeProofKind,
+        ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String> {
+            Ok(pallet_shielded_pool::types::ShieldedFeeBreakdown {
+                prover_fee: 0,
+                miner_fee: 0,
+                total_fee: 0,
+            })
+        }
+
+        fn forced_inclusions(
+            &self,
+        ) -> Result<Vec<pallet_shielded_pool::types::ForcedInclusionStatus>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn build_wallet_bundle() -> wallet::TransactionBundle {
+        let dir = tempdir().expect("tempdir");
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "sender-pass").expect("sender wallet");
+        let recipient =
+            WalletStore::create_full(&recipient_path, "recipient-pass").expect("recipient wallet");
+
+        let mut rng = StdRng::seed_from_u64(7);
+        let address = sender.primary_address().expect("primary address");
+        let note = NotePlaintext::random(
+            500_000_000,
+            NATIVE_ASSET_ID,
+            MemoPlaintext::default(),
+            &mut rng,
+        );
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).expect("encrypt note");
+        let recovered = sender
+            .full_viewing_key()
+            .expect("full viewing key")
+            .expect("wallet is full")
+            .decrypt_note(&ciphertext)
+            .expect("recover note");
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+
+        sender
+            .append_commitments(&[(0, commitment)])
+            .expect("append commitment");
+        sender
+            .register_ciphertext_index(0)
+            .expect("ciphertext index");
+        sender
+            .record_recovered_note(recovered, 0, 0)
+            .expect("record recovered note");
+
+        build_transaction(
+            &sender,
+            &[Recipient {
+                address: recipient.primary_address().expect("recipient address"),
+                value: 100_000_000,
+                asset_id: NATIVE_ASSET_ID,
+                memo: MemoPlaintext::new(b"rpc roundtrip".to_vec()),
+            }],
+            10_000_000,
+        )
+        .expect("build transaction")
+        .bundle
     }
 
     #[tokio::test]
@@ -967,6 +1157,50 @@ mod tests {
         assert!(!response.success);
         assert!(response.error.is_some());
         assert!(response.error.unwrap().contains("Invalid nullifier"));
+    }
+
+    #[tokio::test]
+    async fn test_submit_shielded_transfer_roundtrips_wallet_bundle_bytes() {
+        let service = Arc::new(CapturingShieldedService::new());
+        let captured = Arc::clone(&service.captured);
+        let rpc = ShieldedRpc::new(service);
+        let bundle = build_wallet_bundle();
+
+        let request = ShieldedTransferRequest {
+            proof: base64::engine::general_purpose::STANDARD.encode(&bundle.proof_bytes),
+            nullifiers: bundle.nullifiers.iter().map(hex::encode).collect(),
+            commitments: bundle.commitments.iter().map(hex::encode).collect(),
+            encrypted_notes: bundle
+                .ciphertexts
+                .iter()
+                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+                .collect(),
+            anchor: hex::encode(bundle.anchor),
+            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
+            binding_hash: hex::encode(bundle.binding_hash),
+            fee: bundle.fee,
+            value_balance: bundle.value_balance,
+            stablecoin: None,
+        };
+
+        let response = rpc.submit_shielded_transfer(request).await.unwrap();
+        assert!(response.success);
+        let expected_tx_hash = hex::encode([0xcd; 32]);
+        assert_eq!(response.tx_hash.as_deref(), Some(expected_tx_hash.as_str()));
+
+        let captured = captured.lock().clone().expect("captured submit payload");
+        assert_eq!(captured.proof, bundle.proof_bytes);
+        assert_eq!(captured.nullifiers, bundle.nullifiers);
+        assert_eq!(captured.commitments, bundle.commitments);
+        assert_eq!(captured.encrypted_notes, bundle.ciphertexts);
+        assert_eq!(captured.anchor, bundle.anchor);
+        assert_eq!(
+            captured.balance_slot_asset_ids,
+            bundle.balance_slot_asset_ids
+        );
+        assert_eq!(captured.binding_hash, bundle.binding_hash);
+        assert_eq!(captured.fee, bundle.fee);
+        assert_eq!(captured.value_balance, bundle.value_balance);
     }
 
     #[tokio::test]

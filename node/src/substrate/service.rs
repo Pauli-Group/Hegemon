@@ -166,12 +166,13 @@ use pallet_shielded_pool::family::{
 use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
 use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
-use sc_client_api::{backend::Finalizer, BlockBackend, BlockchainEvents};
+use sc_client_api::{Backend as ClientBackend, BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ApiExt, Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
+use sp_database::Transaction as DbTransaction;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -216,7 +217,7 @@ fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
 use jsonrpsee::server::ServerBuilder;
 
 // Import sync service
-use crate::substrate::sync::ChainSyncService;
+use crate::substrate::sync::{ChainSyncService, DownloadedBlock};
 
 // =============================================================================
 // Storage Changes Cache
@@ -5684,28 +5685,25 @@ use sp_consensus::BlockOrigin;
 use sp_runtime::generic::Digest;
 use sp_runtime::DigestItem;
 
-fn finalize_imported_block(
-    client: &Arc<HegemonFullClient>,
-    block_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
-    block_number: u64,
-    source: &'static str,
-) {
-    if let Err(err) = client.finalize_block(block_hash, None, true) {
-        tracing::warn!(
-            block_number,
-            block_hash = %hex::encode(block_hash.as_bytes()),
-            source,
-            error = ?err,
-            "Failed to finalize imported block"
-        );
-    } else {
-        tracing::debug!(
-            block_number,
-            block_hash = %hex::encode(block_hash.as_bytes()),
-            source,
-            "Finalized imported block"
-        );
-    }
+fn is_retryable_sync_parent_state_error(error: &str) -> bool {
+    error.contains("UnknownBlock")
+}
+
+fn is_finalized_chain_conflict_error(error: &str) -> bool {
+    error.contains("Potential long-range attack: block not in finalized chain")
+        || error.contains("NotInFinalizedChain")
+}
+
+fn collect_deferred_downloaded_tail<I>(
+    current: DownloadedBlock,
+    remaining: I,
+) -> Vec<DownloadedBlock>
+where
+    I: IntoIterator<Item = DownloadedBlock>,
+{
+    let mut deferred = vec![current];
+    deferred.extend(remaining);
+    deferred
 }
 
 fn configure_pow_import_params(
@@ -5907,6 +5905,9 @@ fn wire_pow_block_import(
 
         // Import through PowBlockImport so local mining follows the same seal verification and
         // cumulative-difficulty fork-choice path as network imports.
+        //
+        // Do not explicitly finalize PoW imports here. Immediate finalization pins the current
+        // tip as irreversible and breaks ordinary longest-chain reorg recovery.
         let import_result = futures::executor::block_on(async {
             let import = pow_block_import.clone();
             import.import_block(import_params).await
@@ -5914,7 +5915,6 @@ fn wire_pow_block_import(
 
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
-                finalize_imported_block(&block_import, block_hash, template.number, "local_mining");
                 let mut store = da_chunk_store.lock();
                 let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
@@ -6025,12 +6025,6 @@ fn wire_pow_block_import(
                 Ok(block_hash)
             }
             Ok(ImportResult::AlreadyInChain) => {
-                finalize_imported_block(
-                    &block_import,
-                    block_hash,
-                    template.number,
-                    "local_already_in_chain",
-                );
                 let mut store = da_chunk_store.lock();
                 let mut ciphertexts = if let Some(build) = da_build.take() {
                     let da_root = build.encoding.root();
@@ -6665,6 +6659,489 @@ fn load_or_create_da_sampling_secret(config: &Configuration) -> Result<[u8; 32],
     }
 }
 
+const LEGACY_META_COLUMN: u32 = 0;
+const LEGACY_DB_NUM_COLUMNS: u32 = 13;
+const LEGACY_DB_STATE_COLUMN: u32 = 1;
+const LEGACY_DB_STATE_META_COLUMN: u32 = 2;
+const LEGACY_DB_HEADER_COLUMN: u32 = 4;
+const LEGACY_DB_BODY_COLUMN: u32 = 5;
+const LEGACY_DB_JUSTIFICATIONS_COLUMN: u32 = 6;
+const LEGACY_DB_TRANSACTION_COLUMN: u32 = 11;
+const LEGACY_DB_BODY_INDEX_COLUMN: u32 = 12;
+const LEGACY_META_TYPE_KEY: &[u8; 4] = b"type";
+const LEGACY_META_BEST_BLOCK_KEY: &[u8; 4] = b"best";
+const LEGACY_META_FINALIZED_BLOCK_KEY: &[u8; 5] = b"final";
+const LEGACY_META_FINALIZED_STATE_KEY: &[u8; 6] = b"fstate";
+const LEGACY_META_GENESIS_HASH_KEY: &[u8; 3] = b"gen";
+const LEGACY_DB_TYPE_FULL: &[u8; 4] = b"full";
+const LEGACY_STATE_META_LAST_CANONICAL_KEY: &[u8; 14] = b"last_canonical";
+const LEGACY_STATE_META_LAST_PRUNED_KEY: &[u8; 11] = b"last_pruned";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LegacyPowTipStateRewind {
+    previous_number: u64,
+    previous_hash: H256,
+    rewound_to_number: u64,
+    rewound_to_hash: H256,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct LegacyPowRepairOutcome {
+    finalized_repair: Option<(u32, H256)>,
+    tip_state_rewind: Option<LegacyPowTipStateRewind>,
+}
+
+struct LegacyParityDbAdapter(parity_db::Db);
+
+fn maybe_repair_legacy_pow_finality_metadata(config: &Configuration) -> Result<(), ServiceError> {
+    let Some(db) = open_legacy_metadata_database(&config.database)? else {
+        return Ok(());
+    };
+
+    let outcome = repair_legacy_pow_finality_metadata_in_db(db.as_ref())?;
+
+    if let Some((previous_finalized_number, previous_finalized_hash)) = outcome.finalized_repair {
+        tracing::warn!(
+            previous_finalized_number,
+            previous_finalized_hash = %previous_finalized_hash,
+            "Downgraded legacy PoW finalized metadata to genesis before backend startup"
+        );
+    }
+
+    if let Some(rewind) = outcome.tip_state_rewind {
+        tracing::warn!(
+            previous_number = rewind.previous_number,
+            previous_hash = %rewind.previous_hash,
+            rewound_to_number = rewind.rewound_to_number,
+            rewound_to_hash = %rewind.rewound_to_hash,
+            "Rewound legacy PoW state canonical tip by one block before backend startup"
+        );
+    }
+
+    Ok(())
+}
+
+fn open_legacy_metadata_database(
+    source: &sc_service::DatabaseSource,
+) -> Result<Option<Arc<dyn sp_database::Database<H256>>>, ServiceError> {
+    match source {
+        sc_service::DatabaseSource::RocksDb { path, .. } => {
+            open_legacy_rocksdb_metadata_database(path)
+        }
+        sc_service::DatabaseSource::ParityDb { path } => {
+            open_legacy_paritydb_metadata_database(path)
+        }
+        sc_service::DatabaseSource::Auto {
+            rocksdb_path,
+            paritydb_path,
+            ..
+        } => {
+            if let Some(db) = open_legacy_rocksdb_metadata_database(rocksdb_path)? {
+                return Ok(Some(db));
+            }
+            open_legacy_paritydb_metadata_database(paritydb_path)
+        }
+        sc_service::DatabaseSource::Custom { .. } => Ok(None),
+    }
+}
+
+fn open_legacy_rocksdb_metadata_database(
+    path: &Path,
+) -> Result<Option<Arc<dyn sp_database::Database<H256>>>, ServiceError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let mut config = kvdb_rocksdb::DatabaseConfig::with_columns(LEGACY_DB_NUM_COLUMNS);
+    config.create_if_missing = false;
+    let db = kvdb_rocksdb::Database::open(&config, path).map_err(|error| {
+        ServiceError::Other(format!(
+            "failed to open RocksDB metadata for legacy PoW finality repair at {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(Some(sp_database::as_database(db)))
+}
+
+fn open_legacy_paritydb_metadata_database(
+    path: &Path,
+) -> Result<Option<Arc<dyn sp_database::Database<H256>>>, ServiceError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let mut config = parity_db::Options::with_columns(path, LEGACY_DB_NUM_COLUMNS as u8);
+    for column in [
+        LEGACY_DB_STATE_COLUMN,
+        LEGACY_DB_HEADER_COLUMN,
+        LEGACY_DB_BODY_COLUMN,
+        LEGACY_DB_BODY_INDEX_COLUMN,
+        LEGACY_DB_TRANSACTION_COLUMN,
+        LEGACY_DB_JUSTIFICATIONS_COLUMN,
+    ] {
+        config.columns[column as usize].compression = parity_db::CompressionType::Lz4;
+    }
+
+    let state_column = &mut config.columns[LEGACY_DB_STATE_COLUMN as usize];
+    state_column.ref_counted = true;
+    state_column.preimage = true;
+    state_column.uniform = true;
+
+    let tx_column = &mut config.columns[LEGACY_DB_TRANSACTION_COLUMN as usize];
+    tx_column.ref_counted = true;
+    tx_column.preimage = true;
+    tx_column.uniform = true;
+
+    let db = match parity_db::Db::open(&config) {
+        Ok(db) => db,
+        Err(parity_db::Error::InvalidConfiguration(_)) => {
+            tracing::warn!(
+                path = %path.display(),
+                "Invalid parity-db metadata during legacy PoW finality repair; attempting metadata rewrite"
+            );
+            if let Some(metadata) = parity_db::Options::load_metadata(path).map_err(|error| {
+                ServiceError::Other(format!(
+                    "failed to load parity-db metadata for legacy PoW finality repair at {}: {error}",
+                    path.display()
+                ))
+            })? {
+                config
+                    .write_metadata_with_version(path, &metadata.salt, Some(metadata.version))
+                    .map_err(|error| {
+                        ServiceError::Other(format!(
+                            "failed to rewrite parity-db metadata for legacy PoW finality repair at {}: {error}",
+                            path.display()
+                        ))
+                    })?;
+            }
+            parity_db::Db::open(&config).map_err(|error| {
+                ServiceError::Other(format!(
+                    "failed to reopen parity-db metadata for legacy PoW finality repair at {}: {error}",
+                    path.display()
+                ))
+            })?
+        }
+        Err(error) => {
+            return Err(ServiceError::Other(format!(
+                "failed to open parity-db metadata for legacy PoW finality repair at {}: {error}",
+                path.display()
+            )))
+        }
+    };
+
+    Ok(Some(Arc::new(LegacyParityDbAdapter(db))))
+}
+
+fn repair_legacy_pow_finality_metadata_in_db(
+    db: &dyn sp_database::Database<H256>,
+) -> Result<LegacyPowRepairOutcome, ServiceError> {
+    if let Some(db_type) = db.get(LEGACY_META_COLUMN, LEGACY_META_TYPE_KEY) {
+        if db_type.as_slice() != LEGACY_DB_TYPE_FULL {
+            return Ok(LegacyPowRepairOutcome::default());
+        }
+    }
+
+    let Some(genesis_hash_bytes) = db.get(LEGACY_META_COLUMN, LEGACY_META_GENESIS_HASH_KEY) else {
+        return Ok(LegacyPowRepairOutcome::default());
+    };
+    let genesis_hash =
+        decode_legacy_meta_hash(&genesis_hash_bytes, "legacy PoW genesis hash metadata")?;
+    let genesis_lookup = legacy_lookup_key(0, genesis_hash)?;
+
+    let Some(finalized_lookup) = db.get(LEGACY_META_COLUMN, LEGACY_META_FINALIZED_BLOCK_KEY) else {
+        return Ok(LegacyPowRepairOutcome::default());
+    };
+    let (previous_finalized_number, previous_finalized_hash) =
+        decode_legacy_lookup_key(&finalized_lookup, "legacy PoW finalized block metadata")?;
+
+    let finalized_state_lookup = db.get(LEGACY_META_COLUMN, LEGACY_META_FINALIZED_STATE_KEY);
+    let finalized_already_at_genesis = finalized_lookup == genesis_lookup;
+    let finalized_state_matches_genesis =
+        finalized_state_lookup.as_deref() == Some(genesis_lookup.as_slice());
+    let mut transaction = DbTransaction::<H256>::new();
+    let mut outcome = LegacyPowRepairOutcome::default();
+
+    if !finalized_already_at_genesis || !finalized_state_matches_genesis {
+        if db.get(LEGACY_META_COLUMN, LEGACY_META_TYPE_KEY).is_none() {
+            transaction.set(
+                LEGACY_META_COLUMN,
+                LEGACY_META_TYPE_KEY,
+                LEGACY_DB_TYPE_FULL,
+            );
+        }
+        transaction.set_from_vec(
+            LEGACY_META_COLUMN,
+            LEGACY_META_FINALIZED_BLOCK_KEY,
+            genesis_lookup.clone(),
+        );
+        transaction.set_from_vec(
+            LEGACY_META_COLUMN,
+            LEGACY_META_FINALIZED_STATE_KEY,
+            genesis_lookup.clone(),
+        );
+        outcome.finalized_repair = Some((previous_finalized_number, previous_finalized_hash));
+    }
+
+    let finalized_effectively_at_genesis =
+        finalized_already_at_genesis || outcome.finalized_repair.is_some();
+
+    if let Some(rewind) =
+        maybe_prepare_legacy_pow_tip_state_rewind(db, finalized_effectively_at_genesis)?
+    {
+        transaction.set_from_vec(
+            LEGACY_DB_STATE_META_COLUMN,
+            LEGACY_STATE_META_LAST_CANONICAL_KEY,
+            encode_legacy_state_last_canonical(rewind.rewound_to_hash, rewind.rewound_to_number),
+        );
+
+        if let Some(last_pruned_bytes) = db.get(
+            LEGACY_DB_STATE_META_COLUMN,
+            LEGACY_STATE_META_LAST_PRUNED_KEY,
+        ) {
+            let last_pruned = decode_legacy_state_last_pruned(
+                &last_pruned_bytes,
+                "legacy PoW last pruned state metadata",
+            )?;
+            if last_pruned > rewind.rewound_to_number {
+                transaction.set_from_vec(
+                    LEGACY_DB_STATE_META_COLUMN,
+                    LEGACY_STATE_META_LAST_PRUNED_KEY,
+                    rewind.rewound_to_number.saturating_sub(1).encode(),
+                );
+            }
+        }
+
+        outcome.tip_state_rewind = Some(rewind);
+    }
+
+    if outcome == LegacyPowRepairOutcome::default() {
+        return Ok(outcome);
+    }
+
+    db.commit(transaction).map_err(|error| {
+        ServiceError::Other(format!(
+            "failed to commit legacy PoW database repair: {error}"
+        ))
+    })?;
+
+    Ok(outcome)
+}
+
+fn maybe_prepare_legacy_pow_tip_state_rewind(
+    db: &dyn sp_database::Database<H256>,
+    finalized_at_genesis: bool,
+) -> Result<Option<LegacyPowTipStateRewind>, ServiceError> {
+    if !finalized_at_genesis {
+        return Ok(None);
+    }
+
+    let Some(best_lookup) = db.get(LEGACY_META_COLUMN, LEGACY_META_BEST_BLOCK_KEY) else {
+        return Ok(None);
+    };
+    let (best_number, best_hash) =
+        decode_legacy_lookup_key(&best_lookup, "legacy PoW best block metadata")?;
+    if best_number == 0 {
+        return Ok(None);
+    }
+
+    let Some(last_canonical_bytes) = db.get(
+        LEGACY_DB_STATE_META_COLUMN,
+        LEGACY_STATE_META_LAST_CANONICAL_KEY,
+    ) else {
+        return Ok(None);
+    };
+    let (last_canonical_hash, last_canonical_number) = decode_legacy_state_last_canonical(
+        &last_canonical_bytes,
+        "legacy PoW last canonical state metadata",
+    )?;
+
+    if last_canonical_number != u64::from(best_number) || last_canonical_hash != best_hash {
+        return Ok(None);
+    }
+
+    let best_lookup_key = legacy_lookup_key(u64::from(best_number), best_hash)?;
+    let Some(best_header_bytes) = db.get(LEGACY_DB_HEADER_COLUMN, &best_lookup_key) else {
+        return Ok(None);
+    };
+    let best_header =
+        runtime::Header::decode(&mut best_header_bytes.as_slice()).map_err(|error| {
+            ServiceError::Other(format!(
+                "failed to decode legacy PoW best header for state rewind: {error}"
+            ))
+        })?;
+
+    let header_number = *best_header.number();
+    if header_number != u64::from(best_number) {
+        return Err(ServiceError::Other(format!(
+            "legacy PoW best header number mismatch during state rewind: metadata #{best_number}, header #{header_number}",
+        )));
+    }
+    let rewound_to_number = u64::from(best_number - 1);
+    let rewound_to_hash = *best_header.parent_hash();
+
+    Ok(Some(LegacyPowTipStateRewind {
+        previous_number: last_canonical_number,
+        previous_hash: last_canonical_hash,
+        rewound_to_number,
+        rewound_to_hash,
+    }))
+}
+
+fn decode_legacy_meta_hash(bytes: &[u8], label: &str) -> Result<H256, ServiceError> {
+    if bytes.len() != 32 {
+        return Err(ServiceError::Other(format!(
+            "{label} has invalid length {}; expected 32 bytes",
+            bytes.len()
+        )));
+    }
+    Ok(H256::from_slice(bytes))
+}
+
+fn decode_legacy_lookup_key(value: &[u8], label: &str) -> Result<(u32, H256), ServiceError> {
+    if value.len() != 36 {
+        return Err(ServiceError::Other(format!(
+            "{label} has invalid length {}; expected 36 bytes",
+            value.len()
+        )));
+    }
+    let number = u32::from_be_bytes([value[0], value[1], value[2], value[3]]);
+    let hash = H256::from_slice(&value[4..]);
+    Ok((number, hash))
+}
+
+fn decode_legacy_state_last_canonical(
+    mut value: &[u8],
+    label: &str,
+) -> Result<(H256, u64), ServiceError> {
+    <(H256, u64)>::decode(&mut value)
+        .map_err(|error| ServiceError::Other(format!("failed to decode {label}: {error}")))
+}
+
+fn encode_legacy_state_last_canonical(hash: H256, number: u64) -> Vec<u8> {
+    (hash, number).encode()
+}
+
+fn decode_legacy_state_last_pruned(mut value: &[u8], label: &str) -> Result<u64, ServiceError> {
+    u64::decode(&mut value)
+        .map_err(|error| ServiceError::Other(format!("failed to decode {label}: {error}")))
+}
+
+fn legacy_lookup_key(number: u64, hash: H256) -> Result<Vec<u8>, ServiceError> {
+    let number: u32 = number.try_into().map_err(|_| {
+        ServiceError::Other(format!(
+            "legacy PoW lookup key number {number} does not fit into u32"
+        ))
+    })?;
+    let mut lookup_key = number.to_be_bytes().to_vec();
+    lookup_key.extend_from_slice(hash.as_bytes());
+    Ok(lookup_key)
+}
+
+fn legacy_parity_ref_counted_column(column: u32) -> bool {
+    matches!(
+        column,
+        LEGACY_DB_STATE_COLUMN | LEGACY_DB_TRANSACTION_COLUMN
+    )
+}
+
+impl<H> sp_database::Database<H> for LegacyParityDbAdapter
+where
+    H: Clone + AsRef<[u8]>,
+{
+    fn commit(
+        &self,
+        transaction: DbTransaction<H>,
+    ) -> Result<(), sp_database::error::DatabaseError> {
+        let mut invalid_columns = Vec::new();
+        self.0
+            .commit(transaction.0.into_iter().filter_map(|change| {
+                Some(match change {
+                    sp_database::Change::Set(column, key, value) => {
+                        (column as u8, key, Some(value))
+                    }
+                    sp_database::Change::Remove(column, key) => (column as u8, key, None),
+                    sp_database::Change::Store(column, key, value) => {
+                        if legacy_parity_ref_counted_column(column) {
+                            (column as u8, key.as_ref().to_vec(), Some(value))
+                        } else {
+                            if !invalid_columns.contains(&column) {
+                                invalid_columns.push(column);
+                            }
+                            return None;
+                        }
+                    }
+                    sp_database::Change::Reference(column, key) => {
+                        if legacy_parity_ref_counted_column(column) {
+                            let value =
+                                <Self as sp_database::Database<H>>::get(self, column, key.as_ref());
+                            (column as u8, key.as_ref().to_vec(), value)
+                        } else {
+                            if !invalid_columns.contains(&column) {
+                                invalid_columns.push(column);
+                            }
+                            return None;
+                        }
+                    }
+                    sp_database::Change::Release(column, key) => {
+                        if legacy_parity_ref_counted_column(column) {
+                            (column as u8, key.as_ref().to_vec(), None)
+                        } else {
+                            if !invalid_columns.contains(&column) {
+                                invalid_columns.push(column);
+                            }
+                            return None;
+                        }
+                    }
+                })
+            }))
+            .map_err(|error| sp_database::error::DatabaseError(Box::new(error)))?;
+
+        if !invalid_columns.is_empty() {
+            return Err(sp_database::error::DatabaseError(Box::new(
+                parity_db::Error::InvalidInput(format!(
+                    "ref-counted operation on non-ref-counted columns {invalid_columns:?}"
+                )),
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn get(&self, column: sp_database::ColumnId, key: &[u8]) -> Option<Vec<u8>> {
+        match self.0.get(column as u8, key) {
+            Ok(value) => value,
+            Err(error) => panic!("critical parity-db read failure during legacy repair: {error:?}"),
+        }
+    }
+
+    fn contains(&self, column: sp_database::ColumnId, key: &[u8]) -> bool {
+        match self.0.get_size(column as u8, key) {
+            Ok(value) => value.is_some(),
+            Err(error) => {
+                panic!("critical parity-db contains failure during legacy repair: {error:?}")
+            }
+        }
+    }
+
+    fn value_size(&self, column: sp_database::ColumnId, key: &[u8]) -> Option<usize> {
+        match self.0.get_size(column as u8, key) {
+            Ok(value) => value.map(|size| size as usize),
+            Err(error) => panic!("critical parity-db size failure during legacy repair: {error:?}"),
+        }
+    }
+
+    fn supports_ref_counting(&self) -> bool {
+        true
+    }
+
+    fn sanitize_key(&self, key: &mut Vec<u8>) {
+        let hash_len = 32usize;
+        if key.len() > hash_len {
+            let _ = key.drain(0..key.len() - hash_len);
+        }
+    }
+}
+
 // =============================================================================
 // Prior PartialComponents/new_partial() removed in favor of new_full_with_client.
 // =============================================================================
@@ -6792,6 +7269,8 @@ pub fn new_partial_with_client(
             ));
         }
     }
+
+    maybe_repair_legacy_pow_finality_metadata(config)?;
 
     // Create the WASM executor
     // new_wasm_executor uses default configuration from sc_executor::WasmExecutor
@@ -7029,7 +7508,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create full Substrate client components
     let PartialComponentsWithClient {
         client,
-        backend: _backend,
+        backend,
         keystore_container: _keystore_container,
         transaction_pool,
         select_chain: _select_chain,
@@ -8377,6 +8856,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let block_import_bridge = Arc::clone(&network_bridge);
                 let block_import_pow = pow_block_import.clone();
                 let block_import_client = client.clone();
+                let backend_for_import = backend.clone();
                 let sync_service_for_import = Arc::clone(&sync_service);
                 let da_chunk_store_for_import = Arc::clone(&da_chunk_store);
                 let commitment_block_proof_store_for_import =
@@ -8430,8 +8910,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                             let mut downloaded_blocks = downloaded_blocks;
                             downloaded_blocks.sort_by_key(|block| block.number);
+                            let mut downloaded_iter = downloaded_blocks.into_iter();
+                            let mut deferred_downloads: Vec<DownloadedBlock> = Vec::new();
+                            let mut reset_sync_after_revert = false;
+                            let mut rewind_sync_to_missing_parent: Option<u64> = None;
 
-                            for downloaded in downloaded_blocks {
+                            while let Some(downloaded) = downloaded_iter.next() {
                                 // Decode the header
                                 let mut header = match runtime::Header::decode(&mut &downloaded.header[..]) {
                                     Ok(h) => h,
@@ -8461,13 +8945,19 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 match block_import_client.header(parent_hash) {
                                     Ok(Some(_)) => {}
                                     Ok(None) => {
+                                        deferred_downloads = collect_deferred_downloaded_tail(
+                                            downloaded,
+                                            downloaded_iter.by_ref(),
+                                        );
+                                        rewind_sync_to_missing_parent = Some(block_number as u64);
                                         tracing::debug!(
-                                            peer = %hex::encode(&downloaded.from_peer),
+                                            peer = %hex::encode(&deferred_downloads[0].from_peer),
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
-                                            "Dropping synced block with unknown parent; sync service will re-request canonical range"
+                                            deferred = deferred_downloads.len(),
+                                            "Deferring synced block tail until parent header becomes visible"
                                         );
-                                        continue;
+                                        break;
                                     }
                                     Err(err) => {
                                         tracing::warn!(
@@ -8631,15 +9121,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         ) {
                                             Ok(policy) => policy,
                                             Err(err) => {
-                                                if err.contains("UnknownBlock") {
+                                                if is_retryable_sync_parent_state_error(&err) {
+                                                    deferred_downloads = collect_deferred_downloaded_tail(
+                                                        downloaded,
+                                                        downloaded_iter.by_ref(),
+                                                    );
                                                     tracing::debug!(
-                                                        peer = %hex::encode(&downloaded.from_peer),
+                                                        peer = %hex::encode(&deferred_downloads[0].from_peer),
                                                         block_number,
                                                         parent = %hex::encode(parent_hash.as_bytes()),
                                                         error = %err,
-                                                        "Dropping synced block (parent state not ready for proof availability policy)"
+                                                        deferred = deferred_downloads.len(),
+                                                        "Deferring synced block tail until parent state is ready for proof availability policy"
                                                     );
-                                                    continue;
+                                                    break;
                                                 }
                                                 tracing::warn!(
                                                     peer = %hex::encode(&downloaded.from_peer),
@@ -8682,15 +9177,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
-                                            if err.contains("UnknownBlock") {
+                                            if is_retryable_sync_parent_state_error(&err) {
+                                                deferred_downloads = collect_deferred_downloaded_tail(
+                                                    downloaded,
+                                                    downloaded_iter.by_ref(),
+                                                );
                                                 tracing::debug!(
-                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    peer = %hex::encode(&deferred_downloads[0].from_peer),
                                                     block_number,
                                                     parent = %hex::encode(parent_hash.as_bytes()),
                                                     error = %err,
-                                                    "Dropping synced block (parent state not ready)"
+                                                    deferred = deferred_downloads.len(),
+                                                    "Deferring synced block tail until parent state is ready"
                                                 );
-                                                continue;
+                                                break;
                                             }
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
@@ -8754,12 +9254,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_initial_sync",
-                                        );
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
                                         {
@@ -8854,12 +9348,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_initial_sync_already_in_chain",
-                                        );
                                         // Treat AlreadyInChain as progress for the sync cursor, so a node that
                                         // reconnects after mining on a fork can still advance without stalling.
                                         {
@@ -8946,20 +9434,105 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::UnknownParent) => {
+                                        deferred_downloads = collect_deferred_downloaded_tail(
+                                            downloaded,
+                                            downloaded_iter.by_ref(),
+                                        );
+                                        rewind_sync_to_missing_parent = Some(block_number as u64);
                                         tracing::debug!(
                                             block_number,
                                             parent = %hex::encode(parent_hash.as_bytes()),
-                                            "Synced block has unknown parent - out of order?"
+                                            deferred = deferred_downloads.len(),
+                                            "Deferring synced block tail until parent import completes"
                                         );
+                                        break;
                                     }
                                     Ok(sc_consensus::ImportResult::MissingState) => {
-                                        blocks_failed += 1;
+                                        deferred_downloads = collect_deferred_downloaded_tail(
+                                            downloaded,
+                                            downloaded_iter.by_ref(),
+                                        );
+                                        rewind_sync_to_missing_parent = Some(block_number as u64);
                                         tracing::warn!(
                                             block_number,
-                                            "Missing state for synced block parent"
+                                            deferred = deferred_downloads.len(),
+                                            "Deferring synced block tail until parent state becomes available"
                                         );
+                                        break;
                                     }
                                     Err(e) => {
+                                        let error_text = e.to_string();
+                                        if is_finalized_chain_conflict_error(&error_text) {
+                                            let info_before = backend_for_import.blockchain().info();
+                                            let finalized_before: u64 =
+                                                info_before.finalized_number.try_into().unwrap_or(0);
+                                            if finalized_before > 0 {
+                                                match ClientBackend::revert(
+                                                    backend_for_import.as_ref(),
+                                                    1u64,
+                                                    true,
+                                                ) {
+                                                    Ok((reverted_blocks, reverted_finalized)) => {
+                                                        let reverted_blocks: u64 = reverted_blocks
+                                                            .try_into()
+                                                            .unwrap_or(0);
+                                                        if reverted_blocks > 0 {
+                                                            let info_after = backend_for_import
+                                                                .blockchain()
+                                                                .info();
+                                                            let finalized_after: u64 = info_after
+                                                                .finalized_number
+                                                                .try_into()
+                                                                .unwrap_or(0);
+                                                            let best_after: u64 = info_after
+                                                                .best_number
+                                                                .try_into()
+                                                                .unwrap_or(0);
+                                                            deferred_downloads =
+                                                                collect_deferred_downloaded_tail(
+                                                                    downloaded,
+                                                                    downloaded_iter.by_ref(),
+                                                                );
+                                                            reset_sync_after_revert = true;
+                                                            tracing::warn!(
+                                                                peer = %hex::encode(&deferred_downloads[0].from_peer),
+                                                                block_number,
+                                                                finalized_before,
+                                                                finalized_after,
+                                                                best_after,
+                                                                reverted_blocks,
+                                                                reverted_finalized = reverted_finalized.len(),
+                                                                deferred = deferred_downloads.len(),
+                                                                "Recovered poisoned finalized head after sync import hit NotInFinalizedChain"
+                                                            );
+                                                            break;
+                                                        }
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&downloaded.from_peer),
+                                                            block_number,
+                                                            finalized_before,
+                                                            "Unsafe revert returned zero blocks after finalized-chain conflict"
+                                                        );
+                                                    }
+                                                    Err(revert_err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&downloaded.from_peer),
+                                                            block_number,
+                                                            finalized_before,
+                                                            error = %revert_err,
+                                                            "Failed to revert poisoned finalized head after sync import conflict"
+                                                        );
+                                                    }
+                                                }
+                                            } else {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    error = %error_text,
+                                                    "Finalized-chain conflict reported at genesis finalized head"
+                                                );
+                                            }
+                                        }
                                         blocks_failed += 1;
                                         tracing::warn!(
                                             peer = %hex::encode(&downloaded.from_peer),
@@ -8969,6 +9542,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                 }
+                            }
+
+                            if !deferred_downloads.is_empty() {
+                                let deferred_count = deferred_downloads.len();
+                                let first_number = deferred_downloads.first().map(|block| block.number).unwrap_or(0);
+                                let last_number = deferred_downloads
+                                    .last()
+                                    .map(|block| block.number)
+                                    .unwrap_or(first_number);
+                                let mut sync = sync_service_for_import.lock().await;
+                                if reset_sync_after_revert {
+                                    sync.on_local_revert();
+                                }
+                                if let Some(child_number) = rewind_sync_to_missing_parent {
+                                    sync.on_downloaded_parent_missing(child_number);
+                                }
+                                sync.requeue_downloaded(deferred_downloads);
+                                tracing::info!(
+                                    deferred = deferred_count,
+                                    first_number,
+                                    last_number,
+                                    "Deferred synced block tail requeued for retry"
+                                );
                             }
 
                             // ============================================================
@@ -9316,12 +9912,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_broadcast",
-                                        );
                                         blocks_imported += 1;
                                         let mut store = da_chunk_store_for_import.lock();
                                         let mut ciphertexts = if let Some(build) = da_build.take() {
@@ -9397,12 +9987,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
-                                        finalize_imported_block(
-                                            &block_import_client,
-                                            post_hash,
-                                            block_number as u64,
-                                            "network_broadcast_already_in_chain",
-                                        );
                                         let mut store = da_chunk_store_for_import.lock();
                                         let mut ciphertexts = if let Some(build) = da_build.take() {
                                             let da_root = build.encoding.root();
@@ -10613,6 +11197,8 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sp_database::Database as _;
+    use sp_database::MemDb;
     use std::sync::MutexGuard as StdMutexGuard;
 
     struct BlockProofModeGuard {
@@ -10833,6 +11419,187 @@ mod tests {
         };
         let len = proof_da_blob_len_from_manifest(&[a, b]).expect("len");
         assert_eq!(len, 155);
+    }
+
+    fn put_legacy_meta_value(db: &MemDb, key: &[u8], value: Vec<u8>) {
+        let mut transaction = DbTransaction::<H256>::new();
+        transaction.set_from_vec(LEGACY_META_COLUMN, key, value);
+        db.commit(transaction).expect("legacy meta write succeeds");
+    }
+
+    fn put_legacy_lookup(db: &MemDb, key: &[u8], number: u64, hash: H256) {
+        put_legacy_meta_value(
+            db,
+            key,
+            legacy_lookup_key(number, hash).expect("lookup key encodes"),
+        );
+    }
+
+    fn put_legacy_state_meta_value(db: &MemDb, key: &[u8], value: Vec<u8>) {
+        let mut transaction = DbTransaction::<H256>::new();
+        transaction.set_from_vec(LEGACY_DB_STATE_META_COLUMN, key, value);
+        db.commit(transaction)
+            .expect("legacy state meta write succeeds");
+    }
+
+    fn put_legacy_header(db: &MemDb, number: u64, hash: H256, parent_hash: H256) {
+        let header = runtime::Header::new(
+            number,
+            H256::repeat_byte(0x55),
+            H256::repeat_byte(0x66),
+            parent_hash,
+            Default::default(),
+        );
+        let mut transaction = DbTransaction::<H256>::new();
+        transaction.set_from_vec(
+            LEGACY_DB_HEADER_COLUMN,
+            &legacy_lookup_key(number, hash).expect("lookup key encodes"),
+            header.encode(),
+        );
+        db.commit(transaction)
+            .expect("legacy header write succeeds");
+    }
+
+    fn get_legacy_meta_value(db: &MemDb, key: &[u8]) -> Option<Vec<u8>> {
+        <MemDb as sp_database::Database<H256>>::get(db, LEGACY_META_COLUMN, key)
+    }
+
+    fn get_legacy_state_meta_value(db: &MemDb, key: &[u8]) -> Option<Vec<u8>> {
+        <MemDb as sp_database::Database<H256>>::get(db, LEGACY_DB_STATE_META_COLUMN, key)
+    }
+
+    #[test]
+    fn legacy_pow_finality_repair_demotes_non_genesis_finalized_head() {
+        let db = MemDb::default();
+        let genesis_hash = H256::repeat_byte(0x11);
+        let poisoned_hash = H256::repeat_byte(0x22);
+
+        put_legacy_meta_value(&db, LEGACY_META_TYPE_KEY, LEGACY_DB_TYPE_FULL.to_vec());
+        put_legacy_meta_value(
+            &db,
+            LEGACY_META_GENESIS_HASH_KEY,
+            genesis_hash.as_bytes().to_vec(),
+        );
+        put_legacy_lookup(&db, LEGACY_META_FINALIZED_BLOCK_KEY, 1199, poisoned_hash);
+        put_legacy_lookup(&db, LEGACY_META_FINALIZED_STATE_KEY, 1199, poisoned_hash);
+
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
+
+        assert_eq!(
+            outcome,
+            LegacyPowRepairOutcome {
+                finalized_repair: Some((1199, poisoned_hash)),
+                tip_state_rewind: None,
+            }
+        );
+        assert_eq!(
+            get_legacy_meta_value(&db, LEGACY_META_FINALIZED_BLOCK_KEY),
+            Some(legacy_lookup_key(0, genesis_hash).expect("genesis lookup"))
+        );
+        assert_eq!(
+            get_legacy_meta_value(&db, LEGACY_META_FINALIZED_STATE_KEY),
+            Some(legacy_lookup_key(0, genesis_hash).expect("genesis lookup"))
+        );
+    }
+
+    #[test]
+    fn legacy_pow_finality_repair_is_noop_when_metadata_is_already_genesis() {
+        let db = MemDb::default();
+        let genesis_hash = H256::repeat_byte(0x33);
+        let genesis_lookup = legacy_lookup_key(0, genesis_hash).expect("genesis lookup");
+
+        put_legacy_meta_value(&db, LEGACY_META_TYPE_KEY, LEGACY_DB_TYPE_FULL.to_vec());
+        put_legacy_meta_value(
+            &db,
+            LEGACY_META_GENESIS_HASH_KEY,
+            genesis_hash.as_bytes().to_vec(),
+        );
+        put_legacy_meta_value(&db, LEGACY_META_FINALIZED_BLOCK_KEY, genesis_lookup.clone());
+        put_legacy_meta_value(&db, LEGACY_META_FINALIZED_STATE_KEY, genesis_lookup);
+
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
+
+        assert_eq!(outcome, LegacyPowRepairOutcome::default());
+    }
+
+    #[test]
+    fn legacy_pow_finality_repair_rebuilds_missing_finalized_state_at_genesis() {
+        let db = MemDb::default();
+        let genesis_hash = H256::repeat_byte(0x44);
+
+        put_legacy_meta_value(&db, LEGACY_META_TYPE_KEY, LEGACY_DB_TYPE_FULL.to_vec());
+        put_legacy_meta_value(
+            &db,
+            LEGACY_META_GENESIS_HASH_KEY,
+            genesis_hash.as_bytes().to_vec(),
+        );
+        put_legacy_lookup(&db, LEGACY_META_FINALIZED_BLOCK_KEY, 0, genesis_hash);
+
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
+
+        assert_eq!(
+            outcome,
+            LegacyPowRepairOutcome {
+                finalized_repair: Some((0, genesis_hash)),
+                tip_state_rewind: None,
+            }
+        );
+        assert_eq!(
+            get_legacy_meta_value(&db, LEGACY_META_FINALIZED_STATE_KEY),
+            Some(legacy_lookup_key(0, genesis_hash).expect("genesis lookup"))
+        );
+    }
+
+    #[test]
+    fn legacy_pow_finality_repair_rewinds_poisoned_state_canonical_tip() {
+        let db = MemDb::default();
+        let genesis_hash = H256::repeat_byte(0x10);
+        let parent_hash = H256::repeat_byte(0x20);
+        let best_hash = H256::repeat_byte(0x30);
+
+        put_legacy_meta_value(&db, LEGACY_META_TYPE_KEY, LEGACY_DB_TYPE_FULL.to_vec());
+        put_legacy_meta_value(
+            &db,
+            LEGACY_META_GENESIS_HASH_KEY,
+            genesis_hash.as_bytes().to_vec(),
+        );
+        put_legacy_lookup(&db, LEGACY_META_FINALIZED_BLOCK_KEY, 0, genesis_hash);
+        put_legacy_lookup(&db, LEGACY_META_FINALIZED_STATE_KEY, 0, genesis_hash);
+        put_legacy_lookup(&db, LEGACY_META_BEST_BLOCK_KEY, 1199, best_hash);
+        put_legacy_state_meta_value(
+            &db,
+            LEGACY_STATE_META_LAST_CANONICAL_KEY,
+            encode_legacy_state_last_canonical(best_hash, 1199),
+        );
+        put_legacy_state_meta_value(&db, LEGACY_STATE_META_LAST_PRUNED_KEY, 900u64.encode());
+        put_legacy_header(&db, 1199, best_hash, parent_hash);
+
+        let outcome =
+            repair_legacy_pow_finality_metadata_in_db(&db).expect("legacy repair should succeed");
+
+        assert_eq!(
+            outcome,
+            LegacyPowRepairOutcome {
+                finalized_repair: None,
+                tip_state_rewind: Some(LegacyPowTipStateRewind {
+                    previous_number: 1199,
+                    previous_hash: best_hash,
+                    rewound_to_number: 1198,
+                    rewound_to_hash: parent_hash,
+                }),
+            }
+        );
+        assert_eq!(
+            get_legacy_state_meta_value(&db, LEGACY_STATE_META_LAST_CANONICAL_KEY),
+            Some(encode_legacy_state_last_canonical(parent_hash, 1198))
+        );
+        assert_eq!(
+            get_legacy_state_meta_value(&db, LEGACY_STATE_META_LAST_PRUNED_KEY),
+            Some(900u64.encode())
+        );
     }
 
     #[test]
@@ -11389,5 +12156,59 @@ mod import_tests {
         );
         assert_eq!(import_params.post_hash, Some(post_hash));
         assert_eq!(import_params.post_digests.len(), 1);
+    }
+
+    #[test]
+    fn test_retryable_sync_parent_state_error_matches_unknown_block() {
+        assert!(is_retryable_sync_parent_state_error(
+            "UnknownBlock: parent state not ready"
+        ));
+        assert!(!is_retryable_sync_parent_state_error(
+            "Proof verification failed"
+        ));
+    }
+
+    #[test]
+    fn test_finalized_chain_conflict_error_matches_not_in_finalized_chain() {
+        assert!(is_finalized_chain_conflict_error(
+            "Potential long-range attack: block not in finalized chain."
+        ));
+        assert!(is_finalized_chain_conflict_error(
+            "ClientImport(NotInFinalizedChain)"
+        ));
+        assert!(!is_finalized_chain_conflict_error(
+            "Proof verification failed"
+        ));
+    }
+
+    #[test]
+    fn test_collect_deferred_downloaded_tail_preserves_order() {
+        let current = DownloadedBlock {
+            number: 10,
+            hash: [0x10; 32],
+            header: vec![0x10],
+            body: vec![vec![0x10]],
+            from_peer: [0x10; 32],
+        };
+        let remaining = vec![
+            DownloadedBlock {
+                number: 11,
+                hash: [0x11; 32],
+                header: vec![0x11],
+                body: vec![vec![0x11]],
+                from_peer: [0x11; 32],
+            },
+            DownloadedBlock {
+                number: 12,
+                hash: [0x12; 32],
+                header: vec![0x12],
+                body: vec![vec![0x12]],
+                from_peer: [0x12; 32],
+            },
+        ];
+
+        let deferred = collect_deferred_downloaded_tail(current, remaining);
+        let numbers: Vec<u64> = deferred.into_iter().map(|block| block.number).collect();
+        assert_eq!(numbers, vec![10, 11, 12]);
     }
 }

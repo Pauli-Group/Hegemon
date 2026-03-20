@@ -767,6 +767,15 @@ fn is_nullifier_conflict_submission(msg: &str) -> bool {
             || lower.contains("nullifier already exists"))
 }
 
+fn is_bad_proof_submission(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("invalid transaction")
+        || lower.contains("invalidtransaction")
+        || lower.contains("pool(invalidtransaction")
+        || lower.contains("transaction pool rejected"))
+        && lower.contains("badproof")
+}
+
 fn parse_hex_48(input: &str) -> WalletdResult<[u8; 48]> {
     let trimmed = input.strip_prefix("0x").unwrap_or(input);
     let bytes = hex::decode(trimmed).map_err(|e| {
@@ -1059,6 +1068,7 @@ fn tx_send(
         let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
         let mut invalid_anchor_retries: u8 = 0;
         let mut nullifier_conflict_retries: u8 = 0;
+        let mut bad_proof_retries: u8 = 0;
 
         loop {
             let result = submit_bundle_strict(
@@ -1164,6 +1174,57 @@ fn tx_send(
                                     e.to_string(),
                                 )
                             })?;
+                    }
+
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, true)
+                        .map_err(WalletdError::internal)?;
+                    continue;
+                }
+                Err(WalletError::Rpc(msg))
+                    if is_bad_proof_submission(&msg) && bad_proof_retries < 1 =>
+                {
+                    store
+                        .mark_notes_pending(&built.spent_note_indexes, false)
+                        .map_err(WalletdError::internal)?;
+                    bad_proof_retries = bad_proof_retries.saturating_add(1);
+
+                    eprintln!(
+                        "[walletd] detected BadProof submission; resetting local wallet sync state and retrying once"
+                    );
+                    store.reset_sync_state().map_err(WalletdError::internal)?;
+
+                    engine.sync_once().await.map_err(|e| {
+                        WalletdError::new(
+                            WalletdErrorCode::SyncFailed,
+                            format!("sync failed after BadProof submission: {e}"),
+                        )
+                    })?;
+                    ensure_wallet_root_consistency(&engine, &store, &client).await?;
+
+                    precheck_nullifiers(&store, &client, &recipients, params.fee)
+                        .await
+                        .map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                        })?;
+                    built = build_transaction(&store, &recipients, params.fee).map_err(|e| {
+                        WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                    })?;
+
+                    let anchor_valid = client
+                        .is_valid_anchor(&built.bundle.anchor)
+                        .await
+                        .map_err(|e| {
+                            WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+                        })?;
+                    if !anchor_valid {
+                        return Err(WalletdError::new(
+                            WalletdErrorCode::TransactionFailed,
+                            format!(
+                                "wallet rebuilt an invalid anchor after BadProof recovery ({})",
+                                hex::encode(built.bundle.anchor)
+                            ),
+                        ));
                     }
 
                     store
