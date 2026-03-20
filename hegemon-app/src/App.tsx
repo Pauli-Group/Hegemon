@@ -19,6 +19,10 @@ import blockReceivedAudio from './assets/sounds/block-received.wav';
 
 const defaultStorePath = '~/.hegemon-wallet';
 const canonicalTestnetP2pPort = 30333;
+const shieldedAddressPrefix = 'shca1';
+const shieldedAddressLength = 2634;
+const shieldedAddressDataCharset = /^[023456789acdefghjklmnpqrstuvwxyz]+$/;
+const shieldedAddressSeparatorPattern = /[\s\u200B\u200C\u200D\uFEFF]+/g;
 const approvedSeeds = 'hegemon.pauli.group:30333';
 const legacySeedAliases: Record<string, string> = {
   'hegemon.pauli.group:31333': 'hegemon.pauli.group:30333',
@@ -232,11 +236,47 @@ const formatNumber = (value: number | null | undefined) => {
 
 const formatHgm = (value: number) => `${(value / 100_000_000).toFixed(8)} HGM`;
 
-const formatAddress = (address: string) => {
-  if (address.length <= 16) {
-    return address;
+const normalizeShieldedAddressInput = (value: string) =>
+  value.replace(shieldedAddressSeparatorPattern, '').trim().toLowerCase();
+
+const validateShieldedAddressInput = (value: string, label = 'Address') => {
+  const normalized = normalizeShieldedAddressInput(value);
+  if (!normalized) {
+    return `${label} is required.`;
   }
-  return `${address.slice(0, 8)}...${address.slice(-8)}`;
+  if (!normalized.startsWith(shieldedAddressPrefix)) {
+    return `${label} must start with ${shieldedAddressPrefix}.`;
+  }
+  if (normalized.length !== shieldedAddressLength) {
+    return `${label} looks truncated or corrupt. Expected ${shieldedAddressLength} chars, got ${normalized.length}.`;
+  }
+  const payload = normalized.slice(shieldedAddressPrefix.length);
+  if (!shieldedAddressDataCharset.test(payload)) {
+    return `${label} contains unsupported bech32 characters.`;
+  }
+  return null;
+};
+
+const formatAddress = (address: string) => {
+  const normalized = normalizeShieldedAddressInput(address);
+  if (normalized.length <= 28) {
+    return normalized || address;
+  }
+  const middleStart = Math.max(0, Math.floor(normalized.length / 2) - 4);
+  return `${normalized.slice(0, 10)}...${normalized.slice(middleStart, middleStart + 8)}...${normalized.slice(-8)}`;
+};
+
+const humanizeWalletAddressError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.toLowerCase().includes('invalid address encoding')) {
+    const lengthMatch = message.match(/invalid address length: expected (\d+) bytes, got (\d+)/i);
+    if (lengthMatch) {
+      const [, expectedBytes, actualBytes] = lengthMatch;
+      return `Recipient address is malformed or truncated. Expected ${expectedBytes} address bytes, got ${actualBytes}. Ask your contact to re-copy their full shielded address.`;
+    }
+    return 'Recipient address is malformed or truncated. Ask your contact to re-copy their full shielded address.';
+  }
+  return message;
 };
 
 const formatBytes = (value: number | null | undefined) => {
@@ -1325,6 +1365,10 @@ export default function App() {
     const normalizedConnection = normalizeLocalConnectionEndpoints(activeConnection);
     const normalizedRole = inferParticipationRole(normalizedConnection);
     const rpcPort = inferRpcPort(normalizedConnection);
+    const normalizedMinerAddress =
+      normalizedRole === 'authoring_pool'
+        ? normalizeShieldedAddressInput(normalizedConnection.minerAddress ?? '')
+        : '';
     if (normalizedConnection !== activeConnection) {
       updateActiveConnection({
         wsUrl: normalizedConnection.wsUrl,
@@ -1336,9 +1380,16 @@ export default function App() {
       setNodeError('Local mining is reserved for the Mining node role. Switch roles or disable Auto-start mining.');
       return;
     }
-    if (normalizedRole === 'authoring_pool' && normalizedConnection.miningIntent && !normalizedConnection.minerAddress) {
+    if (normalizedRole === 'authoring_pool' && normalizedConnection.miningIntent && !normalizedMinerAddress) {
       setNodeError('Set a miner address before enabling mining.');
       return;
+    }
+    if (normalizedRole === 'authoring_pool' && normalizedMinerAddress) {
+      const validationError = validateShieldedAddressInput(normalizedMinerAddress, 'Miner address');
+      if (validationError) {
+        setNodeError(validationError);
+        return;
+      }
     }
     if (normalizedConnection.maxPeers !== undefined && normalizedConnection.maxPeers < 1) {
       setNodeError('Max peers must be at least 1.');
@@ -1368,7 +1419,7 @@ export default function App() {
         rpcPort,
         p2pPort: normalizedConnection.p2pPort,
         listenAddr: normalizedConnection.listenAddr || undefined,
-        minerAddress: normalizedRole === 'authoring_pool' ? normalizedConnection.minerAddress || undefined : undefined,
+        minerAddress: normalizedRole === 'authoring_pool' ? normalizedMinerAddress || undefined : undefined,
         mineThreads: normalizedRole === 'authoring_pool' ? normalizedConnection.mineThreads : undefined,
         mineOnStart: normalizedRole === 'authoring_pool' ? normalizedConnection.miningIntent : false,
         seeds: normalizedConnection.seeds || undefined,
@@ -1776,6 +1827,11 @@ export default function App() {
     let attemptId: string | null = null;
     setWalletError(null);
     try {
+      const normalizedRecipientAddress = normalizeShieldedAddressInput(recipientAddress);
+      const recipientAddressError = validateShieldedAddressInput(normalizedRecipientAddress, 'Recipient address');
+      if (recipientAddressError) {
+        throw new Error(recipientAddressError);
+      }
       const amount = toBaseUnits(sendAmount);
       const fee = toBaseUnits(sendFee);
       if (!amount || !fee) {
@@ -1804,7 +1860,7 @@ export default function App() {
       const resolvedStorePath = resolveStorePath();
       const recipients = [
         {
-          address: recipientAddress,
+          address: normalizedRecipientAddress,
           value: amount,
           asset_id: 0,
           memo: sendMemo || null
@@ -1872,7 +1928,7 @@ export default function App() {
         id: attemptId,
         storePath: resolvedStorePath,
         createdAt,
-        recipient: recipientAddress.trim(),
+        recipient: normalizedRecipientAddress,
         amount,
         fee,
         memo: sendMemo || undefined,
@@ -1908,14 +1964,14 @@ export default function App() {
       await refreshDisclosureRecords();
     } catch (error) {
       if (attemptId) {
-        const message = error instanceof Error ? error.message : 'Wallet send failed.';
+        const message = humanizeWalletAddressError(error);
         setSendAttempts((prev) =>
           prev.map((entry) =>
             entry.id === attemptId ? { ...entry, status: 'failed', error: message } : entry
           )
         );
       }
-      setWalletError(error instanceof Error ? error.message : 'Wallet send failed.');
+      setWalletError(humanizeWalletAddressError(error));
     } finally {
       setWalletBusy(false);
     }
@@ -1925,10 +1981,16 @@ export default function App() {
     if (!contactsLoaded || contactsSaving || !newContactName || !newContactAddress) {
       return;
     }
+    const normalizedContactAddress = normalizeShieldedAddressInput(newContactAddress);
+    const contactAddressError = validateShieldedAddressInput(normalizedContactAddress, 'Contact address');
+    if (contactAddressError) {
+      setContactsError(contactAddressError);
+      return;
+    }
     const newEntry: Contact = {
       id: makeId(),
       name: newContactName,
-      address: newContactAddress,
+      address: normalizedContactAddress,
       verified: newContactVerified,
       notes: newContactNotes || undefined,
       lastUsed: undefined
@@ -2116,12 +2178,34 @@ export default function App() {
   const chainTone = genesisMismatch ? 'error' : walletGenesis && walletNodeGenesis ? 'ok' : 'neutral';
   const chainLabel = genesisMismatch ? 'Mismatch' : walletGenesis && walletNodeGenesis ? 'Match' : 'Unknown';
   const hgmBalance = walletStatus?.balances?.find((balance) => balance.assetId === 0) ?? null;
+  const recipientAddressError = recipientAddress
+    ? validateShieldedAddressInput(recipientAddress, 'Recipient address')
+    : null;
+  const newContactAddressError = newContactAddress
+    ? validateShieldedAddressInput(newContactAddress, 'Contact address')
+    : null;
+  const minerAddressError =
+    roleAllowsLocalMining && activeConnection?.minerAddress
+      ? validateShieldedAddressInput(activeConnection.minerAddress, 'Miner address')
+      : null;
+  const contactAddressErrors = useMemo(() => {
+    const errors = new Map<string, string>();
+    contacts.forEach((contact) => {
+      const error = validateShieldedAddressInput(contact.address, 'Contact address');
+      if (error) {
+        errors.set(contact.id, error);
+      }
+    });
+    return errors;
+  }, [contacts]);
   const sendBlockedReason = !walletReady
     ? 'Open or init a wallet to send funds.'
     : walletSummary?.reachable === false
       ? 'Wallet connection is offline. Select a reachable node or fix the RPC endpoint.'
       : genesisMismatch
         ? 'Genesis mismatch between the wallet store and the selected node.'
+        : recipientAddressError
+          ? recipientAddressError
         : null;
   const canSend = !walletBusy && !sendBlockedReason;
 
@@ -2778,6 +2862,7 @@ export default function App() {
                       onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
                       placeholder="shca1..."
                     />
+                    {minerAddressError ? <p className="text-xs text-guard">{minerAddressError}</p> : null}
                   </label>
                   <label className="space-y-2">
                     <span className="label">Mine threads</span>
@@ -3610,6 +3695,7 @@ export default function App() {
             onChange={(event) => setRecipientAddress(event.target.value)}
             placeholder="shca1..."
           />
+          {recipientAddressError ? <p className="text-xs text-guard">{recipientAddressError}</p> : null}
         </label>
         {contacts.length > 0 && (
           <label className="space-y-2">
@@ -3624,11 +3710,15 @@ export default function App() {
               }}
             >
               <option value="">Select a contact</option>
-              {contacts.map((contact) => (
-                <option key={contact.id} value={contact.id}>
-                  {contact.name} - {formatAddress(contact.address)}
-                </option>
-              ))}
+              {contacts.map((contact) => {
+                const contactAddressError = contactAddressErrors.get(contact.id);
+                return (
+                  <option key={contact.id} value={contact.id} disabled={Boolean(contactAddressError)}>
+                    {contact.name} - {formatAddress(contact.address)}
+                    {contactAddressError ? ' (invalid)' : ''}
+                  </option>
+                );
+              })}
             </select>
           </label>
         )}
@@ -3817,6 +3907,7 @@ export default function App() {
         <label className="space-y-2">
           <span className="label">Address</span>
           <input value={newContactAddress} onChange={(event) => setNewContactAddress(event.target.value)} placeholder="shca1..." />
+          {newContactAddressError ? <p className="text-xs text-guard">{newContactAddressError}</p> : null}
         </label>
         <label className="space-y-2">
           <span className="label">Notes</span>
@@ -3826,7 +3917,11 @@ export default function App() {
           <input type="checkbox" checked={newContactVerified} onChange={(event) => setNewContactVerified(event.target.checked)} />
           Verified out of band
         </label>
-        <button className="secondary" onClick={handleAddContact} disabled={!contactsLoaded || contactsSaving}>
+        <button
+          className="secondary"
+          onClick={handleAddContact}
+          disabled={!contactsLoaded || contactsSaving || Boolean(newContactAddressError)}
+        >
           {!contactsLoaded ? 'Loading…' : contactsSaving ? 'Saving…' : 'Add contact'}
         </button>
       </div>
@@ -3853,6 +3948,9 @@ export default function App() {
                 Remove
               </button>
             </div>
+            {contactAddressErrors.get(contact.id) ? (
+              <p className="text-sm text-guard">{contactAddressErrors.get(contact.id)}</p>
+            ) : null}
             <p className="text-sm text-surfaceMuted">Verified: {contact.verified ? 'Yes' : 'No'}</p>
             {contact.notes && <p className="text-sm text-surfaceMuted">Notes: {contact.notes}</p>}
             {contact.lastUsed && <p className="text-sm text-surfaceMuted">Last used: {new Date(contact.lastUsed).toLocaleString()}</p>}
