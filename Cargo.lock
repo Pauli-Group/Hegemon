@@ -1614,6 +1614,7 @@ dependencies = [
  "blake3",
  "block-circuit",
  "crossbeam-channel",
+ "hex",
  "network",
  "num-bigint",
  "num-traits",
@@ -1646,6 +1647,7 @@ dependencies = [
  "sp-runtime",
  "state-da",
  "state-merkle",
+ "superneo-hegemon",
  "synthetic-crypto",
  "thiserror 1.0.69",
  "tokio",
@@ -3710,6 +3712,7 @@ dependencies = [
  "state-da",
  "state-merkle",
  "substrate-frame-rpc-system",
+ "superneo-hegemon",
  "synthetic-crypto",
  "tempfile",
  "thiserror 1.0.69",
@@ -11132,6 +11135,79 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "superneo-backend-lattice"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "p3-goldilocks",
+ "serde",
+ "superneo-ccs",
+ "superneo-core",
+ "superneo-ring",
+]
+
+[[package]]
+name = "superneo-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "p3-goldilocks",
+ "serde",
+ "serde_json",
+ "superneo-backend-lattice",
+ "superneo-ccs",
+ "superneo-core",
+ "superneo-hegemon",
+ "superneo-ring",
+]
+
+[[package]]
+name = "superneo-ccs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "p3-field",
+ "p3-goldilocks",
+ "serde",
+]
+
+[[package]]
+name = "superneo-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "superneo-ccs",
+]
+
+[[package]]
+name = "superneo-hegemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "p3-field",
+ "p3-goldilocks",
+ "superneo-backend-lattice",
+ "superneo-ccs",
+ "superneo-core",
+ "superneo-ring",
+]
+
+[[package]]
+name = "superneo-ring"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "p3-field",
+ "p3-goldilocks",
+ "superneo-ccs",
+]
 
 [[package]]
 name = "syn"

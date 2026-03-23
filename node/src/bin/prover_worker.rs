@@ -207,6 +207,12 @@ async fn work_flat_once(client: &RpcClient, args: &Args) -> Result<bool> {
         da_chunk_count,
         commitment_proof: StarkProof::from_bytes(Vec::new()),
         proof_mode: BlockProofMode::FlatBatches,
+        proof_kind: pallet_shielded_pool::types::proof_artifact_kind_from_mode(
+            BlockProofMode::FlatBatches,
+        ),
+        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
+            consensus::ProofArtifactKind::FlatBatches,
+        ),
         flat_batches: vec![BatchProofItem {
             start_tx_index: package.chunk_start_tx_index,
             tx_count: package.chunk_tx_count,
@@ -214,6 +220,7 @@ async fn work_flat_once(client: &RpcClient, args: &Args) -> Result<bool> {
             proof: StarkProof::from_bytes(encoded_batch_proof),
         }],
         merge_root: None,
+        receipt_root: None,
         artifact_claim: None,
     };
     let request = SubmitWorkResultRequest {

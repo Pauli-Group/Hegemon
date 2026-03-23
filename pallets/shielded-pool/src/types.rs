@@ -66,6 +66,18 @@ pub type Commitment = [u8; 48];
 pub type Nullifier = [u8; 48];
 /// Merkle root bytes (48-byte PQ sponge output).
 pub type MerkleRoot = [u8; 48];
+/// Verifier profile digest for a proof artifact family and parameter profile.
+pub type VerifierProfileDigest = [u8; 48];
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
+)]
+pub struct TxValidityReceipt {
+    pub statement_hash: [u8; 48],
+    pub proof_digest: [u8; 48],
+    pub public_inputs_digest: [u8; 48],
+    pub verifier_profile: VerifierProfileDigest,
+}
 
 /// A shielded note representing a unit of value.
 ///
@@ -216,6 +228,52 @@ pub enum BlockProofMode {
     FlatBatches,
     /// Verify a recursion root proof over leaf batches.
     MergeRoot,
+    /// Verify an experimental receipt root over canonical tx-validity receipts.
+    ReceiptRoot,
+}
+
+/// Backend-neutral proof artifact kind. `proof_mode` remains for legacy block-payload handling,
+/// while this enum is the forward-compatible selector for artifact routing.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+)]
+pub enum ProofArtifactKind {
+    InlineTx,
+    FlatBatches,
+    MergeRoot,
+    ReceiptRoot,
+    Custom([u8; 16]),
+}
+
+impl ProofArtifactKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::InlineTx => "inline_tx",
+            Self::FlatBatches => "flat_batches",
+            Self::MergeRoot => "merge_root",
+            Self::ReceiptRoot => "receipt_root",
+            Self::Custom(_) => "custom",
+        }
+    }
+}
+
+pub fn proof_artifact_kind_from_mode(mode: BlockProofMode) -> ProofArtifactKind {
+    match mode {
+        BlockProofMode::InlineTx => ProofArtifactKind::InlineTx,
+        BlockProofMode::FlatBatches => ProofArtifactKind::FlatBatches,
+        BlockProofMode::MergeRoot => ProofArtifactKind::MergeRoot,
+        BlockProofMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
+    }
 }
 
 /// Flat batch proof item.
@@ -257,6 +315,23 @@ pub struct MergeRootProofPayload {
     pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
 }
 
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
+)]
+pub struct ReceiptRootMetadata {
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    pub leaf_count: u32,
+    pub fold_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct ReceiptRootProofPayload {
+    pub root_proof: StarkProof,
+    pub metadata: ReceiptRootMetadata,
+    pub receipts: Vec<TxValidityReceipt>,
+}
+
 /// Parent-agnostic proof object over an ordered transaction set.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
 pub struct CandidateArtifact {
@@ -274,10 +349,16 @@ pub struct CandidateArtifact {
     pub commitment_proof: StarkProof,
     /// Proof mode for this bundle.
     pub proof_mode: BlockProofMode,
+    /// Backend-neutral proof artifact kind for routing and future verifier agility.
+    pub proof_kind: ProofArtifactKind,
+    /// Verifier profile digest for the artifact family and parameter profile.
+    pub verifier_profile: VerifierProfileDigest,
     /// Flat proof batches (required in FlatBatches mode).
     pub flat_batches: Vec<BatchProofItem>,
     /// Optional merge-root proof payload (required in MergeRoot mode).
     pub merge_root: Option<MergeRootProofPayload>,
+    /// Optional receipt-root proof payload (required in ReceiptRoot mode).
+    pub receipt_root: Option<ReceiptRootProofPayload>,
     /// Optional external artifact payout claim.
     pub artifact_claim: Option<ArtifactClaim>,
 }
@@ -294,6 +375,8 @@ pub struct ArtifactAnnouncement {
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
     pub proof_mode: BlockProofMode,
+    pub proof_kind: ProofArtifactKind,
+    pub verifier_profile: VerifierProfileDigest,
     pub claimed_payout_amount: u64,
 }
 

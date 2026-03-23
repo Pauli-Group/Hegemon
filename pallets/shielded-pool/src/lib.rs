@@ -2171,10 +2171,16 @@ pub mod pallet {
                             .sum::<usize>()
                 })
                 .unwrap_or(0);
+            let receipt_root_bytes = bundle
+                .receipt_root
+                .as_ref()
+                .map(|receipt_root| receipt_root.root_proof.data.len())
+                .unwrap_or(0);
             let aggregation_bytes = match bundle.proof_mode {
                 types::BlockProofMode::InlineTx => 0,
                 types::BlockProofMode::FlatBatches => flat_batches_bytes,
                 types::BlockProofMode::MergeRoot => merge_root_bytes,
+                types::BlockProofMode::ReceiptRoot => receipt_root_bytes,
             };
             bundle.commitment_proof.data.len() + aggregation_bytes
         }
@@ -2182,9 +2188,18 @@ pub mod pallet {
         pub(crate) fn validate_block_proof_bundle_mode(
             bundle: &types::BlockProofBundle,
         ) -> Result<(), Error<T>> {
+            if bundle.proof_kind != types::proof_artifact_kind_from_mode(bundle.proof_mode) {
+                return Err(Error::<T>::InvalidProofFormat);
+            }
+            if bundle.verifier_profile == [0u8; 48] {
+                return Err(Error::<T>::InvalidProofFormat);
+            }
             match bundle.proof_mode {
                 types::BlockProofMode::InlineTx => {
-                    if !bundle.flat_batches.is_empty() || bundle.merge_root.is_some() {
+                    if !bundle.flat_batches.is_empty()
+                        || bundle.merge_root.is_some()
+                        || bundle.receipt_root.is_some()
+                    {
                         return Err(Error::<T>::InvalidProofFormat);
                     }
                 }
@@ -2194,7 +2209,7 @@ pub mod pallet {
                     {
                         return Err(Error::<T>::InvalidProofFormat);
                     }
-                    if bundle.merge_root.is_some() {
+                    if bundle.merge_root.is_some() || bundle.receipt_root.is_some() {
                         return Err(Error::<T>::InvalidProofFormat);
                     }
                     for item in &bundle.flat_batches {
@@ -2210,7 +2225,7 @@ pub mod pallet {
                     }
                 }
                 types::BlockProofMode::MergeRoot => {
-                    if !bundle.flat_batches.is_empty() {
+                    if !bundle.flat_batches.is_empty() || bundle.receipt_root.is_some() {
                         return Err(Error::<T>::InvalidProofFormat);
                     }
                     let merge_root = bundle
@@ -2234,6 +2249,33 @@ pub mod pallet {
                         }
                         if item.proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
                             return Err(Error::<T>::ProofTooLarge);
+                        }
+                    }
+                }
+                types::BlockProofMode::ReceiptRoot => {
+                    if !bundle.flat_batches.is_empty() || bundle.merge_root.is_some() {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    let receipt_root = bundle
+                        .receipt_root
+                        .as_ref()
+                        .ok_or(Error::<T>::InvalidProofFormat)?;
+                    if receipt_root.root_proof.data.is_empty()
+                        || receipt_root.root_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE
+                    {
+                        return Err(Error::<T>::ProofTooLarge);
+                    }
+                    if receipt_root.receipts.is_empty()
+                        || receipt_root.metadata.leaf_count != receipt_root.receipts.len() as u32
+                    {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    if receipt_root.metadata.fold_count == 0 && receipt_root.receipts.len() > 1 {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    for receipt in &receipt_root.receipts {
+                        if receipt.verifier_profile == [0u8; 48] {
+                            return Err(Error::<T>::InvalidProofFormat);
                         }
                     }
                 }

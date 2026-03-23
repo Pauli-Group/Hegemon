@@ -4,8 +4,9 @@ use block_circuit::CommitmentBlockProver;
 use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::types::{
-    ConsensusBlock, ProofVerificationMode, ProvenBatch, ProvenBatchMode, Transaction,
-    TxStatementBinding, kernel_root_from_shielded_root,
+    ConsensusBlock, ProofArtifactKind, ProofEnvelope, ProofVerificationMode, ProvenBatch,
+    ProvenBatchMode, ReceiptRootMetadata, ReceiptRootProofPayload, Transaction, TxStatementBinding,
+    TxValidityArtifact, TxValidityReceipt, kernel_root_from_shielded_root,
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
@@ -13,6 +14,10 @@ use consensus::{
 };
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
+use superneo_hegemon::{
+    CanonicalTxValidityReceipt, build_receipt_root_artifact_bytes,
+    experimental_receipt_root_verifier_profile,
+};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{
     Felt, HashFelt, felts_to_bytes48, merkle_node, spend_auth_key_bytes,
@@ -332,12 +337,25 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         da_chunk_count: 1,
         commitment_proof,
         mode: ProvenBatchMode::InlineTx,
+        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
+        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
+            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
+        ),
         flat_batches: Vec::new(),
         merge_root: None,
+        receipt_root: None,
     });
     block.tx_statement_bindings = Some(statement_bindings);
     block.tx_statements_commitment = Some(tx_statements_commitment);
-    block.transaction_proofs = Some(proofs);
+    block.tx_validity_artifacts = Some(
+        proofs
+            .iter()
+            .map(|proof| {
+                consensus::proof::tx_validity_artifact_from_proof(proof)
+                    .expect("tx validity artifact")
+            })
+            .collect(),
+    );
     block.proof_verification_mode = ProofVerificationMode::InlineRequired;
 
     RawActiveFixture {
@@ -350,6 +368,47 @@ fn build_raw_active_fixture() -> RawActiveFixture {
 fn raw_active_fixture() -> &'static RawActiveFixture {
     static FIXTURE: OnceLock<RawActiveFixture> = OnceLock::new();
     FIXTURE.get_or_init(build_raw_active_fixture)
+}
+
+fn build_receipt_root_block_artifacts(
+    receipts: &[TxValidityReceipt],
+) -> (
+    Vec<TxValidityArtifact>,
+    ReceiptRootProofPayload,
+    ProofEnvelope,
+) {
+    let canonical_receipts = receipts
+        .iter()
+        .map(|receipt| CanonicalTxValidityReceipt {
+            statement_hash: receipt.statement_hash,
+            proof_digest: receipt.proof_digest,
+            public_inputs_digest: receipt.public_inputs_digest,
+            verifier_profile: receipt.verifier_profile,
+        })
+        .collect::<Vec<_>>();
+    let built = build_receipt_root_artifact_bytes(&canonical_receipts).expect("receipt-root bytes");
+    let verifier_profile = experimental_receipt_root_verifier_profile();
+    let tx_validity_artifacts = receipts
+        .iter()
+        .cloned()
+        .map(consensus::tx_validity_artifact_from_receipt)
+        .collect::<Vec<_>>();
+    let payload = ReceiptRootProofPayload {
+        root_proof: built.artifact_bytes.clone(),
+        metadata: ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+        receipts: receipts.to_vec(),
+    };
+    let envelope = ProofEnvelope {
+        kind: ProofArtifactKind::ReceiptRoot,
+        verifier_profile,
+        artifact_bytes: built.artifact_bytes,
+    };
+    (tx_validity_artifacts, payload, envelope)
 }
 
 #[test]
@@ -366,17 +425,21 @@ fn raw_active_block_is_accepted() {
 fn raw_active_rejects_bad_tx_proof() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
-    let proof = block
-        .transaction_proofs
+    let artifact = block
+        .tx_validity_artifacts
         .as_mut()
-        .expect("tx proofs present")
+        .expect("tx artifacts present")
         .first_mut()
-        .expect("first tx proof");
+        .expect("first tx artifact");
+    let envelope = artifact.proof.as_mut().expect("inline tx proof envelope");
+    let mut proof: TransactionProof =
+        bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof");
     let stark_inputs = proof
         .stark_public_inputs
         .as_mut()
         .expect("serialized stark inputs present");
     stark_inputs.fee = stark_inputs.fee.saturating_add(1);
+    envelope.artifact_bytes = bincode::serialize(&proof).expect("encode tx proof");
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
@@ -419,12 +482,71 @@ fn raw_active_rejects_commitment_mismatch() {
 }
 
 #[test]
+fn receipt_root_block_is_accepted() {
+    let fixture = raw_active_fixture();
+    let mut block = fixture.block.clone();
+    let receipts = block
+        .tx_validity_artifacts
+        .as_ref()
+        .expect("tx validity artifacts")
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    let (tx_validity_artifacts, receipt_root, envelope) =
+        build_receipt_root_block_artifacts(&receipts);
+    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
+    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
+    proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
+    proven_batch.verifier_profile = experimental_receipt_root_verifier_profile();
+    proven_batch.receipt_root = Some(receipt_root);
+    block.tx_validity_artifacts = Some(tx_validity_artifacts);
+    block.block_artifact = Some(envelope);
+    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+
+    let verifier = ParallelProofVerifier::new();
+    let updated = verifier
+        .verify_block(&block, &fixture.base_tree)
+        .expect("valid receipt-root block should verify");
+    assert_eq!(updated.root(), fixture.updated_root);
+}
+
+#[test]
+fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
+    let fixture = raw_active_fixture();
+    let mut block = fixture.block.clone();
+    let mut receipts = block
+        .tx_validity_artifacts
+        .as_ref()
+        .expect("tx validity artifacts")
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    receipts[0].statement_hash = [0xA5; 48];
+    let (tx_validity_artifacts, receipt_root, envelope) =
+        build_receipt_root_block_artifacts(&receipts);
+    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
+    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
+    proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
+    proven_batch.verifier_profile = experimental_receipt_root_verifier_profile();
+    proven_batch.receipt_root = Some(receipt_root);
+    block.tx_validity_artifacts = Some(tx_validity_artifacts);
+    block.block_artifact = Some(envelope);
+    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+
+    let verifier = ParallelProofVerifier::new();
+    let err = verifier
+        .verify_block(&block, &fixture.base_tree)
+        .expect_err("receipt-root must reject mismatched statement receipts");
+    assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
+}
+
+#[test]
 fn raw_active_rejects_duplicate_nullifier_conflict() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
     block.transactions[1] = block.transactions[0].clone();
-    if let Some(proofs) = block.transaction_proofs.as_mut() {
-        proofs[1] = proofs[0].clone();
+    if let Some(artifacts) = block.tx_validity_artifacts.as_mut() {
+        artifacts[1] = artifacts[0].clone();
     }
     if let Some(bindings) = block.tx_statement_bindings.as_mut() {
         bindings[1] = bindings[0].clone();

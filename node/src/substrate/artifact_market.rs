@@ -2,6 +2,67 @@ use codec::Encode;
 use consensus::ArtifactAnnouncement;
 use sp_core::hashing::blake2_256;
 
+pub fn consensus_proven_batch_mode_from_pallet(
+    mode: pallet_shielded_pool::types::BlockProofMode,
+) -> consensus::ProvenBatchMode {
+    match mode {
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => {
+            consensus::ProvenBatchMode::InlineTx
+        }
+        pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
+            consensus::ProvenBatchMode::FlatBatches
+        }
+        pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
+            consensus::ProvenBatchMode::MergeRoot
+        }
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+            consensus::ProvenBatchMode::ReceiptRoot
+        }
+    }
+}
+
+pub fn consensus_proof_artifact_kind_from_pallet(
+    kind: pallet_shielded_pool::types::ProofArtifactKind,
+) -> consensus::ProofArtifactKind {
+    match kind {
+        pallet_shielded_pool::types::ProofArtifactKind::InlineTx => {
+            consensus::ProofArtifactKind::InlineTx
+        }
+        pallet_shielded_pool::types::ProofArtifactKind::FlatBatches => {
+            consensus::ProofArtifactKind::FlatBatches
+        }
+        pallet_shielded_pool::types::ProofArtifactKind::MergeRoot => {
+            consensus::ProofArtifactKind::MergeRoot
+        }
+        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot => {
+            consensus::ProofArtifactKind::ReceiptRoot
+        }
+        pallet_shielded_pool::types::ProofArtifactKind::Custom(bytes) => {
+            consensus::ProofArtifactKind::Custom(bytes)
+        }
+    }
+}
+
+pub fn legacy_pallet_artifact_identity(
+    mode: pallet_shielded_pool::types::BlockProofMode,
+) -> (
+    pallet_shielded_pool::types::ProofArtifactKind,
+    pallet_shielded_pool::types::VerifierProfileDigest,
+) {
+    let kind = pallet_shielded_pool::types::proof_artifact_kind_from_mode(mode);
+    let verifier_profile = if matches!(
+        mode,
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+    ) {
+        superneo_hegemon::experimental_receipt_root_verifier_profile()
+    } else {
+        consensus::legacy_block_artifact_verifier_profile(
+            consensus_proof_artifact_kind_from_pallet(kind),
+        )
+    };
+    (kind, verifier_profile)
+}
+
 pub fn candidate_artifact_hash(
     artifact: &pallet_shielded_pool::types::CandidateArtifact,
 ) -> [u8; 32] {
@@ -11,21 +72,14 @@ pub fn candidate_artifact_hash(
 pub fn artifact_announcement(
     artifact: &pallet_shielded_pool::types::CandidateArtifact,
 ) -> ArtifactAnnouncement {
+    let proof_mode = consensus_proven_batch_mode_from_pallet(artifact.proof_mode);
     ArtifactAnnouncement {
         artifact_hash: candidate_artifact_hash(artifact),
         tx_statements_commitment: artifact.tx_statements_commitment,
         tx_count: artifact.tx_count,
-        proof_mode: match artifact.proof_mode {
-            pallet_shielded_pool::types::BlockProofMode::InlineTx => {
-                consensus::ProvenBatchMode::InlineTx
-            }
-            pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
-                consensus::ProvenBatchMode::FlatBatches
-            }
-            pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
-                consensus::ProvenBatchMode::MergeRoot
-            }
-        },
+        proof_mode,
+        proof_kind: consensus_proof_artifact_kind_from_pallet(artifact.proof_kind),
+        verifier_profile: artifact.verifier_profile,
         claimed_payout_amount: artifact
             .artifact_claim
             .as_ref()
@@ -39,6 +93,9 @@ mod tests {
     use super::*;
 
     fn artifact() -> pallet_shielded_pool::types::CandidateArtifact {
+        let (proof_kind, verifier_profile) = legacy_pallet_artifact_identity(
+            pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+        );
         pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count: 2,
@@ -47,8 +104,11 @@ mod tests {
             da_chunk_count: 1,
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2, 3]),
             proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            proof_kind,
+            verifier_profile,
             flat_batches: vec![],
             merge_root: None,
+            receipt_root: None,
             artifact_claim: None,
         }
     }
@@ -68,5 +128,30 @@ mod tests {
         let announcement = artifact_announcement(&artifact);
         assert_eq!(announcement.tx_count, 2);
         assert_eq!(announcement.tx_statements_commitment, [7u8; 48]);
+        assert_eq!(
+            announcement.proof_kind,
+            consensus::ProofArtifactKind::FlatBatches
+        );
+        assert_eq!(
+            announcement.verifier_profile,
+            consensus::legacy_block_artifact_verifier_profile(
+                consensus::ProofArtifactKind::FlatBatches
+            )
+        );
+    }
+
+    #[test]
+    fn receipt_root_uses_experimental_verifier_profile() {
+        let (kind, verifier_profile) = legacy_pallet_artifact_identity(
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        );
+        assert_eq!(
+            kind,
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        );
+        assert_eq!(
+            verifier_profile,
+            superneo_hegemon::experimental_receipt_root_verifier_profile()
+        );
     }
 }

@@ -1,0 +1,16 @@
+[package]
+name = "superneo-ring"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+superneo-ccs = { path = "../superneo-ccs" }
+
+[lints]
+workspace = true

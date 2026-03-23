@@ -30,6 +30,12 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 - Rust crate `consensus` exposes `BlockBuilder`, ledger-state transition helpers, and PQ signature utilities that miners call w
 hen assembling payloads.
+- The proof-bearing block boundary is now backend-neutral:
+  - `ProofEnvelope { kind, verifier_profile, artifact_bytes }`
+  - `TxValidityReceipt { statement_hash, proof_digest, public_inputs_digest, verifier_profile }`
+  - `TxValidityArtifact { receipt, proof }`
+  - `ConsensusBlock` carries `tx_validity_artifacts` plus an optional `block_artifact` instead of a raw `transaction_proofs` field.
+- Import routes proof checks through `VerifierRegistry`, which currently has adapters for `InlineTx`, `MergeRoot`, and the experimental `ReceiptRoot` artifact family.
 - Go benchmarking module `consensus/bench` offers `cmd/netbench`:
   - Flags: `--miners`, `--payload-bytes`, `--pq-signature-bytes`, `--smoke`.
   - Output: JSON summary with `messages_per_second`, `avg_latency_ms`, `pq_signature_bytes` so operators can project miner gossi
@@ -224,8 +230,26 @@ Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursi
 
 Artifact market RPC notes:
 
-- `prover_listArtifactAnnouncements` returns lightweight reusable-artifact metadata for prepared candidate artifacts.
-- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a matching `(tx_statements_commitment, tx_count)` pair when one is available.
+- `prover_listArtifactAnnouncements` returns lightweight reusable-artifact metadata for prepared candidate artifacts. Each entry now includes legacy `proof_mode` plus explicit `proof_kind` and `verifier_profile` fields so clients can distinguish backend family from compatibility transport labels.
+- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a matching `(tx_statements_commitment, tx_count)` pair when one is available. The response also includes the artifact’s explicit `proof_kind` and `verifier_profile`; the request tuple remains `(tx_statements_commitment, tx_count)` for compatibility in the current branch.
+
+`ArtifactAnnouncementResponse` fields:
+- `artifact_hash: String` (`0x`-prefixed hex)
+- `tx_statements_commitment: String` (`0x`-prefixed hex)
+- `tx_count: u32`
+- `proof_mode: String` (legacy compatibility label: `inline_tx` | `flat_batches` | `merge_root` | `receipt_root`)
+- `proof_kind: String` (backend-neutral artifact family label)
+- `verifier_profile: String` (`0x`-prefixed 48-byte digest)
+- `claimed_payout_amount: u64`
+
+`CandidateArtifactResponse` fields:
+- `artifact_hash: String` (`0x`-prefixed hex)
+- `tx_statements_commitment: String` (`0x`-prefixed hex)
+- `tx_count: u32`
+- `proof_kind: String`
+- `verifier_profile: String` (`0x`-prefixed 48-byte digest)
+- `candidate_txs: Vec<String>` (SCALE-encoded extrinsics as `0x` hex)
+- `payload: String` (full SCALE-encoded `CandidateArtifact` as `0x` hex)
 
 ## Documentation hooks
 

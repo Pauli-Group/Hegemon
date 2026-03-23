@@ -13,9 +13,11 @@ use crate::merge_root_layout::{
     merge_root_tree_levels_for_tx_count,
 };
 use crate::types::{
-    Block, DaParams, DaRoot, FeeCommitment, ProofVerificationMode, ProvenBatchMode,
-    StarkCommitment, StateRoot, TxStatementBinding, VersionCommitment, compute_fee_commitment,
-    compute_proof_commitment, compute_version_commitment, da_root, kernel_root_from_shielded_root,
+    Block, DaParams, DaRoot, FeeCommitment, ProofArtifactKind, ProofEnvelope,
+    ProofVerificationMode, ProvenBatchMode, StarkCommitment, StateRoot, TxStatementBinding,
+    TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest, VersionCommitment,
+    compute_fee_commitment, compute_proof_commitment, compute_version_commitment, da_root,
+    kernel_root_from_shielded_root, legacy_block_artifact_verifier_profile,
 };
 use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
@@ -25,11 +27,20 @@ use rayon::prelude::*;
 use std::any::Any;
 use std::collections::BTreeSet;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::Arc;
 use std::time::Instant;
+use superneo_hegemon::{
+    CanonicalTxValidityReceipt, experimental_receipt_root_verifier_profile,
+    verify_receipt_root_artifact_bytes,
+};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::proof::verify as verify_transaction_proof;
+use transaction_circuit::proof::{
+    TransactionProof, transaction_proof_digest, transaction_public_inputs_digest,
+    transaction_statement_hash, transaction_verifier_profile_digest,
+    transaction_verifier_profile_digest_for_version, verify as verify_transaction_proof,
+};
 #[cfg(test)]
 use tx_proof_manifest::TxProofManifestPublicInputs;
 
@@ -37,6 +48,259 @@ use tx_proof_manifest::TxProofManifestPublicInputs;
 pub struct CommitmentNullifierLists {
     pub nullifiers: Vec<[u8; 48]>,
     pub sorted_nullifiers: Vec<[u8; 48]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockArtifactVerifyReport {
+    pub tx_count: usize,
+    pub verified_statement_commitment: [u8; 48],
+    pub verify_ms: u128,
+    pub verify_batch_ms: u128,
+    pub cache_hit: Option<bool>,
+    pub cache_build_ms: Option<u128>,
+}
+
+pub trait ArtifactVerifier: Send + Sync {
+    fn kind(&self) -> ProofArtifactKind;
+    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool;
+
+    fn verify_tx_artifact(
+        &self,
+        _tx: &crate::types::Transaction,
+        _artifact: &TxValidityArtifact,
+    ) -> Result<TxStatementBinding, ProofError> {
+        Err(ProofError::UnsupportedProofArtifact(format!(
+            "proof kind {} does not support tx-artifact verification",
+            self.kind().label()
+        )))
+    }
+
+    fn verify_block_artifact(
+        &self,
+        _txs: &[crate::types::Transaction],
+        _tx_artifacts: Option<&[TxValidityArtifact]>,
+        _expected_commitment: &[u8; 48],
+        _envelope: &ProofEnvelope,
+    ) -> Result<BlockArtifactVerifyReport, ProofError> {
+        Err(ProofError::UnsupportedProofArtifact(format!(
+            "proof kind {} does not support block-artifact verification",
+            self.kind().label()
+        )))
+    }
+}
+
+#[derive(Clone)]
+pub struct VerifierRegistry {
+    verifiers: Vec<Arc<dyn ArtifactVerifier>>,
+}
+
+impl Default for VerifierRegistry {
+    fn default() -> Self {
+        let mut registry = Self {
+            verifiers: Vec::new(),
+        };
+        registry.register(Arc::new(InlineTxP3Verifier {
+            verifying_key: generate_keys().1,
+        }));
+        registry.register(Arc::new(MergeRootP3Verifier));
+        registry.register(Arc::new(ReceiptRootVerifier));
+        registry
+    }
+}
+
+impl VerifierRegistry {
+    pub fn register(&mut self, verifier: Arc<dyn ArtifactVerifier>) {
+        self.verifiers.push(verifier);
+    }
+
+    pub fn resolve(
+        &self,
+        kind: ProofArtifactKind,
+        verifier_profile: VerifierProfileDigest,
+    ) -> Result<&dyn ArtifactVerifier, ProofError> {
+        self.verifiers
+            .iter()
+            .find(|verifier| {
+                verifier.kind() == kind && verifier.supports_verifier_profile(verifier_profile)
+            })
+            .map(|verifier| verifier.as_ref())
+            .ok_or_else(|| {
+                ProofError::MissingArtifactVerifier(format!(
+                    "kind={} verifier_profile=0x{} has no registered verifier",
+                    kind.label(),
+                    hex::encode(verifier_profile)
+                ))
+            })
+    }
+}
+
+struct InlineTxP3Verifier {
+    verifying_key: transaction_circuit::keys::VerifyingKey,
+}
+
+impl ArtifactVerifier for InlineTxP3Verifier {
+    fn kind(&self) -> ProofArtifactKind {
+        ProofArtifactKind::InlineTx
+    }
+
+    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
+        verifier_profile != [0u8; 48]
+    }
+
+    fn verify_tx_artifact(
+        &self,
+        tx: &crate::types::Transaction,
+        artifact: &TxValidityArtifact,
+    ) -> Result<TxStatementBinding, ProofError> {
+        let proof = decode_inline_tx_artifact_proof(artifact)?;
+        let expected_profile = transaction_verifier_profile_digest_for_version(tx.version);
+        if artifact.receipt.verifier_profile != expected_profile {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "verifier profile mismatch".to_string(),
+            });
+        }
+        let envelope = artifact
+            .proof
+            .as_ref()
+            .ok_or(ProofError::MissingTransactionProofs)?;
+        if envelope.verifier_profile != expected_profile {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "proof envelope verifier profile mismatch".to_string(),
+            });
+        }
+        let expected_receipt = tx_validity_receipt_from_proof(&proof)
+            .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })?;
+        if expected_receipt != artifact.receipt {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "tx validity receipt mismatch".to_string(),
+            });
+        }
+        verify_transaction_proof_inputs_unindexed(tx, &proof)
+            .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })?;
+        verify_transaction_proof_unindexed(&self.verifying_key, &proof)
+            .map_err(|message| ProofError::TransactionProofVerification { index: 0, message })?;
+        Ok(statement_binding_from_proof(&proof))
+    }
+}
+
+struct MergeRootP3Verifier;
+
+impl ArtifactVerifier for MergeRootP3Verifier {
+    fn kind(&self) -> ProofArtifactKind {
+        ProofArtifactKind::MergeRoot
+    }
+
+    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
+        verifier_profile == legacy_block_artifact_verifier_profile(self.kind())
+    }
+
+    fn verify_block_artifact(
+        &self,
+        txs: &[crate::types::Transaction],
+        _tx_artifacts: Option<&[TxValidityArtifact]>,
+        expected_commitment: &[u8; 48],
+        envelope: &ProofEnvelope,
+    ) -> Result<BlockArtifactVerifyReport, ProofError> {
+        if envelope.kind != self.kind() {
+            return Err(ProofError::UnsupportedProofArtifact(format!(
+                "expected {} block artifact, got {}",
+                self.kind().label(),
+                envelope.kind.label()
+            )));
+        }
+        if envelope.verifier_profile != legacy_block_artifact_verifier_profile(self.kind()) {
+            return Err(ProofError::AggregationProofInputsMismatch(
+                "merge-root verifier profile mismatch".to_string(),
+            ));
+        }
+        let verify_metrics = verify_aggregation_proof_safely(
+            &envelope.artifact_bytes,
+            txs.len(),
+            expected_commitment,
+        )?;
+        Ok(BlockArtifactVerifyReport {
+            tx_count: txs.len(),
+            verified_statement_commitment: *expected_commitment,
+            verify_ms: verify_metrics.total_ms,
+            verify_batch_ms: verify_metrics.verify_batch_ms,
+            cache_hit: Some(verify_metrics.cache_hit),
+            cache_build_ms: Some(verify_metrics.cache_build_ms),
+        })
+    }
+}
+
+struct ReceiptRootVerifier;
+
+impl ArtifactVerifier for ReceiptRootVerifier {
+    fn kind(&self) -> ProofArtifactKind {
+        ProofArtifactKind::ReceiptRoot
+    }
+
+    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
+        verifier_profile == experimental_receipt_root_verifier_profile()
+    }
+
+    fn verify_block_artifact(
+        &self,
+        txs: &[crate::types::Transaction],
+        tx_artifacts: Option<&[TxValidityArtifact]>,
+        expected_commitment: &[u8; 48],
+        envelope: &ProofEnvelope,
+    ) -> Result<BlockArtifactVerifyReport, ProofError> {
+        if envelope.kind != self.kind() {
+            return Err(ProofError::UnsupportedProofArtifact(format!(
+                "expected {} block artifact, got {}",
+                self.kind().label(),
+                envelope.kind.label()
+            )));
+        }
+        if envelope.verifier_profile != experimental_receipt_root_verifier_profile() {
+            return Err(ProofError::AggregationProofInputsMismatch(
+                "receipt-root verifier profile mismatch".to_string(),
+            ));
+        }
+        let receipts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+        if receipts.len() != txs.len() {
+            return Err(ProofError::TransactionProofCountMismatch {
+                expected: txs.len(),
+                observed: receipts.len(),
+            });
+        }
+        let canonical = receipts
+            .iter()
+            .map(|artifact| CanonicalTxValidityReceipt {
+                statement_hash: artifact.receipt.statement_hash,
+                proof_digest: artifact.receipt.proof_digest,
+                public_inputs_digest: artifact.receipt.public_inputs_digest,
+                verifier_profile: artifact.receipt.verifier_profile,
+            })
+            .collect::<Vec<_>>();
+        let derived_receipt_commitment = commitment_from_receipts(receipts)?;
+        if derived_receipt_commitment != *expected_commitment {
+            return Err(ProofError::AggregationProofInputsMismatch(
+                "receipt-root statement commitment mismatch".to_string(),
+            ));
+        }
+        let start_verify = Instant::now();
+        verify_receipt_root_artifact_bytes(&canonical, &envelope.artifact_bytes).map_err(
+            |err| {
+                ProofError::AggregationProofVerification(format!(
+                    "receipt-root verification failed: {err}"
+                ))
+            },
+        )?;
+        Ok(BlockArtifactVerifyReport {
+            tx_count: txs.len(),
+            verified_statement_commitment: *expected_commitment,
+            verify_ms: start_verify.elapsed().as_millis(),
+            verify_batch_ms: 0,
+            cache_hit: None,
+            cache_build_ms: None,
+        })
+    }
 }
 
 pub fn commitment_nullifier_lists(
@@ -199,20 +463,168 @@ where
     }
 }
 
-fn verify_transaction_proof_safely(
-    verifying_key: &transaction_circuit::keys::VerifyingKey,
-    index: usize,
-    proof: &transaction_circuit::TransactionProof,
-) -> Result<(), ProofError> {
-    run_verifier(
-        format!("transaction proof verification at index {index}"),
-        || verify_transaction_proof(proof, verifying_key),
-        |err| ProofError::TransactionProofVerification {
-            index,
-            message: err.to_string(),
-        },
-    )?;
+pub fn tx_validity_receipt_from_proof(
+    proof: &TransactionProof,
+) -> Result<TxValidityReceipt, String> {
+    let public_inputs_digest =
+        transaction_public_inputs_digest(proof).map_err(|err| err.to_string())?;
+    Ok(TxValidityReceipt {
+        statement_hash: transaction_statement_hash(proof),
+        proof_digest: transaction_proof_digest(proof),
+        public_inputs_digest,
+        verifier_profile: transaction_verifier_profile_digest(proof),
+    })
+}
+
+pub fn tx_validity_artifact_from_proof(
+    proof: &TransactionProof,
+) -> Result<TxValidityArtifact, ProofError> {
+    let receipt = tx_validity_receipt_from_proof(proof)
+        .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })?;
+    let artifact_bytes =
+        bincode::serialize(proof).map_err(|err| ProofError::TransactionProofVerification {
+            index: 0,
+            message: format!("failed to serialize inline tx proof artifact: {err}"),
+        })?;
+    Ok(TxValidityArtifact {
+        receipt: receipt.clone(),
+        proof: Some(ProofEnvelope {
+            kind: ProofArtifactKind::InlineTx,
+            verifier_profile: receipt.verifier_profile,
+            artifact_bytes,
+        }),
+    })
+}
+
+pub fn tx_validity_artifact_from_receipt(receipt: TxValidityReceipt) -> TxValidityArtifact {
+    TxValidityArtifact {
+        receipt,
+        proof: None,
+    }
+}
+
+fn decode_inline_tx_artifact_proof(
+    artifact: &TxValidityArtifact,
+) -> Result<TransactionProof, ProofError> {
+    let envelope = artifact
+        .proof
+        .as_ref()
+        .ok_or(ProofError::MissingTransactionProofs)?;
+    if envelope.kind != ProofArtifactKind::InlineTx {
+        return Err(ProofError::UnsupportedProofArtifact(format!(
+            "expected inline_tx proof envelope, got {}",
+            envelope.kind.label()
+        )));
+    }
+    bincode::deserialize(&envelope.artifact_bytes).map_err(|err| {
+        ProofError::TransactionProofVerification {
+            index: 0,
+            message: format!("failed to decode inline tx proof artifact: {err}"),
+        }
+    })
+}
+
+fn verify_transaction_proof_inputs_unindexed(
+    tx: &crate::types::Transaction,
+    proof: &TransactionProof,
+) -> Result<(), String> {
+    if proof.version_binding() != tx.version {
+        return Err("version binding mismatch".to_string());
+    }
+
+    let expected_nullifiers: Vec<[u8; 48]> = proof
+        .nullifiers
+        .iter()
+        .copied()
+        .filter(|value| *value != [0u8; 48])
+        .collect();
+    if tx.nullifiers != expected_nullifiers {
+        return Err("nullifier list mismatch".to_string());
+    }
+
+    let expected_commitments: Vec<[u8; 48]> = proof
+        .commitments
+        .iter()
+        .copied()
+        .filter(|value| *value != [0u8; 48])
+        .collect();
+    if tx.commitments != expected_commitments {
+        return Err("commitment list mismatch".to_string());
+    }
+
+    if tx.balance_tag != proof.public_inputs.balance_tag {
+        return Err("balance tag mismatch".to_string());
+    }
+
+    if !tx.ciphertexts.is_empty() {
+        let mut derived_hashes: Vec<[u8; 48]> = tx
+            .ciphertexts
+            .iter()
+            .map(|ciphertext| ciphertext_hash_bytes(ciphertext))
+            .collect();
+        derived_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
+        if derived_hashes != proof.public_inputs.ciphertext_hashes {
+            return Err("ciphertext hash mismatch".to_string());
+        }
+    }
+
+    let mut expected_ciphertext_hashes = tx.ciphertext_hashes.clone();
+    expected_ciphertext_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
+    if expected_ciphertext_hashes != proof.public_inputs.ciphertext_hashes {
+        return Err("ciphertext hash mismatch".to_string());
+    }
+
     Ok(())
+}
+
+fn verify_transaction_proof_unindexed(
+    verifying_key: &transaction_circuit::keys::VerifyingKey,
+    proof: &TransactionProof,
+) -> Result<(), String> {
+    verify_transaction_proof(proof, verifying_key)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+fn reindex_tx_artifact_error(index: usize, error: ProofError) -> ProofError {
+    match error {
+        ProofError::TransactionProofInputsMismatch { message, .. } => {
+            ProofError::TransactionProofInputsMismatch { index, message }
+        }
+        ProofError::TransactionProofVerification { message, .. } => {
+            ProofError::TransactionProofVerification { index, message }
+        }
+        other => other,
+    }
+}
+
+fn verify_tx_validity_artifacts(
+    registry: &VerifierRegistry,
+    transactions: &[crate::types::Transaction],
+    artifacts: &[TxValidityArtifact],
+) -> Result<Vec<TxStatementBinding>, ProofError> {
+    if artifacts.len() != transactions.len() {
+        return Err(ProofError::TransactionProofCountMismatch {
+            expected: transactions.len(),
+            observed: artifacts.len(),
+        });
+    }
+
+    transactions
+        .par_iter()
+        .zip(artifacts)
+        .enumerate()
+        .map(|(index, (tx, artifact))| {
+            let envelope = artifact
+                .proof
+                .as_ref()
+                .ok_or(ProofError::MissingTransactionProofs)?;
+            let verifier = registry.resolve(envelope.kind, envelope.verifier_profile)?;
+            verifier
+                .verify_tx_artifact(tx, artifact)
+                .map_err(|err| reindex_tx_artifact_error(index, err))
+        })
+        .collect()
 }
 
 fn verify_batch_proof_bytes_safely(
@@ -291,15 +703,19 @@ impl ProofVerifier for HashVerifier {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ParallelProofVerifier {
     verifying_key: transaction_circuit::keys::VerifyingKey,
+    verifier_registry: VerifierRegistry,
 }
 
 impl ParallelProofVerifier {
     pub fn new() -> Self {
         let (_, verifying_key) = generate_keys();
-        Self { verifying_key }
+        Self {
+            verifying_key,
+            verifier_registry: VerifierRegistry::default(),
+        }
     }
 }
 
@@ -343,28 +759,37 @@ impl ProofVerifier for ParallelProofVerifier {
             .sum();
 
         if block.transactions.is_empty() {
-            if block.proven_batch.is_some() || block.transaction_proofs.is_some() {
+            if block.proven_batch.is_some()
+                || block.tx_validity_artifacts.is_some()
+                || block.block_artifact.is_some()
+            {
                 return Err(ProofError::CommitmentProofEmptyBlock);
             }
             return apply_commitments(parent_commitment_tree, &block.transactions);
         }
 
         let verification_mode = block.proof_verification_mode;
-        let transaction_proofs = block.transaction_proofs.as_ref();
-
-        let tx_proof_bytes_total: usize = transaction_proofs
-            .map(|proofs| proofs.iter().map(|proof| proof.stark_proof.len()).sum())
+        let tx_validity_artifacts = block.tx_validity_artifacts.as_ref();
+        let tx_proof_bytes_total: usize = tx_validity_artifacts
+            .map(|artifacts| {
+                artifacts
+                    .iter()
+                    .filter_map(|artifact| artifact.proof.as_ref())
+                    .map(|envelope| envelope.artifact_bytes.len())
+                    .sum()
+            })
             .unwrap_or(0);
-        if let Some(proofs) = transaction_proofs
-            && proofs.len() != block.transactions.len()
+
+        if let Some(artifacts) = tx_validity_artifacts
+            && artifacts.len() != block.transactions.len()
         {
             return Err(ProofError::TransactionProofCountMismatch {
                 expected: block.transactions.len(),
-                observed: proofs.len(),
+                observed: artifacts.len(),
             });
         }
         if matches!(verification_mode, ProofVerificationMode::InlineRequired)
-            && transaction_proofs.is_none()
+            && tx_validity_artifacts.is_none()
         {
             return Err(ProofError::MissingTransactionProofs);
         }
@@ -377,30 +802,17 @@ impl ProofVerifier for ParallelProofVerifier {
                 return Err(ProofError::MissingProvenBatchForSelfContained);
             }
 
-            let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
-            proofs
-                .par_iter()
-                .zip(&block.transactions)
-                .enumerate()
-                .try_for_each(|(index, (proof, tx))| {
-                    verify_transaction_proof_inputs(index, tx, proof)?;
-                    Ok::<_, ProofError>(())
-                })?;
+            let tx_artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
             let start_tx = Instant::now();
-            proofs
-                .par_iter()
-                .enumerate()
-                .try_for_each(|(index, proof)| {
-                    verify_transaction_proof_safely(&self.verifying_key, index, proof)?;
-                    Ok::<_, ProofError>(())
-                })?;
+            let bindings = verify_tx_validity_artifacts(
+                &self.verifier_registry,
+                &block.transactions,
+                tx_artifacts,
+            )?;
             let tx_verify_ms = start_tx.elapsed().as_millis();
 
             let expected_tree = apply_commitments(parent_commitment_tree, &block.transactions)?;
-            let anchors: Vec<[u8; 48]> = proofs
-                .iter()
-                .map(|proof| proof.public_inputs.merkle_root)
-                .collect();
+            let anchors: Vec<[u8; 48]> = bindings.iter().map(|binding| binding.anchor).collect();
             let result = verify_and_apply_tree_transition(
                 parent_commitment_tree,
                 parent_commitment_tree.root(),
@@ -443,22 +855,30 @@ impl ProofVerifier for ParallelProofVerifier {
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
         let commitment_verify_ms = start_commitment.elapsed().as_millis();
 
-        let resolved_statement_bindings =
-            if let Some(bindings) = block.tx_statement_bindings.clone() {
-                if bindings.len() != block.transactions.len() {
-                    return Err(ProofError::CommitmentProofInputsMismatch(format!(
-                        "transaction statement binding count mismatch (expected {}, got {})",
-                        block.transactions.len(),
-                        bindings.len()
-                    )));
-                }
-                Some(bindings)
-            } else if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
-                let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
-                Some(statement_bindings_from_transaction_proofs(proofs)?)
-            } else {
-                None
-            };
+        let mut verified_tx_bindings: Option<Vec<TxStatementBinding>> = None;
+        let resolved_statement_bindings = if let Some(bindings) =
+            block.tx_statement_bindings.clone()
+        {
+            if bindings.len() != block.transactions.len() {
+                return Err(ProofError::CommitmentProofInputsMismatch(format!(
+                    "transaction statement binding count mismatch (expected {}, got {})",
+                    block.transactions.len(),
+                    bindings.len()
+                )));
+            }
+            Some(bindings)
+        } else if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
+            let artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+            let bindings = verify_tx_validity_artifacts(
+                &self.verifier_registry,
+                &block.transactions,
+                artifacts,
+            )?;
+            verified_tx_bindings = Some(bindings.clone());
+            Some(bindings)
+        } else {
+            None
+        };
 
         if matches!(
             verification_mode,
@@ -472,7 +892,6 @@ impl ProofVerifier for ParallelProofVerifier {
             .as_deref()
             .map(commitment_from_statement_bindings)
             .transpose()?;
-
         let expected_commitment =
             match (block.tx_statements_commitment, derived_statement_commitment) {
                 (Some(expected), Some(derived)) => {
@@ -498,26 +917,39 @@ impl ProofVerifier for ParallelProofVerifier {
             ));
         }
 
-        if matches!(verification_mode, ProofVerificationMode::InlineRequired)
-            && let Some(proofs) = transaction_proofs
-        {
-            proofs
-                .par_iter()
-                .zip(&block.transactions)
-                .enumerate()
-                .try_for_each(|(index, (proof, tx))| {
-                    verify_transaction_proof_inputs(index, tx, proof)?;
-                    Ok::<_, ProofError>(())
-                })?;
-        }
-
         let mut tx_verify_ms = 0u128;
-
         let mut aggregation_cache_hit = None;
         let mut aggregation_cache_build_ms = None;
         let mut aggregation_cache_prewarm_hit = None;
         let mut aggregation_cache_prewarm_build_ms = None;
         let mut aggregation_cache_prewarm_total_ms = None;
+        let block_artifact = block
+            .block_artifact
+            .clone()
+            .or_else(|| match proven_batch.mode {
+                ProvenBatchMode::MergeRoot => {
+                    proven_batch
+                        .merge_root
+                        .as_ref()
+                        .map(|merge_root| ProofEnvelope {
+                            kind: proven_batch.proof_kind,
+                            verifier_profile: proven_batch.verifier_profile,
+                            artifact_bytes: merge_root.root_proof.clone(),
+                        })
+                }
+                ProvenBatchMode::ReceiptRoot => {
+                    proven_batch
+                        .receipt_root
+                        .as_ref()
+                        .map(|receipt_root| ProofEnvelope {
+                            kind: proven_batch.proof_kind,
+                            verifier_profile: proven_batch.verifier_profile,
+                            artifact_bytes: receipt_root.root_proof.clone(),
+                        })
+                }
+                ProvenBatchMode::InlineTx | ProvenBatchMode::FlatBatches => None,
+            });
+
         let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
             match proven_batch.mode {
                 ProvenBatchMode::InlineTx => (false, 0u128, 0u128),
@@ -599,35 +1031,69 @@ impl ProofVerifier for ParallelProofVerifier {
                     }
                     aggregation_cache_prewarm_total_ms = Some(prewarm_start.elapsed().as_millis());
 
-                    let verify_metrics = verify_aggregation_proof_safely(
-                        &merge_root.root_proof,
-                        tx_count,
+                    let merge_root_verifier = self
+                        .verifier_registry
+                        .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
+                    let verify_report = merge_root_verifier.verify_block_artifact(
+                        &block.transactions,
+                        tx_validity_artifacts.map(|artifacts| artifacts.as_slice()),
                         &expected_commitment,
+                        block_artifact
+                            .as_ref()
+                            .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?,
                     )?;
-                    aggregation_cache_hit = Some(verify_metrics.cache_hit);
-                    aggregation_cache_build_ms = Some(verify_metrics.cache_build_ms);
-                    (
-                        true,
-                        verify_metrics.total_ms,
-                        verify_metrics.verify_batch_ms,
-                    )
+                    aggregation_cache_hit = verify_report.cache_hit;
+                    aggregation_cache_build_ms = verify_report.cache_build_ms;
+                    (true, verify_report.verify_ms, verify_report.verify_batch_ms)
+                }
+                ProvenBatchMode::ReceiptRoot => {
+                    let receipt_root = proven_batch.receipt_root.as_ref().ok_or_else(|| {
+                        ProofError::ProvenBatchBindingMismatch(
+                            "missing receipt_root payload for ReceiptRoot mode".to_string(),
+                        )
+                    })?;
+                    if receipt_root.metadata.leaf_count != tx_count as u32 {
+                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                            "receipt-root leaf_count mismatch (payload {}, expected {})",
+                            receipt_root.metadata.leaf_count, tx_count
+                        )));
+                    }
+                    if receipt_root.receipts.len() != tx_count {
+                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                            "receipt-root receipt count mismatch (payload {}, expected {})",
+                            receipt_root.receipts.len(),
+                            tx_count
+                        )));
+                    }
+                    let receipt_root_verifier = self
+                        .verifier_registry
+                        .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
+                    let verify_report = receipt_root_verifier.verify_block_artifact(
+                        &block.transactions,
+                        tx_validity_artifacts.map(|artifacts| artifacts.as_slice()),
+                        &expected_commitment,
+                        block_artifact
+                            .as_ref()
+                            .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?,
+                    )?;
+                    (true, verify_report.verify_ms, verify_report.verify_batch_ms)
                 }
             };
 
         if !aggregation_verified {
             match verification_mode {
                 ProofVerificationMode::InlineRequired => {
-                    let transaction_proofs =
-                        transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
-                    let start_tx = Instant::now();
-                    transaction_proofs
-                        .par_iter()
-                        .enumerate()
-                        .try_for_each(|(index, proof)| {
-                            verify_transaction_proof_safely(&self.verifying_key, index, proof)?;
-                            Ok::<_, ProofError>(())
-                        })?;
-                    tx_verify_ms = start_tx.elapsed().as_millis();
+                    if verified_tx_bindings.is_none() {
+                        let artifacts =
+                            tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+                        let start_tx = Instant::now();
+                        verified_tx_bindings = Some(verify_tx_validity_artifacts(
+                            &self.verifier_registry,
+                            &block.transactions,
+                            artifacts,
+                        )?);
+                        tx_verify_ms = start_tx.elapsed().as_millis();
+                    }
                 }
                 ProofVerificationMode::SelfContainedAggregation => {
                     return Err(ProofError::MissingAggregationProofForSelfContainedMode);
@@ -639,11 +1105,10 @@ impl ProofVerifier for ParallelProofVerifier {
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
         let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
         let result = if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
-            let proofs = transaction_proofs.ok_or(ProofError::MissingTransactionProofs)?;
-            let anchors: Vec<[u8; 48]> = proofs
-                .iter()
-                .map(|proof| proof.public_inputs.merkle_root)
-                .collect();
+            let bindings = verified_tx_bindings
+                .as_ref()
+                .ok_or(ProofError::MissingTransactionProofs)?;
+            let anchors: Vec<[u8; 48]> = bindings.iter().map(|binding| binding.anchor).collect();
             verify_and_apply_tree_transition(
                 parent_commitment_tree,
                 proof_starting_root,
@@ -766,16 +1231,6 @@ fn apply_commitments(
     Ok(tree)
 }
 
-fn statement_bindings_from_transaction_proofs(
-    proofs: &[transaction_circuit::TransactionProof],
-) -> Result<Vec<TxStatementBinding>, ProofError> {
-    let mut bindings = Vec::with_capacity(proofs.len());
-    for proof in proofs {
-        bindings.push(statement_binding_from_proof(proof));
-    }
-    Ok(bindings)
-}
-
 fn commitment_from_statement_bindings(
     bindings: &[TxStatementBinding],
 ) -> Result<[u8; 48], ProofError> {
@@ -785,6 +1240,15 @@ fn commitment_from_statement_bindings(
         .collect::<Vec<_>>();
     CommitmentBlockProver::commitment_from_statement_hashes(&hashes)
         .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))
+}
+
+fn commitment_from_receipts(receipts: &[TxValidityArtifact]) -> Result<[u8; 48], ProofError> {
+    let hashes = receipts
+        .iter()
+        .map(|artifact| artifact.receipt.statement_hash)
+        .collect::<Vec<_>>();
+    CommitmentBlockProver::commitment_from_statement_hashes(&hashes)
+        .map_err(|err| ProofError::AggregationProofInputsMismatch(err.to_string()))
 }
 
 fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
@@ -797,6 +1261,11 @@ fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
             .merge_root
             .as_ref()
             .map(|merge| merge.root_proof.len())
+            .unwrap_or(0),
+        ProvenBatchMode::ReceiptRoot => batch
+            .receipt_root
+            .as_ref()
+            .map(|receipt_root| receipt_root.root_proof.len())
             .unwrap_or(0),
     }
 }
@@ -811,6 +1280,11 @@ fn total_batch_proof_uncompressed_bytes(batch: &crate::types::ProvenBatch) -> us
             .merge_root
             .as_ref()
             .map(|merge| aggregation_proof_uncompressed_len(&merge.root_proof))
+            .unwrap_or(0),
+        ProvenBatchMode::ReceiptRoot => batch
+            .receipt_root
+            .as_ref()
+            .map(|receipt_root| receipt_root.root_proof.len())
             .unwrap_or(0),
     }
 }
@@ -1160,32 +1634,7 @@ fn verify_flat_batch_bindings_against_transactions(
 }
 
 fn statement_hash_from_proof(proof: &transaction_circuit::TransactionProof) -> [u8; 48] {
-    let public = &proof.public_inputs;
-    let mut message = Vec::new();
-    message.extend_from_slice(b"tx-statement-v1");
-    message.extend_from_slice(&public.merkle_root);
-    for nf in &public.nullifiers {
-        message.extend_from_slice(nf);
-    }
-    for cm in &public.commitments {
-        message.extend_from_slice(cm);
-    }
-    for ct in &public.ciphertext_hashes {
-        message.extend_from_slice(ct);
-    }
-    message.extend_from_slice(&public.native_fee.to_le_bytes());
-    message.extend_from_slice(&public.value_balance.to_le_bytes());
-    message.extend_from_slice(&public.balance_tag);
-    message.extend_from_slice(&public.circuit_version.to_le_bytes());
-    message.extend_from_slice(&public.crypto_suite.to_le_bytes());
-    message.push(public.stablecoin.enabled as u8);
-    message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
-    message.extend_from_slice(&public.stablecoin.policy_hash);
-    message.extend_from_slice(&public.stablecoin.oracle_commitment);
-    message.extend_from_slice(&public.stablecoin.attestation_commitment);
-    message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
-    message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
-    blake3_384(&message)
+    transaction_statement_hash(proof)
 }
 
 fn statement_binding_from_proof(
@@ -1197,78 +1646,6 @@ fn statement_binding_from_proof(
         fee: proof.public_inputs.native_fee,
         circuit_version: u32::from(proof.public_inputs.circuit_version),
     }
-}
-
-fn verify_transaction_proof_inputs(
-    index: usize,
-    tx: &crate::types::Transaction,
-    proof: &transaction_circuit::TransactionProof,
-) -> Result<(), ProofError> {
-    if proof.version_binding() != tx.version {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index,
-            message: "version binding mismatch".to_string(),
-        });
-    }
-
-    let expected_nullifiers: Vec<[u8; 48]> = proof
-        .nullifiers
-        .iter()
-        .copied()
-        .filter(|value| *value != [0u8; 48])
-        .collect();
-    if expected_nullifiers != tx.nullifiers {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index,
-            message: "nullifier list mismatch".to_string(),
-        });
-    }
-
-    let expected_commitments: Vec<[u8; 48]> = proof
-        .commitments
-        .iter()
-        .copied()
-        .filter(|value| *value != [0u8; 48])
-        .collect();
-    if expected_commitments != tx.commitments {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index,
-            message: "commitment list mismatch".to_string(),
-        });
-    }
-
-    if proof.public_inputs.balance_tag != tx.balance_tag {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index,
-            message: "balance tag mismatch".to_string(),
-        });
-    }
-
-    if !tx.ciphertexts.is_empty() {
-        let mut derived_hashes: Vec<[u8; 48]> = tx
-            .ciphertexts
-            .iter()
-            .map(|ct| ciphertext_hash_bytes(ct))
-            .collect();
-        derived_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
-        if derived_hashes != proof.public_inputs.ciphertext_hashes {
-            return Err(ProofError::TransactionProofInputsMismatch {
-                index,
-                message: "ciphertext hash mismatch".to_string(),
-            });
-        }
-    }
-
-    let mut expected_ciphertext_hashes = tx.ciphertext_hashes.clone();
-    expected_ciphertext_hashes.resize(MAX_OUTPUTS, [0u8; 48]);
-    if expected_ciphertext_hashes != proof.public_inputs.ciphertext_hashes {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index,
-            message: "ciphertext hash mismatch".to_string(),
-        });
-    }
-
-    Ok(())
 }
 
 fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], ProofError> {

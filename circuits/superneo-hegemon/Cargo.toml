@@ -1,0 +1,20 @@
+[package]
+name = "superneo-hegemon"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+superneo-backend-lattice = { path = "../superneo-backend-lattice" }
+superneo-ccs = { path = "../superneo-ccs" }
+superneo-core = { path = "../superneo-core" }
+superneo-ring = { path = "../superneo-ring" }
+
+[lints]
+workspace = true

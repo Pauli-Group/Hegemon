@@ -90,8 +90,13 @@ fn build_block_with_commitment_proof(
         da_chunk_count: 1,
         commitment_proof,
         mode: ProvenBatchMode::FlatBatches,
+        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::FlatBatches),
+        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
+            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::FlatBatches),
+        ),
         flat_batches: Vec::new(),
         merge_root: None,
+        receipt_root: None,
     });
     block.tx_statement_bindings = Some(statement_bindings);
     block.tx_statements_commitment = Some(tx_statements_commitment);

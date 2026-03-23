@@ -1,0 +1,15 @@
+[package]
+name = "superneo-core"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+superneo-ccs = { path = "../superneo-ccs" }
+
+[lints]
+workspace = true

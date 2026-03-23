@@ -132,6 +132,10 @@ pub enum ProofError {
     FlatBatchProofDecodeFailed(String),
     #[error("flat batch coverage invalid: {0}")]
     FlatBatchCoverage(String),
+    #[error("unsupported proof artifact: {0}")]
+    UnsupportedProofArtifact(String),
+    #[error("no verifier registered for proof artifact: {0}")]
+    MissingArtifactVerifier(String),
     #[error("proof verifier panicked: {0}")]
     VerifierPanicked(String),
     #[error("commitment tree error: {0}")]

@@ -6,7 +6,7 @@ pub use state_da::{
     DaChunk, DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams,
     DaRoot,
 };
-use transaction_circuit::{TransactionProof, hashing_pq::ciphertext_hash_bytes};
+use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
 pub type Nullifier = [u8; 48];
 pub type Commitment = [u8; 48];
@@ -19,6 +19,7 @@ pub type StarkCommitment = [u8; 48];
 pub type VersionCommitment = [u8; 48];
 pub type StateRoot = [u8; 48];
 pub type NullifierRoot = [u8; 48];
+pub type VerifierProfileDigest = [u8; 48];
 pub type SupplyDigest = u128;
 pub type Amount = u64;
 pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
@@ -221,11 +222,71 @@ impl Default for ProofVerificationMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProofArtifactKind {
+    InlineTx,
+    FlatBatches,
+    MergeRoot,
+    ReceiptRoot,
+    Custom([u8; 16]),
+}
+
+impl ProofArtifactKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::InlineTx => "inline_tx",
+            Self::FlatBatches => "flat_batches",
+            Self::MergeRoot => "merge_root",
+            Self::ReceiptRoot => "receipt_root",
+            Self::Custom(_) => "custom",
+        }
+    }
+}
+
+pub fn proof_artifact_kind_from_mode(mode: ProvenBatchMode) -> ProofArtifactKind {
+    match mode {
+        ProvenBatchMode::InlineTx => ProofArtifactKind::InlineTx,
+        ProvenBatchMode::FlatBatches => ProofArtifactKind::FlatBatches,
+        ProvenBatchMode::MergeRoot => ProofArtifactKind::MergeRoot,
+        ProvenBatchMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
+    }
+}
+
+pub fn legacy_block_artifact_verifier_profile(kind: ProofArtifactKind) -> VerifierProfileDigest {
+    let mut material = Vec::new();
+    material.extend_from_slice(b"hegemon.legacy-block-artifact-profile.v1");
+    material.extend_from_slice(kind.label().as_bytes());
+    material.extend_from_slice(&BLOCK_PROOF_FORMAT_ID_V5.to_le_bytes());
+    blake3_384(&material)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProofEnvelope {
+    pub kind: ProofArtifactKind,
+    pub verifier_profile: VerifierProfileDigest,
+    pub artifact_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxValidityReceipt {
+    pub statement_hash: [u8; 48],
+    pub proof_digest: [u8; 48],
+    pub public_inputs_digest: [u8; 48],
+    pub verifier_profile: VerifierProfileDigest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxValidityArtifact {
+    pub receipt: TxValidityReceipt,
+    pub proof: Option<ProofEnvelope>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProvenBatchMode {
     InlineTx,
     FlatBatches,
     MergeRoot,
+    ReceiptRoot,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -252,6 +313,21 @@ pub struct MergeRootProofPayload {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceiptRootMetadata {
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    pub leaf_count: u32,
+    pub fold_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceiptRootProofPayload {
+    pub root_proof: Vec<u8>,
+    pub metadata: ReceiptRootMetadata,
+    pub receipts: Vec<TxValidityReceipt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvenBatch {
     pub version: u8,
     pub tx_count: u32,
@@ -260,8 +336,11 @@ pub struct ProvenBatch {
     pub da_chunk_count: u32,
     pub commitment_proof: CommitmentBlockProof,
     pub mode: ProvenBatchMode,
+    pub proof_kind: ProofArtifactKind,
+    pub verifier_profile: VerifierProfileDigest,
     pub flat_batches: Vec<BatchProofItem>,
     pub merge_root: Option<MergeRootProofPayload>,
+    pub receipt_root: Option<ReceiptRootProofPayload>,
 }
 
 /// Consensus-facing artifact claim for the prover or artifact publisher
@@ -287,6 +366,8 @@ pub struct ArtifactAnnouncement {
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
     pub proof_mode: ProvenBatchMode,
+    pub proof_kind: ProofArtifactKind,
+    pub verifier_profile: VerifierProfileDigest,
     pub claimed_payout_amount: u64,
 }
 
@@ -304,13 +385,14 @@ pub struct Block<BH> {
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
     pub proven_batch: Option<ProvenBatch>,
+    pub tx_validity_artifacts: Option<Vec<TxValidityArtifact>>,
+    pub block_artifact: Option<ProofEnvelope>,
     /// Canonical per-transaction statement bindings in transaction order.
     /// Each binding carries the transaction statement hash and the flat-batch public context.
     pub tx_statement_bindings: Option<Vec<TxStatementBinding>>,
     /// Optional commitment to transaction statement hashes, derived by the caller in canonical
     /// transaction order (for example from binding-hash statements on Substrate imports).
     pub tx_statements_commitment: Option<[u8; 48]>,
-    pub transaction_proofs: Option<Vec<TransactionProof>>,
     pub proof_verification_mode: ProofVerificationMode,
 }
 
@@ -321,9 +403,10 @@ impl<BH> Block<BH> {
             transactions: self.transactions,
             coinbase: self.coinbase,
             proven_batch: self.proven_batch,
+            tx_validity_artifacts: self.tx_validity_artifacts,
+            block_artifact: self.block_artifact,
             tx_statement_bindings: self.tx_statement_bindings,
             tx_statements_commitment: self.tx_statements_commitment,
-            transaction_proofs: self.transaction_proofs,
             proof_verification_mode: self.proof_verification_mode,
         }
     }

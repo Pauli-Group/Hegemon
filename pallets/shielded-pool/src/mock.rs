@@ -261,6 +261,7 @@ mod legacy_tests {
     }
 
     fn valid_proven_batch() -> crate::types::BlockProofBundle {
+        let proof_mode = BlockProofMode::FlatBatches;
         crate::types::BlockProofBundle {
             version: BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count: 1,
@@ -268,7 +269,9 @@ mod legacy_tests {
             da_root: valid_da_root(),
             da_chunk_count: 1,
             commitment_proof: valid_proof(),
-            proof_mode: BlockProofMode::FlatBatches,
+            proof_mode,
+            proof_kind: crate::types::proof_artifact_kind_from_mode(proof_mode),
+            verifier_profile: [7u8; 48],
             flat_batches: vec![BatchProofItem {
                 start_tx_index: 0,
                 tx_count: 1,
@@ -276,7 +279,8 @@ mod legacy_tests {
                 proof: valid_proof(),
             }],
             merge_root: None,
-            prover_claim: None,
+            receipt_root: None,
+            artifact_claim: None,
         }
     }
 
@@ -949,7 +953,7 @@ mod legacy_tests {
             let mut payload = valid_proven_batch();
             let mut claim = signed_prover_claim(&payload, 1);
             claim.claim_signature = vec![0u8; 64].try_into().expect("bounded invalid signature");
-            payload.prover_claim = Some(claim);
+            payload.artifact_claim = Some(claim);
             assert_noop!(
                 Pallet::<Test>::submit_proven_batch(RuntimeOrigin::none(), payload),
                 crate::Error::<Test>::InvalidProverClaimSignature
@@ -995,7 +999,7 @@ mod legacy_tests {
             ));
 
             let mut payload = valid_proven_batch();
-            payload.prover_claim = Some(signed_prover_claim(&payload, 3));
+            payload.artifact_claim = Some(signed_prover_claim(&payload, 3));
             assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
                 payload,
@@ -1050,7 +1054,7 @@ mod legacy_tests {
 
             let mut payload = valid_proven_batch();
             let claim = signed_prover_claim(&payload, 3);
-            payload.prover_claim = Some(claim.clone());
+            payload.artifact_claim = Some(claim.clone());
             assert_ok!(Pallet::<Test>::submit_proven_batch(
                 RuntimeOrigin::none(),
                 payload,

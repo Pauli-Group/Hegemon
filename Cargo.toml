@@ -35,8 +35,15 @@ members = [
     "pallets/shielded-pool",
     "pallets/archive-market",
     "pallets/kernel",
-    "tests", "node",
+    "tests",
+    "node",
     "runtime",
+    "circuits/superneo-ccs",
+    "circuits/superneo-core",
+    "circuits/superneo-ring",
+    "circuits/superneo-backend-lattice",
+    "circuits/superneo-hegemon",
+    "circuits/superneo-bench",
 ]
 exclude = ["spikes/recursion"]
 resolver = "2"

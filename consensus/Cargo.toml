@@ -13,6 +13,7 @@ tx-proof-manifest = { path = "../circuits/tx-proof-manifest" }
 codec = { workspace = true }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
+hex = "0.4"
 num-bigint = "0.4"
 num-traits = "0.2"
 parking_lot = "0.12"
@@ -32,6 +33,7 @@ p3-uni-stark = { workspace = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 rayon = "1"
 state-da = { path = "../state/da" }
+superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 sha2 = "0.10"
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }

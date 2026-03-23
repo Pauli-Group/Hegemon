@@ -44,8 +44,10 @@ pub use mining::{
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use proof::{
-    CommitmentNullifierLists, HashVerifier, ParallelProofVerifier, ProofVerifier,
-    commitment_nullifier_lists, verify_commitment_proof_payload,
+    ArtifactVerifier, BlockArtifactVerifyReport, CommitmentNullifierLists, HashVerifier,
+    ParallelProofVerifier, ProofVerifier, VerifierRegistry, commitment_nullifier_lists,
+    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt,
+    tx_validity_receipt_from_proof, verify_commitment_proof_payload,
 };
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CRYPTO_SUITE_GAMMA,
@@ -60,9 +62,12 @@ pub use types::{
     ArtifactAnnouncement, ArtifactClaim, BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, BatchProofItem,
     CandidateArtifact, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk,
     DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot,
-    FeeCommitment, MergeRootMetadata, MergeRootProofPayload, Nullifier, ProvenBatchMode,
-    StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob, da_root,
-    encode_da_blob, encode_da_blob_multipage, verify_da_chunk, verify_da_multi_chunk,
+    FeeCommitment, MergeRootMetadata, MergeRootProofPayload, Nullifier, ProofArtifactKind,
+    ProofEnvelope, ProvenBatchMode, ReceiptRootMetadata, ReceiptRootProofPayload, StarkCommitment,
+    SupplyDigest, Transaction, TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest,
+    VersionCommitment, build_da_blob, da_root, encode_da_blob, encode_da_blob_multipage,
+    legacy_block_artifact_verifier_profile, proof_artifact_kind_from_mode, verify_da_chunk,
+    verify_da_multi_chunk,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

@@ -5,6 +5,7 @@
 
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
+use synthetic_crypto::hashes::blake3_384;
 
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
@@ -21,7 +22,9 @@ use crate::p3_prover::TransactionProverP3;
 use crate::p3_verifier::verify_transaction_proof_bytes_p3;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
+use postcard::to_allocvec;
 use transaction_core::p3_air::TransactionPublicInputsP3;
+use transaction_core::p3_config::{FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS};
 
 /// A transaction proof containing public inputs and the STARK proof bytes.
 ///
@@ -102,6 +105,11 @@ impl TransactionProof {
         !self.stark_proof.is_empty()
     }
 }
+
+pub const TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
+pub const TX_PROOF_DIGEST_DOMAIN: &[u8] = b"tx-proof-digest-v1";
+pub const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
+pub const TX_VERIFIER_PROFILE_DOMAIN: &[u8] = b"hegemon.inline-tx-p3-profile.v1";
 
 /// Reconstruct the Plonky3 public inputs from a transaction proof.
 ///
@@ -219,6 +227,79 @@ pub fn stark_public_inputs_p3(
         stablecoin_oracle_commitment,
         stablecoin_attestation_commitment,
     })
+}
+
+pub fn transaction_statement_hash(proof: &TransactionProof) -> [u8; 48] {
+    let public = &proof.public_inputs;
+    let mut message = Vec::new();
+    message.extend_from_slice(TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(&public.merkle_root);
+    for nf in &public.nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for cm in &public.commitments {
+        message.extend_from_slice(cm);
+    }
+    for ct in &public.ciphertext_hashes {
+        message.extend_from_slice(ct);
+    }
+    message.extend_from_slice(&public.native_fee.to_le_bytes());
+    message.extend_from_slice(&public.value_balance.to_le_bytes());
+    message.extend_from_slice(&public.balance_tag);
+    message.extend_from_slice(&public.circuit_version.to_le_bytes());
+    message.extend_from_slice(&public.crypto_suite.to_le_bytes());
+    message.push(public.stablecoin.enabled as u8);
+    message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
+    message.extend_from_slice(&public.stablecoin.policy_hash);
+    message.extend_from_slice(&public.stablecoin.oracle_commitment);
+    message.extend_from_slice(&public.stablecoin.attestation_commitment);
+    message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
+    message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
+    blake3_384(&message)
+}
+
+pub fn transaction_proof_digest(proof: &TransactionProof) -> [u8; 48] {
+    let mut message = Vec::with_capacity(TX_PROOF_DIGEST_DOMAIN.len() + proof.stark_proof.len());
+    message.extend_from_slice(TX_PROOF_DIGEST_DOMAIN);
+    message.extend_from_slice(&proof.stark_proof);
+    blake3_384(&message)
+}
+
+pub fn transaction_public_inputs_digest(
+    proof: &TransactionProof,
+) -> Result<[u8; 48], TransactionCircuitError> {
+    let stark_inputs =
+        proof
+            .stark_public_inputs
+            .as_ref()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "missing STARK public inputs",
+            ))?;
+    let encoded = to_allocvec(stark_inputs).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize STARK public inputs: {err}"
+        ))
+    })?;
+    let mut message = Vec::with_capacity(TX_PUBLIC_INPUTS_DIGEST_DOMAIN.len() + encoded.len());
+    message.extend_from_slice(TX_PUBLIC_INPUTS_DIGEST_DOMAIN);
+    message.extend_from_slice(&encoded);
+    Ok(blake3_384(&message))
+}
+
+pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) -> [u8; 48] {
+    let mut message = Vec::new();
+    message.extend_from_slice(TX_VERIFIER_PROFILE_DOMAIN);
+    message.extend_from_slice(b"plonky3-transaction-proof");
+    message.extend_from_slice(&version.circuit.to_le_bytes());
+    message.extend_from_slice(&version.crypto.to_le_bytes());
+    message.extend_from_slice(&(FRI_LOG_BLOWUP as u64).to_le_bytes());
+    message.extend_from_slice(&(FRI_NUM_QUERIES as u64).to_le_bytes());
+    message.extend_from_slice(&(FRI_POW_BITS as u64).to_le_bytes());
+    blake3_384(&message)
+}
+
+pub fn transaction_verifier_profile_digest(proof: &TransactionProof) -> [u8; 48] {
+    transaction_verifier_profile_digest_for_version(proof.version_binding())
 }
 
 /// Generate a real STARK proof for a transaction (Plonky3 backend).
@@ -416,4 +497,70 @@ fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircu
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::public_inputs::TransactionPublicInputs;
+
+    fn dummy_serialized_inputs() -> SerializedStarkInputs {
+        SerializedStarkInputs {
+            input_flags: vec![0; MAX_INPUTS],
+            output_flags: vec![0; MAX_OUTPUTS],
+            fee: 0,
+            value_balance_sign: 0,
+            value_balance_magnitude: 0,
+            merkle_root: [0u8; 48],
+            balance_slot_asset_ids: vec![0, u64::MAX, u64::MAX, u64::MAX],
+            stablecoin_enabled: 0,
+            stablecoin_asset_id: 0,
+            stablecoin_policy_version: 0,
+            stablecoin_issuance_sign: 0,
+            stablecoin_issuance_magnitude: 0,
+            stablecoin_policy_hash: [0u8; 48],
+            stablecoin_oracle_commitment: [0u8; 48],
+            stablecoin_attestation_commitment: [0u8; 48],
+        }
+    }
+
+    fn dummy_proof() -> TransactionProof {
+        let public_inputs = TransactionPublicInputs::default();
+        TransactionProof {
+            nullifiers: public_inputs.nullifiers.clone(),
+            commitments: public_inputs.commitments.clone(),
+            balance_slots: public_inputs.balance_slots.clone(),
+            public_inputs,
+            stark_proof: vec![1, 2, 3, 4],
+            stark_public_inputs: Some(dummy_serialized_inputs()),
+        }
+    }
+
+    #[test]
+    fn verifier_profile_digest_matches_version_helper() {
+        let proof = dummy_proof();
+        assert_eq!(
+            transaction_verifier_profile_digest(&proof),
+            transaction_verifier_profile_digest_for_version(proof.version_binding())
+        );
+    }
+
+    #[test]
+    fn statement_hash_changes_when_fee_changes() {
+        let proof = dummy_proof();
+        let mut changed = proof.clone();
+        changed.public_inputs.native_fee = 9;
+        assert_ne!(
+            transaction_statement_hash(&proof),
+            transaction_statement_hash(&changed)
+        );
+    }
+
+    #[test]
+    fn public_inputs_digest_requires_serialized_inputs() {
+        let mut proof = dummy_proof();
+        proof.stark_public_inputs = None;
+        let error = transaction_public_inputs_digest(&proof).expect_err("missing inputs fail");
+        assert!(error.to_string().contains("missing STARK public inputs"));
+    }
 }

@@ -96,6 +96,8 @@ pub struct ArtifactAnnouncementResponse {
     pub tx_statements_commitment: String,
     pub tx_count: u32,
     pub proof_mode: String,
+    pub proof_kind: String,
+    pub verifier_profile: String,
     pub claimed_payout_amount: u64,
 }
 
@@ -104,6 +106,8 @@ pub struct CandidateArtifactResponse {
     pub artifact_hash: String,
     pub tx_statements_commitment: String,
     pub tx_count: u32,
+    pub proof_kind: String,
+    pub verifier_profile: String,
     pub candidate_txs: Vec<String>,
     pub payload: String,
 }
@@ -330,7 +334,10 @@ impl ProverRpc {
                 consensus::ProvenBatchMode::InlineTx => "inline_tx".to_string(),
                 consensus::ProvenBatchMode::FlatBatches => "flat_batches".to_string(),
                 consensus::ProvenBatchMode::MergeRoot => "merge_root".to_string(),
+                consensus::ProvenBatchMode::ReceiptRoot => "receipt_root".to_string(),
             },
+            proof_kind: announcement.proof_kind.label().to_string(),
+            verifier_profile: format!("0x{}", hex::encode(announcement.verifier_profile)),
             claimed_payout_amount: announcement.claimed_payout_amount,
         }
     }
@@ -484,6 +491,13 @@ impl ProverApiServer for ProverRpc {
                 hex::encode(bundle.payload.tx_statements_commitment)
             ),
             tx_count: bundle.payload.tx_count,
+            proof_kind:
+                crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+                    bundle.payload.proof_kind,
+                )
+                .label()
+                .to_string(),
+            verifier_profile: format!("0x{}", hex::encode(bundle.payload.verifier_profile)),
             candidate_txs: bundle
                 .candidate_txs
                 .iter()
@@ -562,6 +576,11 @@ mod tests {
             da_chunk_count: 1,
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2]),
             proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::FlatBatches,
+            verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            )
+            .1,
             flat_batches: vec![pallet_shielded_pool::types::BatchProofItem {
                 start_tx_index: 0,
                 tx_count: tx_count.min(u16::MAX as u32) as u16,
@@ -569,6 +588,7 @@ mod tests {
                 proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![3, 4]),
             }],
             merge_root: None,
+            receipt_root: None,
             artifact_claim: None,
         }
     }
@@ -629,6 +649,8 @@ mod tests {
                         tx_statements_commitment: payload.tx_statements_commitment,
                         tx_count: payload.tx_count,
                         proof_mode: payload.proof_mode,
+                        proof_kind: payload.proof_kind,
+                        verifier_profile: payload.verifier_profile,
                         artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(
                             &payload,
                         ),

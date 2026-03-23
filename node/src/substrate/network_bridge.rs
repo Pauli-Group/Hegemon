@@ -133,6 +133,8 @@ pub enum ArtifactProtocolMessage {
         tx_statements_commitment: [u8; 48],
         tx_count: u32,
         proof_mode: pallet_shielded_pool::types::BlockProofMode,
+        proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+        verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
         claimed_payout_amount: u64,
     },
     Request {

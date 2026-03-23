@@ -18,6 +18,8 @@ pub struct BundleMatchKey {
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
     pub proof_mode: pallet_shielded_pool::types::BlockProofMode,
+    pub proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+    pub verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
     pub artifact_hash: [u8; 32],
 }
 
@@ -57,6 +59,11 @@ fn block_proof_bundle_payload_bytes(
             .merge_root
             .as_ref()
             .map(|merge| merge.root_proof.data.len())
+            .unwrap_or(0),
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => payload
+            .receipt_root
+            .as_ref()
+            .map(|receipt_root| receipt_root.root_proof.data.len())
             .unwrap_or(0),
     };
     payload.commitment_proof.data.len() + aggregation_bytes
@@ -2024,8 +2031,14 @@ impl ProverCoordinator {
             da_chunk_count: anchor_payload.da_chunk_count,
             commitment_proof: anchor_payload.commitment_proof.clone(),
             proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::FlatBatches,
+            verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            )
+            .1,
             flat_batches,
             merge_root: None,
+            receipt_root: None,
             artifact_claim: anchor_payload.artifact_claim.clone(),
         })
     }
@@ -2652,6 +2665,9 @@ impl ProverCoordinator {
         }
         if raw.eq_ignore_ascii_case("merge_root") || raw.eq_ignore_ascii_case("merge-root") {
             return pallet_shielded_pool::types::BlockProofMode::MergeRoot;
+        }
+        if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
+            return pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
         }
         if raw.eq_ignore_ascii_case("flat")
             || raw.eq_ignore_ascii_case("flat_batches")
@@ -3525,7 +3541,11 @@ impl ProverCoordinator {
     fn proof_mode_requires_prepared_bundles(
         mode: pallet_shielded_pool::types::BlockProofMode,
     ) -> bool {
-        matches!(mode, pallet_shielded_pool::types::BlockProofMode::MergeRoot)
+        matches!(
+            mode,
+            pallet_shielded_pool::types::BlockProofMode::MergeRoot
+                | pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        )
     }
 }
 
@@ -3533,7 +3553,8 @@ fn proof_mode_rank(mode: pallet_shielded_pool::types::BlockProofMode) -> u8 {
     match mode {
         pallet_shielded_pool::types::BlockProofMode::FlatBatches => 0,
         pallet_shielded_pool::types::BlockProofMode::MergeRoot => 1,
-        pallet_shielded_pool::types::BlockProofMode::InlineTx => 2,
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => 2,
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 3,
     }
 }
 
@@ -3546,6 +3567,8 @@ fn candidate_bundle_key(
         tx_statements_commitment: payload.tx_statements_commitment,
         tx_count: payload.tx_count,
         proof_mode: payload.proof_mode,
+        proof_kind: payload.proof_kind,
+        verifier_profile: payload.verifier_profile,
         artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(payload),
     }
 }
@@ -3672,6 +3695,11 @@ mod tests {
             da_chunk_count: 1,
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2, 3]),
             proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::FlatBatches,
+            verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            )
+            .1,
             flat_batches: vec![pallet_shielded_pool::types::BatchProofItem {
                 start_tx_index: 0,
                 tx_count: tx_count.min(u16::MAX as u32) as u16,
@@ -3679,6 +3707,7 @@ mod tests {
                 proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![4, 5, 6]),
             }],
             merge_root: None,
+            receipt_root: None,
             artifact_claim: None,
         }
     }
@@ -4342,6 +4371,8 @@ mod tests {
                         tx_statements_commitment: payload.tx_statements_commitment,
                         tx_count: payload.tx_count,
                         proof_mode: payload.proof_mode,
+                        proof_kind: payload.proof_kind,
+                        verifier_profile: payload.verifier_profile,
                         artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(
                             &payload,
                         ),
@@ -5121,6 +5152,8 @@ mod tests {
                         tx_statements_commitment: payload.tx_statements_commitment,
                         tx_count: payload.tx_count,
                         proof_mode: payload.proof_mode,
+                        proof_kind: payload.proof_kind,
+                        verifier_profile: payload.verifier_profile,
                         artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(
                             &payload,
                         ),

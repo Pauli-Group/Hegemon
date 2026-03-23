@@ -17,7 +17,8 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::prove;
 use transaction_circuit::{
-    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
+    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionProof,
+    TransactionWitness,
 };
 
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
@@ -231,11 +232,18 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         da_chunk_count: 1,
         commitment_proof,
         mode: ProvenBatchMode::FlatBatches,
+        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::FlatBatches),
+        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
+            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::FlatBatches),
+        ),
         flat_batches: Vec::new(),
         merge_root: None,
+        receipt_root: None,
     });
     block.tx_statements_commitment = Some(tx_statements_commitment);
-    block.transaction_proofs = Some(vec![tx_proof.clone()]);
+    block.tx_validity_artifacts = Some(vec![
+        consensus::proof::tx_validity_artifact_from_proof(&tx_proof).expect("tx validity artifact"),
+    ]);
 
     let verifier = ParallelProofVerifier::new();
     let updated = verifier
@@ -244,13 +252,17 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
     assert_eq!(updated.root(), updated_tree.root());
 
     let mut tampered = block.clone();
-    if let Some(proofs) = tampered.transaction_proofs.as_mut() {
-        let mut inputs = proofs[0]
+    if let Some(artifacts) = tampered.tx_validity_artifacts.as_mut() {
+        let envelope = artifacts[0].proof.as_mut().expect("inline proof");
+        let mut proof: TransactionProof =
+            bincode::deserialize(&envelope.artifact_bytes).expect("decode proof");
+        let mut inputs = proof
             .stark_public_inputs
             .clone()
             .expect("stark public inputs");
         inputs.fee = inputs.fee.saturating_add(1);
-        proofs[0].stark_public_inputs = Some(inputs);
+        proof.stark_public_inputs = Some(inputs);
+        envelope.artifact_bytes = bincode::serialize(&proof).expect("encode proof");
     }
 
     let err = verifier

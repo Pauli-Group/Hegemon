@@ -140,7 +140,9 @@ use batch_circuit::prewarm_batch_verifier_cache;
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
-use consensus::proof::HeaderProofExt;
+use consensus::proof::{
+    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt, HeaderProofExt,
+};
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
     encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
@@ -194,6 +196,10 @@ use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
+use superneo_hegemon::{
+    build_receipt_root_artifact_bytes, experimental_receipt_root_verifier_profile,
+    CanonicalTxValidityReceipt,
+};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
@@ -2525,8 +2531,14 @@ fn finalize_merge_root_bundle_from_artifact(
             commitment_proof.proof_bytes,
         ),
         proof_mode: pallet_shielded_pool::types::BlockProofMode::MergeRoot,
+        proof_kind: pallet_shielded_pool::types::ProofArtifactKind::MergeRoot,
+        verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+            pallet_shielded_pool::types::BlockProofMode::MergeRoot,
+        )
+        .1,
         flat_batches: Vec::new(),
         merge_root: Some(merge_root),
+        receipt_root: None,
         artifact_claim: None,
     };
     Ok(PreparedBundle {
@@ -2535,6 +2547,8 @@ fn finalize_merge_root_bundle_from_artifact(
             tx_statements_commitment,
             tx_count: payload.tx_count,
             proof_mode: payload.proof_mode,
+            proof_kind: payload.proof_kind,
+            verifier_profile: payload.verifier_profile,
             artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(&payload),
         },
         payload,
@@ -2610,14 +2624,37 @@ fn largest_power_of_two_at_most(value: usize) -> usize {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum PreparedProofMode {
-    InlineTx,
-    #[allow(dead_code)]
-    FlatBatches,
-    MergeRoot,
+struct PreparedArtifactSelector {
+    legacy_mode: pallet_shielded_pool::types::BlockProofMode,
+    proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+    verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
 }
 
-fn prepared_proof_mode_from_env() -> PreparedProofMode {
+impl PreparedArtifactSelector {
+    fn from_mode(mode: pallet_shielded_pool::types::BlockProofMode) -> Self {
+        let (proof_kind, verifier_profile) =
+            crate::substrate::artifact_market::legacy_pallet_artifact_identity(mode);
+        Self {
+            legacy_mode: mode,
+            proof_kind,
+            verifier_profile,
+        }
+    }
+
+    fn inline_tx() -> Self {
+        Self::from_mode(pallet_shielded_pool::types::BlockProofMode::InlineTx)
+    }
+
+    fn merge_root() -> Self {
+        Self::from_mode(pallet_shielded_pool::types::BlockProofMode::MergeRoot)
+    }
+
+    fn receipt_root() -> Self {
+        Self::from_mode(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
+    }
+}
+
+fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
     if raw.is_empty()
         || raw.eq_ignore_ascii_case("inline_tx")
@@ -2625,10 +2662,13 @@ fn prepared_proof_mode_from_env() -> PreparedProofMode {
         || raw.eq_ignore_ascii_case("raw")
         || raw.eq_ignore_ascii_case("raw_active")
     {
-        return PreparedProofMode::InlineTx;
+        return PreparedArtifactSelector::inline_tx();
     }
     if raw.eq_ignore_ascii_case("merge_root") || raw.eq_ignore_ascii_case("merge-root") {
-        return PreparedProofMode::MergeRoot;
+        return PreparedArtifactSelector::merge_root();
+    }
+    if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
+        return PreparedArtifactSelector::receipt_root();
     }
     if raw.eq_ignore_ascii_case("flat")
         || raw.eq_ignore_ascii_case("flat_batches")
@@ -2637,13 +2677,13 @@ fn prepared_proof_mode_from_env() -> PreparedProofMode {
         tracing::warn!(
             "HEGEMON_BLOCK_PROOF_MODE=flat is disabled after the tx-proof-manifest benchmark loss; falling back to inline_tx"
         );
-        return PreparedProofMode::InlineTx;
+        return PreparedArtifactSelector::inline_tx();
     }
     tracing::warn!(
         mode = raw,
         "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
     );
-    PreparedProofMode::InlineTx
+    PreparedArtifactSelector::inline_tx()
 }
 
 #[allow(dead_code)]
@@ -2771,17 +2811,59 @@ fn build_merge_root_proof_from_materials(
     })
 }
 
+fn build_receipt_root_proof_from_materials(
+    proofs: Arc<Vec<TransactionProof>>,
+) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String> {
+    if proofs.is_empty() {
+        return Err("candidate tx set has no receipt-root proof material".to_string());
+    }
+    let mut consensus_receipts = Vec::with_capacity(proofs.len());
+    let mut canonical_receipts = Vec::with_capacity(proofs.len());
+    for proof in proofs.iter() {
+        let artifact = tx_validity_artifact_from_proof(proof)
+            .map_err(|err| format!("tx validity artifact derivation failed: {err}"))?;
+        consensus_receipts.push(artifact.receipt.clone());
+        canonical_receipts.push(CanonicalTxValidityReceipt {
+            statement_hash: artifact.receipt.statement_hash,
+            proof_digest: artifact.receipt.proof_digest,
+            public_inputs_digest: artifact.receipt.public_inputs_digest,
+            verifier_profile: artifact.receipt.verifier_profile,
+        });
+    }
+    let built = build_receipt_root_artifact_bytes(&canonical_receipts)
+        .map_err(|err| format!("receipt-root artifact generation failed: {err}"))?;
+    Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
+        metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+        receipts: consensus_receipts
+            .into_iter()
+            .map(|receipt| pallet_shielded_pool::types::TxValidityReceipt {
+                statement_hash: receipt.statement_hash,
+                proof_digest: receipt.proof_digest,
+                public_inputs_digest: receipt.public_inputs_digest,
+                verifier_profile: receipt.verifier_profile,
+            })
+            .collect(),
+    })
+}
+
 #[derive(Clone, Debug)]
 enum PreparedAggregationArtifacts {
     InlineTx,
     #[allow(dead_code)]
     Flat(Vec<pallet_shielded_pool::types::BatchProofItem>),
     Merge(pallet_shielded_pool::types::MergeRootProofPayload),
+    ReceiptRoot(pallet_shielded_pool::types::ReceiptRootProofPayload),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ProveAheadAggregationCacheKey {
-    proof_mode: PreparedProofMode,
+    selector: PreparedArtifactSelector,
     tx_statements_commitment: [u8; 48],
     tx_count: u32,
     flat_slot_txs: u16,
@@ -2853,14 +2935,14 @@ static PROVE_AHEAD_AGGREGATION_CACHE: once_cell::sync::Lazy<
 });
 
 fn make_prove_ahead_aggregation_cache_key(
-    proof_mode: PreparedProofMode,
+    selector: PreparedArtifactSelector,
     tx_statements_commitment: [u8; 48],
     tx_count: u32,
     flat_slot_txs: usize,
     merge_arity: u16,
 ) -> ProveAheadAggregationCacheKey {
     ProveAheadAggregationCacheKey {
-        proof_mode,
+        selector,
         tx_statements_commitment,
         tx_count,
         flat_slot_txs: u16::try_from(flat_slot_txs).unwrap_or(u16::MAX),
@@ -2945,6 +3027,11 @@ fn block_proof_payload_aggregation_bytes(
             .as_ref()
             .map(|merge| merge.root_proof.data.len())
             .unwrap_or(0),
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => payload
+            .receipt_root
+            .as_ref()
+            .map(|receipt_root| receipt_root.root_proof.data.len())
+            .unwrap_or(0),
     }
 }
 
@@ -2963,7 +3050,27 @@ fn block_proof_payload_aggregation_uncompressed_bytes(
             .as_ref()
             .map(|merge| aggregation_proof_uncompressed_len(merge.root_proof.data.as_slice()))
             .unwrap_or(0),
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => payload
+            .receipt_root
+            .as_ref()
+            .map(|receipt_root| receipt_root.root_proof.data.len())
+            .unwrap_or(0),
     }
+}
+
+fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::CandidateArtifact) {
+    if matches!(
+        payload.proof_mode,
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+    ) {
+        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
+        payload.verifier_profile = experimental_receipt_root_verifier_profile();
+        return;
+    }
+    let (proof_kind, verifier_profile) =
+        crate::substrate::artifact_market::legacy_pallet_artifact_identity(payload.proof_mode);
+    payload.proof_kind = proof_kind;
+    payload.verifier_profile = verifier_profile;
 }
 
 const MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION: u32 = 4;
@@ -3044,10 +3151,10 @@ fn prepare_block_proof_bundle(
     let proofs_for_commitment = Arc::clone(&context.tx_proofs);
     let proofs_for_batching = Arc::clone(&context.tx_proofs);
     let batch_slot_txs = batch_slot_txs();
-    let selected_mode = prepared_proof_mode_from_env();
+    let selected_artifact = prepared_artifact_selector_from_env();
     let merge_arity = merge_root_arity_from_env();
     let aggregation_cache_key = make_prove_ahead_aggregation_cache_key(
-        selected_mode,
+        selected_artifact,
         tx_statements_commitment,
         tx_count,
         batch_slot_txs,
@@ -3083,7 +3190,9 @@ fn prepare_block_proof_bundle(
             tracing::info!(
                 block_number,
                 tx_count,
-                mode = ?selected_mode,
+                legacy_mode = ?selected_artifact.legacy_mode,
+                proof_kind = ?selected_artifact.proof_kind,
+                verifier_profile = %hex::encode(selected_artifact.verifier_profile),
                 "prepare_block_proof_bundle: starting aggregation stage"
             );
             let stage_started = Instant::now();
@@ -3094,20 +3203,30 @@ fn prepare_block_proof_bundle(
                 cache_hit = true;
                 Ok(cached)
             } else {
-                let built = match selected_mode {
-                    PreparedProofMode::InlineTx => Ok(PreparedAggregationArtifacts::InlineTx),
-                    PreparedProofMode::FlatBatches => build_flat_batch_proofs_from_materials(
-                        aggregation_proofs,
-                        aggregation_bindings,
-                        batch_slot_txs,
-                    )
-                    .map(PreparedAggregationArtifacts::Flat),
-                    PreparedProofMode::MergeRoot => build_merge_root_proof_from_materials(
-                        aggregation_proofs,
-                        Arc::new(statement_hashes.clone()),
-                        tx_statements_commitment,
-                    )
-                    .map(PreparedAggregationArtifacts::Merge),
+                let built = match selected_artifact.legacy_mode {
+                    pallet_shielded_pool::types::BlockProofMode::InlineTx => {
+                        Ok(PreparedAggregationArtifacts::InlineTx)
+                    }
+                    pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
+                        build_flat_batch_proofs_from_materials(
+                            aggregation_proofs,
+                            aggregation_bindings,
+                            batch_slot_txs,
+                        )
+                        .map(PreparedAggregationArtifacts::Flat)
+                    }
+                    pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
+                        build_merge_root_proof_from_materials(
+                            aggregation_proofs,
+                            Arc::new(statement_hashes.clone()),
+                            tx_statements_commitment,
+                        )
+                        .map(PreparedAggregationArtifacts::Merge)
+                    }
+                    pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+                        build_receipt_root_proof_from_materials(aggregation_proofs)
+                            .map(PreparedAggregationArtifacts::ReceiptRoot)
+                    }
                 };
                 if let Ok(ref artifacts) = built {
                     store_prove_ahead_aggregation_artifacts(
@@ -3187,8 +3306,14 @@ fn prepare_block_proof_bundle(
             commitment_proof.proof_bytes.clone(),
         ),
         proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
+        proof_kind: pallet_shielded_pool::types::ProofArtifactKind::InlineTx,
+        verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+            pallet_shielded_pool::types::BlockProofMode::InlineTx,
+        )
+        .1,
         flat_batches: Vec::new(),
         merge_root: None,
+        receipt_root: None,
         artifact_claim: None,
     };
     match aggregation_artifacts {
@@ -3196,6 +3321,7 @@ fn prepare_block_proof_bundle(
             payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::InlineTx;
             payload.flat_batches.clear();
             payload.merge_root = None;
+            payload.receipt_root = None;
         }
         PreparedAggregationArtifacts::Flat(flat_batches) => {
             if flat_batches.is_empty() {
@@ -3204,13 +3330,22 @@ fn prepare_block_proof_bundle(
             payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::FlatBatches;
             payload.flat_batches = flat_batches;
             payload.merge_root = None;
+            payload.receipt_root = None;
         }
         PreparedAggregationArtifacts::Merge(merge_root) => {
             payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::MergeRoot;
             payload.flat_batches.clear();
             payload.merge_root = Some(merge_root);
+            payload.receipt_root = None;
+        }
+        PreparedAggregationArtifacts::ReceiptRoot(receipt_root) => {
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
+            payload.flat_batches.clear();
+            payload.merge_root = None;
+            payload.receipt_root = Some(receipt_root);
         }
     }
+    sync_payload_artifact_identity(&mut payload);
 
     tracing::info!(
         block_number,
@@ -3235,6 +3370,8 @@ fn prepare_block_proof_bundle(
             tx_statements_commitment,
             tx_count,
             proof_mode: payload.proof_mode,
+            proof_kind: payload.proof_kind,
+            verifier_profile: payload.verifier_profile,
             artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(&payload),
         },
         payload,
@@ -3703,6 +3840,35 @@ fn derive_commitment_block_proof_from_bytes(
     })
 }
 
+fn tx_validity_artifacts_from_transaction_proofs(
+    proofs: &[TransactionProof],
+) -> Result<Vec<consensus::TxValidityArtifact>, String> {
+    proofs
+        .iter()
+        .map(|proof| {
+            tx_validity_artifact_from_proof(proof)
+                .map_err(|err| format!("tx validity artifact derivation failed: {err}"))
+        })
+        .collect()
+}
+
+fn tx_validity_artifacts_from_receipts(
+    receipts: &[pallet_shielded_pool::types::TxValidityReceipt],
+) -> Vec<consensus::TxValidityArtifact> {
+    receipts
+        .iter()
+        .cloned()
+        .map(|receipt| {
+            tx_validity_artifact_from_receipt(consensus::TxValidityReceipt {
+                statement_hash: receipt.statement_hash,
+                proof_digest: receipt.proof_digest,
+                public_inputs_digest: receipt.public_inputs_digest,
+                verifier_profile: receipt.verifier_profile,
+            })
+        })
+        .collect()
+}
+
 fn verify_proof_carrying_block(
     verifier: &ParallelProofVerifier,
     client: &HegemonFullClient,
@@ -3785,8 +3951,8 @@ fn verify_proof_carrying_block(
         .map_err(|_| "prover fee bucket exceeds u64".to_string())?;
     let reward_bundle = extract_block_reward_bundle(extrinsics)?;
     let tx_proof_bytes_total: usize = tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
-    let transaction_proofs = if tx_proofs.len() == transactions.len() {
-        Some(tx_proofs)
+    let inline_tx_artifacts = if tx_proofs.len() == transactions.len() {
+        Some(tx_validity_artifacts_from_transaction_proofs(&tx_proofs)?)
     } else {
         None
     };
@@ -3908,20 +4074,43 @@ fn verify_proof_carrying_block(
         if matches!(
             payload.proof_mode,
             pallet_shielded_pool::types::BlockProofMode::InlineTx
-        ) && transaction_proofs.is_none()
+        ) && inline_tx_artifacts.is_none()
         {
             return Err(
                 "inline_tx candidate artifact requires inline transaction proof bytes".to_string(),
             );
         }
-        let transaction_proofs = if matches!(
+        let tx_validity_artifacts = if matches!(
             verification_mode,
             consensus::types::ProofVerificationMode::SelfContainedAggregation
         ) {
-            None
+            payload
+                .receipt_root
+                .as_ref()
+                .map(|receipt_root| tx_validity_artifacts_from_receipts(&receipt_root.receipts))
         } else {
-            transaction_proofs
+            inline_tx_artifacts.clone()
         };
+        let block_artifact =
+            payload
+                .receipt_root
+                .as_ref()
+                .map(|receipt_root| consensus::ProofEnvelope {
+                    kind: consensus::ProofArtifactKind::ReceiptRoot,
+                    verifier_profile: payload.verifier_profile,
+                    artifact_bytes: receipt_root.root_proof.data.clone(),
+                })
+                .or_else(|| {
+                    payload.merge_root.as_ref().map(|merge_root| {
+                        consensus::ProofEnvelope {
+                kind: crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+                    payload.proof_kind,
+                ),
+                verifier_profile: payload.verifier_profile,
+                artifact_bytes: merge_root.root_proof.data.clone(),
+            }
+                    })
+                });
 
         let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
         tracing::info!(
@@ -3951,23 +4140,20 @@ fn verify_proof_carrying_block(
             transactions,
             coinbase: None,
             proven_batch: Some(consensus::types::ProvenBatch {
+                mode: crate::substrate::artifact_market::consensus_proven_batch_mode_from_pallet(
+                    payload.proof_mode,
+                ),
                 version: payload.version,
                 tx_count: payload.tx_count,
                 tx_statements_commitment: payload.tx_statements_commitment,
                 da_root: payload.da_root,
                 da_chunk_count: payload.da_chunk_count,
                 commitment_proof: commitment_proof.clone(),
-                mode: match payload.proof_mode {
-                    pallet_shielded_pool::types::BlockProofMode::InlineTx => {
-                        consensus::types::ProvenBatchMode::InlineTx
-                    }
-                    pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
-                        consensus::types::ProvenBatchMode::FlatBatches
-                    }
-                    pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
-                        consensus::types::ProvenBatchMode::MergeRoot
-                    }
-                },
+                proof_kind:
+                    crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+                        payload.proof_kind,
+                    ),
+                verifier_profile: payload.verifier_profile,
                 flat_batches: payload
                     .flat_batches
                     .iter()
@@ -3999,10 +4185,33 @@ fn verify_proof_carrying_block(
                             .collect(),
                     }
                 }),
+                receipt_root: payload.receipt_root.as_ref().map(|receipt_root| {
+                    consensus::types::ReceiptRootProofPayload {
+                        root_proof: receipt_root.root_proof.data.clone(),
+                        metadata: consensus::types::ReceiptRootMetadata {
+                            relation_id: receipt_root.metadata.relation_id,
+                            shape_digest: receipt_root.metadata.shape_digest,
+                            leaf_count: receipt_root.metadata.leaf_count,
+                            fold_count: receipt_root.metadata.fold_count,
+                        },
+                        receipts: receipt_root
+                            .receipts
+                            .iter()
+                            .cloned()
+                            .map(|receipt| consensus::types::TxValidityReceipt {
+                                statement_hash: receipt.statement_hash,
+                                proof_digest: receipt.proof_digest,
+                                public_inputs_digest: receipt.public_inputs_digest,
+                                verifier_profile: receipt.verifier_profile,
+                            })
+                            .collect(),
+                    }
+                }),
             }),
+            tx_validity_artifacts,
+            block_artifact,
             tx_statement_bindings: Some(tx_statement_bindings.clone()),
             tx_statements_commitment: Some(tx_statements_commitment),
-            transaction_proofs,
             proof_verification_mode: verification_mode,
         };
 
@@ -4057,9 +4266,10 @@ fn verify_proof_carrying_block(
         transactions,
         coinbase: None,
         proven_batch: None,
+        tx_validity_artifacts: inline_tx_artifacts,
+        block_artifact: None,
         tx_statement_bindings: Some(tx_statement_bindings),
         tx_statements_commitment: None,
-        transaction_proofs,
         proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
     };
 
@@ -4344,7 +4554,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
     parent_hash: H256,
     candidate_txs: &[Vec<u8>],
     min_ready_batch_txs: usize,
-    proof_mode: PreparedProofMode,
+    selector: PreparedArtifactSelector,
 ) -> Result<Option<String>, String> {
     if candidate_txs.is_empty() {
         return Ok(None);
@@ -4383,17 +4593,19 @@ fn mining_pause_reason_for_pending_shielded_batch(
         return Ok(None);
     }
 
-    let reason = match proof_mode {
-        PreparedProofMode::InlineTx => format!(
+    let reason = match selector.proof_kind {
+        pallet_shielded_pool::types::ProofArtifactKind::InlineTx => format!(
             "inline_tx shielded batch waiting for prepared bundle (tx_count={})",
             shielded_tx_count
         ),
-        PreparedProofMode::MergeRoot => format!(
+        pallet_shielded_pool::types::ProofArtifactKind::MergeRoot
+        | pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot => format!(
             "proofless shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
             shielded_tx_count,
             missing.len()
         ),
-        PreparedProofMode::FlatBatches => return Ok(None),
+        pallet_shielded_pool::types::ProofArtifactKind::FlatBatches
+        | pallet_shielded_pool::types::ProofArtifactKind::Custom(_) => return Ok(None),
     };
     Ok(Some(reason))
 }
@@ -4414,7 +4626,7 @@ fn ready_bundle_trace_for_candidate(
     block_number: u64,
     candidate_txs: &[Vec<u8>],
     min_ready_batch_txs: usize,
-    _proof_mode: PreparedProofMode,
+    _selector: PreparedArtifactSelector,
 ) -> Result<Option<ReadyBundleTrace>, String> {
     if candidate_txs.is_empty() {
         return Ok(None);
@@ -5092,8 +5304,12 @@ pub fn wire_block_builder_api(
         }
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
-        let selected_proof_mode = prepared_proof_mode_from_env();
-        let merge_root_mode_enabled = matches!(selected_proof_mode, PreparedProofMode::MergeRoot);
+        let selected_artifact = prepared_artifact_selector_from_env();
+        let merge_root_mode_enabled = matches!(
+            selected_artifact.proof_kind,
+            pallet_shielded_pool::types::ProofArtifactKind::MergeRoot
+                | pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        );
         let mut defer_proofless_until_ready_batch = false;
         let mut aggregation_mode_required_for_block = false;
         let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
@@ -5253,7 +5469,7 @@ pub fn wire_block_builder_api(
                     if !merge_root_mode_enabled && is_proofless_sidecar {
                         tracing::warn!(
                             block_number,
-                            mode = ?selected_proof_mode,
+                            proof_kind = ?selected_artifact.proof_kind,
                             "Skipping proofless shielded transfer: raw inline_tx mode requires canonical inline tx proofs"
                         );
                         continue;
@@ -10422,7 +10638,30 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     consensus::ProvenBatchMode::MergeRoot => {
                                         pallet_shielded_pool::types::BlockProofMode::MergeRoot
                                     }
+                                    consensus::ProvenBatchMode::ReceiptRoot => {
+                                        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+                                    }
                                 },
+                                proof_kind: match announcement.proof_kind {
+                                    consensus::ProofArtifactKind::InlineTx => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::InlineTx
+                                    }
+                                    consensus::ProofArtifactKind::FlatBatches => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::FlatBatches
+                                    }
+                                    consensus::ProofArtifactKind::MergeRoot => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::MergeRoot
+                                    }
+                                    consensus::ProofArtifactKind::ReceiptRoot => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+                                    }
+                                    consensus::ProofArtifactKind::Custom(bytes) => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::Custom(
+                                            bytes,
+                                        )
+                                    }
+                                },
+                                verifier_profile: announcement.verifier_profile,
                                 claimed_payout_amount: announcement.claimed_payout_amount,
                             };
                             let _ = handle
@@ -10443,9 +10682,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         });
 
         let hold_mining_while_proving = load_hold_mining_while_proving();
-        let selected_proof_mode = prepared_proof_mode_from_env();
-        let prepared_bundle_required_while_proving =
-            matches!(selected_proof_mode, PreparedProofMode::MergeRoot);
+        let selected_artifact = prepared_artifact_selector_from_env();
+        let prepared_bundle_required_while_proving = matches!(
+            selected_artifact.proof_kind,
+            pallet_shielded_pool::types::ProofArtifactKind::MergeRoot
+                | pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        );
         if prepared_bundle_required_while_proving && hold_mining_while_proving {
             let client_for_mining_pause = client.clone();
             let coordinator_for_mining_pause = Arc::clone(&prover_coordinator);
@@ -10463,7 +10705,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     parent_hash,
                     &candidate_txs,
                     min_ready_batch_txs,
-                    selected_proof_mode,
+                    selected_artifact,
                 ) {
                     Ok(reason) => reason,
                     Err(error) => {
@@ -10481,7 +10723,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         block_number,
                         &candidate_txs,
                         min_ready_batch_txs,
-                        selected_proof_mode,
+                        selected_artifact,
                     ) {
                         Ok(trace) => trace,
                         Err(error) => {
@@ -10524,12 +10766,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             });
             tracing::info!(
                 min_ready_proven_batch_txs = min_ready_batch_txs,
-                proof_mode = ?selected_proof_mode,
+                proof_kind = ?selected_artifact.proof_kind,
+                verifier_profile = %hex::encode(selected_artifact.verifier_profile),
                 "Mining will pause while shielded batches wait for a ready prepared bundle"
             );
         } else if prepared_bundle_required_while_proving {
             tracing::warn!(
-                proof_mode = ?selected_proof_mode,
+                proof_kind = ?selected_artifact.proof_kind,
+                verifier_profile = %hex::encode(selected_artifact.verifier_profile),
                 "Mining hold while proving is disabled; parent-bound prepared bundles may churn on stale parents"
             );
         }
@@ -11236,7 +11480,25 @@ mod tests {
     #[test]
     fn flat_mode_falls_back_to_inline_tx_after_tx_proof_manifest_removal() {
         let _guard = set_block_proof_mode("flat");
-        assert_eq!(prepared_proof_mode_from_env(), PreparedProofMode::InlineTx);
+        let selector = prepared_artifact_selector_from_env();
+        assert_eq!(
+            selector.proof_kind,
+            pallet_shielded_pool::types::ProofArtifactKind::InlineTx
+        );
+    }
+
+    #[test]
+    fn receipt_root_mode_is_selected_from_env() {
+        let _guard = set_block_proof_mode("receipt_root");
+        let selector = prepared_artifact_selector_from_env();
+        assert_eq!(
+            selector.proof_kind,
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        );
+        assert_eq!(
+            selector.verifier_profile,
+            experimental_receipt_root_verifier_profile()
+        );
     }
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
@@ -11632,7 +11894,7 @@ mod tests {
             parent_hash,
             &candidate_txs,
             1,
-            PreparedProofMode::MergeRoot,
+            PreparedArtifactSelector::merge_root(),
         )
         .expect("pause reason evaluation succeeds");
         assert!(
@@ -11661,6 +11923,12 @@ mod tests {
                 da_chunk_count: 0,
                 commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
                 proof_mode: pallet_shielded_pool::types::BlockProofMode::MergeRoot,
+                proof_kind: pallet_shielded_pool::types::ProofArtifactKind::MergeRoot,
+                verifier_profile:
+                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                        pallet_shielded_pool::types::BlockProofMode::MergeRoot,
+                    )
+                    .1,
                 flat_batches: Vec::new(),
                 merge_root: Some(pallet_shielded_pool::types::MergeRootProofPayload {
                     root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
@@ -11672,6 +11940,7 @@ mod tests {
                     },
                     diagnostics_leaf_proofs: Vec::new(),
                 }),
+                receipt_root: None,
                 artifact_claim: None,
             },
             candidate_txs.clone(),
@@ -11682,7 +11951,7 @@ mod tests {
             parent_hash,
             &candidate_txs,
             1,
-            PreparedProofMode::MergeRoot,
+            PreparedArtifactSelector::merge_root(),
         )
         .expect("pause reason evaluation succeeds");
         assert!(
@@ -11722,7 +11991,7 @@ mod tests {
             parent_hash,
             &candidate_txs,
             1,
-            PreparedProofMode::InlineTx,
+            PreparedArtifactSelector::inline_tx(),
         )
         .expect("pause reason evaluation succeeds");
         assert!(
@@ -11779,8 +12048,15 @@ mod tests {
                 da_chunk_count: 0,
                 commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
                 proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                proof_kind: pallet_shielded_pool::types::ProofArtifactKind::InlineTx,
+                verifier_profile:
+                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                        pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                    )
+                    .1,
                 flat_batches: Vec::new(),
                 merge_root: None,
+                receipt_root: None,
                 artifact_claim: None,
             },
             candidate_txs.clone(),
@@ -11792,7 +12068,7 @@ mod tests {
             block_number,
             &candidate_txs,
             1,
-            PreparedProofMode::InlineTx,
+            PreparedArtifactSelector::inline_tx(),
         )
         .expect("trace evaluation succeeds");
         assert!(
