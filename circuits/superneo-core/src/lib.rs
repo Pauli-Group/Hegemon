@@ -14,7 +14,7 @@ impl SecurityParams {
         Self {
             target_security_bits: 128,
             max_fold_arity: 2,
-            transcript_domain: b"hegemon.superneo.mock.v1",
+            transcript_domain: b"hegemon.superneo.fold.v1",
         }
     }
 }

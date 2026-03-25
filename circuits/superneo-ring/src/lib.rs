@@ -1,6 +1,7 @@
 use anyhow::{bail, ensure, Result};
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
+use serde::Serialize;
 use superneo_ccs::{ensure_assignment_matches_shape, Assignment, CcsShape};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,11 +21,12 @@ impl Default for GoldilocksPackingConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PackedWitness<R> {
     pub coeffs: Vec<R>,
     pub original_len: usize,
     pub used_bits: usize,
+    pub coeff_capacity_bits: u16,
 }
 
 pub trait WitnessPacker<F, R> {
@@ -122,6 +124,7 @@ impl WitnessPacker<Goldilocks, u64> for GoldilocksPayPerBitPacker {
             coeffs,
             original_len: assignment.witness.len(),
             used_bits,
+            coeff_capacity_bits: coeff_capacity,
         })
     }
 
@@ -135,6 +138,12 @@ impl WitnessPacker<Goldilocks, u64> for GoldilocksPayPerBitPacker {
         ensure!(
             (1..=64).contains(&coeff_capacity),
             "coeff_capacity_bits must be in 1..=64"
+        );
+        ensure!(
+            packed.coeff_capacity_bits == coeff_capacity,
+            "packed witness coeff capacity {} does not match packer config {}",
+            packed.coeff_capacity_bits,
+            coeff_capacity
         );
         ensure!(
             (1..=64).contains(&self.config.limb_bits),

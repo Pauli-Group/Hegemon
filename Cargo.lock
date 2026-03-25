@@ -11141,6 +11141,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "p3-field",
  "p3-goldilocks",
  "serde",
  "superneo-ccs",
@@ -11205,6 +11206,7 @@ dependencies = [
  "anyhow",
  "p3-field",
  "p3-goldilocks",
+ "serde",
  "superneo-ccs",
 ]
 

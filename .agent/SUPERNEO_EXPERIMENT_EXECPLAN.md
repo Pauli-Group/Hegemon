@@ -6,7 +6,7 @@ This document must be maintained in accordance with `.agent/PLANS.md`.
 
 ## Purpose / Big Picture
 
-After this change, Hegemon will have an isolated experimental stack for SuperNeo-style post-proof folding that can be built and benchmarked without contaminating the shipping `InlineTx` path. A contributor will be able to compile a Hegemon-owned relation into a local customizable constraint-system shape, pack its witness with pay-per-bit rules, run a deterministic mock folding backend, and compare the prototype output against the existing `raw_active` benchmark numbers from `output/prover-recovery/2026-03-14/active-lanes/metrics.tsv`.
+After this change, Hegemon will have an isolated experimental stack for SuperNeo-style post-proof folding that can be built and benchmarked without contaminating the shipping `InlineTx` path. A contributor will be able to compile a Hegemon-owned relation into a local customizable constraint-system shape, pack its witness with pay-per-bit rules, run a direct in-repo folding backend, and compare the prototype output against the existing `raw_active` benchmark numbers from `output/prover-recovery/2026-03-14/active-lanes/metrics.tsv`.
 
 The first milestone is intentionally modest. It does not claim a real lattice backend yet. It proves the crate boundaries, artifact formats, packing rules, and benchmark harness that a real SuperNeo backend would need. Success is observable by running the new targeted tests and the new `superneo-bench` binary.
 
@@ -20,6 +20,8 @@ The first milestone is intentionally modest. It does not claim a real lattice ba
 - [x] (2026-03-20 19:06Z) Ran `cargo run -p superneo-bench -- --relation tx_receipt --k 1,2 --compare-inline-tx` and captured JSON output against the frozen `raw_active` baseline.
 - [x] (2026-03-20 19:08Z) Updated `DESIGN.md` and `METHODS.md` to record the experimental stack, its receipt-relation boundary, and the fact that the backend is still a mock.
 - [x] (2026-03-21 01:41Z) Closed the first review gaps: parent fold metadata is now verified, security/transcript knobs are hashed into the mock backend, receipt statements bind a trace digest, signed packing fails fast, canonical byte accounting replaced `bincode` sizing, and odd-`k` / negative tests now exist.
+- [x] (2026-03-25 04:54Z) Replaced the digest mock with a direct in-repo SuperNeo-style backend: pay-per-bit bit expansion, deterministic matrix commitments over Goldilocks, transcript-derived fold challenges, and canonical receipt-root verification that reconstructs packed witnesses from public receipts.
+- [x] (2026-03-25 04:56Z) Re-ran the experimental crate tests, the consensus `receipt_root_` tests, the node `receipt_root` tests, and the benchmark CLI after the backend rewrite.
 
 ## Surprises & Discoveries
 
@@ -35,6 +37,12 @@ The first milestone is intentionally modest. It does not claim a real lattice ba
 - Observation: `bincode::serialized_size` was overstating artifact bytes because every fixed-width digest was being counted as a length-prefixed byte blob. The benchmark now uses explicit fixed-width byte accounting for the mock artifacts instead.
   Evidence: the benchmark output dropped from `250/419 B/tx` to `210/355 B/tx` for the `tx_receipt` mock path after switching away from `bincode` sizing.
 
+- Observation: the public `latticefold` / `stark-rings` stack is still hard-blocked on unstable Rust features (`trait_alias`, `inherent_associated_types`) and therefore cannot be adopted directly inside Hegemon’s stable default workspace.
+  Evidence: `cargo +1.91.1 check -p latticefold --example e2e` fails in `stark-rings-linalg` with `#![feature] may not be used on the stable release channel`.
+
+- Observation: canonical tx-validity receipts are a good first target for a real folding backend because the verifier can deterministically reconstruct the packed witness from public receipt digests, which keeps the receipt-root artifact compact even when the leaf proof object itself carries packed witness data.
+  Evidence: after the backend rewrite, `cargo test -p superneo-hegemon` and `cargo test -p consensus receipt_root_ -- --nocapture` both pass without changing the consensus-facing receipt-root artifact entry points.
+
 ## Decision Log
 
 - Decision: the first backend implementation is a deterministic mock backend in `circuits/superneo-backend-lattice`, not a real `latticefold` integration.
@@ -49,9 +57,17 @@ The first milestone is intentionally modest. It does not claim a real lattice ba
   Rationale: `InlineTx` remains the live path. The experiment must be trivially removable if it loses the benchmark.
   Date/Author: 2026-03-20 / Codex
 
+- Decision: implement the next backend milestone directly from the Neo/SuperNeo papers inside Hegemon rather than vendoring `latticefold`.
+  Rationale: the user explicitly required an in-repo implementation, and the public latticefold stack currently requires nightly-only compiler features that would destabilize Hegemon’s stable workspace.
+  Date/Author: 2026-03-25 / Codex
+
+- Decision: the first direct backend implements the folding geometry and pay-per-bit commitment shape, but not the final Ajtai/module-SIS commitment hardness from Neo/SuperNeo.
+  Rationale: this is the largest protocol step that can be landed today in stable Rust without importing an unstable external lattice stack. It converts the experiment from a hash mock into a concrete folding engine while preserving the option to swap in a real lattice commitment later.
+  Date/Author: 2026-03-25 / Codex
+
 ## Outcomes & Retrospective
 
-Milestone one is complete and the first review pass is closed. The repo now contains a compilable, benchmarkable experimental stack with a Hegemon-owned relation layer, a Goldilocks packing layer, a mock folding backend, Hegemon receipt relations, a JSON benchmark harness that compares against the stored `InlineTx` baseline, and targeted negative tests that lock in the corrected behavior. The remaining gap is deliberate: no real lattice or code-accumulation backend has been wired in yet.
+Milestone one is complete and the first review pass is closed. Milestone two is now also landed: the repo contains a compilable, benchmarkable experimental stack with a Hegemon-owned relation layer, a Goldilocks packing layer, a direct in-repo folding backend, Hegemon receipt relations, a JSON benchmark harness that compares against the stored `InlineTx` baseline, and targeted negative tests that lock in the corrected behavior. The remaining gap is still deliberate: this is a concrete SuperNeo-style backend, but it is not yet a production lattice/Ajtai implementation with the paper’s exact security assumptions.
 
 ## Context and Orientation
 
@@ -64,7 +80,7 @@ The experimental crates introduced here are:
 - `circuits/superneo-ccs` for the Hegemon-owned relation and shape types.
 - `circuits/superneo-core` for backend traits and artifact wrappers.
 - `circuits/superneo-ring` for Goldilocks pay-per-bit witness packing.
-- `circuits/superneo-backend-lattice` for the mock backend and the future lattice adapter boundary.
+- `circuits/superneo-backend-lattice` for the direct in-repo folding backend and the future lattice-hardness adapter boundary.
 - `circuits/superneo-hegemon` for Hegemon-specific relations.
 - `circuits/superneo-bench` for a JSON benchmark CLI that compares the experiment to the frozen `raw_active` baseline.
 
@@ -76,11 +92,11 @@ Next, define the orchestration boundary in `circuits/superneo-core/src/lib.rs`. 
 
 Then, add Goldilocks witness packing in `circuits/superneo-ring/src/lib.rs`. The packer consumes a `WitnessSchema` and an `Assignment` and emits a packed representation that respects declared bit widths. This is where Hegemon’s future pay-per-bit value proposition lives, so the packer must preserve bounded-width semantics instead of treating every field element as an unstructured 64-bit limb.
 
-After that, implement a deterministic mock backend in `circuits/superneo-backend-lattice/src/lib.rs`. The backend should hash statements and packed witnesses into compact commitments, synthesize leaf proofs deterministically, and fold instances by hashing child commitments and statement digests. Verification should recompute the expected digests rather than inspecting hidden witnesses. This provides a faithful API target without the cost of importing `latticefold` yet.
+After that, implement the direct backend in `circuits/superneo-backend-lattice/src/lib.rs`. The backend should expand packed witnesses to their used bit slices, project those bits through a deterministic public matrix over Goldilocks to obtain commitments, bind leaf proofs to statement digests plus packed witnesses, and fold parent commitments with transcript-derived linear challenges. Verification should recompute the same bit-linear commitments and fold transitions from public data. This gives the experiment a real folding engine without importing a nightly-only external lattice implementation.
 
 With the generic pieces in place, add `ToyBalanceRelation` and `TxProofReceiptRelation` to `circuits/superneo-hegemon/src/lib.rs`. The toy relation proves the plumbing works. The receipt relation derives a compact post-proof statement from synthetic proof bytes, public inputs, and a verifier profile, then builds a bounded witness assignment suitable for packing.
 
-Finally, wire everything into `circuits/superneo-bench/src/main.rs`. The benchmark should generate deterministic synthetic leaves, run the mock backend over `k` inputs, fold them to a root, and emit JSON with the same top-level metrics Hegemon already uses for active-path comparisons. When `--compare-inline-tx` is passed, it should also load the frozen `raw_active` numbers from `output/prover-recovery/2026-03-14/active-lanes/metrics.tsv`.
+Finally, wire everything into `circuits/superneo-bench/src/main.rs`. The benchmark should generate deterministic synthetic leaves, run the direct backend over `k` inputs, fold them to a root, and emit JSON with the same top-level metrics Hegemon already uses for active-path comparisons. When `--compare-inline-tx` is passed, it should also load the frozen `raw_active` numbers from `output/prover-recovery/2026-03-14/active-lanes/metrics.tsv`.
 
 ## Concrete Steps
 
@@ -90,7 +106,7 @@ From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`:
 
        git switch -c codex/superneo-experiment
 
-2. Replace the generated crate stubs with the actual API layer and mock backend.
+2. Replace the generated crate stubs with the actual API layer and direct backend.
 
        cargo test -p superneo-ccs
        cargo test -p superneo-ring
@@ -138,7 +154,7 @@ The important artifact for milestone one is the benchmark JSON. A representative
       }
     }
 
-Revision note: this file was created on 2026-03-20 to guide the first experimental SuperNeo spike and deliberately starts with a mock backend so the crate boundaries can be validated before any heavy lattice integration. It was updated the same day after the stack compiled, the targeted tests passed, the benchmark CLI emitted JSON comparisons, and the design/method documents were amended to capture the experiment boundary. It was updated again on 2026-03-21 after the initial code review so the corrected metadata binding, trace digest binding, fixed-width artifact sizing, and new negative tests are captured in the plan state.
+Revision note: this file was created on 2026-03-20 to guide the first experimental SuperNeo spike and deliberately started with a mock backend so the crate boundaries could be validated before any heavy lattice integration. It was updated the same day after the stack compiled, the targeted tests passed, the benchmark CLI emitted JSON comparisons, and the design/method documents were amended to capture the experiment boundary. It was updated again on 2026-03-21 after the initial code review so the corrected metadata binding, trace digest binding, fixed-width artifact sizing, and new negative tests were captured in the plan state. It was updated on 2026-03-25 after the mock backend was replaced with a direct in-repo SuperNeo-style folding backend derived from the Neo/SuperNeo papers, while keeping the consensus-facing receipt-root API stable.
 
 ## Interfaces and Dependencies
 

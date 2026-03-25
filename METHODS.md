@@ -229,7 +229,15 @@ The repo now carries a bounded SuperNeo research spike under `circuits/superneo-
 
 The witness method is equally narrow. `circuits/superneo-hegemon` pads raw proof bytes into a fixed-width receipt lane and carries a bounded vector of binary “verification trace bits.” `circuits/superneo-ring` then packs those witness lanes with declared bit widths so the experiment can measure pay-per-bit packing pressure directly in Goldilocks terms. This is not a real verifier circuit; it is a method scaffold for comparing artifact size and fold orchestration against the frozen `raw_active` benchmark before deeper backend work begins.
 
-`circuits/superneo-backend-lattice` currently implements only a deterministic mock backend: commit packed witnesses, derive leaf proofs by hashing the statement digest plus witness commitment, then fold pairs by hashing child commitments and statement digests. That method is intentionally cheap and observable. Its purpose is to prove that the relation boundary and benchmark harness are sane before any real lattice or code-accumulation backend is allowed to consume engineering time.
+`circuits/superneo-backend-lattice` now implements a direct in-repo SuperNeo-style folding backend over Goldilocks. The method is still experimental and not a production lattice commitment scheme, but it is no longer a pure mock. The current steps are:
+
+* pack witness values with pay-per-bit widths in `superneo-ring`,
+* expand the packed witness to its used bit slice,
+* commit to those bits with a deterministic public matrix over Goldilocks (so commitment work scales with witness bit-width rather than a fixed 64-bit lane width),
+* bind each leaf to its statement digest and packed witness in a leaf proof,
+* fold commitments with transcript-derived linear challenges to produce parent commitments and parent statement digests.
+
+For canonical tx-validity receipts, the verifier can reconstruct the packed witness directly from the public receipt digests, so the receipt-root artifact stays digest-only even though the backend itself now performs concrete bit-linear commitment and fold work. This gives Hegemon a stable-Rust experimental implementation of the folding geometry described in Neo/SuperNeo without importing an external nightly-only lattice library. The remaining gap is cryptographic hardness: the current commitment operator is a deterministic Goldilocks matrix projection, not the Ajtai/module-SIS commitment from the papers.
 
 ---
 

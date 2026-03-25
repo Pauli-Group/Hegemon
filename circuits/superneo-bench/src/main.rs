@@ -165,7 +165,10 @@ fn benchmark_toy_balance(
         total_active_path_verify_ns: total_verify_ns,
         packed_witness_bits,
         shape_digest: shape_hex(pk.shape_digest),
-        note: format!("mock backend root={}", root.witness_commitment.to_hex()),
+        note: format!(
+            "superneo fold backend root={}",
+            root.witness_commitment.to_hex()
+        ),
         inline_tx_baseline,
     })
 }
@@ -252,7 +255,10 @@ fn benchmark_tx_receipt(
         total_active_path_verify_ns: total_verify_ns,
         packed_witness_bits,
         shape_digest: shape_hex(pk.shape_digest),
-        note: format!("mock backend root={}", root.witness_commitment.to_hex()),
+        note: format!(
+            "superneo fold backend root={}",
+            root.witness_commitment.to_hex()
+        ),
         inline_tx_baseline,
     })
 }
@@ -354,17 +360,15 @@ fn bytes_to_bits(bytes: &[u8], limit: usize) -> Vec<u8> {
 }
 
 fn leaf_artifact_bytes(artifact: &LeafArtifact<LeafDigestProof>) -> usize {
-    let _ = artifact;
     u16::BITS as usize / 8
         + RelationId::BYTES
         + ShapeDigest::BYTES
         + StatementDigest::BYTES
-        + LeafDigestProof::BYTES
+        + artifact.proof.byte_size()
 }
 
 fn fold_artifact_bytes(artifact: &FoldArtifact<FoldDigestProof>) -> usize {
-    let _ = artifact;
-    u16::BITS as usize / 8 + (StatementDigest::BYTES * 3) + FoldDigestProof::BYTES
+    u16::BITS as usize / 8 + (StatementDigest::BYTES * 3) + artifact.proof.byte_size()
 }
 
 #[cfg(test)]
@@ -386,19 +390,19 @@ mod tests {
                 relation_id,
                 shape_digest: pk.shape_digest,
                 statement_digest: digest_statement(b"a"),
-                witness_commitment: LatticeCommitment([1u8; 48]),
+                witness_commitment: LatticeCommitment::from_rows(vec![1u64; pk.projection_rows]),
             },
             FoldedInstance {
                 relation_id,
                 shape_digest: pk.shape_digest,
                 statement_digest: digest_statement(b"b"),
-                witness_commitment: LatticeCommitment([2u8; 48]),
+                witness_commitment: LatticeCommitment::from_rows(vec![2u64; pk.projection_rows]),
             },
             FoldedInstance {
                 relation_id,
                 shape_digest: pk.shape_digest,
                 statement_digest: digest_statement(b"c"),
-                witness_commitment: LatticeCommitment([3u8; 48]),
+                witness_commitment: LatticeCommitment::from_rows(vec![3u64; pk.projection_rows]),
             },
         ];
 

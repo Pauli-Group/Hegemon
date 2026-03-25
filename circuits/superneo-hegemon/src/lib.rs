@@ -1,12 +1,10 @@
 use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_goldilocks::Goldilocks;
-use superneo_backend_lattice::{
-    FoldDigestProof, LatticeBackend, LatticeCommitment, LeafDigestProof,
-};
+use superneo_backend_lattice::{LatticeBackend, LatticeCommitment, LeafDigestProof};
 use superneo_ccs::{
     digest_statement, Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix,
-    StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
+    StatementEncoding, WitnessField, WitnessSchema,
 };
 use superneo_core::{Backend, FoldedInstance, SecurityParams};
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
@@ -534,8 +532,8 @@ pub fn build_receipt_root_artifact_bytes(
         let proof = backend.prove_leaf(&pk, &relation.relation_id(), &encoding, &packed)?;
         leaves.push(ReceiptRootLeaf {
             statement_digest: encoding.statement_digest.0,
-            witness_commitment: proof.witness_commitment.0,
-            proof_digest: proof.proof_digest.0,
+            witness_commitment: proof.witness_commitment.digest,
+            proof_digest: proof.proof_digest,
         });
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
@@ -554,12 +552,12 @@ pub fn build_receipt_root_artifact_bytes(
                 let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
                 folds.push(ReceiptRootFoldStep {
                     parent_statement_digest: parent.statement_digest.0,
-                    parent_commitment: parent.witness_commitment.0,
+                    parent_commitment: parent.witness_commitment.digest,
                     left_statement_digest: left.statement_digest.0,
-                    left_commitment: left.witness_commitment.0,
+                    left_commitment: left.witness_commitment.digest,
                     right_statement_digest: right.statement_digest.0,
-                    right_commitment: right.witness_commitment.0,
-                    proof_digest: proof.proof_digest.0,
+                    right_commitment: right.witness_commitment.digest,
+                    proof_digest: proof.proof_digest,
                 });
                 next.push(parent);
             } else {
@@ -577,7 +575,7 @@ pub fn build_receipt_root_artifact_bytes(
         leaves,
         folds: folds.clone(),
         root_statement_digest: root.statement_digest.0,
-        root_commitment: root.witness_commitment.0,
+        root_commitment: root.witness_commitment.digest,
     };
     Ok(BuiltReceiptRootArtifact {
         artifact_bytes: encode_receipt_root_artifact(&artifact),
@@ -608,6 +606,7 @@ pub fn verify_receipt_root_artifact_bytes(
     let relation = CanonicalTxValidityReceiptRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
+    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
     let (pk, vk) = backend.setup(&security, relation.shape())?;
     ensure!(
         artifact.relation_id == relation.relation_id().0,
@@ -627,20 +626,23 @@ pub fn verify_receipt_root_artifact_bytes(
     let mut current = Vec::with_capacity(receipts.len());
     for (receipt, leaf) in receipts.iter().zip(&artifact.leaves) {
         let encoding = relation.encode_statement(receipt)?;
+        let assignment = relation.build_assignment(receipt, &())?;
+        let packed = packer.pack(relation.shape(), &assignment)?;
         ensure!(
             leaf.statement_digest == encoding.statement_digest.0,
             "receipt-root leaf statement digest mismatch"
         );
         let proof = LeafDigestProof {
-            witness_commitment: LatticeCommitment(leaf.witness_commitment),
-            proof_digest: LatticeCommitment(leaf.proof_digest),
+            witness_commitment: LatticeCommitment::digest_only(leaf.witness_commitment),
+            packed_witness: packed,
+            proof_digest: leaf.proof_digest,
         };
         backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &proof)?;
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
             shape_digest: pk.shape_digest,
             statement_digest: encoding.statement_digest,
-            witness_commitment: proof.witness_commitment,
+            witness_commitment: backend.commit_witness(&pk, &proof.packed_witness)?,
         });
     }
 
@@ -657,25 +659,27 @@ pub fn verify_receipt_root_artifact_bytes(
                 fold_index += 1;
                 ensure!(
                     fold.left_statement_digest == left.statement_digest.0
-                        && fold.left_commitment == left.witness_commitment.0,
+                        && fold.left_commitment == left.witness_commitment.digest,
                     "receipt-root fold left child mismatch"
                 );
                 ensure!(
                     fold.right_statement_digest == right.statement_digest.0
-                        && fold.right_commitment == right.witness_commitment.0,
+                        && fold.right_commitment == right.witness_commitment.digest,
                     "receipt-root fold right child mismatch"
                 );
-                let parent = FoldedInstance {
-                    relation_id: relation.relation_id(),
-                    shape_digest: pk.shape_digest,
-                    statement_digest: StatementDigest(fold.parent_statement_digest),
-                    witness_commitment: LatticeCommitment(fold.parent_commitment),
-                };
-                let proof = FoldDigestProof {
-                    parent_statement_digest: StatementDigest(fold.parent_statement_digest),
-                    parent_commitment: LatticeCommitment(fold.parent_commitment),
-                    proof_digest: LatticeCommitment(fold.proof_digest),
-                };
+                let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
+                ensure!(
+                    fold.parent_statement_digest == parent.statement_digest.0,
+                    "receipt-root fold parent statement digest mismatch"
+                );
+                ensure!(
+                    fold.parent_commitment == parent.witness_commitment.digest,
+                    "receipt-root fold parent commitment mismatch"
+                );
+                ensure!(
+                    fold.proof_digest == proof.proof_digest,
+                    "receipt-root fold proof digest mismatch"
+                );
                 backend.verify_fold(&vk, &parent, &left, &right, &proof)?;
                 next.push(parent);
             } else {
@@ -698,7 +702,7 @@ pub fn verify_receipt_root_artifact_bytes(
         "receipt-root root statement digest mismatch"
     );
     ensure!(
-        artifact.root_commitment == root.witness_commitment.0,
+        artifact.root_commitment == root.witness_commitment.digest,
         "receipt-root root commitment mismatch"
     );
 
