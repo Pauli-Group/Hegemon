@@ -17,3 +17,32 @@ When Hegemon is working correctly the network processes transactions of the Hege
 ## Addresses
 
 Ideally addresses should be bech32 encoded merkle roots. This merkle tree would contain the public keys needed but it would also contain the id of an NFT on the host chain. Any account holding the NFT on the host chain would be able to withdraw tokens from the Hegemon account to the host chain. This NFT could itself be stored in a one time use quantum secure smart contract account (PQSCA) on the host chain such that a quantum secure signature is still needed when withdrawing to the host chain. By keeping the authority with the NFT instead of the PQSCA directly, we allow the PQSCA to be changed without modifying the Hegemon merkleroot. 
+
+## Begin Federated 
+
+Don't start fully decentralized. Have a permissioned set of peers run the network at first. 
+
+## Parameters
+
+Parameters are settings for the blockchain. Early on they will be controlled by us or a small multisig. Later parameters will be controlled via on-chain governance. 
+
+### Possible Parameters
+
+- Target blocktime
+- Max block size
+
+
+## Mixed consensus
+
+PoW + PoS where the PoS happens on the host side based on the distribution of the asset. A parameter controls the ratio of blocks produced via PoW vs PoS. 
+
+## Mixed Public + Private Ledger
+
+Consider including a public ledger in the chain. 
+
+**todo: answer "why is this a good idea?"**
+
+## Resources
+
+- [Hoskinson live stream: Midnight Launch Week](https://www.youtube.com/watch?v=LyD8WdTEK7M)
+    - I'm heavely influenced by this mans thinking and what he's doing with Midnight
