@@ -10,11 +10,13 @@ use consensus::types::{
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    build_experimental_receipt_root_artifact, commitment_nullifier_lists,
-    experimental_receipt_root_verifier_profile, tx_validity_artifact_from_tx_leaf_proof,
+    build_experimental_native_receipt_root_artifact, commitment_nullifier_lists,
+    experimental_native_receipt_root_verifier_profile,
+    tx_validity_artifact_from_native_tx_leaf_bytes,
 };
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
+use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{
     Felt, HashFelt, felts_to_bytes48, merkle_node, spend_auth_key_bytes,
@@ -32,6 +34,7 @@ struct RawActiveFixture {
     base_tree: CommitmentTreeState,
     block: ConsensusBlock,
     updated_root: [u8; 48],
+    witnesses: Vec<TransactionWitness>,
 }
 
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
@@ -359,6 +362,7 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         base_tree,
         block,
         updated_root: updated_tree.root(),
+        witnesses: vec![witness_a, witness_b],
     }
 }
 
@@ -368,22 +372,27 @@ fn raw_active_fixture() -> &'static RawActiveFixture {
 }
 
 fn build_receipt_root_block_artifacts(
-    proofs: &[transaction_circuit::proof::TransactionProof],
+    witnesses: &[TransactionWitness],
 ) -> (
     Vec<TxValidityArtifact>,
     ReceiptRootProofPayload,
     ProofEnvelope,
 ) {
-    let tx_validity_artifacts = proofs
+    let tx_validity_artifacts = witnesses
         .iter()
-        .map(|proof| tx_validity_artifact_from_tx_leaf_proof(proof).expect("tx leaf artifact"))
+        .map(|witness| {
+            let built = build_native_tx_leaf_artifact_bytes(witness).expect("native tx leaf bytes");
+            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes)
+                .expect("native tx leaf artifact")
+        })
         .collect::<Vec<_>>();
     let receipts = tx_validity_artifacts
         .iter()
         .map(|artifact| artifact.receipt.clone())
         .collect::<Vec<_>>();
-    let built = build_experimental_receipt_root_artifact(&receipts).expect("receipt-root bytes");
-    let verifier_profile = experimental_receipt_root_verifier_profile();
+    let built = build_experimental_native_receipt_root_artifact(&tx_validity_artifacts)
+        .expect("native receipt-root bytes");
+    let verifier_profile = experimental_native_receipt_root_verifier_profile();
     let payload = ReceiptRootProofPayload {
         root_proof: built.artifact_bytes.clone(),
         metadata: ReceiptRootMetadata {
@@ -466,23 +475,12 @@ fn raw_active_rejects_commitment_mismatch() {
 fn receipt_root_block_is_accepted() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
-    let proofs = fixture
-        .block
-        .tx_validity_artifacts
-        .as_ref()
-        .expect("tx validity artifacts")
-        .iter()
-        .map(|artifact| {
-            let envelope = artifact.proof.as_ref().expect("inline tx proof envelope");
-            bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof")
-        })
-        .collect::<Vec<TransactionProof>>();
     let (tx_validity_artifacts, receipt_root, envelope) =
-        build_receipt_root_block_artifacts(&proofs);
+        build_receipt_root_block_artifacts(&fixture.witnesses);
     let proven_batch = block.proven_batch.as_mut().expect("proven batch");
     proven_batch.mode = ProvenBatchMode::ReceiptRoot;
     proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
-    proven_batch.verifier_profile = experimental_receipt_root_verifier_profile();
+    proven_batch.verifier_profile = experimental_native_receipt_root_verifier_profile();
     proven_batch.receipt_root = Some(receipt_root);
     block.tx_validity_artifacts = Some(tx_validity_artifacts);
     block.block_artifact = Some(envelope);
@@ -499,24 +497,13 @@ fn receipt_root_block_is_accepted() {
 fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
-    let proofs = fixture
-        .block
-        .tx_validity_artifacts
-        .as_ref()
-        .expect("tx validity artifacts")
-        .iter()
-        .map(|artifact| {
-            let envelope = artifact.proof.as_ref().expect("inline tx proof envelope");
-            bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof")
-        })
-        .collect::<Vec<TransactionProof>>();
     let (mut tx_validity_artifacts, receipt_root, envelope) =
-        build_receipt_root_block_artifacts(&proofs);
+        build_receipt_root_block_artifacts(&fixture.witnesses);
     tx_validity_artifacts[0].receipt.statement_hash = [0xA5; 48];
     let proven_batch = block.proven_batch.as_mut().expect("proven batch");
     proven_batch.mode = ProvenBatchMode::ReceiptRoot;
     proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
-    proven_batch.verifier_profile = experimental_receipt_root_verifier_profile();
+    proven_batch.verifier_profile = experimental_native_receipt_root_verifier_profile();
     proven_batch.receipt_root = Some(receipt_root);
     block.tx_validity_artifacts = Some(tx_validity_artifacts);
     block.block_artifact = Some(envelope);

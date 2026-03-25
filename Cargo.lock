@@ -11156,6 +11156,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "clap",
+ "libc",
  "p3-goldilocks",
  "serde",
  "serde_json",

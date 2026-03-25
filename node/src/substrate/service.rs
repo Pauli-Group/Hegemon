@@ -141,7 +141,7 @@ use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlock
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::{
-    tx_validity_artifact_from_proof, tx_validity_artifact_from_tx_leaf_proof, HeaderProofExt,
+    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof, HeaderProofExt,
 };
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
@@ -1239,35 +1239,33 @@ fn canonical_balance_slots(
         .collect())
 }
 
-fn build_transaction_proof(
-    proof_bytes: Vec<u8>,
+struct MaterializedTxPublicInputs {
+    padded_nullifiers: Vec<[u8; 48]>,
+    padded_commitments: Vec<[u8; 48]>,
+    balance_slots: Vec<BalanceSlot>,
+    stark_public_inputs: SerializedStarkInputs,
+    public_inputs: TransactionPublicInputs,
+}
+
+fn materialize_transaction_public_inputs_with_hashes(
     nullifiers: Vec<[u8; 48]>,
     commitments: Vec<[u8; 48]>,
-    ciphertexts: &[Vec<u8>],
+    ciphertext_hashes: Vec<[u8; 48]>,
     anchor: [u8; 48],
     balance_slot_asset_ids: [u64; BALANCE_SLOTS],
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
-) -> Result<TransactionProof, String> {
-    if proof_bytes.is_empty() {
-        return Err("shielded transfer proof bytes are empty".to_string());
-    }
-
+) -> Result<MaterializedTxPublicInputs, String> {
     let input_count = nullifiers.len();
     let output_count = commitments.len();
-    if ciphertexts.len() != output_count {
-        return Err("ciphertext count does not match commitments".to_string());
+    if ciphertext_hashes.len() != output_count {
+        return Err("ciphertext hash count does not match commitments".to_string());
     }
     let padded_nullifiers = pad_commitments(nullifiers, MAX_INPUTS, "nullifiers")?;
     let padded_commitments = pad_commitments(commitments, MAX_OUTPUTS, "commitments")?;
-    let ciphertext_hashes: Vec<[u8; 48]> = ciphertexts
-        .iter()
-        .map(|ct| ciphertext_hash_bytes(ct))
-        .collect();
     let padded_ciphertext_hashes =
         pad_commitments(ciphertext_hashes, MAX_OUTPUTS, "ciphertext hashes")?;
-
     let stablecoin_binding = stablecoin
         .as_ref()
         .map(convert_stablecoin_binding)
@@ -1291,7 +1289,7 @@ fn build_transaction_proof(
         anchor,
         padded_nullifiers.clone(),
         padded_commitments.clone(),
-        padded_ciphertext_hashes.clone(),
+        padded_ciphertext_hashes,
         balance_slots.clone(),
         fee,
         value_balance,
@@ -1299,14 +1297,54 @@ fn build_transaction_proof(
         DEFAULT_VERSION_BINDING,
     )
     .map_err(|err| err.to_string())?;
+    Ok(MaterializedTxPublicInputs {
+        padded_nullifiers,
+        padded_commitments,
+        balance_slots,
+        stark_public_inputs,
+        public_inputs,
+    })
+}
+
+fn build_transaction_proof(
+    proof_bytes: Vec<u8>,
+    nullifiers: Vec<[u8; 48]>,
+    commitments: Vec<[u8; 48]>,
+    ciphertexts: &[Vec<u8>],
+    anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; BALANCE_SLOTS],
+    stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
+    fee: u64,
+    value_balance: i128,
+) -> Result<TransactionProof, String> {
+    if proof_bytes.is_empty() {
+        return Err("shielded transfer proof bytes are empty".to_string());
+    }
+    if ciphertexts.len() != commitments.len() {
+        return Err("ciphertext count does not match commitments".to_string());
+    }
+    let ciphertext_hashes: Vec<[u8; 48]> = ciphertexts
+        .iter()
+        .map(|ct| ciphertext_hash_bytes(ct))
+        .collect();
+    let materialized = materialize_transaction_public_inputs_with_hashes(
+        nullifiers,
+        commitments,
+        ciphertext_hashes,
+        anchor,
+        balance_slot_asset_ids,
+        stablecoin,
+        fee,
+        value_balance,
+    )?;
 
     Ok(TransactionProof {
-        public_inputs,
-        nullifiers: padded_nullifiers,
-        commitments: padded_commitments,
-        balance_slots,
+        public_inputs: materialized.public_inputs,
+        nullifiers: materialized.padded_nullifiers,
+        commitments: materialized.padded_commitments,
+        balance_slots: materialized.balance_slots,
         stark_proof: proof_bytes,
-        stark_public_inputs: Some(stark_public_inputs),
+        stark_public_inputs: Some(materialized.stark_public_inputs),
     })
 }
 
@@ -1324,56 +1362,24 @@ fn build_transaction_proof_with_hashes(
     if proof_bytes.is_empty() {
         return Err("shielded transfer proof bytes are empty".to_string());
     }
-
-    let input_count = nullifiers.len();
-    let output_count = commitments.len();
-    if ciphertext_hashes.len() != output_count {
-        return Err("ciphertext hash count does not match commitments".to_string());
-    }
-    let padded_nullifiers = pad_commitments(nullifiers, MAX_INPUTS, "nullifiers")?;
-    let padded_commitments = pad_commitments(commitments, MAX_OUTPUTS, "commitments")?;
-    let padded_ciphertext_hashes =
-        pad_commitments(ciphertext_hashes.to_vec(), MAX_OUTPUTS, "ciphertext hashes")?;
-
-    let stablecoin_binding = stablecoin
-        .as_ref()
-        .map(convert_stablecoin_binding)
-        .unwrap_or_default();
-    let balance_slots = canonical_balance_slots(
-        balance_slot_asset_ids,
-        fee,
-        value_balance,
-        &stablecoin_binding,
-    )?;
-    let stark_public_inputs = build_stark_inputs(
-        input_count,
-        output_count,
+    let materialized = materialize_transaction_public_inputs_with_hashes(
+        nullifiers,
+        commitments,
+        ciphertext_hashes.to_vec(),
         anchor,
         balance_slot_asset_ids,
+        stablecoin,
         fee,
         value_balance,
-        stablecoin.as_ref().map(|_| &stablecoin_binding),
     )?;
-    let public_inputs = TransactionPublicInputs::new(
-        anchor,
-        padded_nullifiers.clone(),
-        padded_commitments.clone(),
-        padded_ciphertext_hashes.clone(),
-        balance_slots.clone(),
-        fee,
-        value_balance,
-        stablecoin_binding,
-        DEFAULT_VERSION_BINDING,
-    )
-    .map_err(|err| err.to_string())?;
 
     Ok(TransactionProof {
-        public_inputs,
-        nullifiers: padded_nullifiers,
-        commitments: padded_commitments,
-        balance_slots,
+        public_inputs: materialized.public_inputs,
+        nullifiers: materialized.padded_nullifiers,
+        commitments: materialized.padded_commitments,
+        balance_slots: materialized.balance_slots,
         stark_proof: proof_bytes,
-        stark_public_inputs: Some(stark_public_inputs),
+        stark_public_inputs: Some(materialized.stark_public_inputs),
     })
 }
 
@@ -2236,6 +2242,7 @@ struct CandidateBlockContext {
     decoded_extrinsics: Vec<runtime::UncheckedExtrinsic>,
     extracted_transactions: Vec<consensus::types::Transaction>,
     tx_proofs: Arc<Vec<TransactionProof>>,
+    tx_validity_artifacts: Option<Vec<consensus::TxValidityArtifact>>,
     statement_bindings: Vec<consensus::types::TxStatementBinding>,
     tx_statements_commitment: [u8; 48],
     da_root: DaRoot,
@@ -2266,7 +2273,7 @@ fn build_candidate_context(
     let da_chunk_count = encoding.chunks().len() as u32;
     let resolved_ciphertexts = da_blob.transactions;
 
-    let (transactions, proofs, proof_binding_hashes) =
+    let (transactions, proofs, extracted_tx_artifacts, proof_binding_hashes) =
         extract_shielded_transfers_for_parallel_verification(
             &decoded,
             Some(resolved_ciphertexts.as_slice()),
@@ -2295,11 +2302,15 @@ fn build_candidate_context(
     let tx_statements_commitment =
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+    let tx_validity_artifacts = extracted_tx_artifacts
+        .into_iter()
+        .collect::<Option<Vec<_>>>();
 
     Ok(CandidateBlockContext {
         decoded_extrinsics: decoded,
         extracted_transactions: transactions,
         tx_proofs: Arc::new(proofs),
+        tx_validity_artifacts,
         statement_bindings,
         tx_statements_commitment,
         da_root,
@@ -2808,19 +2819,30 @@ fn build_merge_root_proof_from_materials(
 }
 
 fn build_receipt_root_proof_from_materials(
-    proofs: Arc<Vec<TransactionProof>>,
+    tx_artifacts: &[consensus::TxValidityArtifact],
 ) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String> {
-    if proofs.is_empty() {
+    if tx_artifacts.is_empty() {
         return Err("candidate tx set has no receipt-root proof material".to_string());
     }
-    let mut consensus_receipts = Vec::with_capacity(proofs.len());
-    for proof in proofs.iter() {
-        let artifact = tx_validity_artifact_from_proof(proof)
-            .map_err(|err| format!("tx validity artifact derivation failed: {err}"))?;
-        consensus_receipts.push(artifact.receipt.clone());
+    if tx_artifacts.iter().any(|artifact| {
+        artifact
+            .proof
+            .as_ref()
+            .map(|proof| {
+                proof.kind != consensus::ProofArtifactKind::TxLeaf
+                    || proof.verifier_profile
+                        != consensus::experimental_native_tx_leaf_verifier_profile()
+            })
+            .unwrap_or(true)
+    }) {
+        return Err("receipt-root requires native tx-leaf artifacts for every tx".to_string());
     }
-    let built = consensus::build_experimental_receipt_root_artifact(&consensus_receipts)
-        .map_err(|err| format!("receipt-root artifact generation failed: {err}"))?;
+    let consensus_receipts = tx_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    let built = consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
+        .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
     Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
         metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
@@ -3053,7 +3075,7 @@ fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::Can
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
     ) {
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
-        payload.verifier_profile = consensus::experimental_receipt_root_verifier_profile();
+        payload.verifier_profile = consensus::experimental_native_receipt_root_verifier_profile();
         return;
     }
     let (proof_kind, verifier_profile) =
@@ -3139,6 +3161,7 @@ fn prepare_block_proof_bundle(
 
     let proofs_for_commitment = Arc::clone(&context.tx_proofs);
     let proofs_for_batching = Arc::clone(&context.tx_proofs);
+    let tx_artifacts_for_batching = context.tx_validity_artifacts.clone();
     let batch_slot_txs = batch_slot_txs();
     let selected_artifact = prepared_artifact_selector_from_env();
     let merge_arity = merge_root_arity_from_env();
@@ -3175,6 +3198,7 @@ fn prepare_block_proof_bundle(
 
         let aggregation_proofs = Arc::clone(&proofs_for_batching);
         let aggregation_bindings = Arc::clone(&statement_bindings);
+        let aggregation_tx_artifacts = tx_artifacts_for_batching.clone();
         let aggregation_handle = scope.spawn(move || {
             tracing::info!(
                 block_number,
@@ -3213,8 +3237,20 @@ fn prepare_block_proof_bundle(
                         .map(PreparedAggregationArtifacts::Merge)
                     }
                     pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-                        build_receipt_root_proof_from_materials(aggregation_proofs)
-                            .map(PreparedAggregationArtifacts::ReceiptRoot)
+                        match aggregation_tx_artifacts.as_ref() {
+                            Some(tx_artifacts) => build_receipt_root_proof_from_materials(
+                                tx_artifacts.as_slice(),
+                            )
+                            .map(PreparedAggregationArtifacts::ReceiptRoot),
+                            None => {
+                                tracing::info!(
+                                    block_number,
+                                    tx_count,
+                                    "prepare_block_proof_bundle: native receipt-root unavailable; falling back to inline_tx"
+                                );
+                                Ok(PreparedAggregationArtifacts::InlineTx)
+                            }
+                        }
                     }
                 };
                 if let Ok(ref artifacts) = built {
@@ -3446,12 +3482,14 @@ fn extract_shielded_transfers_for_parallel_verification(
     (
         Vec<consensus::types::Transaction>,
         Vec<TransactionProof>,
+        Vec<Option<consensus::TxValidityArtifact>>,
         Vec<[u8; 64]>,
     ),
     String,
 > {
     let mut transactions = Vec::new();
     let mut proofs = Vec::new();
+    let mut tx_validity_artifacts = Vec::new();
     let mut proof_binding_hashes = Vec::new();
     let mut ciphertext_cursor = 0usize;
 
@@ -3506,6 +3544,10 @@ fn extract_shielded_transfers_for_parallel_verification(
                 )?;
                 let tx = crate::transaction::proof_to_transaction(&tx_proof, version, ciphertexts);
                 transactions.push(tx);
+                tx_validity_artifacts
+                    .push(Some(tx_validity_artifact_from_proof(&tx_proof).map_err(
+                        |err| format!("inline tx artifact derivation failed: {err}"),
+                    )?));
                 proofs.push(tx_proof);
                 proof_binding_hashes.push(args.binding_hash);
             }
@@ -3534,15 +3576,16 @@ fn extract_shielded_transfers_for_parallel_verification(
                     }
                     Err(err) => return Err(err),
                 };
-                let tx_proof = match (maybe_proof_bytes, maybe_ciphertexts.as_ref()) {
+                let mut tx_artifact = None;
+                let tx_proof = match (maybe_proof_bytes.as_ref(), maybe_ciphertexts.as_ref()) {
                     (Some(proof_bytes), Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
                             &args.ciphertext_sizes,
                             &args.ciphertext_hashes,
                         )?;
-                        Some(build_transaction_proof(
-                            proof_bytes,
+                        let materialized = build_transaction_proof(
+                            proof_bytes.clone(),
                             nullifiers_vec.clone(),
                             commitments_vec.clone(),
                             ciphertexts,
@@ -3551,19 +3594,45 @@ fn extract_shielded_transfers_for_parallel_verification(
                             args.stablecoin.clone(),
                             args.fee,
                             0,
-                        )?)
+                        )?;
+                        if let Ok(native_artifact) =
+                            tx_validity_artifact_from_native_tx_leaf_bytes(proof_bytes.clone())
+                        {
+                            tx_artifact = Some(native_artifact);
+                            None
+                        } else {
+                            tx_artifact =
+                                Some(tx_validity_artifact_from_proof(&materialized).map_err(
+                                    |err| format!("inline tx artifact derivation failed: {err}"),
+                                )?);
+                            Some(materialized)
+                        }
                     }
-                    (Some(proof_bytes), None) => Some(build_transaction_proof_with_hashes(
-                        proof_bytes,
-                        nullifiers_vec.clone(),
-                        commitments_vec.clone(),
-                        &hash_vec,
-                        args.anchor,
-                        args.balance_slot_asset_ids,
-                        args.stablecoin.clone(),
-                        args.fee,
-                        0,
-                    )?),
+                    (Some(proof_bytes), None) => {
+                        let materialized = build_transaction_proof_with_hashes(
+                            proof_bytes.clone(),
+                            nullifiers_vec.clone(),
+                            commitments_vec.clone(),
+                            &hash_vec,
+                            args.anchor,
+                            args.balance_slot_asset_ids,
+                            args.stablecoin.clone(),
+                            args.fee,
+                            0,
+                        )?;
+                        if let Ok(native_artifact) =
+                            tx_validity_artifact_from_native_tx_leaf_bytes(proof_bytes.clone())
+                        {
+                            tx_artifact = Some(native_artifact);
+                            None
+                        } else {
+                            tx_artifact =
+                                Some(tx_validity_artifact_from_proof(&materialized).map_err(
+                                    |err| format!("inline tx artifact derivation failed: {err}"),
+                                )?);
+                            Some(materialized)
+                        }
+                    }
                     (None, Some(ciphertexts)) => {
                         validate_ciphertexts_against_hashes(
                             ciphertexts,
@@ -3574,6 +3643,16 @@ fn extract_shielded_transfers_for_parallel_verification(
                     }
                     (None, None) => None,
                 };
+                let materialized_public = materialize_transaction_public_inputs_with_hashes(
+                    nullifiers_vec.clone(),
+                    commitments_vec.clone(),
+                    hash_vec.clone(),
+                    args.anchor,
+                    args.balance_slot_asset_ids,
+                    args.stablecoin.clone(),
+                    args.fee,
+                    0,
+                )?;
                 let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
                     (Some(proof), Some(ciphertexts)) => {
                         crate::transaction::proof_to_transaction(proof, version, ciphertexts)
@@ -3588,19 +3667,20 @@ fn extract_shielded_transfers_for_parallel_verification(
                     (None, Some(ciphertexts)) => consensus::types::Transaction::new(
                         nullifiers_vec,
                         commitments_vec,
-                        [0u8; 48],
+                        materialized_public.public_inputs.balance_tag,
                         version,
                         ciphertexts,
                     ),
                     (None, None) => consensus::types::Transaction::new_with_hashes(
                         nullifiers_vec,
                         commitments_vec,
-                        [0u8; 48],
+                        materialized_public.public_inputs.balance_tag,
                         version,
                         hash_vec,
                     ),
                 };
                 transactions.push(tx);
+                tx_validity_artifacts.push(tx_artifact);
                 if let Some(tx_proof) = tx_proof {
                     proofs.push(tx_proof);
                     proof_binding_hashes.push(args.binding_hash);
@@ -3629,7 +3709,12 @@ fn extract_shielded_transfers_for_parallel_verification(
         ));
     }
 
-    Ok((transactions, proofs, proof_binding_hashes))
+    Ok((
+        transactions,
+        proofs,
+        tx_validity_artifacts,
+        proof_binding_hashes,
+    ))
 }
 
 fn load_parent_commitment_tree_state(
@@ -3841,18 +3926,6 @@ fn tx_validity_artifacts_from_transaction_proofs(
         .collect()
 }
 
-fn tx_leaf_artifacts_from_transaction_proofs(
-    proofs: &[TransactionProof],
-) -> Result<Vec<consensus::TxValidityArtifact>, String> {
-    proofs
-        .iter()
-        .map(|proof| {
-            tx_validity_artifact_from_tx_leaf_proof(proof)
-                .map_err(|err| format!("tx leaf artifact derivation failed: {err}"))
-        })
-        .collect()
-}
-
 fn verify_proof_carrying_block(
     verifier: &ParallelProofVerifier,
     client: &HegemonFullClient,
@@ -3869,7 +3942,7 @@ fn verify_proof_carrying_block(
     let proven_batch_payload = extract_proven_batch_payload(extrinsics)?;
     ensure_shielded_transfer_ordering(extrinsics)?;
     ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
-    let (transactions, tx_proofs, _proof_binding_hashes) =
+    let (transactions, tx_proofs, extracted_tx_artifacts, _proof_binding_hashes) =
         extract_shielded_transfers_for_parallel_verification(
             extrinsics,
             resolved_ciphertexts,
@@ -3935,15 +4008,13 @@ fn verify_proof_carrying_block(
         .map_err(|_| "prover fee bucket exceeds u64".to_string())?;
     let reward_bundle = extract_block_reward_bundle(extrinsics)?;
     let tx_proof_bytes_total: usize = tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
+    let extracted_tx_artifacts = extracted_tx_artifacts
+        .into_iter()
+        .collect::<Option<Vec<_>>>();
     let inline_tx_artifacts = if tx_proofs.len() == transactions.len() {
         Some(tx_validity_artifacts_from_transaction_proofs(&tx_proofs)?)
     } else {
-        None
-    };
-    let tx_leaf_artifacts = if tx_proofs.len() == transactions.len() {
-        Some(tx_leaf_artifacts_from_transaction_proofs(&tx_proofs)?)
-    } else {
-        None
+        extracted_tx_artifacts.clone()
     };
     let extrinsics_bytes_total: usize = extrinsics.iter().map(|ext| ext.encode().len()).sum();
     let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
@@ -4070,7 +4141,9 @@ fn verify_proof_carrying_block(
             );
         }
         let tx_validity_artifacts = match payload.proof_mode {
-            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => tx_leaf_artifacts.clone(),
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+                extracted_tx_artifacts.clone()
+            }
             _ => inline_tx_artifacts.clone(),
         };
         let block_artifact =
@@ -11483,7 +11556,7 @@ mod tests {
         );
         assert_eq!(
             selector.verifier_profile,
-            consensus::experimental_receipt_root_verifier_profile()
+            consensus::experimental_native_receipt_root_verifier_profile()
         );
     }
 

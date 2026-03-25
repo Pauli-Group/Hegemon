@@ -10,14 +10,16 @@ use superneo_core::{
     Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact, SecurityParams,
 };
 use superneo_hegemon::{
+    build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_receipt_root_artifact_bytes,
     build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
     build_verified_tx_proof_receipt_root_artifact_bytes,
-    canonical_tx_validity_receipt_from_transaction_proof,
+    canonical_tx_validity_receipt_from_transaction_proof, decode_native_tx_leaf_artifact_bytes,
     native_tx_validity_statement_from_witness, tx_leaf_public_tx_from_transaction_proof,
-    verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
-    verify_verified_tx_proof_receipt_root_artifact_bytes, NativeTxValidityRelation,
-    ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness, TxLeafPublicRelation,
-    TxProofReceiptRelation, TxProofReceiptWitness,
+    tx_leaf_public_tx_from_witness, verify_native_tx_leaf_artifact_bytes,
+    verify_native_tx_leaf_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
+    verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
+    NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness,
+    TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -33,6 +35,7 @@ enum RelationChoice {
     ToyBalance,
     TxReceipt,
     NativeTxValidity,
+    NativeTxLeafReceiptRoot,
     TxLeafReceiptRoot,
     VerifiedTxReceipt,
 }
@@ -40,7 +43,7 @@ enum RelationChoice {
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark the experimental SuperNeo stack")]
 struct Cli {
-    #[arg(long, value_enum, default_value_t = RelationChoice::TxLeafReceiptRoot)]
+    #[arg(long, value_enum, default_value_t = RelationChoice::NativeTxLeafReceiptRoot)]
     relation: RelationChoice,
     #[arg(long, value_delimiter = ',', default_values_t = vec![1usize])]
     k: Vec<usize>,
@@ -66,6 +69,7 @@ struct BenchResult {
     shape_digest: String,
     note: String,
     edge_prepare_ns: Option<u128>,
+    peak_rss_bytes: Option<u64>,
     inline_tx_baseline: Option<InlineTxBaseline>,
 }
 
@@ -91,6 +95,9 @@ fn main() -> Result<()> {
             RelationChoice::TxReceipt => benchmark_tx_receipt(k, inline_tx_baseline)?,
             RelationChoice::NativeTxValidity => {
                 benchmark_native_tx_validity(k, inline_tx_baseline)?
+            }
+            RelationChoice::NativeTxLeafReceiptRoot => {
+                benchmark_native_tx_leaf_receipt_root(k, inline_tx_baseline)?
             }
             RelationChoice::TxLeafReceiptRoot => {
                 benchmark_tx_leaf_receipt_root(k, inline_tx_baseline)?
@@ -196,6 +203,7 @@ fn benchmark_toy_balance(
             root.witness_commitment.to_hex()
         ),
         edge_prepare_ns: None,
+        peak_rss_bytes: Some(current_peak_rss_bytes()?),
         inline_tx_baseline,
     })
 }
@@ -288,6 +296,7 @@ fn benchmark_tx_receipt(
             root.witness_commitment.to_hex()
         ),
         edge_prepare_ns: None,
+        peak_rss_bytes: Some(current_peak_rss_bytes()?),
         inline_tx_baseline,
     })
 }
@@ -371,6 +380,73 @@ fn benchmark_native_tx_validity(
             root.witness_commitment.to_hex()
         ),
         edge_prepare_ns: None,
+        peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        inline_tx_baseline,
+    })
+}
+
+fn benchmark_native_tx_leaf_receipt_root(
+    k: usize,
+    inline_tx_baseline: Option<InlineTxBaseline>,
+) -> Result<BenchResult> {
+    let witnesses = (0..k)
+        .map(|seed| sample_witness(seed as u64 + 1))
+        .collect::<Vec<_>>();
+    let relation = NativeTxValidityRelation::default();
+    let packed_witness_bits = relation.shape().witness_schema.total_witness_bits() * k;
+
+    let edge_prepare_start = Instant::now();
+    let built_leaves = witnesses
+        .iter()
+        .map(|witness| {
+            let tx = tx_leaf_public_tx_from_witness(witness)?;
+            let built = build_native_tx_leaf_artifact_bytes(witness)?;
+            let receipt = built.receipt.clone();
+            Ok((tx, receipt, built))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let edge_prepare_ns = edge_prepare_start.elapsed().as_nanos();
+
+    let native_artifacts = built_leaves
+        .iter()
+        .map(|(_, _, built)| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+        .collect::<Result<Vec<_>>>()?;
+    let tx_leaf_bytes_total = built_leaves
+        .iter()
+        .map(|(_, _, built)| built.artifact_bytes.len())
+        .sum::<usize>();
+
+    let prove_start = Instant::now();
+    let built_root = build_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts)?;
+    let total_prove_ns = prove_start.elapsed().as_nanos();
+
+    let verify_start = Instant::now();
+    for (tx, receipt, built) in &built_leaves {
+        verify_native_tx_leaf_artifact_bytes(tx, receipt, &built.artifact_bytes)?;
+    }
+    let metadata = verify_native_tx_leaf_receipt_root_artifact_bytes(
+        &native_artifacts,
+        &built_root.artifact_bytes,
+    )?;
+    let total_verify_ns = verify_start.elapsed().as_nanos();
+
+    let total_bytes = tx_leaf_bytes_total + built_root.artifact_bytes.len();
+
+    Ok(BenchResult {
+        relation: "native_tx_leaf_receipt_root".to_owned(),
+        k,
+        bytes_per_tx: total_bytes.div_ceil(k),
+        total_active_path_prove_ns: total_prove_ns,
+        total_active_path_verify_ns: total_verify_ns,
+        packed_witness_bits,
+        shape_digest: shape_hex(ShapeDigest(metadata.shape_digest)),
+        note: format!(
+            "native tx-leaf artifacts={}B root_artifact={}B",
+            tx_leaf_bytes_total,
+            built_root.artifact_bytes.len()
+        ),
+        edge_prepare_ns: Some(edge_prepare_ns),
+        peak_rss_bytes: Some(current_peak_rss_bytes()?),
         inline_tx_baseline,
     })
 }
@@ -433,6 +509,7 @@ fn benchmark_tx_leaf_receipt_root(
             built_root.artifact_bytes.len()
         ),
         edge_prepare_ns: Some(edge_prepare_ns),
+        peak_rss_bytes: Some(current_peak_rss_bytes()?),
         inline_tx_baseline,
     })
 }
@@ -478,6 +555,7 @@ fn benchmark_verified_tx_receipt(
             tx_proof_bytes_total + receipt_bytes_total
         ),
         edge_prepare_ns: None,
+        peak_rss_bytes: Some(current_peak_rss_bytes()?),
         inline_tx_baseline,
     })
 }
@@ -702,6 +780,26 @@ fn fold_artifact_bytes(artifact: &FoldArtifact<FoldDigestProof>) -> usize {
 
 fn packed_witness_transport_bytes(packed: &superneo_ring::PackedWitness<u64>) -> usize {
     4 + (packed.coeffs.len() * 8) + 4 + 4 + 2
+}
+
+fn current_peak_rss_bytes() -> Result<u64> {
+    #[cfg(unix)]
+    {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+        ensure!(rc == 0, "getrusage failed");
+        let usage = unsafe { usage.assume_init() };
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            return Ok(usage.ru_maxrss as u64);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        {
+            return Ok((usage.ru_maxrss as u64) * 1024);
+        }
+    }
+    #[allow(unreachable_code)]
+    Ok(0)
 }
 
 #[cfg(test)]
