@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_goldilocks::Goldilocks;
@@ -8,6 +10,11 @@ use superneo_ccs::{
 };
 use superneo_core::{Backend, FoldedInstance, SecurityParams};
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
+use transaction_circuit::keys::generate_keys;
+use transaction_circuit::proof::{
+    transaction_proof_digest, transaction_public_inputs_digest, transaction_statement_hash,
+    transaction_verifier_profile_digest, verify as verify_transaction_proof, TransactionProof,
+};
 
 pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
@@ -248,6 +255,11 @@ pub struct CanonicalTxValidityReceiptRelation {
     shape: CcsShape<Goldilocks>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedTxProofReceiptRelation {
+    shape: CcsShape<Goldilocks>,
+}
+
 impl Default for CanonicalTxValidityReceiptRelation {
     fn default() -> Self {
         let witness_schema = WitnessSchema {
@@ -274,6 +286,14 @@ impl Default for CanonicalTxValidityReceiptRelation {
             witness_schema,
         };
         Self { shape }
+    }
+}
+
+impl Default for VerifiedTxProofReceiptRelation {
+    fn default() -> Self {
+        Self {
+            shape: CanonicalTxValidityReceiptRelation::default().shape,
+        }
     }
 }
 
@@ -316,6 +336,41 @@ impl Relation<Goldilocks> for CanonicalTxValidityReceiptRelation {
         witness.extend(bytes48_to_goldilocks(&statement.public_inputs_digest));
         witness.extend(bytes48_to_goldilocks(&statement.verifier_profile));
         Ok(Assignment { witness })
+    }
+}
+
+impl Relation<Goldilocks> for VerifiedTxProofReceiptRelation {
+    type Statement = CanonicalTxValidityReceipt;
+    type Witness = TransactionProof;
+
+    fn relation_id(&self) -> RelationId {
+        RelationId::from_label("hegemon.superneo.verified-inline-tx-receipt")
+    }
+
+    fn shape(&self) -> &CcsShape<Goldilocks> {
+        &self.shape
+    }
+
+    fn encode_statement(
+        &self,
+        statement: &Self::Statement,
+    ) -> Result<StatementEncoding<Goldilocks>> {
+        CanonicalTxValidityReceiptRelation::default().encode_statement(statement)
+    }
+
+    fn build_assignment(
+        &self,
+        statement: &Self::Statement,
+        witness: &Self::Witness,
+    ) -> Result<Assignment<Goldilocks>> {
+        let derived = canonical_tx_validity_receipt_from_transaction_proof(witness)?;
+        ensure!(
+            derived == *statement,
+            "verified tx proof relation statement does not match witness-derived receipt"
+        );
+        verify_transaction_proof(witness, transaction_verifying_key())
+            .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
+        CanonicalTxValidityReceiptRelation::default().build_assignment(statement, &())
     }
 }
 
@@ -488,8 +543,25 @@ pub fn build_tx_proof_receipt(
     })
 }
 
+fn transaction_verifying_key() -> &'static transaction_circuit::keys::VerifyingKey {
+    static VERIFYING_KEY: OnceLock<transaction_circuit::keys::VerifyingKey> = OnceLock::new();
+    VERIFYING_KEY.get_or_init(|| generate_keys().1)
+}
+
+pub fn canonical_tx_validity_receipt_from_transaction_proof(
+    proof: &TransactionProof,
+) -> Result<CanonicalTxValidityReceipt> {
+    Ok(CanonicalTxValidityReceipt {
+        statement_hash: transaction_statement_hash(proof),
+        proof_digest: transaction_proof_digest(proof),
+        public_inputs_digest: transaction_public_inputs_digest(proof)
+            .map_err(|err| anyhow::anyhow!("failed to derive tx public inputs digest: {err}"))?,
+        verifier_profile: transaction_verifier_profile_digest(proof),
+    })
+}
+
 pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
-    let relation = CanonicalTxValidityReceiptRelation::default();
+    let relation = VerifiedTxProofReceiptRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
     let (pk, _) = backend
@@ -507,6 +579,88 @@ pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
         b"hegemon.superneo.receipt-root-profile.digest.v1",
         &material,
     )
+}
+
+pub fn build_verified_tx_proof_receipt_root_artifact_bytes(
+    proofs: &[TransactionProof],
+) -> Result<BuiltReceiptRootArtifact> {
+    ensure!(
+        !proofs.is_empty(),
+        "receipt-root artifact requires at least one transaction proof"
+    );
+
+    let relation = VerifiedTxProofReceiptRelation::default();
+    let security = SecurityParams::experimental_default();
+    let backend = LatticeBackend::default();
+    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+    let (pk, _) = backend.setup(&security, relation.shape())?;
+
+    let mut leaves = Vec::with_capacity(proofs.len());
+    let mut current = Vec::with_capacity(proofs.len());
+    for proof in proofs {
+        let statement = canonical_tx_validity_receipt_from_transaction_proof(proof)?;
+        let encoding = relation.encode_statement(&statement)?;
+        let assignment = relation.build_assignment(&statement, proof)?;
+        let packed = packer.pack(relation.shape(), &assignment)?;
+        let leaf_proof = backend.prove_leaf(&pk, &relation.relation_id(), &encoding, &packed)?;
+        leaves.push(ReceiptRootLeaf {
+            statement_digest: encoding.statement_digest.0,
+            witness_commitment: leaf_proof.witness_commitment.digest,
+            proof_digest: leaf_proof.proof_digest,
+        });
+        current.push(FoldedInstance {
+            relation_id: relation.relation_id(),
+            shape_digest: pk.shape_digest,
+            statement_digest: encoding.statement_digest,
+            witness_commitment: leaf_proof.witness_commitment,
+        });
+    }
+
+    let mut folds = Vec::new();
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
+                folds.push(ReceiptRootFoldStep {
+                    parent_statement_digest: parent.statement_digest.0,
+                    parent_commitment: parent.witness_commitment.digest,
+                    left_statement_digest: left.statement_digest.0,
+                    left_commitment: left.witness_commitment.digest,
+                    right_statement_digest: right.statement_digest.0,
+                    right_commitment: right.witness_commitment.digest,
+                    proof_digest: proof.proof_digest,
+                });
+                next.push(parent);
+            } else {
+                next.push(left);
+            }
+        }
+        current = next;
+    }
+
+    let root = current
+        .pop()
+        .expect("non-empty verified receipt-root leaf set");
+    let artifact = ReceiptRootArtifact {
+        version: RECEIPT_ROOT_ARTIFACT_VERSION,
+        relation_id: relation.relation_id().0,
+        shape_digest: pk.shape_digest.0,
+        leaves,
+        folds: folds.clone(),
+        root_statement_digest: root.statement_digest.0,
+        root_commitment: root.witness_commitment.digest,
+    };
+    Ok(BuiltReceiptRootArtifact {
+        artifact_bytes: encode_receipt_root_artifact(&artifact),
+        metadata: ReceiptRootMetadata {
+            relation_id: artifact.relation_id,
+            shape_digest: artifact.shape_digest,
+            leaf_count: artifact.leaves.len() as u32,
+            fold_count: folds.len() as u32,
+        },
+    })
 }
 
 pub fn build_receipt_root_artifact_bytes(
@@ -585,6 +739,133 @@ pub fn build_receipt_root_artifact_bytes(
             leaf_count: artifact.leaves.len() as u32,
             fold_count: folds.len() as u32,
         },
+    })
+}
+
+pub fn verify_verified_tx_proof_receipt_root_artifact_bytes(
+    proofs: &[TransactionProof],
+    artifact_bytes: &[u8],
+) -> Result<ReceiptRootMetadata> {
+    ensure!(
+        !proofs.is_empty(),
+        "receipt-root artifact requires at least one transaction proof"
+    );
+    let artifact = decode_receipt_root_artifact(artifact_bytes)?;
+    ensure!(
+        artifact.version == RECEIPT_ROOT_ARTIFACT_VERSION,
+        "unsupported receipt-root artifact version {}",
+        artifact.version
+    );
+
+    let relation = VerifiedTxProofReceiptRelation::default();
+    let security = SecurityParams::experimental_default();
+    let backend = LatticeBackend::default();
+    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    ensure!(
+        artifact.relation_id == relation.relation_id().0,
+        "receipt-root relation id mismatch"
+    );
+    ensure!(
+        artifact.shape_digest == pk.shape_digest.0,
+        "receipt-root shape digest mismatch"
+    );
+    ensure!(
+        artifact.leaves.len() == proofs.len(),
+        "receipt-root leaf count {} does not match tx proofs {}",
+        artifact.leaves.len(),
+        proofs.len()
+    );
+
+    let mut current = Vec::with_capacity(proofs.len());
+    for (proof, leaf) in proofs.iter().zip(&artifact.leaves) {
+        let statement = canonical_tx_validity_receipt_from_transaction_proof(proof)?;
+        let encoding = relation.encode_statement(&statement)?;
+        let assignment = relation.build_assignment(&statement, proof)?;
+        let packed = packer.pack(relation.shape(), &assignment)?;
+        ensure!(
+            leaf.statement_digest == encoding.statement_digest.0,
+            "receipt-root leaf statement digest mismatch"
+        );
+        let proof = LeafDigestProof {
+            witness_commitment: LatticeCommitment::digest_only(leaf.witness_commitment),
+            packed_witness: packed,
+            proof_digest: leaf.proof_digest,
+        };
+        backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &proof)?;
+        current.push(FoldedInstance {
+            relation_id: relation.relation_id(),
+            shape_digest: pk.shape_digest,
+            statement_digest: encoding.statement_digest,
+            witness_commitment: backend.commit_witness(&pk, &proof.packed_witness)?,
+        });
+    }
+
+    let mut fold_index = 0usize;
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let fold = artifact
+                    .folds
+                    .get(fold_index)
+                    .ok_or_else(|| anyhow::anyhow!("receipt-root fold list ended early"))?;
+                fold_index += 1;
+                ensure!(
+                    fold.left_statement_digest == left.statement_digest.0
+                        && fold.left_commitment == left.witness_commitment.digest,
+                    "receipt-root fold left child mismatch"
+                );
+                ensure!(
+                    fold.right_statement_digest == right.statement_digest.0
+                        && fold.right_commitment == right.witness_commitment.digest,
+                    "receipt-root fold right child mismatch"
+                );
+                let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
+                ensure!(
+                    fold.parent_statement_digest == parent.statement_digest.0,
+                    "receipt-root fold parent statement digest mismatch"
+                );
+                ensure!(
+                    fold.parent_commitment == parent.witness_commitment.digest,
+                    "receipt-root fold parent commitment mismatch"
+                );
+                ensure!(
+                    fold.proof_digest == proof.proof_digest,
+                    "receipt-root fold proof digest mismatch"
+                );
+                backend.verify_fold(&vk, &parent, &left, &right, &proof)?;
+                next.push(parent);
+            } else {
+                next.push(left);
+            }
+        }
+        current = next;
+    }
+
+    ensure!(
+        fold_index == artifact.folds.len(),
+        "receipt-root artifact has {} unused fold steps",
+        artifact.folds.len().saturating_sub(fold_index)
+    );
+    let root = current
+        .pop()
+        .expect("receipt-root verifier must retain one root");
+    ensure!(
+        artifact.root_statement_digest == root.statement_digest.0,
+        "receipt-root root statement digest mismatch"
+    );
+    ensure!(
+        artifact.root_commitment == root.witness_commitment.digest,
+        "receipt-root root commitment mismatch"
+    );
+
+    Ok(ReceiptRootMetadata {
+        relation_id: artifact.relation_id,
+        shape_digest: artifact.shape_digest,
+        leaf_count: artifact.leaves.len() as u32,
+        fold_count: artifact.folds.len() as u32,
     })
 }
 
@@ -847,6 +1128,12 @@ fn digest48_with_parts(label: &[u8], parts: &[&[u8]]) -> [u8; 48] {
 #[cfg(test)]
 mod tests {
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
+    use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
+    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+    use transaction_circuit::keys::generate_keys;
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::proof::prove;
+    use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
 
     use super::*;
 
@@ -970,5 +1257,119 @@ mod tests {
         let mut wrong = receipts.clone();
         wrong[1].proof_digest = [99u8; 48];
         assert!(verify_receipt_root_artifact_bytes(&wrong, &built.artifact_bytes).is_err());
+    }
+
+    #[test]
+    fn verified_tx_proof_receipt_root_round_trip() {
+        let proofs = vec![sample_transaction_proof(1), sample_transaction_proof(2)];
+        let built = build_verified_tx_proof_receipt_root_artifact_bytes(&proofs).unwrap();
+        let metadata =
+            verify_verified_tx_proof_receipt_root_artifact_bytes(&proofs, &built.artifact_bytes)
+                .unwrap();
+        assert_eq!(metadata.leaf_count, proofs.len() as u32);
+        assert_eq!(
+            metadata.relation_id,
+            VerifiedTxProofReceiptRelation::default().relation_id().0
+        );
+    }
+
+    fn sample_transaction_proof(seed: u64) -> TransactionProof {
+        let witness = sample_witness(seed);
+        let (proving_key, _) = generate_keys();
+        prove(&witness, &proving_key).expect("sample tx proof")
+    }
+
+    fn sample_witness(seed: u64) -> TransactionWitness {
+        let sk_spend = [seed as u8 + 42; 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [seed as u8 + 2; 32],
+            pk_auth,
+            rho: [seed as u8 + 3; 32],
+            r: [seed as u8 + 4; 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: seed + 100,
+            pk_recipient: [seed as u8 + 5; 32],
+            pk_auth,
+            rho: [seed as u8 + 6; 32],
+            r: [seed as u8 + 7; 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+
+        let output_native = OutputNoteWitness {
+            note: NoteData {
+                value: 3,
+                asset_id: NATIVE_ASSET_ID,
+                pk_recipient: [seed as u8 + 11; 32],
+                pk_auth: [seed as u8 + 12; 32],
+                rho: [seed as u8 + 13; 32],
+                r: [seed as u8 + 14; 32],
+            },
+        };
+        let output_asset = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: seed + 100,
+                pk_recipient: [seed as u8 + 21; 32],
+                pk_auth: [seed as u8 + 22; 32],
+                rho: [seed as u8 + 23; 32],
+                r: [seed as u8 + 24; 32],
+            },
+        };
+
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [seed as u8 + 9; 32],
+                    merkle_path: merkle_path0,
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [seed as u8 + 10; 32],
+                    merkle_path: merkle_path1,
+                },
+            ],
+            outputs: vec![output_native, output_asset],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&merkle_root),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn build_two_leaf_merkle_tree(
+        leaf0: HashFelt,
+        leaf1: HashFelt,
+    ) -> (MerklePath, MerklePath, HashFelt) {
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..CIRCUIT_MERKLE_DEPTH {
+            let zero = [Goldilocks::new(0); 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        (
+            MerklePath {
+                siblings: siblings0,
+            },
+            MerklePath {
+                siblings: siblings1,
+            },
+            current,
+        )
     }
 }

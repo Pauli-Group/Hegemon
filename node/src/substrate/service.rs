@@ -140,9 +140,7 @@ use batch_circuit::prewarm_batch_verifier_cache;
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
-use consensus::proof::{
-    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt, HeaderProofExt,
-};
+use consensus::proof::{tx_validity_artifact_from_proof, HeaderProofExt};
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
     encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
@@ -2819,7 +2817,7 @@ fn build_receipt_root_proof_from_materials(
             .map_err(|err| format!("tx validity artifact derivation failed: {err}"))?;
         consensus_receipts.push(artifact.receipt.clone());
     }
-    let built = consensus::build_experimental_receipt_root_artifact(&consensus_receipts)
+    let built = consensus::build_experimental_receipt_root_artifact_from_proofs(&proofs)
         .map_err(|err| format!("receipt-root artifact generation failed: {err}"))?;
     Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
@@ -3841,23 +3839,6 @@ fn tx_validity_artifacts_from_transaction_proofs(
         .collect()
 }
 
-fn tx_validity_artifacts_from_receipts(
-    receipts: &[pallet_shielded_pool::types::TxValidityReceipt],
-) -> Vec<consensus::TxValidityArtifact> {
-    receipts
-        .iter()
-        .cloned()
-        .map(|receipt| {
-            tx_validity_artifact_from_receipt(consensus::TxValidityReceipt {
-                statement_hash: receipt.statement_hash,
-                proof_digest: receipt.proof_digest,
-                public_inputs_digest: receipt.public_inputs_digest,
-                verifier_profile: receipt.verifier_profile,
-            })
-        })
-        .collect()
-}
-
 fn verify_proof_carrying_block(
     verifier: &ParallelProofVerifier,
     client: &HegemonFullClient,
@@ -4069,17 +4050,7 @@ fn verify_proof_carrying_block(
                 "inline_tx candidate artifact requires inline transaction proof bytes".to_string(),
             );
         }
-        let tx_validity_artifacts = if matches!(
-            verification_mode,
-            consensus::types::ProofVerificationMode::SelfContainedAggregation
-        ) {
-            payload
-                .receipt_root
-                .as_ref()
-                .map(|receipt_root| tx_validity_artifacts_from_receipts(&receipt_root.receipts))
-        } else {
-            inline_tx_artifacts.clone()
-        };
+        let tx_validity_artifacts = inline_tx_artifacts.clone();
         let block_artifact =
             payload
                 .receipt_root

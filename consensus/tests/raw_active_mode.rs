@@ -6,11 +6,11 @@ use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::types::{
     ConsensusBlock, ProofArtifactKind, ProofEnvelope, ProofVerificationMode, ProvenBatch,
     ProvenBatchMode, ReceiptRootMetadata, ReceiptRootProofPayload, Transaction, TxStatementBinding,
-    TxValidityArtifact, TxValidityReceipt, kernel_root_from_shielded_root,
+    TxValidityArtifact, kernel_root_from_shielded_root,
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    build_experimental_receipt_root_artifact, commitment_nullifier_lists,
+    build_experimental_receipt_root_artifact_from_proofs, commitment_nullifier_lists,
     experimental_receipt_root_verifier_profile,
 };
 use crypto::hashes::blake3_384;
@@ -368,18 +368,22 @@ fn raw_active_fixture() -> &'static RawActiveFixture {
 }
 
 fn build_receipt_root_block_artifacts(
-    receipts: &[TxValidityReceipt],
+    proofs: &[transaction_circuit::proof::TransactionProof],
 ) -> (
     Vec<TxValidityArtifact>,
     ReceiptRootProofPayload,
     ProofEnvelope,
 ) {
-    let built = build_experimental_receipt_root_artifact(receipts).expect("receipt-root bytes");
+    let built =
+        build_experimental_receipt_root_artifact_from_proofs(proofs).expect("receipt-root bytes");
     let verifier_profile = experimental_receipt_root_verifier_profile();
-    let tx_validity_artifacts = receipts
+    let tx_validity_artifacts = proofs
         .iter()
-        .cloned()
-        .map(consensus::tx_validity_artifact_from_receipt)
+        .map(|proof| consensus::tx_validity_artifact_from_proof(proof).expect("tx validity proof"))
+        .collect::<Vec<_>>();
+    let receipts = tx_validity_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
         .collect::<Vec<_>>();
     let payload = ReceiptRootProofPayload {
         root_proof: built.artifact_bytes.clone(),
@@ -399,14 +403,16 @@ fn build_receipt_root_block_artifacts(
     (tx_validity_artifacts, payload, envelope)
 }
 
-#[test]
-fn raw_active_block_is_accepted() {
-    let fixture = raw_active_fixture();
-    let verifier = ParallelProofVerifier::new();
-    let updated = verifier
-        .verify_block(&fixture.block, &fixture.base_tree)
-        .expect("valid raw-active block should verify");
-    assert_eq!(updated.root(), fixture.updated_root);
+fn proofs_from_artifacts(
+    artifacts: &[TxValidityArtifact],
+) -> Vec<transaction_circuit::proof::TransactionProof> {
+    artifacts
+        .iter()
+        .map(|artifact| {
+            let envelope = artifact.proof.as_ref().expect("inline tx proof envelope");
+            bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof")
+        })
+        .collect()
 }
 
 #[test]
@@ -473,15 +479,14 @@ fn raw_active_rejects_commitment_mismatch() {
 fn receipt_root_block_is_accepted() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
-    let receipts = block
-        .tx_validity_artifacts
-        .as_ref()
-        .expect("tx validity artifacts")
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
+    let proofs = proofs_from_artifacts(
+        block
+            .tx_validity_artifacts
+            .as_ref()
+            .expect("tx validity artifacts"),
+    );
     let (tx_validity_artifacts, receipt_root, envelope) =
-        build_receipt_root_block_artifacts(&receipts);
+        build_receipt_root_block_artifacts(&proofs);
     let proven_batch = block.proven_batch.as_mut().expect("proven batch");
     proven_batch.mode = ProvenBatchMode::ReceiptRoot;
     proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
@@ -502,16 +507,15 @@ fn receipt_root_block_is_accepted() {
 fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
-    let mut receipts = block
-        .tx_validity_artifacts
-        .as_ref()
-        .expect("tx validity artifacts")
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
-    receipts[0].statement_hash = [0xA5; 48];
-    let (tx_validity_artifacts, receipt_root, envelope) =
-        build_receipt_root_block_artifacts(&receipts);
+    let proofs = proofs_from_artifacts(
+        block
+            .tx_validity_artifacts
+            .as_ref()
+            .expect("tx validity artifacts"),
+    );
+    let (mut tx_validity_artifacts, receipt_root, envelope) =
+        build_receipt_root_block_artifacts(&proofs);
+    tx_validity_artifacts[0].receipt.statement_hash = [0xA5; 48];
     let proven_batch = block.proven_batch.as_mut().expect("proven batch");
     proven_batch.mode = ProvenBatchMode::ReceiptRoot;
     proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
@@ -525,7 +529,21 @@ fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
     let err = verifier
         .verify_block(&block, &fixture.base_tree)
         .expect_err("receipt-root must reject mismatched statement receipts");
-    assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
+    assert!(matches!(
+        err,
+        ProofError::AggregationProofInputsMismatch(_)
+            | ProofError::TransactionProofInputsMismatch { .. }
+    ));
+}
+
+#[test]
+fn raw_active_block_is_accepted() {
+    let fixture = raw_active_fixture();
+    let verifier = ParallelProofVerifier::new();
+    let updated = verifier
+        .verify_block(&fixture.block, &fixture.base_tree)
+        .expect("valid raw-active block should verify");
+    assert_eq!(updated.root(), fixture.updated_root);
 }
 
 #[test]

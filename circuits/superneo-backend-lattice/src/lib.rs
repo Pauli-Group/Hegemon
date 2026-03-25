@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 use blake3::Hasher;
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
@@ -29,7 +29,9 @@ pub struct LatticeBackendConfig {
     pub ring_profile: RingProfile,
     pub security_bits: u32,
     pub challenge_bits: u32,
-    pub projection_rows: usize,
+    pub commitment_rows: usize,
+    pub ring_degree: usize,
+    pub digit_bits: u16,
 }
 
 impl Default for LatticeBackendConfig {
@@ -37,8 +39,10 @@ impl Default for LatticeBackendConfig {
         Self {
             ring_profile: RingProfile::GoldilocksCyclotomic24,
             security_bits: 128,
-            challenge_bits: 128,
-            projection_rows: 12,
+            challenge_bits: 16,
+            commitment_rows: 8,
+            ring_degree: 8,
+            digit_bits: 8,
         }
     }
 }
@@ -64,13 +68,20 @@ pub struct BackendKey {
     pub max_fold_arity: u32,
     pub transcript_domain_digest: [u8; 32],
     pub ring_profile: RingProfile,
-    pub projection_rows: usize,
+    pub commitment_rows: usize,
+    pub ring_degree: usize,
+    pub digit_bits: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RingElem {
+    pub coeffs: Vec<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LatticeCommitment {
     pub digest: [u8; 48],
-    pub rows: Vec<u64>,
+    pub rows: Vec<RingElem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,10 +109,64 @@ pub struct BackendShape {
     pub witness_bits: usize,
 }
 
+impl RingElem {
+    fn zero(ring_degree: usize) -> Self {
+        Self {
+            coeffs: vec![0; ring_degree],
+        }
+    }
+
+    pub fn from_coeffs(coeffs: Vec<u64>) -> Self {
+        Self { coeffs }
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        for (lhs, rhs) in self.coeffs.iter_mut().zip(&other.coeffs) {
+            *lhs = goldilocks_add(*lhs, *rhs);
+        }
+    }
+
+    fn scale(&self, scalar: u64) -> Self {
+        Self {
+            coeffs: self
+                .coeffs
+                .iter()
+                .map(|coeff| goldilocks_mul(*coeff, scalar))
+                .collect(),
+        }
+    }
+
+    fn mul_negacyclic(&self, other: &Self) -> Self {
+        let degree = self.coeffs.len();
+        let mut out = vec![Goldilocks::new(0); degree];
+        for (i, left) in self.coeffs.iter().enumerate() {
+            for (j, right) in other.coeffs.iter().enumerate() {
+                let target = i + j;
+                let product = Goldilocks::new(*left) * Goldilocks::new(*right);
+                if target < degree {
+                    out[target] = out[target] + product;
+                } else {
+                    out[target - degree] = out[target - degree] - product;
+                }
+            }
+        }
+        Self {
+            coeffs: out
+                .into_iter()
+                .map(|value| value.as_canonical_u64())
+                .collect(),
+        }
+    }
+
+    fn byte_size(&self) -> usize {
+        4 + (self.coeffs.len() * 8)
+    }
+}
+
 impl LatticeCommitment {
     pub const DIGEST_BYTES: usize = 48;
 
-    pub fn from_rows(rows: Vec<u64>) -> Self {
+    pub fn from_rows(rows: Vec<RingElem>) -> Self {
         Self {
             digest: digest_commitment_rows(&rows),
             rows,
@@ -116,7 +181,7 @@ impl LatticeCommitment {
     }
 
     pub fn byte_size(&self) -> usize {
-        Self::DIGEST_BYTES + 4 + (self.rows.len() * 8)
+        Self::DIGEST_BYTES + 4 + self.rows.iter().map(RingElem::byte_size).sum::<usize>()
     }
 
     pub fn to_hex(&self) -> String {
@@ -170,8 +235,16 @@ impl Backend<Goldilocks> for LatticeBackend {
     ) -> Result<(Self::ProverKey, Self::VerifierKey)> {
         shape.validate()?;
         ensure!(
-            self.config.projection_rows > 0,
-            "projection_rows must be strictly positive"
+            self.config.commitment_rows > 0,
+            "commitment_rows must be strictly positive"
+        );
+        ensure!(
+            self.config.ring_degree > 0,
+            "ring_degree must be strictly positive"
+        );
+        ensure!(
+            (1..=16).contains(&self.config.digit_bits),
+            "digit_bits must be in 1..=16"
         );
         let key = BackendKey {
             shape_digest: digest_shape(shape),
@@ -183,7 +256,9 @@ impl Backend<Goldilocks> for LatticeBackend {
                 security.transcript_domain,
             ),
             ring_profile: self.config.ring_profile,
-            projection_rows: self.config.projection_rows,
+            commitment_rows: self.config.commitment_rows,
+            ring_degree: self.config.ring_degree,
+            digit_bits: self.config.digit_bits,
         };
         Ok((key.clone(), key))
     }
@@ -193,8 +268,8 @@ impl Backend<Goldilocks> for LatticeBackend {
         pk: &Self::ProverKey,
         packed: &Self::PackedWitness,
     ) -> Result<Self::Commitment> {
-        let bits = expand_packed_bits(packed)?;
-        let rows = project_bits(pk, &bits);
+        let ring_message = embed_packed_witness(pk, packed)?;
+        let rows = commit_ring_message(pk, &ring_message);
         Ok(LatticeCommitment::from_rows(rows))
     }
 
@@ -395,6 +470,46 @@ pub fn to_backend_ccs(shape: &CcsShape<Goldilocks>) -> Result<BackendShape> {
     })
 }
 
+fn embed_packed_witness(pk: &BackendKey, packed: &PackedWitness<u64>) -> Result<Vec<RingElem>> {
+    let digits = expand_packed_digits(packed, pk.digit_bits)?;
+    let mut ring_elems = Vec::with_capacity(digits.len().div_ceil(pk.ring_degree));
+    for chunk in digits.chunks(pk.ring_degree) {
+        let mut coeffs = vec![0u64; pk.ring_degree];
+        for (idx, digit) in chunk.iter().enumerate() {
+            coeffs[idx] = *digit;
+        }
+        ring_elems.push(RingElem::from_coeffs(coeffs));
+    }
+    Ok(ring_elems)
+}
+
+fn expand_packed_digits(packed: &PackedWitness<u64>, digit_bits: u16) -> Result<Vec<u64>> {
+    ensure!(
+        (1..=64).contains(&packed.coeff_capacity_bits),
+        "packed witness coeff capacity must be in 1..=64"
+    );
+    ensure!(
+        (1..=16).contains(&digit_bits),
+        "digit_bits must be in 1..=16"
+    );
+    let bits = expand_packed_bits(packed)?;
+    let mut digits = Vec::with_capacity(bits.len().div_ceil(digit_bits as usize));
+    let mut cursor = 0usize;
+    while cursor < bits.len() {
+        let mut digit = 0u64;
+        for offset in 0..digit_bits as usize {
+            let bit_index = cursor + offset;
+            if bit_index >= bits.len() {
+                break;
+            }
+            digit |= u64::from(bits[bit_index]) << offset;
+        }
+        digits.push(digit);
+        cursor += digit_bits as usize;
+    }
+    Ok(digits)
+}
+
 fn expand_packed_bits(packed: &PackedWitness<u64>) -> Result<Vec<u8>> {
     ensure!(
         (1..=64).contains(&packed.coeff_capacity_bits),
@@ -408,48 +523,58 @@ fn expand_packed_bits(packed: &PackedWitness<u64>) -> Result<Vec<u8>> {
         let coeff = *packed
             .coeffs
             .get(coeff_index)
-            .ok_or_else(|| anyhow::anyhow!("packed witness ended early while expanding bits"))?;
+            .ok_or_else(|| anyhow!("packed witness ended early while expanding bits"))?;
         bits.push(((coeff >> bit_offset) & 1) as u8);
     }
     Ok(bits)
 }
 
-fn project_bits(pk: &BackendKey, bits: &[u8]) -> Vec<u64> {
-    let mut rows = vec![Goldilocks::new(0); pk.projection_rows];
-    for (bit_index, bit) in bits.iter().enumerate() {
-        if *bit == 0 {
-            continue;
+fn commit_ring_message(pk: &BackendKey, message: &[RingElem]) -> Vec<RingElem> {
+    let mut rows = Vec::with_capacity(pk.commitment_rows);
+    for row_index in 0..pk.commitment_rows {
+        let mut acc = RingElem::zero(pk.ring_degree);
+        for (col_index, message_elem) in message.iter().enumerate() {
+            let matrix = matrix_entry(pk, row_index, col_index);
+            acc.add_assign(&matrix.mul_negacyclic(message_elem));
         }
-        for (row_index, row) in rows.iter_mut().enumerate() {
-            *row = *row + matrix_entry(pk, row_index, bit_index);
-        }
+        rows.push(acc);
     }
-    rows.into_iter().map(|row| row.as_canonical_u64()).collect()
+    rows
 }
 
-fn matrix_entry(pk: &BackendKey, row_index: usize, bit_index: usize) -> Goldilocks {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.matrix-commitment.v1");
-    hasher.update(pk.ring_profile.label());
-    hasher.update(&pk.shape_digest.0);
-    hasher.update(&pk.security_bits.to_le_bytes());
-    hasher.update(&pk.challenge_bits.to_le_bytes());
-    hasher.update(&pk.max_fold_arity.to_le_bytes());
-    hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.projection_rows as u64).to_le_bytes());
-    hasher.update(&(row_index as u64).to_le_bytes());
-    hasher.update(&(bit_index as u64).to_le_bytes());
-    let mut out = [0u8; 8];
-    hasher.finalize_xof().fill(&mut out);
-    Goldilocks::new(u64::from_le_bytes(out))
+fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem {
+    let mut coeffs = Vec::with_capacity(pk.ring_degree);
+    for coeff_index in 0..pk.ring_degree {
+        let mut hasher = Hasher::new();
+        hasher.update(b"hegemon.superneo.ajtai-matrix.v1");
+        hasher.update(pk.ring_profile.label());
+        hasher.update(&pk.shape_digest.0);
+        hasher.update(&pk.security_bits.to_le_bytes());
+        hasher.update(&pk.challenge_bits.to_le_bytes());
+        hasher.update(&pk.max_fold_arity.to_le_bytes());
+        hasher.update(&pk.transcript_domain_digest);
+        hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+        hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+        hasher.update(&pk.digit_bits.to_le_bytes());
+        hasher.update(&(row_index as u64).to_le_bytes());
+        hasher.update(&(col_index as u64).to_le_bytes());
+        hasher.update(&(coeff_index as u64).to_le_bytes());
+        let mut out = [0u8; 8];
+        hasher.finalize_xof().fill(&mut out);
+        coeffs.push(Goldilocks::new(u64::from_le_bytes(out)).as_canonical_u64());
+    }
+    RingElem::from_coeffs(coeffs)
 }
 
-fn digest_commitment_rows(rows: &[u64]) -> [u8; 48] {
+fn digest_commitment_rows(rows: &[RingElem]) -> [u8; 48] {
     let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.commitment-digest.v1");
+    hasher.update(b"hegemon.superneo.commitment-digest.v2");
     hasher.update(&(rows.len() as u64).to_le_bytes());
     for row in rows {
-        hasher.update(&row.to_le_bytes());
+        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        for coeff in &row.coeffs {
+            hasher.update(&coeff.to_le_bytes());
+        }
     }
     hash48(hasher)
 }
@@ -460,7 +585,7 @@ fn derive_fold_challenge(
     right: &FoldedInstance<LatticeCommitment>,
 ) -> u64 {
     let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-challenge.v1");
+    hasher.update(b"hegemon.superneo.fold-challenge.v2");
     hasher.update(pk.ring_profile.label());
     hasher.update(&pk.shape_digest.0);
     hasher.update(&left.relation_id.0);
@@ -468,25 +593,31 @@ fn derive_fold_challenge(
     hasher.update(&pk.challenge_bits.to_le_bytes());
     hasher.update(&pk.max_fold_arity.to_le_bytes());
     hasher.update(&pk.transcript_domain_digest);
+    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+    hasher.update(&pk.digit_bits.to_le_bytes());
     hasher.update(&left.statement_digest.0);
     hasher.update(&right.statement_digest.0);
     hasher.update(&left.witness_commitment.digest);
     hasher.update(&right.witness_commitment.digest);
     let mut out = [0u8; 8];
     hasher.finalize_xof().fill(&mut out);
-    let challenge = Goldilocks::new(u64::from_le_bytes(out)).as_canonical_u64();
-    if challenge == 0 {
+    let raw = u64::from_le_bytes(out);
+    let mask_bits = pk.challenge_bits.min(16);
+    let modulus = 1u64 << mask_bits;
+    let reduced = if modulus <= 1 {
         1
     } else {
-        challenge
-    }
+        (raw % (modulus - 1)) + 1
+    };
+    Goldilocks::new(reduced).as_canonical_u64()
 }
 
 fn fold_commitment_rows(
     left: &LatticeCommitment,
     right: &LatticeCommitment,
     challenge: u64,
-) -> Result<Vec<u64>> {
+) -> Result<Vec<RingElem>> {
     ensure!(
         !left.rows.is_empty() && !right.rows.is_empty(),
         "folded commitments require concrete row data"
@@ -495,13 +626,14 @@ fn fold_commitment_rows(
         left.rows.len() == right.rows.len(),
         "folded commitments must have the same row length"
     );
-    let scalar = Goldilocks::new(challenge);
     Ok(left
         .rows
         .iter()
         .zip(&right.rows)
         .map(|(left_row, right_row)| {
-            (Goldilocks::new(*left_row) + scalar * Goldilocks::new(*right_row)).as_canonical_u64()
+            let mut acc = left_row.clone();
+            acc.add_assign(&right_row.scale(challenge));
+            acc
         })
         .collect())
 }
@@ -514,7 +646,7 @@ fn leaf_proof_digest(
     commitment: &LatticeCommitment,
 ) -> [u8; 48] {
     let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.leaf-proof.v1");
+    hasher.update(b"hegemon.superneo.leaf-proof.v2");
     hasher.update(pk.ring_profile.label());
     hasher.update(&pk.shape_digest.0);
     hasher.update(&relation_id.0);
@@ -522,7 +654,9 @@ fn leaf_proof_digest(
     hasher.update(&pk.challenge_bits.to_le_bytes());
     hasher.update(&pk.max_fold_arity.to_le_bytes());
     hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.projection_rows as u64).to_le_bytes());
+    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+    hasher.update(&pk.digit_bits.to_le_bytes());
     hasher.update(&statement_digest.0);
     hasher.update(&commitment.digest);
     hasher.update(&(packed.original_len as u64).to_le_bytes());
@@ -542,7 +676,7 @@ fn fold_statement_digest(
     parent_commitment_digest: &[u8; 48],
 ) -> StatementDigest {
     let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-statement.v1");
+    hasher.update(b"hegemon.superneo.fold-statement.v2");
     hasher.update(&challenge.to_le_bytes());
     hasher.update(&left.0);
     hasher.update(&right.0);
@@ -560,7 +694,7 @@ fn fold_proof_digest(
     parent_commitment_digest: &[u8; 48],
 ) -> [u8; 48] {
     let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-proof.v1");
+    hasher.update(b"hegemon.superneo.fold-proof.v2");
     hasher.update(pk.ring_profile.label());
     hasher.update(&pk.shape_digest.0);
     hasher.update(&relation_id.0);
@@ -568,7 +702,9 @@ fn fold_proof_digest(
     hasher.update(&pk.challenge_bits.to_le_bytes());
     hasher.update(&pk.max_fold_arity.to_le_bytes());
     hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.projection_rows as u64).to_le_bytes());
+    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+    hasher.update(&pk.digit_bits.to_le_bytes());
     hasher.update(&challenge.to_le_bytes());
     hasher.update(&left.statement_digest.0);
     hasher.update(&right.statement_digest.0);
@@ -577,6 +713,14 @@ fn fold_proof_digest(
     hasher.update(&parent_statement_digest.0);
     hasher.update(parent_commitment_digest);
     hash48(hasher)
+}
+
+fn goldilocks_add(left: u64, right: u64) -> u64 {
+    (Goldilocks::new(left) + Goldilocks::new(right)).as_canonical_u64()
+}
+
+fn goldilocks_mul(left: u64, right: u64) -> u64 {
+    (Goldilocks::new(left) * Goldilocks::new(right)).as_canonical_u64()
 }
 
 fn hash48(hasher: Hasher) -> [u8; 48] {
@@ -609,7 +753,7 @@ mod tests {
     use superneo_core::{Backend, FoldedInstance, SecurityParams};
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 
-    use super::{LatticeBackend, LatticeBackendConfig, LatticeCommitment};
+    use super::{LatticeBackend, LatticeBackendConfig, LatticeCommitment, RingElem};
 
     fn shape() -> CcsShape<Goldilocks> {
         CcsShape {
@@ -764,13 +908,23 @@ mod tests {
             relation_id: superneo_ccs::RelationId::from_label("test"),
             shape_digest: pk.shape_digest,
             statement_digest: digest_statement(b"left"),
-            witness_commitment: LatticeCommitment::from_rows(vec![1u64; pk.projection_rows]),
+            witness_commitment: LatticeCommitment::from_rows(vec![
+                RingElem::from_coeffs(
+                    vec![1u64; pk.ring_degree]
+                );
+                pk.commitment_rows
+            ]),
         };
         let right = FoldedInstance {
             relation_id: superneo_ccs::RelationId::from_label("test"),
             shape_digest: pk.shape_digest,
             statement_digest: digest_statement(b"right"),
-            witness_commitment: LatticeCommitment::from_rows(vec![2u64; pk.projection_rows]),
+            witness_commitment: LatticeCommitment::from_rows(vec![
+                RingElem::from_coeffs(
+                    vec![2u64; pk.ring_degree]
+                );
+                pk.commitment_rows
+            ]),
         };
         let (mut parent, proof) = backend.fold_pair(&pk, &left, &right).unwrap();
         parent.relation_id = superneo_ccs::RelationId::from_label("wrong");

@@ -30,7 +30,10 @@ use std::collections::BTreeSet;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Instant;
-use superneo_hegemon::CanonicalTxValidityReceipt;
+use superneo_hegemon::{
+    CanonicalTxValidityReceipt, build_verified_tx_proof_receipt_root_artifact_bytes,
+    verify_verified_tx_proof_receipt_root_artifact_bytes,
+};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
@@ -273,6 +276,44 @@ impl ArtifactVerifier for ReceiptRootVerifier {
                 observed: receipts.len(),
             });
         }
+        let verifying_key = generate_keys().1;
+        let mut proofs = Vec::with_capacity(receipts.len());
+        let mut verified_receipts = Vec::with_capacity(receipts.len());
+        for (index, (tx, artifact)) in txs.iter().zip(receipts.iter()).enumerate() {
+            let proof = decode_inline_tx_artifact_proof(artifact)
+                .map_err(|err| reindex_tx_artifact_error(index, err))?;
+            let expected_profile = transaction_verifier_profile_digest_for_version(tx.version);
+            if artifact.receipt.verifier_profile != expected_profile {
+                return Err(ProofError::TransactionProofInputsMismatch {
+                    index,
+                    message: "verifier profile mismatch".to_string(),
+                });
+            }
+            let envelope = artifact
+                .proof
+                .as_ref()
+                .ok_or(ProofError::MissingTransactionProofs)?;
+            if envelope.verifier_profile != expected_profile {
+                return Err(ProofError::TransactionProofInputsMismatch {
+                    index,
+                    message: "proof envelope verifier profile mismatch".to_string(),
+                });
+            }
+            let expected_receipt = tx_validity_receipt_from_proof(&proof)
+                .map_err(|message| ProofError::TransactionProofInputsMismatch { index, message })?;
+            if expected_receipt != artifact.receipt {
+                return Err(ProofError::TransactionProofInputsMismatch {
+                    index,
+                    message: "tx validity receipt mismatch".to_string(),
+                });
+            }
+            verify_transaction_proof_inputs_unindexed(tx, &proof)
+                .map_err(|message| ProofError::TransactionProofInputsMismatch { index, message })?;
+            verify_transaction_proof_unindexed(&verifying_key, &proof)
+                .map_err(|message| ProofError::TransactionProofVerification { index, message })?;
+            verified_receipts.push(expected_receipt);
+            proofs.push(proof);
+        }
         let derived_receipt_commitment = commitment_from_receipts(receipts)?;
         if derived_receipt_commitment != *expected_commitment {
             return Err(ProofError::AggregationProofInputsMismatch(
@@ -280,17 +321,20 @@ impl ArtifactVerifier for ReceiptRootVerifier {
             ));
         }
         let start_verify = Instant::now();
-        let receipts = receipts
-            .iter()
-            .map(|artifact| artifact.receipt.clone())
-            .collect::<Vec<_>>();
-        verify_experimental_receipt_root_artifact(&receipts, &envelope.artifact_bytes).map_err(
-            |err| {
-                ProofError::AggregationProofVerification(format!(
-                    "receipt-root verification failed: {err}"
-                ))
-            },
-        )?;
+        let root_metadata = verify_experimental_receipt_root_artifact_from_proofs(
+            &proofs,
+            &envelope.artifact_bytes,
+        )
+        .map_err(|err| {
+            ProofError::AggregationProofVerification(format!(
+                "receipt-root verification failed: {err}"
+            ))
+        })?;
+        if root_metadata.leaf_count as usize != verified_receipts.len() {
+            return Err(ProofError::AggregationProofInputsMismatch(
+                "receipt-root verified leaf count mismatch".to_string(),
+            ));
+        }
         Ok(BlockArtifactVerifyReport {
             tx_count: txs.len(),
             verified_statement_commitment: *expected_commitment,
@@ -523,12 +567,42 @@ pub fn build_experimental_receipt_root_artifact(
     })
 }
 
+pub fn build_experimental_receipt_root_artifact_from_proofs(
+    proofs: &[TransactionProof],
+) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
+    let built = build_verified_tx_proof_receipt_root_artifact_bytes(proofs)
+        .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
+    Ok(ExperimentalReceiptRootArtifact {
+        artifact_bytes: built.artifact_bytes,
+        metadata: ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+    })
+}
+
 pub fn verify_experimental_receipt_root_artifact(
     receipts: &[TxValidityReceipt],
     artifact_bytes: &[u8],
 ) -> Result<ReceiptRootMetadata, ProofError> {
     let canonical = canonical_receipts_from_tx_receipts(receipts);
     let metadata = superneo_hegemon::verify_receipt_root_artifact_bytes(&canonical, artifact_bytes)
+        .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
+    Ok(ReceiptRootMetadata {
+        relation_id: metadata.relation_id,
+        shape_digest: metadata.shape_digest,
+        leaf_count: metadata.leaf_count,
+        fold_count: metadata.fold_count,
+    })
+}
+
+pub fn verify_experimental_receipt_root_artifact_from_proofs(
+    proofs: &[TransactionProof],
+    artifact_bytes: &[u8],
+) -> Result<ReceiptRootMetadata, ProofError> {
+    let metadata = verify_verified_tx_proof_receipt_root_artifact_bytes(proofs, artifact_bytes)
         .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
     Ok(ReceiptRootMetadata {
         relation_id: metadata.relation_id,

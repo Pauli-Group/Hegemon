@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::PathBuf, time::Instant};
+use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock, time::Instant};
 
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
@@ -10,22 +10,32 @@ use superneo_core::{
     Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact, SecurityParams,
 };
 use superneo_hegemon::{
-    build_tx_proof_receipt, ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness,
-    TxProofReceiptRelation, TxProofReceiptWitness,
+    build_tx_proof_receipt, build_verified_tx_proof_receipt_root_artifact_bytes,
+    verify_verified_tx_proof_receipt_root_artifact_bytes, ToyBalanceRelation, ToyBalanceStatement,
+    ToyBalanceWitness, TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
+use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
+use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+use transaction_circuit::keys::generate_keys;
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+use transaction_circuit::proof::{prove, TransactionProof};
+use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
+
+const RECEIPT_ROOT_WITNESS_BITS: usize = 48 * 4 * 8;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[value(rename_all = "snake_case")]
 enum RelationChoice {
     ToyBalance,
     TxReceipt,
+    VerifiedTxReceipt,
 }
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark the experimental SuperNeo stack")]
 struct Cli {
-    #[arg(long, value_enum, default_value_t = RelationChoice::TxReceipt)]
+    #[arg(long, value_enum, default_value_t = RelationChoice::VerifiedTxReceipt)]
     relation: RelationChoice,
     #[arg(long, value_delimiter = ',', default_values_t = vec![1usize])]
     k: Vec<usize>,
@@ -73,6 +83,9 @@ fn main() -> Result<()> {
         let result = match cli.relation {
             RelationChoice::ToyBalance => benchmark_toy_balance(k, inline_tx_baseline)?,
             RelationChoice::TxReceipt => benchmark_tx_receipt(k, inline_tx_baseline)?,
+            RelationChoice::VerifiedTxReceipt => {
+                benchmark_verified_tx_receipt(k, inline_tx_baseline)?
+            }
         };
         results.push(result);
     }
@@ -263,6 +276,49 @@ fn benchmark_tx_receipt(
     })
 }
 
+fn benchmark_verified_tx_receipt(
+    k: usize,
+    inline_tx_baseline: Option<InlineTxBaseline>,
+) -> Result<BenchResult> {
+    let proofs = (0..k)
+        .map(|seed| sample_transaction_proof(seed as u64 + 1))
+        .collect::<Vec<_>>();
+
+    let prove_start = Instant::now();
+    let built = build_verified_tx_proof_receipt_root_artifact_bytes(&proofs)?;
+    let total_prove_ns = prove_start.elapsed().as_nanos();
+
+    let verify_start = Instant::now();
+    let metadata =
+        verify_verified_tx_proof_receipt_root_artifact_bytes(&proofs, &built.artifact_bytes)?;
+    let total_verify_ns = verify_start.elapsed().as_nanos();
+
+    let tx_proof_bytes_total = proofs
+        .iter()
+        .map(|proof| bincode::serialize(proof).map(|bytes| bytes.len()))
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .sum::<usize>();
+    let receipt_bytes_total = proofs.len() * (48 * 4);
+    let total_bytes = tx_proof_bytes_total + receipt_bytes_total + built.artifact_bytes.len();
+
+    Ok(BenchResult {
+        relation: "verified_tx_receipt".to_owned(),
+        k,
+        bytes_per_tx: total_bytes.div_ceil(k),
+        total_active_path_prove_ns: total_prove_ns,
+        total_active_path_verify_ns: total_verify_ns,
+        packed_witness_bits: RECEIPT_ROOT_WITNESS_BITS,
+        shape_digest: shape_hex(ShapeDigest(metadata.shape_digest)),
+        note: format!(
+            "verified inline tx proofs + receipt_root artifact={}B tx_artifacts={}B",
+            built.artifact_bytes.len(),
+            tx_proof_bytes_total + receipt_bytes_total
+        ),
+        inline_tx_baseline,
+    })
+}
+
 fn fold_to_root(
     backend: &LatticeBackend,
     pk: &<LatticeBackend as Backend<Goldilocks>>::ProverKey,
@@ -336,6 +392,116 @@ fn load_inline_tx_baselines() -> Result<HashMap<usize, InlineTxBaseline>> {
     Ok(baselines)
 }
 
+fn sample_transaction_proof(seed: u64) -> TransactionProof {
+    static SAMPLE_PROOFS: OnceLock<std::sync::Mutex<HashMap<u64, TransactionProof>>> =
+        OnceLock::new();
+    let proofs = SAMPLE_PROOFS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let mut guard = proofs.lock().expect("sample tx proof cache poisoned");
+    if let Some(proof) = guard.get(&seed) {
+        return proof.clone();
+    }
+    let witness = sample_witness(seed);
+    let (proving_key, _) = generate_keys();
+    let proof = prove(&witness, &proving_key).expect("sample tx proof");
+    guard.insert(seed, proof.clone());
+    proof
+}
+
+fn sample_witness(seed: u64) -> TransactionWitness {
+    let sk_spend = [seed as u8 + 42; 32];
+    let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+    let input_note_native = NoteData {
+        value: 8,
+        asset_id: NATIVE_ASSET_ID,
+        pk_recipient: [seed as u8 + 2; 32],
+        pk_auth,
+        rho: [seed as u8 + 3; 32],
+        r: [seed as u8 + 4; 32],
+    };
+    let input_note_asset = NoteData {
+        value: 5,
+        asset_id: seed + 100,
+        pk_recipient: [seed as u8 + 5; 32],
+        pk_auth,
+        rho: [seed as u8 + 6; 32],
+        r: [seed as u8 + 7; 32],
+    };
+
+    let leaf0 = input_note_native.commitment();
+    let leaf1 = input_note_asset.commitment();
+    let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+
+    let output_native = OutputNoteWitness {
+        note: NoteData {
+            value: 3,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [seed as u8 + 11; 32],
+            pk_auth: [seed as u8 + 12; 32],
+            rho: [seed as u8 + 13; 32],
+            r: [seed as u8 + 14; 32],
+        },
+    };
+    let output_asset = OutputNoteWitness {
+        note: NoteData {
+            value: 5,
+            asset_id: seed + 100,
+            pk_recipient: [seed as u8 + 21; 32],
+            pk_auth: [seed as u8 + 22; 32],
+            rho: [seed as u8 + 23; 32],
+            r: [seed as u8 + 24; 32],
+        },
+    };
+
+    TransactionWitness {
+        inputs: vec![
+            InputNoteWitness {
+                note: input_note_native,
+                position: 0,
+                rho_seed: [seed as u8 + 9; 32],
+                merkle_path: merkle_path0,
+            },
+            InputNoteWitness {
+                note: input_note_asset,
+                position: 1,
+                rho_seed: [seed as u8 + 10; 32],
+                merkle_path: merkle_path1,
+            },
+        ],
+        outputs: vec![output_native, output_asset],
+        ciphertext_hashes: vec![[0u8; 48]; 2],
+        sk_spend,
+        merkle_root: felts_to_bytes48(&merkle_root),
+        fee: 5,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    }
+}
+
+fn build_two_leaf_merkle_tree(
+    leaf0: HashFelt,
+    leaf1: HashFelt,
+) -> (MerklePath, MerklePath, HashFelt) {
+    let mut siblings0 = vec![leaf1];
+    let mut siblings1 = vec![leaf0];
+    let mut current = merkle_node(leaf0, leaf1);
+    for _ in 1..CIRCUIT_MERKLE_DEPTH {
+        let zero = [Goldilocks::new(0); 6];
+        siblings0.push(zero);
+        siblings1.push(zero);
+        current = merkle_node(current, zero);
+    }
+    (
+        MerklePath {
+            siblings: siblings0,
+        },
+        MerklePath {
+            siblings: siblings1,
+        },
+        current,
+    )
+}
+
 fn baseline_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../output/prover-recovery/2026-03-14/active-lanes/metrics.tsv")
@@ -374,7 +540,7 @@ fn fold_artifact_bytes(artifact: &FoldArtifact<FoldDigestProof>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use superneo_backend_lattice::LatticeCommitment;
+    use superneo_backend_lattice::{LatticeCommitment, RingElem};
     use superneo_ccs::digest_statement;
 
     #[test]
@@ -390,19 +556,34 @@ mod tests {
                 relation_id,
                 shape_digest: pk.shape_digest,
                 statement_digest: digest_statement(b"a"),
-                witness_commitment: LatticeCommitment::from_rows(vec![1u64; pk.projection_rows]),
+                witness_commitment: LatticeCommitment::from_rows(vec![
+                    RingElem::from_coeffs(
+                        vec![1u64; pk.ring_degree]
+                    );
+                    pk.commitment_rows
+                ]),
             },
             FoldedInstance {
                 relation_id,
                 shape_digest: pk.shape_digest,
                 statement_digest: digest_statement(b"b"),
-                witness_commitment: LatticeCommitment::from_rows(vec![2u64; pk.projection_rows]),
+                witness_commitment: LatticeCommitment::from_rows(vec![
+                    RingElem::from_coeffs(
+                        vec![2u64; pk.ring_degree]
+                    );
+                    pk.commitment_rows
+                ]),
             },
             FoldedInstance {
                 relation_id,
                 shape_digest: pk.shape_digest,
                 statement_digest: digest_statement(b"c"),
-                witness_commitment: LatticeCommitment::from_rows(vec![3u64; pk.projection_rows]),
+                witness_commitment: LatticeCommitment::from_rows(vec![
+                    RingElem::from_coeffs(
+                        vec![3u64; pk.ring_degree]
+                    );
+                    pk.commitment_rows
+                ]),
             },
         ];
 
