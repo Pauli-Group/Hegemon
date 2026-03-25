@@ -140,7 +140,9 @@ use batch_circuit::prewarm_batch_verifier_cache;
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
-use consensus::proof::{tx_validity_artifact_from_proof, HeaderProofExt};
+use consensus::proof::{
+    tx_validity_artifact_from_proof, tx_validity_artifact_from_tx_leaf_proof, HeaderProofExt,
+};
 use consensus::{
     aggregation_proof_uncompressed_len, decode_flat_batch_proof_bytes,
     encode_aggregation_proof_bytes, encode_flat_batch_proof_bytes_with_kind,
@@ -2817,7 +2819,7 @@ fn build_receipt_root_proof_from_materials(
             .map_err(|err| format!("tx validity artifact derivation failed: {err}"))?;
         consensus_receipts.push(artifact.receipt.clone());
     }
-    let built = consensus::build_experimental_receipt_root_artifact_from_proofs(&proofs)
+    let built = consensus::build_experimental_receipt_root_artifact(&consensus_receipts)
         .map_err(|err| format!("receipt-root artifact generation failed: {err}"))?;
     Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
@@ -3839,6 +3841,18 @@ fn tx_validity_artifacts_from_transaction_proofs(
         .collect()
 }
 
+fn tx_leaf_artifacts_from_transaction_proofs(
+    proofs: &[TransactionProof],
+) -> Result<Vec<consensus::TxValidityArtifact>, String> {
+    proofs
+        .iter()
+        .map(|proof| {
+            tx_validity_artifact_from_tx_leaf_proof(proof)
+                .map_err(|err| format!("tx leaf artifact derivation failed: {err}"))
+        })
+        .collect()
+}
+
 fn verify_proof_carrying_block(
     verifier: &ParallelProofVerifier,
     client: &HegemonFullClient,
@@ -3923,6 +3937,11 @@ fn verify_proof_carrying_block(
     let tx_proof_bytes_total: usize = tx_proofs.iter().map(|proof| proof.stark_proof.len()).sum();
     let inline_tx_artifacts = if tx_proofs.len() == transactions.len() {
         Some(tx_validity_artifacts_from_transaction_proofs(&tx_proofs)?)
+    } else {
+        None
+    };
+    let tx_leaf_artifacts = if tx_proofs.len() == transactions.len() {
+        Some(tx_leaf_artifacts_from_transaction_proofs(&tx_proofs)?)
     } else {
         None
     };
@@ -4050,7 +4069,10 @@ fn verify_proof_carrying_block(
                 "inline_tx candidate artifact requires inline transaction proof bytes".to_string(),
             );
         }
-        let tx_validity_artifacts = inline_tx_artifacts.clone();
+        let tx_validity_artifacts = match payload.proof_mode {
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => tx_leaf_artifacts.clone(),
+            _ => inline_tx_artifacts.clone(),
+        };
         let block_artifact =
             payload
                 .receipt_root
@@ -4558,6 +4580,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
             "inline_tx shielded batch waiting for prepared bundle (tx_count={})",
             shielded_tx_count
         ),
+        pallet_shielded_pool::types::ProofArtifactKind::TxLeaf => return Ok(None),
         pallet_shielded_pool::types::ProofArtifactKind::MergeRoot
         | pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot => format!(
             "proofless shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
@@ -10605,6 +10628,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 proof_kind: match announcement.proof_kind {
                                     consensus::ProofArtifactKind::InlineTx => {
                                         pallet_shielded_pool::types::ProofArtifactKind::InlineTx
+                                    }
+                                    consensus::ProofArtifactKind::TxLeaf => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::TxLeaf
                                     }
                                     consensus::ProofArtifactKind::FlatBatches => {
                                         pallet_shielded_pool::types::ProofArtifactKind::FlatBatches

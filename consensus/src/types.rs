@@ -225,6 +225,7 @@ impl Default for ProofVerificationMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProofArtifactKind {
     InlineTx,
+    TxLeaf,
     FlatBatches,
     MergeRoot,
     ReceiptRoot,
@@ -235,6 +236,7 @@ impl ProofArtifactKind {
     pub fn label(&self) -> &'static str {
         match self {
             Self::InlineTx => "inline_tx",
+            Self::TxLeaf => "tx_leaf",
             Self::FlatBatches => "flat_batches",
             Self::MergeRoot => "merge_root",
             Self::ReceiptRoot => "receipt_root",

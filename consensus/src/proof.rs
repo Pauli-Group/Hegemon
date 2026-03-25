@@ -31,14 +31,16 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Instant;
 use superneo_hegemon::{
-    CanonicalTxValidityReceipt, build_verified_tx_proof_receipt_root_artifact_bytes,
-    verify_verified_tx_proof_receipt_root_artifact_bytes,
+    CanonicalTxValidityReceipt, build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes,
+    build_verified_tx_proof_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
+    verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
 };
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{
-    TransactionProof, transaction_proof_digest, transaction_public_inputs_digest,
+    SerializedStarkInputs, TransactionProof, transaction_proof_digest,
+    transaction_public_inputs_digest, transaction_public_inputs_digest_from_serialized,
     transaction_statement_hash, transaction_verifier_profile_digest,
     transaction_verifier_profile_digest_for_version, verify as verify_transaction_proof,
 };
@@ -109,6 +111,7 @@ impl Default for VerifierRegistry {
         registry.register(Arc::new(InlineTxP3Verifier {
             verifying_key: generate_keys().1,
         }));
+        registry.register(Arc::new(TxLeafVerifier));
         registry.register(Arc::new(MergeRootP3Verifier));
         registry.register(Arc::new(ReceiptRootVerifier));
         registry
@@ -193,6 +196,57 @@ impl ArtifactVerifier for InlineTxP3Verifier {
     }
 }
 
+struct TxLeafVerifier;
+
+impl ArtifactVerifier for TxLeafVerifier {
+    fn kind(&self) -> ProofArtifactKind {
+        ProofArtifactKind::TxLeaf
+    }
+
+    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
+        verifier_profile == experimental_tx_leaf_verifier_profile()
+    }
+
+    fn verify_tx_artifact(
+        &self,
+        tx: &crate::types::Transaction,
+        artifact: &TxValidityArtifact,
+    ) -> Result<TxStatementBinding, ProofError> {
+        let envelope = artifact
+            .proof
+            .as_ref()
+            .ok_or(ProofError::MissingTransactionProofs)?;
+        if envelope.kind != self.kind() {
+            return Err(ProofError::UnsupportedProofArtifact(format!(
+                "expected {} proof envelope, got {}",
+                self.kind().label(),
+                envelope.kind.label()
+            )));
+        }
+        if envelope.verifier_profile != experimental_tx_leaf_verifier_profile() {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "tx-leaf verifier profile mismatch".to_string(),
+            });
+        }
+        let expected_profile = transaction_verifier_profile_digest_for_version(tx.version);
+        if artifact.receipt.verifier_profile != expected_profile {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "tx-leaf tx verifier profile mismatch".to_string(),
+            });
+        }
+        let canonical = canonical_receipt_from_tx_receipt(&artifact.receipt);
+        let metadata = verify_tx_leaf_artifact_bytes(&canonical, &envelope.artifact_bytes)
+            .map_err(|err| ProofError::TransactionProofVerification {
+                index: 0,
+                message: format!("tx-leaf verification failed: {err}"),
+            })?;
+        statement_binding_from_tx_leaf(tx, &artifact.receipt, &metadata.stark_public_inputs)
+            .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })
+    }
+}
+
 struct MergeRootP3Verifier;
 
 impl ArtifactVerifier for MergeRootP3Verifier {
@@ -269,67 +323,37 @@ impl ArtifactVerifier for ReceiptRootVerifier {
                 "receipt-root verifier profile mismatch".to_string(),
             ));
         }
-        let receipts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-        if receipts.len() != txs.len() {
+        let artifacts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+        if artifacts.len() != txs.len() {
             return Err(ProofError::TransactionProofCountMismatch {
                 expected: txs.len(),
-                observed: receipts.len(),
+                observed: artifacts.len(),
             });
         }
-        let verifying_key = generate_keys().1;
-        let mut proofs = Vec::with_capacity(receipts.len());
-        let mut verified_receipts = Vec::with_capacity(receipts.len());
-        for (index, (tx, artifact)) in txs.iter().zip(receipts.iter()).enumerate() {
-            let proof = decode_inline_tx_artifact_proof(artifact)
+        let tx_leaf_verifier = TxLeafVerifier;
+        let mut verified_bindings = Vec::with_capacity(artifacts.len());
+        let mut verified_receipts = Vec::with_capacity(artifacts.len());
+        for (index, (tx, artifact)) in txs.iter().zip(artifacts.iter()).enumerate() {
+            let binding = tx_leaf_verifier
+                .verify_tx_artifact(tx, artifact)
                 .map_err(|err| reindex_tx_artifact_error(index, err))?;
-            let expected_profile = transaction_verifier_profile_digest_for_version(tx.version);
-            if artifact.receipt.verifier_profile != expected_profile {
-                return Err(ProofError::TransactionProofInputsMismatch {
-                    index,
-                    message: "verifier profile mismatch".to_string(),
-                });
-            }
-            let envelope = artifact
-                .proof
-                .as_ref()
-                .ok_or(ProofError::MissingTransactionProofs)?;
-            if envelope.verifier_profile != expected_profile {
-                return Err(ProofError::TransactionProofInputsMismatch {
-                    index,
-                    message: "proof envelope verifier profile mismatch".to_string(),
-                });
-            }
-            let expected_receipt = tx_validity_receipt_from_proof(&proof)
-                .map_err(|message| ProofError::TransactionProofInputsMismatch { index, message })?;
-            if expected_receipt != artifact.receipt {
-                return Err(ProofError::TransactionProofInputsMismatch {
-                    index,
-                    message: "tx validity receipt mismatch".to_string(),
-                });
-            }
-            verify_transaction_proof_inputs_unindexed(tx, &proof)
-                .map_err(|message| ProofError::TransactionProofInputsMismatch { index, message })?;
-            verify_transaction_proof_unindexed(&verifying_key, &proof)
-                .map_err(|message| ProofError::TransactionProofVerification { index, message })?;
-            verified_receipts.push(expected_receipt);
-            proofs.push(proof);
+            verified_bindings.push(binding);
+            verified_receipts.push(artifact.receipt.clone());
         }
-        let derived_receipt_commitment = commitment_from_receipts(receipts)?;
-        if derived_receipt_commitment != *expected_commitment {
+        let derived_statement_commitment = commitment_from_statement_bindings(&verified_bindings)?;
+        if derived_statement_commitment != *expected_commitment {
             return Err(ProofError::AggregationProofInputsMismatch(
                 "receipt-root statement commitment mismatch".to_string(),
             ));
         }
         let start_verify = Instant::now();
-        let root_metadata = verify_experimental_receipt_root_artifact_from_proofs(
-            &proofs,
-            &envelope.artifact_bytes,
-        )
-        .map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "receipt-root verification failed: {err}"
-            ))
-        })?;
+        let root_metadata =
+            verify_experimental_receipt_root_artifact(&verified_receipts, &envelope.artifact_bytes)
+                .map_err(|err| {
+                    ProofError::AggregationProofVerification(format!(
+                        "receipt-root verification failed: {err}"
+                    ))
+                })?;
         if root_metadata.leaf_count as usize != verified_receipts.len() {
             return Err(ProofError::AggregationProofInputsMismatch(
                 "receipt-root verified leaf count mismatch".to_string(),
@@ -539,6 +563,27 @@ pub fn tx_validity_artifact_from_proof(
     })
 }
 
+pub fn tx_validity_artifact_from_tx_leaf_proof(
+    proof: &TransactionProof,
+) -> Result<TxValidityArtifact, ProofError> {
+    let receipt = tx_validity_receipt_from_proof(proof)
+        .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })?;
+    let built = build_tx_leaf_artifact_bytes(proof).map_err(|err| {
+        ProofError::TransactionProofVerification {
+            index: 0,
+            message: format!("failed to build tx-leaf artifact: {err}"),
+        }
+    })?;
+    Ok(TxValidityArtifact {
+        receipt: receipt.clone(),
+        proof: Some(ProofEnvelope {
+            kind: ProofArtifactKind::TxLeaf,
+            verifier_profile: experimental_tx_leaf_verifier_profile(),
+            artifact_bytes: built.artifact_bytes,
+        }),
+    })
+}
+
 pub fn tx_validity_artifact_from_receipt(receipt: TxValidityReceipt) -> TxValidityArtifact {
     TxValidityArtifact {
         receipt,
@@ -550,11 +595,15 @@ pub fn experimental_receipt_root_verifier_profile() -> VerifierProfileDigest {
     superneo_hegemon::experimental_receipt_root_verifier_profile()
 }
 
+pub fn experimental_tx_leaf_verifier_profile() -> VerifierProfileDigest {
+    superneo_hegemon::experimental_tx_leaf_verifier_profile()
+}
+
 pub fn build_experimental_receipt_root_artifact(
     receipts: &[TxValidityReceipt],
 ) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
     let canonical = canonical_receipts_from_tx_receipts(receipts);
-    let built = superneo_hegemon::build_receipt_root_artifact_bytes(&canonical)
+    let built = build_receipt_root_artifact_bytes(&canonical)
         .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
     Ok(ExperimentalReceiptRootArtifact {
         artifact_bytes: built.artifact_bytes,
@@ -588,7 +637,7 @@ pub fn verify_experimental_receipt_root_artifact(
     artifact_bytes: &[u8],
 ) -> Result<ReceiptRootMetadata, ProofError> {
     let canonical = canonical_receipts_from_tx_receipts(receipts);
-    let metadata = superneo_hegemon::verify_receipt_root_artifact_bytes(&canonical, artifact_bytes)
+    let metadata = verify_receipt_root_artifact_bytes(&canonical, artifact_bytes)
         .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
     Ok(ReceiptRootMetadata {
         relation_id: metadata.relation_id,
@@ -617,13 +666,17 @@ fn canonical_receipts_from_tx_receipts(
 ) -> Vec<CanonicalTxValidityReceipt> {
     receipts
         .iter()
-        .map(|receipt| CanonicalTxValidityReceipt {
-            statement_hash: receipt.statement_hash,
-            proof_digest: receipt.proof_digest,
-            public_inputs_digest: receipt.public_inputs_digest,
-            verifier_profile: receipt.verifier_profile,
-        })
+        .map(canonical_receipt_from_tx_receipt)
         .collect()
+}
+
+fn canonical_receipt_from_tx_receipt(receipt: &TxValidityReceipt) -> CanonicalTxValidityReceipt {
+    CanonicalTxValidityReceipt {
+        statement_hash: receipt.statement_hash,
+        proof_digest: receipt.proof_digest,
+        public_inputs_digest: receipt.public_inputs_digest,
+        verifier_profile: receipt.verifier_profile,
+    }
 }
 
 fn decode_inline_tx_artifact_proof(
@@ -644,6 +697,106 @@ fn decode_inline_tx_artifact_proof(
             index: 0,
             message: format!("failed to decode inline tx proof artifact: {err}"),
         }
+    })
+}
+
+fn decode_signed_magnitude(sign: u8, magnitude: u64, label: &str) -> Result<i128, String> {
+    match sign {
+        0 => Ok(i128::from(magnitude)),
+        1 => Ok(-i128::from(magnitude)),
+        other => Err(format!("{label} sign flag must be 0 or 1, got {other}")),
+    }
+}
+
+fn statement_hash_from_tx_and_stark_inputs(
+    tx: &crate::types::Transaction,
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<[u8; 48], String> {
+    if tx.nullifiers.len() > MAX_INPUTS {
+        return Err(format!(
+            "transaction nullifier length {} exceeds MAX_INPUTS {MAX_INPUTS}",
+            tx.nullifiers.len()
+        ));
+    }
+    if tx.commitments.len() > MAX_OUTPUTS {
+        return Err(format!(
+            "transaction commitment length {} exceeds MAX_OUTPUTS {MAX_OUTPUTS}",
+            tx.commitments.len()
+        ));
+    }
+    if tx.ciphertext_hashes.len() > MAX_OUTPUTS {
+        return Err(format!(
+            "transaction ciphertext hash length {} exceeds MAX_OUTPUTS {MAX_OUTPUTS}",
+            tx.ciphertext_hashes.len()
+        ));
+    }
+    let value_balance = decode_signed_magnitude(
+        stark_inputs.value_balance_sign,
+        stark_inputs.value_balance_magnitude,
+        "value_balance",
+    )?;
+    let stablecoin_issuance = decode_signed_magnitude(
+        stark_inputs.stablecoin_issuance_sign,
+        stark_inputs.stablecoin_issuance_magnitude,
+        "stablecoin_issuance",
+    )?;
+
+    let mut message = Vec::new();
+    message.extend_from_slice(transaction_circuit::proof::TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(&stark_inputs.merkle_root);
+    for nf in &tx.nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for _ in tx.nullifiers.len()..MAX_INPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    for cm in &tx.commitments {
+        message.extend_from_slice(cm);
+    }
+    for _ in tx.commitments.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    for ct in &tx.ciphertext_hashes {
+        message.extend_from_slice(ct);
+    }
+    for _ in tx.ciphertext_hashes.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    message.extend_from_slice(&stark_inputs.fee.to_le_bytes());
+    message.extend_from_slice(&value_balance.to_le_bytes());
+    message.extend_from_slice(&tx.balance_tag);
+    message.extend_from_slice(&tx.version.circuit.to_le_bytes());
+    message.extend_from_slice(&tx.version.crypto.to_le_bytes());
+    message.push(stark_inputs.stablecoin_enabled);
+    message.extend_from_slice(&stark_inputs.stablecoin_asset_id.to_le_bytes());
+    message.extend_from_slice(&stark_inputs.stablecoin_policy_hash);
+    message.extend_from_slice(&stark_inputs.stablecoin_oracle_commitment);
+    message.extend_from_slice(&stark_inputs.stablecoin_attestation_commitment);
+    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
+    message.extend_from_slice(&stark_inputs.stablecoin_policy_version.to_le_bytes());
+    Ok(blake3_384(&message))
+}
+
+fn statement_binding_from_tx_leaf(
+    tx: &crate::types::Transaction,
+    receipt: &TxValidityReceipt,
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<TxStatementBinding, String> {
+    let expected_statement_hash = statement_hash_from_tx_and_stark_inputs(tx, stark_inputs)?;
+    if expected_statement_hash != receipt.statement_hash {
+        return Err("tx-leaf statement hash mismatch".to_string());
+    }
+    let expected_public_inputs_digest =
+        transaction_public_inputs_digest_from_serialized(stark_inputs)
+            .map_err(|err| format!("failed to hash tx-leaf STARK public inputs: {err}"))?;
+    if expected_public_inputs_digest != receipt.public_inputs_digest {
+        return Err("tx-leaf public inputs digest mismatch".to_string());
+    }
+    Ok(TxStatementBinding {
+        statement_hash: receipt.statement_hash,
+        anchor: stark_inputs.merkle_root,
+        fee: stark_inputs.fee,
+        circuit_version: u32::from(tx.version.circuit),
     })
 }
 
@@ -1188,12 +1341,24 @@ impl ProofVerifier for ParallelProofVerifier {
                             tx_count
                         )));
                     }
+                    let artifacts =
+                        tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+                    let artifact_receipts = artifacts
+                        .iter()
+                        .map(|artifact| artifact.receipt.clone())
+                        .collect::<Vec<_>>();
+                    if receipt_root.receipts != artifact_receipts {
+                        return Err(ProofError::ProvenBatchBindingMismatch(
+                            "receipt-root payload receipts do not match tx validity artifacts"
+                                .to_string(),
+                        ));
+                    }
                     let receipt_root_verifier = self
                         .verifier_registry
                         .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
                     let verify_report = receipt_root_verifier.verify_block_artifact(
                         &block.transactions,
-                        tx_validity_artifacts.map(|artifacts| artifacts.as_slice()),
+                        Some(artifacts),
                         &expected_commitment,
                         block_artifact
                             .as_ref()

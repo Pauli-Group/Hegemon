@@ -1,8 +1,8 @@
 use anyhow::{ensure, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use superneo_ccs::{CcsShape, RelationId, ShapeDigest, StatementDigest, StatementEncoding};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityParams {
     pub target_security_bits: u32,
     pub max_fold_arity: u32,
@@ -78,7 +78,7 @@ pub trait Backend<F> {
     ) -> Result<()>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldedInstance<C> {
     pub relation_id: RelationId,
     pub shape_digest: ShapeDigest,
@@ -86,7 +86,7 @@ pub struct FoldedInstance<C> {
     pub witness_commitment: C,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeafArtifact<P> {
     pub version: u16,
     pub relation_id: RelationId,
@@ -95,7 +95,7 @@ pub struct LeafArtifact<P> {
     pub proof: P,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldArtifact<P> {
     pub version: u16,
     pub parent_statement_digest: StatementDigest,

@@ -10,8 +10,8 @@ use consensus::types::{
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    build_experimental_receipt_root_artifact_from_proofs, commitment_nullifier_lists,
-    experimental_receipt_root_verifier_profile,
+    build_experimental_receipt_root_artifact, commitment_nullifier_lists,
+    experimental_receipt_root_verifier_profile, tx_validity_artifact_from_tx_leaf_proof,
 };
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
@@ -374,17 +374,16 @@ fn build_receipt_root_block_artifacts(
     ReceiptRootProofPayload,
     ProofEnvelope,
 ) {
-    let built =
-        build_experimental_receipt_root_artifact_from_proofs(proofs).expect("receipt-root bytes");
-    let verifier_profile = experimental_receipt_root_verifier_profile();
     let tx_validity_artifacts = proofs
         .iter()
-        .map(|proof| consensus::tx_validity_artifact_from_proof(proof).expect("tx validity proof"))
+        .map(|proof| tx_validity_artifact_from_tx_leaf_proof(proof).expect("tx leaf artifact"))
         .collect::<Vec<_>>();
     let receipts = tx_validity_artifacts
         .iter()
         .map(|artifact| artifact.receipt.clone())
         .collect::<Vec<_>>();
+    let built = build_experimental_receipt_root_artifact(&receipts).expect("receipt-root bytes");
+    let verifier_profile = experimental_receipt_root_verifier_profile();
     let payload = ReceiptRootProofPayload {
         root_proof: built.artifact_bytes.clone(),
         metadata: ReceiptRootMetadata {
@@ -401,18 +400,6 @@ fn build_receipt_root_block_artifacts(
         artifact_bytes: built.artifact_bytes,
     };
     (tx_validity_artifacts, payload, envelope)
-}
-
-fn proofs_from_artifacts(
-    artifacts: &[TxValidityArtifact],
-) -> Vec<transaction_circuit::proof::TransactionProof> {
-    artifacts
-        .iter()
-        .map(|artifact| {
-            let envelope = artifact.proof.as_ref().expect("inline tx proof envelope");
-            bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof")
-        })
-        .collect()
 }
 
 #[test]
@@ -479,12 +466,17 @@ fn raw_active_rejects_commitment_mismatch() {
 fn receipt_root_block_is_accepted() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
-    let proofs = proofs_from_artifacts(
-        block
-            .tx_validity_artifacts
-            .as_ref()
-            .expect("tx validity artifacts"),
-    );
+    let proofs = fixture
+        .block
+        .tx_validity_artifacts
+        .as_ref()
+        .expect("tx validity artifacts")
+        .iter()
+        .map(|artifact| {
+            let envelope = artifact.proof.as_ref().expect("inline tx proof envelope");
+            bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof")
+        })
+        .collect::<Vec<TransactionProof>>();
     let (tx_validity_artifacts, receipt_root, envelope) =
         build_receipt_root_block_artifacts(&proofs);
     let proven_batch = block.proven_batch.as_mut().expect("proven batch");
@@ -507,12 +499,17 @@ fn receipt_root_block_is_accepted() {
 fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
-    let proofs = proofs_from_artifacts(
-        block
-            .tx_validity_artifacts
-            .as_ref()
-            .expect("tx validity artifacts"),
-    );
+    let proofs = fixture
+        .block
+        .tx_validity_artifacts
+        .as_ref()
+        .expect("tx validity artifacts")
+        .iter()
+        .map(|artifact| {
+            let envelope = artifact.proof.as_ref().expect("inline tx proof envelope");
+            bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof")
+        })
+        .collect::<Vec<TransactionProof>>();
     let (mut tx_validity_artifacts, receipt_root, envelope) =
         build_receipt_root_block_artifacts(&proofs);
     tx_validity_artifacts[0].receipt.statement_hash = [0xA5; 48];
@@ -531,7 +528,8 @@ fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
         .expect_err("receipt-root must reject mismatched statement receipts");
     assert!(matches!(
         err,
-        ProofError::AggregationProofInputsMismatch(_)
+        ProofError::ProvenBatchBindingMismatch(_)
+            | ProofError::AggregationProofInputsMismatch(_)
             | ProofError::TransactionProofInputsMismatch { .. }
     ));
 }

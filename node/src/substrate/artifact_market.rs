@@ -28,6 +28,9 @@ pub fn consensus_proof_artifact_kind_from_pallet(
         pallet_shielded_pool::types::ProofArtifactKind::InlineTx => {
             consensus::ProofArtifactKind::InlineTx
         }
+        pallet_shielded_pool::types::ProofArtifactKind::TxLeaf => {
+            consensus::ProofArtifactKind::TxLeaf
+        }
         pallet_shielded_pool::types::ProofArtifactKind::FlatBatches => {
             consensus::ProofArtifactKind::FlatBatches
         }

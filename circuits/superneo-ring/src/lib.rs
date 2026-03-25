@@ -1,7 +1,7 @@
 use anyhow::{bail, ensure, Result};
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use superneo_ccs::{ensure_assignment_matches_shape, Assignment, CcsShape};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,7 +21,7 @@ impl Default for GoldilocksPackingConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackedWitness<R> {
     pub coeffs: Vec<R>,
     pub original_len: usize,

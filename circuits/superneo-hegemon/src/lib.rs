@@ -3,22 +3,26 @@ use std::sync::OnceLock;
 use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_goldilocks::Goldilocks;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use superneo_backend_lattice::{LatticeBackend, LatticeCommitment, LeafDigestProof};
 use superneo_ccs::{
     digest_statement, Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix,
     StatementEncoding, WitnessField, WitnessSchema,
 };
-use superneo_core::{Backend, FoldedInstance, SecurityParams};
+use superneo_core::{Backend, FoldedInstance, LeafArtifact, SecurityParams};
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{
-    transaction_proof_digest, transaction_public_inputs_digest, transaction_statement_hash,
-    transaction_verifier_profile_digest, verify as verify_transaction_proof, TransactionProof,
+    transaction_proof_digest, transaction_public_inputs_digest,
+    transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
+    transaction_verifier_profile_digest, verify as verify_transaction_proof, SerializedStarkInputs,
+    TransactionProof,
 };
 
 pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
 pub const RECEIPT_ROOT_ARTIFACT_VERSION: u16 = 1;
+pub const TX_LEAF_ARTIFACT_VERSION: u16 = 1;
 pub const RECEIPT_ROOT_DIGEST_WIDTH: usize = 4;
 pub const RECEIPT_ROOT_LIMBS_PER_DIGEST: usize = 6;
 pub const RECEIPT_ROOT_WITNESS_LIMBS: usize =
@@ -417,6 +421,36 @@ pub struct BuiltReceiptRootArtifact {
     pub metadata: ReceiptRootMetadata,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TxLeafArtifact {
+    pub version: u16,
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub statement_digest: [u8; 48],
+    pub stark_public_inputs: SerializedStarkInputs,
+    pub leaf: LeafArtifact<LeafDigestProof>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltTxLeafArtifact {
+    pub artifact_bytes: Vec<u8>,
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    pub statement_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxLeafMetadata {
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    pub statement_digest: [u8; 48],
+    pub stark_public_inputs: SerializedStarkInputs,
+}
+
 impl Relation<Goldilocks> for TxProofReceiptRelation {
     type Statement = TxProofReceipt;
     type Witness = TxProofReceiptWitness;
@@ -548,6 +582,27 @@ fn transaction_verifying_key() -> &'static transaction_circuit::keys::VerifyingK
     VERIFYING_KEY.get_or_init(|| generate_keys().1)
 }
 
+fn serialize_fixed_bytes_48<S>(
+    bytes: &[u8; 48],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_bytes(bytes)
+}
+
+fn deserialize_fixed_bytes_48<'de, D>(deserializer: D) -> std::result::Result<[u8; 48], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| serde::de::Error::invalid_length(len, &"48 bytes"))
+}
+
 pub fn canonical_tx_validity_receipt_from_transaction_proof(
     proof: &TransactionProof,
 ) -> Result<CanonicalTxValidityReceipt> {
@@ -579,6 +634,137 @@ pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
         b"hegemon.superneo.receipt-root-profile.digest.v1",
         &material,
     )
+}
+
+pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
+    let relation = CanonicalTxValidityReceiptRelation::default();
+    let security = SecurityParams::experimental_default();
+    let backend = LatticeBackend::default();
+    let (pk, _) = backend
+        .setup(&security, relation.shape())
+        .expect("experimental tx-leaf setup must succeed");
+    let mut material = Vec::with_capacity(32 + 32 + 32 + 32);
+    material.extend_from_slice(b"hegemon.superneo.tx-leaf-profile.v1");
+    material.extend_from_slice(&relation.relation_id().0);
+    material.extend_from_slice(&pk.shape_digest.0);
+    material.extend_from_slice(&pk.security_bits.to_le_bytes());
+    material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
+    material.extend_from_slice(&pk.transcript_domain_digest);
+    digest48(b"hegemon.superneo.tx-leaf-profile.digest.v1", &material)
+}
+
+pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxLeafArtifact> {
+    let relation = CanonicalTxValidityReceiptRelation::default();
+    let security = SecurityParams::experimental_default();
+    let backend = LatticeBackend::default();
+    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+    let (pk, _) = backend.setup(&security, relation.shape())?;
+
+    verify_transaction_proof(proof, transaction_verifying_key())
+        .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
+    let receipt = canonical_tx_validity_receipt_from_transaction_proof(proof)?;
+    let encoding = relation.encode_statement(&receipt)?;
+    let assignment = relation.build_assignment(&receipt, &())?;
+    let packed = packer.pack(relation.shape(), &assignment)?;
+    let leaf_proof = backend.prove_leaf(&pk, &relation.relation_id(), &encoding, &packed)?;
+    let stark_public_inputs = proof
+        .stark_public_inputs
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("transaction proof is missing serialized STARK inputs"))?;
+    let artifact = TxLeafArtifact {
+        version: TX_LEAF_ARTIFACT_VERSION,
+        relation_id: relation.relation_id().0,
+        shape_digest: pk.shape_digest.0,
+        statement_digest: encoding.statement_digest.0,
+        stark_public_inputs,
+        leaf: LeafArtifact {
+            version: TX_LEAF_ARTIFACT_VERSION,
+            relation_id: relation.relation_id(),
+            shape_digest: pk.shape_digest,
+            statement_digest: encoding.statement_digest,
+            proof: leaf_proof,
+        },
+    };
+    Ok(BuiltTxLeafArtifact {
+        artifact_bytes: bincode::serialize(&artifact)
+            .map_err(|err| anyhow::anyhow!("failed to encode tx-leaf artifact: {err}"))?,
+        relation_id: artifact.relation_id,
+        shape_digest: artifact.shape_digest,
+        statement_digest: artifact.statement_digest,
+    })
+}
+
+pub fn decode_tx_leaf_artifact_bytes(artifact_bytes: &[u8]) -> Result<TxLeafArtifact> {
+    bincode::deserialize(artifact_bytes)
+        .map_err(|err| anyhow::anyhow!("failed to decode tx-leaf artifact: {err}"))
+}
+
+pub fn verify_tx_leaf_artifact_bytes(
+    receipt: &CanonicalTxValidityReceipt,
+    artifact_bytes: &[u8],
+) -> Result<TxLeafMetadata> {
+    let artifact = decode_tx_leaf_artifact_bytes(artifact_bytes)?;
+    ensure!(
+        artifact.version == TX_LEAF_ARTIFACT_VERSION,
+        "unsupported tx-leaf artifact version {}",
+        artifact.version
+    );
+
+    let relation = CanonicalTxValidityReceiptRelation::default();
+    let security = SecurityParams::experimental_default();
+    let backend = LatticeBackend::default();
+    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    ensure!(
+        artifact.relation_id == relation.relation_id().0,
+        "tx-leaf relation id mismatch"
+    );
+    ensure!(
+        artifact.shape_digest == pk.shape_digest.0,
+        "tx-leaf shape digest mismatch"
+    );
+    ensure!(
+        artifact.leaf.version == TX_LEAF_ARTIFACT_VERSION,
+        "tx-leaf inner proof version mismatch"
+    );
+    ensure!(
+        artifact.leaf.relation_id == relation.relation_id(),
+        "tx-leaf inner relation id mismatch"
+    );
+    ensure!(
+        artifact.leaf.shape_digest == pk.shape_digest,
+        "tx-leaf inner shape digest mismatch"
+    );
+    ensure!(
+        transaction_public_inputs_digest_from_serialized(&artifact.stark_public_inputs)
+            .map_err(|err| anyhow::anyhow!("failed to hash tx-leaf public inputs: {err}"))?
+            == receipt.public_inputs_digest,
+        "tx-leaf public inputs digest mismatch"
+    );
+    let encoding = relation.encode_statement(receipt)?;
+    let assignment = relation.build_assignment(receipt, &())?;
+    let packed = packer.pack(relation.shape(), &assignment)?;
+    ensure!(
+        artifact.statement_digest == encoding.statement_digest.0,
+        "tx-leaf statement digest mismatch"
+    );
+    ensure!(
+        artifact.leaf.statement_digest == encoding.statement_digest,
+        "tx-leaf inner statement digest mismatch"
+    );
+    let proof = LeafDigestProof {
+        witness_commitment: artifact.leaf.proof.witness_commitment.clone(),
+        packed_witness: packed,
+        proof_digest: artifact.leaf.proof.proof_digest,
+    };
+    backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &proof)?;
+    Ok(TxLeafMetadata {
+        relation_id: artifact.relation_id,
+        shape_digest: artifact.shape_digest,
+        statement_digest: artifact.statement_digest,
+        stark_public_inputs: artifact.stark_public_inputs,
+    })
 }
 
 pub fn build_verified_tx_proof_receipt_root_artifact_bytes(

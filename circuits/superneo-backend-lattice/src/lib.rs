@@ -2,14 +2,14 @@ use anyhow::{anyhow, ensure, Result};
 use blake3::Hasher;
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use superneo_ccs::{
     digest_shape, CcsShape, RelationId, ShapeDigest, StatementDigest, StatementEncoding,
 };
 use superneo_core::{validate_fold_pair, Backend, FoldedInstance, SecurityParams};
 use superneo_ring::PackedWitness;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RingProfile {
     GoldilocksCyclotomic24,
     GoldilocksFrog,
@@ -24,7 +24,7 @@ impl RingProfile {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LatticeBackendConfig {
     pub ring_profile: RingProfile,
     pub security_bits: u32,
@@ -47,7 +47,7 @@ impl Default for LatticeBackendConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LatticeBackend {
     pub config: LatticeBackendConfig,
 }
@@ -60,7 +60,7 @@ impl Default for LatticeBackend {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendKey {
     pub shape_digest: ShapeDigest,
     pub security_bits: u32,
@@ -73,33 +73,49 @@ pub struct BackendKey {
     pub digit_bits: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RingElem {
     pub coeffs: Vec<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LatticeCommitment {
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
     pub digest: [u8; 48],
     pub rows: Vec<RingElem>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeafDigestProof {
     pub witness_commitment: LatticeCommitment,
     pub packed_witness: PackedWitness<u64>,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
     pub proof_digest: [u8; 48],
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldDigestProof {
     pub challenge: u64,
     pub parent_statement_digest: StatementDigest,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
     pub parent_commitment_digest: [u8; 48],
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
     pub proof_digest: [u8; 48],
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendShape {
     pub shape_digest: ShapeDigest,
     pub num_rows: usize,
@@ -161,6 +177,27 @@ impl RingElem {
     fn byte_size(&self) -> usize {
         4 + (self.coeffs.len() * 8)
     }
+}
+
+fn serialize_fixed_bytes_48<S>(
+    bytes: &[u8; 48],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_bytes(bytes)
+}
+
+fn deserialize_fixed_bytes_48<'de, D>(deserializer: D) -> std::result::Result<[u8; 48], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| serde::de::Error::invalid_length(len, &"48 bytes"))
 }
 
 impl LatticeCommitment {

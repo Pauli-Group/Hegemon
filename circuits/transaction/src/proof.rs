@@ -265,6 +265,20 @@ pub fn transaction_proof_digest(proof: &TransactionProof) -> [u8; 48] {
     blake3_384(&message)
 }
 
+pub fn transaction_public_inputs_digest_from_serialized(
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<[u8; 48], TransactionCircuitError> {
+    let encoded = to_allocvec(stark_inputs).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize STARK public inputs: {err}"
+        ))
+    })?;
+    let mut message = Vec::with_capacity(TX_PUBLIC_INPUTS_DIGEST_DOMAIN.len() + encoded.len());
+    message.extend_from_slice(TX_PUBLIC_INPUTS_DIGEST_DOMAIN);
+    message.extend_from_slice(&encoded);
+    Ok(blake3_384(&message))
+}
+
 pub fn transaction_public_inputs_digest(
     proof: &TransactionProof,
 ) -> Result<[u8; 48], TransactionCircuitError> {
@@ -275,15 +289,7 @@ pub fn transaction_public_inputs_digest(
             .ok_or(TransactionCircuitError::ConstraintViolation(
                 "missing STARK public inputs",
             ))?;
-    let encoded = to_allocvec(stark_inputs).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to serialize STARK public inputs: {err}"
-        ))
-    })?;
-    let mut message = Vec::with_capacity(TX_PUBLIC_INPUTS_DIGEST_DOMAIN.len() + encoded.len());
-    message.extend_from_slice(TX_PUBLIC_INPUTS_DIGEST_DOMAIN);
-    message.extend_from_slice(&encoded);
-    Ok(blake3_384(&message))
+    transaction_public_inputs_digest_from_serialized(stark_inputs)
 }
 
 pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) -> [u8; 48] {

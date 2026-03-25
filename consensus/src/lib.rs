@@ -48,8 +48,9 @@ pub use proof::{
     ExperimentalReceiptRootArtifact, HashVerifier, ParallelProofVerifier, ProofVerifier,
     VerifierRegistry, build_experimental_receipt_root_artifact,
     build_experimental_receipt_root_artifact_from_proofs, commitment_nullifier_lists,
-    experimental_receipt_root_verifier_profile, tx_validity_artifact_from_proof,
-    tx_validity_artifact_from_receipt, tx_validity_receipt_from_proof,
+    experimental_receipt_root_verifier_profile, experimental_tx_leaf_verifier_profile,
+    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt,
+    tx_validity_artifact_from_tx_leaf_proof, tx_validity_receipt_from_proof,
     verify_commitment_proof_payload, verify_experimental_receipt_root_artifact,
     verify_experimental_receipt_root_artifact_from_proofs,
 };

@@ -3,7 +3,7 @@ use std::fmt;
 use anyhow::{bail, ensure, Result};
 use blake3::Hasher;
 use p3_field::PrimeField64;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RelationId(pub [u8; 32]);
@@ -114,6 +114,20 @@ impl Serialize for RelationId {
     }
 }
 
+impl<'de> Deserialize<'de> for RelationId {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let len = bytes.len();
+        let array: [u8; Self::BYTES] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::invalid_length(len, &"32 bytes"))?;
+        Ok(Self(array))
+    }
+}
+
 impl Serialize for ShapeDigest {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -123,12 +137,40 @@ impl Serialize for ShapeDigest {
     }
 }
 
+impl<'de> Deserialize<'de> for ShapeDigest {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let len = bytes.len();
+        let array: [u8; Self::BYTES] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::invalid_length(len, &"32 bytes"))?;
+        Ok(Self(array))
+    }
+}
+
 impl Serialize for StatementDigest {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for StatementDigest {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let len = bytes.len();
+        let array: [u8; Self::BYTES] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::invalid_length(len, &"48 bytes"))?;
+        Ok(Self(array))
     }
 }
 

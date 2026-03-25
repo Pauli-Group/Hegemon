@@ -11196,6 +11196,7 @@ dependencies = [
  "blake3",
  "p3-field",
  "p3-goldilocks",
+ "serde",
  "superneo-backend-lattice",
  "superneo-ccs",
  "superneo-core",

@@ -10,6 +10,8 @@ After this change, Hegemon has an isolated experimental stack for SuperNeo-style
 
 The milestone target has also moved. The stack is no longer just crate-boundary scaffolding: it now includes a ring-based Ajtai-style commitment approximation and a verified tx-proof receipt relation that re-checks real `TransactionProof`s before folding. The remaining gap is narrower and explicit: the backend still does not implement Neo/SuperNeo’s exact Module-SIS commitment analysis, decomposition reduction, or sum-check machinery.
 
+The next milestone is architectural rather than cosmetic. The current `ReceiptRoot` path must stop depending on inline tx-proof bytes during import. This milestone therefore introduces a standalone tx-level leaf artifact, `TxLeaf`, and redefines the honest experiment as proof-ready tx leaf artifacts plus a folded root.
+
 ## Progress
 
 - [x] (2026-03-20 18:22Z) Re-read `.agent/PLANS.md`, `DESIGN.md`, and `METHODS.md` before changing code.
@@ -23,6 +25,7 @@ The milestone target has also moved. The stack is no longer just crate-boundary 
 - [x] (2026-03-25 04:54Z) Replaced the digest mock with a direct in-repo SuperNeo-style backend: pay-per-bit bit expansion, ring embedding, deterministic Ajtai-style matrix commitments over Goldilocks, and transcript-derived fold challenges.
 - [x] (2026-03-25 05:12Z) Added `VerifiedTxProofReceiptRelation`, bound receipt leaves to real `TransactionProof` verification, and changed `ReceiptRoot` artifact construction/import to derive receipts from verified inline tx proofs instead of trusting standalone digest receipts.
 - [x] (2026-03-25 05:25Z) Re-ran the experimental crate tests, the consensus `receipt_root_` tests, and the honest `verified_tx_receipt` benchmark after the verified-relation upgrade.
+- [x] (2026-03-25 17:38Z) Added a standalone `TxLeaf` experimental tx artifact kind, taught `ReceiptRoot` to consume `TxLeaf` artifacts instead of inline tx proofs, and re-benchmarked that topology separately from the current inline-proof bridge.
 
 ## Surprises & Discoveries
 
@@ -47,6 +50,12 @@ The milestone target has also moved. The stack is no longer just crate-boundary 
 - Observation: the honest `verified_tx_receipt` benchmark changes the conclusion materially. In `--release`, the current SuperNeo-style receipt-root path is already a byte win against `raw_active`, and on the current local run it also beats the frozen low-`k` active-path timings.
   Evidence: `cargo run --release -p superneo-bench -- --relation verified_tx_receipt --k 1,2 --compare-inline-tx` reports `354390 B/tx`, `15056750 ns` prove, `14502958 ns` verify at `k=1`, and `354612 B/tx`, `26686750 ns` prove, `28173958 ns` verify at `k=2`, versus the stored `raw_active` baselines of `536098/70812417/18299167` and `456262/108371875/29954584`.
 
+- Observation: the current `verified_tx_receipt` benchmark is still a bridge measurement, not the final topology. It starts from already-built `TransactionProof`s and times only the receipt-root stage, so it still assumes inline tx proof carriage outside the folded root.
+  Evidence: `circuits/superneo-bench/src/main.rs` builds `proofs` with `sample_transaction_proof(...)` and then times `build_verified_tx_proof_receipt_root_artifact_bytes(&proofs)` directly, while `docs/SCALABILITY_PATH.md` defines the live `InlineTx` path as proof-ready txs plus the parent-bound commitment proof.
+
+- Observation: the new `tx_leaf_receipt_root` benchmark is the first honest measurement of the proof-ready-leaf topology actually implemented on this branch. It measures proof-ready tx leaf artifacts, folded root construction, and receipt-root verification over those artifacts, while tracking edge leaf preparation separately.
+  Evidence: `cargo run --release -p superneo-bench -- --relation tx_leaf_receipt_root --k 1,2,4,8 --compare-inline-tx` reports `1827/1910/1952/1973 B/tx`, `831166/1676666/5441584/6035916 ns` active-path prove, `2891708/5438750/16308209/18444125 ns` active-path verify, and `15681791/30136041/150432875/108117208 ns` edge leaf preparation for `k=1,2,4,8`.
+
 ## Decision Log
 
 - Decision: the first backend implementation is a deterministic mock backend in `circuits/superneo-backend-lattice`, not a real `latticefold` integration.
@@ -69,9 +78,13 @@ The milestone target has also moved. The stack is no longer just crate-boundary 
   Rationale: this is the largest protocol step that can be landed today in stable Rust without importing an unstable external lattice stack. It converts the experiment from a hash mock into a concrete folding engine while preserving the option to swap in a real lattice commitment later.
   Date/Author: 2026-03-25 / Codex
 
+- Decision: `TxLeaf` is now the canonical experimental tx-artifact kind for the receipt-root lane, and the old `verified_tx_receipt` benchmark is retained only as a bridge/comparison lane.
+  Rationale: the topology question is the real research question. The branch now measures and validates the proof-ready tx-leaf path directly, while keeping the bridge path available to compare against the older “inline proofs plus folded root” experiment.
+  Date/Author: 2026-03-25 / Codex
+
 ## Outcomes & Retrospective
 
-Milestone one is complete and the first review pass is closed. Milestone two is also landed: the repo contains a compilable, benchmarkable experimental stack with a Hegemon-owned relation layer, a Goldilocks packing layer, a direct in-repo folding backend, Hegemon receipt relations, a verified tx-proof receipt path, a JSON benchmark harness that compares against the stored `InlineTx` baseline, and targeted negative tests that lock in the corrected behavior. The current result is useful and honest: the experimental receipt-root path is already a strong byte-compression candidate and, on the current local `--release` run, a low-`k` active-path win as well. The remaining gap is deliberate: this is a concrete SuperNeo-style backend, but it is not yet a production lattice/Ajtai implementation with the paper’s exact security assumptions.
+Milestone one is complete and the first review pass is closed. Milestone two is also landed: the repo contains a compilable, benchmarkable experimental stack with a Hegemon-owned relation layer, a Goldilocks packing layer, a direct in-repo folding backend, Hegemon receipt relations, a standalone `TxLeaf` artifact kind, a `ReceiptRoot` verifier that now consumes those tx-leaf artifacts, a JSON benchmark harness that compares both the bridge path and the proof-ready-leaf path against the stored `InlineTx` baseline, and targeted negative tests that lock in the corrected behavior. The remaining gap is still deliberate: this is a concrete SuperNeo-style backend, but it is not yet a production lattice/Ajtai implementation with the paper’s exact security assumptions.
 
 ## Context and Orientation
 
@@ -100,7 +113,9 @@ After that, implement the direct backend in `circuits/superneo-backend-lattice/s
 
 With the generic pieces in place, add `ToyBalanceRelation`, `TxProofReceiptRelation`, and then `VerifiedTxProofReceiptRelation` to `circuits/superneo-hegemon/src/lib.rs`. The toy relation proves the plumbing works. The synthetic receipt relation remains useful for narrow crate tests. The verified receipt relation is the real target: it derives a canonical post-proof statement from an actual `TransactionProof`, re-verifies that proof when building the assignment, and then feeds the bounded witness assignment into the packing layer.
 
-Finally, wire everything into `circuits/superneo-bench/src/main.rs`. The benchmark should support both deterministic synthetic leaves and the honest `verified_tx_receipt` path built from real `TransactionProof`s, run the direct backend over `k` inputs, fold them to a root, and emit JSON with the same top-level metrics Hegemon already uses for active-path comparisons. When `--compare-inline-tx` is passed, it should also load the frozen `raw_active` numbers from `output/prover-recovery/2026-03-14/active-lanes/metrics.tsv`.
+Finally, wire everything into `circuits/superneo-bench/src/main.rs`. The benchmark now supports deterministic synthetic leaves, the older `verified_tx_receipt` bridge lane built from real `TransactionProof`s, and the honest `tx_leaf_receipt_root` lane built from proof-ready tx-leaf artifacts. When `--compare-inline-tx` is passed, it also loads the frozen `raw_active` numbers from `output/prover-recovery/2026-03-14/active-lanes/metrics.tsv`.
+
+The current experimental topology is now the proof-ready-leaf lane. `TxLeaf` proof bytes contain the SuperNeo leaf proof plus the smaller transaction public-input object needed to recover a full `TxStatementBinding`, and `ReceiptRoot` verification consumes those tx-leaf artifacts instead of inline tx proofs. This is still an experimental trust boundary, not the final secure system, but it now measures and validates the scaling shape of “proof-ready tx leaves + folded root” directly.
 
 ## Concrete Steps
 
@@ -119,7 +134,7 @@ From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`:
 
 3. Run the experimental benchmark against the fixed baseline.
 
-       cargo run -p superneo-bench -- --relation verified_tx_receipt --k 1,2 --compare-inline-tx
+       cargo run --release -p superneo-bench -- --relation tx_leaf_receipt_root --k 1,2,4,8 --compare-inline-tx
 
 Expected output is JSON that includes `relation`, `k`, `bytes_per_tx`, `total_active_path_prove_ns`, `total_active_path_verify_ns`, `packed_witness_bits`, and `shape_digest`. The important current use of the benchmark is honesty: it must measure the verified receipt-root path against the frozen `InlineTx` baseline without pretending the receipt root replaces inline tx proof verification yet.
 
@@ -130,8 +145,9 @@ Milestone-one validation is behavioral:
 - `cargo test -p superneo-ring` must prove that the packer round-trips a bounded Goldilocks assignment.
 - `cargo test -p superneo-backend-lattice` must prove that a leaf proof verifies and that one fold step verifies.
 - `cargo test -p superneo-hegemon` must prove that the toy relation, the synthetic receipt relation, and the verified receipt relation all produce assignments that the packer/backend accept.
-- `cargo test -p consensus receipt_root_ -- --nocapture` must prove that the experimental `ReceiptRoot` path re-verifies inline tx proofs and rejects receipt-root artifacts tied to the wrong tx statement set.
-- `cargo run -p superneo-bench -- --relation verified_tx_receipt --k 1,2 --compare-inline-tx` must complete and print machine-readable JSON with both experimental metrics and the stored `InlineTx` baseline for the requested `k` values.
+- `cargo test -p consensus receipt_root_ -- --nocapture` must prove that the experimental `ReceiptRoot` path accepts valid `TxLeaf`-backed blocks and rejects receipt-root artifacts tied to the wrong tx statement set.
+- `cargo test -p hegemon-node receipt_root -- --nocapture` must prove that node-side selection and artifact-market glue still work after adding `TxLeaf`.
+- `cargo run --release -p superneo-bench -- --relation tx_leaf_receipt_root --k 1,2,4,8 --compare-inline-tx` must complete and print the proof-ready-leaf topology metrics alongside the stored `InlineTx` baseline.
 
 The project should not proceed to a real lattice backend unless this prototype stack remains isolated, easy to understand, and benchmark-ready.
 
@@ -141,17 +157,18 @@ All changes in this milestone are additive. Re-running the targeted tests is saf
 
 ## Artifacts and Notes
 
-The important artifact for milestone one is the benchmark JSON. A representative shape is:
+The important artifact for the current milestone is the proof-ready-leaf benchmark JSON. A representative shape is:
 
     {
-      "relation": "verified_tx_receipt",
+      "relation": "tx_leaf_receipt_root",
       "k": 2,
-      "bytes_per_tx": 354612,
-      "total_active_path_prove_ns": 26686750,
-      "total_active_path_verify_ns": 28173958,
-      "packed_witness_bits": 1536,
-      "shape_digest": "ab12...",
-      "note": "verified inline tx proofs + receipt_root artifact=794B tx_artifacts=708429B",
+      "bytes_per_tx": 1910,
+      "total_active_path_prove_ns": 1676666,
+      "total_active_path_verify_ns": 5438750,
+      "packed_witness_bits": 3072,
+      "shape_digest": "d957...",
+      "note": "proof-ready txs; tx_leaf_artifacts=3026B root_artifact=794B",
+      "edge_prepare_ns": 30136041,
       "inline_tx_baseline": {
         "bytes_per_tx": 456262,
         "total_active_path_prove_ns": 108371875,
@@ -160,6 +177,8 @@ The important artifact for milestone one is the benchmark JSON. A representative
     }
 
 Revision note: this file was created on 2026-03-20 to guide the first experimental SuperNeo spike and deliberately started with a mock backend so the crate boundaries could be validated before any heavy lattice integration. It was updated the same day after the stack compiled, the targeted tests passed, the benchmark CLI emitted JSON comparisons, and the design/method documents were amended to capture the experiment boundary. It was updated again on 2026-03-21 after the initial code review so the corrected metadata binding, trace digest binding, fixed-width artifact sizing, and new negative tests were captured in the plan state. It was updated on 2026-03-25 after the mock backend was replaced with a direct in-repo SuperNeo-style folding backend derived from the Neo/SuperNeo papers, and again later that day after the verified tx-proof receipt relation landed and the benchmark switched from synthetic receipt leaves to the honest `verified_tx_receipt` path.
+
+Revision note (2026-03-25, later): the `TxLeaf` milestone is now landed. The honest experimental lane is `tx_leaf_receipt_root`, the receipt-root verifier consumes `TxLeaf` artifacts instead of inline tx proofs, and the benchmark records proof-ready-leaf metrics plus separate edge leaf-preparation time.
 
 ## Interfaces and Dependencies
 
