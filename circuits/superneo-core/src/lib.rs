@@ -51,6 +51,7 @@ pub trait Backend<F> {
         relation_id: &RelationId,
         statement: &StatementEncoding<F>,
         packed: &Self::PackedWitness,
+        commitment: &Self::Commitment,
     ) -> Result<Self::LeafProof>;
 
     fn verify_leaf(
@@ -58,6 +59,7 @@ pub trait Backend<F> {
         vk: &Self::VerifierKey,
         relation_id: &RelationId,
         statement: &StatementEncoding<F>,
+        expected_packed: &Self::PackedWitness,
         proof: &Self::LeafProof,
     ) -> Result<()>;
 

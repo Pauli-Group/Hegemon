@@ -26,6 +26,7 @@ The next milestone is architectural rather than cosmetic. The current `ReceiptRo
 - [x] (2026-03-25 05:12Z) Added `VerifiedTxProofReceiptRelation`, bound receipt leaves to real `TransactionProof` verification, and changed `ReceiptRoot` artifact construction/import to derive receipts from verified inline tx proofs instead of trusting standalone digest receipts.
 - [x] (2026-03-25 05:25Z) Re-ran the experimental crate tests, the consensus `receipt_root_` tests, and the honest `verified_tx_receipt` benchmark after the verified-relation upgrade.
 - [x] (2026-03-25 17:38Z) Added a standalone `TxLeaf` experimental tx artifact kind, taught `ReceiptRoot` to consume `TxLeaf` artifacts instead of inline tx proofs, and re-benchmarked that topology separately from the current inline-proof bridge.
+- [x] (2026-03-25 20:56Z) Tightened the leaf-proof boundary so proofs no longer carry packed witnesses, revalidated the receipt-root consensus/node tests, and re-benchmarked both the bridge and proof-ready-leaf lanes.
 
 ## Surprises & Discoveries
 
@@ -55,6 +56,9 @@ The next milestone is architectural rather than cosmetic. The current `ReceiptRo
 
 - Observation: the new `tx_leaf_receipt_root` benchmark is the first honest measurement of the proof-ready-leaf topology actually implemented on this branch. It measures proof-ready tx leaf artifacts, folded root construction, and receipt-root verification over those artifacts, while tracking edge leaf preparation separately.
   Evidence: `cargo run --release -p superneo-bench -- --relation tx_leaf_receipt_root --k 1,2,4,8 --compare-inline-tx` reports `1827/1910/1952/1973 B/tx`, `831166/1676666/5441584/6035916 ns` active-path prove, `2891708/5438750/16308209/18444125 ns` active-path verify, and `15681791/30136041/150432875/108117208 ns` edge leaf preparation for `k=1,2,4,8`.
+
+- Observation: the leaf proof no longer needs to smuggle the packed witness. Because canonical tx-validity receipts are public and deterministic, the verifier can reconstruct the expected packed witness from the receipt, recompute the witness commitment locally, and check that against a compact proof object. That materially reduces tx-leaf bytes without changing the proof-ready-leaf topology.
+  Evidence: after this change, `cargo run --release -p superneo-bench -- --relation tx_leaf_receipt_root --k 1,2,4,8 --compare-inline-tx` reports `1009/1092/1134/1155 B/tx`, `552041/1182500/2128375/4521250 ns` active-path prove, `1543667/3232292/7240917/12430125 ns` active-path verify, and `9530917/18692833/37564333/77786500 ns` edge leaf preparation for `k=1,2,4,8`. The bridge lane `verified_tx_receipt` reports `354390/354612/354651/354642 B/tx`, `8809291/17637542/37589000/175496834 ns` active-path prove, and `9390667/19330167/38015958/100838750 ns` active-path verify for `k=1,2,4,8`.
 
 ## Decision Log
 
@@ -115,7 +119,7 @@ With the generic pieces in place, add `ToyBalanceRelation`, `TxProofReceiptRelat
 
 Finally, wire everything into `circuits/superneo-bench/src/main.rs`. The benchmark now supports deterministic synthetic leaves, the older `verified_tx_receipt` bridge lane built from real `TransactionProof`s, and the honest `tx_leaf_receipt_root` lane built from proof-ready tx-leaf artifacts. When `--compare-inline-tx` is passed, it also loads the frozen `raw_active` numbers from `output/prover-recovery/2026-03-14/active-lanes/metrics.tsv`.
 
-The current experimental topology is now the proof-ready-leaf lane. `TxLeaf` proof bytes contain the SuperNeo leaf proof plus the smaller transaction public-input object needed to recover a full `TxStatementBinding`, and `ReceiptRoot` verification consumes those tx-leaf artifacts instead of inline tx proofs. This is still an experimental trust boundary, not the final secure system, but it now measures and validates the scaling shape of “proof-ready tx leaves + folded root” directly.
+The current experimental topology is now the proof-ready-leaf lane. `TxLeaf` proof bytes contain a compact SuperNeo leaf proof plus the smaller transaction public-input object needed to recover a full `TxStatementBinding`, and `ReceiptRoot` verification consumes those tx-leaf artifacts instead of inline tx proofs. Verification reconstructs the expected packed witness from the canonical receipt rather than reading it back out of the proof object. This is still an experimental trust boundary, not the final secure system, but it now measures and validates the scaling shape of “proof-ready tx leaves + folded root” directly.
 
 ## Concrete Steps
 
@@ -162,13 +166,13 @@ The important artifact for the current milestone is the proof-ready-leaf benchma
     {
       "relation": "tx_leaf_receipt_root",
       "k": 2,
-      "bytes_per_tx": 1910,
-      "total_active_path_prove_ns": 1676666,
-      "total_active_path_verify_ns": 5438750,
+      "bytes_per_tx": 1092,
+      "total_active_path_prove_ns": 1182500,
+      "total_active_path_verify_ns": 3232292,
       "packed_witness_bits": 3072,
       "shape_digest": "d957...",
-      "note": "proof-ready txs; tx_leaf_artifacts=3026B root_artifact=794B",
-      "edge_prepare_ns": 30136041,
+      "note": "proof-ready txs; tx_leaf_artifacts=1390B root_artifact=794B",
+      "edge_prepare_ns": 18692833,
       "inline_tx_baseline": {
         "bytes_per_tx": 456262,
         "total_active_path_prove_ns": 108371875,
@@ -179,6 +183,8 @@ The important artifact for the current milestone is the proof-ready-leaf benchma
 Revision note: this file was created on 2026-03-20 to guide the first experimental SuperNeo spike and deliberately started with a mock backend so the crate boundaries could be validated before any heavy lattice integration. It was updated the same day after the stack compiled, the targeted tests passed, the benchmark CLI emitted JSON comparisons, and the design/method documents were amended to capture the experiment boundary. It was updated again on 2026-03-21 after the initial code review so the corrected metadata binding, trace digest binding, fixed-width artifact sizing, and new negative tests were captured in the plan state. It was updated on 2026-03-25 after the mock backend was replaced with a direct in-repo SuperNeo-style folding backend derived from the Neo/SuperNeo papers, and again later that day after the verified tx-proof receipt relation landed and the benchmark switched from synthetic receipt leaves to the honest `verified_tx_receipt` path.
 
 Revision note (2026-03-25, later): the `TxLeaf` milestone is now landed. The honest experimental lane is `tx_leaf_receipt_root`, the receipt-root verifier consumes `TxLeaf` artifacts instead of inline tx proofs, and the benchmark records proof-ready-leaf metrics plus separate edge leaf-preparation time.
+
+Revision note (2026-03-25, latest): the leaf-proof boundary is now tightened. Compact tx-leaf proofs no longer serialize the packed witness; verification reconstructs the expected witness packing from the canonical receipt, recomputes the witness commitment, and checks the proof against that digest. This materially reduced tx-leaf bytes and active-path verification cost while preserving the same proof-ready-leaf topology.
 
 ## Interfaces and Dependencies
 

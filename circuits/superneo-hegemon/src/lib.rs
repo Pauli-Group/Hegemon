@@ -4,7 +4,7 @@ use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use superneo_backend_lattice::{LatticeBackend, LatticeCommitment, LeafDigestProof};
+use superneo_backend_lattice::{LatticeBackend, LeafDigestProof};
 use superneo_ccs::{
     digest_statement, Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix,
     StatementEncoding, WitnessField, WitnessSchema,
@@ -667,7 +667,14 @@ pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxL
     let encoding = relation.encode_statement(&receipt)?;
     let assignment = relation.build_assignment(&receipt, &())?;
     let packed = packer.pack(relation.shape(), &assignment)?;
-    let leaf_proof = backend.prove_leaf(&pk, &relation.relation_id(), &encoding, &packed)?;
+    let commitment = backend.commit_witness(&pk, &packed)?;
+    let leaf_proof = backend.prove_leaf(
+        &pk,
+        &relation.relation_id(),
+        &encoding,
+        &packed,
+        &commitment,
+    )?;
     let stark_public_inputs = proof
         .stark_public_inputs
         .clone()
@@ -753,12 +760,13 @@ pub fn verify_tx_leaf_artifact_bytes(
         artifact.leaf.statement_digest == encoding.statement_digest,
         "tx-leaf inner statement digest mismatch"
     );
-    let proof = LeafDigestProof {
-        witness_commitment: artifact.leaf.proof.witness_commitment.clone(),
-        packed_witness: packed,
-        proof_digest: artifact.leaf.proof.proof_digest,
-    };
-    backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &proof)?;
+    backend.verify_leaf(
+        &vk,
+        &relation.relation_id(),
+        &encoding,
+        &packed,
+        &artifact.leaf.proof,
+    )?;
     Ok(TxLeafMetadata {
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
@@ -788,17 +796,24 @@ pub fn build_verified_tx_proof_receipt_root_artifact_bytes(
         let encoding = relation.encode_statement(&statement)?;
         let assignment = relation.build_assignment(&statement, proof)?;
         let packed = packer.pack(relation.shape(), &assignment)?;
-        let leaf_proof = backend.prove_leaf(&pk, &relation.relation_id(), &encoding, &packed)?;
+        let commitment = backend.commit_witness(&pk, &packed)?;
+        let leaf_proof = backend.prove_leaf(
+            &pk,
+            &relation.relation_id(),
+            &encoding,
+            &packed,
+            &commitment,
+        )?;
         leaves.push(ReceiptRootLeaf {
             statement_digest: encoding.statement_digest.0,
-            witness_commitment: leaf_proof.witness_commitment.digest,
+            witness_commitment: commitment.digest,
             proof_digest: leaf_proof.proof_digest,
         });
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
             shape_digest: pk.shape_digest,
             statement_digest: encoding.statement_digest,
-            witness_commitment: leaf_proof.witness_commitment,
+            witness_commitment: commitment,
         });
     }
 
@@ -869,17 +884,24 @@ pub fn build_receipt_root_artifact_bytes(
         let encoding = relation.encode_statement(receipt)?;
         let assignment = relation.build_assignment(receipt, &())?;
         let packed = packer.pack(relation.shape(), &assignment)?;
-        let proof = backend.prove_leaf(&pk, &relation.relation_id(), &encoding, &packed)?;
+        let commitment = backend.commit_witness(&pk, &packed)?;
+        let proof = backend.prove_leaf(
+            &pk,
+            &relation.relation_id(),
+            &encoding,
+            &packed,
+            &commitment,
+        )?;
         leaves.push(ReceiptRootLeaf {
             statement_digest: encoding.statement_digest.0,
-            witness_commitment: proof.witness_commitment.digest,
+            witness_commitment: commitment.digest,
             proof_digest: proof.proof_digest,
         });
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
             shape_digest: pk.shape_digest,
             statement_digest: encoding.statement_digest,
-            witness_commitment: proof.witness_commitment,
+            witness_commitment: commitment,
         });
     }
 
@@ -974,16 +996,15 @@ pub fn verify_verified_tx_proof_receipt_root_artifact_bytes(
             "receipt-root leaf statement digest mismatch"
         );
         let proof = LeafDigestProof {
-            witness_commitment: LatticeCommitment::digest_only(leaf.witness_commitment),
-            packed_witness: packed,
+            witness_commitment_digest: leaf.witness_commitment,
             proof_digest: leaf.proof_digest,
         };
-        backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &proof)?;
+        backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &packed, &proof)?;
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
             shape_digest: pk.shape_digest,
             statement_digest: encoding.statement_digest,
-            witness_commitment: backend.commit_witness(&pk, &proof.packed_witness)?,
+            witness_commitment: backend.commit_witness(&pk, &packed)?,
         });
     }
 
@@ -1100,16 +1121,15 @@ pub fn verify_receipt_root_artifact_bytes(
             "receipt-root leaf statement digest mismatch"
         );
         let proof = LeafDigestProof {
-            witness_commitment: LatticeCommitment::digest_only(leaf.witness_commitment),
-            packed_witness: packed,
+            witness_commitment_digest: leaf.witness_commitment,
             proof_digest: leaf.proof_digest,
         };
-        backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &proof)?;
+        backend.verify_leaf(&vk, &relation.relation_id(), &encoding, &packed, &proof)?;
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
             shape_digest: pk.shape_digest,
             statement_digest: encoding.statement_digest,
-            witness_commitment: backend.commit_witness(&pk, &proof.packed_witness)?,
+            witness_commitment: backend.commit_witness(&pk, &packed)?,
         });
     }
 

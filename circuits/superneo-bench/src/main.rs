@@ -138,7 +138,8 @@ fn benchmark_toy_balance(
         let packed = packer.pack(relation.shape(), &assignment)?;
         packed_witness_bits += packed.used_bits;
         let relation_id = relation.relation_id();
-        let proof = backend.prove_leaf(&pk, &relation_id, &encoding, &packed)?;
+        let commitment = backend.commit_witness(&pk, &packed)?;
+        let proof = backend.prove_leaf(&pk, &relation_id, &encoding, &packed, &commitment)?;
         let artifact = LeafArtifact {
             version: 1,
             relation_id,
@@ -151,9 +152,9 @@ fn benchmark_toy_balance(
             relation_id,
             shape_digest: pk.shape_digest,
             statement_digest: encoding.statement_digest,
-            witness_commitment: proof.witness_commitment.clone(),
+            witness_commitment: commitment,
         };
-        leaf_payloads.push((encoding, instance, proof));
+        leaf_payloads.push((encoding, packed, instance, proof));
     }
     let leaf_prove_ns = prove_start.elapsed().as_nanos();
 
@@ -163,15 +164,15 @@ fn benchmark_toy_balance(
         &pk,
         leaf_payloads
             .iter()
-            .map(|(_, instance, _)| instance.clone())
+            .map(|(_, _, instance, _)| instance.clone())
             .collect(),
     )?;
     total_bytes += fold_bytes;
     let total_prove_ns = leaf_prove_ns + fold_start.elapsed().as_nanos();
 
     let verify_start = Instant::now();
-    for (encoding, _, proof) in &leaf_payloads {
-        backend.verify_leaf(&vk, &relation.relation_id(), encoding, proof)?;
+    for (encoding, packed, _, proof) in &leaf_payloads {
+        backend.verify_leaf(&vk, &relation.relation_id(), encoding, packed, proof)?;
     }
     for step in &fold_steps {
         backend.verify_fold(&vk, &step.parent, &step.left, &step.right, &step.proof)?;
@@ -229,7 +230,8 @@ fn benchmark_tx_receipt(
         let packed = packer.pack(relation.shape(), &assignment)?;
         packed_witness_bits += packed.used_bits;
         let relation_id = relation.relation_id();
-        let proof = backend.prove_leaf(&pk, &relation_id, &encoding, &packed)?;
+        let commitment = backend.commit_witness(&pk, &packed)?;
+        let proof = backend.prove_leaf(&pk, &relation_id, &encoding, &packed, &commitment)?;
         let artifact = LeafArtifact {
             version: 1,
             relation_id,
@@ -242,9 +244,9 @@ fn benchmark_tx_receipt(
             relation_id,
             shape_digest: pk.shape_digest,
             statement_digest: encoding.statement_digest,
-            witness_commitment: proof.witness_commitment.clone(),
+            witness_commitment: commitment,
         };
-        leaf_payloads.push((encoding, instance, proof));
+        leaf_payloads.push((encoding, packed, instance, proof));
     }
     let leaf_prove_ns = prove_start.elapsed().as_nanos();
 
@@ -254,15 +256,15 @@ fn benchmark_tx_receipt(
         &pk,
         leaf_payloads
             .iter()
-            .map(|(_, instance, _)| instance.clone())
+            .map(|(_, _, instance, _)| instance.clone())
             .collect(),
     )?;
     total_bytes += fold_bytes;
     let total_prove_ns = leaf_prove_ns + fold_start.elapsed().as_nanos();
 
     let verify_start = Instant::now();
-    for (encoding, _, proof) in &leaf_payloads {
-        backend.verify_leaf(&vk, &relation.relation_id(), encoding, proof)?;
+    for (encoding, packed, _, proof) in &leaf_payloads {
+        backend.verify_leaf(&vk, &relation.relation_id(), encoding, packed, proof)?;
     }
     for step in &fold_steps {
         backend.verify_fold(&vk, &step.parent, &step.left, &step.right, &step.proof)?;

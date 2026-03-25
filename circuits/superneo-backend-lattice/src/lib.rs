@@ -90,8 +90,11 @@ pub struct LatticeCommitment {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeafDigestProof {
-    pub witness_commitment: LatticeCommitment,
-    pub packed_witness: PackedWitness<u64>,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub witness_commitment_digest: [u8; 48],
     #[serde(
         serialize_with = "serialize_fixed_bytes_48",
         deserialize_with = "deserialize_fixed_bytes_48"
@@ -233,13 +236,7 @@ impl LatticeCommitment {
 
 impl LeafDigestProof {
     pub fn byte_size(&self) -> usize {
-        self.witness_commitment.byte_size()
-            + 8
-            + 8
-            + 2
-            + 4
-            + (self.packed_witness.coeffs.len() * 8)
-            + 48
+        48 + 48
     }
 }
 
@@ -316,18 +313,17 @@ impl Backend<Goldilocks> for LatticeBackend {
         relation_id: &RelationId,
         statement: &StatementEncoding<Goldilocks>,
         packed: &Self::PackedWitness,
+        commitment: &Self::Commitment,
     ) -> Result<Self::LeafProof> {
-        let witness_commitment = self.commit_witness(pk, packed)?;
         let proof_digest = leaf_proof_digest(
             pk,
             relation_id,
             &statement.statement_digest,
             packed,
-            &witness_commitment,
+            &commitment.digest,
         );
         Ok(LeafDigestProof {
-            witness_commitment,
-            packed_witness: packed.clone(),
+            witness_commitment_digest: commitment.digest,
             proof_digest,
         })
     }
@@ -337,25 +333,20 @@ impl Backend<Goldilocks> for LatticeBackend {
         vk: &Self::VerifierKey,
         relation_id: &RelationId,
         statement: &StatementEncoding<Goldilocks>,
+        expected_packed: &Self::PackedWitness,
         proof: &Self::LeafProof,
     ) -> Result<()> {
-        let expected_commitment = self.commit_witness(vk, &proof.packed_witness)?;
+        let expected_commitment = self.commit_witness(vk, expected_packed)?;
         ensure!(
-            proof.witness_commitment.digest == expected_commitment.digest,
+            proof.witness_commitment_digest == expected_commitment.digest,
             "leaf witness commitment digest mismatch"
         );
-        if !proof.witness_commitment.rows.is_empty() {
-            ensure!(
-                proof.witness_commitment.rows == expected_commitment.rows,
-                "leaf witness commitment rows mismatch"
-            );
-        }
         let expected_proof_digest = leaf_proof_digest(
             vk,
             relation_id,
             &statement.statement_digest,
-            &proof.packed_witness,
-            &expected_commitment,
+            expected_packed,
+            &expected_commitment.digest,
         );
         ensure!(
             proof.proof_digest == expected_proof_digest,
@@ -680,7 +671,7 @@ fn leaf_proof_digest(
     relation_id: &RelationId,
     statement_digest: &StatementDigest,
     packed: &PackedWitness<u64>,
-    commitment: &LatticeCommitment,
+    commitment_digest: &[u8; 48],
 ) -> [u8; 48] {
     let mut hasher = Hasher::new();
     hasher.update(b"hegemon.superneo.leaf-proof.v2");
@@ -695,7 +686,7 @@ fn leaf_proof_digest(
     hasher.update(&(pk.ring_degree as u64).to_le_bytes());
     hasher.update(&pk.digit_bits.to_le_bytes());
     hasher.update(&statement_digest.0);
-    hasher.update(&commitment.digest);
+    hasher.update(commitment_digest);
     hasher.update(&(packed.original_len as u64).to_le_bytes());
     hasher.update(&(packed.used_bits as u64).to_le_bytes());
     hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
@@ -848,6 +839,8 @@ mod tests {
             public_inputs: vec![Goldilocks::new(2)],
             statement_digest: digest_statement(b"right"),
         };
+        let left_commitment = backend.commit_witness(&pk, &left_packed).unwrap();
+        let right_commitment = backend.commit_witness(&pk, &right_packed).unwrap();
 
         let left_proof = backend
             .prove_leaf(
@@ -855,6 +848,7 @@ mod tests {
                 &superneo_ccs::RelationId::from_label("test"),
                 &left_statement,
                 &left_packed,
+                &left_commitment,
             )
             .unwrap();
         let right_proof = backend
@@ -863,6 +857,7 @@ mod tests {
                 &superneo_ccs::RelationId::from_label("test"),
                 &right_statement,
                 &right_packed,
+                &right_commitment,
             )
             .unwrap();
         backend
@@ -870,6 +865,7 @@ mod tests {
                 &vk,
                 &superneo_ccs::RelationId::from_label("test"),
                 &left_statement,
+                &left_packed,
                 &left_proof,
             )
             .unwrap();
@@ -878,6 +874,7 @@ mod tests {
                 &vk,
                 &superneo_ccs::RelationId::from_label("test"),
                 &right_statement,
+                &right_packed,
                 &right_proof,
             )
             .unwrap();
@@ -886,13 +883,13 @@ mod tests {
             relation_id: superneo_ccs::RelationId::from_label("test"),
             shape_digest: pk.shape_digest,
             statement_digest: left_statement.statement_digest,
-            witness_commitment: left_proof.witness_commitment.clone(),
+            witness_commitment: left_commitment,
         };
         let right_instance = FoldedInstance {
             relation_id: superneo_ccs::RelationId::from_label("test"),
             shape_digest: pk.shape_digest,
             statement_digest: right_statement.statement_digest,
-            witness_commitment: right_proof.witness_commitment.clone(),
+            witness_commitment: right_commitment,
         };
         let (parent, proof) = backend
             .fold_pair(&pk, &left_instance, &right_instance)
@@ -903,7 +900,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_leaf_rejects_tampered_packed_witness() {
+    fn verify_leaf_rejects_tampered_expected_witness() {
         let backend = LatticeBackend::new(LatticeBackendConfig::default());
         let security = SecurityParams::experimental_default();
         let (pk, vk) = backend.setup(&security, &shape()).unwrap();
@@ -916,20 +913,24 @@ mod tests {
             public_inputs: vec![Goldilocks::new(1)],
             statement_digest: digest_statement(b"left"),
         };
-        let mut proof = backend
+        let commitment = backend.commit_witness(&pk, &packed).unwrap();
+        let proof = backend
             .prove_leaf(
                 &pk,
                 &superneo_ccs::RelationId::from_label("test"),
                 &statement,
                 &packed,
+                &commitment,
             )
             .unwrap();
-        proof.packed_witness.coeffs[0] ^= 1;
+        let mut tampered = packed.clone();
+        tampered.coeffs[0] ^= 1;
         assert!(backend
             .verify_leaf(
                 &vk,
                 &superneo_ccs::RelationId::from_label("test"),
                 &statement,
+                &tampered,
                 &proof,
             )
             .is_err());
