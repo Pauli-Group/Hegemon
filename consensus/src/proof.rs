@@ -31,9 +31,10 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Instant;
 use superneo_hegemon::{
-    CanonicalTxValidityReceipt, build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes,
-    build_verified_tx_proof_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
-    verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
+    CanonicalTxValidityReceipt, TxLeafPublicTx, build_receipt_root_artifact_bytes,
+    build_tx_leaf_artifact_bytes, build_verified_tx_proof_receipt_root_artifact_bytes,
+    verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
+    verify_verified_tx_proof_receipt_root_artifact_bytes,
 };
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
@@ -237,11 +238,14 @@ impl ArtifactVerifier for TxLeafVerifier {
             });
         }
         let canonical = canonical_receipt_from_tx_receipt(&artifact.receipt);
-        let metadata = verify_tx_leaf_artifact_bytes(&canonical, &envelope.artifact_bytes)
-            .map_err(|err| ProofError::TransactionProofVerification {
-                index: 0,
-                message: format!("tx-leaf verification failed: {err}"),
-            })?;
+        let tx_view = tx_leaf_public_tx_from_consensus_tx(tx);
+        let metadata =
+            verify_tx_leaf_artifact_bytes(&tx_view, &canonical, &envelope.artifact_bytes).map_err(
+                |err| ProofError::TransactionProofVerification {
+                    index: 0,
+                    message: format!("tx-leaf verification failed: {err}"),
+                },
+            )?;
         statement_binding_from_tx_leaf(tx, &artifact.receipt, &metadata.stark_public_inputs)
             .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })
     }
@@ -676,6 +680,16 @@ fn canonical_receipt_from_tx_receipt(receipt: &TxValidityReceipt) -> CanonicalTx
         proof_digest: receipt.proof_digest,
         public_inputs_digest: receipt.public_inputs_digest,
         verifier_profile: receipt.verifier_profile,
+    }
+}
+
+fn tx_leaf_public_tx_from_consensus_tx(tx: &crate::types::Transaction) -> TxLeafPublicTx {
+    TxLeafPublicTx {
+        nullifiers: tx.nullifiers.clone(),
+        commitments: tx.commitments.clone(),
+        ciphertext_hashes: tx.ciphertext_hashes.clone(),
+        balance_tag: tx.balance_tag,
+        version: tx.version,
     }
 }
 

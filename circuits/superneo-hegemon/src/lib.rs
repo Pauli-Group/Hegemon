@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_goldilocks::Goldilocks;
+use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use superneo_backend_lattice::{LatticeBackend, LeafDigestProof};
 use superneo_ccs::{
@@ -11,12 +12,13 @@ use superneo_ccs::{
 };
 use superneo_core::{Backend, FoldedInstance, LeafArtifact, SecurityParams};
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
+use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{
     transaction_proof_digest, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
-    transaction_verifier_profile_digest, verify as verify_transaction_proof, SerializedStarkInputs,
-    TransactionProof,
+    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
+    verify as verify_transaction_proof, SerializedStarkInputs, TransactionProof,
 };
 
 pub const MAX_RECEIPT_BYTES: usize = 96;
@@ -27,6 +29,7 @@ pub const RECEIPT_ROOT_DIGEST_WIDTH: usize = 4;
 pub const RECEIPT_ROOT_LIMBS_PER_DIGEST: usize = 6;
 pub const RECEIPT_ROOT_WITNESS_LIMBS: usize =
     RECEIPT_ROOT_DIGEST_WIDTH * RECEIPT_ROOT_LIMBS_PER_DIGEST;
+pub const DIGEST_LIMBS: usize = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToyBalanceStatement {
@@ -260,7 +263,22 @@ pub struct CanonicalTxValidityReceiptRelation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedTxProofReceiptRelation {
+pub struct TxLeafPublicTx {
+    pub nullifiers: Vec<[u8; 48]>,
+    pub commitments: Vec<[u8; 48]>,
+    pub ciphertext_hashes: Vec<[u8; 48]>,
+    pub balance_tag: [u8; 48],
+    pub version: VersionBinding,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxLeafPublicWitness {
+    pub tx: TxLeafPublicTx,
+    pub stark_public_inputs: SerializedStarkInputs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxLeafPublicRelation {
     shape: CcsShape<Goldilocks>,
 }
 
@@ -293,11 +311,202 @@ impl Default for CanonicalTxValidityReceiptRelation {
     }
 }
 
-impl Default for VerifiedTxProofReceiptRelation {
+impl Default for TxLeafPublicRelation {
     fn default() -> Self {
-        Self {
-            shape: CanonicalTxValidityReceiptRelation::default().shape,
-        }
+        let witness_schema = WitnessSchema {
+            fields: vec![
+                WitnessField {
+                    name: "input_flag_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "output_flag_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "input_flag",
+                    bit_width: 1,
+                    signed: false,
+                    count: MAX_INPUTS,
+                },
+                WitnessField {
+                    name: "output_flag",
+                    bit_width: 1,
+                    signed: false,
+                    count: MAX_OUTPUTS,
+                },
+                WitnessField {
+                    name: "fee",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "value_balance_sign",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "value_balance_magnitude",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "merkle_root_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "balance_slot_asset_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "balance_slot_asset_id",
+                    bit_width: 64,
+                    signed: false,
+                    count: BALANCE_SLOTS,
+                },
+                WitnessField {
+                    name: "stablecoin_enabled",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_asset_id",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_policy_version",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_issuance_sign",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_issuance_magnitude",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_policy_hash_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "stablecoin_oracle_commitment_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "stablecoin_attestation_commitment_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "nullifier_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "nullifier_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_INPUTS * DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "commitment_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "commitment_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_OUTPUTS * DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "ciphertext_hash_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "ciphertext_hash_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_OUTPUTS * DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "balance_tag_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: DIGEST_LIMBS,
+                },
+                WitnessField {
+                    name: "circuit_version",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "crypto_suite",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+            ],
+        };
+        let shape = CcsShape {
+            num_rows: 256,
+            num_cols: witness_schema.total_witness_elements(),
+            matrices: vec![SparseMatrix {
+                row_count: 256,
+                col_count: witness_schema.total_witness_elements(),
+                entries: vec![
+                    SparseEntry {
+                        row: 0,
+                        col: 0,
+                        value: Goldilocks::new(1),
+                    },
+                    SparseEntry {
+                        row: 1,
+                        col: 1,
+                        value: Goldilocks::new(1),
+                    },
+                    SparseEntry {
+                        row: 2,
+                        col: 2,
+                        value: Goldilocks::new(1),
+                    },
+                ],
+            }],
+            selectors: vec![Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)],
+            witness_schema,
+        };
+        Self { shape }
     }
 }
 
@@ -343,12 +552,12 @@ impl Relation<Goldilocks> for CanonicalTxValidityReceiptRelation {
     }
 }
 
-impl Relation<Goldilocks> for VerifiedTxProofReceiptRelation {
+impl Relation<Goldilocks> for TxLeafPublicRelation {
     type Statement = CanonicalTxValidityReceipt;
-    type Witness = TransactionProof;
+    type Witness = TxLeafPublicWitness;
 
     fn relation_id(&self) -> RelationId {
-        RelationId::from_label("hegemon.superneo.verified-inline-tx-receipt")
+        RelationId::from_label("hegemon.superneo.tx-leaf-public")
     }
 
     fn shape(&self) -> &CcsShape<Goldilocks> {
@@ -367,14 +576,8 @@ impl Relation<Goldilocks> for VerifiedTxProofReceiptRelation {
         statement: &Self::Statement,
         witness: &Self::Witness,
     ) -> Result<Assignment<Goldilocks>> {
-        let derived = canonical_tx_validity_receipt_from_transaction_proof(witness)?;
-        ensure!(
-            derived == *statement,
-            "verified tx proof relation statement does not match witness-derived receipt"
-        );
-        verify_transaction_proof(witness, transaction_verifying_key())
-            .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
-        CanonicalTxValidityReceiptRelation::default().build_assignment(statement, &())
+        validate_tx_leaf_public_witness(statement, witness)?;
+        tx_leaf_public_witness_assignment(witness)
     }
 }
 
@@ -615,8 +818,342 @@ pub fn canonical_tx_validity_receipt_from_transaction_proof(
     })
 }
 
+pub fn tx_leaf_public_tx_from_transaction_proof(
+    proof: &TransactionProof,
+) -> Result<TxLeafPublicTx> {
+    let stark_inputs = proof
+        .stark_public_inputs
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("transaction proof is missing serialized STARK inputs"))?;
+    let input_count = active_flag_count(&stark_inputs.input_flags)?;
+    let output_count = active_flag_count(&stark_inputs.output_flags)?;
+    ensure!(
+        input_count <= proof.nullifiers.len(),
+        "transaction proof input flags exceed nullifier vector"
+    );
+    ensure!(
+        output_count <= proof.commitments.len()
+            && output_count <= proof.public_inputs.ciphertext_hashes.len(),
+        "transaction proof output flags exceed commitment/ciphertext vectors"
+    );
+    Ok(TxLeafPublicTx {
+        nullifiers: proof.nullifiers[..input_count].to_vec(),
+        commitments: proof.commitments[..output_count].to_vec(),
+        ciphertext_hashes: proof.public_inputs.ciphertext_hashes[..output_count].to_vec(),
+        balance_tag: proof.public_inputs.balance_tag,
+        version: proof.version_binding(),
+    })
+}
+
+pub fn tx_leaf_public_witness_from_transaction_proof(
+    proof: &TransactionProof,
+) -> Result<TxLeafPublicWitness> {
+    Ok(TxLeafPublicWitness {
+        tx: tx_leaf_public_tx_from_transaction_proof(proof)?,
+        stark_public_inputs: proof.stark_public_inputs.clone().ok_or_else(|| {
+            anyhow::anyhow!("transaction proof is missing serialized STARK inputs")
+        })?,
+    })
+}
+
+pub fn tx_leaf_public_witness_from_parts(
+    tx: &TxLeafPublicTx,
+    stark_public_inputs: &SerializedStarkInputs,
+) -> TxLeafPublicWitness {
+    TxLeafPublicWitness {
+        tx: tx.clone(),
+        stark_public_inputs: stark_public_inputs.clone(),
+    }
+}
+
+fn validate_tx_leaf_public_witness(
+    statement: &CanonicalTxValidityReceipt,
+    witness: &TxLeafPublicWitness,
+) -> Result<()> {
+    ensure!(
+        witness.tx.nullifiers.len() <= MAX_INPUTS,
+        "tx-leaf witness nullifier length {} exceeds {}",
+        witness.tx.nullifiers.len(),
+        MAX_INPUTS
+    );
+    ensure!(
+        witness.tx.commitments.len() <= MAX_OUTPUTS,
+        "tx-leaf witness commitment length {} exceeds {}",
+        witness.tx.commitments.len(),
+        MAX_OUTPUTS
+    );
+    ensure!(
+        witness.tx.ciphertext_hashes.len() <= MAX_OUTPUTS,
+        "tx-leaf witness ciphertext-hash length {} exceeds {}",
+        witness.tx.ciphertext_hashes.len(),
+        MAX_OUTPUTS
+    );
+    ensure!(
+        witness.stark_public_inputs.input_flags.len() <= MAX_INPUTS,
+        "tx-leaf witness input flag length {} exceeds {}",
+        witness.stark_public_inputs.input_flags.len(),
+        MAX_INPUTS
+    );
+    ensure!(
+        witness.stark_public_inputs.output_flags.len() <= MAX_OUTPUTS,
+        "tx-leaf witness output flag length {} exceeds {}",
+        witness.stark_public_inputs.output_flags.len(),
+        MAX_OUTPUTS
+    );
+    ensure!(
+        witness.stark_public_inputs.balance_slot_asset_ids.len() <= BALANCE_SLOTS,
+        "tx-leaf witness balance slot asset length {} exceeds {}",
+        witness.stark_public_inputs.balance_slot_asset_ids.len(),
+        BALANCE_SLOTS
+    );
+    ensure!(
+        witness
+            .stark_public_inputs
+            .input_flags
+            .iter()
+            .all(|flag| *flag <= 1),
+        "tx-leaf input flags must be binary"
+    );
+    ensure!(
+        witness
+            .stark_public_inputs
+            .output_flags
+            .iter()
+            .all(|flag| *flag <= 1),
+        "tx-leaf output flags must be binary"
+    );
+    ensure!(
+        witness.stark_public_inputs.value_balance_sign <= 1,
+        "tx-leaf value_balance_sign must be binary"
+    );
+    ensure!(
+        witness.stark_public_inputs.stablecoin_enabled <= 1,
+        "tx-leaf stablecoin_enabled must be binary"
+    );
+    ensure!(
+        witness.stark_public_inputs.stablecoin_issuance_sign <= 1,
+        "tx-leaf stablecoin_issuance_sign must be binary"
+    );
+    ensure!(
+        active_flag_count(&witness.stark_public_inputs.input_flags)? == witness.tx.nullifiers.len(),
+        "tx-leaf nullifier list length does not match active input flags"
+    );
+    ensure!(
+        active_flag_count(&witness.stark_public_inputs.output_flags)?
+            == witness.tx.commitments.len()
+            && active_flag_count(&witness.stark_public_inputs.output_flags)?
+                == witness.tx.ciphertext_hashes.len(),
+        "tx-leaf output lists do not match active output flags"
+    );
+
+    let expected_statement_hash =
+        tx_statement_hash_from_tx_leaf_public(&witness.tx, &witness.stark_public_inputs)?;
+    ensure!(
+        expected_statement_hash == statement.statement_hash,
+        "tx-leaf statement hash mismatch"
+    );
+    let expected_public_inputs_digest =
+        transaction_public_inputs_digest_from_serialized(&witness.stark_public_inputs)
+            .map_err(|err| anyhow::anyhow!("failed to hash tx-leaf public inputs: {err}"))?;
+    ensure!(
+        expected_public_inputs_digest == statement.public_inputs_digest,
+        "tx-leaf public inputs digest mismatch"
+    );
+    let expected_verifier_profile =
+        transaction_verifier_profile_digest_for_version(witness.tx.version);
+    ensure!(
+        expected_verifier_profile == statement.verifier_profile,
+        "tx-leaf verifier profile mismatch"
+    );
+    Ok(())
+}
+
+fn tx_leaf_public_witness_assignment(
+    witness: &TxLeafPublicWitness,
+) -> Result<Assignment<Goldilocks>> {
+    let mut values =
+        Vec::with_capacity(TxLeafPublicRelation::default().shape.expected_witness_len());
+    values.push(Goldilocks::new(
+        witness.stark_public_inputs.input_flags.len() as u64,
+    ));
+    values.push(Goldilocks::new(
+        witness.stark_public_inputs.output_flags.len() as u64,
+    ));
+    push_padded_bits(
+        &mut values,
+        &witness.stark_public_inputs.input_flags,
+        MAX_INPUTS,
+        "input flags",
+    )?;
+    push_padded_bits(
+        &mut values,
+        &witness.stark_public_inputs.output_flags,
+        MAX_OUTPUTS,
+        "output flags",
+    )?;
+    values.push(Goldilocks::new(witness.stark_public_inputs.fee));
+    values.push(Goldilocks::new(u64::from(
+        witness.stark_public_inputs.value_balance_sign,
+    )));
+    values.push(Goldilocks::new(
+        witness.stark_public_inputs.value_balance_magnitude,
+    ));
+    push_bytes48_limbs(&mut values, &witness.stark_public_inputs.merkle_root);
+    values.push(Goldilocks::new(
+        witness.stark_public_inputs.balance_slot_asset_ids.len() as u64,
+    ));
+    push_padded_u64s(
+        &mut values,
+        &witness.stark_public_inputs.balance_slot_asset_ids,
+        BALANCE_SLOTS,
+    );
+    values.push(Goldilocks::new(u64::from(
+        witness.stark_public_inputs.stablecoin_enabled,
+    )));
+    values.push(Goldilocks::new(
+        witness.stark_public_inputs.stablecoin_asset_id,
+    ));
+    values.push(Goldilocks::new(u64::from(
+        witness.stark_public_inputs.stablecoin_policy_version,
+    )));
+    values.push(Goldilocks::new(u64::from(
+        witness.stark_public_inputs.stablecoin_issuance_sign,
+    )));
+    values.push(Goldilocks::new(
+        witness.stark_public_inputs.stablecoin_issuance_magnitude,
+    ));
+    push_bytes48_limbs(
+        &mut values,
+        &witness.stark_public_inputs.stablecoin_policy_hash,
+    );
+    push_bytes48_limbs(
+        &mut values,
+        &witness.stark_public_inputs.stablecoin_oracle_commitment,
+    );
+    push_bytes48_limbs(
+        &mut values,
+        &witness
+            .stark_public_inputs
+            .stablecoin_attestation_commitment,
+    );
+    values.push(Goldilocks::new(witness.tx.nullifiers.len() as u64));
+    push_padded_digest_vec(&mut values, &witness.tx.nullifiers, MAX_INPUTS);
+    values.push(Goldilocks::new(witness.tx.commitments.len() as u64));
+    push_padded_digest_vec(&mut values, &witness.tx.commitments, MAX_OUTPUTS);
+    values.push(Goldilocks::new(witness.tx.ciphertext_hashes.len() as u64));
+    push_padded_digest_vec(&mut values, &witness.tx.ciphertext_hashes, MAX_OUTPUTS);
+    push_bytes48_limbs(&mut values, &witness.tx.balance_tag);
+    values.push(Goldilocks::new(u64::from(witness.tx.version.circuit)));
+    values.push(Goldilocks::new(u64::from(witness.tx.version.crypto)));
+    Ok(Assignment { witness: values })
+}
+
+fn decode_signed_magnitude(sign: u8, magnitude: u64, label: &str) -> Result<i128> {
+    match sign {
+        0 => Ok(i128::from(magnitude)),
+        1 => Ok(-i128::from(magnitude)),
+        other => Err(anyhow::anyhow!(
+            "{label} sign flag must be 0 or 1, got {other}"
+        )),
+    }
+}
+
+fn tx_statement_hash_from_tx_leaf_public(
+    tx: &TxLeafPublicTx,
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<[u8; 48]> {
+    let mut message = Vec::new();
+    message.extend_from_slice(transaction_circuit::proof::TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(&stark_inputs.merkle_root);
+    extend_padded_digests(&mut message, &tx.nullifiers, MAX_INPUTS)?;
+    extend_padded_digests(&mut message, &tx.commitments, MAX_OUTPUTS)?;
+    extend_padded_digests(&mut message, &tx.ciphertext_hashes, MAX_OUTPUTS)?;
+    let value_balance = decode_signed_magnitude(
+        stark_inputs.value_balance_sign,
+        stark_inputs.value_balance_magnitude,
+        "value_balance",
+    )?;
+    let stablecoin_issuance = decode_signed_magnitude(
+        stark_inputs.stablecoin_issuance_sign,
+        stark_inputs.stablecoin_issuance_magnitude,
+        "stablecoin_issuance",
+    )?;
+    message.extend_from_slice(&stark_inputs.fee.to_le_bytes());
+    message.extend_from_slice(&value_balance.to_le_bytes());
+    message.extend_from_slice(&tx.balance_tag);
+    message.extend_from_slice(&tx.version.circuit.to_le_bytes());
+    message.extend_from_slice(&tx.version.crypto.to_le_bytes());
+    message.push(stark_inputs.stablecoin_enabled);
+    message.extend_from_slice(&stark_inputs.stablecoin_asset_id.to_le_bytes());
+    message.extend_from_slice(&stark_inputs.stablecoin_policy_hash);
+    message.extend_from_slice(&stark_inputs.stablecoin_oracle_commitment);
+    message.extend_from_slice(&stark_inputs.stablecoin_attestation_commitment);
+    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
+    message.extend_from_slice(&stark_inputs.stablecoin_policy_version.to_le_bytes());
+    Ok(blake3_384_bytes(&message))
+}
+
+fn active_flag_count(flags: &[u8]) -> Result<usize> {
+    ensure!(flags.iter().all(|flag| *flag <= 1), "flags must be binary");
+    Ok(flags.iter().filter(|flag| **flag == 1).count())
+}
+
+fn push_padded_bits(
+    out: &mut Vec<Goldilocks>,
+    values: &[u8],
+    target: usize,
+    label: &str,
+) -> Result<()> {
+    ensure!(
+        values.len() <= target,
+        "{label} length {} exceeds {target}",
+        values.len()
+    );
+    ensure!(
+        values.iter().all(|value| *value <= 1),
+        "{label} must be binary"
+    );
+    for idx in 0..target {
+        out.push(Goldilocks::new(u64::from(*values.get(idx).unwrap_or(&0))));
+    }
+    Ok(())
+}
+
+fn push_padded_u64s(out: &mut Vec<Goldilocks>, values: &[u64], target: usize) {
+    for idx in 0..target {
+        out.push(Goldilocks::new(*values.get(idx).unwrap_or(&0)));
+    }
+}
+
+fn push_bytes48_limbs(out: &mut Vec<Goldilocks>, bytes: &[u8; 48]) {
+    out.extend(bytes48_to_goldilocks(bytes));
+}
+
+fn push_padded_digest_vec(out: &mut Vec<Goldilocks>, values: &[[u8; 48]], target: usize) {
+    for idx in 0..target {
+        let digest = values.get(idx).copied().unwrap_or([0u8; 48]);
+        push_bytes48_limbs(out, &digest);
+    }
+}
+
+fn extend_padded_digests(bytes: &mut Vec<u8>, values: &[[u8; 48]], target: usize) -> Result<()> {
+    ensure!(
+        values.len() <= target,
+        "digest vector length {} exceeds {}",
+        values.len(),
+        target
+    );
+    for value in values {
+        bytes.extend_from_slice(value);
+    }
+    for _ in values.len()..target {
+        bytes.extend_from_slice(&[0u8; 48]);
+    }
+    Ok(())
+}
+
 pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
-    let relation = VerifiedTxProofReceiptRelation::default();
+    let relation = CanonicalTxValidityReceiptRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
     let (pk, _) = backend
@@ -637,7 +1174,7 @@ pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
 }
 
 pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
-    let relation = CanonicalTxValidityReceiptRelation::default();
+    let relation = TxLeafPublicRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
     let (pk, _) = backend
@@ -655,7 +1192,7 @@ pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
 }
 
 pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxLeafArtifact> {
-    let relation = CanonicalTxValidityReceiptRelation::default();
+    let relation = TxLeafPublicRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
@@ -664,8 +1201,9 @@ pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxL
     verify_transaction_proof(proof, transaction_verifying_key())
         .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
     let receipt = canonical_tx_validity_receipt_from_transaction_proof(proof)?;
+    let witness = tx_leaf_public_witness_from_transaction_proof(proof)?;
     let encoding = relation.encode_statement(&receipt)?;
-    let assignment = relation.build_assignment(&receipt, &())?;
+    let assignment = relation.build_assignment(&receipt, &witness)?;
     let packed = packer.pack(relation.shape(), &assignment)?;
     let commitment = backend.commit_witness(&pk, &packed)?;
     let leaf_proof = backend.prove_leaf(
@@ -675,16 +1213,12 @@ pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxL
         &packed,
         &commitment,
     )?;
-    let stark_public_inputs = proof
-        .stark_public_inputs
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("transaction proof is missing serialized STARK inputs"))?;
     let artifact = TxLeafArtifact {
         version: TX_LEAF_ARTIFACT_VERSION,
         relation_id: relation.relation_id().0,
         shape_digest: pk.shape_digest.0,
         statement_digest: encoding.statement_digest.0,
-        stark_public_inputs,
+        stark_public_inputs: witness.stark_public_inputs,
         leaf: LeafArtifact {
             version: TX_LEAF_ARTIFACT_VERSION,
             relation_id: relation.relation_id(),
@@ -708,6 +1242,7 @@ pub fn decode_tx_leaf_artifact_bytes(artifact_bytes: &[u8]) -> Result<TxLeafArti
 }
 
 pub fn verify_tx_leaf_artifact_bytes(
+    tx: &TxLeafPublicTx,
     receipt: &CanonicalTxValidityReceipt,
     artifact_bytes: &[u8],
 ) -> Result<TxLeafMetadata> {
@@ -718,7 +1253,7 @@ pub fn verify_tx_leaf_artifact_bytes(
         artifact.version
     );
 
-    let relation = CanonicalTxValidityReceiptRelation::default();
+    let relation = TxLeafPublicRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
@@ -743,14 +1278,9 @@ pub fn verify_tx_leaf_artifact_bytes(
         artifact.leaf.shape_digest == pk.shape_digest,
         "tx-leaf inner shape digest mismatch"
     );
-    ensure!(
-        transaction_public_inputs_digest_from_serialized(&artifact.stark_public_inputs)
-            .map_err(|err| anyhow::anyhow!("failed to hash tx-leaf public inputs: {err}"))?
-            == receipt.public_inputs_digest,
-        "tx-leaf public inputs digest mismatch"
-    );
+    let witness = tx_leaf_public_witness_from_parts(tx, &artifact.stark_public_inputs);
     let encoding = relation.encode_statement(receipt)?;
-    let assignment = relation.build_assignment(receipt, &())?;
+    let assignment = relation.build_assignment(receipt, &witness)?;
     let packed = packer.pack(relation.shape(), &assignment)?;
     ensure!(
         artifact.statement_digest == encoding.statement_digest.0,
@@ -783,7 +1313,7 @@ pub fn build_verified_tx_proof_receipt_root_artifact_bytes(
         "receipt-root artifact requires at least one transaction proof"
     );
 
-    let relation = VerifiedTxProofReceiptRelation::default();
+    let relation = TxLeafPublicRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
@@ -792,9 +1322,12 @@ pub fn build_verified_tx_proof_receipt_root_artifact_bytes(
     let mut leaves = Vec::with_capacity(proofs.len());
     let mut current = Vec::with_capacity(proofs.len());
     for proof in proofs {
+        verify_transaction_proof(proof, transaction_verifying_key())
+            .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
         let statement = canonical_tx_validity_receipt_from_transaction_proof(proof)?;
+        let witness = tx_leaf_public_witness_from_transaction_proof(proof)?;
         let encoding = relation.encode_statement(&statement)?;
-        let assignment = relation.build_assignment(&statement, proof)?;
+        let assignment = relation.build_assignment(&statement, &witness)?;
         let packed = packer.pack(relation.shape(), &assignment)?;
         let commitment = backend.commit_witness(&pk, &packed)?;
         let leaf_proof = backend.prove_leaf(
@@ -965,7 +1498,7 @@ pub fn verify_verified_tx_proof_receipt_root_artifact_bytes(
         artifact.version
     );
 
-    let relation = VerifiedTxProofReceiptRelation::default();
+    let relation = TxLeafPublicRelation::default();
     let security = SecurityParams::experimental_default();
     let backend = LatticeBackend::default();
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
@@ -987,9 +1520,12 @@ pub fn verify_verified_tx_proof_receipt_root_artifact_bytes(
 
     let mut current = Vec::with_capacity(proofs.len());
     for (proof, leaf) in proofs.iter().zip(&artifact.leaves) {
+        verify_transaction_proof(proof, transaction_verifying_key())
+            .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
         let statement = canonical_tx_validity_receipt_from_transaction_proof(proof)?;
+        let witness = tx_leaf_public_witness_from_transaction_proof(proof)?;
         let encoding = relation.encode_statement(&statement)?;
-        let assignment = relation.build_assignment(&statement, proof)?;
+        let assignment = relation.build_assignment(&statement, &witness)?;
         let packed = packer.pack(relation.shape(), &assignment)?;
         ensure!(
             leaf.statement_digest == encoding.statement_digest.0,
@@ -1331,6 +1867,14 @@ fn digest48_with_parts(label: &[u8], parts: &[&[u8]]) -> [u8; 48] {
     out
 }
 
+fn blake3_384_bytes(bytes: &[u8]) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    let mut out = [0u8; 48];
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
@@ -1466,6 +2010,29 @@ mod tests {
     }
 
     #[test]
+    fn tx_leaf_artifact_round_trip() {
+        let proof = sample_transaction_proof(7);
+        let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
+        let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
+        let built = build_tx_leaf_artifact_bytes(&proof).unwrap();
+        let metadata = verify_tx_leaf_artifact_bytes(&tx, &receipt, &built.artifact_bytes).unwrap();
+        assert_eq!(
+            metadata.relation_id,
+            TxLeafPublicRelation::default().relation_id().0
+        );
+    }
+
+    #[test]
+    fn tx_leaf_artifact_rejects_wrong_tx_view() {
+        let proof = sample_transaction_proof(8);
+        let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
+        let mut tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
+        tx.balance_tag[0] ^= 0x5a;
+        let built = build_tx_leaf_artifact_bytes(&proof).unwrap();
+        assert!(verify_tx_leaf_artifact_bytes(&tx, &receipt, &built.artifact_bytes).is_err());
+    }
+
+    #[test]
     fn verified_tx_proof_receipt_root_round_trip() {
         let proofs = vec![sample_transaction_proof(1), sample_transaction_proof(2)];
         let built = build_verified_tx_proof_receipt_root_artifact_bytes(&proofs).unwrap();
@@ -1475,7 +2042,7 @@ mod tests {
         assert_eq!(metadata.leaf_count, proofs.len() as u32);
         assert_eq!(
             metadata.relation_id,
-            VerifiedTxProofReceiptRelation::default().relation_id().0
+            TxLeafPublicRelation::default().relation_id().0
         );
     }
 
