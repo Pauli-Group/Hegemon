@@ -36,6 +36,11 @@ hen assembling payloads.
   - `TxValidityArtifact { receipt, proof }`
   - `ConsensusBlock` carries `tx_validity_artifacts` plus an optional `block_artifact` instead of a raw `transaction_proofs` field.
 - Import routes proof checks through `VerifierRegistry`, which currently has adapters for `InlineTx`, `MergeRoot`, and the experimental `ReceiptRoot` artifact family.
+- The consensus crate also exposes the temporary receipt-root backend façade:
+  - `experimental_receipt_root_verifier_profile()`
+  - `build_experimental_receipt_root_artifact(receipts)`
+  - `verify_experimental_receipt_root_artifact(receipts, artifact_bytes)`
+  These helpers keep generic layers from importing a backend-specific `superneo-*` crate directly.
 - Go benchmarking module `consensus/bench` offers `cmd/netbench`:
   - Flags: `--miners`, `--payload-bytes`, `--pq-signature-bytes`, `--smoke`.
   - Output: JSON summary with `messages_per_second`, `avg_latency_ms`, `pq_signature_bytes` so operators can project miner gossi

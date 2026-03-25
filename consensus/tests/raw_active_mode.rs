@@ -10,14 +10,11 @@ use consensus::types::{
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    commitment_nullifier_lists,
+    build_experimental_receipt_root_artifact, commitment_nullifier_lists,
+    experimental_receipt_root_verifier_profile,
 };
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
-use superneo_hegemon::{
-    CanonicalTxValidityReceipt, build_receipt_root_artifact_bytes,
-    experimental_receipt_root_verifier_profile,
-};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{
     Felt, HashFelt, felts_to_bytes48, merkle_node, spend_auth_key_bytes,
@@ -377,16 +374,7 @@ fn build_receipt_root_block_artifacts(
     ReceiptRootProofPayload,
     ProofEnvelope,
 ) {
-    let canonical_receipts = receipts
-        .iter()
-        .map(|receipt| CanonicalTxValidityReceipt {
-            statement_hash: receipt.statement_hash,
-            proof_digest: receipt.proof_digest,
-            public_inputs_digest: receipt.public_inputs_digest,
-            verifier_profile: receipt.verifier_profile,
-        })
-        .collect::<Vec<_>>();
-    let built = build_receipt_root_artifact_bytes(&canonical_receipts).expect("receipt-root bytes");
+    let built = build_experimental_receipt_root_artifact(receipts).expect("receipt-root bytes");
     let verifier_profile = experimental_receipt_root_verifier_profile();
     let tx_validity_artifacts = receipts
         .iter()

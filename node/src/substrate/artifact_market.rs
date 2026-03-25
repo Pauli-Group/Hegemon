@@ -54,7 +54,7 @@ pub fn legacy_pallet_artifact_identity(
         mode,
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
     ) {
-        superneo_hegemon::experimental_receipt_root_verifier_profile()
+        consensus::experimental_receipt_root_verifier_profile()
     } else {
         consensus::legacy_block_artifact_verifier_profile(
             consensus_proof_artifact_kind_from_pallet(kind),
@@ -151,7 +151,7 @@ mod tests {
         );
         assert_eq!(
             verifier_profile,
-            superneo_hegemon::experimental_receipt_root_verifier_profile()
+            consensus::experimental_receipt_root_verifier_profile()
         );
     }
 }

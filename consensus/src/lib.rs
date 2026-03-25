@@ -44,10 +44,12 @@ pub use mining::{
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use proof::{
-    ArtifactVerifier, BlockArtifactVerifyReport, CommitmentNullifierLists, HashVerifier,
-    ParallelProofVerifier, ProofVerifier, VerifierRegistry, commitment_nullifier_lists,
-    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt,
-    tx_validity_receipt_from_proof, verify_commitment_proof_payload,
+    ArtifactVerifier, BlockArtifactVerifyReport, CommitmentNullifierLists,
+    ExperimentalReceiptRootArtifact, HashVerifier, ParallelProofVerifier, ProofVerifier,
+    VerifierRegistry, build_experimental_receipt_root_artifact, commitment_nullifier_lists,
+    experimental_receipt_root_verifier_profile, tx_validity_artifact_from_proof,
+    tx_validity_artifact_from_receipt, tx_validity_receipt_from_proof,
+    verify_commitment_proof_payload, verify_experimental_receipt_root_artifact,
 };
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CRYPTO_SUITE_GAMMA,

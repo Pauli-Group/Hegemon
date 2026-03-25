@@ -196,10 +196,6 @@ use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
-use superneo_hegemon::{
-    build_receipt_root_artifact_bytes, experimental_receipt_root_verifier_profile,
-    CanonicalTxValidityReceipt,
-};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
@@ -2818,19 +2814,12 @@ fn build_receipt_root_proof_from_materials(
         return Err("candidate tx set has no receipt-root proof material".to_string());
     }
     let mut consensus_receipts = Vec::with_capacity(proofs.len());
-    let mut canonical_receipts = Vec::with_capacity(proofs.len());
     for proof in proofs.iter() {
         let artifact = tx_validity_artifact_from_proof(proof)
             .map_err(|err| format!("tx validity artifact derivation failed: {err}"))?;
         consensus_receipts.push(artifact.receipt.clone());
-        canonical_receipts.push(CanonicalTxValidityReceipt {
-            statement_hash: artifact.receipt.statement_hash,
-            proof_digest: artifact.receipt.proof_digest,
-            public_inputs_digest: artifact.receipt.public_inputs_digest,
-            verifier_profile: artifact.receipt.verifier_profile,
-        });
     }
-    let built = build_receipt_root_artifact_bytes(&canonical_receipts)
+    let built = consensus::build_experimental_receipt_root_artifact(&consensus_receipts)
         .map_err(|err| format!("receipt-root artifact generation failed: {err}"))?;
     Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
@@ -3064,7 +3053,7 @@ fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::Can
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
     ) {
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
-        payload.verifier_profile = experimental_receipt_root_verifier_profile();
+        payload.verifier_profile = consensus::experimental_receipt_root_verifier_profile();
         return;
     }
     let (proof_kind, verifier_profile) =
@@ -11497,7 +11486,7 @@ mod tests {
         );
         assert_eq!(
             selector.verifier_profile,
-            experimental_receipt_root_verifier_profile()
+            consensus::experimental_receipt_root_verifier_profile()
         );
     }
 

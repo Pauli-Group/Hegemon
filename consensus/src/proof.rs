@@ -14,10 +14,11 @@ use crate::merge_root_layout::{
 };
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofArtifactKind, ProofEnvelope,
-    ProofVerificationMode, ProvenBatchMode, StarkCommitment, StateRoot, TxStatementBinding,
-    TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest, VersionCommitment,
-    compute_fee_commitment, compute_proof_commitment, compute_version_commitment, da_root,
-    kernel_root_from_shielded_root, legacy_block_artifact_verifier_profile,
+    ProofVerificationMode, ProvenBatchMode, ReceiptRootMetadata, StarkCommitment, StateRoot,
+    TxStatementBinding, TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest,
+    VersionCommitment, compute_fee_commitment, compute_proof_commitment,
+    compute_version_commitment, da_root, kernel_root_from_shielded_root,
+    legacy_block_artifact_verifier_profile,
 };
 use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
@@ -29,10 +30,7 @@ use std::collections::BTreeSet;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Instant;
-use superneo_hegemon::{
-    CanonicalTxValidityReceipt, experimental_receipt_root_verifier_profile,
-    verify_receipt_root_artifact_bytes,
-};
+use superneo_hegemon::CanonicalTxValidityReceipt;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
@@ -43,6 +41,12 @@ use transaction_circuit::proof::{
 };
 #[cfg(test)]
 use tx_proof_manifest::TxProofManifestPublicInputs;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExperimentalReceiptRootArtifact {
+    pub artifact_bytes: Vec<u8>,
+    pub metadata: ReceiptRootMetadata,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentNullifierLists {
@@ -269,15 +273,6 @@ impl ArtifactVerifier for ReceiptRootVerifier {
                 observed: receipts.len(),
             });
         }
-        let canonical = receipts
-            .iter()
-            .map(|artifact| CanonicalTxValidityReceipt {
-                statement_hash: artifact.receipt.statement_hash,
-                proof_digest: artifact.receipt.proof_digest,
-                public_inputs_digest: artifact.receipt.public_inputs_digest,
-                verifier_profile: artifact.receipt.verifier_profile,
-            })
-            .collect::<Vec<_>>();
         let derived_receipt_commitment = commitment_from_receipts(receipts)?;
         if derived_receipt_commitment != *expected_commitment {
             return Err(ProofError::AggregationProofInputsMismatch(
@@ -285,7 +280,11 @@ impl ArtifactVerifier for ReceiptRootVerifier {
             ));
         }
         let start_verify = Instant::now();
-        verify_receipt_root_artifact_bytes(&canonical, &envelope.artifact_bytes).map_err(
+        let receipts = receipts
+            .iter()
+            .map(|artifact| artifact.receipt.clone())
+            .collect::<Vec<_>>();
+        verify_experimental_receipt_root_artifact(&receipts, &envelope.artifact_bytes).map_err(
             |err| {
                 ProofError::AggregationProofVerification(format!(
                     "receipt-root verification failed: {err}"
@@ -501,6 +500,56 @@ pub fn tx_validity_artifact_from_receipt(receipt: TxValidityReceipt) -> TxValidi
         receipt,
         proof: None,
     }
+}
+
+pub fn experimental_receipt_root_verifier_profile() -> VerifierProfileDigest {
+    superneo_hegemon::experimental_receipt_root_verifier_profile()
+}
+
+pub fn build_experimental_receipt_root_artifact(
+    receipts: &[TxValidityReceipt],
+) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
+    let canonical = canonical_receipts_from_tx_receipts(receipts);
+    let built = superneo_hegemon::build_receipt_root_artifact_bytes(&canonical)
+        .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
+    Ok(ExperimentalReceiptRootArtifact {
+        artifact_bytes: built.artifact_bytes,
+        metadata: ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+    })
+}
+
+pub fn verify_experimental_receipt_root_artifact(
+    receipts: &[TxValidityReceipt],
+    artifact_bytes: &[u8],
+) -> Result<ReceiptRootMetadata, ProofError> {
+    let canonical = canonical_receipts_from_tx_receipts(receipts);
+    let metadata = superneo_hegemon::verify_receipt_root_artifact_bytes(&canonical, artifact_bytes)
+        .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
+    Ok(ReceiptRootMetadata {
+        relation_id: metadata.relation_id,
+        shape_digest: metadata.shape_digest,
+        leaf_count: metadata.leaf_count,
+        fold_count: metadata.fold_count,
+    })
+}
+
+fn canonical_receipts_from_tx_receipts(
+    receipts: &[TxValidityReceipt],
+) -> Vec<CanonicalTxValidityReceipt> {
+    receipts
+        .iter()
+        .map(|receipt| CanonicalTxValidityReceipt {
+            statement_hash: receipt.statement_hash,
+            proof_digest: receipt.proof_digest,
+            public_inputs_digest: receipt.public_inputs_digest,
+            verifier_profile: receipt.verifier_profile,
+        })
+        .collect()
 }
 
 fn decode_inline_tx_artifact_proof(

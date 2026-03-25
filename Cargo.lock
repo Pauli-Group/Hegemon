@@ -3712,7 +3712,6 @@ dependencies = [
  "state-da",
  "state-merkle",
  "substrate-frame-rpc-system",
- "superneo-hegemon",
  "synthetic-crypto",
  "tempfile",
  "thiserror 1.0.69",
