@@ -12,10 +12,12 @@ use superneo_core::{
 use superneo_hegemon::{
     build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
     build_verified_tx_proof_receipt_root_artifact_bytes,
-    canonical_tx_validity_receipt_from_transaction_proof, tx_leaf_public_tx_from_transaction_proof,
+    canonical_tx_validity_receipt_from_transaction_proof,
+    native_tx_validity_statement_from_witness, tx_leaf_public_tx_from_transaction_proof,
     verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
-    verify_verified_tx_proof_receipt_root_artifact_bytes, ToyBalanceRelation, ToyBalanceStatement,
-    ToyBalanceWitness, TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
+    verify_verified_tx_proof_receipt_root_artifact_bytes, NativeTxValidityRelation,
+    ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness, TxLeafPublicRelation,
+    TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -30,6 +32,7 @@ use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
 enum RelationChoice {
     ToyBalance,
     TxReceipt,
+    NativeTxValidity,
     TxLeafReceiptRoot,
     VerifiedTxReceipt,
 }
@@ -86,6 +89,9 @@ fn main() -> Result<()> {
         let result = match cli.relation {
             RelationChoice::ToyBalance => benchmark_toy_balance(k, inline_tx_baseline)?,
             RelationChoice::TxReceipt => benchmark_tx_receipt(k, inline_tx_baseline)?,
+            RelationChoice::NativeTxValidity => {
+                benchmark_native_tx_validity(k, inline_tx_baseline)?
+            }
             RelationChoice::TxLeafReceiptRoot => {
                 benchmark_tx_leaf_receipt_root(k, inline_tx_baseline)?
             }
@@ -279,6 +285,89 @@ fn benchmark_tx_receipt(
         shape_digest: shape_hex(pk.shape_digest),
         note: format!(
             "superneo fold backend root={}",
+            root.witness_commitment.to_hex()
+        ),
+        edge_prepare_ns: None,
+        inline_tx_baseline,
+    })
+}
+
+fn benchmark_native_tx_validity(
+    k: usize,
+    inline_tx_baseline: Option<InlineTxBaseline>,
+) -> Result<BenchResult> {
+    let relation = NativeTxValidityRelation::default();
+    let backend = LatticeBackend::default();
+    let security = SecurityParams::experimental_default();
+    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+
+    let witnesses = (0..k)
+        .map(|seed| sample_witness(seed as u64 + 1))
+        .collect::<Vec<_>>();
+    let mut leaf_payloads = Vec::with_capacity(k);
+    let mut total_bytes = 0usize;
+    let mut packed_witness_bits = 0usize;
+
+    let prove_start = Instant::now();
+    for witness in &witnesses {
+        let statement = native_tx_validity_statement_from_witness(witness)?;
+        let encoding = relation.encode_statement(&statement)?;
+        let assignment = relation.build_assignment(&statement, witness)?;
+        let packed = packer.pack(relation.shape(), &assignment)?;
+        packed_witness_bits += packed.used_bits;
+        let relation_id = relation.relation_id();
+        let commitment = backend.commit_witness(&pk, &packed)?;
+        let proof = backend.prove_leaf(&pk, &relation_id, &encoding, &packed, &commitment)?;
+        let artifact = LeafArtifact {
+            version: 1,
+            relation_id,
+            shape_digest: pk.shape_digest,
+            statement_digest: encoding.statement_digest,
+            proof: proof.clone(),
+        };
+        total_bytes += leaf_artifact_bytes(&artifact) + packed_witness_transport_bytes(&packed);
+        let instance = FoldedInstance {
+            relation_id,
+            shape_digest: pk.shape_digest,
+            statement_digest: encoding.statement_digest,
+            witness_commitment: commitment,
+        };
+        leaf_payloads.push((encoding, packed, instance, proof));
+    }
+    let leaf_prove_ns = prove_start.elapsed().as_nanos();
+
+    let fold_start = Instant::now();
+    let (root, fold_steps, fold_bytes) = fold_to_root(
+        &backend,
+        &pk,
+        leaf_payloads
+            .iter()
+            .map(|(_, _, instance, _)| instance.clone())
+            .collect(),
+    )?;
+    total_bytes += fold_bytes;
+    let total_prove_ns = leaf_prove_ns + fold_start.elapsed().as_nanos();
+
+    let verify_start = Instant::now();
+    for (encoding, packed, _, proof) in &leaf_payloads {
+        backend.verify_leaf(&vk, &relation.relation_id(), encoding, packed, proof)?;
+    }
+    for step in &fold_steps {
+        backend.verify_fold(&vk, &step.parent, &step.left, &step.right, &step.proof)?;
+    }
+    let total_verify_ns = verify_start.elapsed().as_nanos();
+
+    Ok(BenchResult {
+        relation: "native_tx_validity".to_owned(),
+        k,
+        bytes_per_tx: total_bytes.div_ceil(k),
+        total_active_path_prove_ns: total_prove_ns,
+        total_active_path_verify_ns: total_verify_ns,
+        packed_witness_bits,
+        shape_digest: shape_hex(pk.shape_digest),
+        note: format!(
+            "native witness relation; bytes include packed witness transport; root={}",
             root.witness_commitment.to_hex()
         ),
         edge_prepare_ns: None,
@@ -609,6 +698,10 @@ fn leaf_artifact_bytes(artifact: &LeafArtifact<LeafDigestProof>) -> usize {
 
 fn fold_artifact_bytes(artifact: &FoldArtifact<FoldDigestProof>) -> usize {
     u16::BITS as usize / 8 + (StatementDigest::BYTES * 3) + artifact.proof.byte_size()
+}
+
+fn packed_witness_transport_bytes(packed: &superneo_ring::PackedWitness<u64>) -> usize {
+    4 + (packed.coeffs.len() * 8) + 4 + 4 + 2
 }
 
 #[cfg(test)]

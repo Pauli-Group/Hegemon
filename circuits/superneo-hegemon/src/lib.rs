@@ -13,13 +13,17 @@ use superneo_ccs::{
 use superneo_core::{Backend, FoldedInstance, LeafArtifact, SecurityParams};
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
+use transaction_circuit::hashing_pq::{bytes48_to_felts, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
+use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE_DEPTH};
 use transaction_circuit::proof::{
     transaction_proof_digest, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
     transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
     verify as verify_transaction_proof, SerializedStarkInputs, TransactionProof,
 };
+use transaction_circuit::public_inputs::TransactionPublicInputs;
+use transaction_circuit::TransactionWitness;
 
 pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
@@ -258,6 +262,13 @@ pub struct CanonicalTxValidityReceipt {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeTxValidityStatement {
+    pub statement_hash: [u8; 48],
+    pub public_inputs_digest: [u8; 48],
+    pub verifier_profile: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CanonicalTxValidityReceiptRelation {
     shape: CcsShape<Goldilocks>,
 }
@@ -279,6 +290,11 @@ pub struct TxLeafPublicWitness {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxLeafPublicRelation {
+    shape: CcsShape<Goldilocks>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeTxValidityRelation {
     shape: CcsShape<Goldilocks>,
 }
 
@@ -510,6 +526,247 @@ impl Default for TxLeafPublicRelation {
     }
 }
 
+impl Default for NativeTxValidityRelation {
+    fn default() -> Self {
+        let witness_schema = WitnessSchema {
+            fields: vec![
+                WitnessField {
+                    name: "input_count",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "output_count",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "ciphertext_hash_count",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "sk_spend_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: 32,
+                },
+                WitnessField {
+                    name: "merkle_root_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: 48,
+                },
+                WitnessField {
+                    name: "fee",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "value_balance_sign",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "value_balance_magnitude",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_enabled",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_asset_id",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_policy_hash_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: 48,
+                },
+                WitnessField {
+                    name: "stablecoin_oracle_commitment_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: 48,
+                },
+                WitnessField {
+                    name: "stablecoin_attestation_commitment_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: 48,
+                },
+                WitnessField {
+                    name: "stablecoin_issuance_sign",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_issuance_magnitude",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_policy_version",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "version_circuit",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "version_crypto",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "input_value",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_INPUTS,
+                },
+                WitnessField {
+                    name: "input_asset_id",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_INPUTS,
+                },
+                WitnessField {
+                    name: "input_pk_recipient_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_INPUTS * 32,
+                },
+                WitnessField {
+                    name: "input_pk_auth_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_INPUTS * 32,
+                },
+                WitnessField {
+                    name: "input_rho_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_INPUTS * 32,
+                },
+                WitnessField {
+                    name: "input_r_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_INPUTS * 32,
+                },
+                WitnessField {
+                    name: "input_position",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_INPUTS,
+                },
+                WitnessField {
+                    name: "input_rho_seed_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_INPUTS * 32,
+                },
+                WitnessField {
+                    name: "input_merkle_sibling_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_INPUTS * MERKLE_TREE_DEPTH * 48,
+                },
+                WitnessField {
+                    name: "output_value",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_OUTPUTS,
+                },
+                WitnessField {
+                    name: "output_asset_id",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_OUTPUTS,
+                },
+                WitnessField {
+                    name: "output_pk_recipient_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_OUTPUTS * 32,
+                },
+                WitnessField {
+                    name: "output_pk_auth_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_OUTPUTS * 32,
+                },
+                WitnessField {
+                    name: "output_rho_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_OUTPUTS * 32,
+                },
+                WitnessField {
+                    name: "output_r_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_OUTPUTS * 32,
+                },
+                WitnessField {
+                    name: "ciphertext_hash_byte",
+                    bit_width: 8,
+                    signed: false,
+                    count: MAX_OUTPUTS * 48,
+                },
+            ],
+        };
+        let shape = CcsShape {
+            num_rows: 512,
+            num_cols: witness_schema.total_witness_elements(),
+            matrices: vec![SparseMatrix {
+                row_count: 512,
+                col_count: witness_schema.total_witness_elements(),
+                entries: vec![
+                    SparseEntry {
+                        row: 0,
+                        col: 0,
+                        value: Goldilocks::new(1),
+                    },
+                    SparseEntry {
+                        row: 1,
+                        col: 1,
+                        value: Goldilocks::new(1),
+                    },
+                    SparseEntry {
+                        row: 2,
+                        col: 2,
+                        value: Goldilocks::new(1),
+                    },
+                ],
+            }],
+            selectors: vec![Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)],
+            witness_schema,
+        };
+        Self { shape }
+    }
+}
+
 impl Relation<Goldilocks> for CanonicalTxValidityReceiptRelation {
     type Statement = CanonicalTxValidityReceipt;
     type Witness = ();
@@ -578,6 +835,46 @@ impl Relation<Goldilocks> for TxLeafPublicRelation {
     ) -> Result<Assignment<Goldilocks>> {
         validate_tx_leaf_public_witness(statement, witness)?;
         tx_leaf_public_witness_assignment(witness)
+    }
+}
+
+impl Relation<Goldilocks> for NativeTxValidityRelation {
+    type Statement = NativeTxValidityStatement;
+    type Witness = TransactionWitness;
+
+    fn relation_id(&self) -> RelationId {
+        RelationId::from_label("hegemon.superneo.native-tx-validity")
+    }
+
+    fn shape(&self) -> &CcsShape<Goldilocks> {
+        &self.shape
+    }
+
+    fn encode_statement(
+        &self,
+        statement: &Self::Statement,
+    ) -> Result<StatementEncoding<Goldilocks>> {
+        let mut bytes = Vec::with_capacity(48 * 3);
+        bytes.extend_from_slice(&statement.statement_hash);
+        bytes.extend_from_slice(&statement.public_inputs_digest);
+        bytes.extend_from_slice(&statement.verifier_profile);
+        let mut public_inputs = Vec::with_capacity(18);
+        public_inputs.extend(bytes48_to_goldilocks(&statement.statement_hash));
+        public_inputs.extend(bytes48_to_goldilocks(&statement.public_inputs_digest));
+        public_inputs.extend(bytes48_to_goldilocks(&statement.verifier_profile));
+        Ok(StatementEncoding {
+            public_inputs,
+            statement_digest: digest_statement(&bytes),
+        })
+    }
+
+    fn build_assignment(
+        &self,
+        statement: &Self::Statement,
+        witness: &Self::Witness,
+    ) -> Result<Assignment<Goldilocks>> {
+        validate_native_tx_witness(statement, witness)?;
+        native_tx_witness_assignment(witness)
     }
 }
 
@@ -818,6 +1115,25 @@ pub fn canonical_tx_validity_receipt_from_transaction_proof(
     })
 }
 
+pub fn native_tx_validity_statement_from_witness(
+    witness: &TransactionWitness,
+) -> Result<NativeTxValidityStatement> {
+    witness
+        .validate()
+        .map_err(|err| anyhow::anyhow!("native tx witness validation failed: {err}"))?;
+    validate_native_merkle_membership(witness)?;
+    let public_inputs = witness
+        .public_inputs()
+        .map_err(|err| anyhow::anyhow!("failed to derive native tx public inputs: {err}"))?;
+    let serialized = serialized_stark_inputs_from_witness(witness, &public_inputs)?;
+    Ok(NativeTxValidityStatement {
+        statement_hash: transaction_statement_hash_from_public_inputs(&public_inputs),
+        public_inputs_digest: transaction_public_inputs_digest_from_serialized(&serialized)
+            .map_err(|err| anyhow::anyhow!("failed to hash native tx public inputs: {err}"))?,
+        verifier_profile: experimental_native_tx_verifier_profile(),
+    })
+}
+
 pub fn tx_leaf_public_tx_from_transaction_proof(
     proof: &TransactionProof,
 ) -> Result<TxLeafPublicTx> {
@@ -864,6 +1180,154 @@ pub fn tx_leaf_public_witness_from_parts(
         tx: tx.clone(),
         stark_public_inputs: stark_public_inputs.clone(),
     }
+}
+
+fn validate_native_merkle_membership(witness: &TransactionWitness) -> Result<()> {
+    let root = bytes48_to_felts(&witness.merkle_root)
+        .ok_or_else(|| anyhow::anyhow!("native tx merkle root is non-canonical"))?;
+    for (index, input) in witness.inputs.iter().enumerate() {
+        ensure!(
+            input.merkle_path.siblings.len() == MERKLE_TREE_DEPTH,
+            "native tx input {} merkle path has length {}, expected {}",
+            index,
+            input.merkle_path.siblings.len(),
+            MERKLE_TREE_DEPTH
+        );
+        ensure!(
+            input
+                .merkle_path
+                .verify(input.note.commitment(), input.position, root),
+            "native tx input {} merkle path does not match root",
+            index
+        );
+    }
+    Ok(())
+}
+
+fn serialized_stark_inputs_from_witness(
+    witness: &TransactionWitness,
+    public_inputs: &TransactionPublicInputs,
+) -> Result<SerializedStarkInputs> {
+    ensure!(
+        public_inputs.balance_slots.len() == BALANCE_SLOTS,
+        "native tx public inputs balance slot count {} does not match {}",
+        public_inputs.balance_slots.len(),
+        BALANCE_SLOTS
+    );
+    let (value_balance_sign, value_balance_magnitude) =
+        signed_magnitude_u64(witness.value_balance, "value_balance")?;
+    let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
+        signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
+    Ok(SerializedStarkInputs {
+        input_flags: (0..MAX_INPUTS)
+            .map(|idx| u8::from(idx < witness.inputs.len()))
+            .collect(),
+        output_flags: (0..MAX_OUTPUTS)
+            .map(|idx| u8::from(idx < witness.outputs.len()))
+            .collect(),
+        fee: witness.fee,
+        value_balance_sign,
+        value_balance_magnitude,
+        merkle_root: witness.merkle_root,
+        balance_slot_asset_ids: public_inputs
+            .balance_slots
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect(),
+        stablecoin_enabled: u8::from(witness.stablecoin.enabled),
+        stablecoin_asset_id: witness.stablecoin.asset_id,
+        stablecoin_policy_version: witness.stablecoin.policy_version,
+        stablecoin_issuance_sign,
+        stablecoin_issuance_magnitude,
+        stablecoin_policy_hash: witness.stablecoin.policy_hash,
+        stablecoin_oracle_commitment: witness.stablecoin.oracle_commitment,
+        stablecoin_attestation_commitment: witness.stablecoin.attestation_commitment,
+    })
+}
+
+fn transaction_statement_hash_from_public_inputs(
+    public_inputs: &TransactionPublicInputs,
+) -> [u8; 48] {
+    let mut message = Vec::new();
+    message.extend_from_slice(transaction_circuit::proof::TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(&public_inputs.merkle_root);
+    for nf in &public_inputs.nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for cm in &public_inputs.commitments {
+        message.extend_from_slice(cm);
+    }
+    for ct in &public_inputs.ciphertext_hashes {
+        message.extend_from_slice(ct);
+    }
+    message.extend_from_slice(&public_inputs.native_fee.to_le_bytes());
+    message.extend_from_slice(&public_inputs.value_balance.to_le_bytes());
+    message.extend_from_slice(&public_inputs.balance_tag);
+    message.extend_from_slice(&public_inputs.circuit_version.to_le_bytes());
+    message.extend_from_slice(&public_inputs.crypto_suite.to_le_bytes());
+    message.push(public_inputs.stablecoin.enabled as u8);
+    message.extend_from_slice(&public_inputs.stablecoin.asset_id.to_le_bytes());
+    message.extend_from_slice(&public_inputs.stablecoin.policy_hash);
+    message.extend_from_slice(&public_inputs.stablecoin.oracle_commitment);
+    message.extend_from_slice(&public_inputs.stablecoin.attestation_commitment);
+    message.extend_from_slice(&public_inputs.stablecoin.issuance_delta.to_le_bytes());
+    message.extend_from_slice(&public_inputs.stablecoin.policy_version.to_le_bytes());
+    blake3_384_bytes(&message)
+}
+
+fn validate_native_tx_witness(
+    statement: &NativeTxValidityStatement,
+    witness: &TransactionWitness,
+) -> Result<()> {
+    let expected = native_tx_validity_statement_from_witness(witness)?;
+    ensure!(
+        expected == *statement,
+        "native tx validity statement mismatch"
+    );
+    Ok(())
+}
+
+fn native_tx_witness_assignment(witness: &TransactionWitness) -> Result<Assignment<Goldilocks>> {
+    witness
+        .validate()
+        .map_err(|err| anyhow::anyhow!("native tx witness validation failed: {err}"))?;
+    validate_native_merkle_membership(witness)?;
+    let mut values = Vec::with_capacity(
+        NativeTxValidityRelation::default()
+            .shape
+            .expected_witness_len(),
+    );
+    let (value_balance_sign, value_balance_magnitude) =
+        signed_magnitude_u64(witness.value_balance, "value_balance")?;
+    let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
+        signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
+
+    values.push(Goldilocks::new(witness.inputs.len() as u64));
+    values.push(Goldilocks::new(witness.outputs.len() as u64));
+    values.push(Goldilocks::new(witness.ciphertext_hashes.len() as u64));
+    push_bytes32(&mut values, &witness.sk_spend);
+    push_bytes48_bytes(&mut values, &witness.merkle_root);
+    values.push(Goldilocks::new(witness.fee));
+    values.push(Goldilocks::new(u64::from(value_balance_sign)));
+    values.push(Goldilocks::new(value_balance_magnitude));
+    values.push(Goldilocks::new(u64::from(witness.stablecoin.enabled)));
+    values.push(Goldilocks::new(witness.stablecoin.asset_id));
+    push_bytes48_bytes(&mut values, &witness.stablecoin.policy_hash);
+    push_bytes48_bytes(&mut values, &witness.stablecoin.oracle_commitment);
+    push_bytes48_bytes(&mut values, &witness.stablecoin.attestation_commitment);
+    values.push(Goldilocks::new(u64::from(stablecoin_issuance_sign)));
+    values.push(Goldilocks::new(stablecoin_issuance_magnitude));
+    values.push(Goldilocks::new(u64::from(
+        witness.stablecoin.policy_version,
+    )));
+    values.push(Goldilocks::new(u64::from(witness.version.circuit)));
+    values.push(Goldilocks::new(u64::from(witness.version.crypto)));
+
+    push_padded_input_note_fields(&mut values, &witness.inputs)?;
+    push_padded_output_note_fields(&mut values, &witness.outputs)?;
+    push_padded_ciphertext_hashes(&mut values, &witness.ciphertext_hashes)?;
+
+    Ok(Assignment { witness: values })
 }
 
 fn validate_tx_leaf_public_witness(
@@ -1152,6 +1616,129 @@ fn extend_padded_digests(bytes: &mut Vec<u8>, values: &[[u8; 48]], target: usize
     Ok(())
 }
 
+fn signed_magnitude_u64(value: i128, label: &str) -> Result<(u8, u64)> {
+    let sign = u8::from(value < 0);
+    let magnitude = value.unsigned_abs();
+    ensure!(
+        magnitude <= u128::from(u64::MAX),
+        "{label} magnitude {} exceeds u64::MAX",
+        magnitude
+    );
+    Ok((sign, magnitude as u64))
+}
+
+fn push_bytes32(out: &mut Vec<Goldilocks>, bytes: &[u8; 32]) {
+    out.extend(bytes.iter().map(|byte| Goldilocks::new(u64::from(*byte))));
+}
+
+fn push_bytes48_bytes(out: &mut Vec<Goldilocks>, bytes: &[u8; 48]) {
+    out.extend(bytes.iter().map(|byte| Goldilocks::new(u64::from(*byte))));
+}
+
+fn push_note_bytes(out: &mut Vec<Goldilocks>, note: &transaction_circuit::note::NoteData) {
+    out.push(Goldilocks::new(note.value));
+    out.push(Goldilocks::new(note.asset_id));
+    push_bytes32(out, &note.pk_recipient);
+    push_bytes32(out, &note.pk_auth);
+    push_bytes32(out, &note.rho);
+    push_bytes32(out, &note.r);
+}
+
+fn push_zero_note_bytes(out: &mut Vec<Goldilocks>) {
+    out.push(Goldilocks::new(0));
+    out.push(Goldilocks::new(0));
+    out.extend(std::iter::repeat_n(Goldilocks::new(0), 32 * 4));
+}
+
+fn push_padded_input_note_fields(
+    out: &mut Vec<Goldilocks>,
+    inputs: &[InputNoteWitness],
+) -> Result<()> {
+    ensure!(
+        inputs.len() <= MAX_INPUTS,
+        "native tx input count {} exceeds {}",
+        inputs.len(),
+        MAX_INPUTS
+    );
+    for idx in 0..MAX_INPUTS {
+        if let Some(input) = inputs.get(idx) {
+            push_note_bytes(out, &input.note);
+        } else {
+            push_zero_note_bytes(out);
+        }
+    }
+    for idx in 0..MAX_INPUTS {
+        out.push(Goldilocks::new(
+            inputs.get(idx).map(|input| input.position).unwrap_or(0),
+        ));
+    }
+    for idx in 0..MAX_INPUTS {
+        if let Some(input) = inputs.get(idx) {
+            push_bytes32(out, &input.rho_seed);
+        } else {
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
+        }
+    }
+    for idx in 0..MAX_INPUTS {
+        if let Some(input) = inputs.get(idx) {
+            ensure!(
+                input.merkle_path.siblings.len() == MERKLE_TREE_DEPTH,
+                "native tx input {} merkle path has length {}, expected {}",
+                idx,
+                input.merkle_path.siblings.len(),
+                MERKLE_TREE_DEPTH
+            );
+            for sibling in &input.merkle_path.siblings {
+                let bytes = felts_to_bytes48(sibling);
+                push_bytes48_bytes(out, &bytes);
+            }
+        } else {
+            out.extend(std::iter::repeat_n(
+                Goldilocks::new(0),
+                MERKLE_TREE_DEPTH * 48,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn push_padded_output_note_fields(
+    out: &mut Vec<Goldilocks>,
+    outputs: &[OutputNoteWitness],
+) -> Result<()> {
+    ensure!(
+        outputs.len() <= MAX_OUTPUTS,
+        "native tx output count {} exceeds {}",
+        outputs.len(),
+        MAX_OUTPUTS
+    );
+    for idx in 0..MAX_OUTPUTS {
+        if let Some(output) = outputs.get(idx) {
+            push_note_bytes(out, &output.note);
+        } else {
+            push_zero_note_bytes(out);
+        }
+    }
+    Ok(())
+}
+
+fn push_padded_ciphertext_hashes(
+    out: &mut Vec<Goldilocks>,
+    ciphertext_hashes: &[[u8; 48]],
+) -> Result<()> {
+    ensure!(
+        ciphertext_hashes.len() <= MAX_OUTPUTS,
+        "native tx ciphertext hash count {} exceeds {}",
+        ciphertext_hashes.len(),
+        MAX_OUTPUTS
+    );
+    for idx in 0..MAX_OUTPUTS {
+        let bytes = ciphertext_hashes.get(idx).copied().unwrap_or([0u8; 48]);
+        push_bytes48_bytes(out, &bytes);
+    }
+    Ok(())
+}
+
 pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
     let relation = CanonicalTxValidityReceiptRelation::default();
     let security = SecurityParams::experimental_default();
@@ -1189,6 +1776,24 @@ pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
     material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
     material.extend_from_slice(&pk.transcript_domain_digest);
     digest48(b"hegemon.superneo.tx-leaf-profile.digest.v1", &material)
+}
+
+pub fn experimental_native_tx_verifier_profile() -> [u8; 48] {
+    let relation = NativeTxValidityRelation::default();
+    let security = SecurityParams::experimental_default();
+    let backend = LatticeBackend::default();
+    let (pk, _) = backend
+        .setup(&security, relation.shape())
+        .expect("experimental native tx setup must succeed");
+    let mut material = Vec::with_capacity(32 + 32 + 32 + 32);
+    material.extend_from_slice(b"hegemon.superneo.native-tx-profile.v1");
+    material.extend_from_slice(&relation.relation_id().0);
+    material.extend_from_slice(&pk.shape_digest.0);
+    material.extend_from_slice(&pk.security_bits.to_le_bytes());
+    material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
+    material.extend_from_slice(&pk.transcript_domain_digest);
+    digest48(b"hegemon.superneo.native-tx-profile.digest.v1", &material)
 }
 
 pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxLeafArtifact> {
@@ -2030,6 +2635,29 @@ mod tests {
         tx.balance_tag[0] ^= 0x5a;
         let built = build_tx_leaf_artifact_bytes(&proof).unwrap();
         assert!(verify_tx_leaf_artifact_bytes(&tx, &receipt, &built.artifact_bytes).is_err());
+    }
+
+    #[test]
+    fn native_tx_validity_roundtrip() {
+        let relation = NativeTxValidityRelation::default();
+        let witness = sample_witness(9);
+        let statement = native_tx_validity_statement_from_witness(&witness).unwrap();
+        let assignment = relation.build_assignment(&statement, &witness).unwrap();
+        let encoding = relation.encode_statement(&statement).unwrap();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let packed = packer.pack(relation.shape(), &assignment).unwrap();
+        let unpacked = packer.unpack(relation.shape(), &packed).unwrap();
+        assert_eq!(assignment, unpacked);
+        assert_eq!(encoding.public_inputs.len(), 18);
+    }
+
+    #[test]
+    fn native_tx_validity_rejects_bad_merkle_path() {
+        let relation = NativeTxValidityRelation::default();
+        let mut witness = sample_witness(10);
+        let statement = native_tx_validity_statement_from_witness(&witness).unwrap();
+        witness.inputs[0].merkle_path.siblings[0] = [Goldilocks::new(9); 6];
+        assert!(relation.build_assignment(&statement, &witness).is_err());
     }
 
     #[test]

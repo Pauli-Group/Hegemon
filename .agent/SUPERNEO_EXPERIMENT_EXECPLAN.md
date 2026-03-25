@@ -28,6 +28,7 @@ The next milestone is architectural rather than cosmetic. The current `ReceiptRo
 - [x] (2026-03-25 17:38Z) Added a standalone `TxLeaf` experimental tx artifact kind, taught `ReceiptRoot` to consume `TxLeaf` artifacts instead of inline tx proofs, and re-benchmarked that topology separately from the current inline-proof bridge.
 - [x] (2026-03-25 20:56Z) Tightened the leaf-proof boundary so proofs no longer carry packed witnesses, revalidated the receipt-root consensus/node tests, and re-benchmarked both the bridge and proof-ready-leaf lanes.
 - [x] (2026-03-25 22:xxZ) Completed the inner-relation migration from receipt-only leaves to `TxLeafPublicRelation`, wired consensus tx-leaf verification through the on-chain tx public view, added direct tx-leaf round-trip/tamper tests, and re-ran the release benchmarks.
+- [x] (2026-03-25 23:xxZ) Added `NativeTxValidityRelation`, benchmarked a witness-driven native tx-validity lane over `TransactionWitness`, and recorded the first native witness numbers with explicit packed-witness byte accounting.
 
 ## Surprises & Discoveries
 
@@ -61,6 +62,9 @@ The next milestone is architectural rather than cosmetic. The current `ReceiptRo
 - Observation: the leaf proof no longer needs to smuggle the packed witness, but witness reconstruction is no longer receipt-only. After the inner-relation rewrite, the verifier reconstructs the expected packed witness from the on-chain tx public view plus serialized STARK public inputs, which makes the tx-leaf lane a real public-tx relation instead of a receipt-limb shell.
   Evidence: after this change, `cargo run --release -p superneo-bench -- --relation tx_leaf_receipt_root --k 1,2,4,8 --compare-inline-tx` reports `1009/1092/1134/1155 B/tx`, `552000/1122917/2181375/4413000 ns` active-path prove, `2852458/5623917/11584042/22764291 ns` active-path verify, and `11008334/21697792/44004000/113406417 ns` edge leaf preparation for `k=1,2,4,8`. The bridge lane `verified_tx_receipt` reports `354390/354612/354651/354642 B/tx`, `10465792/21443000/43520750/85560875 ns` active-path prove, and `12163208/24834042/49349916/96580708 ns` active-path verify for `k=1,2,4,8`.
 
+- Observation: the first native witness lane is materially smaller than inline tx even when witness transport is accounted for, and its active-path timings are already within the same order of magnitude as the bridge lane.
+  Evidence: `cargo run --release -p superneo-bench -- --relation native_tx_validity --k 1,2,4,8 --compare-inline-tx` reports `4600/4749/4824/4861 B/tx`, `12633209/25745874/53328417/103116125 ns` active-path prove, and `12380583/24199125/49015166/96619666 ns` active-path verify for `k=1,2,4,8`, with bytes explicitly including packed witness transport.
+
 ## Decision Log
 
 - Decision: the first backend implementation is a deterministic mock backend in `circuits/superneo-backend-lattice`, not a real `latticefold` integration.
@@ -89,7 +93,7 @@ The next milestone is architectural rather than cosmetic. The current `ReceiptRo
 
 ## Outcomes & Retrospective
 
-Milestone one is complete and the first review pass is closed. Milestone two is also landed: the repo contains a compilable, benchmarkable experimental stack with a Hegemon-owned relation layer, a Goldilocks packing layer, a direct in-repo folding backend, Hegemon receipt relations, a standalone `TxLeaf` artifact kind, a `ReceiptRoot` verifier that now consumes those tx-leaf artifacts, and a `TxLeafPublicRelation` inner relation that binds canonical receipts to an on-chain tx public view plus serialized STARK public inputs. The benchmark harness compares both the bridge path and the proof-ready-leaf path against the stored `InlineTx` baseline, and targeted negative tests now lock in tx-leaf tamper rejection as well as receipt-root binding behavior. The remaining gap is still deliberate: this is a concrete SuperNeo-style backend, but it is not yet a production lattice/Ajtai implementation with the paper’s exact security assumptions.
+Milestone one is complete and the first review pass is closed. Milestone two is also landed: the repo contains a compilable, benchmarkable experimental stack with a Hegemon-owned relation layer, a Goldilocks packing layer, a direct in-repo folding backend, Hegemon receipt relations, a standalone `TxLeaf` artifact kind, a `ReceiptRoot` verifier that now consumes those tx-leaf artifacts, a `TxLeafPublicRelation` inner relation that binds canonical receipts to an on-chain tx public view plus serialized STARK public inputs, and a first `NativeTxValidityRelation` lane that consumes `TransactionWitness` directly for native witness benchmarking. The benchmark harness now compares the bridge path, the proof-ready-leaf path, and the native witness path against the stored `InlineTx` baseline, and targeted negative tests now lock in tx-leaf tamper rejection, native Merkle-path rejection, and receipt-root binding behavior. The remaining gap is still deliberate: this is a concrete SuperNeo-style backend, but it is not yet a production lattice/Ajtai implementation with the paper’s exact security assumptions or a compact hidden-witness artifact path for the native lane.
 
 ## Context and Orientation
 
