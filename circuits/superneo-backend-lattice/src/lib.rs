@@ -3,6 +3,7 @@ use blake3::Hasher;
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc, time::Instant};
 use superneo_ccs::{
     digest_shape, CcsShape, RelationId, ShapeDigest, StatementDigest, StatementEncoding,
 };
@@ -50,6 +51,73 @@ impl Default for LatticeBackendConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LatticeBackend {
     pub config: LatticeBackendConfig,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KernelCostReport {
+    pub bit_unpack_ns: u128,
+    pub digit_expand_ns: u128,
+    pub matrix_prepare_ns: u128,
+    pub commitment_kernel_ns: u128,
+    pub leaf_hash_ns: u128,
+    pub fold_kernel_ns: u128,
+    pub small_small_ops: u64,
+    pub small_big_ops: u64,
+    pub big_big_ops: u64,
+    pub delayed_reduction_batches: u64,
+    pub evaluation_windows: u64,
+    pub streamed_message_windows: u64,
+    pub matrix_cache_hits: u64,
+    pub matrix_cache_misses: u64,
+}
+
+impl KernelCostReport {
+    pub fn merge(&mut self, other: &Self) {
+        self.bit_unpack_ns += other.bit_unpack_ns;
+        self.digit_expand_ns += other.digit_expand_ns;
+        self.matrix_prepare_ns += other.matrix_prepare_ns;
+        self.commitment_kernel_ns += other.commitment_kernel_ns;
+        self.leaf_hash_ns += other.leaf_hash_ns;
+        self.fold_kernel_ns += other.fold_kernel_ns;
+        self.small_small_ops += other.small_small_ops;
+        self.small_big_ops += other.small_big_ops;
+        self.big_big_ops += other.big_big_ops;
+        self.delayed_reduction_batches += other.delayed_reduction_batches;
+        self.evaluation_windows += other.evaluation_windows;
+        self.streamed_message_windows += other.streamed_message_windows;
+        self.matrix_cache_hits += other.matrix_cache_hits;
+        self.matrix_cache_misses += other.matrix_cache_misses;
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct KernelLocalStats {
+    small_small_ops: u64,
+    small_big_ops: u64,
+    big_big_ops: u64,
+    delayed_reduction_batches: u64,
+    evaluation_windows: u64,
+    streamed_message_windows: u64,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedCommitmentMatrix {
+    rows: Vec<Vec<RingElem>>,
+}
+
+#[derive(Clone, Debug)]
+struct EmbeddedRingElem {
+    ring: RingElem,
+    source_width_bits: u16,
+}
+
+const GOLDILOCKS_MODULUS_I128: i128 = 18_446_744_069_414_584_321;
+const COMMITMENT_WINDOW_COLUMNS: usize = 32;
+
+thread_local! {
+    static KERNEL_COST_REPORT: RefCell<KernelCostReport> = RefCell::new(KernelCostReport::default());
+    static PREPARED_MATRIX_CACHE: RefCell<BTreeMap<[u8; 32], Arc<PreparedCommitmentMatrix>>> =
+        RefCell::new(BTreeMap::new());
 }
 
 impl Default for LatticeBackend {
@@ -129,52 +197,8 @@ pub struct BackendShape {
 }
 
 impl RingElem {
-    fn zero(ring_degree: usize) -> Self {
-        Self {
-            coeffs: vec![0; ring_degree],
-        }
-    }
-
     pub fn from_coeffs(coeffs: Vec<u64>) -> Self {
         Self { coeffs }
-    }
-
-    fn add_assign(&mut self, other: &Self) {
-        for (lhs, rhs) in self.coeffs.iter_mut().zip(&other.coeffs) {
-            *lhs = goldilocks_add(*lhs, *rhs);
-        }
-    }
-
-    fn scale(&self, scalar: u64) -> Self {
-        Self {
-            coeffs: self
-                .coeffs
-                .iter()
-                .map(|coeff| goldilocks_mul(*coeff, scalar))
-                .collect(),
-        }
-    }
-
-    fn mul_negacyclic(&self, other: &Self) -> Self {
-        let degree = self.coeffs.len();
-        let mut out = vec![Goldilocks::new(0); degree];
-        for (i, left) in self.coeffs.iter().enumerate() {
-            for (j, right) in other.coeffs.iter().enumerate() {
-                let target = i + j;
-                let product = Goldilocks::new(*left) * Goldilocks::new(*right);
-                if target < degree {
-                    out[target] = out[target] + product;
-                } else {
-                    out[target - degree] = out[target - degree] - product;
-                }
-            }
-        }
-        Self {
-            coeffs: out
-                .into_iter()
-                .map(|value| value.as_canonical_u64())
-                .collect(),
-        }
     }
 
     fn byte_size(&self) -> usize {
@@ -254,6 +278,49 @@ impl LatticeBackend {
     }
 }
 
+pub fn reset_kernel_cost_report() {
+    KERNEL_COST_REPORT.with(|report| {
+        *report.borrow_mut() = KernelCostReport::default();
+    });
+}
+
+pub fn reset_kernel_runtime_state() {
+    reset_kernel_cost_report();
+    clear_prepared_matrix_cache();
+}
+
+pub fn current_kernel_cost_report() -> KernelCostReport {
+    KERNEL_COST_REPORT.with(|report| report.borrow().clone())
+}
+
+pub fn take_kernel_cost_report() -> KernelCostReport {
+    KERNEL_COST_REPORT.with(|report| {
+        let mut report = report.borrow_mut();
+        let current = report.clone();
+        *report = KernelCostReport::default();
+        current
+    })
+}
+
+pub fn clear_prepared_matrix_cache() {
+    PREPARED_MATRIX_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+fn update_kernel_cost_report(f: impl FnOnce(&mut KernelCostReport)) {
+    KERNEL_COST_REPORT.with(|report| f(&mut report.borrow_mut()));
+}
+
+fn flush_kernel_stats(stats: &KernelLocalStats) {
+    update_kernel_cost_report(|report| {
+        report.small_small_ops += stats.small_small_ops;
+        report.small_big_ops += stats.small_big_ops;
+        report.big_big_ops += stats.big_big_ops;
+        report.delayed_reduction_batches += stats.delayed_reduction_batches;
+        report.evaluation_windows += stats.evaluation_windows;
+        report.streamed_message_windows += stats.streamed_message_windows;
+    });
+}
+
 impl Backend<Goldilocks> for LatticeBackend {
     type ProverKey = BackendKey;
     type VerifierKey = BackendKey;
@@ -315,6 +382,7 @@ impl Backend<Goldilocks> for LatticeBackend {
         packed: &Self::PackedWitness,
         commitment: &Self::Commitment,
     ) -> Result<Self::LeafProof> {
+        let hash_start = Instant::now();
         let proof_digest = leaf_proof_digest(
             pk,
             relation_id,
@@ -322,6 +390,9 @@ impl Backend<Goldilocks> for LatticeBackend {
             packed,
             &commitment.digest,
         );
+        update_kernel_cost_report(|report| {
+            report.leaf_hash_ns += hash_start.elapsed().as_nanos();
+        });
         Ok(LeafDigestProof {
             witness_commitment_digest: commitment.digest,
             proof_digest,
@@ -363,6 +434,7 @@ impl Backend<Goldilocks> for LatticeBackend {
     ) -> Result<(FoldedInstance<Self::Commitment>, Self::FoldProof)> {
         validate_fold_pair(left, right)?;
         let challenge = derive_fold_challenge(pk, left, right);
+        let fold_start = Instant::now();
         let parent_commitment = LatticeCommitment::from_rows(fold_commitment_rows(
             &left.witness_commitment,
             &right.witness_commitment,
@@ -395,6 +467,9 @@ impl Backend<Goldilocks> for LatticeBackend {
             statement_digest: parent_statement_digest,
             witness_commitment: parent_commitment,
         };
+        update_kernel_cost_report(|report| {
+            report.fold_kernel_ns += fold_start.elapsed().as_nanos();
+        });
         Ok((parent, proof))
     }
 
@@ -498,20 +573,42 @@ pub fn to_backend_ccs(shape: &CcsShape<Goldilocks>) -> Result<BackendShape> {
     })
 }
 
-fn embed_packed_witness(pk: &BackendKey, packed: &PackedWitness<u64>) -> Result<Vec<RingElem>> {
-    let digits = expand_packed_digits(packed, pk.digit_bits)?;
+fn embed_packed_witness(
+    pk: &BackendKey,
+    packed: &PackedWitness<u64>,
+) -> Result<Vec<EmbeddedRingElem>> {
+    ensure!(
+        packed.value_bit_widths.len() == packed.original_len,
+        "packed witness width metadata length {} does not match original_len {}",
+        packed.value_bit_widths.len(),
+        packed.original_len
+    );
+    let (digits, digit_source_widths) = expand_packed_digits(packed, pk.digit_bits)?;
     let mut ring_elems = Vec::with_capacity(digits.len().div_ceil(pk.ring_degree));
-    for chunk in digits.chunks(pk.ring_degree) {
+    for (chunk_index, chunk) in digits.chunks(pk.ring_degree).enumerate() {
         let mut coeffs = vec![0u64; pk.ring_degree];
         for (idx, digit) in chunk.iter().enumerate() {
             coeffs[idx] = *digit;
         }
-        ring_elems.push(RingElem::from_coeffs(coeffs));
+        let source_width_bits = digit_source_widths
+            .iter()
+            .skip(chunk_index * pk.ring_degree)
+            .take(chunk.len())
+            .copied()
+            .max()
+            .unwrap_or(1);
+        ring_elems.push(EmbeddedRingElem {
+            ring: RingElem::from_coeffs(coeffs),
+            source_width_bits,
+        });
     }
     Ok(ring_elems)
 }
 
-fn expand_packed_digits(packed: &PackedWitness<u64>, digit_bits: u16) -> Result<Vec<u64>> {
+fn expand_packed_digits(
+    packed: &PackedWitness<u64>,
+    digit_bits: u16,
+) -> Result<(Vec<u64>, Vec<u16>)> {
     ensure!(
         (1..=64).contains(&packed.coeff_capacity_bits),
         "packed witness coeff capacity must be in 1..=64"
@@ -520,22 +617,37 @@ fn expand_packed_digits(packed: &PackedWitness<u64>, digit_bits: u16) -> Result<
         (1..=16).contains(&digit_bits),
         "digit_bits must be in 1..=16"
     );
+    let digit_start = Instant::now();
     let bits = expand_packed_bits(packed)?;
     let mut digits = Vec::with_capacity(bits.len().div_ceil(digit_bits as usize));
+    let bit_source_widths = expand_packed_bit_source_widths(packed)?;
+    ensure!(
+        bit_source_widths.len() == bits.len(),
+        "bit source width metadata length {} does not match expanded bits {}",
+        bit_source_widths.len(),
+        bits.len()
+    );
+    let mut digit_source_widths = Vec::with_capacity(bits.len().div_ceil(digit_bits as usize));
     let mut cursor = 0usize;
     while cursor < bits.len() {
         let mut digit = 0u64;
+        let mut source_width_bits = 1u16;
         for offset in 0..digit_bits as usize {
             let bit_index = cursor + offset;
             if bit_index >= bits.len() {
                 break;
             }
             digit |= u64::from(bits[bit_index]) << offset;
+            source_width_bits = source_width_bits.max(bit_source_widths[bit_index]);
         }
         digits.push(digit);
+        digit_source_widths.push(source_width_bits);
         cursor += digit_bits as usize;
     }
-    Ok(digits)
+    update_kernel_cost_report(|report| {
+        report.digit_expand_ns += digit_start.elapsed().as_nanos();
+    });
+    Ok((digits, digit_source_widths))
 }
 
 fn expand_packed_bits(packed: &PackedWitness<u64>) -> Result<Vec<u8>> {
@@ -543,6 +655,7 @@ fn expand_packed_bits(packed: &PackedWitness<u64>) -> Result<Vec<u8>> {
         (1..=64).contains(&packed.coeff_capacity_bits),
         "packed witness coeff capacity must be in 1..=64"
     );
+    let bit_unpack_start = Instant::now();
     let coeff_capacity = packed.coeff_capacity_bits as usize;
     let mut bits = Vec::with_capacity(packed.used_bits);
     for bit_index in 0..packed.used_bits {
@@ -554,19 +667,81 @@ fn expand_packed_bits(packed: &PackedWitness<u64>) -> Result<Vec<u8>> {
             .ok_or_else(|| anyhow!("packed witness ended early while expanding bits"))?;
         bits.push(((coeff >> bit_offset) & 1) as u8);
     }
+    update_kernel_cost_report(|report| {
+        report.bit_unpack_ns += bit_unpack_start.elapsed().as_nanos();
+    });
     Ok(bits)
 }
 
-fn commit_ring_message(pk: &BackendKey, message: &[RingElem]) -> Vec<RingElem> {
-    let mut rows = Vec::with_capacity(pk.commitment_rows);
-    for row_index in 0..pk.commitment_rows {
-        let mut acc = RingElem::zero(pk.ring_degree);
-        for (col_index, message_elem) in message.iter().enumerate() {
-            let matrix = matrix_entry(pk, row_index, col_index);
-            acc.add_assign(&matrix.mul_negacyclic(message_elem));
-        }
-        rows.push(acc);
+fn expand_packed_bit_source_widths(packed: &PackedWitness<u64>) -> Result<Vec<u16>> {
+    let total_value_bits = packed
+        .value_bit_widths
+        .iter()
+        .map(|width| usize::from(*width))
+        .sum::<usize>();
+    ensure!(
+        total_value_bits == packed.used_bits,
+        "packed witness width metadata covers {} bits but used_bits is {}",
+        total_value_bits,
+        packed.used_bits
+    );
+    let mut bit_source_widths = Vec::with_capacity(packed.used_bits);
+    for width in &packed.value_bit_widths {
+        bit_source_widths.extend(std::iter::repeat_n(*width, usize::from(*width)));
     }
+    Ok(bit_source_widths)
+}
+
+fn commit_ring_message(pk: &BackendKey, message: &[EmbeddedRingElem]) -> Vec<RingElem> {
+    let prepared = prepare_commitment_matrix(pk, message.len());
+    let commit_start = Instant::now();
+    let window_size = message.len().max(1).min(COMMITMENT_WINDOW_COLUMNS);
+    let mut accumulators = vec![vec![0i128; pk.ring_degree]; pk.commitment_rows];
+    let mut stats = KernelLocalStats::default();
+    let row_count = pk.commitment_rows;
+
+    for (window_index, chunk) in message.chunks(window_size).enumerate() {
+        stats.evaluation_windows += 1;
+        stats.streamed_message_windows += 1;
+        let base_col = window_index * window_size;
+        for (offset, message_elem) in chunk.iter().enumerate() {
+            let col_index = base_col + offset;
+            for row_index in 0..row_count {
+                if message_elem.source_width_bits <= 16 {
+                    accumulate_negacyclic_product_narrow_source(
+                        &mut accumulators[row_index],
+                        &prepared.rows[row_index][col_index],
+                        &message_elem.ring,
+                        &mut stats,
+                    );
+                } else {
+                    accumulate_negacyclic_product_generic_source(
+                        &mut accumulators[row_index],
+                        &prepared.rows[row_index][col_index],
+                        &message_elem.ring,
+                        &mut stats,
+                    );
+                }
+            }
+        }
+    }
+
+    let rows = accumulators
+        .into_iter()
+        .map(|coeffs| {
+            stats.delayed_reduction_batches += 1;
+            RingElem::from_coeffs(
+                coeffs
+                    .into_iter()
+                    .map(reduce_goldilocks_signed)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    flush_kernel_stats(&stats);
+    update_kernel_cost_report(|report| {
+        report.commitment_kernel_ns += commit_start.elapsed().as_nanos();
+    });
     rows
 }
 
@@ -592,6 +767,50 @@ fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem
         coeffs.push(Goldilocks::new(u64::from_le_bytes(out)).as_canonical_u64());
     }
     RingElem::from_coeffs(coeffs)
+}
+
+fn prepare_commitment_matrix(pk: &BackendKey, message_len: usize) -> Arc<PreparedCommitmentMatrix> {
+    let cache_key = prepared_matrix_cache_key(pk, message_len);
+    if let Some(hit) = PREPARED_MATRIX_CACHE.with(|cache| cache.borrow().get(&cache_key).cloned()) {
+        update_kernel_cost_report(|report| {
+            report.matrix_cache_hits += 1;
+        });
+        return hit;
+    }
+
+    let prepare_start = Instant::now();
+    let mut rows = Vec::with_capacity(pk.commitment_rows);
+    for row_index in 0..pk.commitment_rows {
+        let mut row = Vec::with_capacity(message_len);
+        for col_index in 0..message_len {
+            row.push(matrix_entry(pk, row_index, col_index));
+        }
+        rows.push(row);
+    }
+    let prepared = Arc::new(PreparedCommitmentMatrix { rows });
+    PREPARED_MATRIX_CACHE.with(|cache| {
+        cache.borrow_mut().insert(cache_key, prepared.clone());
+    });
+    update_kernel_cost_report(|report| {
+        report.matrix_cache_misses += 1;
+        report.matrix_prepare_ns += prepare_start.elapsed().as_nanos();
+    });
+    prepared
+}
+
+fn prepared_matrix_cache_key(pk: &BackendKey, message_len: usize) -> [u8; 32] {
+    let mut material = Vec::with_capacity(32 + 8 * 6);
+    material.extend_from_slice(&pk.shape_digest.0);
+    material.extend_from_slice(pk.ring_profile.label());
+    material.extend_from_slice(&pk.security_bits.to_le_bytes());
+    material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
+    material.extend_from_slice(&pk.transcript_domain_digest);
+    material.extend_from_slice(&(pk.commitment_rows as u64).to_le_bytes());
+    material.extend_from_slice(&(pk.ring_degree as u64).to_le_bytes());
+    material.extend_from_slice(&pk.digit_bits.to_le_bytes());
+    material.extend_from_slice(&(message_len as u64).to_le_bytes());
+    digest32_with_label(b"hegemon.superneo.prepared-matrix.v1", &material)
 }
 
 fn digest_commitment_rows(rows: &[RingElem]) -> [u8; 48] {
@@ -654,16 +873,48 @@ fn fold_commitment_rows(
         left.rows.len() == right.rows.len(),
         "folded commitments must have the same row length"
     );
-    Ok(left
+    let mut stats = KernelLocalStats::default();
+    let rows = left
         .rows
         .iter()
         .zip(&right.rows)
         .map(|(left_row, right_row)| {
-            let mut acc = left_row.clone();
-            acc.add_assign(&right_row.scale(challenge));
-            acc
+            delayed_linear_combine(left_row, right_row, challenge, &mut stats)
         })
-        .collect())
+        .collect::<Result<Vec<_>>>()?;
+    flush_kernel_stats(&stats);
+    Ok(rows)
+}
+
+fn delayed_linear_combine(
+    left: &RingElem,
+    right: &RingElem,
+    challenge: u64,
+    stats: &mut KernelLocalStats,
+) -> Result<RingElem> {
+    ensure!(
+        left.coeffs.len() == right.coeffs.len(),
+        "cannot combine ring elements with different degrees"
+    );
+    stats.delayed_reduction_batches += 1;
+    let challenge_bits = operand_bit_width(challenge);
+    let mut coeffs = Vec::with_capacity(left.coeffs.len());
+    for (left_coeff, right_coeff) in left.coeffs.iter().zip(&right.coeffs) {
+        classify_mul_widths(challenge_bits, operand_bit_width(*right_coeff), 1, stats);
+        let value = i128::from(*left_coeff) + i128::from(challenge) * i128::from(*right_coeff);
+        coeffs.push(reduce_goldilocks_signed(value));
+    }
+    Ok(RingElem::from_coeffs(coeffs))
+}
+
+fn classify_mul_widths(left_bits: u16, right_bits: u16, count: u64, stats: &mut KernelLocalStats) {
+    let left_small = left_bits <= 16;
+    let right_small = right_bits <= 16;
+    match (left_small, right_small) {
+        (true, true) => stats.small_small_ops += count,
+        (false, false) => stats.big_big_ops += count,
+        _ => stats.small_big_ops += count,
+    }
 }
 
 fn leaf_proof_digest(
@@ -743,12 +994,66 @@ fn fold_proof_digest(
     hash48(hasher)
 }
 
-fn goldilocks_add(left: u64, right: u64) -> u64 {
-    (Goldilocks::new(left) + Goldilocks::new(right)).as_canonical_u64()
+fn accumulate_negacyclic_product_narrow_source(
+    accumulator: &mut [i128],
+    left: &RingElem,
+    right: &RingElem,
+    stats: &mut KernelLocalStats,
+) {
+    accumulate_negacyclic_product_with_mode(accumulator, left, right, stats, true);
 }
 
-fn goldilocks_mul(left: u64, right: u64) -> u64 {
-    (Goldilocks::new(left) * Goldilocks::new(right)).as_canonical_u64()
+fn accumulate_negacyclic_product_generic_source(
+    accumulator: &mut [i128],
+    left: &RingElem,
+    right: &RingElem,
+    stats: &mut KernelLocalStats,
+) {
+    accumulate_negacyclic_product_with_mode(accumulator, left, right, stats, false);
+}
+
+fn accumulate_negacyclic_product_with_mode(
+    accumulator: &mut [i128],
+    left: &RingElem,
+    right: &RingElem,
+    stats: &mut KernelLocalStats,
+    narrow_source: bool,
+) {
+    let degree = left.coeffs.len();
+    stats.delayed_reduction_batches += 1;
+    for (i, left_coeff) in left.coeffs.iter().enumerate() {
+        for (j, right_coeff) in right.coeffs.iter().enumerate() {
+            if *right_coeff == 0 {
+                continue;
+            }
+            let target = i + j;
+            let product = if narrow_source {
+                stats.small_big_ops += 1;
+                i128::from(*left_coeff) * i128::from((*right_coeff) as u16)
+            } else {
+                stats.big_big_ops += 1;
+                i128::from(*left_coeff) * i128::from(*right_coeff)
+            };
+            if target < degree {
+                accumulator[target] += product;
+            } else {
+                accumulator[target - degree] -= product;
+            }
+        }
+    }
+}
+
+fn reduce_goldilocks_signed(value: i128) -> u64 {
+    let mut reduced = value % GOLDILOCKS_MODULUS_I128;
+    if reduced < 0 {
+        reduced += GOLDILOCKS_MODULUS_I128;
+    }
+    reduced as u64
+}
+
+fn operand_bit_width(value: u64) -> u16 {
+    let width = u64::BITS - value.leading_zeros();
+    width.max(1) as u16
 }
 
 fn hash48(hasher: Hasher) -> [u8; 48] {
@@ -781,7 +1086,10 @@ mod tests {
     use superneo_core::{Backend, FoldedInstance, SecurityParams};
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 
-    use super::{LatticeBackend, LatticeBackendConfig, LatticeCommitment, RingElem};
+    use super::{
+        clear_prepared_matrix_cache, reset_kernel_cost_report, take_kernel_cost_report,
+        LatticeBackend, LatticeBackendConfig, LatticeCommitment, RingElem, RingProfile,
+    };
 
     fn shape() -> CcsShape<Goldilocks> {
         CcsShape {
@@ -808,6 +1116,39 @@ mod tests {
                     WitnessField {
                         name: "b",
                         bit_width: 4,
+                        signed: false,
+                        count: 1,
+                    },
+                ],
+            },
+        }
+    }
+
+    fn wide_shape() -> CcsShape<Goldilocks> {
+        CcsShape {
+            num_rows: 2,
+            num_cols: 2,
+            matrices: vec![SparseMatrix {
+                row_count: 2,
+                col_count: 2,
+                entries: vec![SparseEntry {
+                    row: 0,
+                    col: 0,
+                    value: Goldilocks::new(1),
+                }],
+            }],
+            selectors: vec![Goldilocks::new(1)],
+            witness_schema: WitnessSchema {
+                fields: vec![
+                    WitnessField {
+                        name: "wide",
+                        bit_width: 64,
+                        signed: false,
+                        count: 1,
+                    },
+                    WitnessField {
+                        name: "narrow",
+                        bit_width: 8,
                         signed: false,
                         count: 1,
                     },
@@ -969,5 +1310,84 @@ mod tests {
         assert!(backend
             .verify_fold(&vk, &parent, &left, &right, &proof)
             .is_err());
+    }
+
+    #[test]
+    fn kernel_report_tracks_cache_hits_and_delayed_reduction() {
+        clear_prepared_matrix_cache();
+        reset_kernel_cost_report();
+
+        let backend = LatticeBackend::new(LatticeBackendConfig::default());
+        let security = SecurityParams::experimental_default();
+        let (pk, _) = backend.setup(&security, &shape()).unwrap();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let assignment = Assignment {
+            witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
+        };
+        let packed = packer.pack(&shape(), &assignment).unwrap();
+
+        let first = backend.commit_witness(&pk, &packed).unwrap();
+        let second = backend.commit_witness(&pk, &packed).unwrap();
+        assert_eq!(first.digest, second.digest);
+
+        let report = take_kernel_cost_report();
+        assert_eq!(report.matrix_cache_misses, 1);
+        assert!(report.matrix_cache_hits >= 1);
+        assert!(report.commitment_kernel_ns > 0);
+        assert!(report.delayed_reduction_batches > 0);
+        assert!(report.small_big_ops > 0);
+        assert_eq!(report.big_big_ops, 0);
+    }
+
+    #[test]
+    fn prepared_matrix_cache_key_separates_ring_profiles() {
+        clear_prepared_matrix_cache();
+        reset_kernel_cost_report();
+
+        let security = SecurityParams::experimental_default();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let assignment = Assignment {
+            witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
+        };
+        let packed = packer.pack(&shape(), &assignment).unwrap();
+
+        let cyclotomic_backend = LatticeBackend::new(LatticeBackendConfig::default());
+        let frog_backend = LatticeBackend::new(LatticeBackendConfig {
+            ring_profile: RingProfile::GoldilocksFrog,
+            ..LatticeBackendConfig::default()
+        });
+        let (cyclotomic_pk, _) = cyclotomic_backend.setup(&security, &shape()).unwrap();
+        let (frog_pk, _) = frog_backend.setup(&security, &shape()).unwrap();
+
+        let cyclotomic_commitment = cyclotomic_backend
+            .commit_witness(&cyclotomic_pk, &packed)
+            .unwrap();
+        let frog_commitment = frog_backend.commit_witness(&frog_pk, &packed).unwrap();
+
+        let report = take_kernel_cost_report();
+        assert_eq!(report.matrix_cache_misses, 2);
+        assert_eq!(report.matrix_cache_hits, 0);
+        assert_ne!(cyclotomic_commitment.digest, frog_commitment.digest);
+        assert_ne!(cyclotomic_commitment.rows, frog_commitment.rows);
+    }
+
+    #[test]
+    fn width_metadata_drives_generic_commitment_kernel() {
+        clear_prepared_matrix_cache();
+        reset_kernel_cost_report();
+
+        let backend = LatticeBackend::new(LatticeBackendConfig::default());
+        let security = SecurityParams::experimental_default();
+        let (pk, _) = backend.setup(&security, &wide_shape()).unwrap();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let assignment = Assignment {
+            witness: vec![Goldilocks::new(1u64 << 40), Goldilocks::new(7)],
+        };
+        let packed = packer.pack(&wide_shape(), &assignment).unwrap();
+
+        backend.commit_witness(&pk, &packed).unwrap();
+
+        let report = take_kernel_cost_report();
+        assert!(report.big_big_ops > 0);
     }
 }

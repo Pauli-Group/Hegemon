@@ -21,12 +21,43 @@ impl Default for GoldilocksPackingConfig {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackedWidthSummary {
+    pub one_bit_values: usize,
+    pub byte_values: usize,
+    pub word16_values: usize,
+    pub word32_values: usize,
+    pub wide_values: usize,
+    pub max_bit_width: u16,
+}
+
+impl PackedWidthSummary {
+    fn observe(&mut self, bit_width: u16) {
+        self.max_bit_width = self.max_bit_width.max(bit_width);
+        match bit_width {
+            0 | 1 => self.one_bit_values += 1,
+            2..=8 => self.byte_values += 1,
+            9..=16 => self.word16_values += 1,
+            17..=32 => self.word32_values += 1,
+            _ => self.wide_values += 1,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackedWitness<R> {
     pub coeffs: Vec<R>,
     pub original_len: usize,
     pub used_bits: usize,
     pub coeff_capacity_bits: u16,
+    pub value_bit_widths: Vec<u16>,
+    pub width_summary: PackedWidthSummary,
+}
+
+impl<R> PackedWitness<R> {
+    pub fn max_declared_width_bits(&self) -> u16 {
+        self.width_summary.max_bit_width
+    }
 }
 
 pub trait WitnessPacker<F, R> {
@@ -68,6 +99,8 @@ impl WitnessPacker<Goldilocks, u64> for GoldilocksPayPerBitPacker {
         let mut bits_used = 0u16;
         let mut witness_idx = 0usize;
         let mut used_bits = 0usize;
+        let mut value_bit_widths = Vec::with_capacity(assignment.witness.len());
+        let mut width_summary = PackedWidthSummary::default();
 
         for field in &shape.witness_schema.fields {
             ensure!(
@@ -77,6 +110,8 @@ impl WitnessPacker<Goldilocks, u64> for GoldilocksPayPerBitPacker {
             for _ in 0..field.count {
                 let raw = assignment.witness[witness_idx].as_canonical_u64();
                 witness_idx += 1;
+                value_bit_widths.push(field.bit_width);
+                width_summary.observe(field.bit_width);
 
                 if self.config.reject_out_of_range && field.bit_width < 64 {
                     let max = 1u128 << field.bit_width;
@@ -125,6 +160,8 @@ impl WitnessPacker<Goldilocks, u64> for GoldilocksPayPerBitPacker {
             original_len: assignment.witness.len(),
             used_bits,
             coeff_capacity_bits: coeff_capacity,
+            value_bit_widths,
+            width_summary,
         })
     }
 
@@ -149,10 +186,17 @@ impl WitnessPacker<Goldilocks, u64> for GoldilocksPayPerBitPacker {
             (1..=64).contains(&self.config.limb_bits),
             "limb_bits must be in 1..=64"
         );
+        ensure!(
+            packed.value_bit_widths.len() == packed.original_len,
+            "packed witness width metadata length {} does not match original_len {}",
+            packed.value_bit_widths.len(),
+            packed.original_len
+        );
 
         let mut witness = Vec::with_capacity(shape.expected_witness_len());
         let mut coeff_idx = 0usize;
         let mut coeff_offset = 0u16;
+        let mut value_idx = 0usize;
 
         for field in &shape.witness_schema.fields {
             ensure!(
@@ -160,6 +204,18 @@ impl WitnessPacker<Goldilocks, u64> for GoldilocksPayPerBitPacker {
                 "signed witness fields are not yet supported by GoldilocksPayPerBitPacker"
             );
             for _ in 0..field.count {
+                let declared_width = *packed
+                    .value_bit_widths
+                    .get(value_idx)
+                    .ok_or_else(|| anyhow::anyhow!("packed witness width metadata ended early"))?;
+                ensure!(
+                    declared_width == field.bit_width,
+                    "packed witness width metadata mismatch for value {}: {} != {}",
+                    value_idx,
+                    declared_width,
+                    field.bit_width
+                );
+                value_idx += 1;
                 let mut raw = 0u64;
                 let mut remaining = field.bit_width;
                 let mut destination_offset = 0u16;
@@ -270,6 +326,11 @@ mod tests {
         let unpacked = packer.unpack(&shape(), &packed).unwrap();
         assert_eq!(assignment, unpacked);
         assert!(packed.used_bits < packed.coeffs.len() * 64);
+        assert_eq!(packed.value_bit_widths, vec![16, 8, 8, 8, 8, 1, 1, 1]);
+        assert_eq!(packed.width_summary.one_bit_values, 3);
+        assert_eq!(packed.width_summary.byte_values, 4);
+        assert_eq!(packed.width_summary.word16_values, 1);
+        assert_eq!(packed.max_declared_width_bits(), 16);
     }
 
     #[test]

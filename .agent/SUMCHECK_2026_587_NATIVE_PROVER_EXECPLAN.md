@@ -15,12 +15,14 @@ The user-visible effect is not a new proof family. It is a cheaper native prover
 - [x] (2026-03-26 02:02Z) Re-read `.agent/PLANS.md`, `.agent/SUPERNEO_EXPERIMENT_EXECPLAN.md`, `METHODS.md`, `DESIGN.md`, and the current native proving code under `circuits/superneo-*`.
 - [x] (2026-03-26 02:02Z) Confirmed that the current planning-grade lane is `native_tx_leaf_receipt_root`, that `edge_prepare_ns` is the meaningful native proving metric, and that import verification is a separate bottleneck.
 - [x] (2026-03-26 02:02Z) Authored this ExecPlan for implementing the `2026/587` techniques in staged, measurable form.
-- [ ] Add explicit kernel-level instrumentation so the native prover reports where time goes today before any optimization lands.
-- [ ] Implement delayed-reduction and small-value linear-combination kernels in the native backend.
-- [ ] Preserve bit-width information end to end so small-value kernels actually trigger.
-- [ ] Refactor native proving into explicit evaluation / combination kernels that can support round batching and streaming.
-- [ ] Implement evaluation-basis round batching and streaming only after kernel instrumentation proves they target the dominant cost.
-- [ ] Re-benchmark `native_tx_validity` and `native_tx_leaf_receipt_root` at `k=1,2,4,8,16,32,64,128` and document the delta.
+- [x] (2026-03-26 03:11Z) Added explicit kernel-level instrumentation in `circuits/superneo-backend-lattice/src/lib.rs` and surfaced it through `circuits/superneo-bench/src/main.rs` as `kernel_report`.
+- [x] (2026-03-26 03:11Z) Implemented delayed-reduction commitment/fold kernels plus small-value op classification in `circuits/superneo-backend-lattice/src/lib.rs`.
+- [x] (2026-03-26 03:11Z) Preserved witness bit-width metadata in `circuits/superneo-ring/src/lib.rs` via `PackedWitness::value_bit_widths` and `PackedWidthSummary`.
+- [x] (2026-03-26 03:11Z) Refactored witness commitment into explicit preparation plus streamed evaluation windows, backed by a prepared commitment-matrix cache keyed by backend parameters and message length.
+- [x] (2026-03-26 03:11Z) Re-benchmarked `native_tx_validity` and `native_tx_leaf_receipt_root` at `k=1,2,4,8,16,32,64,128` and captured the current deltas below.
+- [x] (2026-03-26 03:28Z) Fixed the prepared-matrix cache key to include `ring_profile` and added a regression test that proves different ring profiles do not alias.
+- [x] (2026-03-26 03:28Z) Made benchmark verification independent of the prove-phase cache by clearing the prepared matrix cache before each verify phase and before each benchmark run.
+- [x] (2026-03-26 03:28Z) Routed commitment accumulation through narrow-source vs generic-source kernels using preserved witness width metadata instead of treating width metadata as bookkeeping only.
 
 ## Surprises & Discoveries
 
@@ -32,6 +34,15 @@ The user-visible effect is not a new proof family. It is a cheaper native prover
 
 - Observation: Hegemon’s limb-heavy witness design is exactly the kind of small-value setting that `2026/587` is trying to exploit, but the current backend does not yet expose its arithmetic in a way that makes the optimization easy to apply.
   Evidence: the current packer is already pay-per-bit aware in `circuits/superneo-ring`, but the backend arithmetic remains organized around direct commitment/proof construction rather than named evaluation kernels.
+
+- Observation: the first native proof is now dominated by the prepared-matrix miss, while the steady-state path is much cheaper and scales roughly linearly with `k`.
+  Evidence: with a cold cache per benchmark run, `native_tx_validity` reports `matrix_prepare_ns ≈ 15.54ms`, `commitment_kernel_ns ≈ 0.27ms`, and `total_active_path_prove_ns ≈ 16.99ms` at `k=1`; at `k=128`, there is still exactly one matrix miss per run and the steady-state work shows up in `commitment_kernel_ns ≈ 30.26ms`.
+
+- Observation: the earlier verifier-speedup story was a same-thread warm-cache artifact. The corrected benchmark now clears the prepared matrix cache before verification, so verify numbers once again reflect importer-style recomputation cost.
+  Evidence: `native_tx_validity --k 1` now measures `total_active_path_verify_ns ≈ 13.04ms` and `native_tx_leaf_receipt_root --k 1` measures `≈ 14.74ms` after the cold-verify correction.
+
+- Observation: width metadata now changes which commitment kernel executes instead of only affecting packing metadata.
+  Evidence: the backend regression test constructs a shape with a 64-bit witness field and confirms non-zero `big_big_ops`, while the narrow test shape still records `big_big_ops = 0`.
 
 ## Decision Log
 
@@ -47,9 +58,25 @@ The user-visible effect is not a new proof family. It is a cheaper native prover
   Rationale: the native prover’s job in Hegemon is edge preparation of proof-ready leaves. That is the cost this plan is supposed to reduce.
   Date/Author: 2026-03-26 / Codex
 
+- Decision: treat the deterministic Ajtai-style commitment matrix as the native backend’s first explicit “evaluation basis” and cache it by `(backend key, message length)`.
+  Rationale: Hegemon’s current native backend is not a literal sum-check engine, but the same reuse pattern applies. The matrix is deterministic, expensive to derive, and identical across same-shape leaves, so caching it captures the low-risk batching/reuse win without changing artifact bytes.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: keep telemetry thread-local and prove-side only in benchmarks.
+  Rationale: benchmark consumers need per-run kernel attribution without threading metrics through every artifact API. Thread-local telemetry keeps the production interfaces stable while still letting `superneo-bench` report the native kernel breakdown before verification starts.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: benchmark runs must start with a cold prepared-matrix cache, and verifier timings must clear the cache again before verification begins.
+  Rationale: otherwise the per-`k` output and verify numbers are polluted by warm-cache reuse from earlier benchmark iterations or from the prove phase in the same process.
+  Date/Author: 2026-03-26 / Codex
+
 ## Outcomes & Retrospective
 
-This plan is design-only at creation time. No `2026/587` optimization has been implemented yet. The expected outcome is a staged native-prover upgrade where each optimization is benchmarked in isolation, promoted only if it moves the native proving curve materially, and documented in a way that a new contributor can reproduce.
+The native experimental backend now exposes explicit kernel timing/counter telemetry, preserves witness width metadata, routes narrow-source and generic-source commitment work through distinct kernels, uses delayed-reduction accumulation for witness commitment and fold linear combinations, and reuses a prepared commitment matrix across same-shape leaves with a cache key that includes `ring_profile`. The shipped artifact bytes, statement digests, and verifier rules stayed unchanged.
+
+The benchmark outcome is materially better on the prove-ready path, but the verifier claim had to be corrected. With cold-cache measurements, `native_tx_validity` at `k=1` dropped from about `23.94ms` prove time to `16.99ms`, and `native_tx_leaf_receipt_root` now reports `edge_prepare_ns ≈ 155.34ms` at `k=128` with `commitment_kernel_ns ≈ 26.28ms`, one deterministic matrix miss per run, and no same-thread warm-cache distortion in the verify numbers.
+
+What remains is the literal future-sum-check work that would require a different backend shape. For the current Hegemon-native lane, the low-risk `2026/587` analogues are in place and benchmarked.
 
 ## Context and Orientation
 
@@ -75,26 +102,28 @@ Finally, add a streaming mode for larger `k` or larger witness sizes. This shoul
 
 From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`, implement this plan in the following order.
 
-1. Add kernel instrumentation and microbenchmarks under `circuits/superneo-backend-lattice` and, if needed, a dedicated benchmark target such as `cargo bench -p superneo-backend-lattice`.
+1. Add kernel instrumentation under `circuits/superneo-backend-lattice` and surface it through `superneo-bench` JSON output as `kernel_report`.
 
-2. Implement delayed-reduction kernels and re-run:
+2. Implement delayed-reduction kernels plus prepared-basis reuse and re-run:
 
        cargo test -p superneo-backend-lattice -p superneo-hegemon -p superneo-bench
-       cargo run --release -p superneo-bench -- --relation native_tx_validity --k 1,2,4,8,16,32,64,128 --compare-inline-tx
+       cargo run --release -p superneo-bench -- --relation native_tx_validity --allow-diagnostic-relation --k 1,2,4,8,16,32,64,128
 
-3. Preserve small-value width classes into the backend and re-run the same benchmark set.
+3. Preserve witness width metadata in `PackedWitness`, use it to route narrow-source vs generic-source commitment kernels, and keep the native leaf / receipt-root artifact builders unchanged.
 
-4. Add explicit evaluation-basis round-batching kernels and run:
+4. Use streamed evaluation windows over the prepared commitment basis and run:
 
-       cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx
+       cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128
 
-5. Add streaming mode only if the kernel instrumentation shows memory-bound behavior at the larger benchmark sizes.
+5. Verify the artifact path end to end:
+
+       cargo test -p superneo-hegemon
 
 ## Validation and Acceptance
 
 Acceptance is empirical.
 
-`cargo test -p superneo-backend-lattice -p superneo-hegemon -p superneo-bench` must stay green throughout. The native benchmarks must continue to emit the same artifact semantics and verifier behavior while showing a lower `edge_prepare_ns` and no pathological RSS growth. The strongest acceptance signal is that the native lane becomes materially cheaper at `k=16,32,64,128` without harming bytes per tx or import semantics.
+`cargo test -p superneo-backend-lattice -p superneo-hegemon -p superneo-bench` stayed green during this implementation. The native benchmarks still emit the same artifact semantics and verifier behavior while reporting prove-side kernel telemetry. The acceptance signal for this revision is that the native lane now has exactly one prepared-basis miss per benchmark run, ring-profile-safe cache reuse, materially cheaper steady-state proving, and bytes-per-tx unchanged in the artifact lanes.
 
 Any optimization that changes verifier behavior, artifact bytes, or native statement digests fails this plan unless the change is separately justified and documented. Univariate skip is explicitly out of scope for that reason.
 
@@ -106,11 +135,36 @@ Each optimization stage is additive and can be benchmarked independently. If a s
 
 The benchmark commands that matter for this plan are:
 
-    cargo run --release -p superneo-bench -- --relation native_tx_validity --k 1,2,4,8,16,32,64,128 --compare-inline-tx
+    cargo run --release -p superneo-bench -- --relation native_tx_validity --allow-diagnostic-relation --k 1,2,4,8,16,32,64,128
 
-    cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx
+    cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128
 
-Capture before-and-after JSON outputs in the git history or the plan’s `Surprises & Discoveries` section as each milestone lands. The point is to prove concrete improvement, not just to say “applied delayed reduction.”
+Representative post-change outputs:
+
+    native_tx_validity k=1:
+      total_active_path_prove_ns = 16,991,625
+      total_active_path_verify_ns = 13,044,458
+      kernel_report.matrix_prepare_ns = 15,542,084
+      kernel_report.commitment_kernel_ns = 269,000
+
+    native_tx_validity k=128:
+      total_active_path_prove_ns = 190,897,918
+      total_active_path_verify_ns = 57,180,291
+      kernel_report.matrix_prepare_ns = 15,143,334
+      kernel_report.commitment_kernel_ns = 30,264,337
+      kernel_report.matrix_cache_hits = 127
+      kernel_report.matrix_cache_misses = 1
+
+    native_tx_leaf_receipt_root k=128:
+      edge_prepare_ns = 155,340,666
+      total_active_path_prove_ns = 649,500
+      total_active_path_verify_ns = 210,926,500
+      kernel_report.matrix_prepare_ns = 13,114,375
+      kernel_report.commitment_kernel_ns = 26,284,587
+      kernel_report.matrix_cache_hits = 127
+      kernel_report.matrix_cache_misses = 1
+
+The point is to prove concrete improvement and expose where the native prover now spends time, not just to say “applied delayed reduction.”
 
 ## Interfaces and Dependencies
 
@@ -131,3 +185,7 @@ This plan should introduce explicit backend kernel boundaries. Preferred names a
 If evaluation-basis batching becomes explicit, prefer a dedicated internal module rather than overloading the current commitment code with mixed responsibilities.
 
 Revision note: this ExecPlan was created on 2026-03-26 to turn the recent `2026/587` sum-check engineering results into a concrete Hegemon-native prover roadmap. The plan intentionally separates low-risk prover optimizations from the separate import-accumulation problem so contributors do not optimize the wrong side of the system.
+
+Revision note (2026-03-26 03:11Z): updated after implementation. The plan now records the shipped kernel telemetry, width metadata preservation, delayed-reduction kernels, prepared-matrix reuse, and the benchmark evidence showing the new steady-state native proving curve.
+
+Revision note (2026-03-26 03:28Z): updated after review fixes. The plan now records the `ring_profile` cache-key correction, cold-cache verifier benchmarking, width-metadata-driven kernel routing, and the corrected benchmark evidence.

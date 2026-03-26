@@ -4,7 +4,10 @@ use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
 use p3_goldilocks::Goldilocks;
 use serde::Serialize;
-use superneo_backend_lattice::{FoldDigestProof, LatticeBackend, LeafDigestProof};
+use superneo_backend_lattice::{
+    clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
+    FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof,
+};
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{
     Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact, SecurityParams,
@@ -88,6 +91,7 @@ struct BenchResult {
     note: String,
     edge_prepare_ns: Option<u128>,
     peak_rss_bytes: Option<u64>,
+    kernel_report: Option<KernelCostReport>,
     inline_tx_baseline: Option<InlineTxBaseline>,
 }
 
@@ -202,6 +206,7 @@ fn benchmark_toy_balance(
     let mut total_bytes = 0usize;
     let mut packed_witness_bits = 0usize;
 
+    reset_kernel_runtime_state();
     let prove_start = Instant::now();
     for idx in 0..k {
         let input_a = 10 + idx as u64;
@@ -255,7 +260,9 @@ fn benchmark_toy_balance(
     )?;
     total_bytes += fold_bytes;
     let total_prove_ns = leaf_prove_ns + fold_start.elapsed().as_nanos();
+    let kernel_report = take_kernel_cost_report();
 
+    clear_prepared_matrix_cache();
     let verify_start = Instant::now();
     for (encoding, packed, _, proof) in &leaf_payloads {
         backend.verify_leaf(&vk, &relation.relation_id(), encoding, packed, proof)?;
@@ -280,6 +287,7 @@ fn benchmark_toy_balance(
         ),
         edge_prepare_ns: None,
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        kernel_report: Some(kernel_report),
         inline_tx_baseline,
     })
 }
@@ -298,6 +306,7 @@ fn benchmark_tx_receipt(
     let mut total_bytes = 0usize;
     let mut packed_witness_bits = 0usize;
 
+    reset_kernel_runtime_state();
     let prove_start = Instant::now();
     for idx in 0..k {
         let proof_bytes = synthetic_bytes(48 + (idx % 8), idx as u64 + 11);
@@ -349,7 +358,9 @@ fn benchmark_tx_receipt(
     )?;
     total_bytes += fold_bytes;
     let total_prove_ns = leaf_prove_ns + fold_start.elapsed().as_nanos();
+    let kernel_report = take_kernel_cost_report();
 
+    clear_prepared_matrix_cache();
     let verify_start = Instant::now();
     for (encoding, packed, _, proof) in &leaf_payloads {
         backend.verify_leaf(&vk, &relation.relation_id(), encoding, packed, proof)?;
@@ -374,6 +385,7 @@ fn benchmark_tx_receipt(
         ),
         edge_prepare_ns: None,
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        kernel_report: Some(kernel_report),
         inline_tx_baseline,
     })
 }
@@ -395,6 +407,7 @@ fn benchmark_native_tx_validity(
     let mut total_bytes = 0usize;
     let mut packed_witness_bits = 0usize;
 
+    reset_kernel_runtime_state();
     let prove_start = Instant::now();
     for witness in &witnesses {
         let statement = native_tx_validity_statement_from_witness(witness)?;
@@ -434,7 +447,9 @@ fn benchmark_native_tx_validity(
     )?;
     total_bytes += fold_bytes;
     let total_prove_ns = leaf_prove_ns + fold_start.elapsed().as_nanos();
+    let kernel_report = take_kernel_cost_report();
 
+    clear_prepared_matrix_cache();
     let verify_start = Instant::now();
     for (encoding, packed, _, proof) in &leaf_payloads {
         backend.verify_leaf(&vk, &relation.relation_id(), encoding, packed, proof)?;
@@ -459,6 +474,7 @@ fn benchmark_native_tx_validity(
         ),
         edge_prepare_ns: None,
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        kernel_report: Some(kernel_report),
         inline_tx_baseline,
     })
 }
@@ -473,6 +489,7 @@ fn benchmark_native_tx_leaf_receipt_root(
     let relation = NativeTxValidityRelation::default();
     let packed_witness_bits = relation.shape().witness_schema.total_witness_bits() * k;
 
+    reset_kernel_runtime_state();
     let edge_prepare_start = Instant::now();
     let built_leaves = witnesses
         .iter()
@@ -497,7 +514,9 @@ fn benchmark_native_tx_leaf_receipt_root(
     let prove_start = Instant::now();
     let built_root = build_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts)?;
     let total_prove_ns = prove_start.elapsed().as_nanos();
+    let kernel_report = take_kernel_cost_report();
 
+    clear_prepared_matrix_cache();
     let verify_start = Instant::now();
     for (tx, receipt, built) in &built_leaves {
         verify_native_tx_leaf_artifact_bytes(tx, receipt, &built.artifact_bytes)?;
@@ -526,6 +545,7 @@ fn benchmark_native_tx_leaf_receipt_root(
         ),
         edge_prepare_ns: Some(edge_prepare_ns),
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        kernel_report: Some(kernel_report),
         inline_tx_baseline,
     })
 }
@@ -540,6 +560,7 @@ fn benchmark_tx_leaf_receipt_root(
     let leaf_relation = TxLeafPublicRelation::default();
     let packed_witness_bits = leaf_relation.shape().witness_schema.total_witness_bits() * k;
 
+    reset_kernel_runtime_state();
     let edge_prepare_start = Instant::now();
     let built_leaves = proofs
         .iter()
@@ -564,7 +585,9 @@ fn benchmark_tx_leaf_receipt_root(
     let prove_start = Instant::now();
     let built_root = build_receipt_root_artifact_bytes(&receipts)?;
     let total_prove_ns = prove_start.elapsed().as_nanos();
+    let kernel_report = take_kernel_cost_report();
 
+    clear_prepared_matrix_cache();
     let verify_start = Instant::now();
     for (tx, receipt, built) in &built_leaves {
         verify_tx_leaf_artifact_bytes(tx, receipt, &built.artifact_bytes)?;
@@ -590,6 +613,7 @@ fn benchmark_tx_leaf_receipt_root(
         ),
         edge_prepare_ns: Some(edge_prepare_ns),
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        kernel_report: Some(kernel_report),
         inline_tx_baseline,
     })
 }
@@ -603,10 +627,13 @@ fn benchmark_verified_tx_receipt(
         .collect::<Vec<_>>();
     let relation = TxLeafPublicRelation::default();
 
+    reset_kernel_runtime_state();
     let prove_start = Instant::now();
     let built = build_verified_tx_proof_receipt_root_artifact_bytes(&proofs)?;
     let total_prove_ns = prove_start.elapsed().as_nanos();
+    let kernel_report = take_kernel_cost_report();
 
+    clear_prepared_matrix_cache();
     let verify_start = Instant::now();
     let metadata =
         verify_verified_tx_proof_receipt_root_artifact_bytes(&proofs, &built.artifact_bytes)?;
@@ -637,6 +664,7 @@ fn benchmark_verified_tx_receipt(
         ),
         edge_prepare_ns: None,
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        kernel_report: Some(kernel_report),
         inline_tx_baseline,
     })
 }
