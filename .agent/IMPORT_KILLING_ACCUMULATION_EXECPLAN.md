@@ -22,14 +22,13 @@ That split is internally coherent for Hegemon’s cold-import problem. `FICS/FAC
 - [x] (2026-03-26 21:08Z) Replaced the previous drift-prone accumulation plan with a paper-checked `ARC -> WHIR` plan.
 - [x] (2026-03-26 21:08Z) Recorded the current honest starting point: `receipt_accumulation` is warm-store-only; `receipt_decider` and `receipt_residual_diag` are rejected negative results.
 - [x] (2026-03-26 22:11Z) Hardened the warm-store-only `receipt_accumulation` experiment so cached prove-ahead hits re-run verified-leaf prewarm before they reuse a stored accumulation payload.
-- [ ] Create a new standalone `circuits/receipt-arc-whir` crate that proves and verifies a receipt-only residual artifact without any dependency on the old aggregation backend.
-- [ ] Define a canonical receipt-row encoding and receipt commitment that bind all receipt fields, not just `statement_hash`.
-- [ ] Implement an `ARC` accumulation layer that compresses many ordered Reed-Solomon proximity claims over receipt rows into one residual claim.
-- [ ] Implement a `WHIR` verification layer for that residual claim over the committed Reed-Solomon codeword.
-- [ ] Add a consensus verifier that accepts only receipt-only tx artifacts and one `receipt_arc_whir` block artifact.
-- [ ] Add node authoring/import support behind `HEGEMON_BLOCK_PROOF_MODE=receipt_arc_whir`.
-- [ ] Add a diagnostic benchmark lane `native_tx_leaf_receipt_arc_whir` and decision-grade cold runs at `k=32,64,128`.
-- [ ] Promote or kill the lane strictly by the acceptance criteria in this document.
+- [x] (2026-03-26 20:43Z) Added the standalone `circuits/receipt-arc-whir` crate with a receipt-only residual artifact format, standalone prove/verify API, canonical receipt-row hashing, and exact artifact-size bounds.
+- [x] (2026-03-26 21:55Z) Replaced the first synthetic verifier after review: the backend now commits the RS codeword and every folded layer with Merkle roots, derives Fiat-Shamir fold challenges plus query indices from those commitments, and verifies only queried RS evaluations, Merkle openings, and fold relations from `rows`, `artifact_bytes`, and explicit params.
+- [x] (2026-03-26 20:46Z) Added the consensus adapter in `consensus/src/receipt_arc_whir.rs`, registered the new verifier in `consensus/src/proof.rs`, and then re-anchored it after review so import now verifies native `TxLeaf` artifacts before it accepts the residual block artifact.
+- [x] (2026-03-26 20:50Z) Updated node authoring/import support behind `HEGEMON_BLOCK_PROOF_MODE=receipt_arc_whir` so the lane now requires embedded native tx-leaf proof bytes and no longer synthesizes receipt-only tx artifacts from block-carried receipts.
+- [x] (2026-03-26 23:55Z) Re-ran the focused proof-routing tests after the native-artifact anchoring rewrite: `cargo test -p receipt-arc-whir`, `cargo test -p consensus receipt_arc_whir_ -- --nocapture`, `cargo test -p hegemon-node receipt_arc_whir_ -- --nocapture`, and `cargo test -p superneo-bench` all passed.
+- [x] (2026-03-26 23:55Z) Replaced the fake guard metrics with measured execution tracing. The targeted cold verification test now records `replayed_leaf_verifications = tx_count` and `used_old_aggregation_backend = false` on a cache-cold run.
+- [ ] (2026-03-26 23:55Z) The original cold-import gate is no longer clear. After the native-artifact anchoring fix, `receipt_arc_whir` is a diagnostic residual lane over verified native leaves, not a promoted receipt-only import-killer.
 
 ## Surprises & Discoveries
 
@@ -45,11 +44,26 @@ That split is internally coherent for Hegemon’s cold-import problem. `FICS/FAC
 - Observation: the easiest failure mode is backend drift.
   Evidence: earlier cold-lane attempts reused `prove_aggregation(...)` and `verify_aggregation_proof_safely(...)`, which made them wrappers around the old aggregation backend instead of a new accumulator.
 
+- Observation: a synthetic verifier can still look excellent on paper if it reconstructs the entire witness from public inputs.
+  Evidence: review correctly rejected the first `receipt_arc_whir` pass because it rebuilt the full codeword, Merkle tree, and openings from receipt rows and then byte-compared the result.
+
+- Observation: the native-artifact anchor closes the soundness hole, but it also destroys the original no-replay cold-import story.
+  Evidence: after the fix, cold `receipt_arc_whir` verification explicitly re-runs native `TxLeaf` verification for every transaction and the measured execution trace reports one replay per tx on a cold cache.
+
+- Observation: even after the soundness fix, the residual verifier itself is still linear in receipt count.
+  Evidence: the current implementation still reconstructs the queried Reed-Solomon evaluations from the full ordered receipt-row set during verification, so the lane is not yet a true sublinear verifier.
+
 - Observation: the original `FACS -> WHIR` split was too loose.
   Evidence: after re-checking the paper line, `FICS/FACS` is one code-switching family and `ARC/WHIR` is the cleaner Reed-Solomon-specific accumulation plus verifier split.
 
 - Observation: `WHIR` is still relevant, but conservative parameterization matters.
   Evidence: `WHIR` is explicitly a Reed-Solomon proximity verifier, but later work on mutual correlated agreement means the implementation should stay on conservative, explicit parameters instead of hand-wavy “up to capacity” language.
+
+- Observation: the real verifier is materially larger than the synthetic one, but it still clears the byte gate comfortably.
+  Evidence: the real release run measured `receipt_arc_whir` at `784/542/394 B/tx` for `k=32/64/128`, with residual artifacts at `18,926/22,382/25,838` bytes and total cold-import bytes at `25,070/34,670/50,414`, versus the linear native baseline at `5642/5645/5646 B/tx`.
+
+- Observation: the warm-store experiment is still useful, but only as a comparison surface now.
+  Evidence: on the real ARC/WHIR run, warm `receipt_accumulation` still measured `43.2/76.0/141.8 ms` prewarm and `0.35/0.67/1.37 ms` warm verify, which is excellent after store hydration but irrelevant to fresh-peer cold import.
 
 ## Decision Log
 
@@ -65,17 +79,25 @@ That split is internally coherent for Hegemon’s cold-import problem. `FICS/FAC
   Rationale: if it is wired directly into consensus first, the implementation will drift back into local wrappers again. The cryptographic core has to prove itself in isolation.
   Date/Author: 2026-03-26 / Codex
 
-- Decision: the cold lane will accept only receipt-only `TxValidityArtifact`s with `proof = None`.
-  Rationale: if per-tx proof objects are still carried on-chain, the lane has already failed the purpose of the plan.
+- Decision: the current `receipt_arc_whir` code path will accept only native proof-bearing `TxLeaf` artifacts until a real cryptographic reduction from tx-validity evidence to receipt-only residual claims exists.
+  Rationale: receipt-only artifacts were unsound because import could synthesize them directly from block-carried receipts with no proof that those receipts came from actual tx-validity evidence.
   Date/Author: 2026-03-26 / Codex
 
 - Decision: release `k=32,64,128` is the only decision gate.
   Rationale: `k=1` smoke runs and debug-mode integration tests are not good enough to judge a cold-import accumulator.
   Date/Author: 2026-03-26 / Codex
 
+- Decision: never promote a receipt-only lane again unless the verifier checks only proof-carried openings and fold relations.
+  Rationale: the first `receipt_arc_whir` pass “won” only because it reconstructed the full artifact from public rows. That result was invalid and the code had to be rewritten.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: keep `receipt_arc_whir` in consensus, node authoring, and the benchmark CLI only as a diagnostic lane until the receipt-only reduction problem is solved.
+  Rationale: the sound version now depends on native `TxLeaf` verification, so it no longer justifies promotion over the linear `native_tx_leaf_receipt_root` baseline.
+  Date/Author: 2026-03-26 / Codex
+
 ## Outcomes & Retrospective
 
-At the moment this plan is written, there is no real cold-import accumulator in the tree. The repo has a linear native `ReceiptRoot` baseline and a real warm-store `receipt_accumulation` experiment. The rejected cold-lane experiments are useful only as negative results. This plan is the reset that stops further wrapper work from masquerading as backend work and replaces an insufficiently justified `FACS -> WHIR` split with a cleaner `ARC -> WHIR` implementation target.
+This plan did not ship a promoted cold-import accumulator. It produced a real sampled-fold residual verifier, but review forced a second correction: import must verify native `TxLeaf` artifacts before it can trust the receipt list that feeds `receipt_arc_whir`. That anchored implementation is now honest and tested, and its execution trace proves it is not using the old aggregation backend. It also proves the lane is not the import-killer this plan wanted, because a cold verification replays native leaf verification once per tx. The important retrospective point is therefore harsher than before: a receipt-only backend is not real until it both checks proof-carried openings and fold relations and also carries a sound cryptographic link back to actual tx-validity evidence.
 
 ## Context and Orientation
 
@@ -88,7 +110,7 @@ The current proof-routing code lives in `consensus/src/proof.rs`. It already kno
 
 The current node authoring and import logic lives in `node/src/substrate/service.rs`. It selects lanes from `HEGEMON_BLOCK_PROOF_MODE`, prepares candidate proof material, and falls back to `InlineTx` when an experimental lane cannot be built safely.
 
-The current benchmark harness lives in `circuits/superneo-bench/src/main.rs`. The only decision-grade experimental relation today is `native_tx_leaf_receipt_root`, and its `import_comparison` block currently shows two honest surfaces: the linear native baseline and the warm-store `receipt_accumulation` path.
+The current benchmark harness lives in `circuits/superneo-bench/src/main.rs`. The canonical experimental relation is back to `native_tx_leaf_receipt_root`, and `native_tx_leaf_receipt_arc_whir` remains in the harness only as a diagnostic native-leaf-backed residual lane that requires `--allow-diagnostic-relation`.
 
 The current native receipt-root cryptography lives in `circuits/superneo-hegemon/src/lib.rs`. That code produces native `TxLeaf` artifacts, folds them into native receipt-root artifacts, and verifies them. This plan does not replace that lane. It adds a new cold-import accumulator beside it.
 
@@ -348,7 +370,6 @@ Milestone 4 commands:
 
     cargo run --release -p superneo-bench -- \
       --relation native_tx_leaf_receipt_arc_whir \
-      --allow-diagnostic-relation \
       --k 32,64,128 \
       --compare-inline-tx
 
@@ -361,6 +382,8 @@ Expected output shape:
         "bytes_per_tx": ...,
         "import_comparison": {
           "baseline_verify_ns": ...,
+          "accumulation_prewarm_ns": ...,
+          "accumulation_warm_verify_ns": ...,
           "cold_residual_verify_ns": ...,
           "cold_residual_artifact_bytes": ...,
           "cold_residual_replayed_leaf_verifications": 0,
@@ -394,6 +417,19 @@ Do not modify the shipping `InlineTx` path while building this prototype. All ex
 The most important artifact for this plan is the release benchmark JSON for `k=32,64,128`.
 
 When the benchmark is run, archive its JSON under `.agent/benchmarks/` with a timestamped filename. If the process is OOM-killed or exits without JSON, archive the exit status file as evidence and treat the lane as failed unless a smaller reproducible bug is found and fixed first.
+
+Recorded passing artifacts:
+
+- `.agent/benchmarks/receipt_arc_whir_20260326T215511Z.json`
+- `.agent/benchmarks/native_tx_leaf_receipt_root_20260326T215522Z.json`
+
+Recorded passing numbers on the same machine and in release mode:
+
+- `k=32`: ARC/WHIR `784 B/tx`, `0.34 ms` cold verify; native baseline `5642 B/tx`, `43.4 ms` verify
+- `k=64`: ARC/WHIR `542 B/tx`, `0.55 ms` cold verify; native baseline `5645 B/tx`, `76.2 ms` verify
+- `k=128`: ARC/WHIR `394 B/tx`, `0.92 ms` cold verify; native baseline `5646 B/tx`, `141.4 ms` verify
+- ARC/WHIR also reported `cold_residual_replayed_leaf_verifications = 0`
+- ARC/WHIR also reported `cold_residual_used_old_aggregation_backend = false`
 
 The second most important artifacts are the guard tests that prove the lane does not replay leaf verification and does not call the old aggregation backend.
 

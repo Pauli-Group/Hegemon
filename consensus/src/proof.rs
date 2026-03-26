@@ -12,6 +12,13 @@ use crate::merge_root_layout::{
     merge_root_leaf_fan_in_from_env, merge_root_leaf_manifest_commitment,
     merge_root_tree_levels_for_tx_count,
 };
+use crate::receipt_arc_whir::{
+    ReceiptArcWhirResidualReport, ReceiptArcWhirVerifyDetails,
+    build_receipt_arc_whir_artifact_from_receipts,
+    experimental_receipt_arc_whir_artifact_kind as receipt_arc_whir_kind,
+    experimental_receipt_arc_whir_verifier_profile as receipt_arc_whir_profile,
+    receipt_arc_whir_metadata, verify_receipt_arc_whir_artifact_from_receipts,
+};
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofArtifactKind, ProofEnvelope,
     ProofVerificationMode, ProvenBatchMode, ReceiptRootMetadata, StarkCommitment, StateRoot,
@@ -27,6 +34,7 @@ use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::any::Any;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
@@ -71,6 +79,17 @@ pub struct CommitmentNullifierLists {
 const DEFAULT_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY: usize = 4096;
 const RECEIPT_ACCUMULATION_ARTIFACT_VERSION: u16 = 1;
 const RECEIPT_ACCUMULATION_ARTIFACT_KIND_BYTES: [u8; 16] = *b"rcpt_accum_v0001";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ReceiptArcWhirExecutionTrace {
+    replayed_leaf_verifications: usize,
+    used_old_aggregation_backend: bool,
+}
+
+thread_local! {
+    static RECEIPT_ARC_WHIR_EXECUTION_TRACE: RefCell<Option<ReceiptArcWhirExecutionTrace>> =
+        const { RefCell::new(None) };
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VerifiedNativeTxLeaf {
@@ -123,6 +142,35 @@ impl NativeTxLeafVerifyCache {
         self.entries.insert(key, value);
         self.order.push_back(key);
     }
+}
+
+fn with_receipt_arc_whir_execution_trace<T>(
+    f: impl FnOnce() -> Result<T, ProofError>,
+) -> Result<(T, ReceiptArcWhirExecutionTrace), ProofError> {
+    RECEIPT_ARC_WHIR_EXECUTION_TRACE.with(|trace| {
+        let previous = trace.replace(Some(ReceiptArcWhirExecutionTrace::default()));
+        let result = f();
+        let current = trace
+            .replace(previous)
+            .expect("receipt_arc_whir execution trace must be present");
+        result.map(|value| (value, current))
+    })
+}
+
+fn note_receipt_arc_whir_leaf_verification() {
+    RECEIPT_ARC_WHIR_EXECUTION_TRACE.with(|trace| {
+        if let Some(current) = trace.borrow_mut().as_mut() {
+            current.replayed_leaf_verifications += 1;
+        }
+    });
+}
+
+fn note_receipt_arc_whir_old_aggregation_backend() {
+    RECEIPT_ARC_WHIR_EXECUTION_TRACE.with(|trace| {
+        if let Some(current) = trace.borrow_mut().as_mut() {
+            current.used_old_aggregation_backend = true;
+        }
+    });
 }
 
 fn load_native_tx_leaf_verify_cache_capacity() -> usize {
@@ -222,6 +270,7 @@ impl Default for VerifierRegistry {
         registry.register(Arc::new(NativeTxLeafVerifier));
         registry.register(Arc::new(MergeRootP3Verifier));
         registry.register(Arc::new(ReceiptRootVerifier));
+        registry.register(Arc::new(ReceiptArcWhirVerifier));
         registry.register(Arc::new(ReceiptAccumulationVerifier));
         registry
     }
@@ -416,6 +465,8 @@ fn verify_native_tx_leaf_artifact_record(
             message: "native tx-leaf cache entry receipt mismatch".to_string(),
         });
     }
+
+    note_receipt_arc_whir_leaf_verification();
 
     let canonical = canonical_receipt_from_tx_receipt(&artifact.receipt);
     let tx_view = tx_leaf_public_tx_from_consensus_tx(tx);
@@ -639,6 +690,92 @@ impl ArtifactVerifier for ReceiptAccumulationVerifier {
             &envelope.artifact_bytes,
         )
     }
+}
+
+struct ReceiptArcWhirVerifier;
+
+impl ArtifactVerifier for ReceiptArcWhirVerifier {
+    fn kind(&self) -> ProofArtifactKind {
+        experimental_receipt_arc_whir_artifact_kind()
+    }
+
+    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
+        verifier_profile == experimental_receipt_arc_whir_verifier_profile()
+    }
+
+    fn verify_block_artifact(
+        &self,
+        txs: &[crate::types::Transaction],
+        tx_artifacts: Option<&[TxValidityArtifact]>,
+        expected_commitment: &[u8; 48],
+        envelope: &ProofEnvelope,
+    ) -> Result<BlockArtifactVerifyReport, ProofError> {
+        let artifacts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+        let details = verify_receipt_arc_whir_native_artifacts_detailed(
+            txs,
+            artifacts,
+            expected_commitment,
+            envelope,
+        )?;
+        if details.residual_report.used_old_aggregation_backend {
+            return Err(ProofError::AggregationProofInputsMismatch(
+                "receipt_arc_whir touched the old aggregation backend".to_string(),
+            ));
+        }
+        Ok(details.block_report)
+    }
+}
+
+fn verify_receipt_arc_whir_native_artifacts_detailed(
+    txs: &[crate::types::Transaction],
+    tx_artifacts: &[TxValidityArtifact],
+    expected_commitment: &[u8; 48],
+    envelope: &ProofEnvelope,
+) -> Result<ReceiptArcWhirVerifyDetails, ProofError> {
+    if tx_artifacts.len() != txs.len() {
+        return Err(ProofError::TransactionProofCountMismatch {
+            expected: txs.len(),
+            observed: tx_artifacts.len(),
+        });
+    }
+
+    let start_verify = Instant::now();
+    let (residual_report, execution_trace) = with_receipt_arc_whir_execution_trace(|| {
+        let mut verified_bindings = Vec::with_capacity(txs.len());
+        let mut receipts = Vec::with_capacity(txs.len());
+        for (index, (tx, artifact)) in txs.iter().zip(tx_artifacts).enumerate() {
+            let record = verify_native_tx_leaf_artifact_record(tx, artifact, None)
+                .map_err(|err| reindex_tx_artifact_error(index, err))?;
+            verified_bindings.push(record.binding);
+            receipts.push(record.receipt);
+        }
+
+        let derived_statement_commitment = commitment_from_statement_bindings(&verified_bindings)?;
+        if derived_statement_commitment != *expected_commitment {
+            return Err(ProofError::AggregationProofInputsMismatch(
+                "receipt_arc_whir statement commitment mismatch".to_string(),
+            ));
+        }
+
+        verify_receipt_arc_whir_artifact_from_receipts(&receipts, expected_commitment, envelope)
+    })?;
+
+    Ok(ReceiptArcWhirVerifyDetails {
+        block_report: BlockArtifactVerifyReport {
+            tx_count: txs.len(),
+            verified_statement_commitment: *expected_commitment,
+            verify_ms: start_verify.elapsed().as_millis(),
+            verify_batch_ms: 0,
+            cache_hit: None,
+            cache_build_ms: None,
+        },
+        residual_report: ReceiptArcWhirResidualReport {
+            row_count: residual_report.row_count,
+            artifact_bytes: residual_report.artifact_bytes,
+            replayed_leaf_verifications: execution_trace.replayed_leaf_verifications,
+            used_old_aggregation_backend: execution_trace.used_old_aggregation_backend,
+        },
+    })
 }
 
 pub fn commitment_nullifier_lists(
@@ -903,6 +1040,14 @@ pub fn experimental_native_receipt_root_verifier_profile() -> VerifierProfileDig
     native_receipt_root_profile()
 }
 
+pub fn experimental_receipt_arc_whir_artifact_kind() -> ProofArtifactKind {
+    receipt_arc_whir_kind()
+}
+
+pub fn experimental_receipt_arc_whir_verifier_profile() -> VerifierProfileDigest {
+    receipt_arc_whir_profile()
+}
+
 pub fn experimental_receipt_accumulation_artifact_kind() -> ProofArtifactKind {
     ProofArtifactKind::Custom(RECEIPT_ACCUMULATION_ARTIFACT_KIND_BYTES)
 }
@@ -1113,6 +1258,16 @@ fn max_receipt_accumulation_artifact_bytes(tx_count: usize) -> usize {
     2 + 4 + 4 + max_native_receipt_root_artifact_bytes(tx_count) + (tx_count * 48)
 }
 
+pub fn build_experimental_receipt_arc_whir_artifact(
+    receipts: &[TxValidityReceipt],
+) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
+    let envelope = build_receipt_arc_whir_artifact_from_receipts(receipts)?;
+    Ok(ExperimentalReceiptRootArtifact {
+        artifact_bytes: envelope.artifact_bytes,
+        metadata: receipt_arc_whir_metadata(receipts.len()),
+    })
+}
+
 pub fn build_experimental_receipt_root_artifact(
     receipts: &[TxValidityReceipt],
 ) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
@@ -1238,6 +1393,35 @@ pub fn verify_experimental_receipt_root_artifact(
         leaf_count: metadata.leaf_count,
         fold_count: metadata.fold_count,
     })
+}
+
+pub fn verify_experimental_receipt_arc_whir_artifact(
+    transactions: &[crate::types::Transaction],
+    tx_artifacts: &[TxValidityArtifact],
+    expected_commitment: &[u8; 48],
+    envelope: &ProofEnvelope,
+) -> Result<BlockArtifactVerifyReport, ProofError> {
+    verify_receipt_arc_whir_native_artifacts_detailed(
+        transactions,
+        tx_artifacts,
+        expected_commitment,
+        envelope,
+    )
+    .map(|details| details.block_report)
+}
+
+pub fn verify_experimental_receipt_arc_whir_artifact_detailed(
+    transactions: &[crate::types::Transaction],
+    tx_artifacts: &[TxValidityArtifact],
+    expected_commitment: &[u8; 48],
+    envelope: &ProofEnvelope,
+) -> Result<ReceiptArcWhirVerifyDetails, ProofError> {
+    verify_receipt_arc_whir_native_artifacts_detailed(
+        transactions,
+        tx_artifacts,
+        expected_commitment,
+        envelope,
+    )
 }
 
 pub fn verify_experimental_receipt_root_artifact_from_proofs(
@@ -1639,6 +1823,7 @@ fn verify_aggregation_proof_safely(
     tx_count: usize,
     expected_commitment: &[u8; 48],
 ) -> Result<crate::aggregation::AggregationVerifyMetrics, ProofError> {
+    note_receipt_arc_whir_old_aggregation_backend();
     run_verifier(
         format!("aggregation proof verification for {tx_count} txs"),
         || verify_aggregation_proof_with_metrics(proof_bytes, tx_count, expected_commitment),
@@ -2042,9 +2227,7 @@ impl ProofVerifier for ParallelProofVerifier {
                     }
                     let artifacts = if let Some(artifacts) = tx_validity_artifacts {
                         artifacts.as_slice()
-                    } else if proven_batch.proof_kind
-                        == experimental_receipt_accumulation_artifact_kind()
-                    {
+                    } else if proof_kind_uses_receipt_only_tx_artifacts(proven_batch.proof_kind) {
                         synthesized_receipt_artifacts = receipt_root
                             .receipts
                             .iter()
@@ -2255,6 +2438,10 @@ pub fn receipt_statement_commitment(
     receipts: &[TxValidityReceipt],
 ) -> Result<[u8; 48], ProofError> {
     commitment_from_receipts(receipts)
+}
+
+fn proof_kind_uses_receipt_only_tx_artifacts(kind: ProofArtifactKind) -> bool {
+    kind == experimental_receipt_accumulation_artifact_kind()
 }
 
 fn read_u16(bytes: &[u8], cursor: &mut usize, context: &str) -> Result<u16, ProofError> {

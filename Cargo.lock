@@ -1637,6 +1637,7 @@ dependencies = [
  "proptest",
  "protocol-versioning",
  "rayon",
+ "receipt-arc-whir",
  "runtime",
  "sc-consensus-pow",
  "serde",
@@ -8200,6 +8201,16 @@ dependencies = [
  "rustls-pki-types",
  "time",
  "yasna",
+]
+
+[[package]]
+name = "receipt-arc-whir"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "p3-field",
+ "p3-goldilocks",
+ "synthetic-crypto",
 ]
 
 [[package]]

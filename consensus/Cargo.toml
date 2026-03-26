@@ -40,6 +40,7 @@ sp-runtime = { workspace = true, features = ["std"] }
 thiserror = "1"
 tracing = "0.1"
 protocol-versioning = { path = "../protocol/versioning" }
+receipt-arc-whir = { path = "../circuits/receipt-arc-whir" }
 serde = { version = "1", features = ["derive"] }
 transaction-circuit = { path = "../circuits/transaction" }
 zstd = { version = "0.13", default-features = false }

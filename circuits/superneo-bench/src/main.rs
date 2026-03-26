@@ -5,10 +5,12 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
 use consensus::{
-    build_experimental_native_receipt_accumulation_artifact, clear_verified_native_tx_leaf_store,
+    build_experimental_native_receipt_accumulation_artifact,
+    build_experimental_receipt_arc_whir_artifact, clear_verified_native_tx_leaf_store,
     prewarm_verified_native_tx_leaf_store, receipt_statement_commitment,
     tx_validity_artifact_from_native_tx_leaf_bytes,
     verify_experimental_native_receipt_accumulation_artifact,
+    verify_experimental_receipt_arc_whir_artifact_detailed,
 };
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Serialize};
@@ -53,6 +55,8 @@ enum RelationChoice {
         help = "Canonical experimental lane: native witness -> native tx-leaf -> receipt-root"
     )]
     NativeTxLeafReceiptRoot,
+    #[value(help = "Diagnostic lane: native witness -> native tx-leaf -> receipt_arc_whir")]
+    NativeTxLeafReceiptArcWhir,
     #[value(help = "Diagnostic bridge lane: proof-ready tx-leaf -> receipt-root")]
     TxLeafReceiptRoot,
     #[value(help = "Diagnostic bridge lane: inline proofs -> receipt-root")]
@@ -107,8 +111,12 @@ struct BenchResult {
 #[derive(Debug, Serialize, Deserialize)]
 struct ImportComparison {
     baseline_verify_ns: u128,
-    accumulation_prewarm_ns: u128,
-    accumulation_warm_verify_ns: u128,
+    accumulation_prewarm_ns: Option<u128>,
+    accumulation_warm_verify_ns: Option<u128>,
+    cold_residual_verify_ns: Option<u128>,
+    cold_residual_artifact_bytes: Option<usize>,
+    cold_residual_replayed_leaf_verifications: Option<usize>,
+    cold_residual_used_old_aggregation_backend: Option<bool>,
 }
 
 fn main() -> Result<()> {
@@ -151,6 +159,9 @@ fn main() -> Result<()> {
             }
             RelationChoice::NativeTxLeafReceiptRoot => {
                 benchmark_native_tx_leaf_receipt_root(k, inline_tx_baseline)?
+            }
+            RelationChoice::NativeTxLeafReceiptArcWhir => {
+                benchmark_native_tx_leaf_receipt_arc_whir(k, inline_tx_baseline)?
             }
             RelationChoice::TxLeafReceiptRoot => {
                 benchmark_tx_leaf_receipt_root(k, inline_tx_baseline)?
@@ -232,7 +243,10 @@ fn relation_description(choice: RelationChoice) -> &'static str {
             "native witness relation without the tx-leaf -> receipt-root topology"
         }
         RelationChoice::NativeTxLeafReceiptRoot => {
-            "native witness -> native tx-leaf -> receipt-root topology"
+            "native witness -> native tx-leaf -> receipt-root baseline topology"
+        }
+        RelationChoice::NativeTxLeafReceiptArcWhir => {
+            "native witness -> native tx-leaf -> receipt_arc_whir residual topology"
         }
         RelationChoice::TxLeafReceiptRoot => {
             "bridge topology built from proof-ready tx-leaf artifacts"
@@ -666,8 +680,155 @@ fn benchmark_native_tx_leaf_receipt_root(
         inline_tx_baseline,
         import_comparison: Some(ImportComparison {
             baseline_verify_ns: total_verify_ns,
-            accumulation_prewarm_ns,
-            accumulation_warm_verify_ns,
+            accumulation_prewarm_ns: Some(accumulation_prewarm_ns),
+            accumulation_warm_verify_ns: Some(accumulation_warm_verify_ns),
+            cold_residual_verify_ns: None,
+            cold_residual_artifact_bytes: None,
+            cold_residual_replayed_leaf_verifications: None,
+            cold_residual_used_old_aggregation_backend: None,
+        }),
+    })
+}
+
+fn benchmark_native_tx_leaf_receipt_arc_whir(
+    k: usize,
+    inline_tx_baseline: Option<InlineTxBaseline>,
+) -> Result<BenchResult> {
+    let witnesses = (0..k)
+        .map(|seed| sample_witness(seed as u64 + 1))
+        .collect::<Vec<_>>();
+    let relation = NativeTxValidityRelation::default();
+    let packed_witness_bits = relation.shape().witness_schema.total_witness_bits() * k;
+
+    reset_kernel_runtime_state();
+    let edge_prepare_start = Instant::now();
+    let built_leaves = witnesses
+        .iter()
+        .map(|witness| {
+            let tx = tx_leaf_public_tx_from_witness(witness)?;
+            let built = build_native_tx_leaf_artifact_bytes(witness)?;
+            let receipt = built.receipt.clone();
+            Ok((tx, receipt, built))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let edge_prepare_ns = edge_prepare_start.elapsed().as_nanos();
+
+    let native_artifacts = built_leaves
+        .iter()
+        .map(|(_, _, built)| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+        .collect::<Result<Vec<_>>>()?;
+    let consensus_transactions = built_leaves
+        .iter()
+        .map(|(tx, _, _)| {
+            consensus::Transaction::new_with_hashes(
+                tx.nullifiers.clone(),
+                tx.commitments.clone(),
+                tx.balance_tag,
+                tx.version,
+                tx.ciphertext_hashes.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let consensus_artifacts = built_leaves
+        .iter()
+        .map(|(_, _, built)| {
+            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes.clone())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let receipts = consensus_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    let expected_commitment = receipt_statement_commitment(&receipts)?;
+    let tx_leaf_bytes_total = built_leaves
+        .iter()
+        .map(|(_, _, built)| built.artifact_bytes.len())
+        .sum::<usize>();
+
+    let prove_start = Instant::now();
+    let built_root = build_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts)?;
+    let _baseline_prove_ns = prove_start.elapsed().as_nanos();
+    let kernel_report = take_kernel_cost_report();
+
+    clear_prepared_matrix_cache();
+    let verify_start = Instant::now();
+    for (tx, receipt, built) in &built_leaves {
+        verify_native_tx_leaf_artifact_bytes(tx, receipt, &built.artifact_bytes)?;
+    }
+    let _baseline_metadata = verify_native_tx_leaf_receipt_root_artifact_bytes(
+        &native_artifacts,
+        &built_root.artifact_bytes,
+    )?;
+    let baseline_verify_ns = verify_start.elapsed().as_nanos();
+
+    clear_verified_native_tx_leaf_store();
+    clear_prepared_matrix_cache();
+    let accumulation_artifact =
+        build_experimental_native_receipt_accumulation_artifact(&consensus_artifacts)?;
+    let accumulation_prewarm_start = Instant::now();
+    prewarm_verified_native_tx_leaf_store(&consensus_transactions, &consensus_artifacts)?;
+    let accumulation_prewarm_ns = accumulation_prewarm_start.elapsed().as_nanos();
+    let accumulation_verify_start = Instant::now();
+    let _accumulation_report = verify_experimental_native_receipt_accumulation_artifact(
+        &consensus_transactions,
+        &receipts,
+        None,
+        &expected_commitment,
+        &accumulation_artifact.artifact_bytes,
+    )?;
+    let accumulation_warm_verify_ns = accumulation_verify_start.elapsed().as_nanos();
+    clear_verified_native_tx_leaf_store();
+    let cold_prove_start = Instant::now();
+    let cold_artifact = build_experimental_receipt_arc_whir_artifact(&receipts)?;
+    let cold_prove_ns = cold_prove_start.elapsed().as_nanos();
+    let cold_envelope = consensus::ProofEnvelope {
+        kind: consensus::experimental_receipt_arc_whir_artifact_kind(),
+        verifier_profile: consensus::experimental_receipt_arc_whir_verifier_profile(),
+        artifact_bytes: cold_artifact.artifact_bytes.clone(),
+    };
+    let cold_residual_artifact_bytes = tx_leaf_bytes_total + cold_artifact.artifact_bytes.len();
+    let cold_verify_start = Instant::now();
+    let cold_report = verify_experimental_receipt_arc_whir_artifact_detailed(
+        &consensus_transactions,
+        &consensus_artifacts,
+        &expected_commitment,
+        &cold_envelope,
+    )?;
+    let cold_residual_verify_ns = cold_verify_start.elapsed().as_nanos();
+    clear_verified_native_tx_leaf_store();
+
+    let total_bytes = cold_residual_artifact_bytes;
+
+    Ok(BenchResult {
+        relation: "native_tx_leaf_receipt_arc_whir".to_owned(),
+        k,
+        bytes_per_tx: total_bytes.div_ceil(k),
+        total_active_path_prove_ns: cold_prove_ns,
+        total_active_path_verify_ns: cold_residual_verify_ns,
+        packed_witness_bits,
+        shape_digest: shape_hex(ShapeDigest(cold_artifact.metadata.shape_digest)),
+        note: format!(
+            "{}; tx_leaf_artifacts={}B residual_artifact={}B",
+            note_prefix(RelationChoice::NativeTxLeafReceiptArcWhir),
+            tx_leaf_bytes_total,
+            cold_artifact.artifact_bytes.len()
+        ),
+        edge_prepare_ns: Some(edge_prepare_ns),
+        peak_rss_bytes: Some(current_peak_rss_bytes()?),
+        kernel_report: Some(kernel_report),
+        inline_tx_baseline,
+        import_comparison: Some(ImportComparison {
+            baseline_verify_ns,
+            accumulation_prewarm_ns: Some(accumulation_prewarm_ns),
+            accumulation_warm_verify_ns: Some(accumulation_warm_verify_ns),
+            cold_residual_verify_ns: Some(cold_residual_verify_ns),
+            cold_residual_artifact_bytes: Some(cold_residual_artifact_bytes),
+            cold_residual_replayed_leaf_verifications: Some(
+                cold_report.residual_report.replayed_leaf_verifications,
+            ),
+            cold_residual_used_old_aggregation_backend: Some(
+                cold_report.residual_report.used_old_aggregation_backend,
+            ),
         }),
     })
 }
@@ -1077,7 +1238,9 @@ mod tests {
     fn note_prefix_labels_canonical_and_diagnostic_lanes() {
         assert!(note_prefix(RelationChoice::NativeTxLeafReceiptRoot)
             .starts_with("canonical experimental lane:"),);
-        assert!(note_prefix(RelationChoice::TxLeafReceiptRoot).starts_with("diagnostic lane:"),);
+        assert!(
+            note_prefix(RelationChoice::NativeTxLeafReceiptArcWhir).starts_with("diagnostic lane:"),
+        );
     }
 
     #[test]

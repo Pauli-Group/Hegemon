@@ -43,6 +43,7 @@ members = [
     "circuits/superneo-ring",
     "circuits/superneo-backend-lattice",
     "circuits/superneo-hegemon",
+    "circuits/receipt-arc-whir",
     "circuits/superneo-bench",
 ]
 exclude = ["spikes/recursion"]

@@ -9,6 +9,7 @@ pub mod mining;
 pub mod nullifier;
 pub mod pow;
 pub mod proof;
+pub mod receipt_arc_whir;
 pub mod reward;
 pub mod substrate;
 pub mod substrate_pow;
@@ -47,23 +48,30 @@ pub use proof::{
     ArtifactVerifier, BlockArtifactVerifyReport, CommitmentNullifierLists,
     ExperimentalReceiptRootArtifact, HashVerifier, ParallelProofVerifier, ProofVerifier,
     ReceiptAccumulator, VerifierRegistry, build_experimental_native_receipt_accumulation_artifact,
-    build_experimental_native_receipt_root_artifact, build_experimental_receipt_root_artifact,
-    build_experimental_receipt_root_artifact_from_proofs, clear_verified_native_tx_leaf_store,
-    commitment_nullifier_lists, experimental_native_receipt_root_verifier_profile,
+    build_experimental_native_receipt_root_artifact, build_experimental_receipt_arc_whir_artifact,
+    build_experimental_receipt_root_artifact, build_experimental_receipt_root_artifact_from_proofs,
+    clear_verified_native_tx_leaf_store, commitment_nullifier_lists,
+    experimental_native_receipt_root_verifier_profile,
     experimental_native_tx_leaf_verifier_profile, experimental_receipt_accumulation_artifact_kind,
-    experimental_receipt_accumulation_verifier_profile, experimental_receipt_root_verifier_profile,
-    experimental_tx_leaf_verifier_profile, prewarm_verified_native_tx_leaf_store,
-    receipt_statement_commitment, tx_validity_artifact_from_native_tx_leaf_bytes,
-    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt,
-    tx_validity_artifact_from_tx_leaf_proof, tx_validity_receipt_from_proof,
-    verify_commitment_proof_payload, verify_experimental_native_receipt_accumulation_artifact,
-    verify_experimental_native_receipt_root_artifact, verify_experimental_receipt_root_artifact,
+    experimental_receipt_accumulation_verifier_profile,
+    experimental_receipt_arc_whir_artifact_kind, experimental_receipt_arc_whir_verifier_profile,
+    experimental_receipt_root_verifier_profile, experimental_tx_leaf_verifier_profile,
+    prewarm_verified_native_tx_leaf_store, receipt_statement_commitment,
+    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof,
+    tx_validity_artifact_from_receipt, tx_validity_artifact_from_tx_leaf_proof,
+    tx_validity_receipt_from_proof, verify_commitment_proof_payload,
+    verify_experimental_native_receipt_accumulation_artifact,
+    verify_experimental_native_receipt_root_artifact,
+    verify_experimental_receipt_arc_whir_artifact,
+    verify_experimental_receipt_arc_whir_artifact_detailed,
+    verify_experimental_receipt_root_artifact,
     verify_experimental_receipt_root_artifact_from_proofs,
 };
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CRYPTO_SUITE_GAMMA,
     CircuitVersion, CryptoSuiteId, DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
 };
+pub use receipt_arc_whir::ReceiptArcWhirVerifyDetails;
 pub use substrate::{BlockOrigin, ImportReceipt, import_pow_block};
 pub use substrate_pow::{
     Sha256dAlgorithm, Sha256dSeal, compact_to_target, compute_work, counter_to_nonce, mine_round,

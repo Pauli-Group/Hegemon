@@ -2669,6 +2669,9 @@ impl ProverCoordinator {
         if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
             return pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
         }
+        if raw.eq_ignore_ascii_case("receipt_arc_whir") {
+            return pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
+        }
         if raw.eq_ignore_ascii_case("flat")
             || raw.eq_ignore_ascii_case("flat_batches")
             || raw.eq_ignore_ascii_case("flatbatches")

@@ -2663,6 +2663,20 @@ impl PreparedArtifactSelector {
         Self::from_mode(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
     }
 
+    fn receipt_arc_whir() -> Self {
+        let proof_kind = match consensus::experimental_receipt_arc_whir_artifact_kind() {
+            consensus::ProofArtifactKind::Custom(bytes) => {
+                pallet_shielded_pool::types::ProofArtifactKind::Custom(bytes)
+            }
+            _ => unreachable!("receipt_arc_whir kind must be custom"),
+        };
+        Self {
+            legacy_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+            proof_kind,
+            verifier_profile: consensus::experimental_receipt_arc_whir_verifier_profile(),
+        }
+    }
+
     fn receipt_accumulation() -> Self {
         let proof_kind = match consensus::experimental_receipt_accumulation_artifact_kind() {
             consensus::ProofArtifactKind::Custom(bytes) => {
@@ -2694,6 +2708,9 @@ fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
         return PreparedArtifactSelector::receipt_root();
     }
+    if raw.eq_ignore_ascii_case("receipt_arc_whir") {
+        return PreparedArtifactSelector::receipt_arc_whir();
+    }
     if raw.eq_ignore_ascii_case("receipt_accumulation")
         || raw.eq_ignore_ascii_case("receipt-accumulation")
     {
@@ -2724,6 +2741,8 @@ fn receipt_root_lane_requires_embedded_proof_bytes(
     }
     let lane = if proof_kind == PreparedArtifactSelector::receipt_accumulation().proof_kind {
         "receipt_accumulation"
+    } else if proof_kind == PreparedArtifactSelector::receipt_arc_whir().proof_kind {
+        "receipt_arc_whir"
     } else {
         "receipt_root"
     };
@@ -2954,6 +2973,51 @@ fn build_receipt_accumulation_proof_from_materials(
     })
 }
 
+fn build_receipt_arc_whir_proof_from_materials(
+    tx_artifacts: &[consensus::TxValidityArtifact],
+) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String> {
+    if tx_artifacts.is_empty() {
+        return Err("candidate tx set has no receipt_arc_whir proof material".to_string());
+    }
+    if tx_artifacts.iter().any(|artifact| {
+        artifact
+            .proof
+            .as_ref()
+            .map(|proof| {
+                proof.kind != consensus::ProofArtifactKind::TxLeaf
+                    || proof.verifier_profile
+                        != consensus::experimental_native_tx_leaf_verifier_profile()
+            })
+            .unwrap_or(true)
+    }) {
+        return Err("receipt_arc_whir requires native tx-leaf artifacts for every tx".to_string());
+    }
+    let consensus_receipts = tx_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    let built = consensus::build_experimental_receipt_arc_whir_artifact(&consensus_receipts)
+        .map_err(|err| format!("receipt_arc_whir artifact generation failed: {err}"))?;
+    Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
+        metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+        receipts: consensus_receipts
+            .into_iter()
+            .map(|receipt| pallet_shielded_pool::types::TxValidityReceipt {
+                statement_hash: receipt.statement_hash,
+                proof_digest: receipt.proof_digest,
+                public_inputs_digest: receipt.public_inputs_digest,
+                verifier_profile: receipt.verifier_profile,
+            })
+            .collect(),
+    })
+}
+
 fn prewarm_receipt_accumulation_store(
     transactions: &[consensus::types::Transaction],
     tx_artifacts: &[consensus::TxValidityArtifact],
@@ -3164,6 +3228,15 @@ where
             ),
         )),
     }
+}
+
+fn prepare_receipt_arc_whir_artifacts(
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
+) -> Result<PreparedAggregationOutcome, String> {
+    prepare_native_receipt_root_artifacts_with_builder(
+        tx_artifacts,
+        build_receipt_arc_whir_proof_from_materials,
+    )
 }
 
 fn should_store_prove_ahead_aggregation_outcome(
@@ -3431,6 +3504,14 @@ fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::Can
     if matches!(
         payload.proof_mode,
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+    ) && payload.proof_kind == PreparedArtifactSelector::receipt_arc_whir().proof_kind
+    {
+        payload.verifier_profile = consensus::experimental_receipt_arc_whir_verifier_profile();
+        return;
+    }
+    if matches!(
+        payload.proof_mode,
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
     ) && payload.proof_kind == PreparedArtifactSelector::receipt_accumulation().proof_kind
     {
         payload.verifier_profile = consensus::experimental_receipt_accumulation_verifier_profile();
@@ -3641,6 +3722,12 @@ fn prepare_block_proof_bundle(
                                     ),
                                 )),
                             }
+                        } else if selected_artifact.proof_kind
+                            == PreparedArtifactSelector::receipt_arc_whir().proof_kind
+                        {
+                            prepare_receipt_arc_whir_artifacts(
+                                aggregation_tx_artifacts.as_deref(),
+                            )
                         } else {
                             prepare_native_receipt_root_artifacts(
                                 aggregation_tx_artifacts.as_deref(),
@@ -3738,7 +3825,7 @@ fn prepare_block_proof_bundle(
                         requested_native_lane =
                             selector_requests_native_receipt_lane(selected_artifact),
                         fallback_reason = report.fallback_reason_label(),
-                        "prepare_block_proof_bundle: canonical native receipt-root lane selected"
+                        "prepare_block_proof_bundle: native receipt-backed aggregation lane selected"
                     );
                 } else {
                     tracing::warn!(
@@ -3750,7 +3837,7 @@ fn prepare_block_proof_bundle(
                         requested_native_lane = selector_requests_native_receipt_lane(selected_artifact),
                         fallback_reason = report.fallback_reason_label(),
                         fallback_detail = %report.fallback_detail(),
-                        "prepare_block_proof_bundle: falling back to inline_tx from the canonical native receipt-root lane"
+                        "prepare_block_proof_bundle: falling back to inline_tx from a native receipt-backed aggregation lane"
                     );
                 }
             } else {
@@ -12133,6 +12220,24 @@ mod tests {
     }
 
     #[test]
+    fn receipt_arc_whir_mode_is_selected_from_env() {
+        let _guard = set_block_proof_mode("receipt_arc_whir");
+        let selector = prepared_artifact_selector_from_env();
+        assert_eq!(
+            selector.legacy_mode,
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        );
+        assert_eq!(
+            selector.proof_kind,
+            PreparedArtifactSelector::receipt_arc_whir().proof_kind
+        );
+        assert_eq!(
+            selector.verifier_profile,
+            consensus::experimental_receipt_arc_whir_verifier_profile()
+        );
+    }
+
+    #[test]
     fn receipt_root_lane_rejects_local_only_sidecar_proof_material() {
         let err = receipt_root_lane_requires_embedded_proof_bytes(
             pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
@@ -12152,6 +12257,17 @@ mod tests {
         .expect_err("receipt_accumulation must reject proofless sidecar-only material");
         assert!(err.contains("receipt_accumulation requires embedded proof bytes"));
         assert!(err.contains("1 transfers"));
+    }
+
+    #[test]
+    fn receipt_arc_whir_lane_rejects_local_only_sidecar_proof_material() {
+        let err = receipt_root_lane_requires_embedded_proof_bytes(
+            PreparedArtifactSelector::receipt_arc_whir().proof_kind,
+            3,
+        )
+        .expect_err("receipt_arc_whir must reject proofless sidecar-only material");
+        assert!(err.contains("receipt_arc_whir requires embedded proof bytes"));
+        assert!(err.contains("3 transfers"));
     }
 
     #[test]
@@ -12324,6 +12440,37 @@ mod tests {
             outcome.artifacts,
             PreparedAggregationArtifacts::InlineTx
         ));
+    }
+
+    #[test]
+    fn receipt_arc_whir_mode_falls_back_when_native_artifacts_are_missing() {
+        let outcome = prepare_receipt_arc_whir_artifacts(None)
+            .expect("missing native artifacts should fall back");
+        let report = outcome
+            .native_selection_report
+            .expect("native selection report should be present");
+        assert!(!report.used_native_lane);
+        assert_eq!(
+            report.fallback_reason,
+            Some(NativeArtifactFallbackReason::ArtifactsUnavailable)
+        );
+        assert!(matches!(
+            outcome.artifacts,
+            PreparedAggregationArtifacts::InlineTx
+        ));
+    }
+
+    #[test]
+    fn receipt_arc_whir_import_rejects_sidecar_only_dependency() {
+        assert!(!receipt_root_lane_uses_receipt_only_tx_artifacts(
+            PreparedArtifactSelector::receipt_arc_whir().proof_kind,
+        ));
+        let err = receipt_root_lane_requires_embedded_proof_bytes(
+            PreparedArtifactSelector::receipt_arc_whir().proof_kind,
+            2,
+        )
+        .expect_err("receipt_arc_whir import must reject sidecar-only proof dependencies");
+        assert!(err.contains("receipt_arc_whir requires embedded proof bytes"));
     }
 
     #[test]
