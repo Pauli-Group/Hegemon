@@ -136,6 +136,8 @@ pub enum ProofError {
     UnsupportedProofArtifact(String),
     #[error("no verifier registered for proof artifact: {0}")]
     MissingArtifactVerifier(String),
+    #[error("verified transaction artifact unavailable at index {index}: {message}")]
+    VerifiedTxArtifactUnavailable { index: usize, message: String },
     #[error("proof verifier panicked: {0}")]
     VerifierPanicked(String),
     #[error("commitment tree error: {0}")]

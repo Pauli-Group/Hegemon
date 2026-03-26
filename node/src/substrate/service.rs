@@ -2243,6 +2243,7 @@ struct CandidateBlockContext {
     extracted_transactions: Vec<consensus::types::Transaction>,
     tx_proofs: Arc<Vec<TransactionProof>>,
     tx_validity_artifacts: Option<Vec<consensus::TxValidityArtifact>>,
+    missing_proof_bindings: usize,
     statement_bindings: Vec<consensus::types::TxStatementBinding>,
     tx_statements_commitment: [u8; 48],
     da_root: DaRoot,
@@ -2305,12 +2306,14 @@ fn build_candidate_context(
     let tx_validity_artifacts = extracted_tx_artifacts
         .into_iter()
         .collect::<Option<Vec<_>>>();
+    let missing_proof_bindings = missing_proof_binding_hashes(&decoded).len();
 
     Ok(CandidateBlockContext {
         decoded_extrinsics: decoded,
         extracted_transactions: transactions,
         tx_proofs: Arc::new(proofs),
         tx_validity_artifacts,
+        missing_proof_bindings,
         statement_bindings,
         tx_statements_commitment,
         da_root,
@@ -2659,6 +2662,20 @@ impl PreparedArtifactSelector {
     fn receipt_root() -> Self {
         Self::from_mode(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
     }
+
+    fn receipt_accumulation() -> Self {
+        let proof_kind = match consensus::experimental_receipt_accumulation_artifact_kind() {
+            consensus::ProofArtifactKind::Custom(bytes) => {
+                pallet_shielded_pool::types::ProofArtifactKind::Custom(bytes)
+            }
+            _ => unreachable!("receipt accumulation kind must be custom"),
+        };
+        Self {
+            legacy_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+            proof_kind,
+            verifier_profile: consensus::experimental_receipt_accumulation_verifier_profile(),
+        }
+    }
 }
 
 fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
@@ -2677,6 +2694,11 @@ fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
         return PreparedArtifactSelector::receipt_root();
     }
+    if raw.eq_ignore_ascii_case("receipt_accumulation")
+        || raw.eq_ignore_ascii_case("receipt-accumulation")
+    {
+        return PreparedArtifactSelector::receipt_accumulation();
+    }
     if raw.eq_ignore_ascii_case("flat")
         || raw.eq_ignore_ascii_case("flat_batches")
         || raw.eq_ignore_ascii_case("flatbatches")
@@ -2691,6 +2713,23 @@ fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
         "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
     );
     PreparedArtifactSelector::inline_tx()
+}
+
+fn receipt_root_lane_requires_embedded_proof_bytes(
+    proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+    missing_proof_bindings: usize,
+) -> Result<(), String> {
+    if missing_proof_bindings == 0 {
+        return Ok(());
+    }
+    let lane = if proof_kind == PreparedArtifactSelector::receipt_accumulation().proof_kind {
+        "receipt_accumulation"
+    } else {
+        "receipt_root"
+    };
+    Err(format!(
+        "{lane} requires embedded proof bytes for every shielded transfer; candidate has {missing_proof_bindings} transfers whose proof bytes are available only via local sidecar state"
+    ))
 }
 
 #[allow(dead_code)]
@@ -2843,6 +2882,41 @@ fn build_receipt_root_proof_from_materials(
         .collect::<Vec<_>>();
     let built = consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
         .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
+    Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
+        metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+        receipts: consensus_receipts
+            .into_iter()
+            .map(|receipt| pallet_shielded_pool::types::TxValidityReceipt {
+                statement_hash: receipt.statement_hash,
+                proof_digest: receipt.proof_digest,
+                public_inputs_digest: receipt.public_inputs_digest,
+                verifier_profile: receipt.verifier_profile,
+            })
+            .collect(),
+    })
+}
+
+fn build_receipt_accumulation_proof_from_materials(
+    transactions: &[consensus::types::Transaction],
+    tx_artifacts: &[consensus::TxValidityArtifact],
+) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String> {
+    if tx_artifacts.is_empty() {
+        return Err("candidate tx set has no receipt-accumulation proof material".to_string());
+    }
+    consensus::prewarm_verified_native_tx_leaf_store(transactions, tx_artifacts)
+        .map_err(|err| format!("receipt accumulation prewarm failed: {err}"))?;
+    let consensus_receipts = tx_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    let built = consensus::build_experimental_native_receipt_accumulation_artifact(tx_artifacts)
+        .map_err(|err| format!("native receipt accumulation artifact generation failed: {err}"))?;
     Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
         metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
@@ -3299,6 +3373,14 @@ fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::Can
     if matches!(
         payload.proof_mode,
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+    ) && payload.proof_kind == PreparedArtifactSelector::receipt_accumulation().proof_kind
+    {
+        payload.verifier_profile = consensus::experimental_receipt_accumulation_verifier_profile();
+        return;
+    }
+    if matches!(
+        payload.proof_mode,
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
     ) {
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
         payload.verifier_profile = consensus::experimental_native_receipt_root_verifier_profile();
@@ -3388,8 +3470,15 @@ fn prepare_block_proof_bundle(
     let proofs_for_commitment = Arc::clone(&context.tx_proofs);
     let proofs_for_batching = Arc::clone(&context.tx_proofs);
     let tx_artifacts_for_batching = context.tx_validity_artifacts.clone();
+    let transactions_for_batching = context.extracted_transactions.clone();
     let batch_slot_txs = batch_slot_txs();
     let selected_artifact = prepared_artifact_selector_from_env();
+    if selected_artifact.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+        receipt_root_lane_requires_embedded_proof_bytes(
+            selected_artifact.proof_kind,
+            context.missing_proof_bindings,
+        )?;
+    }
     let merge_arity = merge_root_arity_from_env();
     let aggregation_cache_key = make_prove_ahead_aggregation_cache_key(
         selected_artifact,
@@ -3426,6 +3515,7 @@ fn prepare_block_proof_bundle(
         let aggregation_proofs = Arc::clone(&proofs_for_batching);
         let aggregation_bindings = Arc::clone(&statement_bindings);
         let aggregation_tx_artifacts = tx_artifacts_for_batching.clone();
+        let aggregation_transactions = transactions_for_batching.clone();
         let aggregation_handle = scope.spawn(move || {
             tracing::info!(
                 block_number,
@@ -3466,7 +3556,43 @@ fn prepare_block_proof_bundle(
                         .map(PreparedAggregationOutcome::new)
                     }
                     pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-                        prepare_native_receipt_root_artifacts(aggregation_tx_artifacts.as_deref())
+                        if selected_artifact.proof_kind
+                            == PreparedArtifactSelector::receipt_accumulation().proof_kind
+                        {
+                            match aggregation_tx_artifacts.as_deref() {
+                                Some(tx_artifacts) => build_receipt_accumulation_proof_from_materials(
+                                    &aggregation_transactions,
+                                    tx_artifacts,
+                                )
+                                .map(PreparedAggregationArtifacts::ReceiptRoot)
+                                .map(|payload| {
+                                    PreparedAggregationOutcome::native(
+                                        payload,
+                                        NativeArtifactSelectionReport::native_lane_selected(),
+                                    )
+                                })
+                                .or_else(|error| {
+                                    Ok(PreparedAggregationOutcome::native(
+                                        PreparedAggregationArtifacts::InlineTx,
+                                        NativeArtifactSelectionReport::fallback(
+                                            NativeArtifactFallbackReason::ArtifactValidationFailed,
+                                            error,
+                                        ),
+                                    ))
+                                }),
+                                None => Ok(PreparedAggregationOutcome::native(
+                                    PreparedAggregationArtifacts::InlineTx,
+                                    NativeArtifactSelectionReport::fallback(
+                                        NativeArtifactFallbackReason::ArtifactsUnavailable,
+                                        "candidate tx set did not materialize native tx-validity artifacts for accumulation",
+                                    ),
+                                )),
+                            }
+                        } else {
+                            prepare_native_receipt_root_artifacts(
+                                aggregation_tx_artifacts.as_deref(),
+                            )
+                        }
                     }
                 };
                 if let Ok(ref artifacts) = built {
@@ -3616,6 +3742,12 @@ fn prepare_block_proof_bundle(
             payload.flat_batches.clear();
             payload.merge_root = None;
             payload.receipt_root = Some(receipt_root);
+            if selected_artifact.proof_kind
+                == PreparedArtifactSelector::receipt_accumulation().proof_kind
+            {
+                payload.proof_kind = selected_artifact.proof_kind;
+                payload.verifier_profile = selected_artifact.verifier_profile;
+            }
         }
     }
     sync_payload_artifact_identity(&mut payload);
@@ -4291,6 +4423,12 @@ fn verify_proof_carrying_block(
         if payload.tx_count != transactions.len() as u32 {
             return Err("proven batch tx_count mismatch".to_string());
         }
+        if payload.proof_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+            receipt_root_lane_requires_embedded_proof_bytes(
+                payload.proof_kind,
+                missing_proof_bindings.len(),
+            )?;
+        }
         if let Some(claim) = payload.artifact_claim.as_ref() {
             if !verify_prover_claim_signature(claim, &payload) {
                 return Err("invalid prover claim signature".to_string());
@@ -4404,17 +4542,21 @@ fn verify_proof_carrying_block(
             }
             _ => inline_tx_artifacts.clone(),
         };
-        let block_artifact =
-            payload
-                .receipt_root
-                .as_ref()
-                .map(|receipt_root| consensus::ProofEnvelope {
-                    kind: consensus::ProofArtifactKind::ReceiptRoot,
-                    verifier_profile: payload.verifier_profile,
-                    artifact_bytes: receipt_root.root_proof.data.clone(),
-                })
-                .or_else(|| {
-                    payload.merge_root.as_ref().map(|merge_root| {
+        let block_artifact = payload
+            .receipt_root
+            .as_ref()
+            .map(|receipt_root| consensus::ProofEnvelope {
+                kind: crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+                    payload.proof_kind,
+                ),
+                verifier_profile: payload.verifier_profile,
+                artifact_bytes: receipt_root.root_proof.data.clone(),
+            })
+            .or_else(|| {
+                payload
+                    .merge_root
+                    .as_ref()
+                    .map(|merge_root| {
                         consensus::ProofEnvelope {
                 kind: crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
                     payload.proof_kind,
@@ -4423,7 +4565,7 @@ fn verify_proof_carrying_block(
                 artifact_bytes: merge_root.root_proof.data.clone(),
             }
                     })
-                });
+            });
 
         let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
         tracing::info!(
@@ -11863,6 +12005,55 @@ mod tests {
             selector.verifier_profile,
             consensus::experimental_native_receipt_root_verifier_profile()
         );
+    }
+
+    #[test]
+    fn receipt_accumulation_mode_is_selected_from_env() {
+        let _guard = set_block_proof_mode("receipt_accumulation");
+        let selector = prepared_artifact_selector_from_env();
+        assert_eq!(
+            selector.legacy_mode,
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        );
+        assert_eq!(
+            selector.proof_kind,
+            PreparedArtifactSelector::receipt_accumulation().proof_kind
+        );
+        assert_eq!(
+            selector.verifier_profile,
+            consensus::experimental_receipt_accumulation_verifier_profile()
+        );
+    }
+
+    #[test]
+    fn receipt_root_lane_rejects_local_only_sidecar_proof_material() {
+        let err = receipt_root_lane_requires_embedded_proof_bytes(
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
+            2,
+        )
+        .expect_err("receipt_root must reject proofless sidecar-only material");
+        assert!(err.contains("receipt_root requires embedded proof bytes"));
+        assert!(err.contains("2 transfers"));
+    }
+
+    #[test]
+    fn receipt_accumulation_lane_rejects_local_only_sidecar_proof_material() {
+        let err = receipt_root_lane_requires_embedded_proof_bytes(
+            PreparedArtifactSelector::receipt_accumulation().proof_kind,
+            1,
+        )
+        .expect_err("receipt_accumulation must reject proofless sidecar-only material");
+        assert!(err.contains("receipt_accumulation requires embedded proof bytes"));
+        assert!(err.contains("1 transfers"));
+    }
+
+    #[test]
+    fn receipt_root_lane_accepts_embedded_proof_bytes() {
+        receipt_root_lane_requires_embedded_proof_bytes(
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
+            0,
+        )
+        .expect("embedded proof bytes should satisfy receipt_root");
     }
 
     #[test]

@@ -10,9 +10,12 @@ use consensus::types::{
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    build_experimental_native_receipt_root_artifact, commitment_nullifier_lists,
-    experimental_native_receipt_root_verifier_profile,
-    tx_validity_artifact_from_native_tx_leaf_bytes,
+    build_experimental_native_receipt_accumulation_artifact,
+    build_experimental_native_receipt_root_artifact, clear_verified_native_tx_leaf_store,
+    commitment_nullifier_lists, experimental_native_receipt_root_verifier_profile,
+    experimental_receipt_accumulation_artifact_kind,
+    experimental_receipt_accumulation_verifier_profile, prewarm_verified_native_tx_leaf_store,
+    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_receipt,
 };
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
@@ -411,6 +414,56 @@ fn build_receipt_root_block_artifacts(
     (tx_validity_artifacts, payload, envelope)
 }
 
+fn build_receipt_accumulation_block_artifacts(
+    witnesses: &[TransactionWitness],
+) -> (
+    Vec<TxValidityArtifact>,
+    Vec<TxValidityArtifact>,
+    ReceiptRootProofPayload,
+    ProofEnvelope,
+) {
+    let tx_validity_artifacts = witnesses
+        .iter()
+        .map(|witness| {
+            let built = build_native_tx_leaf_artifact_bytes(witness).expect("native tx leaf bytes");
+            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes)
+                .expect("native tx leaf artifact")
+        })
+        .collect::<Vec<_>>();
+    let receipt_only_artifacts = tx_validity_artifacts
+        .iter()
+        .map(|artifact| tx_validity_artifact_from_receipt(artifact.receipt.clone()))
+        .collect::<Vec<_>>();
+    let receipts = tx_validity_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    let built = build_experimental_native_receipt_accumulation_artifact(&tx_validity_artifacts)
+        .expect("native receipt accumulation bytes");
+    let verifier_profile = experimental_receipt_accumulation_verifier_profile();
+    let payload = ReceiptRootProofPayload {
+        root_proof: built.artifact_bytes.clone(),
+        metadata: ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+        receipts: receipts.to_vec(),
+    };
+    let envelope = ProofEnvelope {
+        kind: experimental_receipt_accumulation_artifact_kind(),
+        verifier_profile,
+        artifact_bytes: built.artifact_bytes,
+    };
+    (
+        tx_validity_artifacts,
+        receipt_only_artifacts,
+        payload,
+        envelope,
+    )
+}
+
 #[test]
 fn raw_active_rejects_bad_tx_proof() {
     let fixture = raw_active_fixture();
@@ -491,6 +544,59 @@ fn receipt_root_block_is_accepted() {
         .verify_block(&block, &fixture.base_tree)
         .expect("valid receipt-root block should verify");
     assert_eq!(updated.root(), fixture.updated_root);
+}
+
+#[test]
+fn receipt_accumulation_block_is_accepted_with_prewarmed_store() {
+    let fixture = raw_active_fixture();
+    clear_verified_native_tx_leaf_store();
+    let mut block = fixture.block.clone();
+    let (native_artifacts, receipt_only_artifacts, receipt_root, envelope) =
+        build_receipt_accumulation_block_artifacts(&fixture.witnesses);
+    prewarm_verified_native_tx_leaf_store(&block.transactions, &native_artifacts)
+        .expect("prewarm verified native tx leaf store");
+    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
+    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
+    proven_batch.proof_kind = experimental_receipt_accumulation_artifact_kind();
+    proven_batch.verifier_profile = experimental_receipt_accumulation_verifier_profile();
+    proven_batch.receipt_root = Some(receipt_root);
+    block.tx_validity_artifacts = Some(receipt_only_artifacts);
+    block.block_artifact = Some(envelope);
+    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+
+    let verifier = ParallelProofVerifier::new();
+    let updated = verifier
+        .verify_block(&block, &fixture.base_tree)
+        .expect("valid receipt accumulation block should verify");
+    assert_eq!(updated.root(), fixture.updated_root);
+    clear_verified_native_tx_leaf_store();
+}
+
+#[test]
+fn receipt_accumulation_rejects_store_miss() {
+    let fixture = raw_active_fixture();
+    clear_verified_native_tx_leaf_store();
+    let mut block = fixture.block.clone();
+    let (_native_artifacts, receipt_only_artifacts, receipt_root, envelope) =
+        build_receipt_accumulation_block_artifacts(&fixture.witnesses);
+    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
+    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
+    proven_batch.proof_kind = experimental_receipt_accumulation_artifact_kind();
+    proven_batch.verifier_profile = experimental_receipt_accumulation_verifier_profile();
+    proven_batch.receipt_root = Some(receipt_root);
+    block.tx_validity_artifacts = Some(receipt_only_artifacts);
+    block.block_artifact = Some(envelope);
+    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+
+    let verifier = ParallelProofVerifier::new();
+    let err = verifier
+        .verify_block(&block, &fixture.base_tree)
+        .expect_err("receipt accumulation must reject an unprepared store miss");
+    assert!(matches!(
+        err,
+        ProofError::VerifiedTxArtifactUnavailable { .. }
+    ));
+    clear_verified_native_tx_leaf_store();
 }
 
 #[test]

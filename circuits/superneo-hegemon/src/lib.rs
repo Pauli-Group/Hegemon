@@ -1020,6 +1020,15 @@ pub struct NativeTxLeafMetadata {
     pub commitment: LatticeCommitment,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeTxLeafRecord {
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    pub statement_digest: [u8; 48],
+    pub commitment: LatticeCommitment,
+    pub proof_digest: [u8; 48],
+}
+
 impl Relation<Goldilocks> for TxProofReceiptRelation {
     type Statement = TxProofReceipt;
     type Witness = TxProofReceiptWitness;
@@ -2157,6 +2166,16 @@ pub fn decode_native_tx_leaf_artifact_bytes(artifact_bytes: &[u8]) -> Result<Nat
     decode_native_tx_leaf_artifact(artifact_bytes)
 }
 
+pub fn native_tx_leaf_record_from_artifact(artifact: &NativeTxLeafArtifact) -> NativeTxLeafRecord {
+    NativeTxLeafRecord {
+        relation_id: artifact.relation_id,
+        shape_digest: artifact.shape_digest,
+        statement_digest: artifact.statement_digest,
+        commitment: artifact.commitment.clone(),
+        proof_digest: artifact.leaf.proof.proof_digest,
+    }
+}
+
 pub fn verify_tx_leaf_artifact_bytes(
     tx: &TxLeafPublicTx,
     receipt: &CanonicalTxValidityReceipt,
@@ -2479,6 +2498,138 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes(
             shape_digest: pk.shape_digest,
             statement_digest: native_artifact.leaf.statement_digest,
             witness_commitment: native_artifact.commitment.clone(),
+        });
+    }
+
+    let mut fold_index = 0usize;
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let fold = artifact
+                    .folds
+                    .get(fold_index)
+                    .ok_or_else(|| anyhow::anyhow!("native receipt-root fold list ended early"))?;
+                fold_index += 1;
+                ensure!(
+                    fold.left_statement_digest == left.statement_digest.0
+                        && fold.left_commitment == left.witness_commitment.digest,
+                    "native receipt-root fold left child mismatch"
+                );
+                ensure!(
+                    fold.right_statement_digest == right.statement_digest.0
+                        && fold.right_commitment == right.witness_commitment.digest,
+                    "native receipt-root fold right child mismatch"
+                );
+                let (parent, expected_proof) = backend.fold_pair(&pk, &left, &right)?;
+                ensure!(
+                    fold.parent_statement_digest == parent.statement_digest.0,
+                    "native receipt-root fold parent statement digest mismatch"
+                );
+                ensure!(
+                    fold.parent_commitment == parent.witness_commitment.digest,
+                    "native receipt-root fold parent commitment mismatch"
+                );
+                ensure!(
+                    fold.proof_digest == expected_proof.proof_digest,
+                    "native receipt-root fold proof digest mismatch"
+                );
+                backend.verify_fold(&vk, &parent, &left, &right, &expected_proof)?;
+                next.push(parent);
+            } else {
+                next.push(left);
+            }
+        }
+        current = next;
+    }
+
+    ensure!(
+        fold_index == artifact.folds.len(),
+        "native receipt-root artifact has {} unused fold steps",
+        artifact.folds.len().saturating_sub(fold_index)
+    );
+    let root = current
+        .pop()
+        .expect("native receipt-root verifier must retain one root");
+    ensure!(
+        artifact.root_statement_digest == root.statement_digest.0,
+        "native receipt-root root statement digest mismatch"
+    );
+    ensure!(
+        artifact.root_commitment == root.witness_commitment.digest,
+        "native receipt-root root commitment mismatch"
+    );
+
+    Ok(ReceiptRootMetadata {
+        relation_id: artifact.relation_id,
+        shape_digest: artifact.shape_digest,
+        leaf_count: artifact.leaves.len() as u32,
+        fold_count: artifact.folds.len() as u32,
+    })
+}
+
+pub fn verify_native_tx_leaf_receipt_root_artifact_from_records(
+    records: &[NativeTxLeafRecord],
+    artifact_bytes: &[u8],
+) -> Result<ReceiptRootMetadata> {
+    ensure!(
+        !records.is_empty(),
+        "native receipt-root artifact requires at least one tx-leaf record"
+    );
+    let artifact = decode_receipt_root_artifact(artifact_bytes)?;
+    ensure!(
+        artifact.version == RECEIPT_ROOT_ARTIFACT_VERSION,
+        "unsupported receipt-root artifact version {}",
+        artifact.version
+    );
+
+    let relation = NativeTxValidityRelation::default();
+    let security = SecurityParams::experimental_default();
+    let backend = LatticeBackend::default();
+    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    ensure!(
+        artifact.relation_id == relation.relation_id().0,
+        "native receipt-root relation id mismatch"
+    );
+    ensure!(
+        artifact.shape_digest == pk.shape_digest.0,
+        "native receipt-root shape digest mismatch"
+    );
+    ensure!(
+        artifact.leaves.len() == records.len(),
+        "native receipt-root leaf count {} does not match tx-leaf records {}",
+        artifact.leaves.len(),
+        records.len()
+    );
+
+    let mut current = Vec::with_capacity(records.len());
+    for (record, leaf) in records.iter().zip(&artifact.leaves) {
+        ensure!(
+            record.relation_id == relation.relation_id().0,
+            "native tx-leaf record relation id mismatch"
+        );
+        ensure!(
+            record.shape_digest == pk.shape_digest.0,
+            "native tx-leaf record shape digest mismatch"
+        );
+        ensure!(
+            leaf.statement_digest == record.statement_digest,
+            "native receipt-root leaf statement digest mismatch"
+        );
+        ensure!(
+            leaf.witness_commitment == record.commitment.digest,
+            "native receipt-root leaf commitment mismatch"
+        );
+        ensure!(
+            leaf.proof_digest == record.proof_digest,
+            "native receipt-root leaf proof digest mismatch"
+        );
+        current.push(FoldedInstance {
+            relation_id: relation.relation_id(),
+            shape_digest: pk.shape_digest,
+            statement_digest: superneo_ccs::StatementDigest(record.statement_digest),
+            witness_commitment: record.commitment.clone(),
         });
     }
 

@@ -2,6 +2,12 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock, time::Instant
 
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
+use consensus::{
+    build_experimental_native_receipt_accumulation_artifact, clear_verified_native_tx_leaf_store,
+    prewarm_verified_native_tx_leaf_store, receipt_statement_commitment,
+    tx_validity_artifact_from_native_tx_leaf_bytes,
+    verify_experimental_native_receipt_accumulation_artifact,
+};
 use p3_goldilocks::Goldilocks;
 use serde::Serialize;
 use superneo_backend_lattice::{
@@ -93,6 +99,14 @@ struct BenchResult {
     peak_rss_bytes: Option<u64>,
     kernel_report: Option<KernelCostReport>,
     inline_tx_baseline: Option<InlineTxBaseline>,
+    import_comparison: Option<ImportComparison>,
+}
+
+#[derive(Debug, Serialize)]
+struct ImportComparison {
+    baseline_verify_ns: u128,
+    accumulation_prewarm_ns: u128,
+    accumulation_warm_verify_ns: u128,
 }
 
 fn main() -> Result<()> {
@@ -289,6 +303,7 @@ fn benchmark_toy_balance(
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
         kernel_report: Some(kernel_report),
         inline_tx_baseline,
+        import_comparison: None,
     })
 }
 
@@ -387,6 +402,7 @@ fn benchmark_tx_receipt(
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
         kernel_report: Some(kernel_report),
         inline_tx_baseline,
+        import_comparison: None,
     })
 }
 
@@ -476,6 +492,7 @@ fn benchmark_native_tx_validity(
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
         kernel_report: Some(kernel_report),
         inline_tx_baseline,
+        import_comparison: None,
     })
 }
 
@@ -506,6 +523,29 @@ fn benchmark_native_tx_leaf_receipt_root(
         .iter()
         .map(|(_, _, built)| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
         .collect::<Result<Vec<_>>>()?;
+    let consensus_transactions = built_leaves
+        .iter()
+        .map(|(tx, _, _)| {
+            consensus::Transaction::new_with_hashes(
+                tx.nullifiers.clone(),
+                tx.commitments.clone(),
+                tx.balance_tag,
+                tx.version,
+                tx.ciphertext_hashes.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let consensus_artifacts = built_leaves
+        .iter()
+        .map(|(_, _, built)| {
+            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes.clone())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let receipts = consensus_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    let expected_commitment = receipt_statement_commitment(&receipts)?;
     let tx_leaf_bytes_total = built_leaves
         .iter()
         .map(|(_, _, built)| built.artifact_bytes.len())
@@ -526,6 +566,22 @@ fn benchmark_native_tx_leaf_receipt_root(
         &built_root.artifact_bytes,
     )?;
     let total_verify_ns = verify_start.elapsed().as_nanos();
+    clear_verified_native_tx_leaf_store();
+    let accumulation_artifact =
+        build_experimental_native_receipt_accumulation_artifact(&consensus_artifacts)?;
+    let accumulation_prewarm_start = Instant::now();
+    prewarm_verified_native_tx_leaf_store(&consensus_transactions, &consensus_artifacts)?;
+    let accumulation_prewarm_ns = accumulation_prewarm_start.elapsed().as_nanos();
+    let accumulation_verify_start = Instant::now();
+    let _accumulation_report = verify_experimental_native_receipt_accumulation_artifact(
+        &consensus_transactions,
+        &receipts,
+        None,
+        &expected_commitment,
+        &accumulation_artifact.artifact_bytes,
+    )?;
+    let accumulation_warm_verify_ns = accumulation_verify_start.elapsed().as_nanos();
+    clear_verified_native_tx_leaf_store();
 
     let total_bytes = tx_leaf_bytes_total + built_root.artifact_bytes.len();
 
@@ -538,15 +594,21 @@ fn benchmark_native_tx_leaf_receipt_root(
         packed_witness_bits,
         shape_digest: shape_hex(ShapeDigest(metadata.shape_digest)),
         note: format!(
-            "{}; native tx-leaf artifacts={}B root_artifact={}B",
+            "{}; native tx-leaf artifacts={}B root_artifact={}B accumulation_artifact={}B; accumulation warm verify is measured after verified-leaf store prewarm",
             note_prefix(RelationChoice::NativeTxLeafReceiptRoot),
             tx_leaf_bytes_total,
-            built_root.artifact_bytes.len()
+            built_root.artifact_bytes.len(),
+            accumulation_artifact.artifact_bytes.len()
         ),
         edge_prepare_ns: Some(edge_prepare_ns),
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
         kernel_report: Some(kernel_report),
         inline_tx_baseline,
+        import_comparison: Some(ImportComparison {
+            baseline_verify_ns: total_verify_ns,
+            accumulation_prewarm_ns,
+            accumulation_warm_verify_ns,
+        }),
     })
 }
 
@@ -615,6 +677,7 @@ fn benchmark_tx_leaf_receipt_root(
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
         kernel_report: Some(kernel_report),
         inline_tx_baseline,
+        import_comparison: None,
     })
 }
 
@@ -666,6 +729,7 @@ fn benchmark_verified_tx_receipt(
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
         kernel_report: Some(kernel_report),
         inline_tx_baseline,
+        import_comparison: None,
     })
 }
 
