@@ -24,11 +24,12 @@ use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use crypto::hashes::blake3_384;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::any::Any;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 use superneo_hegemon::{
     CanonicalTxValidityReceipt, TxLeafPublicTx, build_native_tx_leaf_receipt_root_artifact_bytes,
@@ -36,6 +37,7 @@ use superneo_hegemon::{
     build_verified_tx_proof_receipt_root_artifact_bytes, decode_native_tx_leaf_artifact_bytes,
     experimental_native_receipt_root_verifier_profile as native_receipt_root_profile,
     experimental_native_tx_leaf_verifier_profile as native_tx_leaf_profile,
+    max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
     verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_receipt_root_artifact_bytes,
     verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
     verify_verified_tx_proof_receipt_root_artifact_bytes,
@@ -62,6 +64,85 @@ pub struct ExperimentalReceiptRootArtifact {
 pub struct CommitmentNullifierLists {
     pub nullifiers: Vec<[u8; 48]>,
     pub sorted_nullifiers: Vec<[u8; 48]>,
+}
+
+const DEFAULT_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY: usize = 4096;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct NativeTxLeafCacheKey {
+    tx_id: [u8; 32],
+    artifact_digest: [u8; 48],
+}
+
+struct NativeTxLeafVerifyCache {
+    capacity: usize,
+    order: VecDeque<NativeTxLeafCacheKey>,
+    entries: HashMap<NativeTxLeafCacheKey, TxStatementBinding>,
+}
+
+impl NativeTxLeafVerifyCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get(&mut self, key: NativeTxLeafCacheKey) -> Option<TxStatementBinding> {
+        let value = self.entries.get(&key).cloned();
+        if value.is_some() {
+            self.order.retain(|entry| entry != &key);
+            self.order.push_back(key);
+        }
+        value
+    }
+
+    fn insert(&mut self, key: NativeTxLeafCacheKey, value: TxStatementBinding) {
+        if self.capacity == 0 {
+            return;
+        }
+        if let Some(existing) = self.entries.get_mut(&key) {
+            *existing = value;
+            self.order.retain(|entry| entry != &key);
+            self.order.push_back(key);
+            return;
+        }
+        while self.entries.len() >= self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+        self.entries.insert(key, value);
+        self.order.push_back(key);
+    }
+}
+
+fn load_native_tx_leaf_verify_cache_capacity() -> usize {
+    std::env::var("HEGEMON_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|capacity| *capacity > 0)
+        .unwrap_or(DEFAULT_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY)
+}
+
+static NATIVE_TX_LEAF_VERIFY_CACHE: LazyLock<Mutex<NativeTxLeafVerifyCache>> =
+    LazyLock::new(|| {
+        Mutex::new(NativeTxLeafVerifyCache::new(
+            load_native_tx_leaf_verify_cache_capacity(),
+        ))
+    });
+
+fn native_tx_leaf_cache_key(
+    tx: &crate::types::Transaction,
+    artifact_bytes: &[u8],
+) -> NativeTxLeafCacheKey {
+    NativeTxLeafCacheKey {
+        tx_id: tx.id,
+        artifact_digest: blake3_384(artifact_bytes),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -289,11 +370,25 @@ impl ArtifactVerifier for NativeTxLeafVerifier {
                 message: "native tx-leaf verifier profile mismatch".to_string(),
             });
         }
+        if envelope.artifact_bytes.len() > max_native_tx_leaf_artifact_bytes() {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: format!(
+                    "native tx-leaf artifact size {} exceeds {}",
+                    envelope.artifact_bytes.len(),
+                    max_native_tx_leaf_artifact_bytes()
+                ),
+            });
+        }
         if artifact.receipt.verifier_profile != experimental_native_tx_leaf_verifier_profile() {
             return Err(ProofError::TransactionProofInputsMismatch {
                 index: 0,
                 message: "native tx-leaf receipt verifier profile mismatch".to_string(),
             });
+        }
+        let cache_key = native_tx_leaf_cache_key(tx, &envelope.artifact_bytes);
+        if let Some(binding) = NATIVE_TX_LEAF_VERIFY_CACHE.lock().get(cache_key) {
+            return Ok(binding);
         }
         let canonical = canonical_receipt_from_tx_receipt(&artifact.receipt);
         let tx_view = tx_leaf_public_tx_from_consensus_tx(tx);
@@ -303,8 +398,16 @@ impl ArtifactVerifier for NativeTxLeafVerifier {
                     index: 0,
                     message: format!("native tx-leaf verification failed: {err}"),
                 })?;
-        statement_binding_from_tx_leaf(tx, &artifact.receipt, &metadata.stark_public_inputs)
-            .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })
+        let binding =
+            statement_binding_from_tx_leaf(tx, &artifact.receipt, &metadata.stark_public_inputs)
+                .map_err(|message| ProofError::TransactionProofInputsMismatch {
+                    index: 0,
+                    message,
+                })?;
+        NATIVE_TX_LEAF_VERIFY_CACHE
+            .lock()
+            .insert(cache_key, binding.clone());
+        Ok(binding)
     }
 }
 
@@ -384,6 +487,14 @@ impl ArtifactVerifier for ReceiptRootVerifier {
                 "receipt-root requires the native verifier profile".to_string(),
             ));
         }
+        if envelope.artifact_bytes.len() > max_native_receipt_root_artifact_bytes(txs.len()) {
+            return Err(ProofError::AggregationProofInputsMismatch(format!(
+                "native receipt-root artifact size {} exceeds {} for tx_count {}",
+                envelope.artifact_bytes.len(),
+                max_native_receipt_root_artifact_bytes(txs.len()),
+                txs.len()
+            )));
+        }
         let artifacts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
         if artifacts.len() != txs.len() {
             return Err(ProofError::TransactionProofCountMismatch {
@@ -392,18 +503,8 @@ impl ArtifactVerifier for ReceiptRootVerifier {
             });
         }
         let tx_artifact_registry = VerifierRegistry::default();
-        let mut verified_bindings = Vec::with_capacity(artifacts.len());
-        for (index, (tx, artifact)) in txs.iter().zip(artifacts.iter()).enumerate() {
-            let proof = artifact
-                .proof
-                .as_ref()
-                .ok_or(ProofError::MissingTransactionProofs)?;
-            let verifier = tx_artifact_registry.resolve(proof.kind, proof.verifier_profile)?;
-            let binding = verifier
-                .verify_tx_artifact(tx, artifact)
-                .map_err(|err| reindex_tx_artifact_error(index, err))?;
-            verified_bindings.push(binding);
-        }
+        let verified_bindings =
+            verify_tx_validity_artifacts(&tx_artifact_registry, txs, artifacts)?;
         let derived_statement_commitment = commitment_from_statement_bindings(&verified_bindings)?;
         if derived_statement_commitment != *expected_commitment {
             return Err(ProofError::AggregationProofInputsMismatch(

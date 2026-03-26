@@ -30,6 +30,7 @@ The next milestone is architectural rather than cosmetic. The current `ReceiptRo
 - [x] (2026-03-25 22:xxZ) Completed the inner-relation migration from receipt-only leaves to `TxLeafPublicRelation`, wired consensus tx-leaf verification through the on-chain tx public view, added direct tx-leaf round-trip/tamper tests, and re-ran the release benchmarks.
 - [x] (2026-03-25 23:xxZ) Added `NativeTxValidityRelation`, benchmarked a witness-driven native tx-validity lane over `TransactionWitness`, and recorded the first native witness numbers with explicit packed-witness byte accounting.
 - [x] (2026-03-25 23:xxZ) Replaced the failing generic native-artifact serialization path with a canonical manual native `TxLeaf` wire format, made the live experimental `ReceiptRoot` verifier native-only, benchmarked `native_tx_leaf_receipt_root` at `k=1,2,4,8,16,32,64,128` with RSS capture, and wired authoring/import to use native leaves with `InlineTx` fallback.
+- [x] (2026-03-26 00:xxZ) Added exact native artifact-size bounds, a reusable native-leaf verification cache keyed by `(tx_id, artifact_digest)`, and routed receipt-root import through the parallel tx-artifact verifier instead of a serial loop.
 
 ## Surprises & Discoveries
 
@@ -68,6 +69,9 @@ The next milestone is architectural rather than cosmetic. The current `ReceiptRo
 
 - Observation: the native `TxLeaf -> ReceiptRoot` path is now the only planning-grade benchmark surface. After switching to a manual hidden-witness opening format, bytes flatten at roughly `5.5-5.6 KB/tx` from `k=1` through `k=128`, root proving stays sub-millisecond through `k=64`, and peak RSS stays under `7 MiB`; the current scaling limiter is import verification because it still checks every native leaf plus the folded root.
   Evidence: `cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8 --compare-inline-tx` reports `5481/5564/5606/5627 B/tx`, `15375/12958/21834/39708 ns` active-path root prove, `21761041/50620417/97802416/192749125 ns` active-path verify, and `11130708/21991625/51405875/99260125 ns` edge leaf preparation for `k=1/2/4/8`; `cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 16,32,64,128 --compare-inline-tx` reports `5637/5642/5645/5646 B/tx`, `89459/312875/335958/1024500 ns` active-path root prove, `374748125/797166917/1615036208/3203242042 ns` active-path verify, `247515750/391192792/837924083/1653179334 ns` edge leaf preparation, and `3833856/4423680/5259264/6881280` peak RSS bytes.
+
+- Observation: the current branch still does not justify a production 128-bit PQ security claim, even after the native artifact hardening.
+  Evidence: the in-repo backend remains an experimental Ajtai-style commitment approximation rather than a paper-equivalent Module-SIS construction with the corresponding reduction and parameter discipline; the new hardening step added exact artifact-size bounds and a native-leaf verification cache, not a new security proof.
 
 ## Decision Log
 
@@ -197,6 +201,8 @@ Revision note (2026-03-25, later): the `TxLeaf` milestone is now landed. The hon
 Revision note (2026-03-25, latest): the leaf-proof boundary is now tightened and the inner relation is now public-tx-aware. Compact tx-leaf proofs no longer serialize the packed witness; verification reconstructs the expected witness packing from the on-chain tx public view plus serialized STARK public inputs, recomputes the witness commitment, and checks the proof against that digest. This preserved the small tx-leaf artifact sizes while replacing the old receipt-only inner relation with `TxLeafPublicRelation`.
 
 Revision note (2026-03-25, latest+1): the native lane now has its own canonical tx-leaf artifact format with a manual hidden-witness opening, the experimental `ReceiptRoot` verifier is native-only, authoring falls back to `InlineTx` when native leaves are unavailable, and the benchmark focus has moved fully to `native_tx_leaf_receipt_root` with release runs through `k=128` plus RSS tracking.
+
+Revision note (2026-03-26): import hardening now adds exact native artifact-size bounds and a reusable native-leaf verification cache keyed by `(tx_id, artifact_digest)`, and `ReceiptRoot` import now reuses the common parallel tx-artifact verifier instead of a serial per-leaf loop.
 
 ## Interfaces and Dependencies
 

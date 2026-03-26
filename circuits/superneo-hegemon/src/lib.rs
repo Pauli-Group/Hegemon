@@ -36,6 +36,12 @@ pub const RECEIPT_ROOT_WITNESS_LIMBS: usize =
     RECEIPT_ROOT_DIGEST_WIDTH * RECEIPT_ROOT_LIMBS_PER_DIGEST;
 pub const DIGEST_LIMBS: usize = 6;
 
+const NOTE_DATA_WIRE_BYTES: usize = 8 + 8 + (32 * 4);
+const INPUT_NOTE_WIRE_BYTES: usize = NOTE_DATA_WIRE_BYTES + 8 + 32 + 4 + (MERKLE_TREE_DEPTH * 48);
+const OUTPUT_NOTE_WIRE_BYTES: usize = NOTE_DATA_WIRE_BYTES;
+const CANONICAL_RECEIPT_WIRE_BYTES: usize = 48 * 4;
+const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToyBalanceStatement {
     pub total_inputs: u64,
@@ -1996,6 +2002,44 @@ pub fn experimental_native_receipt_root_verifier_profile() -> [u8; 48] {
         b"hegemon.superneo.native-receipt-root-profile.digest.v1",
         &material,
     )
+}
+
+pub fn max_native_tx_leaf_artifact_bytes() -> usize {
+    let config = LatticeBackend::default().config;
+    let serialized_stark_inputs_bytes = 4
+        + MAX_INPUTS
+        + 4
+        + MAX_OUTPUTS
+        + 8
+        + 1
+        + 8
+        + 48
+        + 4
+        + (BALANCE_SLOTS * 8)
+        + 1
+        + 8
+        + 4
+        + 1
+        + 8
+        + (48 * 3);
+    let native_opening_bytes =
+        32 + 4 + (MAX_INPUTS * INPUT_NOTE_WIRE_BYTES) + 4 + (MAX_OUTPUTS * OUTPUT_NOTE_WIRE_BYTES);
+    let lattice_commitment_bytes =
+        48 + 4 + (config.commitment_rows * (4 + (config.ring_degree * 8)));
+    2 + 32
+        + 32
+        + 48
+        + CANONICAL_RECEIPT_WIRE_BYTES
+        + serialized_stark_inputs_bytes
+        + native_opening_bytes
+        + lattice_commitment_bytes
+        + LEAF_ARTIFACT_WIRE_BYTES
+}
+
+pub fn max_native_receipt_root_artifact_bytes(tx_count: usize) -> usize {
+    let leaf_bytes = tx_count * (48 * 3);
+    let fold_bytes = tx_count.saturating_sub(1) * (48 * 7);
+    2 + 32 + 32 + 4 + 4 + leaf_bytes + fold_bytes + 48 + 48
 }
 
 pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxLeafArtifact> {
