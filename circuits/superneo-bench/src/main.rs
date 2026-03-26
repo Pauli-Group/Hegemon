@@ -1,4 +1,6 @@
-use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock, time::Instant};
+use std::{
+    collections::HashMap, fs, path::PathBuf, process::Command, sync::OnceLock, time::Instant,
+};
 
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
@@ -9,7 +11,7 @@ use consensus::{
     verify_experimental_native_receipt_accumulation_artifact,
 };
 use p3_goldilocks::Goldilocks;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
     clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
     FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof,
@@ -78,14 +80,14 @@ struct Cli {
     compare_inline_tx: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct InlineTxBaseline {
     bytes_per_tx: usize,
     total_active_path_prove_ns: u128,
     total_active_path_verify_ns: u128,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BenchResult {
     relation: String,
     k: usize,
@@ -102,7 +104,7 @@ struct BenchResult {
     import_comparison: Option<ImportComparison>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ImportComparison {
     baseline_verify_ns: u128,
     accumulation_prewarm_ns: u128,
@@ -117,6 +119,20 @@ fn main() -> Result<()> {
         "k values must be strictly positive"
     );
     validate_relation_selection(cli.relation, cli.allow_diagnostic_relation)?;
+
+    if cli.k.len() > 1 {
+        let mut results = Vec::with_capacity(cli.k.len());
+        for k in cli.k {
+            results.push(run_isolated_benchmark_case(
+                cli.relation,
+                cli.allow_diagnostic_relation,
+                cli.compare_inline_tx,
+                k,
+            )?);
+        }
+        println!("{}", serde_json::to_string_pretty(&results)?);
+        return Ok(());
+    }
 
     let baselines = if cli.compare_inline_tx {
         load_inline_tx_baselines()?
@@ -148,6 +164,50 @@ fn main() -> Result<()> {
 
     println!("{}", serde_json::to_string_pretty(&results)?);
     Ok(())
+}
+
+fn run_isolated_benchmark_case(
+    relation: RelationChoice,
+    allow_diagnostic_relation: bool,
+    compare_inline_tx: bool,
+    k: usize,
+) -> Result<BenchResult> {
+    let exe = std::env::current_exe().context("failed to locate current benchmark executable")?;
+    let mut command = Command::new(exe);
+    command
+        .arg("--relation")
+        .arg(
+            relation
+                .to_possible_value()
+                .expect("relation enum value")
+                .get_name(),
+        )
+        .arg("--k")
+        .arg(k.to_string());
+    if allow_diagnostic_relation {
+        command.arg("--allow-diagnostic-relation");
+    }
+    if compare_inline_tx {
+        command.arg("--compare-inline-tx");
+    }
+
+    let output = command
+        .output()
+        .with_context(|| format!("failed to spawn isolated benchmark process for k={k}"))?;
+    ensure!(
+        output.status.success(),
+        "isolated benchmark process failed for k={k}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut results: Vec<BenchResult> = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("failed to parse isolated benchmark JSON for k={k}"))?;
+    ensure!(
+        results.len() == 1,
+        "isolated benchmark process for k={} returned {} result rows",
+        k,
+        results.len()
+    );
+    Ok(results.pop().expect("single isolated benchmark result"))
 }
 
 fn is_canonical_relation(choice: RelationChoice) -> bool {

@@ -1,4 +1,4 @@
-# Harden The SuperNeo Backend Into A Production-Grade Native PQ Folding Stack
+# Harden The Native PQ Folding Backend Into A Credible Production Candidate
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -6,7 +6,7 @@ This document follows [`.agent/PLANS.md`](/Users/pldd/Projects/Reflexivity/Hegem
 
 ## Purpose / Big Picture
 
-The current SuperNeo branch proves the topology and measures useful scaling, but it still relies on an experimental in-repo backend. That means Hegemon cannot honestly claim production-strength post-quantum security from it yet. After this plan, the branch will have a hardened native folding backend: real commitment randomness, real opening proofs, real parameter discipline, a versioned verifier profile derived from those parameters, and a test story strong enough that the experimental lane can be judged on security and performance rather than on faith.
+The current native folding branch proves the topology and measures useful scaling, but it still relies on an experimental in-repo backend. That means Hegemon cannot honestly claim production-strength post-quantum security from it yet. After re-checking the literature, this plan also needs a narrower research footing than it originally had: the accessible concrete backend guidance comes primarily from `Neo`, `LatticeFold+`, and lattice-PCS work such as `HyperWolf`, while `SuperNeo` remains important but still partially provisional here because we can verify its existence and title from the 2026 ePrint listing more easily than its full construction details. After this plan, the branch should have a hardened native folding backend candidate: real commitment randomness, real opening proofs, real parameter discipline, a versioned verifier profile derived from those parameters, and a test story strong enough that the experimental lane can be judged on security and performance rather than on faith.
 
 The user-visible result is a backend that a contributor can benchmark and inspect without having to mentally subtract “toy backend” from every chart. The goal is not paper worship. The goal is a working, optimized, plausibly secure production candidate that preserves Hegemon’s small-field and PQ direction.
 
@@ -24,6 +24,9 @@ The user-visible result is a backend that a contributor can benchmark and inspec
 
 ## Surprises & Discoveries
 
+- Observation: the accessible research support is strongest for `Neo` and `LatticeFold+`, not for every specific `SuperNeo` implementation detail.
+  Evidence: `Neo` is easy to verify from public snippets and the ePrint record as a lattice-based folding scheme for CCS over small fields with pay-per-bit commitments; `LatticeFold+` is easy to verify from the ePrint record as a faster/simpler lattice-based folding line; `SuperNeo` is verifiable as a 2026 ePrint entry and title, but the fine construction details are not as directly inspectable from the sources available in this environment.
+
 - Observation: the current branch already answered the topology question without answering the security question.
   Evidence: the native `TxLeaf -> ReceiptRoot` path is wired and benchmarked, but the current docs still state that the branch does not justify a production 128-bit PQ claim.
 
@@ -35,8 +38,8 @@ The user-visible result is a backend that a contributor can benchmark and inspec
 
 ## Decision Log
 
-- Decision: harden the existing SuperNeo direction rather than replacing it immediately with another experimental backend.
-  Rationale: SuperNeo is still the best known fit to Hegemon’s stated goals: small-field arithmetic, Goldilocks compatibility, plausible PQ security, and low recursion overhead.
+- Decision: harden the existing native PQ folding direction rather than replacing it immediately with another experimental backend.
+  Rationale: the accessible literature still supports the direction strongly enough to justify hardening work, but the plan should no longer pretend that every concrete step is already nailed down by `SuperNeo` alone. The concrete reference stack is `Neo` plus `LatticeFold+` plus lattice commitment work, with `SuperNeo` treated as an important but still partially provisional upgrade line.
   Date/Author: 2026-03-26 / Codex
 
 - Decision: treat parameter discipline and verifier-profile derivation as part of the cryptographic implementation, not as paperwork.
@@ -51,13 +54,22 @@ The user-visible result is a backend that a contributor can benchmark and inspec
 
 This plan is design-only at creation time. The hardened backend does not exist yet. The expected outcome is a versioned, parameterized native folding backend that can be judged honestly on both security posture and performance. If it fails that judgment, the result should still be useful because the proof-neutral boundary survives and the hardening work will have made the failure explicit.
 
+After re-checking the literature on 2026-03-26, the correction is that this remains the right hardening plan, but the title and rationale need to be narrower. The plan should be read as “harden the native PQ folding candidate” rather than “implement known-good SuperNeo details line by line.” The accessible basis for the hardening work is strongest around `Neo`, `LatticeFold+`, and lattice PCS/opening work. `SuperNeo` remains a watch item, not a fully inspectable spec in this environment.
+
 ## Context and Orientation
 
 The current backend lives in `circuits/superneo-backend-lattice/src/lib.rs`. It handles witness commitment, leaf proof generation, and fold proof generation for the experimental native lane. “Hardening” here means replacing approximation shortcuts with cryptographically meaningful constructions and a stable parameter story. A “parameter set” means the exact security-relevant constants that define the backend, such as matrix dimensions, challenge widths, ring profile, decomposition widths, norm bounds, randomness widths, and opening schedules. A “verifier profile” is the 48-byte digest that tells consensus which backend rules are in force for an artifact.
 
 This plan assumes the architecture from the existing SuperNeo experiment remains in place: `NativeTxValidityRelation` is the canonical native relation, `TxLeaf` is the tx-level artifact, `ReceiptRoot` is the block-level native aggregate, and `InlineTx` remains the shipping fallback. The hardening work therefore focuses on `circuits/superneo-backend-lattice`, `circuits/superneo-hegemon`, and the verifier-profile glue in `consensus/src/proof.rs`.
 
-The papers behind this direction are `SuperNeo` (`2026/242`), `Neo` (`2025/294`), `LatticeFold+` (`2025/247`), and `HyperWolf` (`2025/922`). This plan does not require implementing them literally line by line. It requires arriving at a working backend whose security and performance claims can be stated with a straight face.
+The research behind this direction now needs to be stated carefully.
+
+- `Neo` (`2025/294`) is the clearest accessible anchor for small-field CCS folding with pay-per-bit commitments.
+- `LatticeFold+` (`2025/247`) is the clearest accessible anchor for a faster and simpler lattice-based folding line than older lattice folding.
+- `SuperNeo` (`2026/242`) is verifiable as an ePrint entry and title, and it clearly stays relevant, but its detailed claims should be treated as provisional here unless the full construction is directly available during implementation.
+- `HyperWolf` and adjacent lattice commitment work remain relevant as commitment/opening references rather than direct folding specifications.
+
+This plan therefore does not require implementing any one paper literally line by line. It requires arriving at a working backend whose security and performance claims can be stated with a straight face and whose design choices are anchored in the accessible literature rather than in unverified summaries.
 
 ## Plan of Work
 
@@ -65,7 +77,7 @@ Start by making the backend parameter set explicit and versioned. Add a single p
 
 With parameters explicit, harden the commitment layer. Replace the current deterministic projection-style commitment logic with commitments that include explicit randomness, documented norm or range bounds, and verifiable openings. The implementation should expose a proof object that can be independently malformed in tests and rejected by the verifier. If the current manual wire format for native `TxLeaf` needs to change to accommodate proper randomness and openings, change it deliberately and version it.
 
-Next, harden fold proofs. Today’s fold path must evolve from a digest-consistency object into a real algebraic fold proof under the parameter set above. Whether this is expressed as one explicit sum-check instance or another exact fold relation, the important requirement is that parent commitments and child commitments are bound through verifiable algebra, not just through re-derived digests.
+Next, harden fold proofs. Today’s fold path must evolve from a digest-consistency object into a real algebraic fold proof under the parameter set above. The implementation target here should be expressed in the accessible language of `Neo` / `LatticeFold+`: small-field folding over an explicit parameter set with proper binding between parent and child commitments. Whether the final implementation resembles one explicit sum-check instance or another exact fold relation, the important requirement is that parent commitments and child commitments are bound through verifiable algebra, not just through re-derived digests.
 
 Then, strengthen the verifier-profile and artifact-boundary integration. `experimental_native_tx_leaf_verifier_profile()` and `experimental_native_receipt_root_verifier_profile()` must derive from the parameter set and the exact relation shape, not from ambient code assumptions. Add negative tests that deliberately mix artifacts and profiles across parameter sets and show that verification fails.
 
@@ -148,4 +160,6 @@ This plan should introduce explicit backend parameter types. Preferred names are
 
 The verifier-profile derivation should be exposed as a stable function that takes the explicit parameter object as input rather than reading global defaults.
 
-Revision note: this ExecPlan was created on 2026-03-26 to turn the current SuperNeo branch from a topology proof into a hardening program. The branch already has enough architecture to justify this investment; what it lacks is a backend whose security claims and benchmark numbers can be stated honestly together.
+Revision note: this ExecPlan was created on 2026-03-26 to turn the current native folding branch from a topology proof into a hardening program. The branch already has enough architecture to justify this investment; what it lacks is a backend whose security claims and benchmark numbers can be stated honestly together.
+
+Revision note (2026-03-26, research pass): corrected the research framing after re-checking the literature. The plan still stands, but it now treats `Neo` and `LatticeFold+` as the primary accessible anchors, treats `SuperNeo` as a relevant but still partially provisional upgrade line, and narrows the title from “production-grade SuperNeo backend” to “credible production candidate.”

@@ -22,6 +22,9 @@ The user-visible effect is disciplined research. Running the benchmark binary or
 
 ## Surprises & Discoveries
 
+- Observation: this plan is still the right experimental boundary after re-checking the literature.
+  Evidence: `Neo` explicitly targets CCS over small prime fields, and its abstract says CCS generalizes `R1CS`, `Plonkish`, and `AIR`, which means Hegemon’s native relation direction is aligned with the actual small-field PQ folding line instead of being an arbitrary local preference. Source: `Neo: Lattice-based folding scheme for CCS over small fields and pay-per-bit commitments` (`ePrint 2025/294`).
+
 - Observation: most of the architectural work is already done. The missing piece is not a new proof object but a stricter product boundary around which experimental path matters.
   Evidence: the canonical native relation already exists in [superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs#L320), the benchmark default already points at the native topology in [superneo-bench/src/main.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-bench/src/main.rs#L46), and the docs already describe `native_tx_leaf_receipt_root` as the only planning-grade lane in [METHODS.md](/Users/pldd/Projects/Reflexivity/Hegemon/METHODS.md#L895).
 
@@ -63,9 +66,13 @@ The user-visible effect is disciplined research. Running the benchmark binary or
 
 This plan is now implemented. The repository did not gain any new proof primitive, but it did gain the missing product boundary: `superneo-bench` defaults to the canonical native lane and forces explicit opt-in for every diagnostic lane; node authoring emits stable native-lane selection and fallback reasons; and the design/method docs now describe `native_tx_leaf_receipt_root` as the only planning-grade experimental surface. The release benchmark still shows the expected native shape after these surface changes: `5481/5564/5606/5627/5637/5642/5645/5646 B/tx` for `k=1/2/4/8/16/32/64/128`, with verification cost remaining the dominant bottleneck on the current experimental import path.
 
+After re-checking the paper line on 2026-03-26, this plan still stands. Nothing in the recent literature changes the core judgment here: bridge lanes remain wrappers around old proof families, while the native tx-validity relation is the only lane that matches the actual small-field PQ folding direction represented by `Neo`.
+
 ## Context and Orientation
 
 `NativeTxValidityRelation` is the relation in `circuits/superneo-hegemon/src/lib.rs` that consumes a `TransactionWitness` directly and derives the native public statement for the experimental folding backend. A “relation” here means the exact algebraic statement and witness encoding that the backend proves. A “bridge lane” means any path that starts from the existing `TransactionProof` family and wraps or folds it afterward, rather than proving transaction validity natively.
+
+The literature check that matters for this plan is not about accumulation. It is about whether Hegemon should treat the native relation or the bridge lanes as the architectural target. `Neo` answers that directly enough to justify this plan: its accessible abstract says it is a lattice-based folding scheme for CCS over small fields, and that CCS generalizes `R1CS`, `Plonkish`, and `AIR`. Hegemon’s native relation lane is therefore aligned with the actual intended backend family, while bridge lanes are only migration aids.
 
 Today, the benchmark CLI in `circuits/superneo-bench/src/main.rs` still exposes several surfaces: `NativeTxValidity`, `NativeTxLeafReceiptRoot`, `TxLeafReceiptRoot`, and `VerifiedTxReceipt`. The difference after this plan is behavioral: `NativeTxLeafReceiptRoot` is the only default, and every other surface now requires `--allow-diagnostic-relation`. The proof-neutral consensus boundary already exists under `consensus/src/proof.rs`, where `TxLeaf` and `ReceiptRoot` are separate artifact kinds routed through a verifier registry. The current native import bottleneck remains linear per leaf because `ReceiptRootVerifier` still resolves and checks every tx artifact before verifying the root.
 
@@ -146,3 +153,5 @@ Do not introduce any new proof artifact kinds in this plan. This is a surface an
 Revision note: this ExecPlan was created on 2026-03-26 to make `NativeTxValidityRelation` and the native `TxLeaf -> ReceiptRoot` topology the only decision-grade experimental surface on the SuperNeo branch. The repository already contains the relation, topology, and benchmarks; what is missing is a strict product boundary around them.
 
 Revision note (2026-03-26, later): implementation is now complete. `superneo-bench` hard-gates non-canonical lanes behind `--allow-diagnostic-relation`, node authoring emits explicit native-lane selection reports with fallback reasons, successful native receipt-root outcomes are cacheable while `InlineTx` fallbacks are not, and the docs plus focused validation commands were refreshed against the current release benchmark output.
+
+Revision note (2026-03-26, research pass): re-checked against `Neo` (`ePrint 2025/294`). This plan still stands; the update only clarifies that the native lane is the right target because it matches the accessible small-field CCS folding literature, not just local branch preference.

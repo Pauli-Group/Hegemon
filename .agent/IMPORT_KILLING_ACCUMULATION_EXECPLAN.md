@@ -1,178 +1,449 @@
-# Eliminate Linear Import Cost With A Receipt-Root Accumulation Layer
+# Build A Real ARC/WHIR Cold-Import Accumulator
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-This document follows [`.agent/PLANS.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/PLANS.md) and must be maintained in accordance with that file.
+This document must be maintained in accordance with `.agent/PLANS.md`.
 
 ## Purpose / Big Picture
 
-Hegemon’s native lane already has promising bytes and promising edge-proving numbers. The remaining structural blocker is import. Today, import still resolves and verifies every tx-level leaf before accepting a `ReceiptRoot`, which means verifier work remains linear in the block size. After this plan, Hegemon will have an accumulation prototype that can prove or at least tightly test the next architectural step: import verifying a root artifact plus a small residual object, instead of re-verifying every leaf. That is the difference between “interesting native lane” and a believable path to `10s` and `100s` of TPS.
+After this change, a fresh Hegemon peer will be able to import an experimental receipt lane block from block contents alone, without a warm verified-leaf store and without replaying per-transaction native leaf verification. The block will carry receipt-only transaction artifacts plus one residual block artifact built by a new Reed-Solomon accumulation backend. The user-visible proof that this worked is a release benchmark that shows cold verification at `k=32,64,128` beating the current linear native `ReceiptRoot` baseline while keeping `cold_residual_replayed_leaf_verifications = 0`.
 
-The user-visible behavior after the first milestone is a new experimental accumulation lane with benchmark and import hooks. A contributor should be able to run a benchmark or import test and compare current `ReceiptRoot` behavior against an accumulation prototype using the same ordered native tx leaf receipts.
+This plan replaces the previous accumulation plan because that plan drifted into wrappers around the old aggregation backend. The fix is not “be more disciplined.” The fix is to choose one research line that actually matches the cold-import goal and write the implementation contract around it.
+
+After checking the papers again, the right primary line is `ARC -> WHIR`, not `FACS -> WHIR`.
+
+- `ARC` is explicitly an accumulation scheme for Reed-Solomon code proximity claims.
+- `WHIR` is explicitly a Reed-Solomon proximity test with super-fast verification.
+
+That split is internally coherent for Hegemon’s cold-import problem. `FICS/FACS` remains relevant as a secondary code-switching line, but it is not the first plan of attack here.
 
 ## Progress
 
-- [x] (2026-03-26 02:02Z) Re-read `.agent/PLANS.md`, `.agent/PROOF_BACKEND_MIGRATION_EXECPLAN.md`, `.agent/SUPERNEO_EXPERIMENT_EXECPLAN.md`, `METHODS.md`, `DESIGN.md`, and the current `ReceiptRoot` verifier path.
-- [x] (2026-03-26 02:02Z) Confirmed that the live structural issue is linear import verification through the tx-artifact verifier loop in `ReceiptRootVerifier`.
-- [x] (2026-03-26 02:02Z) Authored this ExecPlan as a dedicated roadmap for the import-killing accumulation branch.
-- [x] (2026-03-26 04:04Z) Replaced the old `(tx_id, artifact_digest)` memoization path with a reusable verified-native-leaf store keyed by native artifact hash and storing the verified leaf commitment rows needed for folded-root checks.
-- [x] (2026-03-26 04:04Z) Added explicit artifact-hash references inside a new `receipt_accumulation` block-artifact wrapper so import can resolve verified leaves before touching full proof bytes.
-- [x] (2026-03-26 04:04Z) Added a proof-neutral `ReceiptAccumulator` interface and a concrete native receipt-accumulation adapter behind a custom `proof_kind`.
-- [x] (2026-03-26 04:04Z) Registered the first accumulation backend end to end: node authoring can select `HEGEMON_BLOCK_PROOF_MODE=receipt_accumulation`, consensus verifies it through the standard verifier registry, and the baseline `ReceiptRoot` verifier remains intact for comparison.
-- [x] (2026-03-26 04:04Z) Added import-comparison output to `superneo-bench`’s canonical `native_tx_leaf_receipt_root` lane and added consensus tests that exercise the warm-store accumulation path plus the fail-closed store-miss path.
-- [x] (2026-03-26 04:13Z) Promoted the prototype as an additive experimental lane after the release benchmark showed warm import verification dropping from `33.4/43.2/76.4/140.7 ms` to `0.18/0.35/0.67/1.37 ms` at `k=16/32/64/128`.
-- [x] (2026-03-26 04:31Z) Tightened the node boundary so `receipt_root` / `receipt_accumulation` now reject sidecar-only proof material during authoring and import, and clarified that the benchmark’s fast accumulation number is a warm-store measurement.
+- [x] (2026-03-26 21:08Z) Replaced the previous drift-prone accumulation plan with a paper-checked `ARC -> WHIR` plan.
+- [x] (2026-03-26 21:08Z) Recorded the current honest starting point: `receipt_accumulation` is warm-store-only; `receipt_decider` and `receipt_residual_diag` are rejected negative results.
+- [x] (2026-03-26 22:11Z) Hardened the warm-store-only `receipt_accumulation` experiment so cached prove-ahead hits re-run verified-leaf prewarm before they reuse a stored accumulation payload.
+- [ ] Create a new standalone `circuits/receipt-arc-whir` crate that proves and verifies a receipt-only residual artifact without any dependency on the old aggregation backend.
+- [ ] Define a canonical receipt-row encoding and receipt commitment that bind all receipt fields, not just `statement_hash`.
+- [ ] Implement an `ARC` accumulation layer that compresses many ordered Reed-Solomon proximity claims over receipt rows into one residual claim.
+- [ ] Implement a `WHIR` verification layer for that residual claim over the committed Reed-Solomon codeword.
+- [ ] Add a consensus verifier that accepts only receipt-only tx artifacts and one `receipt_arc_whir` block artifact.
+- [ ] Add node authoring/import support behind `HEGEMON_BLOCK_PROOF_MODE=receipt_arc_whir`.
+- [ ] Add a diagnostic benchmark lane `native_tx_leaf_receipt_arc_whir` and decision-grade cold runs at `k=32,64,128`.
+- [ ] Promote or kill the lane strictly by the acceptance criteria in this document.
 
 ## Surprises & Discoveries
 
-- Observation: Hegemon already has the right consensus boundary for this work. The hard part is not consensus surgery; it is replacing the inner verification pattern.
-  Evidence: `ProofEnvelope`, `TxValidityArtifact`, and the verifier registry already exist in [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs#L158) and [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs#L188).
+- Observation: warm-store reuse is real, but it is not the target.
+  Evidence: `receipt_accumulation` reduces warm verification dramatically only after verified-leaf prewarm; it fails closed on cold import.
 
-- Observation: the current `ReceiptRoot` path is native-only but still linear on import.
-  Evidence: `ReceiptRootVerifier` calls the generic tx-artifact verifier across all artifacts in [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs#L505).
+- Observation: cached warm-store payloads still need current warm-store state.
+  Evidence: prove-ahead cache hits for `receipt_accumulation` must re-run verified-leaf prewarm before reuse; otherwise the cached payload can outlive the verifier-local store entries it still assumes.
 
-- Observation: not all recent accumulation work attacks the same problem. Some papers primarily reduce prover costs, while others directly target accumulation depth, verifier queries, or code-based oracle reuse.
-  Evidence: `WARP`, `FACS`, `Arc`, `BOIL`, and `WHIR` live on the accumulation / code / verifier side, while `2026/587` is a prover-optimization paper.
+- Observation: a “self-contained cold lane” can still be garbage if it embeds per-tx proof objects or replays per-leaf verification.
+  Evidence: `receipt_decider` and `receipt_residual_diag` were both removed after review and benchmarking.
 
-- Observation: Hegemon did not need a new runtime payload shape to prototype import reuse. The existing `ReceiptRoot` payload could carry the experiment by switching only `proof_kind` / `verifier_profile` and wrapping the root bytes with ordered native leaf hashes.
-  Evidence: `node/src/substrate/service.rs` now routes `HEGEMON_BLOCK_PROOF_MODE=receipt_accumulation` through legacy `ReceiptRoot` payload assembly while `consensus/src/proof.rs` decodes a custom wrapper and still verifies through `ArtifactVerifier`.
+- Observation: the easiest failure mode is backend drift.
+  Evidence: earlier cold-lane attempts reused `prove_aggregation(...)` and `verify_aggregation_proof_safely(...)`, which made them wrappers around the old aggregation backend instead of a new accumulator.
 
-- Observation: the warm-path import win is already obvious even in a small debug smoke. Re-checking the folded root from the verified-leaf store is much cheaper than replaying native leaf verification.
-  Evidence: `cargo run -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1` now prints `import_comparison` with `baseline_verify_ns=251152541`, `accumulation_prewarm_ns=22612375`, and `accumulation_warm_verify_ns=280333`.
+- Observation: the original `FACS -> WHIR` split was too loose.
+  Evidence: after re-checking the paper line, `FICS/FACS` is one code-switching family and `ARC/WHIR` is the cleaner Reed-Solomon-specific accumulation plus verifier split.
 
-- Observation: the prototype is a decisive warm-path win, not a cold-path miracle. Prewarming still scales with the number of leaves, but once the verified-native-leaf store is warm, folded-root re-checks stay tiny.
-  Evidence: `cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 16,32,64,128 --compare-inline-tx` reported `baseline_verify_ns=33364208/43200834/76430000/140656375`, `accumulation_prewarm_ns=17697917/34998541/65996583/133269041`, and `accumulation_warm_verify_ns=179250/353833/669959/1366250`.
-
-- Observation: the accumulation lane is a warm-reuse experiment, not a sidecar-dependent network lane. Receipt-root selectors have to be reconstructable from block contents, so authoring/import now reject candidates that only have local sidecar proof bytes.
-  Evidence: `node/src/substrate/service.rs` now hard-fails `receipt_root` / `receipt_accumulation` when proof bytes are missing from the block, instead of allowing importer-local pending-proof state to decide validity.
+- Observation: `WHIR` is still relevant, but conservative parameterization matters.
+  Evidence: `WHIR` is explicitly a Reed-Solomon proximity verifier, but later work on mutual correlated agreement means the implementation should stay on conservative, explicit parameters instead of hand-wavy “up to capacity” language.
 
 ## Decision Log
 
-- Decision: build this plan around canonical native tx-validity receipts, not around raw `TransactionProof`s and not around ad hoc tx-leaf bytes.
-  Rationale: receipts are the stable parent-independent binding that already fits the proof-backend-neutral architecture and generalizes across future backends.
+- Decision: use `ARC -> WHIR` as the primary cold-import backend line.
+  Rationale: `ARC` is already an accumulation scheme for Reed-Solomon code proximity claims, and `WHIR` is already a Reed-Solomon proximity verifier with fast verification. That pairing is a much cleaner fit than the earlier `FACS -> WHIR` wording.
   Date/Author: 2026-03-26 / Codex
 
-- Decision: prototype the transparent/code-based accumulation branch first.
-  Rationale: `WARP`, `FACS`, `Arc`, `BOIL`, and `WHIR` most directly target the exact problem Hegemon has today: too much per-leaf verifier work. They are also structurally closer to the existing proof-neutral artifact architecture than a full new folding backend would be.
+- Decision: keep `FICS/FACS` as a secondary research line, not the implementation target of this plan.
+  Rationale: `FICS/FACS` is still relevant because it shows a code-switching approach to fast IOPPs and accumulation, but it is not the cleanest first implementation for Hegemon’s cold-import problem.
   Date/Author: 2026-03-26 / Codex
 
-- Decision: stage this plan so the first milestones improve import even before the final accumulation backend exists.
-  Rationale: a verified-leaf store and artifact-hash references give immediate operational benefit and also provide the substrate the final accumulator will need anyway.
+- Decision: the new backend must start in a new crate and must not call the old aggregation helpers.
+  Rationale: if it is wired directly into consensus first, the implementation will drift back into local wrappers again. The cryptographic core has to prove itself in isolation.
   Date/Author: 2026-03-26 / Codex
 
-- Decision: keep the old native `ReceiptRoot` verifier linear and put the import-reuse path behind a new custom `receipt_accumulation` artifact kind.
-  Rationale: the branch needs a real side-by-side baseline. Replacing `ReceiptRoot` in place would hide whether the prototype actually reduces import work.
+- Decision: the cold lane will accept only receipt-only `TxValidityArtifact`s with `proof = None`.
+  Rationale: if per-tx proof objects are still carried on-chain, the lane has already failed the purpose of the plan.
   Date/Author: 2026-03-26 / Codex
 
-- Decision: encode ordered native artifact hashes inside the custom accumulation artifact bytes instead of widening `TxValidityArtifact` or the runtime payload structs.
-  Rationale: the import prototype needs explicit hash references, but the cheapest way to make that self-contained was to wrap the existing native receipt-root bytes with the ordered hash list under a new `proof_kind`.
-  Date/Author: 2026-03-26 / Codex
-
-- Decision: promote the prototype for continued experimental use and benchmarking, but keep it off the production-default path.
-  Rationale: the decision-grade release benchmark shows clear warm-import wins at every required `k`, while prewarm remains roughly linear. That means the branch answered the architectural question positively, but it does not justify replacing the baseline or claiming a cold-path breakthrough.
+- Decision: release `k=32,64,128` is the only decision gate.
+  Rationale: `k=1` smoke runs and debug-mode integration tests are not good enough to judge a cold-import accumulator.
   Date/Author: 2026-03-26 / Codex
 
 ## Outcomes & Retrospective
 
-The branch is no longer design-only. It now has a reusable verified-native-leaf store, a custom `receipt_accumulation` verifier adapter, node-side selection plumbing, benchmark comparison output, and import tests for both the warm and fail-closed cold path. The decision-grade release benchmark answered the plan’s core question: warm import verification is materially lower than the linear baseline at `k=16,32,64,128`, so the prototype earns continued experimental life. It is still not the production default because the prewarm step remains near-linear and the verified-leaf store is the real source of the win. The node boundary is now explicit about that limitation: receipt-root lanes reject sidecar-only proof material and only run when peers can reconstruct the native leaves from block contents.
+At the moment this plan is written, there is no real cold-import accumulator in the tree. The repo has a linear native `ReceiptRoot` baseline and a real warm-store `receipt_accumulation` experiment. The rejected cold-lane experiments are useful only as negative results. This plan is the reset that stops further wrapper work from masquerading as backend work and replaces an insufficiently justified `FACS -> WHIR` split with a cleaner `ARC -> WHIR` implementation target.
 
 ## Context and Orientation
 
-In Hegemon, a “receipt” is the canonical, parent-independent binding of a transaction-validity proof or native tx-validity artifact to the statement it proves. A “leaf” is the tx-level proof artifact. A “root” is the block-level aggregate over the ordered leaf set. An “accumulation scheme” is a proof system that combines many verification obligations into one smaller obligation. For Hegemon, the reason to care is simple: if import must still verify every leaf, the chain remains verifier-linear even if the leaf bytes are tiny.
+The current proof-routing code lives in `consensus/src/proof.rs`. It already knows about these block-artifact lanes:
 
-The current import path is in `consensus/src/proof.rs`. `NativeTxLeafVerifier` verifies a native tx leaf and caches successful results in a local LRU-style cache. `ReceiptRootVerifier` still calls `verify_tx_validity_artifacts(...)` across the whole artifact set before verifying the root. The architecture already has a neutral proof envelope and a neutral tx-artifact type, so this plan does not need to redesign consensus. It needs to change what the receipt-root lane proves and how import reuses verified work.
+- `InlineTx`, the shipping path.
+- `MergeRoot`, the rejected recursive hot-path experiment.
+- `ReceiptRoot`, the native linear baseline over native `TxLeaf` artifacts.
+- `receipt_accumulation`, an additive warm-store experiment that wraps native receipt-root bytes plus ordered leaf hashes and reuses the verified-native-leaf store.
 
-The recent paper lines relevant to this plan are the code-based and accumulation papers: `WARP` for linear-time hash-based accumulation, `FICS/FACS` for fast IOPPs and accumulation via code-switching, `Arc` for Reed–Solomon accumulation, `BOIL` for correlated holographic IOP accumulation, and `WHIR` for fast Reed–Solomon proximity verification. This plan does not assume one of them is already the answer. It requires prototyping against Hegemon’s actual import surface before promotion.
+The current node authoring and import logic lives in `node/src/substrate/service.rs`. It selects lanes from `HEGEMON_BLOCK_PROOF_MODE`, prepares candidate proof material, and falls back to `InlineTx` when an experimental lane cannot be built safely.
+
+The current benchmark harness lives in `circuits/superneo-bench/src/main.rs`. The only decision-grade experimental relation today is `native_tx_leaf_receipt_root`, and its `import_comparison` block currently shows two honest surfaces: the linear native baseline and the warm-store `receipt_accumulation` path.
+
+The current native receipt-root cryptography lives in `circuits/superneo-hegemon/src/lib.rs`. That code produces native `TxLeaf` artifacts, folds them into native receipt-root artifacts, and verifies them. This plan does not replace that lane. It adds a new cold-import accumulator beside it.
+
+Terms used in this plan:
+
+- A **receipt** is `consensus::TxValidityReceipt`, the four-field object containing `statement_hash`, `proof_digest`, `public_inputs_digest`, and `verifier_profile`.
+- A **receipt row** is the exact ordered byte representation of one receipt. In this plan the row hash must bind all four fields.
+- **Cold import** means verification by a fresh peer from block contents alone. No verified-leaf store, no local sidecars, no candidate-preparation cache.
+- `ARC` means the accumulation layer. In this repository it will accumulate claims that ordered receipt rows lie close to a Reed-Solomon codeword representation.
+- `WHIR` means the fast Reed-Solomon proximity verification layer for the residual claim produced by `ARC`.
+- A **residual artifact** is the one block-level proof object produced by the new backend. It is not allowed to contain a bundled per-tx proof family.
+
+The two forbidden failure modes are:
+
+1. Building a new lane that still calls any of these helpers:
+   `prove_aggregation(...)`, `verify_aggregation_proof_safely(...)`, `verify_tx_validity_artifacts(...)`, `verify_native_tx_leaf_artifact_bytes(...)`, `verify_native_tx_leaf_receipt_root_artifact_bytes(...)`, or `verify_native_tx_leaf_receipt_root_artifact_from_records(...)`.
+
+2. Building a new lane that still depends on any of these stateful shortcuts:
+   `prewarm_verified_native_tx_leaf_store(...)`, `verify_experimental_native_receipt_accumulation_artifact(...)`, or any importer-local sidecar proof material.
+
+If either forbidden pattern appears in the implementation, the milestone has failed and the code must not be integrated.
+
+## Research Notes That Justify This Plan
+
+The point of this section is to make the paper choice explicit so the next contributor does not repeat the earlier drift.
+
+`ARC` is recorded in the 2024 ePrint listing as:
+
+    "ARC: Accumulation for Reed-Solomon Codes"
+    ePrint 2024/1731
+
+The paper is described in search/index material as an accumulation scheme for claims about proximity of codewords to Reed-Solomon codes and as an almost-drop-in replacement for IOP-based PCD deployments.
+
+Source:
+- https://eprint-classic.github.io/2024.html
+- https://eprint.iacr.org/2024/1731.pdf
+
+`WHIR` is recorded in the 2024 ePrint listing as:
+
+    "WHIR: Reed-Solomon Proximity Testing with Super-Fast Verification"
+    ePrint 2024/1586
+
+Source:
+- https://eprint-classic.github.io/2024.html
+- https://eprint.iacr.org/2024/1586.pdf
+
+`FICS/FACS` is recorded in the 2025 ePrint listing as:
+
+    "FICS and FACS: Fast IOPPs and Accumulation via Code-Switching"
+    ePrint 2025/737
+
+This matters because it shows that the code-switching family is real and relevant, but it also shows why the earlier `FACS -> WHIR` wording was sloppy: `FICS/FACS` is already an internally coherent pair, and `ARC/WHIR` is the cleaner Reed-Solomon-specific pair.
+
+Source:
+- https://eprint-classic.github.io/2025.html
+- https://eprint.iacr.org/2025/737
+
+This plan therefore commits to `ARC -> WHIR` as the first implementation line. If that line loses, `FICS/FACS` can become the next plan, but not by quietly mutating this one.
 
 ## Plan of Work
 
-Begin with the import substrate that any future accumulation lane needs. Add a verified-native-leaf store keyed by artifact hash and statement commitment, not just the current in-process `(tx_id, artifact_digest)` cache. This store should live at the node or consensus boundary and survive long enough to benefit repeated candidate assembly, repeated block validation, and peer-announced artifact reuse. The first milestone is complete when import can skip full native-leaf verification for artifacts that have already been verified locally and whose statement binding matches the current block’s ordered statement set.
+### Milestone 1: Build the backend in isolation
 
-Next, teach block artifacts and the artifact market to reference verified leaves by digest instead of always embedding every proof byte inline. This does not yet eliminate verification, but it changes the import surface from “here are all the bytes, verify them again” to “here is the root artifact and here are the expected verified leaf digests.” The purpose is to make root-level verification and cached admission-time verification compose cleanly.
+Create a new workspace crate at `circuits/receipt-arc-whir`. Do not put the first implementation in `consensus` or `node`. The entire point of this milestone is to prove that the backend exists independently of the current receipt-root helpers.
 
-Once the substrate exists, define a generic accumulation interface over canonical tx-validity receipts. Put this interface behind the proof-neutral boundary, not inside one backend crate. The interface should allow a backend to absorb ordered receipts or ordered verified-leaf digests, produce an accumulation artifact, and verify that artifact against the ordered receipt set and the expected statement commitment.
+In `circuits/receipt-arc-whir/src/lib.rs`, define the minimal public surface:
 
-Then prototype the first backend. The preferred order is `FACS/WHIR` first, then `WARP`, then `Arc/BOIL` if the first two stall. The prototype does not need to ship on the first pass, but it must be real enough to benchmark import behavior. That means it must emit an actual block artifact kind, register a verifier adapter, and be exercised through the same consensus import path as `ReceiptRoot`.
+    pub const RECEIPT_ARC_WHIR_ARTIFACT_KIND_BYTES: [u8; 16];
+    pub const RECEIPT_ARC_WHIR_ARTIFACT_VERSION: u16;
 
-Finally, benchmark cold and warm import at `k=16,32,64,128`. If the accumulation prototype does not materially reduce import work relative to the current native `ReceiptRoot` lane, kill it cleanly and document why. The purpose of this plan is to answer the question, not to preserve a fashionable paper line.
+    pub struct ReceiptRow {
+        pub statement_hash: [u8; 48],
+        pub proof_digest: [u8; 48],
+        pub public_inputs_digest: [u8; 48],
+        pub verifier_profile: [u8; 48],
+    }
+
+    pub struct ReceiptArcWhirParams {
+        pub log_blowup: u8,
+        pub query_count: u8,
+        pub folding_rounds: u8,
+    }
+
+    pub struct ReceiptResidualArtifact {
+        pub version: u16,
+        pub receipt_commitment: [u8; 48],
+        pub codeword_len: u32,
+        pub arc_bytes: Vec<u8>,
+        pub whir_bytes: Vec<u8>,
+    }
+
+    pub struct ReceiptResidualVerifyReport {
+        pub row_count: usize,
+        pub artifact_bytes: usize,
+        pub replayed_leaf_verifications: usize,
+        pub used_old_aggregation_backend: bool,
+    }
+
+    pub fn canonical_receipt_row_hash(row: &ReceiptRow) -> [u8; 48];
+    pub fn receipt_rows_commitment(rows: &[ReceiptRow]) -> [u8; 48];
+    pub fn prove_receipt_arc_whir(
+        rows: &[ReceiptRow],
+        params: &ReceiptArcWhirParams,
+    ) -> anyhow::Result<Vec<u8>>;
+    pub fn verify_receipt_arc_whir(
+        rows: &[ReceiptRow],
+        artifact_bytes: &[u8],
+        params: &ReceiptArcWhirParams,
+    ) -> anyhow::Result<ReceiptResidualVerifyReport>;
+    pub fn max_receipt_arc_whir_artifact_bytes(row_count: usize) -> usize;
+
+The semantics are strict:
+
+- `canonical_receipt_row_hash` must hash the full row in order: `statement_hash || proof_digest || public_inputs_digest || verifier_profile`.
+- `receipt_rows_commitment` must commit to the ordered row hashes, not just `statement_hash`.
+- `prove_receipt_arc_whir` must produce one artifact for the full ordered receipt list.
+- `verify_receipt_arc_whir` must verify only from `rows`, `artifact_bytes`, and `params`.
+- `ReceiptResidualVerifyReport.replayed_leaf_verifications` must stay `0`.
+- `ReceiptResidualVerifyReport.used_old_aggregation_backend` must stay `false`.
+
+The `ARC` instructions for this crate are:
+
+1. Treat the ordered receipt rows as the source data. Do not use `TransactionProof`, native `TxLeaf` openings, or the verified-native-leaf store here.
+2. Hash each receipt row with `canonical_receipt_row_hash`.
+3. Lift the ordered row hashes into field elements for a Reed-Solomon codeword domain.
+4. Encode the ordered rows as a Reed-Solomon claim set.
+5. Accumulate those Reed-Solomon proximity claims into one residual claim. In this repository, that means `arc_bytes` must summarize one residual claim for the whole receipt vector, not one proof per row.
+6. The artifact may contain accumulator state, challenge material, and residual openings. It may not contain embedded per-row proof blobs.
+
+The `WHIR` instructions for this crate are:
+
+1. Take the residual Reed-Solomon claim from the `ARC` layer.
+2. Produce `whir_bytes` that verify that residual claim with fast verifier work.
+3. Keep the verifier interface receipt-only: it may query the residual codeword state carried in the artifact, but it may not query old tx-leaf artifacts or any importer-local cache.
+4. Use `ReceiptArcWhirParams` to expose explicit, conservative codeword settings that matter for performance: blowup, query count, and accumulation/folding rounds.
+
+This milestone is complete only when the crate can prove and verify standalone receipt vectors and fail on receipt mutation, receipt reordering, artifact truncation, and oversized artifact input.
+
+### Milestone 2: Wire the backend into consensus without lying
+
+After Milestone 1 works standalone, integrate it into `consensus/src/proof.rs` and `consensus/src/lib.rs`.
+
+Add a new custom block-artifact kind named `receipt_arc_whir`. Use a new custom `ProofArtifactKind::Custom(...)` tag and a dedicated verifier-profile digest derived from a stable domain string such as `hegemon:receipt_arc_whir:v1`.
+
+The consensus integration must define:
+
+    pub fn experimental_receipt_arc_whir_artifact_kind() -> ProofArtifactKind;
+    pub fn experimental_receipt_arc_whir_verifier_profile() -> VerifierProfileDigest;
+    pub fn build_experimental_receipt_arc_whir_artifact(
+        receipts: &[TxValidityReceipt],
+    ) -> Result<ExperimentalReceiptRootArtifact, ProofError>;
+    pub fn verify_experimental_receipt_arc_whir_artifact(
+        receipts: &[TxValidityReceipt],
+        expected_commitment: &[u8; 48],
+        envelope: &ProofEnvelope,
+    ) -> Result<BlockArtifactVerifyReport, ProofError>;
+
+Create a dedicated module `consensus/src/receipt_arc_whir.rs` for the adapter layer. This module must:
+
+- convert `TxValidityReceipt` into `ReceiptRow`
+- compute the ordered receipt commitment with all receipt fields bound
+- call only the new `circuits/receipt-arc-whir` crate
+- apply explicit encoded artifact size caps before decode
+- expose the no-replay / no-old-backend counters to tests and benchmarks
+
+The consensus verifier for this lane must reject all of the following:
+
+- any tx artifact whose `proof` field is present
+- any block artifact whose kind or verifier profile is wrong
+- any artifact whose bytes exceed `max_receipt_arc_whir_artifact_bytes(txs.len())`
+- any artifact that causes `replayed_leaf_verifications != 0`
+- any artifact that causes `used_old_aggregation_backend == true`
+
+Do not reuse `ReceiptRootVerifier` or `ExperimentalNativeReceiptAccumulator`. This lane is new code, not a variant of an existing verifier.
+
+### Milestone 3: Make node authoring and import cold-self-contained
+
+Only after Milestone 2 passes should the node path change.
+
+In `node/src/substrate/service.rs`, add `HEGEMON_BLOCK_PROOF_MODE=receipt_arc_whir`. Do not add aliases.
+
+Authoring on this lane must do exactly this:
+
+1. Start from the current candidate set and whatever local proof material exists today.
+2. Derive the canonical `TxValidityReceipt` for each ordered tx.
+3. Emit `tx_validity_artifacts` that contain those receipts and `proof = None`.
+4. Build exactly one block artifact through `build_experimental_receipt_arc_whir_artifact(...)`.
+5. Refuse to author the lane if steps `2-4` cannot be completed self-contained. Fall back to `InlineTx` with an explicit log reason.
+
+Import on this lane must do exactly this:
+
+1. Read the receipt-only `tx_validity_artifacts` from the block.
+2. Reconstruct the ordered receipt rows from those block-carried receipts alone.
+3. Verify the one `receipt_arc_whir` block artifact.
+4. Reject the block if any tx artifact carries proof bytes, if any receipt is missing, or if the verifier touches warm-store or per-leaf replay helpers.
+
+This lane is not allowed to depend on:
+
+- local sidecar proof bytes
+- the verified-native-leaf store
+- prewarm state
+- old aggregation proof bytes
+
+### Milestone 4: Benchmark honestly and kill quickly if it loses
+
+After node and consensus integration, add a diagnostic benchmark lane in `circuits/superneo-bench/src/main.rs` named `native_tx_leaf_receipt_arc_whir`. Keep `native_tx_leaf_receipt_root` as the canonical benchmark surface until the new lane wins.
+
+The new benchmark must:
+
+- clear the verified-native-leaf store before each run
+- clear any backend-local prepared caches before each cold verify
+- report the full cold artifact bytes, not just the residual bytes
+- report `cold_residual_verify_ns`
+- report `cold_residual_artifact_bytes`
+- report `cold_residual_replayed_leaf_verifications`
+- report `cold_residual_used_old_aggregation_backend`
+
+The benchmark must never describe the new lane as canonical before it wins the gate below.
 
 ## Concrete Steps
 
-From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`, implement this plan in the following order.
+All commands run from `/Users/pldd/Projects/Reflexivity/Hegemon`.
 
-1. Extend the current native-leaf cache into a reusable verified-artifact store and add targeted tests:
+Milestone 1 commands:
 
-       cargo test -p consensus receipt_accumulation_ -- --nocapture
-       cargo test -p consensus receipt_root_block_is_accepted -- --nocapture
-       cargo test -p hegemon-node receipt_accumulation_mode_is_selected_from_env -- --nocapture
+    cargo test -p receipt-arc-whir
 
-2. Add artifact-hash references and wire them through the block-artifact/import path.
+Expected success:
 
-3. Define the generic accumulation interface and add a new experimental block artifact kind for the prototype backend.
+    running N tests
+    test receipt_arc_whir_accepts_canonical_rows ... ok
+    test receipt_arc_whir_rejects_reordered_rows ... ok
+    test receipt_arc_whir_rejects_mutated_receipt_metadata ... ok
+    test receipt_arc_whir_rejects_oversized_artifact ... ok
 
-4. Implement the first backend candidate and benchmark it with:
+Milestone 2 commands:
 
-       cargo run -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1
-       cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 16,32,64,128 --compare-inline-tx
+    cargo test -p consensus receipt_arc_whir_ -- --nocapture
 
-   The canonical benchmark now emits an `import_comparison` object for that lane with the baseline linear `ReceiptRoot` verify time beside the accumulation path’s prewarm and warm verify timings.
+Expected success:
 
-5. Record the measured import delta and decide whether to promote or kill the backend.
+    test receipt_arc_whir_block_is_accepted_from_receipt_only_artifacts ... ok
+    test receipt_arc_whir_rejects_tx_artifacts_with_proof_bytes ... ok
+    test receipt_arc_whir_rejects_old_backend_replay ... ok
+
+Milestone 3 commands:
+
+    cargo test -p hegemon-node receipt_arc_whir_ -- --nocapture
+
+Expected success:
+
+    test receipt_arc_whir_mode_is_selected_from_env ... ok
+    test receipt_arc_whir_mode_falls_back_when_receipts_cannot_be_built ... ok
+    test receipt_arc_whir_import_rejects_sidecar_only_dependency ... ok
+
+Milestone 4 commands:
+
+    cargo run --release -p superneo-bench -- \
+      --relation native_tx_leaf_receipt_arc_whir \
+      --allow-diagnostic-relation \
+      --k 32,64,128 \
+      --compare-inline-tx
+
+Expected output shape:
+
+    [
+      {
+        "relation": "native_tx_leaf_receipt_arc_whir",
+        "k": 32,
+        "bytes_per_tx": ...,
+        "import_comparison": {
+          "baseline_verify_ns": ...,
+          "cold_residual_verify_ns": ...,
+          "cold_residual_artifact_bytes": ...,
+          "cold_residual_replayed_leaf_verifications": 0,
+          "cold_residual_used_old_aggregation_backend": false
+        }
+      }
+    ]
 
 ## Validation and Acceptance
 
-Acceptance happens in layers.
+This plan succeeds only if all of these are true:
 
-The first acceptance point is operational reuse: repeated verification of the same native tx leaf across candidate assembly or repeated import attempts must hit a verified-artifact store rather than re-run full verification. The second acceptance point is block shape: the experimental accumulation artifact must verify through the proof-neutral consensus boundary without special-case imports. That is now true through `HEGEMON_BLOCK_PROOF_MODE=receipt_accumulation` and the custom `proof_kind` adapter in `consensus/src/proof.rs`. The final acceptance point is performance: the accumulation lane must reduce import work materially at the larger `k` values that matter for scalability.
+1. The new backend exists in `circuits/receipt-arc-whir` and can prove / verify standalone receipt vectors.
+2. The consensus verifier for `receipt_arc_whir` does not call any forbidden helper from the old aggregation or native leaf paths.
+3. Node import verifies the lane from block contents alone. No warm store, no sidecars, no per-leaf replay.
+4. The benchmark reports `cold_residual_replayed_leaf_verifications = 0`.
+5. The benchmark reports `cold_residual_used_old_aggregation_backend = false`.
+6. On the same machine and in release mode, `cold_residual_verify_ns < baseline_verify_ns` for `k = 32, 64, 128`.
+7. On the same machine and in release mode, `bytes_per_tx <= native_tx_leaf_receipt_root bytes_per_tx` for `k = 32, 64, 128`.
 
-The benchmark criterion is not subtle. If the new lane does not obviously beat the current linear-import native `ReceiptRoot` path at `k=32,64,128`, it does not earn a product roadmap slot.
+If any of conditions `4-7` fail, the lane is a loss. Record the numbers in this plan, update `DESIGN.md` and `METHODS.md`, remove the lane from supported node selectors, and stop.
 
 ## Idempotence and Recovery
 
-Each stage in this plan is additive. The verified-artifact store can land before the final accumulation backend. Artifact-hash references can coexist with byte-carrying artifacts during migration. If the chosen accumulation backend loses, remove only that backend adapter and keep the reusable verified-artifact substrate.
+This work must be additive until the benchmark gate is passed. The new crate, verifier, and node selector are allowed to exist behind an experimental mode. If the lane loses the gate, recovery is simple: remove the new proof kind from `consensus/src/proof.rs`, remove the env selector from `node/src/substrate/service.rs`, delete the benchmark relation, and keep only the negative result in the docs.
+
+Do not modify the shipping `InlineTx` path while building this prototype. All experiments must remain deletable.
 
 ## Artifacts and Notes
 
-The old choke point this plan set out to remove is visible in:
+The most important artifact for this plan is the release benchmark JSON for `k=32,64,128`.
 
-    consensus/src/proof.rs
-        ReceiptRootVerifier::verify_block_artifact(...)
-        -> verify_tx_validity_artifacts(...)
-        -> verify every native tx leaf before verifying the root
+When the benchmark is run, archive its JSON under `.agent/benchmarks/` with a timestamped filename. If the process is OOM-killed or exits without JSON, archive the exit status file as evidence and treat the lane as failed unless a smaller reproducible bug is found and fixed first.
 
-The first benchmark or import report added by this plan must print both the old path and the new accumulation path side by side for the same `k` values. That hook now exists in `superneo-bench`’s canonical native lane as the JSON `import_comparison` object, and the decision-grade `--release` run is now recorded: warm verification fell from `33.4/43.2/76.4/140.7 ms` to `0.18/0.35/0.67/1.37 ms` at `k=16/32/64/128`, while prewarm cost measured `17.7/35.0/66.0/133.3 ms`.
+The second most important artifacts are the guard tests that prove the lane does not replay leaf verification and does not call the old aggregation backend.
 
 ## Interfaces and Dependencies
 
-This plan should introduce a generic accumulation interface. Preferred names are:
+The new crate `circuits/receipt-arc-whir` may depend on field and hash crates already in the repository, but it must not depend on:
 
-    pub trait ReceiptAccumulator: Send + Sync {
-        fn kind(&self) -> ProofArtifactKind;
-        fn verifier_profile(&self) -> VerifierProfileDigest;
-        fn build(
-            &self,
-            receipts: &[TxValidityReceipt],
-            artifacts: &[TxValidityArtifact],
-        ) -> Result<ProofEnvelope, ProofError>;
-        fn verify(
-            &self,
-            receipts: &[TxValidityReceipt],
-            expected_commitment: &[u8; 48],
-            envelope: &ProofEnvelope,
-        ) -> Result<BlockArtifactVerifyReport, ProofError>;
-    }
+- `aggregation_circuit`
+- `transaction_circuit::proof`
+- `superneo-hegemon`
+- `superneo-backend-lattice`
 
-If a persistent verified-leaf store is added, prefer a neutral interface such as:
+Use existing repository primitives where they help:
 
-    pub trait VerifiedTxArtifactStore {
-        fn get(&self, artifact_hash: [u8; 48]) -> Option<TxStatementBinding>;
-        fn put(&self, artifact_hash: [u8; 48], binding: TxStatementBinding);
-    }
+- `crypto::hashes::blake3_384` for stable 48-byte row hashes and commitments
+- existing field crates already used by the repo for codeword arithmetic
+- `consensus::TxValidityReceipt` as the source receipt object at the adapter boundary
 
-Keep the first backend under an experimental namespace. This plan is about import architecture, not about prematurely sanctifying one paper family.
+At the end of Milestone 2, these public functions must exist:
 
-Revision note: this ExecPlan was created on 2026-03-26 to turn the “import is still linear” diagnosis on the native `ReceiptRoot` lane into an executable roadmap. It intentionally combines immediate operational reuse steps with a later accumulation prototype so the branch can make progress even before one specific paper line wins.
+In `circuits/receipt-arc-whir/src/lib.rs`:
 
-Revision note (2026-03-26 04:04Z): the branch now ships a concrete first prototype. Consensus has a verified-native-leaf store keyed by artifact hash, a custom `receipt_accumulation` artifact kind built through the neutral `ReceiptAccumulator` interface, node authoring can request that kind via `HEGEMON_BLOCK_PROOF_MODE=receipt_accumulation`, and `superneo-bench` now prints side-by-side baseline vs accumulation import timings for the canonical native lane. The outstanding work is no longer implementation plumbing; it is the full benchmark run and the promote-or-kill decision.
+    pub fn prove_receipt_arc_whir(
+        rows: &[ReceiptRow],
+        params: &ReceiptArcWhirParams,
+    ) -> anyhow::Result<Vec<u8>>;
 
-Revision note (2026-03-26 04:13Z): the required `--release` benchmark run is now recorded and the promote-or-kill decision is made. The prototype stays as an additive experimental lane because warm import verification clearly beats the linear native `ReceiptRoot` baseline at `k=16,32,64,128`, but it remains off the default path because the benefit still depends on a warm verified-native-leaf store.
+    pub fn verify_receipt_arc_whir(
+        rows: &[ReceiptRow],
+        artifact_bytes: &[u8],
+        params: &ReceiptArcWhirParams,
+    ) -> anyhow::Result<ReceiptResidualVerifyReport>;
+
+In `consensus/src/receipt_arc_whir.rs`:
+
+    pub fn build_receipt_arc_whir_artifact_from_receipts(
+        receipts: &[TxValidityReceipt],
+    ) -> Result<ProofEnvelope, ProofError>;
+
+    pub fn verify_receipt_arc_whir_artifact_from_receipts(
+        receipts: &[TxValidityReceipt],
+        expected_commitment: &[u8; 48],
+        envelope: &ProofEnvelope,
+    ) -> Result<BlockArtifactVerifyReport, ProofError>;
+
+In `consensus/src/proof.rs`:
+
+    pub fn experimental_receipt_arc_whir_artifact_kind() -> ProofArtifactKind;
+    pub fn experimental_receipt_arc_whir_verifier_profile() -> VerifierProfileDigest;
+
+The benchmark relation name must be exactly `native_tx_leaf_receipt_arc_whir`. The env selector must be exactly `receipt_arc_whir`. Do not add aliases until the lane is proven good enough to survive.
+
+Revision note: this file was rewritten from scratch on 2026-03-26 after re-checking the paper line. The earlier `FACS -> WHIR` wording was directionally related but not the cleanest primary implementation target. This version commits to `ARC -> WHIR` as the first real cold-import backend for Hegemon and leaves `FICS/FACS` as a secondary line if this one loses.

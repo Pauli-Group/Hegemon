@@ -3,7 +3,12 @@ use blake3::Hasher;
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc, time::Instant};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+    time::Instant,
+};
 use superneo_ccs::{
     digest_shape, CcsShape, RelationId, ShapeDigest, StatementDigest, StatementEncoding,
 };
@@ -69,6 +74,7 @@ pub struct KernelCostReport {
     pub streamed_message_windows: u64,
     pub matrix_cache_hits: u64,
     pub matrix_cache_misses: u64,
+    pub matrix_cache_evictions: u64,
 }
 
 impl KernelCostReport {
@@ -87,6 +93,7 @@ impl KernelCostReport {
         self.streamed_message_windows += other.streamed_message_windows;
         self.matrix_cache_hits += other.matrix_cache_hits;
         self.matrix_cache_misses += other.matrix_cache_misses;
+        self.matrix_cache_evictions += other.matrix_cache_evictions;
     }
 }
 
@@ -105,6 +112,12 @@ struct PreparedCommitmentMatrix {
     rows: Vec<Vec<RingElem>>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct PreparedMatrixCache {
+    entries: BTreeMap<[u8; 32], Arc<PreparedCommitmentMatrix>>,
+    access_order: VecDeque<[u8; 32]>,
+}
+
 #[derive(Clone, Debug)]
 struct EmbeddedRingElem {
     ring: RingElem,
@@ -113,11 +126,60 @@ struct EmbeddedRingElem {
 
 const GOLDILOCKS_MODULUS_I128: i128 = 18_446_744_069_414_584_321;
 const COMMITMENT_WINDOW_COLUMNS: usize = 32;
+const PREPARED_MATRIX_CACHE_MAX_ENTRIES: usize = 16;
 
 thread_local! {
     static KERNEL_COST_REPORT: RefCell<KernelCostReport> = RefCell::new(KernelCostReport::default());
-    static PREPARED_MATRIX_CACHE: RefCell<BTreeMap<[u8; 32], Arc<PreparedCommitmentMatrix>>> =
-        RefCell::new(BTreeMap::new());
+    static PREPARED_MATRIX_CACHE: RefCell<PreparedMatrixCache> =
+        RefCell::new(PreparedMatrixCache::default());
+}
+
+impl PreparedMatrixCache {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.access_order.clear();
+    }
+
+    fn get(&mut self, key: &[u8; 32]) -> Option<Arc<PreparedCommitmentMatrix>> {
+        let entry = self.entries.get(key).cloned()?;
+        self.touch(*key);
+        Some(entry)
+    }
+
+    fn insert(
+        &mut self,
+        key: [u8; 32],
+        value: Arc<PreparedCommitmentMatrix>,
+        capacity: usize,
+    ) -> u64 {
+        if capacity == 0 {
+            return 0;
+        }
+        self.entries.insert(key, value);
+        self.touch(key);
+
+        let mut evictions = 0;
+        while self.entries.len() > capacity {
+            let Some(evicted_key) = self.access_order.pop_front() else {
+                break;
+            };
+            if self.entries.remove(&evicted_key).is_some() {
+                evictions += 1;
+            }
+        }
+        evictions
+    }
+
+    fn touch(&mut self, key: [u8; 32]) {
+        if let Some(position) = self
+            .access_order
+            .iter()
+            .position(|existing| *existing == key)
+        {
+            self.access_order.remove(position);
+        }
+        self.access_order.push_back(key);
+    }
 }
 
 impl Default for LatticeBackend {
@@ -771,7 +833,7 @@ fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem
 
 fn prepare_commitment_matrix(pk: &BackendKey, message_len: usize) -> Arc<PreparedCommitmentMatrix> {
     let cache_key = prepared_matrix_cache_key(pk, message_len);
-    if let Some(hit) = PREPARED_MATRIX_CACHE.with(|cache| cache.borrow().get(&cache_key).cloned()) {
+    if let Some(hit) = PREPARED_MATRIX_CACHE.with(|cache| cache.borrow_mut().get(&cache_key)) {
         update_kernel_cost_report(|report| {
             report.matrix_cache_hits += 1;
         });
@@ -788,11 +850,16 @@ fn prepare_commitment_matrix(pk: &BackendKey, message_len: usize) -> Arc<Prepare
         rows.push(row);
     }
     let prepared = Arc::new(PreparedCommitmentMatrix { rows });
-    PREPARED_MATRIX_CACHE.with(|cache| {
-        cache.borrow_mut().insert(cache_key, prepared.clone());
+    let evictions = PREPARED_MATRIX_CACHE.with(|cache| {
+        cache.borrow_mut().insert(
+            cache_key,
+            prepared.clone(),
+            PREPARED_MATRIX_CACHE_MAX_ENTRIES,
+        )
     });
     update_kernel_cost_report(|report| {
         report.matrix_cache_misses += 1;
+        report.matrix_cache_evictions += evictions;
         report.matrix_prepare_ns += prepare_start.elapsed().as_nanos();
     });
     prepared
@@ -1088,8 +1155,10 @@ mod tests {
 
     use super::{
         clear_prepared_matrix_cache, reset_kernel_cost_report, take_kernel_cost_report,
-        LatticeBackend, LatticeBackendConfig, LatticeCommitment, RingElem, RingProfile,
+        LatticeBackend, LatticeBackendConfig, LatticeCommitment, PreparedCommitmentMatrix,
+        PreparedMatrixCache, RingElem, RingProfile,
     };
+    use std::sync::Arc;
 
     fn shape() -> CcsShape<Goldilocks> {
         CcsShape {
@@ -1369,6 +1438,29 @@ mod tests {
         assert_eq!(report.matrix_cache_hits, 0);
         assert_ne!(cyclotomic_commitment.digest, frog_commitment.digest);
         assert_ne!(cyclotomic_commitment.rows, frog_commitment.rows);
+    }
+
+    #[test]
+    fn prepared_matrix_cache_evicts_least_recently_used_entries() {
+        let mut cache = PreparedMatrixCache::default();
+        let matrix = |seed| {
+            Arc::new(PreparedCommitmentMatrix {
+                rows: vec![vec![RingElem::from_coeffs(vec![seed])]],
+            })
+        };
+        let first = [1u8; 32];
+        let second = [2u8; 32];
+        let third = [3u8; 32];
+
+        assert_eq!(cache.insert(first, matrix(1), 2), 0);
+        assert_eq!(cache.insert(second, matrix(2), 2), 0);
+        assert!(cache.get(&first).is_some());
+
+        assert_eq!(cache.insert(third, matrix(3), 2), 1);
+        assert!(cache.get(&first).is_some());
+        assert!(cache.get(&second).is_none());
+        assert!(cache.get(&third).is_some());
+        assert_eq!(cache.entries.len(), 2);
     }
 
     #[test]

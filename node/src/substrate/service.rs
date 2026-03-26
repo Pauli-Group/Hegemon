@@ -2732,6 +2732,27 @@ fn receipt_root_lane_requires_embedded_proof_bytes(
     ))
 }
 
+fn receipt_root_lane_uses_receipt_only_tx_artifacts(
+    proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+) -> bool {
+    proof_kind == PreparedArtifactSelector::receipt_accumulation().proof_kind
+}
+
+fn selector_requests_native_receipt_lane(selector: PreparedArtifactSelector) -> bool {
+    selector.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+}
+
+fn consensus_receipt_from_pallet(
+    receipt: pallet_shielded_pool::types::TxValidityReceipt,
+) -> consensus::TxValidityReceipt {
+    consensus::TxValidityReceipt {
+        statement_hash: receipt.statement_hash,
+        proof_digest: receipt.proof_digest,
+        public_inputs_digest: receipt.public_inputs_digest,
+        verifier_profile: receipt.verifier_profile,
+    }
+}
+
 #[allow(dead_code)]
 fn build_flat_batch_proofs_from_materials(
     proofs: Arc<Vec<TransactionProof>>,
@@ -2906,11 +2927,7 @@ fn build_receipt_accumulation_proof_from_materials(
     transactions: &[consensus::types::Transaction],
     tx_artifacts: &[consensus::TxValidityArtifact],
 ) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String> {
-    if tx_artifacts.is_empty() {
-        return Err("candidate tx set has no receipt-accumulation proof material".to_string());
-    }
-    consensus::prewarm_verified_native_tx_leaf_store(transactions, tx_artifacts)
-        .map_err(|err| format!("receipt accumulation prewarm failed: {err}"))?;
+    prewarm_receipt_accumulation_store(transactions, tx_artifacts)?;
     let consensus_receipts = tx_artifacts
         .iter()
         .map(|artifact| artifact.receipt.clone())
@@ -2935,6 +2952,18 @@ fn build_receipt_accumulation_proof_from_materials(
             })
             .collect(),
     })
+}
+
+fn prewarm_receipt_accumulation_store(
+    transactions: &[consensus::types::Transaction],
+    tx_artifacts: &[consensus::TxValidityArtifact],
+) -> Result<(), String> {
+    if tx_artifacts.is_empty() {
+        return Err("candidate tx set has no receipt-accumulation proof material".to_string());
+    }
+    consensus::prewarm_verified_native_tx_leaf_store(transactions, tx_artifacts)
+        .map_err(|err| format!("receipt accumulation prewarm failed: {err}"))?;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3064,6 +3093,35 @@ impl PreparedAggregationOutcome {
             native_selection_report: Some(report),
         }
     }
+}
+
+fn reuse_cached_aggregation_outcome<F>(
+    selector: PreparedArtifactSelector,
+    cached: PreparedAggregationOutcome,
+    transactions: &[consensus::types::Transaction],
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
+    prewarm_receipt_accumulation: F,
+) -> Result<PreparedAggregationOutcome, String>
+where
+    F: FnOnce(
+        &[consensus::types::Transaction],
+        &[consensus::TxValidityArtifact],
+    ) -> Result<(), String>,
+{
+    if selector.proof_kind != PreparedArtifactSelector::receipt_accumulation().proof_kind
+        || !matches!(
+            cached.artifacts,
+            PreparedAggregationArtifacts::ReceiptRoot(_)
+        )
+    {
+        return Ok(cached);
+    }
+
+    let tx_artifacts = tx_artifacts.ok_or_else(|| {
+        "cached receipt_accumulation outcome requires current native tx-validity artifacts to rewarm verified native tx-leaf store".to_string()
+    })?;
+    prewarm_receipt_accumulation(transactions, tx_artifacts)?;
+    Ok(cached)
 }
 
 fn prepare_native_receipt_root_artifacts(
@@ -3527,20 +3585,15 @@ fn prepare_block_proof_bundle(
             );
             let stage_started = Instant::now();
             let mut cache_hit = false;
-            let stage_result = if let Some(cached) =
-                lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
-            {
-                cache_hit = true;
-                Ok(cached)
-            } else {
+            let build_stage = || {
                 let built = match selected_artifact.legacy_mode {
                     pallet_shielded_pool::types::BlockProofMode::InlineTx => Ok(
                         PreparedAggregationOutcome::new(PreparedAggregationArtifacts::InlineTx),
                     ),
                     pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
                         build_flat_batch_proofs_from_materials(
-                            aggregation_proofs,
-                            aggregation_bindings,
+                            Arc::clone(&aggregation_proofs),
+                            Arc::clone(&aggregation_bindings),
                             batch_slot_txs,
                         )
                         .map(PreparedAggregationArtifacts::Flat)
@@ -3605,6 +3658,34 @@ fn prepare_block_proof_bundle(
                 }
                 built
             };
+            let stage_result = if let Some(cached) =
+                lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
+            {
+                match reuse_cached_aggregation_outcome(
+                    selected_artifact,
+                    cached,
+                    &aggregation_transactions,
+                    aggregation_tx_artifacts.as_deref(),
+                    prewarm_receipt_accumulation_store,
+                ) {
+                    Ok(cached) => {
+                        cache_hit = true;
+                        Ok(cached)
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            block_number,
+                            tx_count,
+                            proof_kind = ?selected_artifact.proof_kind,
+                            error = %error,
+                            "prepare_block_proof_bundle: cached aggregation outcome rejected; rebuilding"
+                        );
+                        build_stage()
+                    }
+                }
+            } else {
+                build_stage()
+            };
             (stage_result, stage_started.elapsed().as_millis(), cache_hit)
         });
 
@@ -3654,7 +3735,8 @@ fn prepare_block_proof_bundle(
                         aggregation_stage_ms,
                         aggregation_cache_hit,
                         used_native_lane = true,
-                        requested_native_lane = true,
+                        requested_native_lane =
+                            selector_requests_native_receipt_lane(selected_artifact),
                         fallback_reason = report.fallback_reason_label(),
                         "prepare_block_proof_bundle: canonical native receipt-root lane selected"
                     );
@@ -3665,7 +3747,7 @@ fn prepare_block_proof_bundle(
                         aggregation_stage_ms,
                         aggregation_cache_hit,
                         used_native_lane = false,
-                        requested_native_lane = true,
+                        requested_native_lane = selector_requests_native_receipt_lane(selected_artifact),
                         fallback_reason = report.fallback_reason_label(),
                         fallback_detail = %report.fallback_detail(),
                         "prepare_block_proof_bundle: falling back to inline_tx from the canonical native receipt-root lane"
@@ -3764,7 +3846,8 @@ fn prepare_block_proof_bundle(
         proof_mode = ?payload.proof_mode,
         aggregation_cache_hit,
         requested_native_lane = selected_artifact.legacy_mode
-            == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+            == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+            && selector_requests_native_receipt_lane(selected_artifact),
         used_native_lane = native_selection_report
             .as_ref()
             .map(|report| report.used_native_lane)
@@ -4537,6 +4620,19 @@ fn verify_proof_carrying_block(
             );
         }
         let tx_validity_artifacts = match payload.proof_mode {
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+                if receipt_root_lane_uses_receipt_only_tx_artifacts(payload.proof_kind) =>
+            {
+                payload.receipt_root.as_ref().map(|receipt_root| {
+                    receipt_root
+                        .receipts
+                        .iter()
+                        .cloned()
+                        .map(consensus_receipt_from_pallet)
+                        .map(consensus::tx_validity_artifact_from_receipt)
+                        .collect::<Vec<_>>()
+                })
+            }
             pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
                 extracted_tx_artifacts.clone()
             }
@@ -11900,6 +11996,7 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol_versioning::DEFAULT_VERSION_BINDING;
     use sp_database::Database as _;
     use sp_database::MemDb;
     use std::sync::MutexGuard as StdMutexGuard;
@@ -11931,6 +12028,16 @@ mod tests {
             proof.artifact_bytes = vec![tag; 16];
         }
         artifact
+    }
+
+    fn dummy_transaction() -> consensus::types::Transaction {
+        consensus::types::Transaction::new(
+            Vec::new(),
+            vec![[4u8; 48]],
+            [5u8; 48],
+            DEFAULT_VERSION_BINDING,
+            Vec::new(),
+        )
     }
 
     fn dummy_receipt_root_payload() -> pallet_shielded_pool::types::ReceiptRootProofPayload {
@@ -12133,6 +12240,72 @@ mod tests {
         cache.insert(first_key, outcome);
         assert!(cache.get(first_key).is_some());
         assert!(cache.get(second_key).is_none());
+    }
+
+    #[test]
+    fn receipt_accumulation_cached_outcome_requires_current_native_artifacts() {
+        let transactions = vec![dummy_transaction()];
+        let cached = PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        );
+        let err = reuse_cached_aggregation_outcome(
+            PreparedArtifactSelector::receipt_accumulation(),
+            cached,
+            transactions.as_slice(),
+            None,
+            |_, _| unreachable!("missing artifacts must reject cache reuse before prewarm"),
+        )
+        .expect_err("cache reuse without native artifacts must be rejected");
+        assert!(err.contains("requires current native tx-validity artifacts"));
+    }
+
+    #[test]
+    fn receipt_accumulation_cached_outcome_rewarms_before_reuse() {
+        let transactions = vec![dummy_transaction()];
+        let artifacts = vec![dummy_native_tx_validity_artifact()];
+        let cached = PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        );
+        let mut prewarm_called = false;
+        let reused = reuse_cached_aggregation_outcome(
+            PreparedArtifactSelector::receipt_accumulation(),
+            cached,
+            transactions.as_slice(),
+            Some(artifacts.as_slice()),
+            |seen_transactions, seen_artifacts| {
+                prewarm_called = true;
+                assert_eq!(seen_transactions.len(), 1);
+                assert_eq!(seen_artifacts.len(), 1);
+                Ok(())
+            },
+        )
+        .expect("cache reuse should rewarm before returning the cached outcome");
+        assert!(prewarm_called);
+        assert!(matches!(
+            reused.artifacts,
+            PreparedAggregationArtifacts::ReceiptRoot(_)
+        ));
+    }
+
+    #[test]
+    fn receipt_accumulation_cached_outcome_rejects_failed_rewarm() {
+        let transactions = vec![dummy_transaction()];
+        let artifacts = vec![dummy_native_tx_validity_artifact()];
+        let cached = PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        );
+        let err = reuse_cached_aggregation_outcome(
+            PreparedArtifactSelector::receipt_accumulation(),
+            cached,
+            transactions.as_slice(),
+            Some(artifacts.as_slice()),
+            |_, _| Err("synthetic prewarm failure".to_string()),
+        )
+        .expect_err("failed prewarm must reject cached accumulation reuse");
+        assert!(err.contains("synthetic prewarm failure"));
     }
 
     #[test]

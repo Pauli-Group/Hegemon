@@ -6,7 +6,7 @@ This document follows [`.agent/PLANS.md`](/Users/pldd/Projects/Reflexivity/Hegem
 
 ## Purpose / Big Picture
 
-Hegemon now has a native proving lane, but it does not yet exploit the best recent sum-check engineering. The recent `2026/587` line shows how to reduce prover time and memory through delayed reduction, small-value arithmetic, evaluation-basis round batching, streaming, and decomposable equality-polynomial handling without changing verifier behavior in the common case. After this work, the native tx-validity lane will have a measured, optimized prover kernel rather than an interesting but under-tuned prototype. A contributor should be able to run the native benchmark and see lower `edge_prepare_ns`, lower prover memory, and stable artifact semantics.
+Hegemon now has a native proving lane, but it does not yet exploit the best recent sum-check engineering. After re-checking the literature, the direct paper-backed core here is narrower than this plan originally implied. The clearest support from the `2026/587` line is for prover-side improvements around small-value arithmetic and equality-structure-aware evaluation work; the other changes on this branch, such as prepared-basis caching and streamed evaluation windows, are better understood as Hegemon-specific engineering analogues rather than literal paper transcriptions. After this work, the native tx-validity lane will have a measured, optimized prover kernel rather than an interesting but under-tuned prototype. A contributor should be able to run the native benchmark and see lower `edge_prepare_ns`, bounded prover memory growth, and stable artifact semantics.
 
 The user-visible effect is not a new proof family. It is a cheaper native prover. That matters because the global Hegemon vision requires proof-ready transactions to be practical on ordinary prover hardware, not just on one benchmark machine.
 
@@ -23,8 +23,13 @@ The user-visible effect is not a new proof family. It is a cheaper native prover
 - [x] (2026-03-26 03:28Z) Fixed the prepared-matrix cache key to include `ring_profile` and added a regression test that proves different ring profiles do not alias.
 - [x] (2026-03-26 03:28Z) Made benchmark verification independent of the prove-phase cache by clearing the prepared matrix cache before each verify phase and before each benchmark run.
 - [x] (2026-03-26 03:28Z) Routed commitment accumulation through narrow-source vs generic-source kernels using preserved witness width metadata instead of treating width metadata as bookkeeping only.
+- [x] (2026-03-26 20:14Z) Replaced the unbounded prepared-matrix cache with a thread-local 16-entry LRU-style cache and surfaced `matrix_cache_evictions` in `KernelCostReport`.
+- [x] (2026-03-26 20:14Z) Changed multi-`k` benchmark sweeps to execute each `k` in an isolated child process so `peak_rss_bytes` is per-case rather than a process-lifetime `ru_maxrss` artifact.
 
 ## Surprises & Discoveries
+
+- Observation: the direct paper support is narrower than this plan originally claimed.
+  Evidence: `Speeding Up Sum-Check Proving (Extended Version)` is the 2026 extended version in the ePrint listing, while public search traces also show the same author line under `2025/1117` and an earlier precursor `More Optimizations to Sum-Check Proving` at `2024/1210`. That supports the sum-check-optimization direction, but not every backend engineering choice on this branch is literally from one paper. Sources: `ePrint 2026/587`, `ePrint 2024/1210`, research index/search traces for `2025/1117`.
 
 - Observation: the paper’s strongest claims are prover-side, not verifier-side.
   Evidence: `2026/587` explicitly frames its results as prover optimizations and says everything except univariate skip leaves the verifier unchanged.
@@ -36,18 +41,24 @@ The user-visible effect is not a new proof family. It is a cheaper native prover
   Evidence: the current packer is already pay-per-bit aware in `circuits/superneo-ring`, but the backend arithmetic remains organized around direct commitment/proof construction rather than named evaluation kernels.
 
 - Observation: the first native proof is now dominated by the prepared-matrix miss, while the steady-state path is much cheaper and scales roughly linearly with `k`.
-  Evidence: with a cold cache per benchmark run, `native_tx_validity` reports `matrix_prepare_ns ≈ 15.54ms`, `commitment_kernel_ns ≈ 0.27ms`, and `total_active_path_prove_ns ≈ 16.99ms` at `k=1`; at `k=128`, there is still exactly one matrix miss per run and the steady-state work shows up in `commitment_kernel_ns ≈ 30.26ms`.
+  Evidence: with a cold cache per benchmark run, `native_tx_validity` reports `matrix_prepare_ns ≈ 13.79ms`, `commitment_kernel_ns ≈ 0.21ms`, and `total_active_path_prove_ns ≈ 15.27ms` at `k=1`; at `k=128`, there is still exactly one matrix miss per run and the steady-state work shows up in `commitment_kernel_ns ≈ 27.99ms`.
 
 - Observation: the earlier verifier-speedup story was a same-thread warm-cache artifact. The corrected benchmark now clears the prepared matrix cache before verification, so verify numbers once again reflect importer-style recomputation cost.
-  Evidence: `native_tx_validity --k 1` now measures `total_active_path_verify_ns ≈ 13.04ms` and `native_tx_leaf_receipt_root --k 1` measures `≈ 14.74ms` after the cold-verify correction.
+  Evidence: `native_tx_validity --k 1` now measures `total_active_path_verify_ns ≈ 15.19ms` and `native_tx_leaf_receipt_root --k 1` measures `≈ 15.99ms` after the cold-verify correction.
 
 - Observation: width metadata now changes which commitment kernel executes instead of only affecting packing metadata.
   Evidence: the backend regression test constructs a shape with a 64-bit witness field and confirms non-zero `big_big_ops`, while the narrow test shape still records `big_big_ops = 0`.
 
+- Observation: the default bounded cache preserves the current benchmark hot path while removing unbounded long-lived growth.
+  Evidence: both `native_tx_validity` and `native_tx_leaf_receipt_root` sweeps still show exactly one miss and `k-1` hits per isolated run, while `matrix_cache_evictions = 0` across `k=1..128` under the 16-entry cap.
+
+- Observation: the old `peak_rss_bytes` field was not a per-case number. Isolating each `k` in its own process fixes that without changing benchmark semantics.
+  Evidence: `superneo-bench` previously swept all requested `k` values in one process while reading `ru_maxrss`; after the subprocess split, the canonical lane reports `peak_rss_bytes` rising from `3,850,240` at `k=1` to `10,059,776` at `k=128`, which is consistent with per-case working-set growth instead of inherited lifetime peaks.
+
 ## Decision Log
 
 - Decision: implement the `2026/587` ideas in increasing structural order: delayed reduction first, small-value kernels second, evaluation-basis round batching third, streaming fourth.
-  Rationale: delayed reduction and small-value kernels have the lowest adoption risk and the clearest local payoff. Round batching and streaming require the prover to expose more of its internal evaluation structure.
+  Rationale: the branch still needs a staged prover-optimization roadmap, but after re-checking the literature this ordering should be read as “direct paper-backed sum-check ideas first, then Hegemon-specific engineering analogues.” The paper line most directly supports the former category, not the latter.
   Date/Author: 2026-03-26 / Codex
 
 - Decision: explicitly defer univariate skip in this plan.
@@ -70,13 +81,23 @@ The user-visible effect is not a new proof family. It is a cheaper native prover
   Rationale: otherwise the per-`k` output and verify numbers are polluted by warm-cache reuse from earlier benchmark iterations or from the prove phase in the same process.
   Date/Author: 2026-03-26 / Codex
 
+- Decision: bound the prepared-matrix cache to 16 thread-local entries and evict least-recently-used entries.
+  Rationale: the cache is an optimization, not correctness state. Long-lived prover workers need a memory ceiling more than they need an unbounded history of shape/message-length combinations, and the current planning-grade sweeps fit under the cap without eviction.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: when `superneo-bench` receives multiple `--k` values, execute each case in a fresh subprocess and aggregate the JSON results.
+  Rationale: `ru_maxrss` is a process-lifetime high-water mark, so in-process sweeps cannot produce meaningful per-case RSS numbers.
+  Date/Author: 2026-03-26 / Codex
+
 ## Outcomes & Retrospective
 
-The native experimental backend now exposes explicit kernel timing/counter telemetry, preserves witness width metadata, routes narrow-source and generic-source commitment work through distinct kernels, uses delayed-reduction accumulation for witness commitment and fold linear combinations, and reuses a prepared commitment matrix across same-shape leaves with a cache key that includes `ring_profile`. The shipped artifact bytes, statement digests, and verifier rules stayed unchanged.
+The native experimental backend now exposes explicit kernel timing/counter telemetry, preserves witness width metadata, routes narrow-source and generic-source commitment work through distinct kernels, uses delayed-reduction accumulation for witness commitment and fold linear combinations, and reuses a prepared commitment matrix across same-shape leaves with a ring-profile-safe, bounded LRU cache. The shipped artifact bytes, statement digests, and verifier rules stayed unchanged.
 
-The benchmark outcome is materially better on the prove-ready path, but the verifier claim had to be corrected. With cold-cache measurements, `native_tx_validity` at `k=1` dropped from about `23.94ms` prove time to `16.99ms`, and `native_tx_leaf_receipt_root` now reports `edge_prepare_ns ≈ 155.34ms` at `k=128` with `commitment_kernel_ns ≈ 26.28ms`, one deterministic matrix miss per run, and no same-thread warm-cache distortion in the verify numbers.
+The benchmark outcome is materially better on the prove-ready path, but the verifier and memory stories had to be corrected. With cold-cache, per-`k` subprocess measurements, `native_tx_validity` at `k=1` now reports `total_active_path_prove_ns ≈ 15.27ms`, `total_active_path_verify_ns ≈ 15.19ms`, and `peak_rss_bytes ≈ 3.44MiB`. `native_tx_leaf_receipt_root` at `k=128` now reports `edge_prepare_ns ≈ 216.30ms`, `commitment_kernel_ns ≈ 33.78ms`, `peak_rss_bytes ≈ 10.06MiB`, one deterministic matrix miss per run, `127` cache hits within the run, and zero evictions under the default 16-entry cap.
 
 What remains is the literal future-sum-check work that would require a different backend shape. For the current Hegemon-native lane, the low-risk `2026/587` analogues are in place and benchmarked.
+
+After re-checking the literature on 2026-03-26, the correction is this: this plan remains useful, but it should be read as a mixed plan, not a pure paper implementation plan. The directly justified pieces are the prover-side small-value and evaluation-structure optimizations from the `2026/587` / `2025/1117` / `2024/1210` line. The prepared-matrix cache, thread-local kernel telemetry, and some of the streaming organization are Hegemon-specific engineering choices inspired by that direction, not claims of direct paper fidelity.
 
 ## Context and Orientation
 
@@ -84,7 +105,13 @@ The current native proving stack for the experiment is spread across `circuits/s
 
 A “sum-check” is an interactive protocol for proving the sum of many evaluations of a polynomial. In this repository, the term matters because the intended future native backend is sum-check-heavy even if the current experimental backend is not yet organized that way. “Delayed reduction” means doing many arithmetic operations in unreduced integer or polynomial form and reducing only once at the end, instead of paying a reduction cost at every step. “Small-value arithmetic” means specializing arithmetic to values that fit in far fewer bits than a full field element. “Streaming” means computing prover messages while keeping only a small working set in memory.
 
-The `2026/587` paper is relevant because Hegemon’s witness layout is already full of bounded values, bit flags, and small limbs. That is exactly the setting where the paper’s small-value and delayed-reduction ideas are supposed to pay off. The plan therefore treats the current code as a staging area for a more explicit sum-check-style native prover, not as the final shape.
+The literature behind this plan now needs to be stated more precisely. The direct line is:
+
+- `2026/587`, `Speeding Up Sum-Check Proving (Extended Version)`
+- the earlier optimization paper `2024/1210`, `More Optimizations to Sum-Check Proving`
+- adjacent small-characteristic/small-field context such as `2024/1046`
+
+These papers justify pushing harder on prover-side optimization for bounded-value and evaluation-structured work. They do not, by themselves, imply that every caching or streaming trick in the current lattice backend is a paper result. The plan therefore treats the current code as a staging area for a more explicit sum-check-style native prover, while clearly labeling which pieces are direct paper-backed ideas and which are Hegemon-specific engineering.
 
 ## Plan of Work
 
@@ -123,7 +150,7 @@ From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`, implement this pl
 
 Acceptance is empirical.
 
-`cargo test -p superneo-backend-lattice -p superneo-hegemon -p superneo-bench` stayed green during this implementation. The native benchmarks still emit the same artifact semantics and verifier behavior while reporting prove-side kernel telemetry. The acceptance signal for this revision is that the native lane now has exactly one prepared-basis miss per benchmark run, ring-profile-safe cache reuse, materially cheaper steady-state proving, and bytes-per-tx unchanged in the artifact lanes.
+`cargo test -p superneo-backend-lattice -p superneo-hegemon -p superneo-bench` stayed green during this implementation. The native benchmarks still emit the same artifact semantics and verifier behavior while reporting prove-side kernel telemetry. The acceptance signal for this revision is that the native lane now has exactly one prepared-basis miss per benchmark run, ring-profile-safe cache reuse, bounded prepared-matrix cache growth, materially cheaper steady-state proving, per-case `peak_rss_bytes` measurements, and bytes-per-tx unchanged in the artifact lanes.
 
 Any optimization that changes verifier behavior, artifact bytes, or native statement digests fails this plan unless the change is separately justified and documented. Univariate skip is explicitly out of scope for that reason.
 
@@ -142,27 +169,32 @@ The benchmark commands that matter for this plan are:
 Representative post-change outputs:
 
     native_tx_validity k=1:
-      total_active_path_prove_ns = 16,991,625
-      total_active_path_verify_ns = 13,044,458
-      kernel_report.matrix_prepare_ns = 15,542,084
-      kernel_report.commitment_kernel_ns = 269,000
+      total_active_path_prove_ns = 15,269,999
+      total_active_path_verify_ns = 15,194,959
+      peak_rss_bytes = 3,440,640
+      kernel_report.matrix_prepare_ns = 13,794,166
+      kernel_report.commitment_kernel_ns = 209,250
 
     native_tx_validity k=128:
-      total_active_path_prove_ns = 190,897,918
-      total_active_path_verify_ns = 57,180,291
-      kernel_report.matrix_prepare_ns = 15,143,334
-      kernel_report.commitment_kernel_ns = 30,264,337
+      total_active_path_prove_ns = 155,983,666
+      total_active_path_verify_ns = 99,780,291
+      peak_rss_bytes = 7,536,640
+      kernel_report.matrix_prepare_ns = 13,317,709
+      kernel_report.commitment_kernel_ns = 27,986,421
       kernel_report.matrix_cache_hits = 127
       kernel_report.matrix_cache_misses = 1
+      kernel_report.matrix_cache_evictions = 0
 
     native_tx_leaf_receipt_root k=128:
-      edge_prepare_ns = 155,340,666
-      total_active_path_prove_ns = 649,500
-      total_active_path_verify_ns = 210,926,500
-      kernel_report.matrix_prepare_ns = 13,114,375
-      kernel_report.commitment_kernel_ns = 26,284,587
+      edge_prepare_ns = 216,297,583
+      total_active_path_prove_ns = 709,292
+      total_active_path_verify_ns = 210,807,292
+      peak_rss_bytes = 10,059,776
+      kernel_report.matrix_prepare_ns = 16,928,583
+      kernel_report.commitment_kernel_ns = 33,782,673
       kernel_report.matrix_cache_hits = 127
       kernel_report.matrix_cache_misses = 1
+      kernel_report.matrix_cache_evictions = 0
 
 The point is to prove concrete improvement and expose where the native prover now spends time, not just to say “applied delayed reduction.”
 
@@ -189,3 +221,7 @@ Revision note: this ExecPlan was created on 2026-03-26 to turn the recent `2026/
 Revision note (2026-03-26 03:11Z): updated after implementation. The plan now records the shipped kernel telemetry, width metadata preservation, delayed-reduction kernels, prepared-matrix reuse, and the benchmark evidence showing the new steady-state native proving curve.
 
 Revision note (2026-03-26 03:28Z): updated after review fixes. The plan now records the `ring_profile` cache-key correction, cold-cache verifier benchmarking, width-metadata-driven kernel routing, and the corrected benchmark evidence.
+
+Revision note (2026-03-26 20:14Z): updated after follow-up memory fixes. The plan now records the bounded LRU prepared-matrix cache, `matrix_cache_evictions` telemetry, subprocess-isolated multi-`k` benchmark sweeps, and corrected per-case RSS measurements.
+
+Revision note (2026-03-26, research pass): corrected the research framing after re-checking the paper line. This plan still stands, but it now explicitly distinguishes the directly paper-backed sum-check ideas (`2026/587`, `2024/1210`, and adjacent small-field work) from Hegemon-specific engineering analogues such as prepared-matrix caching and some streaming organization.
