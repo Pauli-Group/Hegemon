@@ -29,22 +29,40 @@ use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNo
 use transaction_circuit::proof::{prove, TransactionProof};
 use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "snake_case")]
 enum RelationChoice {
+    #[value(help = "Diagnostic toy lane; crate-level plumbing only")]
     ToyBalance,
+    #[value(help = "Diagnostic synthetic receipt lane; crate-level regression only")]
     TxReceipt,
+    #[value(help = "Diagnostic native witness lane; relation-only measurements")]
     NativeTxValidity,
+    #[value(
+        help = "Canonical experimental lane: native witness -> native tx-leaf -> receipt-root"
+    )]
     NativeTxLeafReceiptRoot,
+    #[value(help = "Diagnostic bridge lane: proof-ready tx-leaf -> receipt-root")]
     TxLeafReceiptRoot,
+    #[value(help = "Diagnostic bridge lane: inline proofs -> receipt-root")]
     VerifiedTxReceipt,
 }
 
 #[derive(Debug, Parser)]
-#[command(author, version, about = "Benchmark the experimental SuperNeo stack")]
+#[command(
+    author,
+    version,
+    about = "Benchmark the experimental SuperNeo stack",
+    after_help = "The canonical experimental surface is native_tx_leaf_receipt_root. Every other relation is diagnostic-only and requires --allow-diagnostic-relation."
+)]
 struct Cli {
     #[arg(long, value_enum, default_value_t = RelationChoice::NativeTxLeafReceiptRoot)]
     relation: RelationChoice,
+    #[arg(
+        long,
+        help = "Allow a non-canonical diagnostic relation instead of the native mainline lane"
+    )]
+    allow_diagnostic_relation: bool,
     #[arg(long, value_delimiter = ',', default_values_t = vec![1usize])]
     k: Vec<usize>,
     #[arg(long)]
@@ -80,6 +98,7 @@ fn main() -> Result<()> {
         cli.k.iter().all(|k| *k > 0),
         "k values must be strictly positive"
     );
+    validate_relation_selection(cli.relation, cli.allow_diagnostic_relation)?;
 
     let baselines = if cli.compare_inline_tx {
         load_inline_tx_baselines()?
@@ -110,6 +129,62 @@ fn main() -> Result<()> {
     }
 
     println!("{}", serde_json::to_string_pretty(&results)?);
+    Ok(())
+}
+
+fn is_canonical_relation(choice: RelationChoice) -> bool {
+    matches!(choice, RelationChoice::NativeTxLeafReceiptRoot)
+}
+
+fn relation_lane_label(choice: RelationChoice) -> &'static str {
+    if is_canonical_relation(choice) {
+        "canonical experimental lane"
+    } else {
+        "diagnostic lane"
+    }
+}
+
+fn relation_description(choice: RelationChoice) -> &'static str {
+    match choice {
+        RelationChoice::ToyBalance => {
+            "toy fold backend plumbing; useful only for crate-level regression coverage"
+        }
+        RelationChoice::TxReceipt => "synthetic receipt fold path; not a planning-grade topology",
+        RelationChoice::NativeTxValidity => {
+            "native witness relation without the tx-leaf -> receipt-root topology"
+        }
+        RelationChoice::NativeTxLeafReceiptRoot => {
+            "native witness -> native tx-leaf -> receipt-root topology"
+        }
+        RelationChoice::TxLeafReceiptRoot => {
+            "bridge topology built from proof-ready tx-leaf artifacts"
+        }
+        RelationChoice::VerifiedTxReceipt => {
+            "bridge topology built from verified inline transaction proofs"
+        }
+    }
+}
+
+fn note_prefix(choice: RelationChoice) -> String {
+    format!(
+        "{}: {}",
+        relation_lane_label(choice),
+        relation_description(choice)
+    )
+}
+
+fn validate_relation_selection(
+    choice: RelationChoice,
+    allow_diagnostic_relation: bool,
+) -> Result<()> {
+    ensure!(
+        is_canonical_relation(choice) || allow_diagnostic_relation,
+        "{} is diagnostic-only; rerun with --allow-diagnostic-relation to benchmark it explicitly",
+        choice
+            .to_possible_value()
+            .expect("value enum name")
+            .get_name()
+    );
     Ok(())
 }
 
@@ -199,7 +274,8 @@ fn benchmark_toy_balance(
         packed_witness_bits,
         shape_digest: shape_hex(pk.shape_digest),
         note: format!(
-            "superneo fold backend root={}",
+            "{}; superneo fold backend root={}",
+            note_prefix(RelationChoice::ToyBalance),
             root.witness_commitment.to_hex()
         ),
         edge_prepare_ns: None,
@@ -292,7 +368,8 @@ fn benchmark_tx_receipt(
         packed_witness_bits,
         shape_digest: shape_hex(pk.shape_digest),
         note: format!(
-            "superneo fold backend root={}",
+            "{}; superneo fold backend root={}",
+            note_prefix(RelationChoice::TxReceipt),
             root.witness_commitment.to_hex()
         ),
         edge_prepare_ns: None,
@@ -376,7 +453,8 @@ fn benchmark_native_tx_validity(
         packed_witness_bits,
         shape_digest: shape_hex(pk.shape_digest),
         note: format!(
-            "native witness relation; bytes include packed witness transport; root={}",
+            "{}; bytes include packed witness transport; root={}",
+            note_prefix(RelationChoice::NativeTxValidity),
             root.witness_commitment.to_hex()
         ),
         edge_prepare_ns: None,
@@ -441,7 +519,8 @@ fn benchmark_native_tx_leaf_receipt_root(
         packed_witness_bits,
         shape_digest: shape_hex(ShapeDigest(metadata.shape_digest)),
         note: format!(
-            "native tx-leaf artifacts={}B root_artifact={}B",
+            "{}; native tx-leaf artifacts={}B root_artifact={}B",
+            note_prefix(RelationChoice::NativeTxLeafReceiptRoot),
             tx_leaf_bytes_total,
             built_root.artifact_bytes.len()
         ),
@@ -504,7 +583,8 @@ fn benchmark_tx_leaf_receipt_root(
         packed_witness_bits,
         shape_digest: shape_hex(ShapeDigest(metadata.shape_digest)),
         note: format!(
-            "proof-ready txs; tx_leaf_artifacts={}B root_artifact={}B",
+            "{}; proof-ready txs; tx_leaf_artifacts={}B root_artifact={}B",
+            note_prefix(RelationChoice::TxLeafReceiptRoot),
             tx_leaf_bytes_total,
             built_root.artifact_bytes.len()
         ),
@@ -550,7 +630,8 @@ fn benchmark_verified_tx_receipt(
         packed_witness_bits: relation.shape().witness_schema.total_witness_bits() * k,
         shape_digest: shape_hex(ShapeDigest(metadata.shape_digest)),
         note: format!(
-            "verified inline tx proofs + receipt_root artifact={}B tx_artifacts={}B",
+            "{}; verified inline tx proofs + receipt_root artifact={}B tx_artifacts={}B",
+            note_prefix(RelationChoice::VerifiedTxReceipt),
             built.artifact_bytes.len(),
             tx_proof_bytes_total + receipt_bytes_total
         ),
@@ -805,8 +886,47 @@ fn current_peak_rss_bytes() -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
     use superneo_backend_lattice::{LatticeCommitment, RingElem};
     use superneo_ccs::digest_statement;
+
+    #[test]
+    fn default_cli_relation_is_canonical_native_receipt_root() {
+        let cli = Cli::try_parse_from(["superneo-bench"]).expect("cli parses");
+        assert_eq!(cli.relation, RelationChoice::NativeTxLeafReceiptRoot);
+        assert!(!cli.allow_diagnostic_relation);
+        validate_relation_selection(cli.relation, cli.allow_diagnostic_relation)
+            .expect("default relation stays canonical");
+    }
+
+    #[test]
+    fn diagnostic_relations_require_explicit_opt_in() {
+        let cli = Cli::try_parse_from(["superneo-bench", "--relation", "verified_tx_receipt"])
+            .expect("cli parses");
+        let error = validate_relation_selection(cli.relation, cli.allow_diagnostic_relation)
+            .expect_err("diagnostic relation should be rejected without opt-in");
+        assert!(
+            error.to_string().contains("--allow-diagnostic-relation"),
+            "unexpected error: {error}"
+        );
+
+        let opted_in = Cli::try_parse_from([
+            "superneo-bench",
+            "--relation",
+            "verified_tx_receipt",
+            "--allow-diagnostic-relation",
+        ])
+        .expect("cli parses with diagnostic opt-in");
+        validate_relation_selection(opted_in.relation, opted_in.allow_diagnostic_relation)
+            .expect("opted-in diagnostic relation should be accepted");
+    }
+
+    #[test]
+    fn note_prefix_labels_canonical_and_diagnostic_lanes() {
+        assert!(note_prefix(RelationChoice::NativeTxLeafReceiptRoot)
+            .starts_with("canonical experimental lane:"),);
+        assert!(note_prefix(RelationChoice::TxLeafReceiptRoot).starts_with("diagnostic lane:"),);
+    }
 
     #[test]
     fn fold_to_root_handles_odd_leaf_count() {

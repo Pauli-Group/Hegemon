@@ -2863,6 +2863,195 @@ fn build_receipt_root_proof_from_materials(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeArtifactFallbackReason {
+    ArtifactsUnavailable,
+    VerifierProfileMismatch,
+    ArtifactValidationFailed,
+}
+
+impl NativeArtifactFallbackReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ArtifactsUnavailable => "native_artifacts_unavailable",
+            Self::VerifierProfileMismatch => "native_verifier_profile_mismatch",
+            Self::ArtifactValidationFailed => "native_artifact_validation_failed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NativeArtifactSelectionReport {
+    used_native_lane: bool,
+    fallback_reason: Option<NativeArtifactFallbackReason>,
+    fallback_detail: Option<String>,
+}
+
+impl NativeArtifactSelectionReport {
+    fn native_lane_selected() -> Self {
+        Self {
+            used_native_lane: true,
+            fallback_reason: None,
+            fallback_detail: None,
+        }
+    }
+
+    fn fallback(reason: NativeArtifactFallbackReason, detail: impl Into<String>) -> Self {
+        Self {
+            used_native_lane: false,
+            fallback_reason: Some(reason),
+            fallback_detail: Some(detail.into()),
+        }
+    }
+
+    fn fallback_reason_label(&self) -> &'static str {
+        self.fallback_reason
+            .map(NativeArtifactFallbackReason::as_str)
+            .unwrap_or("none")
+    }
+
+    fn fallback_detail(&self) -> &str {
+        self.fallback_detail.as_deref().unwrap_or("")
+    }
+}
+
+fn require_native_tx_leaf_artifacts<'a>(
+    tx_artifacts: Option<&'a [consensus::TxValidityArtifact]>,
+) -> Result<&'a [consensus::TxValidityArtifact], NativeArtifactSelectionReport> {
+    let expected_profile = consensus::experimental_native_tx_leaf_verifier_profile();
+    let Some(tx_artifacts) = tx_artifacts else {
+        return Err(NativeArtifactSelectionReport::fallback(
+            NativeArtifactFallbackReason::ArtifactsUnavailable,
+            "candidate tx set did not materialize native tx-validity artifacts for every transfer",
+        ));
+    };
+
+    for (index, artifact) in tx_artifacts.iter().enumerate() {
+        let Some(proof) = artifact.proof.as_ref() else {
+            return Err(NativeArtifactSelectionReport::fallback(
+                NativeArtifactFallbackReason::ArtifactsUnavailable,
+                format!("tx {index} is missing a tx-validity proof envelope"),
+            ));
+        };
+        if proof.kind != consensus::ProofArtifactKind::TxLeaf {
+            return Err(NativeArtifactSelectionReport::fallback(
+                NativeArtifactFallbackReason::ArtifactsUnavailable,
+                format!(
+                    "tx {index} artifact kind {} is not tx_leaf",
+                    proof.kind.label()
+                ),
+            ));
+        }
+        if proof.verifier_profile != expected_profile {
+            return Err(NativeArtifactSelectionReport::fallback(
+                NativeArtifactFallbackReason::VerifierProfileMismatch,
+                format!(
+                    "tx {index} proof verifier profile {} does not match native {}",
+                    hex::encode(proof.verifier_profile),
+                    hex::encode(expected_profile),
+                ),
+            ));
+        }
+        if artifact.receipt.verifier_profile != expected_profile {
+            return Err(NativeArtifactSelectionReport::fallback(
+                NativeArtifactFallbackReason::VerifierProfileMismatch,
+                format!(
+                    "tx {index} receipt verifier profile {} does not match native {}",
+                    hex::encode(artifact.receipt.verifier_profile),
+                    hex::encode(expected_profile),
+                ),
+            ));
+        }
+    }
+
+    Ok(tx_artifacts)
+}
+
+#[derive(Clone, Debug)]
+struct PreparedAggregationOutcome {
+    artifacts: PreparedAggregationArtifacts,
+    native_selection_report: Option<NativeArtifactSelectionReport>,
+}
+
+impl PreparedAggregationOutcome {
+    fn new(artifacts: PreparedAggregationArtifacts) -> Self {
+        Self {
+            artifacts,
+            native_selection_report: None,
+        }
+    }
+
+    fn native(
+        artifacts: PreparedAggregationArtifacts,
+        report: NativeArtifactSelectionReport,
+    ) -> Self {
+        Self {
+            artifacts,
+            native_selection_report: Some(report),
+        }
+    }
+}
+
+fn prepare_native_receipt_root_artifacts(
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
+) -> Result<PreparedAggregationOutcome, String> {
+    prepare_native_receipt_root_artifacts_with_builder(
+        tx_artifacts,
+        build_receipt_root_proof_from_materials,
+    )
+}
+
+fn prepare_native_receipt_root_artifacts_with_builder<F>(
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
+    build_receipt_root: F,
+) -> Result<PreparedAggregationOutcome, String>
+where
+    F: FnOnce(
+        &[consensus::TxValidityArtifact],
+    ) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String>,
+{
+    let tx_artifacts = match require_native_tx_leaf_artifacts(tx_artifacts) {
+        Ok(tx_artifacts) => tx_artifacts,
+        Err(report) => {
+            return Ok(PreparedAggregationOutcome::native(
+                PreparedAggregationArtifacts::InlineTx,
+                report,
+            ));
+        }
+    };
+    match build_receipt_root(tx_artifacts) {
+        Ok(payload) => Ok(PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(payload),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        )),
+        Err(error) => Ok(PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::InlineTx,
+            NativeArtifactSelectionReport::fallback(
+                NativeArtifactFallbackReason::ArtifactValidationFailed,
+                error,
+            ),
+        )),
+    }
+}
+
+fn should_store_prove_ahead_aggregation_outcome(
+    selector: PreparedArtifactSelector,
+    outcome: &PreparedAggregationOutcome,
+) -> bool {
+    if selector.legacy_mode != pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+        return true;
+    }
+
+    matches!(
+        outcome.artifacts,
+        PreparedAggregationArtifacts::ReceiptRoot(_)
+    ) && outcome
+        .native_selection_report
+        .as_ref()
+        .map(|report| report.used_native_lane)
+        .unwrap_or(true)
+}
+
 #[derive(Clone, Debug)]
 enum PreparedAggregationArtifacts {
     InlineTx,
@@ -2879,12 +3068,13 @@ struct ProveAheadAggregationCacheKey {
     tx_count: u32,
     flat_slot_txs: u16,
     merge_arity: u16,
+    tx_artifact_set_digest: Option<[u8; 48]>,
 }
 
 struct ProveAheadAggregationCache {
     capacity: usize,
     order: VecDeque<ProveAheadAggregationCacheKey>,
-    entries: HashMap<ProveAheadAggregationCacheKey, Arc<PreparedAggregationArtifacts>>,
+    entries: HashMap<ProveAheadAggregationCacheKey, Arc<PreparedAggregationOutcome>>,
 }
 
 impl ProveAheadAggregationCache {
@@ -2906,7 +3096,7 @@ impl ProveAheadAggregationCache {
     fn get(
         &mut self,
         key: ProveAheadAggregationCacheKey,
-    ) -> Option<Arc<PreparedAggregationArtifacts>> {
+    ) -> Option<Arc<PreparedAggregationOutcome>> {
         let entry = self.entries.get(&key).cloned();
         if entry.is_some() {
             self.touch_key(key);
@@ -2917,7 +3107,7 @@ impl ProveAheadAggregationCache {
     fn insert(
         &mut self,
         key: ProveAheadAggregationCacheKey,
-        artifacts: Arc<PreparedAggregationArtifacts>,
+        artifacts: Arc<PreparedAggregationOutcome>,
     ) {
         self.entries.insert(key, artifacts);
         self.touch_key(key);
@@ -2951,6 +3141,7 @@ fn make_prove_ahead_aggregation_cache_key(
     tx_count: u32,
     flat_slot_txs: usize,
     merge_arity: u16,
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
 ) -> ProveAheadAggregationCacheKey {
     ProveAheadAggregationCacheKey {
         selector,
@@ -2958,19 +3149,54 @@ fn make_prove_ahead_aggregation_cache_key(
         tx_count,
         flat_slot_txs: u16::try_from(flat_slot_txs).unwrap_or(u16::MAX),
         merge_arity,
+        tx_artifact_set_digest: prove_ahead_tx_artifact_set_digest(selector, tx_artifacts),
     }
+}
+
+fn prove_ahead_tx_artifact_set_digest(
+    selector: PreparedArtifactSelector,
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
+) -> Option<[u8; 48]> {
+    if selector.legacy_mode != pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+        return None;
+    }
+
+    tx_artifacts.map(digest_tx_validity_artifact_set)
+}
+
+fn digest_tx_validity_artifact_set(tx_artifacts: &[consensus::TxValidityArtifact]) -> [u8; 48] {
+    let mut material = Vec::with_capacity(64 + tx_artifacts.len() * 196);
+    material.extend_from_slice(b"hegemon.prove-ahead.tx-artifact-set.v1");
+    material.extend_from_slice(&(tx_artifacts.len() as u32).to_le_bytes());
+    for artifact in tx_artifacts {
+        material.extend_from_slice(&artifact.receipt.statement_hash);
+        material.extend_from_slice(&artifact.receipt.proof_digest);
+        material.extend_from_slice(&artifact.receipt.public_inputs_digest);
+        material.extend_from_slice(&artifact.receipt.verifier_profile);
+        match artifact.proof.as_ref() {
+            Some(proof) => {
+                material.push(1);
+                material.extend_from_slice(proof.kind.label().as_bytes());
+                material.push(0);
+                material.extend_from_slice(&proof.verifier_profile);
+                material.extend_from_slice(&blake3_384(&proof.artifact_bytes));
+            }
+            None => material.push(0),
+        }
+    }
+    blake3_384(&material)
 }
 
 fn lookup_prove_ahead_aggregation_artifacts(
     key: ProveAheadAggregationCacheKey,
-) -> Option<PreparedAggregationArtifacts> {
+) -> Option<PreparedAggregationOutcome> {
     let mut guard = PROVE_AHEAD_AGGREGATION_CACHE.lock();
     guard.get(key).map(|value| value.as_ref().clone())
 }
 
 fn store_prove_ahead_aggregation_artifacts(
     key: ProveAheadAggregationCacheKey,
-    artifacts: PreparedAggregationArtifacts,
+    artifacts: PreparedAggregationOutcome,
 ) {
     let mut guard = PROVE_AHEAD_AGGREGATION_CACHE.lock();
     guard.insert(key, Arc::new(artifacts));
@@ -3171,6 +3397,7 @@ fn prepare_block_proof_bundle(
         tx_count,
         batch_slot_txs,
         merge_arity,
+        context.tx_validity_artifacts.as_deref(),
     );
     let da_root = context.da_root;
     // commitment and aggregation proving operate on independent materials;
@@ -3217,9 +3444,9 @@ fn prepare_block_proof_bundle(
                 Ok(cached)
             } else {
                 let built = match selected_artifact.legacy_mode {
-                    pallet_shielded_pool::types::BlockProofMode::InlineTx => {
-                        Ok(PreparedAggregationArtifacts::InlineTx)
-                    }
+                    pallet_shielded_pool::types::BlockProofMode::InlineTx => Ok(
+                        PreparedAggregationOutcome::new(PreparedAggregationArtifacts::InlineTx),
+                    ),
                     pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
                         build_flat_batch_proofs_from_materials(
                             aggregation_proofs,
@@ -3227,6 +3454,7 @@ fn prepare_block_proof_bundle(
                             batch_slot_txs,
                         )
                         .map(PreparedAggregationArtifacts::Flat)
+                        .map(PreparedAggregationOutcome::new)
                     }
                     pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
                         build_merge_root_proof_from_materials(
@@ -3235,29 +3463,19 @@ fn prepare_block_proof_bundle(
                             tx_statements_commitment,
                         )
                         .map(PreparedAggregationArtifacts::Merge)
+                        .map(PreparedAggregationOutcome::new)
                     }
                     pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-                        match aggregation_tx_artifacts.as_ref() {
-                            Some(tx_artifacts) => build_receipt_root_proof_from_materials(
-                                tx_artifacts.as_slice(),
-                            )
-                            .map(PreparedAggregationArtifacts::ReceiptRoot),
-                            None => {
-                                tracing::info!(
-                                    block_number,
-                                    tx_count,
-                                    "prepare_block_proof_bundle: native receipt-root unavailable; falling back to inline_tx"
-                                );
-                                Ok(PreparedAggregationArtifacts::InlineTx)
-                            }
-                        }
+                        prepare_native_receipt_root_artifacts(aggregation_tx_artifacts.as_deref())
                     }
                 };
                 if let Ok(ref artifacts) = built {
-                    store_prove_ahead_aggregation_artifacts(
-                        aggregation_cache_key,
-                        artifacts.clone(),
-                    );
+                    if should_store_prove_ahead_aggregation_outcome(selected_artifact, artifacts) {
+                        store_prove_ahead_aggregation_artifacts(
+                            aggregation_cache_key,
+                            artifacts.clone(),
+                        );
+                    }
                 }
                 built
             };
@@ -3301,13 +3519,42 @@ fn prepare_block_proof_bundle(
         ),
     }
     match &aggregation_result {
-        Ok(_) => tracing::info!(
-            block_number,
-            tx_count,
-            aggregation_stage_ms,
-            aggregation_cache_hit,
-            "prepare_block_proof_bundle: aggregation stage complete"
-        ),
+        Ok(outcome) => {
+            if let Some(report) = outcome.native_selection_report.as_ref() {
+                if report.used_native_lane {
+                    tracing::info!(
+                        block_number,
+                        tx_count,
+                        aggregation_stage_ms,
+                        aggregation_cache_hit,
+                        used_native_lane = true,
+                        requested_native_lane = true,
+                        fallback_reason = report.fallback_reason_label(),
+                        "prepare_block_proof_bundle: canonical native receipt-root lane selected"
+                    );
+                } else {
+                    tracing::warn!(
+                        block_number,
+                        tx_count,
+                        aggregation_stage_ms,
+                        aggregation_cache_hit,
+                        used_native_lane = false,
+                        requested_native_lane = true,
+                        fallback_reason = report.fallback_reason_label(),
+                        fallback_detail = %report.fallback_detail(),
+                        "prepare_block_proof_bundle: falling back to inline_tx from the canonical native receipt-root lane"
+                    );
+                }
+            } else {
+                tracing::info!(
+                    block_number,
+                    tx_count,
+                    aggregation_stage_ms,
+                    aggregation_cache_hit,
+                    "prepare_block_proof_bundle: aggregation stage complete"
+                );
+            }
+        }
         Err(error) => tracing::warn!(
             block_number,
             tx_count,
@@ -3319,7 +3566,8 @@ fn prepare_block_proof_bundle(
     }
     let commitment_proof = commitment_result?
         .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
-    let aggregation_artifacts = aggregation_result?;
+    let aggregation_outcome = aggregation_result?;
+    let native_selection_report = aggregation_outcome.native_selection_report.clone();
 
     let mut payload = pallet_shielded_pool::types::BlockProofBundle {
         version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
@@ -3341,7 +3589,7 @@ fn prepare_block_proof_bundle(
         receipt_root: None,
         artifact_claim: None,
     };
-    match aggregation_artifacts {
+    match aggregation_outcome.artifacts {
         PreparedAggregationArtifacts::InlineTx => {
             payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::InlineTx;
             payload.flat_batches.clear();
@@ -3383,6 +3631,16 @@ fn prepare_block_proof_bundle(
         batch_slot_txs,
         proof_mode = ?payload.proof_mode,
         aggregation_cache_hit,
+        requested_native_lane = selected_artifact.legacy_mode
+            == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        used_native_lane = native_selection_report
+            .as_ref()
+            .map(|report| report.used_native_lane)
+            .unwrap_or(false),
+        native_lane_fallback_reason = native_selection_report
+            .as_ref()
+            .map(|report| report.fallback_reason_label())
+            .unwrap_or("not_requested"),
         commitment_stage_ms,
         aggregation_stage_ms,
         total_ms = started.elapsed().as_millis(),
@@ -11504,6 +11762,53 @@ mod tests {
     use sp_database::MemDb;
     use std::sync::MutexGuard as StdMutexGuard;
 
+    fn dummy_receipt(profile: consensus::VerifierProfileDigest) -> consensus::TxValidityReceipt {
+        consensus::TxValidityReceipt {
+            statement_hash: [1u8; 48],
+            proof_digest: [2u8; 48],
+            public_inputs_digest: [3u8; 48],
+            verifier_profile: profile,
+        }
+    }
+
+    fn dummy_native_tx_validity_artifact() -> consensus::TxValidityArtifact {
+        consensus::TxValidityArtifact {
+            receipt: dummy_receipt(consensus::experimental_native_tx_leaf_verifier_profile()),
+            proof: Some(consensus::ProofEnvelope {
+                kind: consensus::ProofArtifactKind::TxLeaf,
+                verifier_profile: consensus::experimental_native_tx_leaf_verifier_profile(),
+                artifact_bytes: vec![42u8; 16],
+            }),
+        }
+    }
+
+    fn dummy_native_tx_validity_artifact_variant(tag: u8) -> consensus::TxValidityArtifact {
+        let mut artifact = dummy_native_tx_validity_artifact();
+        artifact.receipt.proof_digest = [tag; 48];
+        if let Some(proof) = artifact.proof.as_mut() {
+            proof.artifact_bytes = vec![tag; 16];
+        }
+        artifact
+    }
+
+    fn dummy_receipt_root_payload() -> pallet_shielded_pool::types::ReceiptRootProofPayload {
+        pallet_shielded_pool::types::ReceiptRootProofPayload {
+            root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![7u8; 8]),
+            metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
+                relation_id: [9u8; 32],
+                shape_digest: [8u8; 32],
+                leaf_count: 1,
+                fold_count: 0,
+            },
+            receipts: vec![pallet_shielded_pool::types::TxValidityReceipt {
+                statement_hash: [1u8; 48],
+                proof_digest: [2u8; 48],
+                public_inputs_digest: [3u8; 48],
+                verifier_profile: consensus::experimental_native_tx_leaf_verifier_profile(),
+            }],
+        }
+    }
+
     struct BlockProofModeGuard {
         previous: Option<String>,
         _guard: StdMutexGuard<'static, ()>,
@@ -11558,6 +11863,154 @@ mod tests {
             selector.verifier_profile,
             consensus::experimental_native_receipt_root_verifier_profile()
         );
+    }
+
+    #[test]
+    fn receipt_root_prefers_native_lane_when_artifacts_are_native() {
+        let artifacts = vec![dummy_native_tx_validity_artifact()];
+        let outcome =
+            prepare_native_receipt_root_artifacts_with_builder(Some(artifacts.as_slice()), |_| {
+                Ok(dummy_receipt_root_payload())
+            })
+            .expect("native receipt-root preparation succeeds");
+        let report = outcome
+            .native_selection_report
+            .expect("native selection report should be present");
+        assert!(report.used_native_lane);
+        assert_eq!(report.fallback_reason, None);
+        assert!(matches!(
+            outcome.artifacts,
+            PreparedAggregationArtifacts::ReceiptRoot(_)
+        ));
+    }
+
+    #[test]
+    fn receipt_root_inline_fallback_outcomes_are_not_cacheable() {
+        let outcome = PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::InlineTx,
+            NativeArtifactSelectionReport::fallback(
+                NativeArtifactFallbackReason::ArtifactsUnavailable,
+                "synthetic miss",
+            ),
+        );
+        assert!(!should_store_prove_ahead_aggregation_outcome(
+            PreparedArtifactSelector::receipt_root(),
+            &outcome,
+        ));
+    }
+
+    #[test]
+    fn receipt_root_native_outcomes_are_cacheable() {
+        let outcome = PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        );
+        assert!(should_store_prove_ahead_aggregation_outcome(
+            PreparedArtifactSelector::receipt_root(),
+            &outcome,
+        ));
+    }
+
+    #[test]
+    fn receipt_root_cache_key_binds_tx_artifact_identity() {
+        let selector = PreparedArtifactSelector::receipt_root();
+        let first_artifacts = vec![dummy_native_tx_validity_artifact_variant(10)];
+        let second_artifacts = vec![dummy_native_tx_validity_artifact_variant(11)];
+        let first_key = make_prove_ahead_aggregation_cache_key(
+            selector,
+            [7u8; 48],
+            1,
+            16,
+            2,
+            Some(first_artifacts.as_slice()),
+        );
+        let second_key = make_prove_ahead_aggregation_cache_key(
+            selector,
+            [7u8; 48],
+            1,
+            16,
+            2,
+            Some(second_artifacts.as_slice()),
+        );
+        assert_ne!(first_key, second_key);
+
+        let outcome = Arc::new(PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        ));
+        let mut cache = ProveAheadAggregationCache::new(1);
+        cache.insert(first_key, outcome);
+        assert!(cache.get(first_key).is_some());
+        assert!(cache.get(second_key).is_none());
+    }
+
+    #[test]
+    fn receipt_root_falls_back_when_native_artifacts_are_missing() {
+        let outcome = prepare_native_receipt_root_artifacts(None)
+            .expect("missing native artifacts should fall back");
+        let report = outcome
+            .native_selection_report
+            .expect("native selection report should be present");
+        assert!(!report.used_native_lane);
+        assert_eq!(
+            report.fallback_reason,
+            Some(NativeArtifactFallbackReason::ArtifactsUnavailable)
+        );
+        assert!(matches!(
+            outcome.artifacts,
+            PreparedAggregationArtifacts::InlineTx
+        ));
+    }
+
+    #[test]
+    fn receipt_root_falls_back_on_verifier_profile_mismatch() {
+        let artifacts = vec![consensus::TxValidityArtifact {
+            receipt: dummy_receipt(consensus::experimental_tx_leaf_verifier_profile()),
+            proof: Some(consensus::ProofEnvelope {
+                kind: consensus::ProofArtifactKind::TxLeaf,
+                verifier_profile: consensus::experimental_tx_leaf_verifier_profile(),
+                artifact_bytes: vec![9u8; 8],
+            }),
+        }];
+        let outcome =
+            prepare_native_receipt_root_artifacts_with_builder(Some(artifacts.as_slice()), |_| {
+                unreachable!("profile mismatch should fail before builder invocation")
+            })
+            .expect("profile mismatch should fall back");
+        let report = outcome
+            .native_selection_report
+            .expect("native selection report should be present");
+        assert!(!report.used_native_lane);
+        assert_eq!(
+            report.fallback_reason,
+            Some(NativeArtifactFallbackReason::VerifierProfileMismatch)
+        );
+        assert!(matches!(
+            outcome.artifacts,
+            PreparedAggregationArtifacts::InlineTx
+        ));
+    }
+
+    #[test]
+    fn receipt_root_falls_back_on_native_artifact_validation_failure() {
+        let artifacts = vec![dummy_native_tx_validity_artifact()];
+        let outcome =
+            prepare_native_receipt_root_artifacts_with_builder(Some(artifacts.as_slice()), |_| {
+                Err("synthetic native artifact validation failure".to_string())
+            })
+            .expect("invalid native artifact should fall back");
+        let report = outcome
+            .native_selection_report
+            .expect("native selection report should be present");
+        assert!(!report.used_native_lane);
+        assert_eq!(
+            report.fallback_reason,
+            Some(NativeArtifactFallbackReason::ArtifactValidationFailed)
+        );
+        assert!(matches!(
+            outcome.artifacts,
+            PreparedAggregationArtifacts::InlineTx
+        ));
     }
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {

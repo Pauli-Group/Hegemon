@@ -15,10 +15,10 @@ The user-visible effect is disciplined research. Running the benchmark binary or
 - [x] (2026-03-26 02:02Z) Re-read `.agent/PLANS.md`, `.agent/SUPERNEO_EXPERIMENT_EXECPLAN.md`, `DESIGN.md`, `METHODS.md`, `consensus/src/proof.rs`, `circuits/superneo-hegemon/src/lib.rs`, and `circuits/superneo-bench/src/main.rs` to anchor this plan in the current branch state.
 - [x] (2026-03-26 02:02Z) Confirmed that `NativeTxValidityRelation` exists, the benchmark default already points at `native_tx_leaf_receipt_root`, and the import bottleneck still comes from per-leaf verification in `ReceiptRootVerifier`.
 - [x] (2026-03-26 02:02Z) Authored this ExecPlan as a dedicated living document for making the native lane the only decision-grade experimental surface.
-- [ ] Freeze the canonical native statement and receipt vocabulary, including which digests and verifier profiles are considered stable on the experimental lane.
-- [ ] Remove bridge lanes from any default benchmark, report, or authoring decision surface while keeping them available for explicit regression checks.
-- [ ] Add explicit observability and failure reasons for native-lane fallback to `InlineTx`.
-- [ ] Update docs and tests so a novice can tell, from one command and one log path, whether the node took the native lane or the `InlineTx` fallback.
+- [x] (2026-03-26 02:23Z) Froze the canonical native benchmark vocabulary in `superneo-bench`: `native_tx_leaf_receipt_root` is the only default relation, JSON notes label it as the canonical experimental lane, and every bridge or relation-only lane now requires `--allow-diagnostic-relation`.
+- [x] (2026-03-26 02:23Z) Removed bridge lanes from the default benchmark/report surface while keeping them available for explicit regression checks behind the diagnostic opt-in flag.
+- [x] (2026-03-26 02:23Z) Added explicit native-lane observability in `node/src/substrate/service.rs`, including stable fallback reasons for unavailable native artifacts, native verifier-profile mismatch, and native artifact validation failure.
+- [x] (2026-03-26 02:23Z) Updated `DESIGN.md`, `METHODS.md`, `.agent/SUPERNEO_EXPERIMENT_EXECPLAN.md`, and this ExecPlan, then ran `cargo test -p superneo-bench`, `cargo test -p hegemon-node receipt_root -- --nocapture`, and `cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx`.
 
 ## Surprises & Discoveries
 
@@ -30,6 +30,12 @@ The user-visible effect is disciplined research. Running the benchmark binary or
 
 - Observation: the node already prefers native leaves and falls back to `InlineTx`; however, that behavior is not yet treated as the single experimental truth across reports and docs.
   Evidence: the current architecture note says the receipt-root lane is native-only and falls back to `InlineTx` when native leaves are unavailable in [METHODS.md](/Users/pldd/Projects/Reflexivity/Hegemon/METHODS.md#L895).
+
+- Observation: soft documentation was not enough to protect the benchmark surface. Contributors still needed a hard opt-in boundary before they would reliably stay on the native lane.
+  Evidence: `cargo test -p superneo-bench` now includes a CLI test that rejects `verified_tx_receipt` unless `--allow-diagnostic-relation` is passed, while the default parse path stays on `native_tx_leaf_receipt_root`.
+
+- Observation: caching `InlineTx` fallback outcomes on the `receipt_root` selector would poison native preference for that candidate set.
+  Evidence: `node/src/substrate/service.rs` now uses `should_store_prove_ahead_aggregation_outcome(...)` so the prove-ahead cache stores successful native `ReceiptRoot` outcomes but deliberately skips `InlineTx` fallback outcomes for that selector.
 
 ## Decision Log
 
@@ -45,15 +51,23 @@ The user-visible effect is disciplined research. Running the benchmark binary or
   Rationale: the experimental lane is not yet production-safe, and contributors need to see exactly why the node chose the shipping path when native artifacts are unavailable or invalid.
   Date/Author: 2026-03-26 / Codex
 
+- Decision: gate bridge and relation-only benchmark lanes behind an explicit CLI flag instead of relying on documentation or help text alone.
+  Rationale: the point of this ExecPlan is to stop accidental benchmarking of non-canonical surfaces. A hard CLI gate is cheap and unambiguous.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: cache successful native `ReceiptRoot` outcomes, but never cache `InlineTx` fallback outcomes for that selector.
+  Rationale: later attempts must be able to adopt native artifacts as soon as they are available; a transient miss cannot be allowed to pin the candidate set to `InlineTx`.
+  Date/Author: 2026-03-26 / Codex
+
 ## Outcomes & Retrospective
 
-This plan is design-only at creation time. Nothing in the repository has changed yet. The expected outcome is organizational clarity rather than a new primitive: after implementing this plan, every default benchmark, authoring selector, report, and document will present the native lane as the only decision-grade experimental target, while bridge lanes remain available only when explicitly requested.
+This plan is now implemented. The repository did not gain any new proof primitive, but it did gain the missing product boundary: `superneo-bench` defaults to the canonical native lane and forces explicit opt-in for every diagnostic lane; node authoring emits stable native-lane selection and fallback reasons; and the design/method docs now describe `native_tx_leaf_receipt_root` as the only planning-grade experimental surface. The release benchmark still shows the expected native shape after these surface changes: `5481/5564/5606/5627/5637/5642/5645/5646 B/tx` for `k=1/2/4/8/16/32/64/128`, with verification cost remaining the dominant bottleneck on the current experimental import path.
 
 ## Context and Orientation
 
 `NativeTxValidityRelation` is the relation in `circuits/superneo-hegemon/src/lib.rs` that consumes a `TransactionWitness` directly and derives the native public statement for the experimental folding backend. A “relation” here means the exact algebraic statement and witness encoding that the backend proves. A “bridge lane” means any path that starts from the existing `TransactionProof` family and wraps or folds it afterward, rather than proving transaction validity natively.
 
-Today, the benchmark CLI in `circuits/superneo-bench/src/main.rs` exposes several surfaces: `NativeTxValidity`, `NativeTxLeafReceiptRoot`, `TxLeafReceiptRoot`, and `VerifiedTxReceipt`. Only `NativeTxLeafReceiptRoot` is intended to guide architecture decisions. The proof-neutral consensus boundary already exists under `consensus/src/proof.rs`, where `TxLeaf` and `ReceiptRoot` are separate artifact kinds routed through a verifier registry. The current native import bottleneck remains linear per leaf because `ReceiptRootVerifier` still resolves and checks every tx artifact before verifying the root.
+Today, the benchmark CLI in `circuits/superneo-bench/src/main.rs` still exposes several surfaces: `NativeTxValidity`, `NativeTxLeafReceiptRoot`, `TxLeafReceiptRoot`, and `VerifiedTxReceipt`. The difference after this plan is behavioral: `NativeTxLeafReceiptRoot` is the only default, and every other surface now requires `--allow-diagnostic-relation`. The proof-neutral consensus boundary already exists under `consensus/src/proof.rs`, where `TxLeaf` and `ReceiptRoot` are separate artifact kinds routed through a verifier registry. The current native import bottleneck remains linear per leaf because `ReceiptRootVerifier` still resolves and checks every tx artifact before verifying the root.
 
 This plan does not create new cryptography. It standardizes which experimental lane the repository treats as canonical, where fallback is allowed, and how native-vs-bridge results are presented. That is necessary before deeper work on prover optimization or accumulation because otherwise measurements and logs will keep mixing incomparable paths.
 
@@ -86,7 +100,7 @@ From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`, implement this pl
 
        cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx
 
-The expected human-visible result is that the benchmark output and docs point only at the native lane as decision-grade, while bridge lanes require an explicit opt-in.
+The expected human-visible result is that the benchmark output and docs point only at the native lane as decision-grade, while bridge lanes require an explicit opt-in flag and node logs report native-lane fallback reasons with stable labels.
 
 ## Validation and Acceptance
 
@@ -106,7 +120,11 @@ The canonical benchmark command after this plan lands is:
 
     cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx
 
-The expected output remains JSON, but the `relation` and `note` fields must make it explicit that this is the primary experimental surface. Bridge lanes remain available only under explicit relation choices.
+The expected output remains JSON, but the `relation` and `note` fields must make it explicit that this is the primary experimental surface. The current release run emits notes such as:
+
+    "note": "canonical experimental lane: native witness -> native tx-leaf -> receipt-root topology; native tx-leaf artifacts=165344B root_artifact=15194B"
+
+Bridge lanes remain available only under explicit relation choices plus `--allow-diagnostic-relation`.
 
 ## Interfaces and Dependencies
 
@@ -126,3 +144,5 @@ In `node/src/substrate/service.rs`, add a structured native-lane selection recor
 Do not introduce any new proof artifact kinds in this plan. This is a surface and discipline plan, not a cryptography plan.
 
 Revision note: this ExecPlan was created on 2026-03-26 to make `NativeTxValidityRelation` and the native `TxLeaf -> ReceiptRoot` topology the only decision-grade experimental surface on the SuperNeo branch. The repository already contains the relation, topology, and benchmarks; what is missing is a strict product boundary around them.
+
+Revision note (2026-03-26, later): implementation is now complete. `superneo-bench` hard-gates non-canonical lanes behind `--allow-diagnostic-relation`, node authoring emits explicit native-lane selection reports with fallback reasons, successful native receipt-root outcomes are cacheable while `InlineTx` fallbacks are not, and the docs plus focused validation commands were refreshed against the current release benchmark output.
