@@ -3645,7 +3645,7 @@ dependencies = [
 
 [[package]]
 name = "hegemon-node"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "aggregation-circuit",
  "anyhow",
@@ -12391,7 +12391,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -12450,7 +12450,7 @@ dependencies = [
 
 [[package]]
 name = "walletd"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "chrono",

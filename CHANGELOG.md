@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.10.0 - 2026-03-27
+- Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.10.0`.
+- Interface package bump: `hegemon-app` is now `0.10.0`.
+
 ## v0.9.1 - 2026-03-09
 - Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.9.1`.
 - Interface package bump: `hegemon-app` is now `0.9.1`.

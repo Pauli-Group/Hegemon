@@ -1,7 +1,7 @@
 {
   "name": "hegemon-app",
   "private": true,
-  "version": "0.9.1",
+  "version": "0.10.0",
   "type": "module",
   "main": "out/main/main.cjs",
   "scripts": {
