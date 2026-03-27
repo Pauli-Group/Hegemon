@@ -34,6 +34,7 @@ impl RingProfile {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct BackendManifest {
     pub family_label: &'static str,
+    pub spec_label: &'static str,
     pub commitment_scheme_label: &'static str,
     pub challenge_schedule_label: &'static str,
     pub maturity_label: &'static str,
@@ -43,6 +44,7 @@ impl BackendManifest {
     pub fn heuristic_goldilocks_baseline() -> Self {
         Self {
             family_label: "heuristic_goldilocks_baseline",
+            spec_label: "hegemon.superneo.native-backend-spec.heuristic-goldilocks-baseline.v1",
             commitment_scheme_label: "ajtai_linear_masked_commitment",
             challenge_schedule_label: "single_goldilocks_fs_challenge",
             maturity_label: "experimental_baseline",
@@ -52,6 +54,7 @@ impl BackendManifest {
     pub fn goldilocks_128b_rewrite() -> Self {
         Self {
             family_label: "goldilocks_128b_rewrite",
+            spec_label: "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v1",
             commitment_scheme_label: "neo_class_linear_commitment_128b_masking",
             challenge_schedule_label: "triple_goldilocks_fs_challenge_negacyclic_mix",
             maturity_label: "rewrite_candidate",
@@ -74,17 +77,26 @@ pub struct NativeBackendParams {
     pub opening_randomness_bits: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NativeSecurityEnvelope {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewState {
+    Experimental,
+    CandidateUnderReview,
+    Accepted,
+    Blocked,
+    Killed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NativeSecurityClaim {
     pub claimed_security_bits: u32,
-    pub challenge_bits: u32,
-    pub fold_challenge_count: u32,
     pub transcript_soundness_bits: u32,
-    pub opening_randomness_bits: u32,
     pub opening_hiding_bits: u32,
     pub commitment_binding_bits: u32,
+    pub composition_loss_bits: u32,
     pub soundness_floor_bits: u32,
-    pub assumption_label: &'static str,
+    pub assumption_ids: Vec<&'static str>,
+    pub review_state: ReviewState,
 }
 
 impl NativeBackendParams {
@@ -130,6 +142,10 @@ impl NativeBackendParams {
             "manifest.commitment_scheme_label must be non-empty"
         );
         ensure!(
+            !self.manifest.spec_label.is_empty(),
+            "manifest.spec_label must be non-empty"
+        );
+        ensure!(
             !self.manifest.challenge_schedule_label.is_empty(),
             "manifest.challenge_schedule_label must be non-empty"
         );
@@ -173,18 +189,18 @@ impl NativeBackendParams {
             self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
             "opening_randomness_bits must be in 1..=256"
         );
-        let envelope = self.security_envelope()?;
+        let claim = self.security_claim()?;
         ensure!(
-            self.security_bits <= envelope.soundness_floor_bits,
-            "security_bits {} exceeds native backend soundness floor {} under {}",
+            self.security_bits <= claim.soundness_floor_bits,
+            "security_bits {} exceeds native backend soundness floor {} under review_state {:?}",
             self.security_bits,
-            envelope.soundness_floor_bits,
-            envelope.assumption_label
+            claim.soundness_floor_bits,
+            claim.review_state
         );
         Ok(())
     }
 
-    pub fn security_envelope(&self) -> Result<NativeSecurityEnvelope> {
+    pub fn security_claim(&self) -> Result<NativeSecurityClaim> {
         ensure!(
             (1..=63).contains(&self.challenge_bits),
             "challenge_bits must be in 1..=63"
@@ -202,11 +218,9 @@ impl NativeBackendParams {
             "opening_randomness_bits must be in 1..=256"
         );
 
-        let fold_challenge_count = self.fold_challenge_count;
         let transcript_soundness_bits = self
             .challenge_bits
-            .saturating_mul(fold_challenge_count)
-            .min(128);
+            .saturating_mul(self.fold_challenge_count);
         let opening_hiding_bits = self.opening_randomness_bits.min(128);
         let commitment_binding_bits = match (
             self.manifest.family_label,
@@ -216,42 +230,56 @@ impl NativeBackendParams {
             ("goldilocks_128b_rewrite", "neo_class_linear_commitment_128b_masking") => 128,
             _ => opening_hiding_bits.min(transcript_soundness_bits),
         };
-        let soundness_floor_bits = transcript_soundness_bits
+        let composition_loss_bits = 0;
+        let pre_loss_floor_bits = transcript_soundness_bits
             .min(opening_hiding_bits)
             .min(commitment_binding_bits);
-        let assumption_label = match (
+        let soundness_floor_bits = pre_loss_floor_bits.saturating_sub(composition_loss_bits);
+        let (assumption_ids, review_state) = match (
             self.manifest.family_label,
             self.manifest.challenge_schedule_label,
-            fold_challenge_count,
+            self.fold_challenge_count,
         ) {
-            (
-                "heuristic_goldilocks_baseline",
-                "single_goldilocks_fs_challenge",
-                1,
-            ) => {
-                "heuristic_goldilocks_baseline: single transcript-derived fold challenge over Goldilocks; commitment binding remains heuristic for this in-repo backend"
-            }
-            (
-                "goldilocks_128b_rewrite",
-                "triple_goldilocks_fs_challenge_negacyclic_mix",
-                3,
-            ) => {
-                "goldilocks_128b_rewrite: three independent transcript-derived Goldilocks challenges mixed through a negacyclic linear fold, 128-bit canonical opening entropy, and a Neo-class linear-commitment binding assumption for this in-repo backend"
-            }
-            _ => {
-                "custom native backend schedule: transcript-derived multi-challenge fold with explicit opening entropy and a family-owned linear-commitment binding assumption"
-            }
+            ("heuristic_goldilocks_baseline", "single_goldilocks_fs_challenge", 1) => (
+                vec![
+                    "random_oracle.blake3_fiat_shamir",
+                    "serialization.canonical_native_artifact_bytes",
+                    "fs.single_goldilocks_fold_challenge",
+                    "opening.truncated_mask_seed_entropy",
+                    "commitment.heuristic_linear_binding",
+                ],
+                ReviewState::Killed,
+            ),
+            ("goldilocks_128b_rewrite", "triple_goldilocks_fs_challenge_negacyclic_mix", 3) => (
+                vec![
+                    "random_oracle.blake3_fiat_shamir",
+                    "serialization.canonical_native_artifact_bytes",
+                    "fs.triple_goldilocks_negacyclic_fold_challenges",
+                    "opening.canonical_128b_mask_seed",
+                    "commitment.neo_class_linear_binding",
+                ],
+                ReviewState::CandidateUnderReview,
+            ),
+            _ => (
+                vec![
+                    "random_oracle.family_owned_fiat_shamir",
+                    "serialization.canonical_native_artifact_bytes",
+                    "fs.custom_multichallenge_fold_schedule",
+                    "opening.explicit_mask_seed_entropy",
+                    "commitment.family_owned_linear_binding",
+                ],
+                ReviewState::Experimental,
+            ),
         };
-        Ok(NativeSecurityEnvelope {
+        Ok(NativeSecurityClaim {
             claimed_security_bits: self.security_bits,
-            challenge_bits: self.challenge_bits,
-            fold_challenge_count,
             transcript_soundness_bits,
-            opening_randomness_bits: self.opening_randomness_bits,
             opening_hiding_bits,
             commitment_binding_bits,
+            composition_loss_bits,
             soundness_floor_bits,
-            assumption_label,
+            assumption_ids,
+            review_state,
         })
     }
 
@@ -267,6 +295,7 @@ impl NativeBackendParams {
         let mut hasher = Hasher::new();
         hasher.update(b"hegemon.superneo.native-backend-params.v2");
         hasher.update(self.manifest.family_label.as_bytes());
+        hasher.update(self.manifest.spec_label.as_bytes());
         hasher.update(self.manifest.commitment_scheme_label.as_bytes());
         hasher.update(self.manifest.challenge_schedule_label.as_bytes());
         hasher.update(self.manifest.maturity_label.as_bytes());
@@ -281,6 +310,27 @@ impl NativeBackendParams {
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
         hash48(hasher)
+    }
+
+    pub fn spec_digest(&self) -> [u8; 32] {
+        let mut hasher = Hasher::new();
+        hasher.update(b"hegemon.superneo.native-backend-spec-digest.v1");
+        hasher.update(self.manifest.family_label.as_bytes());
+        hasher.update(self.manifest.spec_label.as_bytes());
+        hasher.update(self.manifest.commitment_scheme_label.as_bytes());
+        hasher.update(self.manifest.challenge_schedule_label.as_bytes());
+        hasher.update(self.manifest.maturity_label.as_bytes());
+        hasher.update(&self.security_bits.to_le_bytes());
+        hasher.update(self.ring_profile.label());
+        hasher.update(&(self.matrix_rows as u64).to_le_bytes());
+        hasher.update(&(self.matrix_cols as u64).to_le_bytes());
+        hasher.update(&self.challenge_bits.to_le_bytes());
+        hasher.update(&self.fold_challenge_count.to_le_bytes());
+        hasher.update(&self.max_fold_arity.to_le_bytes());
+        hasher.update(self.transcript_domain_label.as_bytes());
+        hasher.update(&self.decomposition_bits.to_le_bytes());
+        hasher.update(&self.opening_randomness_bits.to_le_bytes());
+        hash32(hasher)
     }
 
     pub fn artifact_version(&self, artifact_label: &[u8]) -> u16 {
@@ -705,6 +755,123 @@ pub trait NativeCommitmentScheme {
         commitment: &Self::Commitment,
         opening: &Self::OpeningProof,
     ) -> Result<()>;
+}
+
+// Review-tooling entry point for deterministic vector generation.
+pub fn commit_packed_witness_with_seed(
+    params: &NativeBackendParams,
+    witness: &PackedWitness<u64>,
+    randomness_seed: [u8; 32],
+) -> Result<(LatticeCommitment, CommitmentOpening)> {
+    commit_with_seed(params, witness, randomness_seed)
+}
+
+pub fn canonical_opening_randomness_seed(
+    params: &NativeBackendParams,
+    randomness_seed: [u8; 32],
+) -> [u8; 32] {
+    canonicalize_opening_randomness_seed(params, randomness_seed)
+}
+
+fn review_backend_key(
+    params: &NativeBackendParams,
+    shape_digest: ShapeDigest,
+) -> Result<BackendKey> {
+    params.validate()?;
+    Ok(BackendKey {
+        params_fingerprint: params.parameter_fingerprint(),
+        shape_digest,
+        security_bits: params.security_bits,
+        challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
+        max_fold_arity: params.max_fold_arity,
+        transcript_domain_digest: digest32_with_label(
+            b"hegemon.superneo.transcript-domain.v1",
+            params.transcript_domain_label.as_bytes(),
+        ),
+        ring_profile: params.ring_profile,
+        commitment_rows: params.matrix_rows,
+        ring_degree: params.ring_degree(),
+        digit_bits: params.digit_bits(),
+        opening_randomness_bits: params.opening_randomness_bits,
+    })
+}
+
+pub fn review_leaf_proof_digest(
+    params: &NativeBackendParams,
+    shape_digest: ShapeDigest,
+    relation_id: &RelationId,
+    statement_digest: &StatementDigest,
+    packed: &PackedWitness<u64>,
+    commitment_digest: &[u8; 48],
+) -> Result<[u8; 48]> {
+    let pk = review_backend_key(params, shape_digest)?;
+    Ok(leaf_proof_digest(
+        &pk,
+        relation_id,
+        statement_digest,
+        packed,
+        commitment_digest,
+    ))
+}
+
+pub fn review_fold_challenges(
+    params: &NativeBackendParams,
+    shape_digest: ShapeDigest,
+    left: &FoldedInstance<LatticeCommitment>,
+    right: &FoldedInstance<LatticeCommitment>,
+) -> Result<Vec<u64>> {
+    validate_fold_pair(left, right)?;
+    ensure!(
+        left.shape_digest == shape_digest && right.shape_digest == shape_digest,
+        "review fold challenge shape digest mismatch"
+    );
+    let pk = review_backend_key(params, shape_digest)?;
+    Ok(derive_fold_challenges(&pk, left, right))
+}
+
+pub fn review_fold_rows(
+    left: &LatticeCommitment,
+    right: &LatticeCommitment,
+    challenges: &[u64],
+) -> Result<Vec<RingElem>> {
+    fold_commitment_rows(left, right, challenges)
+}
+
+pub fn review_fold_statement_digest(
+    left: &StatementDigest,
+    right: &StatementDigest,
+    challenges: &[u64],
+    parent_commitment_digest: &[u8; 48],
+) -> StatementDigest {
+    fold_statement_digest(left, right, challenges, parent_commitment_digest)
+}
+
+pub fn review_fold_proof_digest(
+    params: &NativeBackendParams,
+    shape_digest: ShapeDigest,
+    relation_id: &RelationId,
+    left: &FoldedInstance<LatticeCommitment>,
+    right: &FoldedInstance<LatticeCommitment>,
+    challenges: &[u64],
+    parent_statement_digest: &StatementDigest,
+    parent_rows: &[RingElem],
+) -> Result<[u8; 48]> {
+    validate_fold_pair(left, right)?;
+    ensure!(
+        left.shape_digest == shape_digest && right.shape_digest == shape_digest,
+        "review fold proof shape digest mismatch"
+    );
+    let pk = review_backend_key(params, shape_digest)?;
+    Ok(fold_proof_digest(
+        &pk,
+        relation_id,
+        left,
+        right,
+        challenges,
+        parent_statement_digest,
+        parent_rows,
+    ))
 }
 
 pub fn reset_kernel_cost_report() {
@@ -1784,6 +1951,12 @@ fn hash48(hasher: Hasher) -> [u8; 48] {
     out
 }
 
+fn hash32(hasher: Hasher) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
 fn digest32_with_label(label: &[u8], bytes: &[u8]) -> [u8; 32] {
     let mut hasher = Hasher::new();
     hasher.update(label);
@@ -1802,17 +1975,19 @@ fn hex_nibble(value: u8) -> char {
 mod tests {
     use p3_goldilocks::Goldilocks;
     use superneo_ccs::{
-        digest_statement, Assignment, CcsShape, SparseEntry, SparseMatrix, StatementEncoding,
-        WitnessField, WitnessSchema,
+        digest_statement, Assignment, CcsShape, RelationId, ShapeDigest, SparseEntry, SparseMatrix,
+        StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
     };
     use superneo_core::{Backend, FoldedInstance};
-    use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
+    use superneo_ring::{
+        GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWitness, WitnessPacker,
+    };
 
     use super::{
-        clear_prepared_matrix_cache, reset_kernel_cost_report, take_kernel_cost_report,
-        BackendManifest, LatticeBackend, LatticeCommitment, NativeBackendParams,
-        NativeCommitmentScheme, PreparedCommitmentMatrix, PreparedMatrixCache, RingElem,
-        RingProfile,
+        clear_prepared_matrix_cache, reset_kernel_cost_report, review_fold_challenges,
+        review_leaf_proof_digest, take_kernel_cost_report, BackendManifest, LatticeBackend,
+        LatticeCommitment, NativeBackendParams, NativeCommitmentScheme, PreparedCommitmentMatrix,
+        PreparedMatrixCache, ReviewState, RingElem, RingProfile,
     };
     use std::sync::Arc;
 
@@ -2338,37 +2513,127 @@ mod tests {
     }
 
     #[test]
-    fn heuristic_goldilocks_baseline_security_envelope_matches_current_floor() {
-        let envelope = NativeBackendParams::heuristic_goldilocks_baseline()
-            .security_envelope()
-            .unwrap();
-        assert_eq!(envelope.claimed_security_bits, 63);
-        assert_eq!(envelope.challenge_bits, 63);
-        assert_eq!(envelope.fold_challenge_count, 1);
-        assert_eq!(envelope.transcript_soundness_bits, 63);
-        assert_eq!(envelope.opening_hiding_bits, 16);
-        assert_eq!(envelope.commitment_binding_bits, 63);
-        assert_eq!(envelope.soundness_floor_bits, 16);
-        assert!(envelope
-            .assumption_label
-            .contains("single transcript-derived fold challenge"));
+    fn spec_digest_covers_spec_identity() {
+        let base = NativeBackendParams::default();
+        let different_spec = NativeBackendParams {
+            manifest: BackendManifest {
+                spec_label: "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v1.alt",
+                ..base.manifest
+            },
+            ..base.clone()
+        };
+        assert_ne!(base.spec_digest(), different_spec.spec_digest());
+        assert_ne!(
+            base.parameter_fingerprint(),
+            different_spec.parameter_fingerprint()
+        );
     }
 
     #[test]
-    fn rewrite_128b_security_envelope_matches_current_floor() {
-        let envelope = NativeBackendParams::goldilocks_128b_rewrite()
-            .security_envelope()
+    fn heuristic_goldilocks_baseline_security_claim_matches_current_floor() {
+        let claim = NativeBackendParams::heuristic_goldilocks_baseline()
+            .security_claim()
             .unwrap();
-        assert_eq!(envelope.claimed_security_bits, 128);
-        assert_eq!(envelope.challenge_bits, 63);
-        assert_eq!(envelope.fold_challenge_count, 3);
-        assert_eq!(envelope.transcript_soundness_bits, 128);
-        assert_eq!(envelope.opening_hiding_bits, 128);
-        assert_eq!(envelope.commitment_binding_bits, 128);
-        assert_eq!(envelope.soundness_floor_bits, 128);
-        assert!(envelope
-            .assumption_label
-            .contains("three independent transcript-derived Goldilocks challenges"));
+        assert_eq!(claim.claimed_security_bits, 63);
+        assert_eq!(claim.transcript_soundness_bits, 63);
+        assert_eq!(claim.opening_hiding_bits, 16);
+        assert_eq!(claim.commitment_binding_bits, 63);
+        assert_eq!(claim.composition_loss_bits, 0);
+        assert_eq!(claim.soundness_floor_bits, 16);
+        assert_eq!(claim.review_state, ReviewState::Killed);
+        assert!(claim
+            .assumption_ids
+            .contains(&"fs.single_goldilocks_fold_challenge"));
+    }
+
+    #[test]
+    fn rewrite_128b_security_claim_matches_current_floor() {
+        let claim = NativeBackendParams::goldilocks_128b_rewrite()
+            .security_claim()
+            .unwrap();
+        assert_eq!(claim.claimed_security_bits, 128);
+        assert_eq!(claim.transcript_soundness_bits, 189);
+        assert_eq!(claim.opening_hiding_bits, 128);
+        assert_eq!(claim.commitment_binding_bits, 128);
+        assert_eq!(claim.composition_loss_bits, 0);
+        assert_eq!(claim.soundness_floor_bits, 128);
+        assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
+        assert!(claim
+            .assumption_ids
+            .contains(&"fs.triple_goldilocks_negacyclic_fold_challenges"));
+    }
+
+    #[test]
+    fn fold_challenges_change_when_transcript_domain_changes() {
+        let params = NativeBackendParams::goldilocks_128b_rewrite();
+        let mut alternate = params.clone();
+        alternate.transcript_domain_label = "hegemon.superneo.fold.alt";
+        let shape_digest = ShapeDigest([9u8; 32]);
+        let relation_id = RelationId::from_label("hegemon.superneo.test.fold");
+        let left = FoldedInstance {
+            relation_id,
+            shape_digest,
+            statement_digest: StatementDigest([1u8; 48]),
+            witness_commitment: LatticeCommitment::from_rows(vec![
+                RingElem::from_coeffs(
+                    vec![3u64; params.matrix_cols]
+                );
+                params.matrix_rows
+            ]),
+        };
+        let right = FoldedInstance {
+            relation_id,
+            shape_digest,
+            statement_digest: StatementDigest([2u8; 48]),
+            witness_commitment: LatticeCommitment::from_rows(vec![
+                RingElem::from_coeffs(
+                    vec![5u64; params.matrix_cols]
+                );
+                params.matrix_rows
+            ]),
+        };
+        let base = review_fold_challenges(&params, shape_digest, &left, &right).unwrap();
+        let changed = review_fold_challenges(&alternate, shape_digest, &left, &right).unwrap();
+        assert_ne!(base, changed);
+    }
+
+    #[test]
+    fn leaf_proof_digest_changes_when_relation_id_changes() {
+        let params = NativeBackendParams::goldilocks_128b_rewrite();
+        let packed = PackedWitness {
+            coeffs: vec![1, 2],
+            original_len: 2,
+            used_bits: 2,
+            coeff_capacity_bits: 60,
+            value_bit_widths: vec![1, 1],
+            width_summary: superneo_ring::PackedWidthSummary {
+                one_bit_values: 2,
+                byte_values: 0,
+                word16_values: 0,
+                word32_values: 0,
+                wide_values: 0,
+                max_bit_width: 1,
+            },
+        };
+        let digest_a = review_leaf_proof_digest(
+            &params,
+            ShapeDigest([7u8; 32]),
+            &RelationId::from_label("hegemon.superneo.test.leaf.a"),
+            &StatementDigest([11u8; 48]),
+            &packed,
+            &[19u8; 48],
+        )
+        .unwrap();
+        let digest_b = review_leaf_proof_digest(
+            &params,
+            ShapeDigest([7u8; 32]),
+            &RelationId::from_label("hegemon.superneo.test.leaf.b"),
+            &StatementDigest([11u8; 48]),
+            &packed,
+            &[19u8; 48],
+        )
+        .unwrap();
+        assert_ne!(digest_a, digest_b);
     }
 
     #[test]

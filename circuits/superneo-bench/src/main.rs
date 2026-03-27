@@ -1,5 +1,10 @@
 use std::{
-    collections::HashMap, fs, path::PathBuf, process::Command, sync::OnceLock, time::Instant,
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::OnceLock,
+    time::Instant,
 };
 
 use anyhow::{ensure, Context, Result};
@@ -17,22 +22,25 @@ use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
     clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
     FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof, NativeBackendParams,
-    NativeSecurityEnvelope,
+    NativeSecurityClaim, ReviewState,
 };
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
 use superneo_hegemon::{
-    build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_receipt_root_artifact_bytes,
-    build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
+    build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_artifact_bytes_with_params_and_seed,
+    build_native_tx_leaf_receipt_root_artifact_bytes, build_receipt_root_artifact_bytes,
+    build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
     build_verified_tx_proof_receipt_root_artifact_bytes,
     canonical_tx_validity_receipt_from_transaction_proof, decode_native_tx_leaf_artifact_bytes,
-    native_backend_params, native_tx_validity_statement_from_witness,
+    decode_receipt_root_artifact_bytes, encode_native_tx_leaf_artifact_bytes,
+    encode_receipt_root_artifact_bytes, native_backend_params,
+    native_tx_validity_statement_from_witness, serialized_stark_inputs_from_witness_for_review,
     tx_leaf_public_tx_from_transaction_proof, tx_leaf_public_tx_from_witness,
     verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_receipt_root_artifact_bytes,
     verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
-    verify_verified_tx_proof_receipt_root_artifact_bytes, NativeTxValidityRelation,
-    ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness, TxLeafPublicRelation,
-    TxProofReceiptRelation, TxProofReceiptWitness,
+    verify_verified_tx_proof_receipt_root_artifact_bytes, CanonicalTxValidityReceipt,
+    NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness,
+    TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -82,6 +90,16 @@ struct Cli {
     k: Vec<usize>,
     #[arg(long)]
     compare_inline_tx: bool,
+    #[arg(
+        long,
+        help = "Print the current native backend params and security claim as JSON and exit"
+    )]
+    print_native_security_claim: bool,
+    #[arg(
+        long,
+        help = "Emit deterministic native backend review vectors into this directory"
+    )]
+    emit_review_vectors: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,7 +115,7 @@ struct BenchResult {
     k: usize,
     parameter_fingerprint: Option<String>,
     native_backend_params: Option<BenchNativeBackendParams>,
-    native_security_envelope: Option<BenchNativeSecurityEnvelope>,
+    native_security_claim: Option<BenchNativeSecurityClaim>,
     bytes_per_tx: usize,
     total_active_path_prove_ns: u128,
     total_active_path_verify_ns: u128,
@@ -114,6 +132,8 @@ struct BenchResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BenchNativeBackendParams {
     family_label: String,
+    spec_label: String,
+    spec_digest: String,
     commitment_scheme_label: String,
     challenge_schedule_label: String,
     maturity_label: String,
@@ -130,16 +150,158 @@ struct BenchNativeBackendParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BenchNativeSecurityEnvelope {
+struct BenchNativeSecurityClaim {
     claimed_security_bits: u32,
-    challenge_bits: u32,
-    fold_challenge_count: u32,
     transcript_soundness_bits: u32,
-    opening_randomness_bits: u32,
     opening_hiding_bits: u32,
     commitment_binding_bits: u32,
+    composition_loss_bits: u32,
     soundness_floor_bits: u32,
-    assumption_label: String,
+    assumption_ids: Vec<String>,
+    review_state: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NativeSecurityClaimReport {
+    parameter_fingerprint: String,
+    native_backend_params: BenchNativeBackendParams,
+    native_security_claim: BenchNativeSecurityClaim,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReviewVectorBundle {
+    parameter_fingerprint: String,
+    native_backend_params: BenchNativeBackendParams,
+    native_security_claim: BenchNativeSecurityClaim,
+    cases: Vec<ReviewVectorCase>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReviewVectorCase {
+    name: String,
+    kind: String,
+    expected_valid: bool,
+    expected_error_substring: Option<String>,
+    artifact_hex: String,
+    tx_context: Option<ReviewTxContext>,
+    block_context: Option<ReviewBlockContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewBackendParams {
+    family_label: String,
+    spec_label: String,
+    commitment_scheme_label: String,
+    challenge_schedule_label: String,
+    maturity_label: String,
+    security_bits: u32,
+    ring_profile: String,
+    matrix_rows: usize,
+    matrix_cols: usize,
+    challenge_bits: u32,
+    fold_challenge_count: u32,
+    max_fold_arity: u32,
+    transcript_domain_label: String,
+    decomposition_bits: u32,
+    opening_randomness_bits: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewReceipt {
+    statement_hash_hex: String,
+    proof_digest_hex: String,
+    public_inputs_digest_hex: String,
+    verifier_profile_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewPackedWitness {
+    coeffs: Vec<u64>,
+    coeff_capacity_bits: u16,
+    value_bit_widths: Vec<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewSerializedStarkInputs {
+    input_flags: Vec<u8>,
+    output_flags: Vec<u8>,
+    fee: u64,
+    value_balance_sign: u8,
+    value_balance_magnitude: u64,
+    merkle_root_hex: String,
+    balance_slot_asset_ids: Vec<u64>,
+    stablecoin_enabled: u8,
+    stablecoin_asset_id: u64,
+    stablecoin_policy_version: u32,
+    stablecoin_issuance_sign: u8,
+    stablecoin_issuance_magnitude: u64,
+    stablecoin_policy_hash_hex: String,
+    stablecoin_oracle_commitment_hex: String,
+    stablecoin_attestation_commitment_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewNoteData {
+    value: u64,
+    asset_id: u64,
+    pk_recipient_hex: String,
+    pk_auth_hex: String,
+    rho_hex: String,
+    r_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewInputNoteWitness {
+    note: ReviewNoteData,
+    position: u64,
+    rho_seed_hex: String,
+    merkle_siblings_hex: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewOutputNoteWitness {
+    note: ReviewNoteData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewTxContext {
+    backend_params: ReviewBackendParams,
+    expected_version: u16,
+    params_fingerprint_hex: String,
+    spec_digest_hex: String,
+    relation_id_hex: String,
+    shape_digest_hex: String,
+    statement_digest_hex: String,
+    receipt: ReviewReceipt,
+    stark_public_inputs: ReviewSerializedStarkInputs,
+    ciphertext_hashes_hex: Vec<String>,
+    witness_version_circuit: u16,
+    witness_version_crypto: u16,
+    opening_sk_spend_hex: String,
+    opening_inputs: Vec<ReviewInputNoteWitness>,
+    opening_outputs: Vec<ReviewOutputNoteWitness>,
+    packed_witness: ReviewPackedWitness,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewReceiptLeafContext {
+    statement_digest_hex: String,
+    witness_commitment_hex: String,
+    proof_digest_hex: String,
+    commitment_rows: Vec<Vec<u64>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewBlockContext {
+    backend_params: ReviewBackendParams,
+    expected_version: u16,
+    params_fingerprint_hex: String,
+    spec_digest_hex: String,
+    relation_id_hex: String,
+    shape_digest_hex: String,
+    root_statement_digest_hex: String,
+    root_commitment_hex: String,
+    leaves: Vec<ReviewReceiptLeafContext>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -155,6 +317,19 @@ struct ImportComparison {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.print_native_security_claim {
+        let report = NativeSecurityClaimReport {
+            parameter_fingerprint: current_parameter_fingerprint_hex(),
+            native_backend_params: current_bench_native_backend_params(),
+            native_security_claim: current_bench_native_security_claim()?,
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if let Some(dir) = &cli.emit_review_vectors {
+        emit_review_vectors(dir)?;
+        return Ok(());
+    }
     ensure!(!cli.k.is_empty(), "at least one k value is required");
     ensure!(
         cli.k.iter().all(|k| *k > 0),
@@ -311,6 +486,8 @@ fn current_bench_native_backend_params() -> BenchNativeBackendParams {
     let params = current_native_backend_params();
     BenchNativeBackendParams {
         family_label: params.manifest.family_label.to_owned(),
+        spec_label: params.manifest.spec_label.to_owned(),
+        spec_digest: hex32(params.spec_digest()),
         commitment_scheme_label: params.manifest.commitment_scheme_label.to_owned(),
         challenge_schedule_label: params.manifest.challenge_schedule_label.to_owned(),
         maturity_label: params.manifest.maturity_label.to_owned(),
@@ -327,29 +504,428 @@ fn current_bench_native_backend_params() -> BenchNativeBackendParams {
     }
 }
 
-fn current_bench_native_security_envelope() -> Result<BenchNativeSecurityEnvelope> {
-    let NativeSecurityEnvelope {
+fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
+    let NativeSecurityClaim {
         claimed_security_bits,
-        challenge_bits,
-        fold_challenge_count,
         transcript_soundness_bits,
-        opening_randomness_bits,
         opening_hiding_bits,
         commitment_binding_bits,
+        composition_loss_bits,
         soundness_floor_bits,
-        assumption_label,
-    } = current_native_backend_params().security_envelope()?;
-    Ok(BenchNativeSecurityEnvelope {
+        assumption_ids,
+        review_state,
+    } = current_native_backend_params().security_claim()?;
+    Ok(BenchNativeSecurityClaim {
         claimed_security_bits,
-        challenge_bits,
-        fold_challenge_count,
         transcript_soundness_bits,
-        opening_randomness_bits,
         opening_hiding_bits,
         commitment_binding_bits,
+        composition_loss_bits,
         soundness_floor_bits,
-        assumption_label: assumption_label.to_owned(),
+        assumption_ids: assumption_ids.iter().map(|id| (*id).to_owned()).collect(),
+        review_state: review_state_label(review_state).to_owned(),
     })
+}
+
+fn review_backend_params(params: &NativeBackendParams) -> ReviewBackendParams {
+    ReviewBackendParams {
+        family_label: params.manifest.family_label.to_owned(),
+        spec_label: params.manifest.spec_label.to_owned(),
+        commitment_scheme_label: params.manifest.commitment_scheme_label.to_owned(),
+        challenge_schedule_label: params.manifest.challenge_schedule_label.to_owned(),
+        maturity_label: params.manifest.maturity_label.to_owned(),
+        security_bits: params.security_bits,
+        ring_profile: format!("{:?}", params.ring_profile),
+        matrix_rows: params.matrix_rows,
+        matrix_cols: params.matrix_cols,
+        challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
+        max_fold_arity: params.max_fold_arity,
+        transcript_domain_label: params.transcript_domain_label.to_owned(),
+        decomposition_bits: params.decomposition_bits,
+        opening_randomness_bits: params.opening_randomness_bits,
+    }
+}
+
+fn review_receipt(receipt: &CanonicalTxValidityReceipt) -> ReviewReceipt {
+    ReviewReceipt {
+        statement_hash_hex: hex48(receipt.statement_hash),
+        proof_digest_hex: hex48(receipt.proof_digest),
+        public_inputs_digest_hex: hex48(receipt.public_inputs_digest),
+        verifier_profile_hex: hex48(receipt.verifier_profile),
+    }
+}
+
+fn review_packed_witness(packed: &superneo_ring::PackedWitness<u64>) -> ReviewPackedWitness {
+    ReviewPackedWitness {
+        coeffs: packed.coeffs.clone(),
+        coeff_capacity_bits: packed.coeff_capacity_bits,
+        value_bit_widths: packed.value_bit_widths.clone(),
+    }
+}
+
+fn review_stark_inputs(
+    stark: &transaction_circuit::proof::SerializedStarkInputs,
+) -> ReviewSerializedStarkInputs {
+    ReviewSerializedStarkInputs {
+        input_flags: stark.input_flags.clone(),
+        output_flags: stark.output_flags.clone(),
+        fee: stark.fee,
+        value_balance_sign: stark.value_balance_sign,
+        value_balance_magnitude: stark.value_balance_magnitude,
+        merkle_root_hex: hex48(stark.merkle_root),
+        balance_slot_asset_ids: stark.balance_slot_asset_ids.clone(),
+        stablecoin_enabled: stark.stablecoin_enabled,
+        stablecoin_asset_id: stark.stablecoin_asset_id,
+        stablecoin_policy_version: stark.stablecoin_policy_version,
+        stablecoin_issuance_sign: stark.stablecoin_issuance_sign,
+        stablecoin_issuance_magnitude: stark.stablecoin_issuance_magnitude,
+        stablecoin_policy_hash_hex: hex48(stark.stablecoin_policy_hash),
+        stablecoin_oracle_commitment_hex: hex48(stark.stablecoin_oracle_commitment),
+        stablecoin_attestation_commitment_hex: hex48(stark.stablecoin_attestation_commitment),
+    }
+}
+
+fn review_note_data(note: &NoteData) -> ReviewNoteData {
+    ReviewNoteData {
+        value: note.value,
+        asset_id: note.asset_id,
+        pk_recipient_hex: hex::encode(note.pk_recipient),
+        pk_auth_hex: hex::encode(note.pk_auth),
+        rho_hex: hex::encode(note.rho),
+        r_hex: hex::encode(note.r),
+    }
+}
+
+fn review_input_witness(input: &InputNoteWitness) -> ReviewInputNoteWitness {
+    ReviewInputNoteWitness {
+        note: review_note_data(&input.note),
+        position: input.position,
+        rho_seed_hex: hex::encode(input.rho_seed),
+        merkle_siblings_hex: input
+            .merkle_path
+            .siblings
+            .iter()
+            .map(|sibling| hex48(felts_to_bytes48(sibling)))
+            .collect(),
+    }
+}
+
+fn review_output_witness(output: &OutputNoteWitness) -> ReviewOutputNoteWitness {
+    ReviewOutputNoteWitness {
+        note: review_note_data(&output.note),
+    }
+}
+
+fn build_review_tx_context(
+    params: &NativeBackendParams,
+    witness: &TransactionWitness,
+    artifact: &superneo_hegemon::NativeTxLeafArtifact,
+) -> ReviewTxContext {
+    ReviewTxContext {
+        backend_params: review_backend_params(params),
+        expected_version: artifact.version,
+        params_fingerprint_hex: hex48(artifact.params_fingerprint),
+        spec_digest_hex: hex32(artifact.spec_digest),
+        relation_id_hex: hex::encode(artifact.relation_id),
+        shape_digest_hex: hex::encode(artifact.shape_digest),
+        statement_digest_hex: hex48(artifact.statement_digest),
+        receipt: review_receipt(&artifact.receipt),
+        stark_public_inputs: review_stark_inputs(
+            &serialized_stark_inputs_from_witness_for_review(witness)
+                .expect("review vector stark inputs"),
+        ),
+        ciphertext_hashes_hex: witness
+            .ciphertext_hashes
+            .iter()
+            .map(|bytes| hex48(*bytes))
+            .collect(),
+        witness_version_circuit: witness.version.circuit,
+        witness_version_crypto: witness.version.crypto,
+        opening_sk_spend_hex: hex::encode(artifact.opening.sk_spend),
+        opening_inputs: artifact
+            .opening
+            .inputs
+            .iter()
+            .map(review_input_witness)
+            .collect(),
+        opening_outputs: artifact
+            .opening
+            .outputs
+            .iter()
+            .map(review_output_witness)
+            .collect(),
+        packed_witness: review_packed_witness(&artifact.commitment_opening.packed_witness),
+    }
+}
+
+fn build_review_block_context(
+    params: &NativeBackendParams,
+    artifact: &superneo_hegemon::ReceiptRootArtifact,
+    leaves: &[superneo_hegemon::NativeTxLeafArtifact],
+) -> ReviewBlockContext {
+    ReviewBlockContext {
+        backend_params: review_backend_params(params),
+        expected_version: artifact.version,
+        params_fingerprint_hex: hex48(artifact.params_fingerprint),
+        spec_digest_hex: hex32(artifact.spec_digest),
+        relation_id_hex: hex::encode(artifact.relation_id),
+        shape_digest_hex: hex::encode(artifact.shape_digest),
+        root_statement_digest_hex: hex48(artifact.root_statement_digest),
+        root_commitment_hex: hex48(artifact.root_commitment),
+        leaves: leaves
+            .iter()
+            .map(|leaf| ReviewReceiptLeafContext {
+                statement_digest_hex: hex48(leaf.statement_digest),
+                witness_commitment_hex: hex48(leaf.commitment.digest),
+                proof_digest_hex: hex48(leaf.leaf.proof.proof_digest),
+                commitment_rows: leaf
+                    .commitment
+                    .rows
+                    .iter()
+                    .map(|row| row.coeffs.clone())
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+fn review_case(
+    name: &str,
+    kind: &str,
+    expected_valid: bool,
+    expected_error_substring: Option<&str>,
+    artifact_bytes: &[u8],
+    tx_context: Option<ReviewTxContext>,
+    block_context: Option<ReviewBlockContext>,
+) -> ReviewVectorCase {
+    ReviewVectorCase {
+        name: name.to_owned(),
+        kind: kind.to_owned(),
+        expected_valid,
+        expected_error_substring: expected_error_substring.map(str::to_owned),
+        artifact_hex: hex::encode(artifact_bytes),
+        tx_context,
+        block_context,
+    }
+}
+
+fn emit_review_vectors(dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir)
+        .with_context(|| format!("failed to create review vector directory {}", dir.display()))?;
+    let params = current_native_backend_params();
+
+    let leaf_witness = sample_witness(1);
+    let built_leaf = build_native_tx_leaf_artifact_bytes_with_params_and_seed(
+        &params,
+        &leaf_witness,
+        review_vector_seed(1),
+    )?;
+    let valid_leaf = decode_native_tx_leaf_artifact_bytes(&built_leaf.artifact_bytes)?;
+    let valid_leaf_context = build_review_tx_context(&params, &leaf_witness, &valid_leaf);
+
+    let mut invalid_leaf_spec = valid_leaf.clone();
+    invalid_leaf_spec.spec_digest[0] ^= 0x01;
+    let invalid_leaf_spec_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_spec)?;
+
+    let mut invalid_leaf_params = valid_leaf.clone();
+    invalid_leaf_params.params_fingerprint[0] ^= 0x01;
+    let invalid_leaf_params_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_params)?;
+
+    let mut invalid_leaf_seed = valid_leaf.clone();
+    invalid_leaf_seed.commitment_opening.randomness_seed[31] = 1;
+    let invalid_leaf_seed_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_seed)?;
+
+    let mut invalid_leaf_proof = valid_leaf.clone();
+    invalid_leaf_proof.leaf.proof.proof_digest[0] ^= 0x01;
+    let invalid_leaf_proof_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_proof)?;
+
+    let mut invalid_leaf_trailing = built_leaf.artifact_bytes.clone();
+    invalid_leaf_trailing.push(0xff);
+
+    let leaf_witness_2 = sample_witness(2);
+    let built_leaf_2 = build_native_tx_leaf_artifact_bytes_with_params_and_seed(
+        &params,
+        &leaf_witness_2,
+        review_vector_seed(2),
+    )?;
+    let valid_leaf_2 = decode_native_tx_leaf_artifact_bytes(&built_leaf_2.artifact_bytes)?;
+
+    let built_root = build_native_tx_leaf_receipt_root_artifact_bytes(&[
+        valid_leaf.clone(),
+        valid_leaf_2.clone(),
+    ])?;
+    let valid_root = decode_receipt_root_artifact_bytes(&built_root.artifact_bytes)?;
+    let valid_root_context = build_review_block_context(
+        &params,
+        &valid_root,
+        &[valid_leaf.clone(), valid_leaf_2.clone()],
+    );
+
+    let mut invalid_root_rows = valid_root.clone();
+    if let Some(first_fold) = invalid_root_rows.folds.first_mut() {
+        if let Some(first_row) = first_fold.parent_rows.first_mut() {
+            if let Some(first_coeff) = first_row.coeffs.first_mut() {
+                *first_coeff ^= 1;
+            }
+        }
+    }
+    let invalid_root_rows_bytes = encode_receipt_root_artifact_bytes(&invalid_root_rows);
+
+    let mut invalid_root_spec = valid_root.clone();
+    invalid_root_spec.spec_digest[0] ^= 0x01;
+    let invalid_root_spec_bytes = encode_receipt_root_artifact_bytes(&invalid_root_spec);
+
+    let mut invalid_root_commitment = valid_root.clone();
+    invalid_root_commitment.root_commitment[0] ^= 0x01;
+    let invalid_root_commitment_bytes =
+        encode_receipt_root_artifact_bytes(&invalid_root_commitment);
+
+    let mut invalid_root_trailing = built_root.artifact_bytes.clone();
+    invalid_root_trailing.push(0xaa);
+
+    let bundle = ReviewVectorBundle {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        native_backend_params: current_bench_native_backend_params(),
+        native_security_claim: current_bench_native_security_claim()?,
+        cases: vec![
+            review_case(
+                "native_tx_leaf_valid",
+                "native_tx_leaf",
+                true,
+                None,
+                &built_leaf.artifact_bytes,
+                Some(valid_leaf_context.clone()),
+                None,
+            ),
+            review_case(
+                "native_tx_leaf_invalid_spec_digest",
+                "native_tx_leaf",
+                false,
+                Some("spec digest mismatch"),
+                &invalid_leaf_spec_bytes,
+                Some(valid_leaf_context.clone()),
+                None,
+            ),
+            review_case(
+                "native_tx_leaf_invalid_params_fingerprint",
+                "native_tx_leaf",
+                false,
+                Some("parameter fingerprint mismatch"),
+                &invalid_leaf_params_bytes,
+                Some(valid_leaf_context.clone()),
+                None,
+            ),
+            review_case(
+                "native_tx_leaf_invalid_noncanonical_seed",
+                "native_tx_leaf",
+                false,
+                Some("randomness seed is not canonical"),
+                &invalid_leaf_seed_bytes,
+                Some(valid_leaf_context),
+                None,
+            ),
+            review_case(
+                "native_tx_leaf_invalid_proof_digest",
+                "native_tx_leaf",
+                false,
+                Some("proof digest mismatch"),
+                &invalid_leaf_proof_bytes,
+                Some(build_review_tx_context(&params, &leaf_witness, &valid_leaf)),
+                None,
+            ),
+            review_case(
+                "native_tx_leaf_invalid_trailing_bytes",
+                "native_tx_leaf",
+                false,
+                Some("trailing bytes"),
+                &invalid_leaf_trailing,
+                Some(build_review_tx_context(&params, &leaf_witness, &valid_leaf)),
+                None,
+            ),
+            review_case(
+                "receipt_root_valid",
+                "receipt_root",
+                true,
+                None,
+                &built_root.artifact_bytes,
+                None,
+                Some(valid_root_context.clone()),
+            ),
+            review_case(
+                "receipt_root_invalid_spec_digest",
+                "receipt_root",
+                false,
+                Some("spec digest mismatch"),
+                &invalid_root_spec_bytes,
+                None,
+                Some(valid_root_context.clone()),
+            ),
+            review_case(
+                "receipt_root_invalid_fold_rows",
+                "receipt_root",
+                false,
+                Some("parent rows mismatch"),
+                &invalid_root_rows_bytes,
+                None,
+                Some(valid_root_context.clone()),
+            ),
+            review_case(
+                "receipt_root_invalid_root_commitment",
+                "receipt_root",
+                false,
+                Some("root commitment mismatch"),
+                &invalid_root_commitment_bytes,
+                None,
+                Some(valid_root_context.clone()),
+            ),
+            review_case(
+                "receipt_root_invalid_trailing_bytes",
+                "receipt_root",
+                false,
+                Some("trailing bytes"),
+                &invalid_root_trailing,
+                None,
+                Some(valid_root_context),
+            ),
+        ],
+    };
+
+    let bundle_path = dir.join("bundle.json");
+    fs::write(&bundle_path, serde_json::to_vec_pretty(&bundle)?).with_context(|| {
+        format!(
+            "failed to write review vectors to {}",
+            bundle_path.display()
+        )
+    })?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "review_vector_bundle": bundle_path,
+            "case_count": bundle.cases.len(),
+            "parameter_fingerprint": bundle.parameter_fingerprint,
+            "spec_digest": bundle.native_backend_params.spec_digest,
+        }))?
+    );
+    Ok(())
+}
+
+fn review_vector_seed(tag: u8) -> [u8; 32] {
+    let mut seed = [0u8; 32];
+    for (idx, byte) in seed.iter_mut().enumerate() {
+        *byte = tag.wrapping_add(idx as u8);
+    }
+    seed
+}
+
+fn review_state_label(state: ReviewState) -> &'static str {
+    match state {
+        ReviewState::Experimental => "experimental",
+        ReviewState::CandidateUnderReview => "candidate_under_review",
+        ReviewState::Accepted => "accepted",
+        ReviewState::Blocked => "blocked",
+        ReviewState::Killed => "killed",
+    }
 }
 
 fn timing_caveat() -> &'static str {
@@ -456,7 +1032,7 @@ fn benchmark_toy_balance(
         k,
         parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
         native_backend_params: Some(current_bench_native_backend_params()),
-        native_security_envelope: Some(current_bench_native_security_envelope()?),
+        native_security_claim: Some(current_bench_native_security_claim()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -558,7 +1134,7 @@ fn benchmark_tx_receipt(
         k,
         parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
         native_backend_params: Some(current_bench_native_backend_params()),
-        native_security_envelope: Some(current_bench_native_security_envelope()?),
+        native_security_claim: Some(current_bench_native_security_claim()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -651,7 +1227,7 @@ fn benchmark_native_tx_validity(
         k,
         parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
         native_backend_params: Some(current_bench_native_backend_params()),
-        native_security_envelope: Some(current_bench_native_security_envelope()?),
+        native_security_claim: Some(current_bench_native_security_claim()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -764,7 +1340,7 @@ fn benchmark_native_tx_leaf_receipt_root(
         k,
         parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
-        native_security_envelope: Some(current_bench_native_security_envelope()?),
+        native_security_claim: Some(current_bench_native_security_claim()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -908,7 +1484,7 @@ fn benchmark_native_tx_leaf_receipt_arc_whir(
         k,
         parameter_fingerprint: Some(hex48(cold_artifact.metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
-        native_security_envelope: Some(current_bench_native_security_envelope()?),
+        native_security_claim: Some(current_bench_native_security_claim()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: cold_prove_ns,
         total_active_path_verify_ns: cold_residual_verify_ns,
@@ -993,7 +1569,7 @@ fn benchmark_tx_leaf_receipt_root(
         k,
         parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
-        native_security_envelope: Some(current_bench_native_security_envelope()?),
+        native_security_claim: Some(current_bench_native_security_claim()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -1048,7 +1624,7 @@ fn benchmark_verified_tx_receipt(
         k,
         parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
-        native_security_envelope: Some(current_bench_native_security_envelope()?),
+        native_security_claim: Some(current_bench_native_security_claim()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -1264,6 +1840,10 @@ fn hex48(bytes: [u8; 48]) -> String {
     hex::encode(bytes)
 }
 
+fn hex32(bytes: [u8; 32]) -> String {
+    hex::encode(bytes)
+}
+
 fn synthetic_bytes(len: usize, seed: u64) -> Vec<u8> {
     (0..len)
         .map(|idx| (((seed as usize * 17) + idx * 29) & 0xff) as u8)
@@ -1318,8 +1898,16 @@ fn current_peak_rss_bytes() -> Result<u64> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use native_backend_ref::verify_bundle_dir;
+    use std::fs;
     use superneo_backend_lattice::{LatticeCommitment, RingElem};
     use superneo_ccs::digest_statement;
+    use superneo_hegemon::{
+        verify_native_tx_leaf_artifact_bytes_with_params,
+        verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
+    };
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
 
     #[test]
     fn default_cli_relation_is_canonical_native_receipt_root() {
@@ -1413,5 +2001,231 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(root.shape_digest, pk.shape_digest);
+    }
+
+    #[test]
+    fn review_vectors_agree_between_production_and_reference_verifiers() {
+        let dir = std::env::temp_dir().join(format!(
+            "hegemon-native-backend-vectors-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        emit_review_vectors(&dir).expect("emit review vectors");
+        let (summary, reference_results) =
+            verify_bundle_dir(&dir).expect("reference verifier should run");
+        assert_eq!(
+            summary.failed_cases, 0,
+            "reference verifier failures: {:?}",
+            reference_results
+        );
+        let bundle: ReviewVectorBundle =
+            serde_json::from_slice(&fs::read(dir.join("bundle.json")).expect("read bundle"))
+                .expect("parse local review bundle");
+        for case in &bundle.cases {
+            let production_result = verify_production_review_case(case);
+            if case.expected_valid {
+                production_result.as_ref().unwrap_or_else(|err| {
+                    panic!("production verifier rejected {}: {err}", case.name)
+                });
+            } else {
+                let expected = case
+                    .expected_error_substring
+                    .as_deref()
+                    .expect("invalid case should declare expected substring");
+                let production_err =
+                    production_result.expect_err("production verifier should reject");
+                assert!(
+                    production_err.to_string().contains(expected),
+                    "production verifier error mismatch for {}: {}",
+                    case.name,
+                    production_err
+                );
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn verify_production_review_case(case: &ReviewVectorCase) -> Result<()> {
+        let artifact_bytes =
+            hex::decode(&case.artifact_hex).context("case artifact_hex must be valid hex")?;
+        match case.kind.as_str() {
+            "native_tx_leaf" => {
+                let ctx = case
+                    .tx_context
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("native_tx_leaf case missing tx_context"))?;
+                let params = current_native_backend_params();
+                let witness = tx_witness_from_review(ctx)?;
+                let tx = tx_leaf_public_tx_from_witness(&witness)?;
+                let receipt = CanonicalTxValidityReceipt {
+                    statement_hash: decode_hex_array_for_test::<48>(
+                        &ctx.receipt.statement_hash_hex,
+                    )?,
+                    proof_digest: decode_hex_array_for_test::<48>(&ctx.receipt.proof_digest_hex)?,
+                    public_inputs_digest: decode_hex_array_for_test::<48>(
+                        &ctx.receipt.public_inputs_digest_hex,
+                    )?,
+                    verifier_profile: decode_hex_array_for_test::<48>(
+                        &ctx.receipt.verifier_profile_hex,
+                    )?,
+                };
+                verify_native_tx_leaf_artifact_bytes_with_params(
+                    &params,
+                    &tx,
+                    &receipt,
+                    &artifact_bytes,
+                )
+                .map(|_| ())
+            }
+            "receipt_root" => {
+                let ctx = case
+                    .block_context
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("receipt_root case missing block_context"))?;
+                let params = current_native_backend_params();
+                let records = receipt_root_records_from_review(ctx)?;
+                verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
+                    &params,
+                    &records,
+                    &artifact_bytes,
+                )
+                .map(|_| ())
+            }
+            other => Err(anyhow::anyhow!("unsupported review case kind {other}")),
+        }
+    }
+
+    fn decode_hex_array_for_test<const N: usize>(value: &str) -> Result<[u8; N]> {
+        let bytes = hex::decode(value)?;
+        let len = bytes.len();
+        bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("hex string has {} bytes, expected {}", len, N))
+    }
+
+    fn tx_witness_from_review(ctx: &ReviewTxContext) -> Result<TransactionWitness> {
+        Ok(TransactionWitness {
+            inputs: ctx
+                .opening_inputs
+                .iter()
+                .map(input_note_from_review)
+                .collect::<Result<Vec<_>>>()?,
+            outputs: ctx
+                .opening_outputs
+                .iter()
+                .map(output_note_from_review)
+                .collect::<Result<Vec<_>>>()?,
+            ciphertext_hashes: ctx
+                .ciphertext_hashes_hex
+                .iter()
+                .map(|value| decode_hex_array_for_test::<48>(value))
+                .collect::<Result<Vec<_>>>()?,
+            sk_spend: decode_hex_array_for_test::<32>(&ctx.opening_sk_spend_hex)?,
+            merkle_root: decode_hex_array_for_test::<48>(&ctx.stark_public_inputs.merkle_root_hex)?,
+            fee: ctx.stark_public_inputs.fee,
+            value_balance: signed_review_value(
+                ctx.stark_public_inputs.value_balance_sign,
+                ctx.stark_public_inputs.value_balance_magnitude,
+            )?,
+            stablecoin: StablecoinPolicyBinding {
+                enabled: ctx.stark_public_inputs.stablecoin_enabled != 0,
+                asset_id: ctx.stark_public_inputs.stablecoin_asset_id,
+                policy_version: ctx.stark_public_inputs.stablecoin_policy_version,
+                issuance_delta: signed_review_value(
+                    ctx.stark_public_inputs.stablecoin_issuance_sign,
+                    ctx.stark_public_inputs.stablecoin_issuance_magnitude,
+                )?,
+                policy_hash: decode_hex_array_for_test::<48>(
+                    &ctx.stark_public_inputs.stablecoin_policy_hash_hex,
+                )?,
+                oracle_commitment: decode_hex_array_for_test::<48>(
+                    &ctx.stark_public_inputs.stablecoin_oracle_commitment_hex,
+                )?,
+                attestation_commitment: decode_hex_array_for_test::<48>(
+                    &ctx.stark_public_inputs
+                        .stablecoin_attestation_commitment_hex,
+                )?,
+            },
+            version: protocol_versioning::VersionBinding::new(
+                ctx.witness_version_circuit,
+                ctx.witness_version_crypto,
+            ),
+        })
+    }
+
+    fn receipt_root_records_from_review(
+        ctx: &ReviewBlockContext,
+    ) -> Result<Vec<superneo_hegemon::NativeTxLeafRecord>> {
+        Ok(ctx
+            .leaves
+            .iter()
+            .map(|leaf| superneo_hegemon::NativeTxLeafRecord {
+                params_fingerprint: decode_hex_array_for_test::<48>(&ctx.params_fingerprint_hex)
+                    .expect("params fingerprint"),
+                spec_digest: decode_hex_array_for_test::<32>(&ctx.spec_digest_hex)
+                    .expect("spec digest"),
+                relation_id: decode_hex_array_for_test::<32>(&ctx.relation_id_hex)
+                    .expect("relation id"),
+                shape_digest: decode_hex_array_for_test::<32>(&ctx.shape_digest_hex)
+                    .expect("shape digest"),
+                statement_digest: decode_hex_array_for_test::<48>(&leaf.statement_digest_hex)
+                    .expect("statement digest"),
+                commitment: LatticeCommitment::from_rows(
+                    leaf.commitment_rows
+                        .iter()
+                        .cloned()
+                        .map(RingElem::from_coeffs)
+                        .collect(),
+                ),
+                proof_digest: decode_hex_array_for_test::<48>(&leaf.proof_digest_hex)
+                    .expect("proof digest"),
+            })
+            .collect())
+    }
+
+    fn input_note_from_review(review: &ReviewInputNoteWitness) -> Result<InputNoteWitness> {
+        let siblings = review
+            .merkle_siblings_hex
+            .iter()
+            .map(|value| {
+                let bytes = decode_hex_array_for_test::<48>(value)?;
+                transaction_circuit::hashing_pq::bytes48_to_felts(&bytes).ok_or_else(|| {
+                    anyhow::anyhow!("native tx-leaf merkle sibling is non-canonical")
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(InputNoteWitness {
+            note: note_from_review(&review.note)?,
+            position: review.position,
+            rho_seed: decode_hex_array_for_test::<32>(&review.rho_seed_hex)?,
+            merkle_path: MerklePath { siblings },
+        })
+    }
+
+    fn output_note_from_review(review: &ReviewOutputNoteWitness) -> Result<OutputNoteWitness> {
+        Ok(OutputNoteWitness {
+            note: note_from_review(&review.note)?,
+        })
+    }
+
+    fn note_from_review(review: &ReviewNoteData) -> Result<NoteData> {
+        Ok(NoteData {
+            value: review.value,
+            asset_id: review.asset_id,
+            pk_recipient: decode_hex_array_for_test::<32>(&review.pk_recipient_hex)?,
+            pk_auth: decode_hex_array_for_test::<32>(&review.pk_auth_hex)?,
+            rho: decode_hex_array_for_test::<32>(&review.rho_hex)?,
+            r: decode_hex_array_for_test::<32>(&review.r_hex)?,
+        })
+    }
+
+    fn signed_review_value(sign: u8, magnitude: u64) -> Result<i128> {
+        ensure!(sign <= 1, "review sign flag must be binary");
+        Ok(if sign == 0 {
+            i128::from(magnitude)
+        } else {
+            -i128::from(magnitude)
+        })
     }
 }

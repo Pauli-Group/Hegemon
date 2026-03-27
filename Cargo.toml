@@ -45,6 +45,9 @@ members = [
     "circuits/superneo-hegemon",
     "circuits/receipt-arc-whir",
     "circuits/superneo-bench",
+    "tools/native-backend-ref",
+    "tools/native-backend-timing",
+    "fuzz",
 ]
 exclude = ["spikes/recursion"]
 resolver = "2"

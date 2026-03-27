@@ -1,0 +1,25 @@
+[package]
+name = "native-backend-ref"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+p3-goldilocks = { workspace = true }
+protocol-versioning = { path = "../../protocol/versioning" }
+superneo-backend-lattice = { path = "../../circuits/superneo-backend-lattice" }
+superneo-ccs = { path = "../../circuits/superneo-ccs" }
+superneo-core = { path = "../../circuits/superneo-core" }
+superneo-hegemon = { path = "../../circuits/superneo-hegemon" }
+superneo-ring = { path = "../../circuits/superneo-ring" }
+transaction-circuit = { path = "../../circuits/transaction" }
+
+[lints]
+workspace = true

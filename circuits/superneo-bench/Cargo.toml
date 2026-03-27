@@ -16,12 +16,16 @@ serde_json = "1"
 libc = "0.2"
 hex = "0.4"
 p3-goldilocks = { workspace = true }
+protocol-versioning = { path = "../../protocol/versioning" }
 superneo-backend-lattice = { path = "../superneo-backend-lattice" }
 superneo-ccs = { path = "../superneo-ccs" }
 superneo-core = { path = "../superneo-core" }
 superneo-hegemon = { path = "../superneo-hegemon" }
 superneo-ring = { path = "../superneo-ring" }
 transaction-circuit = { path = "../transaction" }
+
+[dev-dependencies]
+native-backend-ref = { path = "../../tools/native-backend-ref" }
 
 [lints]
 workspace = true

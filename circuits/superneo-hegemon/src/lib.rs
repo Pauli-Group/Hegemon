@@ -6,8 +6,8 @@ use p3_goldilocks::Goldilocks;
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use superneo_backend_lattice::{
-    CommitmentOpening, LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams,
-    NativeCommitmentScheme, RingElem,
+    commit_packed_witness_with_seed, CommitmentOpening, LatticeBackend, LatticeCommitment,
+    LeafDigestProof, NativeBackendParams, NativeCommitmentScheme, RingElem,
 };
 use superneo_ccs::{
     digest_statement, Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix,
@@ -922,6 +922,7 @@ pub struct ReceiptRootFoldStep {
 pub struct ReceiptRootArtifact {
     pub version: u16,
     pub params_fingerprint: [u8; 48],
+    pub spec_digest: [u8; 32],
     pub relation_id: [u8; 32],
     pub shape_digest: [u8; 32],
     pub leaves: Vec<ReceiptRootLeaf>,
@@ -933,6 +934,7 @@ pub struct ReceiptRootArtifact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceiptRootMetadata {
     pub params_fingerprint: [u8; 48],
+    pub spec_digest: [u8; 32],
     pub relation_id: [u8; 32],
     pub shape_digest: [u8; 32],
     pub leaf_count: u32,
@@ -978,6 +980,7 @@ pub struct NativeTxLeafArtifact {
         deserialize_with = "deserialize_fixed_bytes_48"
     )]
     pub params_fingerprint: [u8; 48],
+    pub spec_digest: [u8; 32],
     pub relation_id: [u8; 32],
     pub shape_digest: [u8; 32],
     #[serde(
@@ -1021,6 +1024,7 @@ pub struct TxLeafMetadata {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeTxLeafMetadata {
     pub params_fingerprint: [u8; 48],
+    pub spec_digest: [u8; 32],
     pub relation_id: [u8; 32],
     pub shape_digest: [u8; 32],
     pub statement_digest: [u8; 48],
@@ -1031,6 +1035,7 @@ pub struct NativeTxLeafMetadata {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeTxLeafRecord {
     pub params_fingerprint: [u8; 48],
+    pub spec_digest: [u8; 32],
     pub relation_id: [u8; 32],
     pub shape_digest: [u8; 32],
     pub statement_digest: [u8; 48],
@@ -1970,6 +1975,7 @@ fn derive_verifier_profile(
         &[
             profile_label,
             &params.parameter_fingerprint(),
+            &params.spec_digest(),
             &relation_id.0,
             &shape_digest.0,
         ],
@@ -1979,12 +1985,14 @@ fn derive_verifier_profile(
 pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
     let relation = CanonicalTxValidityReceiptRelation::default();
     let backend = LatticeBackend::default();
+    let params = backend.native_params().clone();
     let security = backend.security_params();
     let (pk, _) = backend
         .setup(&security, relation.shape())
         .expect("experimental receipt-root setup must succeed");
     let mut material = Vec::with_capacity(32 + 32 + 32 + 32);
     material.extend_from_slice(b"hegemon.superneo.receipt-root-profile.v1");
+    material.extend_from_slice(&params.spec_digest());
     material.extend_from_slice(&relation.relation_id().0);
     material.extend_from_slice(&pk.shape_digest.0);
     material.extend_from_slice(&pk.security_bits.to_le_bytes());
@@ -2002,12 +2010,14 @@ pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
 pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
     let relation = TxLeafPublicRelation::default();
     let backend = LatticeBackend::default();
+    let params = backend.native_params().clone();
     let security = backend.security_params();
     let (pk, _) = backend
         .setup(&security, relation.shape())
         .expect("experimental tx-leaf setup must succeed");
     let mut material = Vec::with_capacity(32 + 32 + 32 + 32);
     material.extend_from_slice(b"hegemon.superneo.tx-leaf-profile.v1");
+    material.extend_from_slice(&params.spec_digest());
     material.extend_from_slice(&relation.relation_id().0);
     material.extend_from_slice(&pk.shape_digest.0);
     material.extend_from_slice(&pk.security_bits.to_le_bytes());
@@ -2124,6 +2134,7 @@ pub fn max_native_tx_leaf_artifact_bytes_with_params(params: &NativeBackendParam
     2 + 48
         + 32
         + 32
+        + 32
         + 48
         + CANONICAL_RECEIPT_WIRE_BYTES
         + serialized_stark_inputs_bytes
@@ -2150,7 +2161,7 @@ pub fn max_native_receipt_root_artifact_bytes_with_params(
         + (params.matrix_rows * (4 + (params.matrix_cols * 8)))
         + 48;
     let fold_bytes = tx_count.saturating_sub(1) * fold_step_bytes;
-    2 + 48 + 32 + 32 + 4 + 4 + leaf_bytes + fold_bytes + 48 + 48
+    2 + 48 + 32 + 32 + 32 + 4 + 4 + leaf_bytes + fold_bytes + 48 + 48
 }
 
 fn native_leaf_proof_digest(
@@ -2169,6 +2180,22 @@ fn native_leaf_proof_digest(
             commitment_digest,
             opening_digest,
         ],
+    )
+}
+
+pub fn native_leaf_proof_digest_for_review(
+    params: &NativeBackendParams,
+    relation_id: &RelationId,
+    statement_digest: &superneo_ccs::StatementDigest,
+    commitment_digest: &[u8; 48],
+    opening_digest: &[u8; 48],
+) -> [u8; 48] {
+    native_leaf_proof_digest(
+        params,
+        relation_id,
+        statement_digest,
+        commitment_digest,
+        opening_digest,
     )
 }
 
@@ -2223,9 +2250,25 @@ pub fn build_native_tx_leaf_artifact_bytes(
     build_native_tx_leaf_artifact_bytes_with_params(&native_backend_params(), witness)
 }
 
+pub fn build_native_tx_leaf_artifact_bytes_with_params_and_seed(
+    params: &NativeBackendParams,
+    witness: &TransactionWitness,
+    randomness_seed: [u8; 32],
+) -> Result<BuiltNativeTxLeafArtifact> {
+    build_native_tx_leaf_artifact_bytes_internal(params, witness, Some(randomness_seed))
+}
+
 pub fn build_native_tx_leaf_artifact_bytes_with_params(
     params: &NativeBackendParams,
     witness: &TransactionWitness,
+) -> Result<BuiltNativeTxLeafArtifact> {
+    build_native_tx_leaf_artifact_bytes_internal(params, witness, None)
+}
+
+fn build_native_tx_leaf_artifact_bytes_internal(
+    params: &NativeBackendParams,
+    witness: &TransactionWitness,
+    randomness_seed: Option<[u8; 32]>,
 ) -> Result<BuiltNativeTxLeafArtifact> {
     let relation = NativeTxValidityRelation::default();
     let security = params.security_params();
@@ -2241,7 +2284,11 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
     let encoding = relation.encode_statement(&statement)?;
     let assignment = relation.build_assignment(&statement, witness)?;
     let packed = packer.pack(relation.shape(), &assignment)?;
-    let (commitment, commitment_opening) = backend.commit(params, &packed)?;
+    let (commitment, commitment_opening) = if let Some(randomness_seed) = randomness_seed {
+        commit_packed_witness_with_seed(params, &packed, randomness_seed)?
+    } else {
+        backend.commit(params, &packed)?
+    };
     let proof_digest = native_leaf_proof_digest(
         params,
         &relation.relation_id(),
@@ -2262,6 +2309,7 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
     let artifact = NativeTxLeafArtifact {
         version: native_tx_leaf_artifact_version(params),
         params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
         relation_id: relation.relation_id().0,
         shape_digest: pk.shape_digest.0,
         statement_digest: encoding.statement_digest.0,
@@ -2291,6 +2339,15 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
     })
 }
 
+pub fn serialized_stark_inputs_from_witness_for_review(
+    witness: &TransactionWitness,
+) -> Result<SerializedStarkInputs> {
+    let public_inputs = witness
+        .public_inputs()
+        .map_err(|err| anyhow::anyhow!("failed to derive native tx public inputs: {err}"))?;
+    serialized_stark_inputs_from_witness(witness, &public_inputs)
+}
+
 pub fn decode_tx_leaf_artifact_bytes(artifact_bytes: &[u8]) -> Result<TxLeafArtifact> {
     bincode::deserialize(artifact_bytes)
         .map_err(|err| anyhow::anyhow!("failed to decode tx-leaf artifact: {err}"))
@@ -2300,9 +2357,14 @@ pub fn decode_native_tx_leaf_artifact_bytes(artifact_bytes: &[u8]) -> Result<Nat
     decode_native_tx_leaf_artifact(artifact_bytes)
 }
 
+pub fn encode_native_tx_leaf_artifact_bytes(artifact: &NativeTxLeafArtifact) -> Result<Vec<u8>> {
+    encode_native_tx_leaf_artifact(artifact)
+}
+
 pub fn native_tx_leaf_record_from_artifact(artifact: &NativeTxLeafArtifact) -> NativeTxLeafRecord {
     NativeTxLeafRecord {
         params_fingerprint: artifact.params_fingerprint,
+        spec_digest: artifact.spec_digest,
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
         statement_digest: artifact.statement_digest,
@@ -2404,6 +2466,10 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         artifact.params_fingerprint == params.parameter_fingerprint(),
         "native tx-leaf parameter fingerprint mismatch"
     );
+    ensure!(
+        artifact.spec_digest == params.spec_digest(),
+        "native tx-leaf spec digest mismatch"
+    );
 
     let relation = NativeTxValidityRelation::default();
     let security = params.security_params();
@@ -2487,6 +2553,7 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     );
     Ok(NativeTxLeafMetadata {
         params_fingerprint: artifact.params_fingerprint,
+        spec_digest: artifact.spec_digest,
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
         statement_digest: artifact.statement_digest,
@@ -2590,6 +2657,7 @@ pub fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
     let artifact = ReceiptRootArtifact {
         version: receipt_root_artifact_version(params),
         params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
         relation_id: relation.relation_id().0,
         shape_digest: pk.shape_digest.0,
         leaves,
@@ -2601,6 +2669,7 @@ pub fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
         artifact_bytes: encode_receipt_root_artifact(&artifact),
         metadata: ReceiptRootMetadata {
             params_fingerprint: artifact.params_fingerprint,
+            spec_digest: artifact.spec_digest,
             relation_id: artifact.relation_id,
             shape_digest: artifact.shape_digest,
             leaf_count: artifact.leaves.len() as u32,
@@ -2639,6 +2708,10 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
         artifact.params_fingerprint == params.parameter_fingerprint(),
         "native receipt-root parameter fingerprint mismatch"
     );
+    ensure!(
+        artifact.spec_digest == params.spec_digest(),
+        "native receipt-root spec digest mismatch"
+    );
 
     let relation = NativeTxValidityRelation::default();
     let security = params.security_params();
@@ -2668,6 +2741,10 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
         ensure!(
             native_artifact.params_fingerprint == params.parameter_fingerprint(),
             "native tx-leaf parameter fingerprint mismatch"
+        );
+        ensure!(
+            native_artifact.spec_digest == params.spec_digest(),
+            "native tx-leaf spec digest mismatch"
         );
         ensure!(
             leaf.statement_digest == native_artifact.statement_digest,
@@ -2749,11 +2826,20 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
 
     Ok(ReceiptRootMetadata {
         params_fingerprint: artifact.params_fingerprint,
+        spec_digest: artifact.spec_digest,
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
         leaf_count: artifact.leaves.len() as u32,
         fold_count: artifact.folds.len() as u32,
     })
+}
+
+pub fn decode_receipt_root_artifact_bytes(artifact_bytes: &[u8]) -> Result<ReceiptRootArtifact> {
+    decode_receipt_root_artifact(artifact_bytes)
+}
+
+pub fn encode_receipt_root_artifact_bytes(artifact: &ReceiptRootArtifact) -> Vec<u8> {
+    encode_receipt_root_artifact(artifact)
 }
 
 pub fn verify_native_tx_leaf_receipt_root_artifact_from_records(
@@ -2786,6 +2872,10 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
         artifact.params_fingerprint == params.parameter_fingerprint(),
         "native receipt-root parameter fingerprint mismatch"
     );
+    ensure!(
+        artifact.spec_digest == params.spec_digest(),
+        "native receipt-root spec digest mismatch"
+    );
 
     let relation = NativeTxValidityRelation::default();
     let security = params.security_params();
@@ -2811,6 +2901,10 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
         ensure!(
             record.params_fingerprint == params.parameter_fingerprint(),
             "native tx-leaf record parameter fingerprint mismatch"
+        );
+        ensure!(
+            record.spec_digest == params.spec_digest(),
+            "native tx-leaf record spec digest mismatch"
         );
         ensure!(
             record.relation_id == relation.relation_id().0,
@@ -2900,6 +2994,7 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
 
     Ok(ReceiptRootMetadata {
         params_fingerprint: artifact.params_fingerprint,
+        spec_digest: artifact.spec_digest,
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
         leaf_count: artifact.leaves.len() as u32,
@@ -2981,6 +3076,7 @@ pub fn build_verified_tx_proof_receipt_root_artifact_bytes(
     let artifact = ReceiptRootArtifact {
         version: receipt_root_artifact_version(&params),
         params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
         relation_id: relation.relation_id().0,
         shape_digest: pk.shape_digest.0,
         leaves,
@@ -2992,6 +3088,7 @@ pub fn build_verified_tx_proof_receipt_root_artifact_bytes(
         artifact_bytes: encode_receipt_root_artifact(&artifact),
         metadata: ReceiptRootMetadata {
             params_fingerprint: artifact.params_fingerprint,
+            spec_digest: artifact.spec_digest,
             relation_id: artifact.relation_id,
             shape_digest: artifact.shape_digest,
             leaf_count: artifact.leaves.len() as u32,
@@ -3068,6 +3165,7 @@ pub fn build_receipt_root_artifact_bytes(
     let artifact = ReceiptRootArtifact {
         version: receipt_root_artifact_version(&params),
         params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
         relation_id: relation.relation_id().0,
         shape_digest: pk.shape_digest.0,
         leaves,
@@ -3079,6 +3177,7 @@ pub fn build_receipt_root_artifact_bytes(
         artifact_bytes: encode_receipt_root_artifact(&artifact),
         metadata: ReceiptRootMetadata {
             params_fingerprint: artifact.params_fingerprint,
+            spec_digest: artifact.spec_digest,
             relation_id: artifact.relation_id,
             shape_digest: artifact.shape_digest,
             leaf_count: artifact.leaves.len() as u32,
@@ -3105,6 +3204,10 @@ pub fn verify_verified_tx_proof_receipt_root_artifact_bytes(
     ensure!(
         artifact.params_fingerprint == params.parameter_fingerprint(),
         "receipt-root parameter fingerprint mismatch"
+    );
+    ensure!(
+        artifact.spec_digest == params.spec_digest(),
+        "receipt-root spec digest mismatch"
     );
 
     let relation = TxLeafPublicRelation::default();
@@ -3213,6 +3316,7 @@ pub fn verify_verified_tx_proof_receipt_root_artifact_bytes(
 
     Ok(ReceiptRootMetadata {
         params_fingerprint: artifact.params_fingerprint,
+        spec_digest: artifact.spec_digest,
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
         leaf_count: artifact.leaves.len() as u32,
@@ -3238,6 +3342,10 @@ pub fn verify_receipt_root_artifact_bytes(
     ensure!(
         artifact.params_fingerprint == params.parameter_fingerprint(),
         "receipt-root parameter fingerprint mismatch"
+    );
+    ensure!(
+        artifact.spec_digest == params.spec_digest(),
+        "receipt-root spec digest mismatch"
     );
 
     let relation = CanonicalTxValidityReceiptRelation::default();
@@ -3342,6 +3450,7 @@ pub fn verify_receipt_root_artifact_bytes(
 
     Ok(ReceiptRootMetadata {
         params_fingerprint: artifact.params_fingerprint,
+        spec_digest: artifact.spec_digest,
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
         leaf_count: artifact.leaves.len() as u32,
@@ -3353,6 +3462,7 @@ fn encode_receipt_root_artifact(artifact: &ReceiptRootArtifact) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&artifact.version.to_le_bytes());
     bytes.extend_from_slice(&artifact.params_fingerprint);
+    bytes.extend_from_slice(&artifact.spec_digest);
     bytes.extend_from_slice(&artifact.relation_id);
     bytes.extend_from_slice(&artifact.shape_digest);
     bytes.extend_from_slice(&(artifact.leaves.len() as u32).to_le_bytes());
@@ -3387,6 +3497,7 @@ fn encode_native_tx_leaf_artifact(artifact: &NativeTxLeafArtifact) -> Result<Vec
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&artifact.version.to_le_bytes());
     bytes.extend_from_slice(&artifact.params_fingerprint);
+    bytes.extend_from_slice(&artifact.spec_digest);
     bytes.extend_from_slice(&artifact.relation_id);
     bytes.extend_from_slice(&artifact.shape_digest);
     bytes.extend_from_slice(&artifact.statement_digest);
@@ -3403,6 +3514,7 @@ fn decode_native_tx_leaf_artifact(bytes: &[u8]) -> Result<NativeTxLeafArtifact> 
     let mut cursor = 0usize;
     let version = read_u16(bytes, &mut cursor)?;
     let params_fingerprint = read_array::<48>(bytes, &mut cursor)?;
+    let spec_digest = read_array::<32>(bytes, &mut cursor)?;
     let relation_id = read_array::<32>(bytes, &mut cursor)?;
     let shape_digest = read_array::<32>(bytes, &mut cursor)?;
     let statement_digest = read_array::<48>(bytes, &mut cursor)?;
@@ -3420,6 +3532,7 @@ fn decode_native_tx_leaf_artifact(bytes: &[u8]) -> Result<NativeTxLeafArtifact> 
     Ok(NativeTxLeafArtifact {
         version,
         params_fingerprint,
+        spec_digest,
         relation_id,
         shape_digest,
         statement_digest,
@@ -3808,6 +3921,7 @@ fn decode_receipt_root_artifact(bytes: &[u8]) -> Result<ReceiptRootArtifact> {
     let mut cursor = 0usize;
     let version = read_u16(bytes, &mut cursor)?;
     let params_fingerprint = read_array::<48>(bytes, &mut cursor)?;
+    let spec_digest = read_array::<32>(bytes, &mut cursor)?;
     let relation_id = read_array::<32>(bytes, &mut cursor)?;
     let shape_digest = read_array::<32>(bytes, &mut cursor)?;
     let leaf_count = read_u32(bytes, &mut cursor)? as usize;
@@ -3857,6 +3971,7 @@ fn decode_receipt_root_artifact(bytes: &[u8]) -> Result<ReceiptRootArtifact> {
     Ok(ReceiptRootArtifact {
         version,
         params_fingerprint,
+        spec_digest,
         relation_id,
         shape_digest,
         leaves,
@@ -4113,6 +4228,7 @@ mod tests {
             metadata.params_fingerprint,
             native_backend_params().parameter_fingerprint()
         );
+        assert_eq!(metadata.spec_digest, native_backend_params().spec_digest());
     }
 
     #[test]
@@ -4147,6 +4263,17 @@ mod tests {
             verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &built.artifact_bytes)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn native_tx_leaf_rejects_spec_digest_mismatch() {
+        let witness = sample_witness(22);
+        let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
+        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
+        artifact.spec_digest[0] ^= 0x5a;
+        let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
+        assert!(verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &tampered).is_err());
     }
 
     #[test]
@@ -4200,6 +4327,24 @@ mod tests {
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
         let mut decoded = decode_receipt_root_artifact(&built.artifact_bytes).unwrap();
         decoded.folds[0].parent_rows[0].coeffs[0] ^= 1;
+        let tampered = encode_receipt_root_artifact(&decoded);
+        assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &tampered).is_err());
+    }
+
+    #[test]
+    fn native_receipt_root_rejects_spec_digest_mismatch() {
+        let witnesses = vec![sample_witness(34), sample_witness(35)];
+        let artifacts = witnesses
+            .iter()
+            .map(|witness| {
+                build_native_tx_leaf_artifact_bytes(witness)
+                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
+        let mut decoded = decode_receipt_root_artifact(&built.artifact_bytes).unwrap();
+        decoded.spec_digest[0] ^= 0x5a;
         let tampered = encode_receipt_root_artifact(&decoded);
         assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &tampered).is_err());
     }

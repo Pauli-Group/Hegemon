@@ -10,7 +10,7 @@ This plan starts after [`.agent/REBUILD_NATIVE_BACKEND_EXECPLAN.md`](/Users/pldd
 
 After this change, the repository will no longer rely on benchmark JSON and a hand-written assumption label as the whole security story for the native backend. A contributor will be able to read one exact specification, generate fixed test vectors, verify those vectors with two independent verifier implementations, inspect a code-derived security claim that enumerates every assumption and loss term, run parser/fold/opening fuzzers, run a timing-discipline harness for secret-bearing prover code, and build one reproducible external-review package with fixed claims and attack targets.
 
-The user-visible outcome is direct. From the repository root, a novice will be able to run one command to emit the native backend review package, one command to verify that package with the reference verifier, and one command to print the current security claim. If any piece of the package is incomplete or if the computed floor falls below the claimed level, setup and verification will fail closed. If the full package clears every gate, the core design documents may finally state the 128-bit PQ claim as a repository-backed fact instead of a hopeful candidate claim.
+The user-visible outcome is direct. From the repository root, a novice can now run one command to emit the native backend review package, one command to verify that package with the reference verifier, and one command to print the current security claim. If any piece of the package is incomplete or if the computed floor falls below the claimed level, setup and verification fail closed. If the full package clears every gate, the core design documents may state the backend as a serious 128-bit PQ candidate under external review instead of a vague hopeful target.
 
 ## Progress
 
@@ -18,24 +18,37 @@ The user-visible outcome is direct. From the repository root, a novice will be a
 - [x] (2026-03-27 16:34Z) Confirmed that the repo currently has a 128-bit-target candidate, not a finished 128-bit package: the docs still describe the backend as an in-repo approximation rather than a paper-equivalent commitment stack.
 - [x] (2026-03-27 16:34Z) Confirmed the scale of the new homebrew crypto surface versus `main`: `git diff --stat main...HEAD -- circuits/superneo-backend-lattice circuits/superneo-ring circuits/superneo-hegemon circuits/superneo-core circuits/superneo-ccs consensus/src/proof.rs node/src/substrate/service.rs` reports `11,357` inserted lines and `463` deletions across the backend, relation layer, and integration surface.
 - [x] (2026-03-27 16:34Z) Authored this successor ExecPlan to turn the current candidate into a full security package with a forced keep-or-kill end state.
-- [ ] Milestone 1: write the exact native-backend specification and freeze the artifact contract.
-- [ ] Milestone 2: replace “assumption label” prose with a code-derived security claim model and overclaim rejection.
-- [ ] Milestone 3: build an independent reference verifier and fixed test-vector suite.
-- [ ] Milestone 4: add exhaustive negative testing, parser fuzzing, transcript-alias testing, and artifact-boundary fuzzing.
-- [ ] Milestone 5: make the constant-time and canonicality story explicit and measurable for the prover-side secret-bearing code.
-- [ ] Milestone 6: build the external cryptanalysis package and public break-it kit.
-- [ ] Milestone 7: rerun the final keep-or-kill gate and update `DESIGN.md`, `METHODS.md`, and `README.md` to match the result exactly.
+- [x] (2026-03-27 17:08Z) Completed milestone 1: added [docs/crypto/native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md), added manifest-owned `spec_label` plus `spec_digest` in the backend, threaded that spec identity through native `TxLeaf` and `ReceiptRoot` artifacts, bound it into verifier profiles and benchmark JSON, and added regressions that reject tampered spec digests.
+- [x] (2026-03-27 20:12Z) Completed milestone 2: replaced `NativeSecurityEnvelope` with `NativeSecurityClaim`, added `ReviewState`, made setup reject overclaims against the computed floor, added `cargo run -p superneo-bench -- --print-native-security-claim`, and added [docs/crypto/native_backend_security_analysis.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_security_analysis.md) plus [docs/crypto/native_backend_attack_worksheet.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_attack_worksheet.md).
+- [x] (2026-03-27 20:33Z) Archived a fresh current-tree release benchmark at [native_tx_leaf_receipt_root_security_claim_m2_20260327.json](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_security_claim_m2_20260327.json), confirming the post-claim-model byte curve at `18,137..18,604 B/tx` and the live claim object in benchmark JSON.
+- [x] (2026-03-27 21:24Z) Completed milestone 3: added [tools/native-backend-ref](/Users/pldd/Projects/Reflexivity/Hegemon/tools/native-backend-ref), added deterministic vector emission and the fixed `11`-case bundle at [testdata/native_backend_vectors/bundle.json](/Users/pldd/Projects/Reflexivity/Hegemon/testdata/native_backend_vectors/bundle.json), and added a production/reference agreement test in `superneo-bench`.
+- [x] (2026-03-27 23:08Z) Completed milestone 4: added transcript-domain regressions, added the `fuzz/` package, ran `cargo +nightly fuzz run native_tx_leaf_artifact -- -max_total_time=60` and `cargo +nightly fuzz run receipt_root_artifact -- -max_total_time=60`, and wired the same native-backend security smoke gate into [ci.yml](/Users/pldd/Projects/Reflexivity/Hegemon/.github/workflows/ci.yml).
+- [x] (2026-03-27 23:11Z) Completed milestone 5: added [docs/crypto/native_backend_constant_time.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_constant_time.md), added [tools/native-backend-timing](/Users/pldd/Projects/Reflexivity/Hegemon/tools/native-backend-timing), and validated the current deterministic tx-leaf build path with `welch_t_statistic = 1.2463`, below the fail threshold `10.0`.
+- [x] (2026-03-27 23:16Z) Completed milestone 6: added the audit/break-it bundle under [audits/native-backend-128b](/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b), added [package_native_backend_review.sh](/Users/pldd/Projects/Reflexivity/Hegemon/scripts/package_native_backend_review.sh) and [verify_native_backend_review_package.sh](/Users/pldd/Projects/Reflexivity/Hegemon/scripts/verify_native_backend_review_package.sh), built the reproducible tarball, and verified final hash `31ce04299b6c35e198de72211ba8fc4254dfd8db1e95b19b443db3c1b4f2216e`.
+- [x] (2026-03-27 23:27Z) Completed milestone 7: archived the final current-tree release benchmark at [native_tx_leaf_receipt_root_security_package_final_20260327.json](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_security_package_final_20260327.json), reran the focused backend/consensus/node validation set, rebuilt the release node, and confirmed a native-only `receipt_root` dev node boots and mines under `HEGEMON_REQUIRE_NATIVE=1`. Final verdict: `KEEP`, with `review_state = candidate_under_review`.
 
 ## Surprises & Discoveries
 
-- Observation: the current branch already knows it is not done; the contradiction is in the package boundary, not in the benchmark surface.
-  Evidence: [DESIGN.md](/Users/pldd/Projects/Reflexivity/Hegemon/DESIGN.md) says the active family is `goldilocks_128b_rewrite` and reports a full `128`-bit `NativeSecurityEnvelope`, but the same section also says the backend “should not be treated as a security-equivalent substitute for the papers” and “still stops short of the exact Module-SIS commitment analysis, decomposition reduction, and sum-check machinery.”
+- Observation: the current branch already knew it was not done; the contradiction was in the package boundary, not in the benchmark surface.
+  Evidence: before milestone 2, [DESIGN.md](/Users/pldd/Projects/Reflexivity/Hegemon/DESIGN.md) reported a full `128`-bit target through `NativeSecurityEnvelope` while still warning that the backend was not paper-equivalent. Milestone 2 fixed that mismatch by moving the live story to `NativeSecurityClaim` with explicit `assumption_ids` and `review_state = candidate_under_review`.
 
 - Observation: the missing work is not “tune the numbers harder.” It is “turn a cryptographic candidate into a cryptographic package.”
   Evidence: the current repo already has explicit manifest identity, fingerprinting, parameter ownership, artifact-bound checks, and benchmark archives, yet it still lacks an exact spec, a second verifier implementation, a reduction worksheet, and an outside-review package.
 
 - Observation: the homebrew surface is large enough that a casual “we can probably audit it later” posture is not serious.
   Evidence: the current diff from `main` adds `2,388` lines in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs), `4,336` lines in [circuits/superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs), `355` lines in [circuits/superneo-ring/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-ring/src/lib.rs), `414` lines in [circuits/superneo-ccs/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-ccs/src/lib.rs), `150` lines in [circuits/superneo-core/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-core/src/lib.rs), plus `2,172` and `1,909` lines in consensus and node integration.
+
+- Observation: the cleanest way to freeze the exact protocol surface was to let `spec_digest` follow the full parameter regime under a distinct domain tag rather than inventing a completely separate handwritten version field.
+  Evidence: the code now derives `spec_digest()` from the manifest and active parameter fields in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs), and native artifact verifiers reject both parameter-fingerprint drift and spec-digest drift independently.
+
+- Observation: the claim model is only useful if operators can print it without running a benchmark and if the docs mirror the exact same fields.
+  Evidence: milestone 2 added `cargo run -p superneo-bench -- --print-native-security-claim`, converted benchmark JSON from `native_security_envelope` to `native_security_claim`, and added the matching prose/docs under `docs/crypto/`.
+
+- Observation: the fuzz package had to be treated as a first-class workspace member to make nightly sanitizer builds reuse the repo's locked dependency graph.
+  Evidence: the initial standalone fuzz workspace pulled a mismatched `ml-kem`/`kem` graph under nightly and would not build until `fuzz/` joined the main workspace and reused the root lockfile.
+
+- Observation: the native-only node path is stable at boot, but the txpool background task still reports an essential-task failure on shutdown after manual interrupt.
+  Evidence: the final dev-node rerun stayed alive, mined work, and served RPC under `HEGEMON_BLOCK_PROOF_MODE=receipt_root HEGEMON_REQUIRE_NATIVE=1 HEGEMON_MINE=1`; the `txpool-background` error only appeared during teardown after `Ctrl-C`.
 
 ## Decision Log
 
@@ -51,6 +64,10 @@ The user-visible outcome is direct. From the repository root, a novice will be a
   Rationale: reusing production verification helpers would not catch the class of bugs that a reference implementation is supposed to catch. The reference verifier may share only plain-data vector files and, if unavoidable, a minimal artifact schema that contains no arithmetic or validation logic.
   Date/Author: 2026-03-27 / Codex
 
+- Decision: move immediately from the old envelope to a claim object with explicit `assumption_ids` and `review_state` rather than preserving two parallel “security summary” surfaces.
+  Rationale: leaving both `NativeSecurityEnvelope` and `NativeSecurityClaim` live would recreate the exact ambiguity this plan is supposed to kill.
+  Date/Author: 2026-03-27 / Codex
+
 - Decision: block any future “128-bit PQ” language in docs or code unless the code-derived claim model, the reference verifier, the negative/fuzz suite, and the review package all exist.
   Rationale: a single benchmark archive and a single security-envelope struct are not a security package.
   Date/Author: 2026-03-27 / Codex
@@ -59,13 +76,17 @@ The user-visible outcome is direct. From the repository root, a novice will be a
   Rationale: this branch introduced a large new cryptographic subsystem. Treating external review as optional would be unserious.
   Date/Author: 2026-03-27 / Codex
 
+- Decision: make `spec_digest` a deterministic code-derived digest over the manifest and active parameter regime rather than a hand-managed integer.
+  Rationale: the repo already has one explicit parameter object. Using a distinct hash domain lets the code freeze the exact surface without reintroducing another ad hoc version namespace.
+  Date/Author: 2026-03-27 / Codex
+
 ## Outcomes & Retrospective
 
-Work has not started yet. The current outcome is only that the repo now has a concrete plan to convert the native backend from “interesting in-tree candidate” into either “defensible 128-bit PQ package” or “explicitly killed line.” Success is not defined as more measurements. Success is defined as one exact spec, one exact claim model, one independent verifier, one negative/fuzz/timing discipline, one external-review package, and one final keep-or-kill verdict that the docs obey.
+The plan is complete. The repo now has one exact protocol document at [docs/crypto/native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md), one manifest-owned `spec_label`, one code-derived `spec_digest`, one explicit `NativeSecurityClaim`, one fixed vector bundle, one independent verifier, local and CI fuzz-smoke discipline, one timing harness, and one reproducible external-review package. The closure verdict is `KEEP`, but not as “done cryptography.” The kept line is `goldilocks_128b_rewrite` with `review_state = candidate_under_review`: serious enough to keep and review, still not paper-equivalent, and still awaiting external cryptanalysis plus the public break-it phase.
 
 ## Context and Orientation
 
-The current native backend lives in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). That file owns the backend manifest, parameter object, commitment and opening logic, transcript challenge schedule, fold verification, and the current `NativeSecurityEnvelope`. The active family is `goldilocks_128b_rewrite`. It is a candidate, not a final package.
+The current native backend lives in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). That file owns the backend manifest, parameter object, commitment and opening logic, transcript challenge schedule, fold verification, and the current `NativeSecurityClaim`. The active family is `goldilocks_128b_rewrite`. It is a candidate, not a final package.
 
 The Hegemon-specific artifact layer lives in [circuits/superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs). That file defines the byte-level `NativeTxLeafArtifact` and `ReceiptRootArtifact` objects and binds backend parameters into verifier profiles and artifact versions. If the spec is vague here, everything above it is vague.
 
@@ -83,7 +104,7 @@ This plan concerns the cryptographic package itself. It does not promise to solv
 
 Milestone 1 freezes the exact protocol surface in prose and in code. Add a new document at [docs/crypto/native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md). This document must define, in plain language and exact byte order, every object the backend consumes or emits: `BackendManifest`, `NativeBackendParams`, `PackedWitness`, `LatticeCommitment`, `CommitmentOpening`, `NativeTxLeafOpening`, `NativeTxLeafArtifact`, `ReceiptRootLeaf`, `ReceiptRootFoldStep`, `ReceiptRootArtifact`, `NativeSecurityClaim`, and every transcript input. The spec must include the message space, serialization width, domain-separation labels, challenge derivation order, canonical seed truncation rule, rejection conditions, and failure semantics for each object. At the same time, add one code-level `spec_digest` or `spec_id` constant to the backend manifest and surface it in benchmark JSON so the repo can prove which exact spec the current artifacts follow. The native artifact builders and verifiers must reject artifacts whose embedded spec identity does not match the active backend manifest.
 
-Milestone 2 replaces the current loose “assumption label” with a real claim model. In [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs), replace `NativeSecurityEnvelope` with a richer `NativeSecurityClaim` type that records the inputs and losses that produce the final floor. It must break the claim into transcript challenge contribution, opening hiding contribution, commitment binding contribution, serialization/canonicality assumptions, Fiat-Shamir random-oracle assumption, fold-composition loss, and final floor. The code must reject any parameter set whose requested claim exceeds the computed floor, any manifest whose commitment label has no matching claim model, and any docs-facing “accepted” review state when the package is not actually complete. In parallel, add [docs/crypto/native_backend_security_analysis.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_security_analysis.md) and [docs/crypto/native_backend_attack_worksheet.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_attack_worksheet.md). The first document explains the algebraic and heuristic assumptions in plain language. The second document is the concrete attack ledger: each plausible break class, what code and vectors exercise it, and what claim it would invalidate.
+Milestone 2 replaced the old loose “assumption label” with a real claim model. In [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs), `NativeSecurityEnvelope` is now superseded by `NativeSecurityClaim`, which records transcript challenge contribution, opening hiding contribution, commitment binding contribution, fold-composition loss, the final floor, explicit `assumption_ids`, and `review_state`. Setup now rejects any parameter set whose requested claim exceeds the computed floor, and the bench exposes a direct claim-print command. In parallel, milestone 2 added [docs/crypto/native_backend_security_analysis.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_security_analysis.md) and [docs/crypto/native_backend_attack_worksheet.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_attack_worksheet.md). The first document explains the algebraic and heuristic assumptions in plain language. The second document is the concrete attack ledger: each plausible break class, what code and vectors exercise it, and what claim it would invalidate.
 
 Milestone 3 builds the independent verifier and fixed vectors. Add a new standalone workspace crate at [tools/native-backend-ref](/Users/pldd/Projects/Reflexivity/Hegemon/tools/native-backend-ref) with its own `Cargo.toml` and `src/` tree. This crate must implement its own artifact parsers, transcript builder, challenge derivation, commitment-opening check, tx-leaf verification, and receipt-root verification. It must not call `superneo_backend_lattice::verify_opening`, `derive_fold_challenges`, `fold_commitments`, `verify_fold_proof`, or the production artifact decoders. It may share only a plain-data test-vector schema and non-executable constant tables if those tables are frozen in the spec. Add a fixed vector directory at [testdata/native_backend_vectors](/Users/pldd/Projects/Reflexivity/Hegemon/testdata/native_backend_vectors). The production backend must emit vectors there through one explicit command, and the reference verifier must consume them through one explicit command. The vector set must contain valid `NativeTxLeafArtifact` and `ReceiptRootArtifact` examples plus deliberately invalid companions that exercise each rejection rule.
 
@@ -116,8 +137,8 @@ From the repository root `/Users/pldd/Projects/Reflexivity/Hegemon`, execute the
 4. Add negative vectors, parser tests, and fuzz targets, then run:
 
        cargo test -p native-backend-ref -p superneo-backend-lattice -p superneo-hegemon
-       cargo fuzz run native_tx_leaf_artifact -- -max_total_time=60
-       cargo fuzz run receipt_root_artifact -- -max_total_time=60
+       cargo +nightly fuzz run native_tx_leaf_artifact -- -max_total_time=60
+       cargo +nightly fuzz run receipt_root_artifact -- -max_total_time=60
 
 5. Add the constant-time/canonicality document and timing harness, then run:
 
@@ -185,7 +206,7 @@ The target benchmark and claim surface should eventually look like this in `supe
       "spec_digest": "<32-byte hex>",
       "commitment_scheme_label": "...",
       "challenge_schedule_label": "...",
-      "maturity_label": "candidate_under_review"
+      "maturity_label": "rewrite_candidate"
     },
     "native_security_claim": {
       "claimed_security_bits": 128,
@@ -194,6 +215,7 @@ The target benchmark and claim surface should eventually look like this in `supe
       "commitment_binding_bits": ...,
       "composition_loss_bits": ...,
       "soundness_floor_bits": ...,
+      "assumption_ids": ["...", "..."],
       "review_state": "candidate_under_review"
     }
 
@@ -236,7 +258,7 @@ In [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivi
         pub fn security_claim(&self) -> Result<NativeSecurityClaim>;
     }
 
-The old `NativeSecurityEnvelope` may remain only as a historical compatibility shim if another crate still needs it temporarily. The bench, docs, and acceptance logic must move to `NativeSecurityClaim`.
+The old `NativeSecurityEnvelope` is gone from the live benchmark and doc surface. The bench, docs, and acceptance logic now move only through `NativeSecurityClaim`.
 
 In [circuits/superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs), artifact bytes must carry the backend fingerprint and the `spec_digest`, and both builders and verifiers must reject mismatches.
 
