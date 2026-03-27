@@ -26,6 +26,13 @@ run_lint() {
     -p disclosure-circuit \
     --all-targets -- -D warnings
   cargo clippy -p runtime --all-targets --all-features -- -D warnings
+  cargo clippy \
+    -p superneo-backend-lattice \
+    -p superneo-hegemon \
+    -p superneo-bench \
+    -p native-backend-ref \
+    -p native-backend-timing \
+    --all-targets -- -D warnings
 }
 
 run_test() {

@@ -1491,7 +1491,7 @@ fn expand_packed_bit_source_widths(packed: &PackedWitness<u64>) -> Result<Vec<u1
 fn commit_ring_message(pk: &BackendKey, message: &[EmbeddedRingElem]) -> Vec<RingElem> {
     let prepared = prepare_commitment_matrix(pk, message.len());
     let commit_start = Instant::now();
-    let window_size = message.len().max(1).min(COMMITMENT_WINDOW_COLUMNS);
+    let window_size = message.len().clamp(1, COMMITMENT_WINDOW_COLUMNS);
     let mut accumulators = vec![vec![0i128; pk.ring_degree]; pk.commitment_rows];
     let mut stats = KernelLocalStats::default();
     let row_count = pk.commitment_rows;
@@ -1502,17 +1502,17 @@ fn commit_ring_message(pk: &BackendKey, message: &[EmbeddedRingElem]) -> Vec<Rin
         let base_col = window_index * window_size;
         for (offset, message_elem) in chunk.iter().enumerate() {
             let col_index = base_col + offset;
-            for row_index in 0..row_count {
+            for (row_index, accumulator) in accumulators.iter_mut().enumerate().take(row_count) {
                 if message_elem.source_width_bits <= 16 {
                     accumulate_negacyclic_product_narrow_source(
-                        &mut accumulators[row_index],
+                        accumulator,
                         &prepared.rows[row_index][col_index],
                         &message_elem.ring,
                         &mut stats,
                     );
                 } else {
                     accumulate_negacyclic_product_generic_source(
-                        &mut accumulators[row_index],
+                        accumulator,
                         &prepared.rows[row_index][col_index],
                         &message_elem.ring,
                         &mut stats,
@@ -1876,7 +1876,7 @@ fn negacyclic_rotated_coeff(row: &RingElem, coeff_index: usize, rotation: usize)
     let wraps = source_index / degree;
     let index = source_index % degree;
     let coeff = i128::from(row.coeffs[index]);
-    if wraps % 2 == 0 {
+    if wraps.is_multiple_of(2) {
         coeff
     } else {
         -coeff

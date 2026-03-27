@@ -1575,10 +1575,7 @@ pub mod pallet {
             fee: u64,
             version: VersionBinding,
         ) -> Result<Option<ValidActionMeta>, InvalidTransaction> {
-            let Some(decoded) = (match decode_native_tx_leaf_lite(proof_bytes) {
-                Ok(decoded) => decoded,
-                Err(_) => None,
-            }) else {
+            let Some(decoded) = decode_native_tx_leaf_lite(proof_bytes).unwrap_or_default() else {
                 return Ok(None);
             };
 

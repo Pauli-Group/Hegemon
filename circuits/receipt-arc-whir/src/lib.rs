@@ -524,7 +524,11 @@ impl MerkleTree {
     fn path(&self, mut index: usize) -> Vec<[u8; 48]> {
         let mut path = Vec::with_capacity(self.layers.len().saturating_sub(1));
         for layer in &self.layers[..self.layers.len().saturating_sub(1)] {
-            let sibling_index = if index % 2 == 0 { index + 1 } else { index - 1 };
+            let sibling_index = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
             path.push(layer[sibling_index]);
             index /= 2;
         }
@@ -696,7 +700,7 @@ fn verify_merkle_path(
 ) -> Result<()> {
     let mut hash = codeword_leaf_hash(layer_index, index as u32, value.as_canonical_u64());
     for sibling in siblings {
-        hash = if index % 2 == 0 {
+        hash = if index.is_multiple_of(2) {
             codeword_node_hash(layer_index, &hash, sibling)
         } else {
             codeword_node_hash(layer_index, sibling, &hash)

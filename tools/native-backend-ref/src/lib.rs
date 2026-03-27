@@ -1451,20 +1451,18 @@ fn review_commit_ring_message(
     pk: &BackendKey,
     message: &[ReviewEmbeddedRingElem],
 ) -> Vec<RingElem> {
-    let window_size = message.len().max(1).min(COMMITMENT_WINDOW_COLUMNS);
+    let window_size = message.len().clamp(1, COMMITMENT_WINDOW_COLUMNS);
     let mut accumulators = vec![vec![0i128; pk.ring_degree]; pk.commitment_rows];
     for (window_index, chunk) in message.chunks(window_size).enumerate() {
         let base_col = window_index * window_size;
         for (offset, message_elem) in chunk.iter().enumerate() {
             let col_index = base_col + offset;
-            for row_index in 0..pk.commitment_rows {
+            for (row_index, accumulator) in
+                accumulators.iter_mut().enumerate().take(pk.commitment_rows)
+            {
                 let matrix_elem = review_matrix_entry(pk, row_index, col_index);
                 let _ = message_elem.source_width_bits;
-                review_accumulate_negacyclic_product(
-                    &mut accumulators[row_index],
-                    &matrix_elem,
-                    &message_elem.ring,
-                );
+                review_accumulate_negacyclic_product(accumulator, &matrix_elem, &message_elem.ring);
             }
         }
     }
@@ -1588,7 +1586,7 @@ fn review_negacyclic_rotated_coeff(row: &RingElem, coeff_index: usize, rotation:
     let wraps = source_index / degree;
     let index = source_index % degree;
     let coeff = i128::from(row.coeffs[index]);
-    if wraps % 2 == 0 {
+    if wraps.is_multiple_of(2) {
         coeff
     } else {
         -coeff

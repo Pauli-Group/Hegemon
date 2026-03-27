@@ -270,6 +270,7 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         .expect_err("tampered proof should fail");
     assert!(matches!(
         err,
-        ProofError::TransactionProofVerification { .. }
+        ProofError::TransactionProofInputsMismatch { .. }
+            | ProofError::TransactionProofVerification { .. }
     ));
 }

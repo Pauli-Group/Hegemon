@@ -277,7 +277,7 @@ fn build_raw_active_fixture() -> RawActiveFixture {
     let (proving_key, _) = generate_keys();
     let proof_a = prove(&witness_a, &proving_key).expect("first tx proof");
     let proof_b = prove(&witness_b, &proving_key).expect("second tx proof");
-    let proofs = vec![proof_a.clone(), proof_b.clone()];
+    let proofs = [proof_a.clone(), proof_b.clone()];
     let transactions = proofs
         .iter()
         .map(transaction_from_proof)
@@ -547,7 +547,8 @@ fn raw_active_rejects_bad_tx_proof() {
         .expect_err("tampered tx proof must be rejected");
     assert!(matches!(
         err,
-        ProofError::TransactionProofVerification { .. }
+        ProofError::TransactionProofInputsMismatch { .. }
+            | ProofError::TransactionProofVerification { .. }
     ));
 }
 

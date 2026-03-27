@@ -122,7 +122,7 @@ fn median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(|left, right| left.total_cmp(right));
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
         sorted[mid]
@@ -170,22 +170,23 @@ fn review_seed(tag: u8) -> [u8; 32] {
 
 fn sample_witness(seed: u64, class_tag: u8) -> TransactionWitness {
     let sk_spend = [seed as u8 ^ class_tag; 32];
+    let seed_u8 = seed as u8;
     let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
     let input_note_native = NoteData {
         value: 8,
         asset_id: NATIVE_ASSET_ID,
-        pk_recipient: [seed as u8 + 2; 32],
+        pk_recipient: [seed_u8 + 2; 32],
         pk_auth,
-        rho: [seed as u8 + 3 ^ class_tag; 32],
-        r: [seed as u8 + 4 ^ class_tag; 32],
+        rho: [(seed_u8 + 3) ^ class_tag; 32],
+        r: [(seed_u8 + 4) ^ class_tag; 32],
     };
     let input_note_asset = NoteData {
         value: 5,
         asset_id: seed + 100,
-        pk_recipient: [seed as u8 + 5; 32],
+        pk_recipient: [seed_u8 + 5; 32],
         pk_auth,
-        rho: [seed as u8 + 6 ^ class_tag; 32],
-        r: [seed as u8 + 7 ^ class_tag; 32],
+        rho: [(seed_u8 + 6) ^ class_tag; 32],
+        r: [(seed_u8 + 7) ^ class_tag; 32],
     };
     let leaf0 = input_note_native.commitment();
     let leaf1 = input_note_asset.commitment();
@@ -195,20 +196,20 @@ fn sample_witness(seed: u64, class_tag: u8) -> TransactionWitness {
         note: NoteData {
             value: 3,
             asset_id: NATIVE_ASSET_ID,
-            pk_recipient: [seed as u8 + 11; 32],
-            pk_auth: [seed as u8 + 12 ^ class_tag; 32],
-            rho: [seed as u8 + 13 ^ class_tag; 32],
-            r: [seed as u8 + 14 ^ class_tag; 32],
+            pk_recipient: [seed_u8 + 11; 32],
+            pk_auth: [(seed_u8 + 12) ^ class_tag; 32],
+            rho: [(seed_u8 + 13) ^ class_tag; 32],
+            r: [(seed_u8 + 14) ^ class_tag; 32],
         },
     };
     let output_asset = OutputNoteWitness {
         note: NoteData {
             value: 5,
             asset_id: seed + 100,
-            pk_recipient: [seed as u8 + 21; 32],
-            pk_auth: [seed as u8 + 22 ^ class_tag; 32],
-            rho: [seed as u8 + 23 ^ class_tag; 32],
-            r: [seed as u8 + 24 ^ class_tag; 32],
+            pk_recipient: [seed_u8 + 21; 32],
+            pk_auth: [(seed_u8 + 22) ^ class_tag; 32],
+            rho: [(seed_u8 + 23) ^ class_tag; 32],
+            r: [(seed_u8 + 24) ^ class_tag; 32],
         },
     };
 
@@ -217,13 +218,13 @@ fn sample_witness(seed: u64, class_tag: u8) -> TransactionWitness {
             InputNoteWitness {
                 note: input_note_native,
                 position: 0,
-                rho_seed: [seed as u8 + 9 ^ class_tag; 32],
+                rho_seed: [(seed_u8 + 9) ^ class_tag; 32],
                 merkle_path: merkle_path0,
             },
             InputNoteWitness {
                 note: input_note_asset,
                 position: 1,
-                rho_seed: [seed as u8 + 10 ^ class_tag; 32],
+                rho_seed: [(seed_u8 + 10) ^ class_tag; 32],
                 merkle_path: merkle_path1,
             },
         ],

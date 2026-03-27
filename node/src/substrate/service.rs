@@ -3212,9 +3212,9 @@ impl NativeArtifactSelectionReport {
     }
 }
 
-fn require_native_tx_leaf_artifacts<'a>(
-    tx_artifacts: Option<&'a [consensus::TxValidityArtifact]>,
-) -> Result<&'a [consensus::TxValidityArtifact], NativeArtifactSelectionReport> {
+fn require_native_tx_leaf_artifacts(
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
+) -> Result<&[consensus::TxValidityArtifact], NativeArtifactSelectionReport> {
     let expected_profile = consensus::experimental_native_tx_leaf_verifier_profile();
     let Some(tx_artifacts) = tx_artifacts else {
         return Err(NativeArtifactSelectionReport::fallback(

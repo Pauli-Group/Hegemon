@@ -4371,7 +4371,7 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_tampered_fold_rows() {
-        let witnesses = vec![sample_witness(30), sample_witness(31)];
+        let witnesses = [sample_witness(30), sample_witness(31)];
         let artifacts = witnesses
             .iter()
             .map(|witness| {
@@ -4389,7 +4389,7 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_spec_digest_mismatch() {
-        let witnesses = vec![sample_witness(34), sample_witness(35)];
+        let witnesses = [sample_witness(34), sample_witness(35)];
         let artifacts = witnesses
             .iter()
             .map(|witness| {
@@ -4407,7 +4407,7 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_mixed_child_commitments() {
-        let witnesses = vec![sample_witness(32), sample_witness(33)];
+        let witnesses = [sample_witness(32), sample_witness(33)];
         let mut artifacts = witnesses
             .iter()
             .map(|witness| {
