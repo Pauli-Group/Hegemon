@@ -1,133 +1,207 @@
-# Harden The Native PQ Folding Backend Into A Credible Production Candidate
+# Consolidate The Remaining Native PQ Work Into One Hardening Plan
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 This document follows [`.agent/PLANS.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/PLANS.md) and must be maintained in accordance with that file.
 
+This plan supersedes the remaining work from:
+
+- [`.agent/NATIVE_TX_VALIDITY_MAINLINE_EXECPLAN.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/NATIVE_TX_VALIDITY_MAINLINE_EXECPLAN.md)
+- [`.agent/SUMCHECK_2026_587_NATIVE_PROVER_EXECPLAN.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/SUMCHECK_2026_587_NATIVE_PROVER_EXECPLAN.md)
+- [`.agent/IMPORT_KILLING_ACCUMULATION_EXECPLAN.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/IMPORT_KILLING_ACCUMULATION_EXECPLAN.md)
+
 ## Purpose / Big Picture
 
-The current native folding branch proves the topology and measures useful scaling, but it still relies on an experimental in-repo backend. That means Hegemon cannot honestly claim production-strength post-quantum security from it yet. After re-checking the literature, this plan also needs a narrower research footing than it originally had: the accessible concrete backend guidance comes primarily from `Neo`, `LatticeFold+`, and lattice-PCS work such as `HyperWolf`, while `SuperNeo` remains important but still partially provisional here because we can verify its existence and title from the 2026 ePrint listing more easily than its full construction details. After this plan, the branch should have a hardened native folding backend candidate: real commitment randomness, real opening proofs, real parameter discipline, a versioned verifier profile derived from those parameters, and a test story strong enough that the experimental lane can be judged on security and performance rather than on faith.
+Hegemon already answered three questions. First, the native lane is the only experimental lane worth planning around. Second, the native prover now has useful kernel instrumentation and meaningful prover-side optimizations. Third, the first cold-import accumulation line did not produce a win. What remains is the work that actually decides whether the native path can become a real winner: turn the experimental in-repo backend into a hardened candidate while preserving the canonical benchmark surface and refusing to waste more time on fake accumulation breakthroughs.
 
-The user-visible result is a backend that a contributor can benchmark and inspect without having to mentally subtract “toy backend” from every chart. The goal is not paper worship. The goal is a working, optimized, plausibly secure production candidate that preserves Hegemon’s small-field and PQ direction.
+After this plan, a contributor should be able to run one canonical native benchmark, inspect one explicit parameter set, read one verifier profile, and judge one backend candidate honestly. The user-visible outcome is not a pile of experimental lanes. It is one native `TxLeaf -> ReceiptRoot` lane with a real commitment/opening story, a real fold-proof story, and numbers that can be discussed without mentally subtracting “toy backend” first.
 
 ## Progress
 
-- [x] (2026-03-26 02:02Z) Re-read `.agent/PLANS.md`, `.agent/SUPERNEO_EXPERIMENT_EXECPLAN.md`, `DESIGN.md`, `METHODS.md`, and the current `circuits/superneo-backend-lattice` implementation.
-- [x] (2026-03-26 02:02Z) Confirmed from the current docs that the backend remains an experimental Ajtai-style approximation and does not justify a production 128-bit PQ claim.
-- [x] (2026-03-26 02:02Z) Authored this ExecPlan as the hardening roadmap for the SuperNeo backend candidate.
-- [ ] Introduce a versioned backend parameter object and a reproducible verifier-profile derivation from those parameters.
-- [ ] Replace deterministic commitment projection with randomized hiding/binding commitments and explicit opening proofs.
-- [ ] Replace digest-style fold proofs with real algebraic fold verification under the chosen parameter set.
-- [ ] Add malformed-proof, wrong-opening, wrong-randomness, and cross-profile rejection tests.
-- [ ] Add benchmark and memory captures for the hardened backend at `k=1,2,4,8,16,32,64,128`.
-- [ ] Decide whether the hardened backend remains good enough to be the primary PQ candidate or whether Hegemon should pivot to a different backend line.
+- [x] (2026-03-26 02:02Z) Re-read `.agent/PLANS.md`, the existing SuperNeo experiment docs, `DESIGN.md`, `METHODS.md`, and the current native backend implementation.
+- [x] (2026-03-26 02:23Z) Completed the remaining product-boundary work from plan 1: `native_tx_leaf_receipt_root` is the canonical experimental lane, bridge lanes are diagnostic-only, and node fallback reasons are explicit.
+- [x] (2026-03-26 20:14Z) Completed the remaining prover-kernel work from plan 2: kernel telemetry, delayed-reduction kernels, width-aware routing, bounded prepared-matrix caching, and per-case RSS benchmarking are in place.
+- [x] (2026-03-26 23:55Z) Completed the remaining research work from plan 3 in the only honest sense available: `receipt_accumulation` remains a warm-store experiment, `receipt_arc_whir` remains a diagnostic lane, and no cold-import winner exists on this branch.
+- [x] (2026-03-26 23:59Z) Consolidated the remaining work from plans 1, 2, 3, and 4 into this single ExecPlan so future work has one owner and one verdict path.
+- [x] (2026-03-26 22:10Z) Locked `NativeBackendParams` as the native backend control surface and derived native verifier profiles, artifact versions, receipt-root metadata, and benchmark JSON from fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c`.
+- [x] (2026-03-26 22:48Z) Replaced the native tx-leaf deterministic commitment shortcut with randomized commitments, explicit commitment openings, and negative tests that mutate randomness, malformed openings, and parameter sets.
+- [x] (2026-03-26 23:12Z) Replaced digest-style fold checks with algebraic fold proofs that carry explicit parent rows, reject malformed fold state, and fail on mixed parent/child commitments.
+- [x] (2026-03-26 23:37Z) Corrected the overstated `native-backend-v1` record twice: `native-backend-v2` fixed the 16-bit challenge lie, and `native-backend-v3` pulled `max_fold_arity` plus `transcript_domain_label` into the explicit parameter object, fingerprint, and setup checks. The canonical benchmark on this tree records fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c` and bytes per tx `18,073..18,552`, while verifier ns are now documented only as rerun-dependent wall-clock observations.
 
 ## Surprises & Discoveries
 
-- Observation: the accessible research support is strongest for `Neo` and `LatticeFold+`, not for every specific `SuperNeo` implementation detail.
-  Evidence: `Neo` is easy to verify from public snippets and the ePrint record as a lattice-based folding scheme for CCS over small fields with pay-per-bit commitments; `LatticeFold+` is easy to verify from the ePrint record as a faster/simpler lattice-based folding line; `SuperNeo` is verifiable as a 2026 ePrint entry and title, but the fine construction details are not as directly inspectable from the sources available in this environment.
+- Observation: the native lane is already the only experimental surface worth planning around.
+  Evidence: `superneo-bench` defaults to `native_tx_leaf_receipt_root`, and non-canonical relations require `--allow-diagnostic-relation`.
 
-- Observation: the current branch already answered the topology question without answering the security question.
-  Evidence: the native `TxLeaf -> ReceiptRoot` path is wired and benchmarked, but the current docs still state that the branch does not justify a production 128-bit PQ claim.
+- Observation: prover-side optimization was worth doing, but it did not change the strategic bottleneck by itself.
+  Evidence: the native backend now exposes `KernelCostReport`, bounded matrix-cache telemetry, and isolated per-case RSS, while import-side behavior remains a separate problem.
 
-- Observation: the most dangerous gap is not missing code volume; it is missing cryptographic binding between the proof object, the commitment randomness, the parameter set, and the verifier profile.
-  Evidence: the current backend is explicitly described as an approximation in [METHODS.md](/Users/pldd/Projects/Reflexivity/Hegemon/METHODS.md#L952).
+- Observation: the first cold-import line consumed time without producing a win.
+  Evidence: `receipt_accumulation` is warm-store-only, and the current diagnostic `receipt_arc_whir` lane honestly reports replay of native leaf verification instead of a real sublinear cold verifier.
 
-- Observation: Hegemon’s architecture now gives the backend room to evolve without another consensus rewrite.
-  Evidence: the proof-neutral verifier registry and block-artifact boundary already exist in [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs#L188).
+- Observation: review found two real overclaims, and both had to be fixed in code instead of hand-waved in docs.
+  Evidence: the old `native-backend-v1` write-up recorded verifier numbers that did not match the current tree, `derive_fold_challenge()` had been silently capping the configured challenge width to 16 bits until the `native-backend-v2` correction, and the `max_fold_arity` plus transcript-domain settings were still ambient until the `native-backend-v3` correction.
+
+- Observation: Hegemon’s proof-neutral consensus boundary survived all of the above failure and churn.
+  Evidence: the verifier registry and block-artifact boundary in [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs#L188) did not need another rewrite when the accumulation line failed.
+
+- Observation: explicit openings and algebraic fold rows raised artifact bytes less than expected.
+  Evidence: the corrected canonical benchmark stayed within `18,073..18,552` bytes per tx across `k=1..128`, even after adding the randomized commitment opening and explicit fold-row payloads.
+
+- Observation: native leaf authoring still dominates the measured proving path; folding itself is cheap on this branch.
+  Evidence: across two back-to-back reruns, `edge_prepare_ns` moved between `17.21ms..17.48ms` at `k=1` and `173.28ms..242.57ms` at `k=128`, while `total_active_path_prove_ns` for the receipt-root artifact itself stayed below `1.65ms`.
+
+- Observation: exact verifier ns are not stable enough to freeze into the docs as a canonical curve.
+  Evidence: two archived `native_tx_leaf_receipt_root` release reruns on the same current tree produced the same fingerprint and byte curve, but materially different verifier curves; see [run_a](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_a_20260326.json) and [run_b](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_b_20260326.json).
 
 ## Decision Log
 
-- Decision: harden the existing native PQ folding direction rather than replacing it immediately with another experimental backend.
-  Rationale: the accessible literature still supports the direction strongly enough to justify hardening work, but the plan should no longer pretend that every concrete step is already nailed down by `SuperNeo` alone. The concrete reference stack is `Neo` plus `LatticeFold+` plus lattice commitment work, with `SuperNeo` treated as an important but still partially provisional upgrade line.
+- Decision: treat plans 1 and 2 as complete and carry them forward only as guardrails and measurement infrastructure.
+  Rationale: the native lane selection, benchmark gating, kernel telemetry, and benchmark hygiene are solved enough that they should now be assumptions, not separate programs.
   Date/Author: 2026-03-26 / Codex
 
-- Decision: treat parameter discipline and verifier-profile derivation as part of the cryptographic implementation, not as paperwork.
-  Rationale: without a stable parameter fingerprint, the node cannot tell one security regime from another, and benchmark numbers become meaningless across revisions.
+- Decision: treat plan 3 as a completed negative result and freeze it.
+  Rationale: `receipt_accumulation` is useful only as a warm-store comparison, and `receipt_arc_whir` is a diagnostic anchored lane, not a promoted cold-import win. Further accumulation work should not continue under this plan.
   Date/Author: 2026-03-26 / Codex
 
-- Decision: keep the backend swap boundary intact while hardening.
-  Rationale: if hardening reveals unacceptable costs, Hegemon must still be able to replace the backend without reopening consensus surgery.
+- Decision: make this plan the sole remaining native-proof roadmap.
+  Rationale: the branch already lost time to plan drift and wrapper experiments. One plan with one owner and one verdict path is stricter and easier to audit.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: do not spend more time on new accumulation prototypes until the native backend itself is hardened and re-benchmarked.
+  Rationale: the current branch still cannot claim production-strength security from the backend it already has. Hardening that backend is the highest-leverage remaining work.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: keep the accessible literature footing narrow and explicit.
+  Rationale: the strongest directly usable anchors remain `Neo`, `LatticeFold+`, and adjacent lattice commitment/opening work. `SuperNeo` remains relevant, but not as a fully inspectable line-by-line implementation spec in this environment.
+  Date/Author: 2026-03-26 / Codex
+
+- Decision: keep the hardened native backend as the primary experimental native-folding candidate on this branch, but stop describing it as a 128-bit PQ candidate or freezing one verifier ns curve into the docs.
+  Rationale: the `native-backend-v3` correction fixed the ambient-parameter drift without blowing up the byte curve; the lane still lands around `18.5KB/tx` on the canonical benchmark instead of inline-proof payloads that remain hundreds of kB per tx on the same harness, while verifier ns remain a host/load-sensitive observation.
   Date/Author: 2026-03-26 / Codex
 
 ## Outcomes & Retrospective
 
-This plan is design-only at creation time. The hardened backend does not exist yet. The expected outcome is a versioned, parameterized native folding backend that can be judged honestly on both security posture and performance. If it fails that judgment, the result should still be useful because the proof-neutral boundary survives and the hardening work will have made the failure explicit.
+At completion, the branch still has one real experimental loss and one now-hardened experimental keep. The loss remains cold-import accumulation: no cold verifier win exists here, and this plan did not pretend otherwise. The keep is narrower and more useful than the pre-hardening state: the native lane now has one versioned parameter set, one randomized commitment opening path, one algebraic fold proof shape, one parameter fingerprint in the benchmark JSON, and one benchmark verdict that can be discussed without subtracting “digest placeholder” first.
 
-After re-checking the literature on 2026-03-26, the correction is that this remains the right hardening plan, but the title and rationale need to be narrower. The plan should be read as “harden the native PQ folding candidate” rather than “implement known-good SuperNeo details line by line.” The accessible basis for the hardening work is strongest around `Neo`, `LatticeFold+`, and lattice PCS/opening work. `SuperNeo` remains a watch item, not a fully inspectable spec in this environment.
+The benchmark verdict is a keep for research, not for a production PQ claim. Under fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c`, the canonical native lane still lands at roughly `18.5KB/tx`, and the exact rerun outputs are archived in [run_a](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_a_20260326.json) and [run_b](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_b_20260326.json) instead of being re-frozen into prose. That keeps the native lane materially smaller than the inline-proof baseline while remaining honest that verification is still linear, wall-clock timing is rerun-dependent, and the backend is still an in-repo approximation with a 63-bit challenge-limited story rather than a production-strength 128-bit Module-SIS proof system.
 
 ## Context and Orientation
 
-The current backend lives in `circuits/superneo-backend-lattice/src/lib.rs`. It handles witness commitment, leaf proof generation, and fold proof generation for the experimental native lane. “Hardening” here means replacing approximation shortcuts with cryptographically meaningful constructions and a stable parameter story. A “parameter set” means the exact security-relevant constants that define the backend, such as matrix dimensions, challenge widths, ring profile, decomposition widths, norm bounds, randomness widths, and opening schedules. A “verifier profile” is the 48-byte digest that tells consensus which backend rules are in force for an artifact.
+The current native experimental lane is `NativeTxValidityRelation -> TxLeaf -> ReceiptRoot`. The relation lives in [circuits/superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs), the backend lives in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs), the benchmark lives in [circuits/superneo-bench/src/main.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-bench/src/main.rs), and proof routing lives in [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs).
 
-This plan assumes the architecture from the existing SuperNeo experiment remains in place: `NativeTxValidityRelation` is the canonical native relation, `TxLeaf` is the tx-level artifact, `ReceiptRoot` is the block-level native aggregate, and `InlineTx` remains the shipping fallback. The hardening work therefore focuses on `circuits/superneo-backend-lattice`, `circuits/superneo-hegemon`, and the verifier-profile glue in `consensus/src/proof.rs`.
+The important current facts are:
 
-The research behind this direction now needs to be stated carefully.
+- `native_tx_leaf_receipt_root` is the only planning-grade experimental benchmark surface.
+- The prover-side optimization pass is already in-tree and should be preserved, not reinvented.
+- `receipt_accumulation` and `receipt_arc_whir` stay in-tree only as explicit experiments and diagnostics; neither is the path to ship.
+- The backend now has explicit parameterization, randomized openings, and algebraic fold proofs, but it is still an in-repo approximation rather than the exact paper construction, so the branch still cannot honestly claim production-strength PQ security.
 
-- `Neo` (`2025/294`) is the clearest accessible anchor for small-field CCS folding with pay-per-bit commitments.
-- `LatticeFold+` (`2025/247`) is the clearest accessible anchor for a faster and simpler lattice-based folding line than older lattice folding.
-- `SuperNeo` (`2026/242`) is verifiable as an ePrint entry and title, and it clearly stays relevant, but its detailed claims should be treated as provisional here unless the full construction is directly available during implementation.
-- `HyperWolf` and adjacent lattice commitment work remain relevant as commitment/opening references rather than direct folding specifications.
+In this plan, a **parameter set** means the exact security-relevant constants that define the backend: ring profile, matrix dimensions, challenge width, decomposition width, randomness width, norm/range bounds, and artifact version. A **verifier profile** is the 48-byte digest consensus uses to know which backend rules are in force for a block or tx artifact. A **commitment opening** is the proof object that convinces a verifier that a committed witness matches the statement. A **fold proof** is the proof object that binds child commitments to a parent commitment through algebra rather than through a digest placeholder.
 
-This plan therefore does not require implementing any one paper literally line by line. It requires arriving at a working backend whose security and performance claims can be stated with a straight face and whose design choices are anchored in the accessible literature rather than in unverified summaries.
+The remaining work therefore lives in three files first and a handful of glue files second:
+
+- [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs) for parameters, commitments, openings, and fold proofs.
+- [circuits/superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs) for native artifact construction and relation binding.
+- [circuits/superneo-bench/src/main.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-bench/src/main.rs) for canonical benchmarking and parameter-fingerprint output.
+- [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs) for verifier-profile derivation and artifact rejection on mixed parameter sets.
 
 ## Plan of Work
 
-Start by making the backend parameter set explicit and versioned. Add a single public parameter object in `circuits/superneo-backend-lattice` that records all security-relevant values, and derive the verifier profile digest from that object rather than from ad hoc code state. This parameter object should be serializable, printable in benchmark outputs, and stable enough that two nodes can agree whether they are verifying the same backend.
+Start by freezing the baseline rather than changing it. Keep the canonical-lane guardrails from plan 1 and the benchmark/kernel instrumentation from plan 2 exactly as the measurement harness for this plan. Do not promote `receipt_accumulation` or `receipt_arc_whir`, do not add new benchmark defaults, and do not spend new engineering effort on accumulation. This plan is about hardening the existing native lane, not inventing a fifth detour.
 
-With parameters explicit, harden the commitment layer. Replace the current deterministic projection-style commitment logic with commitments that include explicit randomness, documented norm or range bounds, and verifiable openings. The implementation should expose a proof object that can be independently malformed in tests and rejected by the verifier. If the current manual wire format for native `TxLeaf` needs to change to accommodate proper randomness and openings, change it deliberately and version it.
+With the surface frozen, make the backend parameter set explicit and versioned. Introduce one public `NativeBackendParams` object in `circuits/superneo-backend-lattice` and make every native verifier profile derive from it instead of from ambient defaults. This object must carry every security-relevant constant, must round-trip through the benchmark output, and must produce a stable parameter fingerprint that appears in the canonical JSON results.
 
-Next, harden fold proofs. Today’s fold path must evolve from a digest-consistency object into a real algebraic fold proof under the parameter set above. The implementation target here should be expressed in the accessible language of `Neo` / `LatticeFold+`: small-field folding over an explicit parameter set with proper binding between parent and child commitments. Whether the final implementation resembles one explicit sum-check instance or another exact fold relation, the important requirement is that parent commitments and child commitments are bound through verifiable algebra, not just through re-derived digests.
+Next, harden the tx-leaf commitment path. Replace the current deterministic projection/opening shortcut with a randomized commitment and explicit opening proof. The new opening must be independently malformed in tests and rejected by the verifier. The native `TxLeaf` artifact format must version itself around this change. The rule is simple: after this step, native tx-leaf verification must depend on a real opening object plus the explicit parameter set, not on backend-local reconstruction conventions alone.
 
-Then, strengthen the verifier-profile and artifact-boundary integration. `experimental_native_tx_leaf_verifier_profile()` and `experimental_native_receipt_root_verifier_profile()` must derive from the parameter set and the exact relation shape, not from ambient code assumptions. Add negative tests that deliberately mix artifacts and profiles across parameter sets and show that verification fails.
+Then harden the fold path. Replace digest-style parent/child consistency checks with a real fold proof that binds child commitments to a parent under the explicit parameter set. The exact algebra may resemble `Neo` or `LatticeFold+` more than any one fully inspectable `SuperNeo` presentation, and that is acceptable. The bar is behavioral: if the proof object is malformed, mixed across parameter sets, or bound to the wrong parent/child commitments, verification must fail for explicit, test-covered reasons.
 
-Finally, benchmark and decide. Re-run the native lane at the same `k` values now used for planning. If the hardened backend keeps bytes and verifier cost in the same ballpark while materially improving the security story, it remains the primary PQ candidate. If the hardened backend explodes constants, record that clearly and reevaluate the backend choice rather than hiding the regression.
+After the cryptographic hardening lands, re-run the canonical native lane only. Use the existing benchmark harness from plans 1 and 2, keep the diagnostic lanes demoted, and record parameter fingerprints, bytes, prove time, verify time, and peak RSS. Then make one decision: if the hardened backend remains strategically attractive, it stays Hegemon’s main PQ candidate; if it explodes constants, record that plainly and stop pretending.
 
 ## Concrete Steps
 
-From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`, implement this plan in the following order.
+From the repo root `/Users/pldd/Projects/Reflexivity/Hegemon`, execute this plan in the following order.
 
-1. Introduce the parameter object and versioned verifier-profile derivation in `circuits/superneo-backend-lattice` and `circuits/superneo-hegemon`, then run:
+1. Introduce `NativeBackendParams`, stable verifier-profile derivation, and artifact versioning in `circuits/superneo-backend-lattice`, `circuits/superneo-hegemon`, and `consensus/src/proof.rs`, then run:
 
        cargo test -p superneo-backend-lattice -p superneo-hegemon
 
-2. Replace the commitment layer with randomized commitments plus explicit openings and add negative tests for malformed openings.
-
-3. Replace digest-style fold proofs with real algebraic fold proofs and re-run:
+2. Replace the native tx-leaf commitment/opening path with randomized commitments plus explicit opening proofs, add negative tests for malformed openings, wrong randomness, and mixed parameter sets, then run:
 
        cargo test -p superneo-backend-lattice -p superneo-hegemon -p consensus receipt_root_ -- --nocapture
 
-4. Benchmark the hardened backend:
+3. Replace digest-style fold checks with a real algebraic fold proof, add negative parent/child mismatch tests, and re-run:
+
+       cargo test -p superneo-backend-lattice -p superneo-hegemon -p consensus receipt_root_ -- --nocapture
+
+4. Benchmark the canonical native lane only:
 
        cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx
 
-5. Record parameter-set fingerprints, artifact sizes, and benchmark outputs in `METHODS.md` and `DESIGN.md`.
+5. Record the parameter fingerprint, artifact sizes, timing results, and keep/kill verdict in `METHODS.md`, `DESIGN.md`, and this ExecPlan.
 
 ## Validation and Acceptance
 
-Acceptance requires both security-facing and performance-facing evidence.
+Acceptance is both security-facing and performance-facing.
 
-On the security side, tests must prove that wrong randomness, wrong openings, wrong parameter sets, and wrong verifier profiles are rejected. On the performance side, the hardened backend must remain close enough to the current experimental scaling that the native lane stays strategically attractive. If the hardened backend becomes too heavy to matter for Hegemon’s global vision, that is still a valid outcome, but it must be demonstrated with numbers and recorded plainly.
+Security acceptance requires:
+
+- wrong openings are rejected
+- wrong randomness is rejected
+- wrong parameter sets are rejected
+- wrong verifier profiles are rejected
+- malformed fold proofs are rejected
+- mixed parent/child commitments are rejected
+
+Performance acceptance requires:
+
+- the canonical benchmark surface remains `native_tx_leaf_receipt_root`
+- the benchmark JSON includes a parameter fingerprint
+- hardened bytes stay close enough to the current experimental curve that the native lane remains strategically attractive
+- verifier timings are recorded honestly from the local run, but exact wall-clock ns are treated as host/load-sensitive observations rather than fixed thresholds
 
 The minimum acceptance commands are:
 
     cargo test -p superneo-backend-lattice -p superneo-hegemon
     cargo test -p consensus receipt_root_ -- --nocapture
+    cargo test -p superneo-bench
     cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx
+
+If the hardened backend regresses so far that the native lane stops being a plausible win, that is still a valid outcome, but it must be recorded as a loss, not hidden behind new diagnostic lanes.
 
 ## Idempotence and Recovery
 
-This plan changes the native artifact format and verifier profile, so version everything. Do not overwrite the current experimental profile in place without keeping a compatibility path for local benchmarks and explicit failure messages for mixed artifacts. If a hardening milestone fails, keep the parameter object and rejection tests even if the commitment or fold implementation is rolled back.
+This plan changes native artifact formats and verifier profiles, so version everything instead of overwriting in place. Re-running tests and benchmarks is safe. If a hardening stage fails, keep the parameter object, the rejection tests, and the benchmark instrumentation even if the cryptographic change itself is reverted. Do not reopen accumulation work as a “fallback” inside this plan; that would recreate the drift this consolidation is meant to stop.
 
 ## Artifacts and Notes
 
-The benchmark outputs for the hardened backend must include the parameter-set fingerprint. A contributor reading a JSON result months later should be able to tell which backend regime produced it.
+The canonical benchmark command after this consolidation remains:
 
-Any new artifact format should carry an explicit version field and a verifier-profile digest that can be checked before deep decoding. This is as much an operational hardening requirement as a cryptographic one.
+    cargo run --release -p superneo-bench -- --relation native_tx_leaf_receipt_root --k 1,2,4,8,16,32,64,128 --compare-inline-tx
+
+The JSON output from that command must include:
+
+- the canonical relation name
+- the parameter fingerprint
+- bytes per tx
+- prove and verify timings
+- peak RSS bytes
+- the existing kernel report from plan 2
+
+The diagnostic accumulation lanes remain available for regression only. They are not part of acceptance for this plan.
+
+Observed 2026-03-26 output summary for `native-backend-v3` / fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c`:
+
+- Stable outputs across reruns: fingerprint above, `18,073..18,552 B/tx`, `max_fold_arity = 2`, and `transcript_domain_label = "hegemon.superneo.fold.v1"`
+- Archived current-tree rerun A: [native_tx_leaf_receipt_root_v3_run_a_20260326.json](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_a_20260326.json)
+- Archived current-tree rerun B: [native_tx_leaf_receipt_root_v3_run_b_20260326.json](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_b_20260326.json)
+- Keep/kill verdict: keep the hardened native backend as the primary experimental native-folding candidate on this branch, but do not describe it as a 128-bit PQ candidate or treat one wall-clock verifier run as canonical
 
 ## Interfaces and Dependencies
 
-This plan should introduce explicit backend parameter types. Preferred names are:
+This consolidated plan should end with these explicit interfaces in place.
+
+In `circuits/superneo-backend-lattice/src/lib.rs`, define:
 
     pub struct NativeBackendParams {
         pub security_bits: u32,
@@ -147,8 +221,8 @@ This plan should introduce explicit backend parameter types. Preferred names are
         fn commit(
             &self,
             params: &NativeBackendParams,
-            witness: &PackedWitness<Goldilocks>,
-        ) -> Result<(Self::Commitment, CommitmentOpening), anyhow::Error>;
+            witness: &PackedWitness<u64>,
+        ) -> Result<(Self::Commitment, Self::OpeningProof), anyhow::Error>;
 
         fn verify_opening(
             &self,
@@ -158,8 +232,8 @@ This plan should introduce explicit backend parameter types. Preferred names are
         ) -> Result<(), anyhow::Error>;
     }
 
-The verifier-profile derivation should be exposed as a stable function that takes the explicit parameter object as input rather than reading global defaults.
+Expose a stable verifier-profile derivation function that takes `&NativeBackendParams` as input rather than reading ambient defaults. The benchmark JSON should expose the resulting parameter fingerprint directly.
 
-Revision note: this ExecPlan was created on 2026-03-26 to turn the current native folding branch from a topology proof into a hardening program. The branch already has enough architecture to justify this investment; what it lacks is a backend whose security claims and benchmark numbers can be stated honestly together.
+Revision note: this file now absorbs the remaining work from plans 1, 2, 3, and 4. The native lane surface and prover-kernel work are treated as baseline assumptions, the accumulation plan is treated as a completed negative result, and the only remaining live work is backend hardening plus the final keep/kill benchmark verdict.
 
-Revision note (2026-03-26, research pass): corrected the research framing after re-checking the literature. The plan still stands, but it now treats `Neo` and `LatticeFold+` as the primary accessible anchors, treats `SuperNeo` as a relevant but still partially provisional upgrade line, and narrows the title from “production-grade SuperNeo backend” to “credible production candidate.”
+Revision note (2026-03-26 / Codex): completed the hardening work, then corrected the review-found overclaims by promoting `native-backend-v3`, widening the fold challenge path to its actual 63-bit field-limited width, pulling `max_fold_arity` plus `transcript_domain_label` into the explicit parameter object and fingerprint, and rewriting the recorded benchmark verdict so wall-clock verifier ns are treated as rerun-dependent observations rather than a canonical curve.

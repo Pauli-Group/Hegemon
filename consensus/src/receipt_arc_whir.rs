@@ -52,6 +52,7 @@ pub fn receipt_arc_whir_metadata(receipt_count: usize) -> ReceiptRootMetadata {
     shape_material.push(params.query_count);
     shape_material.push(params.folding_rounds);
     ReceiptRootMetadata {
+        params_fingerprint: blake3_384(b"hegemon:receipt_arc_whir:params:v1"),
         relation_id: blake3_256(b"hegemon:receipt_arc_whir:relation:v1"),
         shape_digest: blake3_256(&shape_material),
         leaf_count: receipt_count as u32,

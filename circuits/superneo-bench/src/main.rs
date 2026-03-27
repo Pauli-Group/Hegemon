@@ -16,23 +16,22 @@ use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
     clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
-    FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof,
+    FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof, NativeBackendParams,
 };
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
-use superneo_core::{
-    Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact, SecurityParams,
-};
+use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
 use superneo_hegemon::{
     build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_receipt_root_artifact_bytes,
     build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
     build_verified_tx_proof_receipt_root_artifact_bytes,
     canonical_tx_validity_receipt_from_transaction_proof, decode_native_tx_leaf_artifact_bytes,
-    native_tx_validity_statement_from_witness, tx_leaf_public_tx_from_transaction_proof,
-    tx_leaf_public_tx_from_witness, verify_native_tx_leaf_artifact_bytes,
-    verify_native_tx_leaf_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
-    verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
-    NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness,
-    TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
+    native_backend_params, native_tx_validity_statement_from_witness,
+    tx_leaf_public_tx_from_transaction_proof, tx_leaf_public_tx_from_witness,
+    verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_receipt_root_artifact_bytes,
+    verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
+    verify_verified_tx_proof_receipt_root_artifact_bytes, NativeTxValidityRelation,
+    ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness, TxLeafPublicRelation,
+    TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -95,6 +94,8 @@ struct InlineTxBaseline {
 struct BenchResult {
     relation: String,
     k: usize,
+    parameter_fingerprint: Option<String>,
+    native_backend_params: Option<BenchNativeBackendParams>,
     bytes_per_tx: usize,
     total_active_path_prove_ns: u128,
     total_active_path_verify_ns: u128,
@@ -106,6 +107,20 @@ struct BenchResult {
     kernel_report: Option<KernelCostReport>,
     inline_tx_baseline: Option<InlineTxBaseline>,
     import_comparison: Option<ImportComparison>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BenchNativeBackendParams {
+    security_bits: u32,
+    ring_profile: String,
+    matrix_rows: usize,
+    matrix_cols: usize,
+    challenge_bits: u32,
+    max_fold_arity: u32,
+    transcript_domain_label: String,
+    decomposition_bits: u32,
+    opening_randomness_bits: u32,
+    version_tag: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -265,6 +280,34 @@ fn note_prefix(choice: RelationChoice) -> String {
     )
 }
 
+fn current_native_backend_params() -> NativeBackendParams {
+    native_backend_params()
+}
+
+fn current_parameter_fingerprint_hex() -> String {
+    hex48(current_native_backend_params().parameter_fingerprint())
+}
+
+fn current_bench_native_backend_params() -> BenchNativeBackendParams {
+    let params = current_native_backend_params();
+    BenchNativeBackendParams {
+        security_bits: params.security_bits,
+        ring_profile: format!("{:?}", params.ring_profile),
+        matrix_rows: params.matrix_rows,
+        matrix_cols: params.matrix_cols,
+        challenge_bits: params.challenge_bits,
+        max_fold_arity: params.max_fold_arity,
+        transcript_domain_label: params.transcript_domain_label.to_owned(),
+        decomposition_bits: params.decomposition_bits,
+        opening_randomness_bits: params.opening_randomness_bits,
+        version_tag: params.version_tag.to_owned(),
+    }
+}
+
+fn timing_caveat() -> &'static str {
+    "total_active_path_*_ns are single-run wall-clock measurements; rerun on your target host before treating them as decision-grade latency numbers"
+}
+
 fn validate_relation_selection(
     choice: RelationChoice,
     allow_diagnostic_relation: bool,
@@ -286,7 +329,7 @@ fn benchmark_toy_balance(
 ) -> Result<BenchResult> {
     let relation = ToyBalanceRelation::default();
     let backend = LatticeBackend::default();
-    let security = SecurityParams::experimental_default();
+    let security = backend.security_params();
     let (pk, vk) = backend.setup(&security, relation.shape())?;
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
 
@@ -363,6 +406,8 @@ fn benchmark_toy_balance(
     Ok(BenchResult {
         relation: "toy_balance".to_owned(),
         k,
+        parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
+        native_backend_params: Some(current_bench_native_backend_params()),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -387,7 +432,7 @@ fn benchmark_tx_receipt(
 ) -> Result<BenchResult> {
     let relation = TxProofReceiptRelation::default();
     let backend = LatticeBackend::default();
-    let security = SecurityParams::experimental_default();
+    let security = backend.security_params();
     let (pk, vk) = backend.setup(&security, relation.shape())?;
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
 
@@ -462,6 +507,8 @@ fn benchmark_tx_receipt(
     Ok(BenchResult {
         relation: "tx_receipt".to_owned(),
         k,
+        parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
+        native_backend_params: Some(current_bench_native_backend_params()),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -486,7 +533,7 @@ fn benchmark_native_tx_validity(
 ) -> Result<BenchResult> {
     let relation = NativeTxValidityRelation::default();
     let backend = LatticeBackend::default();
-    let security = SecurityParams::experimental_default();
+    let security = backend.security_params();
     let (pk, vk) = backend.setup(&security, relation.shape())?;
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
 
@@ -552,6 +599,8 @@ fn benchmark_native_tx_validity(
     Ok(BenchResult {
         relation: "native_tx_validity".to_owned(),
         k,
+        parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
+        native_backend_params: Some(current_bench_native_backend_params()),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -662,17 +711,20 @@ fn benchmark_native_tx_leaf_receipt_root(
     Ok(BenchResult {
         relation: "native_tx_leaf_receipt_root".to_owned(),
         k,
+        parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
+        native_backend_params: Some(current_bench_native_backend_params()),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
         packed_witness_bits,
         shape_digest: shape_hex(ShapeDigest(metadata.shape_digest)),
         note: format!(
-            "{}; native tx-leaf artifacts={}B root_artifact={}B accumulation_artifact={}B; accumulation warm verify is measured after verified-leaf store prewarm",
+            "{}; native tx-leaf artifacts={}B root_artifact={}B accumulation_artifact={}B; accumulation warm verify is measured after verified-leaf store prewarm; {}",
             note_prefix(RelationChoice::NativeTxLeafReceiptRoot),
             tx_leaf_bytes_total,
             built_root.artifact_bytes.len(),
-            accumulation_artifact.artifact_bytes.len()
+            accumulation_artifact.artifact_bytes.len(),
+            timing_caveat()
         ),
         edge_prepare_ns: Some(edge_prepare_ns),
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
@@ -802,16 +854,19 @@ fn benchmark_native_tx_leaf_receipt_arc_whir(
     Ok(BenchResult {
         relation: "native_tx_leaf_receipt_arc_whir".to_owned(),
         k,
+        parameter_fingerprint: Some(hex48(cold_artifact.metadata.params_fingerprint)),
+        native_backend_params: Some(current_bench_native_backend_params()),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: cold_prove_ns,
         total_active_path_verify_ns: cold_residual_verify_ns,
         packed_witness_bits,
         shape_digest: shape_hex(ShapeDigest(cold_artifact.metadata.shape_digest)),
         note: format!(
-            "{}; tx_leaf_artifacts={}B residual_artifact={}B",
+            "{}; tx_leaf_artifacts={}B residual_artifact={}B; {}",
             note_prefix(RelationChoice::NativeTxLeafReceiptArcWhir),
             tx_leaf_bytes_total,
-            cold_artifact.artifact_bytes.len()
+            cold_artifact.artifact_bytes.len(),
+            timing_caveat()
         ),
         edge_prepare_ns: Some(edge_prepare_ns),
         peak_rss_bytes: Some(current_peak_rss_bytes()?),
@@ -883,6 +938,8 @@ fn benchmark_tx_leaf_receipt_root(
     Ok(BenchResult {
         relation: "tx_leaf_receipt_root".to_owned(),
         k,
+        parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
+        native_backend_params: Some(current_bench_native_backend_params()),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -935,6 +992,8 @@ fn benchmark_verified_tx_receipt(
     Ok(BenchResult {
         relation: "verified_tx_receipt".to_owned(),
         k,
+        parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
+        native_backend_params: Some(current_bench_native_backend_params()),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -1146,6 +1205,10 @@ fn shape_hex(shape: ShapeDigest) -> String {
     shape.to_hex()
 }
 
+fn hex48(bytes: [u8; 48]) -> String {
+    hex::encode(bytes)
+}
+
 fn synthetic_bytes(len: usize, seed: u64) -> Vec<u8> {
     (0..len)
         .map(|idx| (((seed as usize * 17) + idx * 29) & 0xff) as u8)
@@ -1247,7 +1310,7 @@ mod tests {
     fn fold_to_root_handles_odd_leaf_count() {
         let backend = LatticeBackend::default();
         let relation = ToyBalanceRelation::default();
-        let security = SecurityParams::experimental_default();
+        let security = backend.security_params();
         let (pk, vk) = backend.setup(&security, relation.shape()).unwrap();
         let relation_id = relation.relation_id();
 

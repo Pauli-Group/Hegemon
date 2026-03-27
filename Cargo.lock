@@ -11152,6 +11152,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "getrandom 0.2.16",
  "p3-field",
  "p3-goldilocks",
  "serde",
@@ -11168,6 +11169,7 @@ dependencies = [
  "bincode",
  "clap",
  "consensus",
+ "hex",
  "libc",
  "p3-goldilocks",
  "serde",

@@ -316,6 +316,7 @@ pub struct MergeRootProofPayload {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceiptRootMetadata {
+    pub params_fingerprint: [u8; 48],
     pub relation_id: [u8; 32],
     pub shape_digest: [u8; 32],
     pub leaf_count: u32,

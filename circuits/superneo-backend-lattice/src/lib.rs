@@ -1,5 +1,6 @@
 use anyhow::{anyhow, ensure, Result};
 use blake3::Hasher;
+use getrandom::getrandom;
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -30,32 +31,130 @@ impl RingProfile {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LatticeBackendConfig {
-    pub ring_profile: RingProfile,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NativeBackendParams {
     pub security_bits: u32,
+    pub ring_profile: RingProfile,
+    pub matrix_rows: usize,
+    pub matrix_cols: usize,
     pub challenge_bits: u32,
-    pub commitment_rows: usize,
-    pub ring_degree: usize,
-    pub digit_bits: u16,
+    pub max_fold_arity: u32,
+    pub transcript_domain_label: &'static str,
+    pub decomposition_bits: u32,
+    pub opening_randomness_bits: u32,
+    pub version_tag: &'static str,
 }
 
-impl Default for LatticeBackendConfig {
-    fn default() -> Self {
+impl NativeBackendParams {
+    pub fn hardened_v3() -> Self {
         Self {
+            security_bits: 63,
             ring_profile: RingProfile::GoldilocksCyclotomic24,
-            security_bits: 128,
-            challenge_bits: 16,
-            commitment_rows: 8,
-            ring_degree: 8,
-            digit_bits: 8,
+            matrix_rows: 8,
+            matrix_cols: 8,
+            challenge_bits: 63,
+            max_fold_arity: 2,
+            transcript_domain_label: "hegemon.superneo.fold.v1",
+            decomposition_bits: 8,
+            opening_randomness_bits: 16,
+            version_tag: "native-backend-v3",
         }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.matrix_rows > 0,
+            "matrix_rows must be strictly positive"
+        );
+        ensure!(
+            self.matrix_cols > 0,
+            "matrix_cols must be strictly positive"
+        );
+        ensure!(
+            (1..=63).contains(&self.challenge_bits),
+            "challenge_bits must be in 1..=63"
+        );
+        ensure!(
+            self.security_bits > 0 && self.security_bits <= self.challenge_bits,
+            "security_bits must be in 1..=challenge_bits"
+        );
+        ensure!(
+            self.max_fold_arity == 2,
+            "binary fold backend requires max_fold_arity == 2"
+        );
+        ensure!(
+            !self.transcript_domain_label.is_empty(),
+            "transcript_domain_label must be non-empty"
+        );
+        ensure!(
+            (1..=16).contains(&self.decomposition_bits),
+            "decomposition_bits must be in 1..=16"
+        );
+        ensure!(
+            self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 32,
+            "opening_randomness_bits must be in 1..=32"
+        );
+        Ok(())
+    }
+
+    pub fn security_params(&self) -> SecurityParams {
+        SecurityParams {
+            target_security_bits: self.security_bits,
+            max_fold_arity: self.max_fold_arity,
+            transcript_domain: self.transcript_domain_label.as_bytes(),
+        }
+    }
+
+    pub fn parameter_fingerprint(&self) -> [u8; 48] {
+        let mut hasher = Hasher::new();
+        hasher.update(b"hegemon.superneo.native-backend-params.v2");
+        hasher.update(&self.security_bits.to_le_bytes());
+        hasher.update(self.ring_profile.label());
+        hasher.update(&(self.matrix_rows as u64).to_le_bytes());
+        hasher.update(&(self.matrix_cols as u64).to_le_bytes());
+        hasher.update(&self.challenge_bits.to_le_bytes());
+        hasher.update(&self.max_fold_arity.to_le_bytes());
+        hasher.update(self.transcript_domain_label.as_bytes());
+        hasher.update(&self.decomposition_bits.to_le_bytes());
+        hasher.update(&self.opening_randomness_bits.to_le_bytes());
+        hasher.update(self.version_tag.as_bytes());
+        hash48(hasher)
+    }
+
+    pub fn artifact_version(&self, artifact_label: &[u8]) -> u16 {
+        let mut hasher = Hasher::new();
+        hasher.update(b"hegemon.superneo.native-artifact-version.v1");
+        hasher.update(self.version_tag.as_bytes());
+        hasher.update(artifact_label);
+        hasher.update(&self.parameter_fingerprint());
+        let mut bytes = [0u8; 2];
+        hasher.finalize_xof().fill(&mut bytes);
+        let raw = u16::from_le_bytes(bytes);
+        raw.max(1)
+    }
+
+    pub fn ring_degree(&self) -> usize {
+        self.matrix_cols
+    }
+
+    pub fn digit_bits(&self) -> u16 {
+        self.decomposition_bits as u16
+    }
+
+    pub fn randomness_bytes(&self) -> usize {
+        self.opening_randomness_bits.div_ceil(8) as usize
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+impl Default for NativeBackendParams {
+    fn default() -> Self {
+        Self::hardened_v3()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LatticeBackend {
-    pub config: LatticeBackendConfig,
+    pub params: NativeBackendParams,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,13 +284,14 @@ impl PreparedMatrixCache {
 impl Default for LatticeBackend {
     fn default() -> Self {
         Self {
-            config: LatticeBackendConfig::default(),
+            params: NativeBackendParams::default(),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackendKey {
+    pub params_fingerprint: [u8; 48],
     pub shape_digest: ShapeDigest,
     pub security_bits: u32,
     pub challenge_bits: u32,
@@ -201,6 +301,7 @@ pub struct BackendKey {
     pub commitment_rows: usize,
     pub ring_degree: usize,
     pub digit_bits: u16,
+    pub opening_randomness_bits: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +335,11 @@ pub struct LeafDigestProof {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldDigestProof {
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub params_fingerprint: [u8; 48],
     pub challenge: u64,
     pub parent_statement_digest: StatementDigest,
     #[serde(
@@ -241,11 +347,32 @@ pub struct FoldDigestProof {
         deserialize_with = "deserialize_fixed_bytes_48"
     )]
     pub parent_commitment_digest: [u8; 48],
+    pub parent_rows: Vec<RingElem>,
     #[serde(
         serialize_with = "serialize_fixed_bytes_48",
         deserialize_with = "deserialize_fixed_bytes_48"
     )]
     pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitmentOpening {
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub params_fingerprint: [u8; 48],
+    pub packed_witness: PackedWitness<u64>,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_32",
+        deserialize_with = "deserialize_fixed_bytes_32"
+    )]
+    pub randomness_seed: [u8; 32],
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub opening_digest: [u8; 48],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +405,16 @@ where
     serializer.serialize_bytes(bytes)
 }
 
+fn serialize_fixed_bytes_32<S>(
+    bytes: &[u8; 32],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_bytes(bytes)
+}
+
 fn deserialize_fixed_bytes_48<'de, D>(deserializer: D) -> std::result::Result<[u8; 48], D::Error>
 where
     D: Deserializer<'de>,
@@ -287,6 +424,17 @@ where
     bytes
         .try_into()
         .map_err(|_| serde::de::Error::invalid_length(len, &"48 bytes"))
+}
+
+fn deserialize_fixed_bytes_32<'de, D>(deserializer: D) -> std::result::Result<[u8; 32], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| serde::de::Error::invalid_length(len, &"32 bytes"))
 }
 
 impl LatticeCommitment {
@@ -327,17 +475,72 @@ impl LeafDigestProof {
 }
 
 impl FoldDigestProof {
-    pub const BYTES: usize = 8 + StatementDigest::BYTES + LatticeCommitment::DIGEST_BYTES + 48;
-
     pub fn byte_size(&self) -> usize {
-        Self::BYTES
+        48 + 8
+            + StatementDigest::BYTES
+            + LatticeCommitment::DIGEST_BYTES
+            + 4
+            + self
+                .parent_rows
+                .iter()
+                .map(RingElem::byte_size)
+                .sum::<usize>()
+            + 48
+    }
+}
+
+impl CommitmentOpening {
+    pub fn byte_size(&self) -> usize {
+        48 + 4
+            + (self.packed_witness.coeffs.len() * 8)
+            + 2
+            + 4
+            + (self.packed_witness.value_bit_widths.len() * 2)
+            + 32
+            + 48
     }
 }
 
 impl LatticeBackend {
-    pub fn new(config: LatticeBackendConfig) -> Self {
-        Self { config }
+    pub fn new(params: NativeBackendParams) -> Self {
+        Self { params }
     }
+
+    pub fn native_params(&self) -> &NativeBackendParams {
+        &self.params
+    }
+
+    pub fn security_params(&self) -> SecurityParams {
+        self.params.security_params()
+    }
+
+    fn ensure_native_params(&self, params: &NativeBackendParams) -> Result<()> {
+        ensure!(
+            params == &self.params,
+            "backend parameter mismatch: backend is configured for {} but caller requested {}",
+            self.params.version_tag,
+            params.version_tag
+        );
+        Ok(())
+    }
+}
+
+pub trait NativeCommitmentScheme {
+    type Commitment;
+    type OpeningProof;
+
+    fn commit(
+        &self,
+        params: &NativeBackendParams,
+        witness: &PackedWitness<u64>,
+    ) -> Result<(Self::Commitment, Self::OpeningProof)>;
+
+    fn verify_opening(
+        &self,
+        params: &NativeBackendParams,
+        commitment: &Self::Commitment,
+        opening: &Self::OpeningProof,
+    ) -> Result<()>;
 }
 
 pub fn reset_kernel_cost_report() {
@@ -383,6 +586,53 @@ fn flush_kernel_stats(stats: &KernelLocalStats) {
     });
 }
 
+impl NativeCommitmentScheme for LatticeBackend {
+    type Commitment = LatticeCommitment;
+    type OpeningProof = CommitmentOpening;
+
+    fn commit(
+        &self,
+        params: &NativeBackendParams,
+        witness: &PackedWitness<u64>,
+    ) -> Result<(Self::Commitment, Self::OpeningProof)> {
+        self.ensure_native_params(params)?;
+        let mut randomness_seed = [0u8; 32];
+        getrandom(&mut randomness_seed)
+            .map_err(|err| anyhow!("failed to sample native commitment randomness: {err}"))?;
+        commit_with_seed(params, witness, randomness_seed)
+    }
+
+    fn verify_opening(
+        &self,
+        params: &NativeBackendParams,
+        commitment: &Self::Commitment,
+        opening: &Self::OpeningProof,
+    ) -> Result<()> {
+        self.ensure_native_params(params)?;
+        ensure!(
+            opening.params_fingerprint == params.parameter_fingerprint(),
+            "commitment opening parameter fingerprint mismatch"
+        );
+        let expected_digest =
+            commitment_opening_digest(params, &opening.packed_witness, &opening.randomness_seed);
+        ensure!(
+            opening.opening_digest == expected_digest,
+            "commitment opening digest mismatch"
+        );
+        let (expected_commitment, _) =
+            commit_with_seed(params, &opening.packed_witness, opening.randomness_seed)?;
+        ensure!(
+            commitment.digest == expected_commitment.digest,
+            "commitment opening digest does not match commitment"
+        );
+        ensure!(
+            commitment.rows == expected_commitment.rows,
+            "commitment opening rows do not match commitment"
+        );
+        Ok(())
+    }
+}
+
 impl Backend<Goldilocks> for LatticeBackend {
     type ProverKey = BackendKey;
     type VerifierKey = BackendKey;
@@ -397,31 +647,39 @@ impl Backend<Goldilocks> for LatticeBackend {
         shape: &CcsShape<Goldilocks>,
     ) -> Result<(Self::ProverKey, Self::VerifierKey)> {
         shape.validate()?;
+        self.params.validate()?;
         ensure!(
-            self.config.commitment_rows > 0,
-            "commitment_rows must be strictly positive"
+            security.target_security_bits == self.params.security_bits,
+            "security target {} does not match native backend params {}",
+            security.target_security_bits,
+            self.params.security_bits
         );
         ensure!(
-            self.config.ring_degree > 0,
-            "ring_degree must be strictly positive"
+            security.max_fold_arity == self.params.max_fold_arity,
+            "max_fold_arity {} does not match native backend params {}",
+            security.max_fold_arity,
+            self.params.max_fold_arity
         );
         ensure!(
-            (1..=16).contains(&self.config.digit_bits),
-            "digit_bits must be in 1..=16"
+            security.transcript_domain == self.params.transcript_domain_label.as_bytes(),
+            "transcript_domain does not match native backend params {}",
+            self.params.transcript_domain_label
         );
         let key = BackendKey {
+            params_fingerprint: self.params.parameter_fingerprint(),
             shape_digest: digest_shape(shape),
-            security_bits: security.target_security_bits,
-            challenge_bits: self.config.challenge_bits,
-            max_fold_arity: security.max_fold_arity,
+            security_bits: self.params.security_bits,
+            challenge_bits: self.params.challenge_bits,
+            max_fold_arity: self.params.max_fold_arity,
             transcript_domain_digest: digest32_with_label(
                 b"hegemon.superneo.transcript-domain.v1",
-                security.transcript_domain,
+                self.params.transcript_domain_label.as_bytes(),
             ),
-            ring_profile: self.config.ring_profile,
-            commitment_rows: self.config.commitment_rows,
-            ring_degree: self.config.ring_degree,
-            digit_bits: self.config.digit_bits,
+            ring_profile: self.params.ring_profile,
+            commitment_rows: self.params.matrix_rows,
+            ring_degree: self.params.matrix_cols,
+            digit_bits: self.params.digit_bits(),
+            opening_randomness_bits: self.params.opening_randomness_bits,
         };
         Ok((key.clone(), key))
     }
@@ -497,11 +755,12 @@ impl Backend<Goldilocks> for LatticeBackend {
         validate_fold_pair(left, right)?;
         let challenge = derive_fold_challenge(pk, left, right);
         let fold_start = Instant::now();
-        let parent_commitment = LatticeCommitment::from_rows(fold_commitment_rows(
+        let parent_rows = fold_commitment_rows(
             &left.witness_commitment,
             &right.witness_commitment,
             challenge,
-        )?);
+        )?;
+        let parent_commitment = LatticeCommitment::from_rows(parent_rows.clone());
         let parent_statement_digest = fold_statement_digest(
             &left.statement_digest,
             &right.statement_digest,
@@ -515,12 +774,14 @@ impl Backend<Goldilocks> for LatticeBackend {
             right,
             challenge,
             &parent_statement_digest,
-            &parent_commitment.digest,
+            &parent_rows,
         );
         let proof = FoldDigestProof {
+            params_fingerprint: pk.params_fingerprint,
             challenge,
             parent_statement_digest,
             parent_commitment_digest: parent_commitment.digest,
+            parent_rows: parent_rows.clone(),
             proof_digest,
         };
         let parent = FoldedInstance {
@@ -561,6 +822,10 @@ impl Backend<Goldilocks> for LatticeBackend {
             "parent relation id does not match folded children"
         );
         ensure!(
+            proof.params_fingerprint == vk.params_fingerprint,
+            "fold proof parameter fingerprint mismatch"
+        );
+        ensure!(
             parent.shape_digest == left.shape_digest && left.shape_digest == right.shape_digest,
             "parent shape digest does not match folded children"
         );
@@ -571,11 +836,16 @@ impl Backend<Goldilocks> for LatticeBackend {
             "fold challenge mismatch"
         );
 
-        let expected_commitment = LatticeCommitment::from_rows(fold_commitment_rows(
+        let expected_rows = fold_commitment_rows(
             &left.witness_commitment,
             &right.witness_commitment,
             expected_challenge,
-        )?);
+        )?;
+        ensure!(
+            proof.parent_rows == expected_rows,
+            "fold proof parent rows mismatch"
+        );
+        let expected_commitment = LatticeCommitment::from_rows(expected_rows.clone());
         ensure!(
             parent.witness_commitment.digest == expected_commitment.digest,
             "folded witness commitment digest mismatch"
@@ -613,7 +883,7 @@ impl Backend<Goldilocks> for LatticeBackend {
             right,
             expected_challenge,
             &expected_statement_digest,
-            &expected_commitment.digest,
+            &expected_rows,
         );
         ensure!(
             proof.proof_digest == expected_proof_digest,
@@ -639,22 +909,31 @@ fn embed_packed_witness(
     pk: &BackendKey,
     packed: &PackedWitness<u64>,
 ) -> Result<Vec<EmbeddedRingElem>> {
+    embed_packed_witness_with_layout(pk.ring_degree, pk.digit_bits, packed)
+}
+
+fn embed_packed_witness_with_layout(
+    ring_degree: usize,
+    digit_bits: u16,
+    packed: &PackedWitness<u64>,
+) -> Result<Vec<EmbeddedRingElem>> {
     ensure!(
         packed.value_bit_widths.len() == packed.original_len,
         "packed witness width metadata length {} does not match original_len {}",
         packed.value_bit_widths.len(),
         packed.original_len
     );
-    let (digits, digit_source_widths) = expand_packed_digits(packed, pk.digit_bits)?;
-    let mut ring_elems = Vec::with_capacity(digits.len().div_ceil(pk.ring_degree));
-    for (chunk_index, chunk) in digits.chunks(pk.ring_degree).enumerate() {
-        let mut coeffs = vec![0u64; pk.ring_degree];
+    ensure!(ring_degree > 0, "ring degree must be strictly positive");
+    let (digits, digit_source_widths) = expand_packed_digits(packed, digit_bits)?;
+    let mut ring_elems = Vec::with_capacity(digits.len().div_ceil(ring_degree));
+    for (chunk_index, chunk) in digits.chunks(ring_degree).enumerate() {
+        let mut coeffs = vec![0u64; ring_degree];
         for (idx, digit) in chunk.iter().enumerate() {
             coeffs[idx] = *digit;
         }
         let source_width_bits = digit_source_widths
             .iter()
-            .skip(chunk_index * pk.ring_degree)
+            .skip(chunk_index * ring_degree)
             .take(chunk.len())
             .copied()
             .max()
@@ -807,11 +1086,122 @@ fn commit_ring_message(pk: &BackendKey, message: &[EmbeddedRingElem]) -> Vec<Rin
     rows
 }
 
+fn commit_with_seed(
+    params: &NativeBackendParams,
+    packed: &PackedWitness<u64>,
+    randomness_seed: [u8; 32],
+) -> Result<(LatticeCommitment, CommitmentOpening)> {
+    params.validate()?;
+    let key = native_commitment_key(params);
+    let ring_message =
+        embed_packed_witness_with_layout(params.ring_degree(), params.digit_bits(), packed)?;
+    let deterministic_rows = commit_ring_message(&key, &ring_message);
+    let randomizer_rows = derive_randomizer_rows(params, randomness_seed);
+    let rows = add_ring_rows(&deterministic_rows, &randomizer_rows)?;
+    let commitment = LatticeCommitment::from_rows(rows);
+    let opening = CommitmentOpening {
+        params_fingerprint: params.parameter_fingerprint(),
+        packed_witness: packed.clone(),
+        randomness_seed,
+        opening_digest: commitment_opening_digest(params, packed, &randomness_seed),
+    };
+    Ok((commitment, opening))
+}
+
+fn native_commitment_key(params: &NativeBackendParams) -> BackendKey {
+    BackendKey {
+        params_fingerprint: params.parameter_fingerprint(),
+        shape_digest: ShapeDigest([0u8; 32]),
+        security_bits: params.security_bits,
+        challenge_bits: params.challenge_bits,
+        max_fold_arity: params.max_fold_arity,
+        transcript_domain_digest: digest32_with_label(
+            b"hegemon.superneo.native-commitment-domain.v1",
+            params.transcript_domain_label.as_bytes(),
+        ),
+        ring_profile: params.ring_profile,
+        commitment_rows: params.matrix_rows,
+        ring_degree: params.ring_degree(),
+        digit_bits: params.digit_bits(),
+        opening_randomness_bits: params.opening_randomness_bits,
+    }
+}
+
+fn derive_randomizer_rows(
+    params: &NativeBackendParams,
+    randomness_seed: [u8; 32],
+) -> Vec<RingElem> {
+    let randomness_mask = if params.opening_randomness_bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << params.opening_randomness_bits) - 1
+    };
+    (0..params.matrix_rows)
+        .map(|row_index| {
+            let coeffs = (0..params.ring_degree())
+                .map(|coeff_index| {
+                    let mut hasher = Hasher::new();
+                    hasher.update(b"hegemon.superneo.commitment-randomizer.v1");
+                    hasher.update(&params.parameter_fingerprint());
+                    hasher.update(&randomness_seed);
+                    hasher.update(&(row_index as u64).to_le_bytes());
+                    hasher.update(&(coeff_index as u64).to_le_bytes());
+                    let mut out = [0u8; 8];
+                    hasher.finalize_xof().fill(&mut out);
+                    Goldilocks::new(u64::from_le_bytes(out) & randomness_mask).as_canonical_u64()
+                })
+                .collect();
+            RingElem::from_coeffs(coeffs)
+        })
+        .collect()
+}
+
+fn add_ring_rows(left: &[RingElem], right: &[RingElem]) -> Result<Vec<RingElem>> {
+    ensure!(
+        left.len() == right.len(),
+        "cannot add {} commitment rows to {} randomizer rows",
+        left.len(),
+        right.len()
+    );
+    let mut stats = KernelLocalStats::default();
+    let rows = left
+        .iter()
+        .zip(right)
+        .map(|(left_row, right_row)| delayed_linear_combine(left_row, right_row, 1, &mut stats))
+        .collect::<Result<Vec<_>>>()?;
+    flush_kernel_stats(&stats);
+    Ok(rows)
+}
+
+fn commitment_opening_digest(
+    params: &NativeBackendParams,
+    packed: &PackedWitness<u64>,
+    randomness_seed: &[u8; 32],
+) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.commitment-opening.v1");
+    hasher.update(&params.parameter_fingerprint());
+    hasher.update(&(packed.original_len as u64).to_le_bytes());
+    hasher.update(&(packed.used_bits as u64).to_le_bytes());
+    hasher.update(&(packed.coeffs.len() as u64).to_le_bytes());
+    for coeff in &packed.coeffs {
+        hasher.update(&coeff.to_le_bytes());
+    }
+    hasher.update(&(packed.value_bit_widths.len() as u64).to_le_bytes());
+    for width in &packed.value_bit_widths {
+        hasher.update(&width.to_le_bytes());
+    }
+    hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
+    hasher.update(randomness_seed);
+    hash48(hasher)
+}
+
 fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem {
     let mut coeffs = Vec::with_capacity(pk.ring_degree);
     for coeff_index in 0..pk.ring_degree {
         let mut hasher = Hasher::new();
         hasher.update(b"hegemon.superneo.ajtai-matrix.v1");
+        hasher.update(&pk.params_fingerprint);
         hasher.update(pk.ring_profile.label());
         hasher.update(&pk.shape_digest.0);
         hasher.update(&pk.security_bits.to_le_bytes());
@@ -821,6 +1211,7 @@ fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem
         hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
         hasher.update(&(pk.ring_degree as u64).to_le_bytes());
         hasher.update(&pk.digit_bits.to_le_bytes());
+        hasher.update(&pk.opening_randomness_bits.to_le_bytes());
         hasher.update(&(row_index as u64).to_le_bytes());
         hasher.update(&(col_index as u64).to_le_bytes());
         hasher.update(&(coeff_index as u64).to_le_bytes());
@@ -867,6 +1258,7 @@ fn prepare_commitment_matrix(pk: &BackendKey, message_len: usize) -> Arc<Prepare
 
 fn prepared_matrix_cache_key(pk: &BackendKey, message_len: usize) -> [u8; 32] {
     let mut material = Vec::with_capacity(32 + 8 * 6);
+    material.extend_from_slice(&pk.params_fingerprint);
     material.extend_from_slice(&pk.shape_digest.0);
     material.extend_from_slice(pk.ring_profile.label());
     material.extend_from_slice(&pk.security_bits.to_le_bytes());
@@ -876,6 +1268,7 @@ fn prepared_matrix_cache_key(pk: &BackendKey, message_len: usize) -> [u8; 32] {
     material.extend_from_slice(&(pk.commitment_rows as u64).to_le_bytes());
     material.extend_from_slice(&(pk.ring_degree as u64).to_le_bytes());
     material.extend_from_slice(&pk.digit_bits.to_le_bytes());
+    material.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
     material.extend_from_slice(&(message_len as u64).to_le_bytes());
     digest32_with_label(b"hegemon.superneo.prepared-matrix.v1", &material)
 }
@@ -900,6 +1293,7 @@ fn derive_fold_challenge(
 ) -> u64 {
     let mut hasher = Hasher::new();
     hasher.update(b"hegemon.superneo.fold-challenge.v2");
+    hasher.update(&pk.params_fingerprint);
     hasher.update(pk.ring_profile.label());
     hasher.update(&pk.shape_digest.0);
     hasher.update(&left.relation_id.0);
@@ -910,6 +1304,7 @@ fn derive_fold_challenge(
     hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
     hasher.update(&(pk.ring_degree as u64).to_le_bytes());
     hasher.update(&pk.digit_bits.to_le_bytes());
+    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
     hasher.update(&left.statement_digest.0);
     hasher.update(&right.statement_digest.0);
     hasher.update(&left.witness_commitment.digest);
@@ -917,7 +1312,7 @@ fn derive_fold_challenge(
     let mut out = [0u8; 8];
     hasher.finalize_xof().fill(&mut out);
     let raw = u64::from_le_bytes(out);
-    let mask_bits = pk.challenge_bits.min(16);
+    let mask_bits = pk.challenge_bits.min(63);
     let modulus = 1u64 << mask_bits;
     let reduced = if modulus <= 1 {
         1
@@ -993,6 +1388,7 @@ fn leaf_proof_digest(
 ) -> [u8; 48] {
     let mut hasher = Hasher::new();
     hasher.update(b"hegemon.superneo.leaf-proof.v2");
+    hasher.update(&pk.params_fingerprint);
     hasher.update(pk.ring_profile.label());
     hasher.update(&pk.shape_digest.0);
     hasher.update(&relation_id.0);
@@ -1003,6 +1399,7 @@ fn leaf_proof_digest(
     hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
     hasher.update(&(pk.ring_degree as u64).to_le_bytes());
     hasher.update(&pk.digit_bits.to_le_bytes());
+    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
     hasher.update(&statement_digest.0);
     hasher.update(commitment_digest);
     hasher.update(&(packed.original_len as u64).to_le_bytes());
@@ -1037,10 +1434,11 @@ fn fold_proof_digest(
     right: &FoldedInstance<LatticeCommitment>,
     challenge: u64,
     parent_statement_digest: &StatementDigest,
-    parent_commitment_digest: &[u8; 48],
+    parent_rows: &[RingElem],
 ) -> [u8; 48] {
     let mut hasher = Hasher::new();
     hasher.update(b"hegemon.superneo.fold-proof.v2");
+    hasher.update(&pk.params_fingerprint);
     hasher.update(pk.ring_profile.label());
     hasher.update(&pk.shape_digest.0);
     hasher.update(&relation_id.0);
@@ -1051,13 +1449,21 @@ fn fold_proof_digest(
     hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
     hasher.update(&(pk.ring_degree as u64).to_le_bytes());
     hasher.update(&pk.digit_bits.to_le_bytes());
+    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
     hasher.update(&challenge.to_le_bytes());
     hasher.update(&left.statement_digest.0);
     hasher.update(&right.statement_digest.0);
     hasher.update(&left.witness_commitment.digest);
     hasher.update(&right.witness_commitment.digest);
     hasher.update(&parent_statement_digest.0);
-    hasher.update(parent_commitment_digest);
+    hasher.update(&digest_commitment_rows(parent_rows));
+    hasher.update(&(parent_rows.len() as u64).to_le_bytes());
+    for row in parent_rows {
+        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        for coeff in &row.coeffs {
+            hasher.update(&coeff.to_le_bytes());
+        }
+    }
     hash48(hasher)
 }
 
@@ -1150,13 +1556,13 @@ mod tests {
         digest_statement, Assignment, CcsShape, SparseEntry, SparseMatrix, StatementEncoding,
         WitnessField, WitnessSchema,
     };
-    use superneo_core::{Backend, FoldedInstance, SecurityParams};
+    use superneo_core::{Backend, FoldedInstance};
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 
     use super::{
         clear_prepared_matrix_cache, reset_kernel_cost_report, take_kernel_cost_report,
-        LatticeBackend, LatticeBackendConfig, LatticeCommitment, PreparedCommitmentMatrix,
-        PreparedMatrixCache, RingElem, RingProfile,
+        LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
+        PreparedCommitmentMatrix, PreparedMatrixCache, RingElem, RingProfile,
     };
     use std::sync::Arc;
 
@@ -1228,8 +1634,8 @@ mod tests {
 
     #[test]
     fn leaf_and_fold_roundtrip() {
-        let backend = LatticeBackend::new(LatticeBackendConfig::default());
-        let security = SecurityParams::experimental_default();
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let security = backend.security_params();
         let (pk, vk) = backend.setup(&security, &shape()).unwrap();
 
         let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
@@ -1311,8 +1717,8 @@ mod tests {
 
     #[test]
     fn verify_leaf_rejects_tampered_expected_witness() {
-        let backend = LatticeBackend::new(LatticeBackendConfig::default());
-        let security = SecurityParams::experimental_default();
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let security = backend.security_params();
         let (pk, vk) = backend.setup(&security, &shape()).unwrap();
         let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
         let assignment = Assignment {
@@ -1347,9 +1753,60 @@ mod tests {
     }
 
     #[test]
+    fn native_commitment_opening_round_trip_and_randomizes() {
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let params = backend.native_params().clone();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let assignment = Assignment {
+            witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
+        };
+        let packed = packer.pack(&shape(), &assignment).unwrap();
+        let (first_commitment, first_opening) = backend.commit(&params, &packed).unwrap();
+        let (second_commitment, second_opening) = backend.commit(&params, &packed).unwrap();
+        backend
+            .verify_opening(&params, &first_commitment, &first_opening)
+            .unwrap();
+        backend
+            .verify_opening(&params, &second_commitment, &second_opening)
+            .unwrap();
+        assert_ne!(
+            first_opening.randomness_seed,
+            second_opening.randomness_seed
+        );
+        assert_ne!(first_commitment.digest, second_commitment.digest);
+    }
+
+    #[test]
+    fn native_commitment_opening_rejects_wrong_randomness_and_params() {
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let params = backend.native_params().clone();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let assignment = Assignment {
+            witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
+        };
+        let packed = packer.pack(&shape(), &assignment).unwrap();
+        let (commitment, opening) = backend.commit(&params, &packed).unwrap();
+
+        let mut wrong_randomness = opening.clone();
+        wrong_randomness.randomness_seed[0] ^= 0x7f;
+        assert!(backend
+            .verify_opening(&params, &commitment, &wrong_randomness)
+            .is_err());
+
+        let wrong_params = NativeBackendParams {
+            opening_randomness_bits: 12,
+            version_tag: "native-backend-v3-alt",
+            ..params.clone()
+        };
+        assert!(backend
+            .verify_opening(&wrong_params, &commitment, &opening)
+            .is_err());
+    }
+
+    #[test]
     fn verify_fold_rejects_parent_metadata_mismatch() {
-        let backend = LatticeBackend::new(LatticeBackendConfig::default());
-        let security = SecurityParams::experimental_default();
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let security = backend.security_params();
         let (pk, vk) = backend.setup(&security, &shape()).unwrap();
 
         let left = FoldedInstance {
@@ -1382,12 +1839,46 @@ mod tests {
     }
 
     #[test]
+    fn verify_fold_rejects_tampered_parent_rows() {
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let security = backend.security_params();
+        let (pk, vk) = backend.setup(&security, &shape()).unwrap();
+        let left = FoldedInstance {
+            relation_id: superneo_ccs::RelationId::from_label("test"),
+            shape_digest: pk.shape_digest,
+            statement_digest: digest_statement(b"left"),
+            witness_commitment: LatticeCommitment::from_rows(vec![
+                RingElem::from_coeffs(
+                    vec![1u64; pk.ring_degree]
+                );
+                pk.commitment_rows
+            ]),
+        };
+        let right = FoldedInstance {
+            relation_id: superneo_ccs::RelationId::from_label("test"),
+            shape_digest: pk.shape_digest,
+            statement_digest: digest_statement(b"right"),
+            witness_commitment: LatticeCommitment::from_rows(vec![
+                RingElem::from_coeffs(
+                    vec![2u64; pk.ring_degree]
+                );
+                pk.commitment_rows
+            ]),
+        };
+        let (parent, mut proof) = backend.fold_pair(&pk, &left, &right).unwrap();
+        proof.parent_rows[0].coeffs[0] ^= 1;
+        assert!(backend
+            .verify_fold(&vk, &parent, &left, &right, &proof)
+            .is_err());
+    }
+
+    #[test]
     fn kernel_report_tracks_cache_hits_and_delayed_reduction() {
         clear_prepared_matrix_cache();
         reset_kernel_cost_report();
 
-        let backend = LatticeBackend::new(LatticeBackendConfig::default());
-        let security = SecurityParams::experimental_default();
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let security = backend.security_params();
         let (pk, _) = backend.setup(&security, &shape()).unwrap();
         let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
         let assignment = Assignment {
@@ -1413,20 +1904,23 @@ mod tests {
         clear_prepared_matrix_cache();
         reset_kernel_cost_report();
 
-        let security = SecurityParams::experimental_default();
         let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
         let assignment = Assignment {
             witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
         };
         let packed = packer.pack(&shape(), &assignment).unwrap();
 
-        let cyclotomic_backend = LatticeBackend::new(LatticeBackendConfig::default());
-        let frog_backend = LatticeBackend::new(LatticeBackendConfig {
+        let cyclotomic_backend = LatticeBackend::new(NativeBackendParams::default());
+        let frog_backend = LatticeBackend::new(NativeBackendParams {
             ring_profile: RingProfile::GoldilocksFrog,
-            ..LatticeBackendConfig::default()
+            ..NativeBackendParams::default()
         });
-        let (cyclotomic_pk, _) = cyclotomic_backend.setup(&security, &shape()).unwrap();
-        let (frog_pk, _) = frog_backend.setup(&security, &shape()).unwrap();
+        let cyclotomic_security = cyclotomic_backend.security_params();
+        let frog_security = frog_backend.security_params();
+        let (cyclotomic_pk, _) = cyclotomic_backend
+            .setup(&cyclotomic_security, &shape())
+            .unwrap();
+        let (frog_pk, _) = frog_backend.setup(&frog_security, &shape()).unwrap();
 
         let cyclotomic_commitment = cyclotomic_backend
             .commit_witness(&cyclotomic_pk, &packed)
@@ -1468,8 +1962,8 @@ mod tests {
         clear_prepared_matrix_cache();
         reset_kernel_cost_report();
 
-        let backend = LatticeBackend::new(LatticeBackendConfig::default());
-        let security = SecurityParams::experimental_default();
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let security = backend.security_params();
         let (pk, _) = backend.setup(&security, &wide_shape()).unwrap();
         let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
         let assignment = Assignment {
@@ -1481,5 +1975,85 @@ mod tests {
 
         let report = take_kernel_cost_report();
         assert!(report.big_big_ops > 0);
+    }
+
+    #[test]
+    fn derive_fold_challenge_uses_configured_width_above_16_bits() {
+        let params = NativeBackendParams {
+            security_bits: 20,
+            challenge_bits: 20,
+            version_tag: "native-backend-v3-challenge-test",
+            ..NativeBackendParams::default()
+        };
+        let backend = LatticeBackend::new(params);
+        let security = backend.security_params();
+        let (pk, _) = backend.setup(&security, &shape()).unwrap();
+
+        for attempt in 0..128u64 {
+            let left = FoldedInstance {
+                relation_id: superneo_ccs::RelationId::from_label("test"),
+                shape_digest: pk.shape_digest,
+                statement_digest: digest_statement(&attempt.to_le_bytes()),
+                witness_commitment: LatticeCommitment::from_rows(vec![
+                    RingElem::from_coeffs(
+                        vec![attempt + 1; pk.ring_degree]
+                    );
+                    pk.commitment_rows
+                ]),
+            };
+            let right = FoldedInstance {
+                relation_id: superneo_ccs::RelationId::from_label("test"),
+                shape_digest: pk.shape_digest,
+                statement_digest: digest_statement(&(attempt + 1000).to_le_bytes()),
+                witness_commitment: LatticeCommitment::from_rows(vec![
+                    RingElem::from_coeffs(
+                        vec![attempt + 2; pk.ring_degree]
+                    );
+                    pk.commitment_rows
+                ]),
+            };
+            let challenge = super::derive_fold_challenge(&pk, &left, &right);
+            if challenge > u16::MAX as u64 {
+                return;
+            }
+        }
+
+        panic!("configured 20-bit fold challenge never exceeded 16 bits");
+    }
+
+    #[test]
+    fn setup_rejects_security_param_drift() {
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let mut security = backend.security_params();
+        security.max_fold_arity = 4;
+        assert!(backend.setup(&security, &shape()).is_err());
+
+        let mut security = backend.security_params();
+        security.transcript_domain = b"hegemon.superneo.fold.alt";
+        assert!(backend.setup(&security, &shape()).is_err());
+    }
+
+    #[test]
+    fn parameter_fingerprint_covers_security_regime() {
+        let base = NativeBackendParams::default();
+        let different_arity = NativeBackendParams {
+            max_fold_arity: 4,
+            version_tag: "native-backend-v3-arity-test",
+            ..base.clone()
+        };
+        assert_ne!(
+            base.parameter_fingerprint(),
+            different_arity.parameter_fingerprint()
+        );
+
+        let different_domain = NativeBackendParams {
+            transcript_domain_label: "hegemon.superneo.fold.alt",
+            version_tag: "native-backend-v3-domain-test",
+            ..base
+        };
+        assert_ne!(
+            NativeBackendParams::default().parameter_fingerprint(),
+            different_domain.parameter_fingerprint()
+        );
     }
 }

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow = "1"
 blake3 = "1"
+getrandom = "0.2"
 p3-field = { workspace = true }
 p3-goldilocks = { workspace = true }
 serde = { version = "1", features = ["derive"] }

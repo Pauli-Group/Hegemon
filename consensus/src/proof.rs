@@ -1277,6 +1277,7 @@ pub fn build_experimental_receipt_root_artifact(
     Ok(ExperimentalReceiptRootArtifact {
         artifact_bytes: built.artifact_bytes,
         metadata: ReceiptRootMetadata {
+            params_fingerprint: built.metadata.params_fingerprint,
             relation_id: built.metadata.relation_id,
             shape_digest: built.metadata.shape_digest,
             leaf_count: built.metadata.leaf_count,
@@ -1293,6 +1294,7 @@ pub fn build_experimental_receipt_root_artifact_from_proofs(
     Ok(ExperimentalReceiptRootArtifact {
         artifact_bytes: built.artifact_bytes,
         metadata: ReceiptRootMetadata {
+            params_fingerprint: built.metadata.params_fingerprint,
             relation_id: built.metadata.relation_id,
             shape_digest: built.metadata.shape_digest,
             leaf_count: built.metadata.leaf_count,
@@ -1331,6 +1333,7 @@ pub fn build_experimental_native_receipt_root_artifact(
     Ok(ExperimentalReceiptRootArtifact {
         artifact_bytes: built.artifact_bytes,
         metadata: ReceiptRootMetadata {
+            params_fingerprint: built.metadata.params_fingerprint,
             relation_id: built.metadata.relation_id,
             shape_digest: built.metadata.shape_digest,
             leaf_count: built.metadata.leaf_count,
@@ -1388,6 +1391,7 @@ pub fn verify_experimental_receipt_root_artifact(
     let metadata = verify_receipt_root_artifact_bytes(&canonical, artifact_bytes)
         .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
     Ok(ReceiptRootMetadata {
+        params_fingerprint: metadata.params_fingerprint,
         relation_id: metadata.relation_id,
         shape_digest: metadata.shape_digest,
         leaf_count: metadata.leaf_count,
@@ -1431,6 +1435,7 @@ pub fn verify_experimental_receipt_root_artifact_from_proofs(
     let metadata = verify_verified_tx_proof_receipt_root_artifact_bytes(proofs, artifact_bytes)
         .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
     Ok(ReceiptRootMetadata {
+        params_fingerprint: metadata.params_fingerprint,
         relation_id: metadata.relation_id,
         shape_digest: metadata.shape_digest,
         leaf_count: metadata.leaf_count,
@@ -1468,6 +1473,7 @@ pub fn verify_experimental_native_receipt_root_artifact(
         verify_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts, artifact_bytes)
             .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
     Ok(ReceiptRootMetadata {
+        params_fingerprint: metadata.params_fingerprint,
         relation_id: metadata.relation_id,
         shape_digest: metadata.shape_digest,
         leaf_count: metadata.leaf_count,

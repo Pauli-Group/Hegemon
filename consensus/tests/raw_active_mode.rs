@@ -403,6 +403,7 @@ fn build_receipt_root_block_artifacts(
     let payload = ReceiptRootProofPayload {
         root_proof: built.artifact_bytes.clone(),
         metadata: ReceiptRootMetadata {
+            params_fingerprint: built.metadata.params_fingerprint,
             relation_id: built.metadata.relation_id,
             shape_digest: built.metadata.shape_digest,
             leaf_count: built.metadata.leaf_count,
@@ -448,6 +449,7 @@ fn build_receipt_accumulation_block_artifacts(
     let payload = ReceiptRootProofPayload {
         root_proof: built.artifact_bytes.clone(),
         metadata: ReceiptRootMetadata {
+            params_fingerprint: built.metadata.params_fingerprint,
             relation_id: built.metadata.relation_id,
             shape_digest: built.metadata.shape_digest,
             leaf_count: built.metadata.leaf_count,
@@ -498,6 +500,7 @@ fn build_receipt_arc_whir_block_artifacts(
     let payload = ReceiptRootProofPayload {
         root_proof: built.artifact_bytes.clone(),
         metadata: ReceiptRootMetadata {
+            params_fingerprint: built.metadata.params_fingerprint,
             relation_id: built.metadata.relation_id,
             shape_digest: built.metadata.shape_digest,
             leaf_count: built.metadata.leaf_count,
