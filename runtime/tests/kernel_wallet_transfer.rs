@@ -6,20 +6,12 @@ use runtime::{Kernel, Runtime, RuntimeOrigin, ShieldedPool, System, Timestamp};
 use sp_io::TestExternalities;
 use sp_runtime::traits::ValidateUnsigned;
 use sp_runtime::transaction_validity::TransactionSource;
-use std::sync::{Mutex, OnceLock};
 use tempfile::tempdir;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
 use transaction_circuit::hashing_pq::felts_to_bytes48;
 use wallet::{
     build_transaction, MemoPlaintext, NoteCiphertext, NotePlaintext, Recipient, WalletStore,
 };
-
-fn wallet_artifact_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-}
 
 fn new_ext() -> TestExternalities {
     let spec = runtime::chain_spec::development_config();
@@ -180,13 +172,7 @@ fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
 }
 
 #[test]
-fn kernel_wallet_native_tx_leaf_payload_survives_kernel_validate_and_apply() {
-    let _env_guard = wallet_artifact_env_lock();
-    let previous_mode = std::env::var("HEGEMON_WALLET_TX_ARTIFACT_MODE").ok();
-    unsafe {
-        std::env::set_var("HEGEMON_WALLET_TX_ARTIFACT_MODE", "native_tx_leaf");
-    }
-
+fn kernel_wallet_rejects_non_native_transfer_payload() {
     let mut ext = new_ext();
 
     ext.execute_with(|| {
@@ -202,7 +188,7 @@ fn kernel_wallet_native_tx_leaf_payload_survives_kernel_validate_and_apply() {
 
         seed_wallet_note(&sender, 250_000_000);
 
-        let built = build_transaction(
+        let mut built = build_transaction(
             &sender,
             &[Recipient {
                 address: recipient.primary_address().expect("recipient address"),
@@ -213,6 +199,7 @@ fn kernel_wallet_native_tx_leaf_payload_survives_kernel_validate_and_apply() {
             0,
         )
         .expect("wallet build_transaction");
+        built.bundle.proof_bytes = vec![0xde, 0xad, 0xbe, 0xef];
 
         let ciphertexts = built
             .bundle
@@ -249,26 +236,10 @@ fn kernel_wallet_native_tx_leaf_payload_survives_kernel_validate_and_apply() {
         let validity =
             pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
         assert!(
-            validity.is_ok(),
-            "wallet-built native tx-leaf kernel action should validate"
-        );
-
-        let prior_commitment_index = ShieldedPool::commitment_index();
-        assert_ok!(Kernel::submit_action(RuntimeOrigin::none(), envelope));
-        assert_eq!(
-            ShieldedPool::commitment_index(),
-            prior_commitment_index + built.bundle.commitments.len() as u64
+            validity.is_err(),
+            "runtime must reject non-native transfer payloads"
         );
     });
-
-    match previous_mode {
-        Some(value) => unsafe {
-            std::env::set_var("HEGEMON_WALLET_TX_ARTIFACT_MODE", value);
-        },
-        None => unsafe {
-            std::env::remove_var("HEGEMON_WALLET_TX_ARTIFACT_MODE");
-        },
-    }
 }
 
 #[test]

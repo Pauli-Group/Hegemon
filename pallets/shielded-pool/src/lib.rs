@@ -1546,24 +1546,6 @@ pub mod pallet {
                 }
             }
 
-            let vk = VerifyingKeyStorage::<T>::get();
-            if !vk.enabled {
-                return Err(InvalidTransaction::Custom(6));
-            }
-
-            let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
-            let inputs = ShieldedTransferInputs {
-                anchor: *anchor,
-                nullifiers: nullifiers.clone().into_inner(),
-                commitments: commitments.clone().into_inner(),
-                ciphertext_hashes,
-                balance_slot_asset_ids: *balance_slot_asset_ids,
-                fee,
-                value_balance: 0,
-                stablecoin: stablecoin.clone(),
-            };
-
-            let verifier = T::ProofVerifier::default();
             if let Some(meta) = Self::try_validate_native_tx_leaf_unsigned_action(
                 &proof.data,
                 nullifiers,
@@ -1578,23 +1560,7 @@ pub mod pallet {
             )? {
                 return Ok(meta);
             }
-
-            match verifier.verify_stark(proof, &inputs, &vk) {
-                VerificationResult::Valid => {}
-                _ => return Err(InvalidTransaction::BadProof),
-            }
-            if !verifier.verify_binding_hash(binding_hash, &inputs) {
-                return Err(InvalidTransaction::BadSigner);
-            }
-
-            Ok(ValidActionMeta {
-                priority: 100,
-                longevity: 64,
-                provides: Self::nullifier_tags(nullifiers.as_slice(), false),
-                requires: Vec::new(),
-                propagate: true,
-                source_class: ActionSourceClass::External,
-            })
+            Err(InvalidTransaction::BadProof)
         }
 
         fn try_validate_native_tx_leaf_unsigned_action(
@@ -2172,49 +2138,39 @@ pub mod pallet {
                 value_balance,
                 stablecoin: stablecoin.clone(),
             };
-            let vk = VerifyingKeyStorage::<T>::get();
-            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
             let verifier = T::ProofVerifier::default();
-            let native_applied = matches!(
-                Self::try_validate_native_tx_leaf_unsigned_action(
-                    &proof.data,
-                    &nullifiers,
-                    &commitments,
-                    &ciphertexts,
-                    &anchor,
-                    &balance_slot_asset_ids,
-                    &binding_hash,
-                    &stablecoin,
-                    fee,
-                    version,
-                ),
-                Ok(Some(_))
-            );
-            if !native_applied {
-                match verifier.verify_stark(&proof, &inputs, &vk) {
-                    VerificationResult::Valid => {}
-                    VerificationResult::InvalidProofFormat => {
-                        warn!(target: "shielded-pool", "Invalid proof format for unsigned transfer");
-                        return Err(Error::<T>::InvalidProofFormat.into());
-                    }
-                    VerificationResult::InvalidPublicInputs => {
-                        warn!(target: "shielded-pool", "Invalid public inputs for unsigned transfer");
-                        return Err(Error::<T>::InvalidProofFormat.into());
-                    }
-                    VerificationResult::VerificationFailed => {
-                        warn!(target: "shielded-pool", "Proof verification failed for unsigned transfer");
-                        return Err(Error::<T>::ProofVerificationFailed.into());
-                    }
-                    VerificationResult::KeyNotFound => {
-                        return Err(Error::<T>::VerifyingKeyNotFound.into());
-                    }
-                    _ => return Err(Error::<T>::ProofVerificationFailed.into()),
-                }
-            }
             ensure!(
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
+            match Self::try_validate_native_tx_leaf_unsigned_action(
+                &proof.data,
+                &nullifiers,
+                &commitments,
+                &ciphertexts,
+                &anchor,
+                &balance_slot_asset_ids,
+                &binding_hash,
+                &stablecoin,
+                fee,
+                version,
+            ) {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    warn!(
+                        target: "shielded-pool",
+                        "non-native proof bytes rejected on the shipped transfer path"
+                    );
+                    return Err(Error::<T>::InvalidProofFormat.into());
+                }
+                Err(_) => {
+                    warn!(
+                        target: "shielded-pool",
+                        "native tx-leaf verification failed for unsigned transfer"
+                    );
+                    return Err(Error::<T>::ProofVerificationFailed.into());
+                }
+            }
             Self::record_fee_split(u128::from(fee), required_breakdown)?;
 
             for nf in nullifiers.iter() {

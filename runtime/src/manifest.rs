@@ -79,9 +79,10 @@ pub fn protocol_manifest() -> ProtocolManifest {
         fee_parameters: FeeParameters::default(),
         da_policy: DaAvailabilityPolicy::default(),
         ciphertext_policy: CiphertextPolicy::default(),
-        // Fresh testnets now ship the live InlineTx lane by default:
-        // wallets carry canonical per-tx proof bytes inline and authors bind
-        // the ordered set with the parent-bound commitment proof.
+        // Fresh testnets now ship the direct native tx-artifact lane by default:
+        // wallets carry canonical native tx-leaf bytes on each transfer and
+        // authors/importers verify those per-tx artifacts directly unless an
+        // explicit experimental block-artifact lane is enabled.
         proof_availability_policy: ProofAvailabilityPolicy::InlineRequired,
         stablecoin_policies: vec![StablecoinPolicyManifestEntry {
             asset_id: 1001,

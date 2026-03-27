@@ -788,7 +788,7 @@ where
         let commitment_count = commitments.len();
 
         if proof.is_empty() {
-            return Err("Empty proof provided".to_string());
+            return Err("Empty native tx-leaf artifact provided".to_string());
         }
 
         // Convert nullifiers to BoundedVec
@@ -803,7 +803,7 @@ where
                 .try_into()
                 .map_err(|_| "Failed to convert commitments")?;
 
-        // Decode the pallet ciphertext container for inline unsigned submission.
+        // Decode the pallet ciphertext container for the shipped unsigned transfer path.
         let mut pallet_ciphertexts = Vec::with_capacity(encrypted_notes.len());
         for note_bytes in encrypted_notes {
             let mut cursor = &note_bytes[..];

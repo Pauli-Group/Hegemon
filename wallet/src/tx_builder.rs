@@ -12,7 +12,6 @@ use transaction_circuit::StablecoinPolicyBinding;
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
-use crate::prover::{StarkProver, StarkProverConfig};
 use crate::rpc::TransactionBundle;
 use crate::store::{OutgoingDisclosureDraft, SpendableNote, WalletMode, WalletStore};
 use crate::substrate_rpc::SubstrateRpcClient;
@@ -41,33 +40,6 @@ struct SubmissionProofMaterial {
     value_balance: i128,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WalletTxArtifactMode {
-    InlineTx,
-    NativeTxLeaf,
-}
-
-fn wallet_tx_artifact_mode_from_env() -> WalletTxArtifactMode {
-    let Ok(raw) = std::env::var("HEGEMON_WALLET_TX_ARTIFACT_MODE") else {
-        return WalletTxArtifactMode::InlineTx;
-    };
-    let value = raw.trim();
-    if value.is_empty()
-        || value.eq_ignore_ascii_case("inline_tx")
-        || value.eq_ignore_ascii_case("inline")
-        || value.eq_ignore_ascii_case("stark")
-    {
-        return WalletTxArtifactMode::InlineTx;
-    }
-    if value.eq_ignore_ascii_case("native")
-        || value.eq_ignore_ascii_case("native_tx_leaf")
-        || value.eq_ignore_ascii_case("tx_leaf")
-    {
-        return WalletTxArtifactMode::NativeTxLeaf;
-    }
-    WalletTxArtifactMode::InlineTx
-}
-
 fn balance_slot_asset_ids_from_witness(
     witness: &TransactionWitness,
 ) -> Result<[u64; 4], WalletError> {
@@ -82,65 +54,24 @@ fn balance_slot_asset_ids_from_witness(
 fn submission_proof_material_from_witness(
     witness: &TransactionWitness,
 ) -> Result<SubmissionProofMaterial, WalletError> {
-    match wallet_tx_artifact_mode_from_env() {
-        WalletTxArtifactMode::InlineTx => {
-            let prover = build_stark_prover();
-            let proof_result = prover.prove(witness)?;
-            Ok(SubmissionProofMaterial {
-                proof_bytes: proof_result.proof_bytes,
-                nullifiers: proof_result.nullifiers,
-                commitments: proof_result.commitments,
-                anchor: proof_result.anchor,
-                balance_slot_asset_ids: proof_result.balance_slot_asset_ids,
-                fee: proof_result.fee,
-                value_balance: proof_result.value_balance,
-            })
-        }
-        WalletTxArtifactMode::NativeTxLeaf => {
-            witness.validate().map_err(|err| {
-                WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str()))
-            })?;
-            let public_inputs = witness.public_inputs().map_err(|err| {
-                WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str()))
-            })?;
-            let built = build_native_tx_leaf_artifact_bytes(witness).map_err(|err| {
-                WalletError::Serialization(format!(
-                    "native tx-leaf artifact generation failed: {err}"
-                ))
-            })?;
-            Ok(SubmissionProofMaterial {
-                proof_bytes: built.artifact_bytes,
-                nullifiers: public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
-                commitments: public_inputs.commitments[..witness.outputs.len()].to_vec(),
-                anchor: witness.merkle_root,
-                balance_slot_asset_ids: balance_slot_asset_ids_from_witness(witness)?,
-                fee: witness.fee,
-                value_balance: witness.value_balance,
-            })
-        }
-    }
-}
-
-fn build_stark_prover() -> StarkProver {
-    let fast = std::env::var("HEGEMON_WALLET_PROVER_FAST")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let recursion = std::env::var("HEGEMON_WALLET_PROVER_RECURSION")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-        || std::env::var("HEGEMON_WALLET_PROOF_SIDECAR")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        || std::env::var("HEGEMON_WALLET_DA_SIDECAR")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-    if recursion {
-        StarkProver::new(StarkProverConfig::recursion())
-    } else if fast {
-        StarkProver::new(StarkProverConfig::fast())
-    } else {
-        StarkProver::with_defaults()
-    }
+    witness
+        .validate()
+        .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
+    let public_inputs = witness
+        .public_inputs()
+        .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
+    let built = build_native_tx_leaf_artifact_bytes(witness).map_err(|err| {
+        WalletError::Serialization(format!("native tx-leaf artifact generation failed: {err}"))
+    })?;
+    Ok(SubmissionProofMaterial {
+        proof_bytes: built.artifact_bytes,
+        nullifiers: public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
+        commitments: public_inputs.commitments[..witness.outputs.len()].to_vec(),
+        anchor: witness.merkle_root,
+        balance_slot_asset_ids: balance_slot_asset_ids_from_witness(witness)?,
+        fee: witness.fee,
+        value_balance: witness.value_balance,
+    })
 }
 
 /// Pre-flight check: compute nullifiers for notes and verify none are spent on-chain.
@@ -1301,9 +1232,6 @@ mod tests {
                 .unwrap();
         }
 
-        let original = std::env::var("HEGEMON_WALLET_TX_ARTIFACT_MODE").ok();
-        std::env::set_var("HEGEMON_WALLET_TX_ARTIFACT_MODE", "native_tx_leaf");
-
         let recipient = Recipient {
             address: recipient_store.primary_address().unwrap(),
             value: 100_000_000,
@@ -1311,11 +1239,6 @@ mod tests {
             memo: MemoPlaintext::new(b"native tx leaf".to_vec()),
         };
         let built = build_transaction(&sender, &[recipient], 0).unwrap();
-
-        match original {
-            Some(value) => std::env::set_var("HEGEMON_WALLET_TX_ARTIFACT_MODE", value),
-            None => std::env::remove_var("HEGEMON_WALLET_TX_ARTIFACT_MODE"),
-        }
 
         let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
             .expect("native tx-leaf payload should decode");

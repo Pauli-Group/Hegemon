@@ -1225,7 +1225,7 @@ impl SubstrateRpcClient {
     ///
     /// # Arguments
     ///
-    /// * `bundle` - The transaction bundle containing proof and encrypted notes
+    /// * `bundle` - The transaction bundle containing native tx-leaf artifact bytes and encrypted notes
     ///
     /// # Returns
     ///
@@ -1241,7 +1241,9 @@ impl SubstrateRpcClient {
     ///
     /// This stages ciphertext bytes in the node's pending sidecar pool via
     /// `da_submitCiphertexts`, then submits the corresponding sidecar-flavored
-    /// kernel action through `hegemon_submitAction`.
+    /// kernel action through `hegemon_submitAction`. The shipped proof bytes
+    /// remain native tx-leaf artifact bytes even when ciphertext transport moves
+    /// to the sidecar path.
     pub async fn submit_shielded_transfer_unsigned_sidecar(
         &self,
         bundle: &TransactionBundle,
