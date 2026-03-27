@@ -51,6 +51,7 @@ pub use proof::{
     build_experimental_native_receipt_root_artifact, build_experimental_receipt_arc_whir_artifact,
     build_experimental_receipt_root_artifact, build_experimental_receipt_root_artifact_from_proofs,
     clear_verified_native_tx_leaf_store, commitment_nullifier_lists,
+    experimental_native_receipt_root_params_fingerprint,
     experimental_native_receipt_root_verifier_profile,
     experimental_native_tx_leaf_verifier_profile, experimental_receipt_accumulation_artifact_kind,
     experimental_receipt_accumulation_verifier_profile,

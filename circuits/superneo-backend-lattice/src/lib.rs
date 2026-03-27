@@ -31,37 +31,112 @@ impl RingProfile {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct BackendManifest {
+    pub family_label: &'static str,
+    pub commitment_scheme_label: &'static str,
+    pub challenge_schedule_label: &'static str,
+    pub maturity_label: &'static str,
+}
+
+impl BackendManifest {
+    pub fn heuristic_goldilocks_baseline() -> Self {
+        Self {
+            family_label: "heuristic_goldilocks_baseline",
+            commitment_scheme_label: "ajtai_linear_masked_commitment",
+            challenge_schedule_label: "single_goldilocks_fs_challenge",
+            maturity_label: "experimental_baseline",
+        }
+    }
+
+    pub fn goldilocks_128b_rewrite() -> Self {
+        Self {
+            family_label: "goldilocks_128b_rewrite",
+            commitment_scheme_label: "neo_class_linear_commitment_128b_masking",
+            challenge_schedule_label: "triple_goldilocks_fs_challenge_negacyclic_mix",
+            maturity_label: "rewrite_candidate",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct NativeBackendParams {
+    pub manifest: BackendManifest,
     pub security_bits: u32,
     pub ring_profile: RingProfile,
     pub matrix_rows: usize,
     pub matrix_cols: usize,
     pub challenge_bits: u32,
+    pub fold_challenge_count: u32,
     pub max_fold_arity: u32,
     pub transcript_domain_label: &'static str,
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
-    pub version_tag: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeSecurityEnvelope {
+    pub claimed_security_bits: u32,
+    pub challenge_bits: u32,
+    pub fold_challenge_count: u32,
+    pub transcript_soundness_bits: u32,
+    pub opening_randomness_bits: u32,
+    pub opening_hiding_bits: u32,
+    pub commitment_binding_bits: u32,
+    pub soundness_floor_bits: u32,
+    pub assumption_label: &'static str,
 }
 
 impl NativeBackendParams {
-    pub fn hardened_v3() -> Self {
+    pub fn heuristic_goldilocks_baseline() -> Self {
         Self {
+            manifest: BackendManifest::heuristic_goldilocks_baseline(),
             security_bits: 63,
             ring_profile: RingProfile::GoldilocksCyclotomic24,
             matrix_rows: 8,
             matrix_cols: 8,
             challenge_bits: 63,
+            fold_challenge_count: 1,
             max_fold_arity: 2,
             transcript_domain_label: "hegemon.superneo.fold.v1",
             decomposition_bits: 8,
             opening_randomness_bits: 16,
-            version_tag: "native-backend-v3",
+        }
+    }
+
+    pub fn goldilocks_128b_rewrite() -> Self {
+        Self {
+            manifest: BackendManifest::goldilocks_128b_rewrite(),
+            security_bits: 128,
+            ring_profile: RingProfile::GoldilocksCyclotomic24,
+            matrix_rows: 8,
+            matrix_cols: 8,
+            challenge_bits: 63,
+            fold_challenge_count: 3,
+            max_fold_arity: 2,
+            transcript_domain_label: "hegemon.superneo.fold.v3",
+            decomposition_bits: 8,
+            opening_randomness_bits: 128,
         }
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.manifest.family_label.is_empty(),
+            "manifest.family_label must be non-empty"
+        );
+        ensure!(
+            !self.manifest.commitment_scheme_label.is_empty(),
+            "manifest.commitment_scheme_label must be non-empty"
+        );
+        ensure!(
+            !self.manifest.challenge_schedule_label.is_empty(),
+            "manifest.challenge_schedule_label must be non-empty"
+        );
+        ensure!(
+            !self.manifest.maturity_label.is_empty(),
+            "manifest.maturity_label must be non-empty"
+        );
         ensure!(
             self.matrix_rows > 0,
             "matrix_rows must be strictly positive"
@@ -75,8 +150,12 @@ impl NativeBackendParams {
             "challenge_bits must be in 1..=63"
         );
         ensure!(
-            self.security_bits > 0 && self.security_bits <= self.challenge_bits,
-            "security_bits must be in 1..=challenge_bits"
+            (1..=4).contains(&self.fold_challenge_count),
+            "fold_challenge_count must be in 1..=4"
+        );
+        ensure!(
+            self.security_bits > 0,
+            "security_bits must be strictly positive"
         );
         ensure!(
             self.max_fold_arity == 2,
@@ -91,10 +170,89 @@ impl NativeBackendParams {
             "decomposition_bits must be in 1..=16"
         );
         ensure!(
-            self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 32,
-            "opening_randomness_bits must be in 1..=32"
+            self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
+            "opening_randomness_bits must be in 1..=256"
+        );
+        let envelope = self.security_envelope()?;
+        ensure!(
+            self.security_bits <= envelope.soundness_floor_bits,
+            "security_bits {} exceeds native backend soundness floor {} under {}",
+            self.security_bits,
+            envelope.soundness_floor_bits,
+            envelope.assumption_label
         );
         Ok(())
+    }
+
+    pub fn security_envelope(&self) -> Result<NativeSecurityEnvelope> {
+        ensure!(
+            (1..=63).contains(&self.challenge_bits),
+            "challenge_bits must be in 1..=63"
+        );
+        ensure!(
+            (1..=4).contains(&self.fold_challenge_count),
+            "fold_challenge_count must be in 1..=4"
+        );
+        ensure!(
+            self.max_fold_arity == 2,
+            "binary fold backend requires max_fold_arity == 2"
+        );
+        ensure!(
+            self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
+            "opening_randomness_bits must be in 1..=256"
+        );
+
+        let fold_challenge_count = self.fold_challenge_count;
+        let transcript_soundness_bits = self
+            .challenge_bits
+            .saturating_mul(fold_challenge_count)
+            .min(128);
+        let opening_hiding_bits = self.opening_randomness_bits.min(128);
+        let commitment_binding_bits = match (
+            self.manifest.family_label,
+            self.manifest.commitment_scheme_label,
+        ) {
+            ("heuristic_goldilocks_baseline", "ajtai_linear_masked_commitment") => 63,
+            ("goldilocks_128b_rewrite", "neo_class_linear_commitment_128b_masking") => 128,
+            _ => opening_hiding_bits.min(transcript_soundness_bits),
+        };
+        let soundness_floor_bits = transcript_soundness_bits
+            .min(opening_hiding_bits)
+            .min(commitment_binding_bits);
+        let assumption_label = match (
+            self.manifest.family_label,
+            self.manifest.challenge_schedule_label,
+            fold_challenge_count,
+        ) {
+            (
+                "heuristic_goldilocks_baseline",
+                "single_goldilocks_fs_challenge",
+                1,
+            ) => {
+                "heuristic_goldilocks_baseline: single transcript-derived fold challenge over Goldilocks; commitment binding remains heuristic for this in-repo backend"
+            }
+            (
+                "goldilocks_128b_rewrite",
+                "triple_goldilocks_fs_challenge_negacyclic_mix",
+                3,
+            ) => {
+                "goldilocks_128b_rewrite: three independent transcript-derived Goldilocks challenges mixed through a negacyclic linear fold, 128-bit canonical opening entropy, and a Neo-class linear-commitment binding assumption for this in-repo backend"
+            }
+            _ => {
+                "custom native backend schedule: transcript-derived multi-challenge fold with explicit opening entropy and a family-owned linear-commitment binding assumption"
+            }
+        };
+        Ok(NativeSecurityEnvelope {
+            claimed_security_bits: self.security_bits,
+            challenge_bits: self.challenge_bits,
+            fold_challenge_count,
+            transcript_soundness_bits,
+            opening_randomness_bits: self.opening_randomness_bits,
+            opening_hiding_bits,
+            commitment_binding_bits,
+            soundness_floor_bits,
+            assumption_label,
+        })
     }
 
     pub fn security_params(&self) -> SecurityParams {
@@ -108,23 +266,27 @@ impl NativeBackendParams {
     pub fn parameter_fingerprint(&self) -> [u8; 48] {
         let mut hasher = Hasher::new();
         hasher.update(b"hegemon.superneo.native-backend-params.v2");
+        hasher.update(self.manifest.family_label.as_bytes());
+        hasher.update(self.manifest.commitment_scheme_label.as_bytes());
+        hasher.update(self.manifest.challenge_schedule_label.as_bytes());
+        hasher.update(self.manifest.maturity_label.as_bytes());
         hasher.update(&self.security_bits.to_le_bytes());
         hasher.update(self.ring_profile.label());
         hasher.update(&(self.matrix_rows as u64).to_le_bytes());
         hasher.update(&(self.matrix_cols as u64).to_le_bytes());
         hasher.update(&self.challenge_bits.to_le_bytes());
+        hasher.update(&self.fold_challenge_count.to_le_bytes());
         hasher.update(&self.max_fold_arity.to_le_bytes());
         hasher.update(self.transcript_domain_label.as_bytes());
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
-        hasher.update(self.version_tag.as_bytes());
         hash48(hasher)
     }
 
     pub fn artifact_version(&self, artifact_label: &[u8]) -> u16 {
         let mut hasher = Hasher::new();
         hasher.update(b"hegemon.superneo.native-artifact-version.v1");
-        hasher.update(self.version_tag.as_bytes());
+        hasher.update(self.manifest.family_label.as_bytes());
         hasher.update(artifact_label);
         hasher.update(&self.parameter_fingerprint());
         let mut bytes = [0u8; 2];
@@ -148,7 +310,7 @@ impl NativeBackendParams {
 
 impl Default for NativeBackendParams {
     fn default() -> Self {
-        Self::hardened_v3()
+        Self::goldilocks_128b_rewrite()
     }
 }
 
@@ -295,6 +457,7 @@ pub struct BackendKey {
     pub shape_digest: ShapeDigest,
     pub security_bits: u32,
     pub challenge_bits: u32,
+    pub fold_challenge_count: u32,
     pub max_fold_arity: u32,
     pub transcript_domain_digest: [u8; 32],
     pub ring_profile: RingProfile,
@@ -340,7 +503,7 @@ pub struct FoldDigestProof {
         deserialize_with = "deserialize_fixed_bytes_48"
     )]
     pub params_fingerprint: [u8; 48],
-    pub challenge: u64,
+    pub challenges: Vec<u64>,
     pub parent_statement_digest: StatementDigest,
     #[serde(
         serialize_with = "serialize_fixed_bytes_48",
@@ -476,7 +639,8 @@ impl LeafDigestProof {
 
 impl FoldDigestProof {
     pub fn byte_size(&self) -> usize {
-        48 + 8
+        48 + 4
+            + (self.challenges.len() * 8)
             + StatementDigest::BYTES
             + LatticeCommitment::DIGEST_BYTES
             + 4
@@ -518,8 +682,8 @@ impl LatticeBackend {
         ensure!(
             params == &self.params,
             "backend parameter mismatch: backend is configured for {} but caller requested {}",
-            self.params.version_tag,
-            params.version_tag
+            self.params.manifest.family_label,
+            params.manifest.family_label
         );
         Ok(())
     }
@@ -613,6 +777,11 @@ impl NativeCommitmentScheme for LatticeBackend {
             opening.params_fingerprint == params.parameter_fingerprint(),
             "commitment opening parameter fingerprint mismatch"
         );
+        ensure!(
+            opening.randomness_seed
+                == canonicalize_opening_randomness_seed(params, opening.randomness_seed),
+            "commitment opening randomness seed is not canonical for configured entropy"
+        );
         let expected_digest =
             commitment_opening_digest(params, &opening.packed_witness, &opening.randomness_seed);
         ensure!(
@@ -670,6 +839,7 @@ impl Backend<Goldilocks> for LatticeBackend {
             shape_digest: digest_shape(shape),
             security_bits: self.params.security_bits,
             challenge_bits: self.params.challenge_bits,
+            fold_challenge_count: self.params.fold_challenge_count,
             max_fold_arity: self.params.max_fold_arity,
             transcript_domain_digest: digest32_with_label(
                 b"hegemon.superneo.transcript-domain.v1",
@@ -753,18 +923,18 @@ impl Backend<Goldilocks> for LatticeBackend {
         right: &FoldedInstance<Self::Commitment>,
     ) -> Result<(FoldedInstance<Self::Commitment>, Self::FoldProof)> {
         validate_fold_pair(left, right)?;
-        let challenge = derive_fold_challenge(pk, left, right);
+        let challenges = derive_fold_challenges(pk, left, right);
         let fold_start = Instant::now();
         let parent_rows = fold_commitment_rows(
             &left.witness_commitment,
             &right.witness_commitment,
-            challenge,
+            &challenges,
         )?;
         let parent_commitment = LatticeCommitment::from_rows(parent_rows.clone());
         let parent_statement_digest = fold_statement_digest(
             &left.statement_digest,
             &right.statement_digest,
-            challenge,
+            &challenges,
             &parent_commitment.digest,
         );
         let proof_digest = fold_proof_digest(
@@ -772,13 +942,13 @@ impl Backend<Goldilocks> for LatticeBackend {
             &left.relation_id,
             left,
             right,
-            challenge,
+            &challenges,
             &parent_statement_digest,
             &parent_rows,
         );
         let proof = FoldDigestProof {
             params_fingerprint: pk.params_fingerprint,
-            challenge,
+            challenges: challenges.clone(),
             parent_statement_digest,
             parent_commitment_digest: parent_commitment.digest,
             parent_rows: parent_rows.clone(),
@@ -830,16 +1000,16 @@ impl Backend<Goldilocks> for LatticeBackend {
             "parent shape digest does not match folded children"
         );
 
-        let expected_challenge = derive_fold_challenge(vk, left, right);
+        let expected_challenges = derive_fold_challenges(vk, left, right);
         ensure!(
-            proof.challenge == expected_challenge,
-            "fold challenge mismatch"
+            proof.challenges == expected_challenges,
+            "fold challenge vector mismatch"
         );
 
         let expected_rows = fold_commitment_rows(
             &left.witness_commitment,
             &right.witness_commitment,
-            expected_challenge,
+            &expected_challenges,
         )?;
         ensure!(
             proof.parent_rows == expected_rows,
@@ -864,7 +1034,7 @@ impl Backend<Goldilocks> for LatticeBackend {
         let expected_statement_digest = fold_statement_digest(
             &left.statement_digest,
             &right.statement_digest,
-            expected_challenge,
+            &expected_challenges,
             &expected_commitment.digest,
         );
         ensure!(
@@ -881,7 +1051,7 @@ impl Backend<Goldilocks> for LatticeBackend {
             &left.relation_id,
             left,
             right,
-            expected_challenge,
+            &expected_challenges,
             &expected_statement_digest,
             &expected_rows,
         );
@@ -1092,6 +1262,7 @@ fn commit_with_seed(
     randomness_seed: [u8; 32],
 ) -> Result<(LatticeCommitment, CommitmentOpening)> {
     params.validate()?;
+    let randomness_seed = canonicalize_opening_randomness_seed(params, randomness_seed);
     let key = native_commitment_key(params);
     let ring_message =
         embed_packed_witness_with_layout(params.ring_degree(), params.digit_bits(), packed)?;
@@ -1114,6 +1285,7 @@ fn native_commitment_key(params: &NativeBackendParams) -> BackendKey {
         shape_digest: ShapeDigest([0u8; 32]),
         security_bits: params.security_bits,
         challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
         max_fold_arity: params.max_fold_arity,
         transcript_domain_digest: digest32_with_label(
             b"hegemon.superneo.native-commitment-domain.v1",
@@ -1131,11 +1303,7 @@ fn derive_randomizer_rows(
     params: &NativeBackendParams,
     randomness_seed: [u8; 32],
 ) -> Vec<RingElem> {
-    let randomness_mask = if params.opening_randomness_bits >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << params.opening_randomness_bits) - 1
-    };
+    let canonical_seed = canonicalize_opening_randomness_seed(params, randomness_seed);
     (0..params.matrix_rows)
         .map(|row_index| {
             let coeffs = (0..params.ring_degree())
@@ -1143,12 +1311,13 @@ fn derive_randomizer_rows(
                     let mut hasher = Hasher::new();
                     hasher.update(b"hegemon.superneo.commitment-randomizer.v1");
                     hasher.update(&params.parameter_fingerprint());
-                    hasher.update(&randomness_seed);
+                    hasher.update(&canonical_seed);
                     hasher.update(&(row_index as u64).to_le_bytes());
                     hasher.update(&(coeff_index as u64).to_le_bytes());
-                    let mut out = [0u8; 8];
+                    let mut out = [0u8; 16];
                     hasher.finalize_xof().fill(&mut out);
-                    Goldilocks::new(u64::from_le_bytes(out) & randomness_mask).as_canonical_u64()
+                    let sample = u128::from_le_bytes(out);
+                    reduce_goldilocks_u128(sample)
                 })
                 .collect();
             RingElem::from_coeffs(coeffs)
@@ -1167,7 +1336,9 @@ fn add_ring_rows(left: &[RingElem], right: &[RingElem]) -> Result<Vec<RingElem>>
     let rows = left
         .iter()
         .zip(right)
-        .map(|(left_row, right_row)| delayed_linear_combine(left_row, right_row, 1, &mut stats))
+        .map(|(left_row, right_row)| {
+            delayed_linear_combine_with_schedule(left_row, right_row, &[1], &mut stats)
+        })
         .collect::<Result<Vec<_>>>()?;
     flush_kernel_stats(&stats);
     Ok(rows)
@@ -1178,6 +1349,7 @@ fn commitment_opening_digest(
     packed: &PackedWitness<u64>,
     randomness_seed: &[u8; 32],
 ) -> [u8; 48] {
+    let randomness_seed = canonicalize_opening_randomness_seed(params, *randomness_seed);
     let mut hasher = Hasher::new();
     hasher.update(b"hegemon.superneo.commitment-opening.v1");
     hasher.update(&params.parameter_fingerprint());
@@ -1192,8 +1364,28 @@ fn commitment_opening_digest(
         hasher.update(&width.to_le_bytes());
     }
     hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
-    hasher.update(randomness_seed);
+    hasher.update(&randomness_seed);
     hash48(hasher)
+}
+
+fn canonicalize_opening_randomness_seed(
+    params: &NativeBackendParams,
+    randomness_seed: [u8; 32],
+) -> [u8; 32] {
+    let allowed_bits = params.opening_randomness_bits.min(256) as usize;
+    if allowed_bits >= 256 {
+        return randomness_seed;
+    }
+    let mut canonical = [0u8; 32];
+    let full_bytes = allowed_bits / 8;
+    let partial_bits = allowed_bits % 8;
+    if full_bytes > 0 {
+        canonical[..full_bytes].copy_from_slice(&randomness_seed[..full_bytes]);
+    }
+    if partial_bits > 0 && full_bytes < canonical.len() {
+        canonical[full_bytes] = randomness_seed[full_bytes] & ((1u8 << partial_bits) - 1);
+    }
+    canonical
 }
 
 fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem {
@@ -1263,6 +1455,7 @@ fn prepared_matrix_cache_key(pk: &BackendKey, message_len: usize) -> [u8; 32] {
     material.extend_from_slice(pk.ring_profile.label());
     material.extend_from_slice(&pk.security_bits.to_le_bytes());
     material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    material.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
     material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
     material.extend_from_slice(&pk.transcript_domain_digest);
     material.extend_from_slice(&(pk.commitment_rows as u64).to_le_bytes());
@@ -1286,46 +1479,47 @@ fn digest_commitment_rows(rows: &[RingElem]) -> [u8; 48] {
     hash48(hasher)
 }
 
-fn derive_fold_challenge(
+fn derive_fold_challenges(
     pk: &BackendKey,
     left: &FoldedInstance<LatticeCommitment>,
     right: &FoldedInstance<LatticeCommitment>,
-) -> u64 {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-challenge.v2");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(pk.ring_profile.label());
-    hasher.update(&pk.shape_digest.0);
-    hasher.update(&left.relation_id.0);
-    hasher.update(&pk.security_bits.to_le_bytes());
-    hasher.update(&pk.challenge_bits.to_le_bytes());
-    hasher.update(&pk.max_fold_arity.to_le_bytes());
-    hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
-    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
-    hasher.update(&pk.digit_bits.to_le_bytes());
-    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
-    hasher.update(&left.statement_digest.0);
-    hasher.update(&right.statement_digest.0);
-    hasher.update(&left.witness_commitment.digest);
-    hasher.update(&right.witness_commitment.digest);
-    let mut out = [0u8; 8];
-    hasher.finalize_xof().fill(&mut out);
-    let raw = u64::from_le_bytes(out);
-    let mask_bits = pk.challenge_bits.min(63);
-    let modulus = 1u64 << mask_bits;
-    let reduced = if modulus <= 1 {
-        1
-    } else {
-        (raw % (modulus - 1)) + 1
-    };
-    Goldilocks::new(reduced).as_canonical_u64()
+) -> Vec<u64> {
+    let mut transcript = Vec::with_capacity(48 + 32 + 32 + 48 + 48 + 64);
+    transcript.extend_from_slice(&pk.params_fingerprint);
+    transcript.extend_from_slice(pk.ring_profile.label());
+    transcript.extend_from_slice(&pk.shape_digest.0);
+    transcript.extend_from_slice(&left.relation_id.0);
+    transcript.extend_from_slice(&pk.security_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
+    transcript.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
+    transcript.extend_from_slice(&pk.transcript_domain_digest);
+    transcript.extend_from_slice(&(pk.commitment_rows as u64).to_le_bytes());
+    transcript.extend_from_slice(&(pk.ring_degree as u64).to_le_bytes());
+    transcript.extend_from_slice(&pk.digit_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
+    transcript.extend_from_slice(&left.statement_digest.0);
+    transcript.extend_from_slice(&right.statement_digest.0);
+    transcript.extend_from_slice(&left.witness_commitment.digest);
+    transcript.extend_from_slice(&right.witness_commitment.digest);
+
+    (0..pk.fold_challenge_count as usize)
+        .map(|challenge_index| {
+            let mut hasher = Hasher::new();
+            hasher.update(b"hegemon.superneo.fold-challenge.v3");
+            hasher.update(&transcript);
+            hasher.update(&(challenge_index as u64).to_le_bytes());
+            let mut out = [0u8; 8];
+            hasher.finalize_xof().fill(&mut out);
+            reduce_fold_challenge(pk.challenge_bits, u64::from_le_bytes(out))
+        })
+        .collect()
 }
 
 fn fold_commitment_rows(
     left: &LatticeCommitment,
     right: &LatticeCommitment,
-    challenge: u64,
+    challenges: &[u64],
 ) -> Result<Vec<RingElem>> {
     ensure!(
         !left.rows.is_empty() && !right.rows.is_empty(),
@@ -1335,38 +1529,82 @@ fn fold_commitment_rows(
         left.rows.len() == right.rows.len(),
         "folded commitments must have the same row length"
     );
+    ensure!(
+        !challenges.is_empty(),
+        "folded commitments require at least one challenge"
+    );
     let mut stats = KernelLocalStats::default();
     let rows = left
         .rows
         .iter()
         .zip(&right.rows)
         .map(|(left_row, right_row)| {
-            delayed_linear_combine(left_row, right_row, challenge, &mut stats)
+            delayed_linear_combine_with_schedule(left_row, right_row, challenges, &mut stats)
         })
         .collect::<Result<Vec<_>>>()?;
     flush_kernel_stats(&stats);
     Ok(rows)
 }
 
-fn delayed_linear_combine(
+fn delayed_linear_combine_with_schedule(
     left: &RingElem,
     right: &RingElem,
-    challenge: u64,
+    challenges: &[u64],
     stats: &mut KernelLocalStats,
 ) -> Result<RingElem> {
     ensure!(
         left.coeffs.len() == right.coeffs.len(),
         "cannot combine ring elements with different degrees"
     );
+    ensure!(
+        !challenges.is_empty(),
+        "fold schedule must contain at least one challenge"
+    );
     stats.delayed_reduction_batches += 1;
-    let challenge_bits = operand_bit_width(challenge);
     let mut coeffs = Vec::with_capacity(left.coeffs.len());
-    for (left_coeff, right_coeff) in left.coeffs.iter().zip(&right.coeffs) {
-        classify_mul_widths(challenge_bits, operand_bit_width(*right_coeff), 1, stats);
-        let value = i128::from(*left_coeff) + i128::from(challenge) * i128::from(*right_coeff);
-        coeffs.push(reduce_goldilocks_signed(value));
+    for (coeff_index, left_coeff) in left.coeffs.iter().enumerate() {
+        let mut value = Goldilocks::new(*left_coeff);
+        for (rotation, challenge) in challenges.iter().copied().enumerate() {
+            let right_coeff = negacyclic_rotated_coeff(right, coeff_index, rotation);
+            classify_mul_widths(
+                operand_bit_width(challenge),
+                operand_bit_width(right_coeff.unsigned_abs() as u64),
+                1,
+                stats,
+            );
+            value += Goldilocks::new(challenge) * goldilocks_from_signed(right_coeff);
+        }
+        coeffs.push(value.as_canonical_u64());
     }
     Ok(RingElem::from_coeffs(coeffs))
+}
+
+fn negacyclic_rotated_coeff(row: &RingElem, coeff_index: usize, rotation: usize) -> i128 {
+    let degree = row.coeffs.len();
+    let source_index = coeff_index + rotation;
+    let wraps = source_index / degree;
+    let index = source_index % degree;
+    let coeff = i128::from(row.coeffs[index]);
+    if wraps % 2 == 0 {
+        coeff
+    } else {
+        -coeff
+    }
+}
+
+fn reduce_fold_challenge(challenge_bits: u32, raw: u64) -> u64 {
+    let mask_bits = challenge_bits.min(63);
+    let modulus = 1u64 << mask_bits;
+    let reduced = if modulus <= 1 {
+        1
+    } else {
+        (raw % (modulus - 1)) + 1
+    };
+    Goldilocks::new(reduced).as_canonical_u64()
+}
+
+fn goldilocks_from_signed(value: i128) -> Goldilocks {
+    Goldilocks::new(reduce_goldilocks_signed(value))
 }
 
 fn classify_mul_widths(left_bits: u16, right_bits: u16, count: u64, stats: &mut KernelLocalStats) {
@@ -1415,12 +1653,15 @@ fn leaf_proof_digest(
 fn fold_statement_digest(
     left: &StatementDigest,
     right: &StatementDigest,
-    challenge: u64,
+    challenges: &[u64],
     parent_commitment_digest: &[u8; 48],
 ) -> StatementDigest {
     let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-statement.v2");
-    hasher.update(&challenge.to_le_bytes());
+    hasher.update(b"hegemon.superneo.fold-statement.v3");
+    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    for challenge in challenges {
+        hasher.update(&challenge.to_le_bytes());
+    }
     hasher.update(&left.0);
     hasher.update(&right.0);
     hasher.update(parent_commitment_digest);
@@ -1432,25 +1673,29 @@ fn fold_proof_digest(
     relation_id: &RelationId,
     left: &FoldedInstance<LatticeCommitment>,
     right: &FoldedInstance<LatticeCommitment>,
-    challenge: u64,
+    challenges: &[u64],
     parent_statement_digest: &StatementDigest,
     parent_rows: &[RingElem],
 ) -> [u8; 48] {
     let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-proof.v2");
+    hasher.update(b"hegemon.superneo.fold-proof.v3");
     hasher.update(&pk.params_fingerprint);
     hasher.update(pk.ring_profile.label());
     hasher.update(&pk.shape_digest.0);
     hasher.update(&relation_id.0);
     hasher.update(&pk.security_bits.to_le_bytes());
     hasher.update(&pk.challenge_bits.to_le_bytes());
+    hasher.update(&pk.fold_challenge_count.to_le_bytes());
     hasher.update(&pk.max_fold_arity.to_le_bytes());
     hasher.update(&pk.transcript_domain_digest);
     hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
     hasher.update(&(pk.ring_degree as u64).to_le_bytes());
     hasher.update(&pk.digit_bits.to_le_bytes());
     hasher.update(&pk.opening_randomness_bits.to_le_bytes());
-    hasher.update(&challenge.to_le_bytes());
+    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    for challenge in challenges {
+        hasher.update(&challenge.to_le_bytes());
+    }
     hasher.update(&left.statement_digest.0);
     hasher.update(&right.statement_digest.0);
     hasher.update(&left.witness_commitment.digest);
@@ -1524,6 +1769,10 @@ fn reduce_goldilocks_signed(value: i128) -> u64 {
     reduced as u64
 }
 
+fn reduce_goldilocks_u128(value: u128) -> u64 {
+    (value % (GOLDILOCKS_MODULUS_I128 as u128)) as u64
+}
+
 fn operand_bit_width(value: u64) -> u16 {
     let width = u64::BITS - value.leading_zeros();
     width.max(1) as u16
@@ -1561,8 +1810,9 @@ mod tests {
 
     use super::{
         clear_prepared_matrix_cache, reset_kernel_cost_report, take_kernel_cost_report,
-        LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
-        PreparedCommitmentMatrix, PreparedMatrixCache, RingElem, RingProfile,
+        BackendManifest, LatticeBackend, LatticeCommitment, NativeBackendParams,
+        NativeCommitmentScheme, PreparedCommitmentMatrix, PreparedMatrixCache, RingElem,
+        RingProfile,
     };
     use std::sync::Arc;
 
@@ -1795,11 +2045,28 @@ mod tests {
 
         let wrong_params = NativeBackendParams {
             opening_randomness_bits: 12,
-            version_tag: "native-backend-v3-alt",
             ..params.clone()
         };
         assert!(backend
             .verify_opening(&wrong_params, &commitment, &opening)
+            .is_err());
+    }
+
+    #[test]
+    fn native_commitment_opening_rejects_noncanonical_randomness_seed() {
+        let backend = LatticeBackend::new(NativeBackendParams::default());
+        let params = backend.native_params().clone();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let assignment = Assignment {
+            witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
+        };
+        let packed = packer.pack(&shape(), &assignment).unwrap();
+        let (commitment, opening) = backend.commit(&params, &packed).unwrap();
+
+        let mut noncanonical = opening.clone();
+        noncanonical.randomness_seed[31] ^= 0x80;
+        assert!(backend
+            .verify_opening(&params, &commitment, &noncanonical)
             .is_err());
     }
 
@@ -1982,7 +2249,7 @@ mod tests {
         let params = NativeBackendParams {
             security_bits: 20,
             challenge_bits: 20,
-            version_tag: "native-backend-v3-challenge-test",
+            fold_challenge_count: 2,
             ..NativeBackendParams::default()
         };
         let backend = LatticeBackend::new(params);
@@ -2012,13 +2279,16 @@ mod tests {
                     pk.commitment_rows
                 ]),
             };
-            let challenge = super::derive_fold_challenge(&pk, &left, &right);
-            if challenge > u16::MAX as u64 {
+            let challenges = super::derive_fold_challenges(&pk, &left, &right);
+            if challenges
+                .iter()
+                .any(|challenge| *challenge > u16::MAX as u64)
+            {
                 return;
             }
         }
 
-        panic!("configured 20-bit fold challenge never exceeded 16 bits");
+        panic!("configured 20-bit fold challenges never exceeded 16 bits");
     }
 
     #[test]
@@ -2036,9 +2306,20 @@ mod tests {
     #[test]
     fn parameter_fingerprint_covers_security_regime() {
         let base = NativeBackendParams::default();
+        let different_manifest = NativeBackendParams {
+            manifest: BackendManifest {
+                family_label: "heuristic_goldilocks_baseline_alt",
+                ..base.manifest
+            },
+            ..base.clone()
+        };
+        assert_ne!(
+            base.parameter_fingerprint(),
+            different_manifest.parameter_fingerprint()
+        );
+
         let different_arity = NativeBackendParams {
             max_fold_arity: 4,
-            version_tag: "native-backend-v3-arity-test",
             ..base.clone()
         };
         assert_ne!(
@@ -2048,12 +2329,60 @@ mod tests {
 
         let different_domain = NativeBackendParams {
             transcript_domain_label: "hegemon.superneo.fold.alt",
-            version_tag: "native-backend-v3-domain-test",
             ..base
         };
         assert_ne!(
             NativeBackendParams::default().parameter_fingerprint(),
             different_domain.parameter_fingerprint()
         );
+    }
+
+    #[test]
+    fn heuristic_goldilocks_baseline_security_envelope_matches_current_floor() {
+        let envelope = NativeBackendParams::heuristic_goldilocks_baseline()
+            .security_envelope()
+            .unwrap();
+        assert_eq!(envelope.claimed_security_bits, 63);
+        assert_eq!(envelope.challenge_bits, 63);
+        assert_eq!(envelope.fold_challenge_count, 1);
+        assert_eq!(envelope.transcript_soundness_bits, 63);
+        assert_eq!(envelope.opening_hiding_bits, 16);
+        assert_eq!(envelope.commitment_binding_bits, 63);
+        assert_eq!(envelope.soundness_floor_bits, 16);
+        assert!(envelope
+            .assumption_label
+            .contains("single transcript-derived fold challenge"));
+    }
+
+    #[test]
+    fn rewrite_128b_security_envelope_matches_current_floor() {
+        let envelope = NativeBackendParams::goldilocks_128b_rewrite()
+            .security_envelope()
+            .unwrap();
+        assert_eq!(envelope.claimed_security_bits, 128);
+        assert_eq!(envelope.challenge_bits, 63);
+        assert_eq!(envelope.fold_challenge_count, 3);
+        assert_eq!(envelope.transcript_soundness_bits, 128);
+        assert_eq!(envelope.opening_hiding_bits, 128);
+        assert_eq!(envelope.commitment_binding_bits, 128);
+        assert_eq!(envelope.soundness_floor_bits, 128);
+        assert!(envelope
+            .assumption_label
+            .contains("three independent transcript-derived Goldilocks challenges"));
+    }
+
+    #[test]
+    fn validate_rejects_security_target_above_soundness_floor() {
+        let params = NativeBackendParams {
+            security_bits: 129,
+            ..NativeBackendParams::goldilocks_128b_rewrite()
+        };
+        let error = params
+            .validate()
+            .expect_err("overclaimed security must fail");
+        let message = error.to_string();
+        assert!(message.contains("exceeds native backend soundness floor"));
+        assert!(message.contains("129"));
+        assert!(message.contains("128"));
     }
 }

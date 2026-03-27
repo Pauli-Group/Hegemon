@@ -2732,6 +2732,111 @@ fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     PreparedArtifactSelector::inline_tx()
 }
 
+fn truthy_env_var(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+    let value = raw.trim();
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("0")
+        || value.eq_ignore_ascii_case("false")
+        || value.eq_ignore_ascii_case("no")
+        || value.eq_ignore_ascii_case("off")
+    {
+        return false;
+    }
+    if value.eq_ignore_ascii_case("1")
+        || value.eq_ignore_ascii_case("true")
+        || value.eq_ignore_ascii_case("yes")
+        || value.eq_ignore_ascii_case("on")
+    {
+        return true;
+    }
+    tracing::warn!(
+        env = name,
+        value,
+        "unrecognized boolean environment override; treating as disabled"
+    );
+    false
+}
+
+fn native_only_receipt_root_required_from_env() -> bool {
+    truthy_env_var("HEGEMON_REQUIRE_NATIVE")
+}
+
+fn ensure_native_only_receipt_root_selector(
+    selector: PreparedArtifactSelector,
+) -> Result<(), String> {
+    if !native_only_receipt_root_required_from_env() {
+        return Ok(());
+    }
+    if selector != PreparedArtifactSelector::receipt_root() {
+        return Err(format!(
+            "HEGEMON_REQUIRE_NATIVE=1 requires HEGEMON_BLOCK_PROOF_MODE=receipt_root; got legacy_mode {:?}, proof_kind {:?}, verifier_profile {}",
+            selector.legacy_mode,
+            selector.proof_kind,
+            hex::encode(selector.verifier_profile),
+        ));
+    }
+    tracing::info!("native-only receipt_root lane selected");
+    Ok(())
+}
+
+fn ensure_native_only_receipt_root_outcome(
+    outcome: &PreparedAggregationOutcome,
+) -> Result<(), String> {
+    if !native_only_receipt_root_required_from_env() {
+        return Ok(());
+    }
+    let report = outcome.native_selection_report.as_ref().ok_or_else(|| {
+        "HEGEMON_REQUIRE_NATIVE=1 requires a native selection report for receipt_root authoring"
+            .to_string()
+    })?;
+    if !report.used_native_lane {
+        return Err(format!(
+            "HEGEMON_REQUIRE_NATIVE=1 forbids InlineTx fallback from receipt_root: {} ({})",
+            report.fallback_reason_label(),
+            report.fallback_detail(),
+        ));
+    }
+    if !matches!(
+        outcome.artifacts,
+        PreparedAggregationArtifacts::ReceiptRoot(_)
+    ) {
+        return Err(
+            "HEGEMON_REQUIRE_NATIVE=1 expected a receipt_root aggregation artifact but received InlineTx fallback".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn is_canonical_native_receipt_root_payload(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> bool {
+    payload.proof_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        && payload.proof_kind == pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        && payload.verifier_profile
+            == consensus::experimental_native_receipt_root_verifier_profile()
+        && payload.receipt_root.is_some()
+}
+
+fn ensure_native_only_receipt_root_payload(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> Result<(), String> {
+    if !native_only_receipt_root_required_from_env() {
+        return Ok(());
+    }
+    if !is_canonical_native_receipt_root_payload(payload) {
+        return Err(format!(
+            "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; canonical native receipt_root is required",
+            payload.proof_mode,
+            payload.proof_kind,
+            hex::encode(payload.verifier_profile),
+        ));
+    }
+    Ok(())
+}
+
 fn receipt_root_lane_requires_embedded_proof_bytes(
     proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
     missing_proof_bindings: usize,
@@ -3612,6 +3717,7 @@ fn prepare_block_proof_bundle(
     let transactions_for_batching = context.extracted_transactions.clone();
     let batch_slot_txs = batch_slot_txs();
     let selected_artifact = prepared_artifact_selector_from_env();
+    ensure_native_only_receipt_root_selector(selected_artifact)?;
     if selected_artifact.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
         receipt_root_lane_requires_embedded_proof_bytes(
             selected_artifact.proof_kind,
@@ -3862,6 +3968,7 @@ fn prepare_block_proof_bundle(
     let commitment_proof = commitment_result?
         .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
     let aggregation_outcome = aggregation_result?;
+    ensure_native_only_receipt_root_outcome(&aggregation_outcome)?;
     let native_selection_report = aggregation_outcome.native_selection_report.clone();
 
     let mut payload = pallet_shielded_pool::types::BlockProofBundle {
@@ -3920,6 +4027,7 @@ fn prepare_block_proof_bundle(
         }
     }
     sync_payload_artifact_identity(&mut payload);
+    ensure_native_only_receipt_root_payload(&payload)?;
 
     tracing::info!(
         block_number,
@@ -4593,6 +4701,7 @@ fn verify_proof_carrying_block(
         if payload.tx_count != transactions.len() as u32 {
             return Err("proven batch tx_count mismatch".to_string());
         }
+        ensure_native_only_receipt_root_payload(&payload)?;
         if payload.proof_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
             receipt_root_lane_requires_embedded_proof_bytes(
                 payload.proof_kind,
@@ -4824,9 +4933,20 @@ fn verify_proof_carrying_block(
                     }
                 }),
                 receipt_root: payload.receipt_root.as_ref().map(|receipt_root| {
+                    let params_fingerprint = if payload.proof_kind
+                        == PreparedArtifactSelector::receipt_arc_whir().proof_kind
+                    {
+                        consensus::receipt_arc_whir::receipt_arc_whir_metadata(
+                            receipt_root.receipts.len(),
+                        )
+                        .params_fingerprint
+                    } else {
+                        consensus::experimental_native_receipt_root_params_fingerprint()
+                    };
                     consensus::types::ReceiptRootProofPayload {
                         root_proof: receipt_root.root_proof.data.clone(),
                         metadata: consensus::types::ReceiptRootMetadata {
+                            params_fingerprint,
                             relation_id: receipt_root.metadata.relation_id,
                             shape_digest: receipt_root.metadata.shape_digest,
                             leaf_count: receipt_root.metadata.leaf_count,
@@ -12145,19 +12265,49 @@ mod tests {
         }
     }
 
+    fn dummy_block_proof_bundle() -> pallet_shielded_pool::types::BlockProofBundle {
+        pallet_shielded_pool::types::BlockProofBundle {
+            version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+            tx_count: 1,
+            tx_statements_commitment: [6u8; 48],
+            da_root: [0u8; 48],
+            da_chunk_count: 1,
+            commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![5u8; 8]),
+            proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
+            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::InlineTx,
+            verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                pallet_shielded_pool::types::BlockProofMode::InlineTx,
+            )
+            .1,
+            flat_batches: Vec::new(),
+            merge_root: None,
+            receipt_root: None,
+            artifact_claim: None,
+        }
+    }
+
     struct BlockProofModeGuard {
-        previous: Option<String>,
+        previous_mode: Option<String>,
+        previous_require_native: Option<String>,
         _guard: StdMutexGuard<'static, ()>,
     }
 
     impl Drop for BlockProofModeGuard {
         fn drop(&mut self) {
-            match self.previous.take() {
+            match self.previous_mode.take() {
                 Some(value) => unsafe {
                     std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", value);
                 },
                 None => unsafe {
                     std::env::remove_var("HEGEMON_BLOCK_PROOF_MODE");
+                },
+            }
+            match self.previous_require_native.take() {
+                Some(value) => unsafe {
+                    std::env::set_var("HEGEMON_REQUIRE_NATIVE", value);
+                },
+                None => unsafe {
+                    std::env::remove_var("HEGEMON_REQUIRE_NATIVE");
                 },
             }
         }
@@ -12167,12 +12317,34 @@ mod tests {
         let guard = crate::substrate::test_env_lock()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let previous = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();
+        let previous_mode = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();
+        let previous_require_native = std::env::var("HEGEMON_REQUIRE_NATIVE").ok();
         unsafe {
             std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", mode);
         }
         BlockProofModeGuard {
-            previous,
+            previous_mode,
+            previous_require_native,
+            _guard: guard,
+        }
+    }
+
+    fn set_block_proof_mode_with_require_native(
+        mode: &str,
+        require_native: &str,
+    ) -> BlockProofModeGuard {
+        let guard = crate::substrate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous_mode = std::env::var("HEGEMON_BLOCK_PROOF_MODE").ok();
+        let previous_require_native = std::env::var("HEGEMON_REQUIRE_NATIVE").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_BLOCK_PROOF_MODE", mode);
+            std::env::set_var("HEGEMON_REQUIRE_NATIVE", require_native);
+        }
+        BlockProofModeGuard {
+            previous_mode,
+            previous_require_native,
             _guard: guard,
         }
     }
@@ -12199,6 +12371,24 @@ mod tests {
             selector.verifier_profile,
             consensus::experimental_native_receipt_root_verifier_profile()
         );
+    }
+
+    #[test]
+    fn require_native_receipt_root_rejects_non_canonical_mode() {
+        let _guard = set_block_proof_mode_with_require_native("inline_tx", "1");
+        let selector = prepared_artifact_selector_from_env();
+        let err = ensure_native_only_receipt_root_selector(selector)
+            .expect_err("HEGEMON_REQUIRE_NATIVE=1 must reject non-receipt_root modes");
+        assert!(
+            err.contains("HEGEMON_REQUIRE_NATIVE=1 requires HEGEMON_BLOCK_PROOF_MODE=receipt_root")
+        );
+    }
+
+    #[test]
+    fn require_native_receipt_root_accepts_canonical_mode() {
+        let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
+        ensure_native_only_receipt_root_selector(prepared_artifact_selector_from_env())
+            .expect("canonical native receipt_root mode must be accepted");
     }
 
     #[test]
@@ -12296,6 +12486,31 @@ mod tests {
             outcome.artifacts,
             PreparedAggregationArtifacts::ReceiptRoot(_)
         ));
+    }
+
+    #[test]
+    fn require_native_receipt_root_rejects_inline_fallback_outcome() {
+        let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
+        let err = ensure_native_only_receipt_root_outcome(&PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::InlineTx,
+            NativeArtifactSelectionReport::fallback(
+                NativeArtifactFallbackReason::ArtifactsUnavailable,
+                "synthetic miss",
+            ),
+        ))
+        .expect_err("native-only mode must reject inline fallback outcomes");
+        assert!(err.contains("forbids InlineTx fallback"));
+        assert!(err.contains("synthetic miss"));
+    }
+
+    #[test]
+    fn require_native_receipt_root_accepts_native_receipt_root_outcome() {
+        let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
+        ensure_native_only_receipt_root_outcome(&PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        ))
+        .expect("native-only mode must accept canonical native receipt_root outcomes");
     }
 
     #[test]
@@ -12522,6 +12737,27 @@ mod tests {
             outcome.artifacts,
             PreparedAggregationArtifacts::InlineTx
         ));
+    }
+
+    #[test]
+    fn require_native_receipt_root_rejects_inline_payload() {
+        let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
+        let payload = dummy_block_proof_bundle();
+        let err = ensure_native_only_receipt_root_payload(&payload)
+            .expect_err("native-only mode must reject inline payloads on import");
+        assert!(err.contains("canonical native receipt_root is required"));
+    }
+
+    #[test]
+    fn require_native_receipt_root_accepts_canonical_payload() {
+        let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
+        let mut payload = dummy_block_proof_bundle();
+        payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
+        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
+        payload.verifier_profile = consensus::experimental_native_receipt_root_verifier_profile();
+        payload.receipt_root = Some(dummy_receipt_root_payload());
+        ensure_native_only_receipt_root_payload(&payload)
+            .expect("native-only mode must accept canonical native receipt_root payloads");
     }
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {

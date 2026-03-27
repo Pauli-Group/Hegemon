@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
     clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
     FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof, NativeBackendParams,
+    NativeSecurityEnvelope,
 };
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
@@ -96,6 +97,7 @@ struct BenchResult {
     k: usize,
     parameter_fingerprint: Option<String>,
     native_backend_params: Option<BenchNativeBackendParams>,
+    native_security_envelope: Option<BenchNativeSecurityEnvelope>,
     bytes_per_tx: usize,
     total_active_path_prove_ns: u128,
     total_active_path_verify_ns: u128,
@@ -111,16 +113,33 @@ struct BenchResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BenchNativeBackendParams {
+    family_label: String,
+    commitment_scheme_label: String,
+    challenge_schedule_label: String,
+    maturity_label: String,
     security_bits: u32,
     ring_profile: String,
     matrix_rows: usize,
     matrix_cols: usize,
     challenge_bits: u32,
+    fold_challenge_count: u32,
     max_fold_arity: u32,
     transcript_domain_label: String,
     decomposition_bits: u32,
     opening_randomness_bits: u32,
-    version_tag: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BenchNativeSecurityEnvelope {
+    claimed_security_bits: u32,
+    challenge_bits: u32,
+    fold_challenge_count: u32,
+    transcript_soundness_bits: u32,
+    opening_randomness_bits: u32,
+    opening_hiding_bits: u32,
+    commitment_binding_bits: u32,
+    soundness_floor_bits: u32,
+    assumption_label: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -291,17 +310,46 @@ fn current_parameter_fingerprint_hex() -> String {
 fn current_bench_native_backend_params() -> BenchNativeBackendParams {
     let params = current_native_backend_params();
     BenchNativeBackendParams {
+        family_label: params.manifest.family_label.to_owned(),
+        commitment_scheme_label: params.manifest.commitment_scheme_label.to_owned(),
+        challenge_schedule_label: params.manifest.challenge_schedule_label.to_owned(),
+        maturity_label: params.manifest.maturity_label.to_owned(),
         security_bits: params.security_bits,
         ring_profile: format!("{:?}", params.ring_profile),
         matrix_rows: params.matrix_rows,
         matrix_cols: params.matrix_cols,
         challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
         max_fold_arity: params.max_fold_arity,
         transcript_domain_label: params.transcript_domain_label.to_owned(),
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
-        version_tag: params.version_tag.to_owned(),
     }
+}
+
+fn current_bench_native_security_envelope() -> Result<BenchNativeSecurityEnvelope> {
+    let NativeSecurityEnvelope {
+        claimed_security_bits,
+        challenge_bits,
+        fold_challenge_count,
+        transcript_soundness_bits,
+        opening_randomness_bits,
+        opening_hiding_bits,
+        commitment_binding_bits,
+        soundness_floor_bits,
+        assumption_label,
+    } = current_native_backend_params().security_envelope()?;
+    Ok(BenchNativeSecurityEnvelope {
+        claimed_security_bits,
+        challenge_bits,
+        fold_challenge_count,
+        transcript_soundness_bits,
+        opening_randomness_bits,
+        opening_hiding_bits,
+        commitment_binding_bits,
+        soundness_floor_bits,
+        assumption_label: assumption_label.to_owned(),
+    })
 }
 
 fn timing_caveat() -> &'static str {
@@ -408,6 +456,7 @@ fn benchmark_toy_balance(
         k,
         parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
         native_backend_params: Some(current_bench_native_backend_params()),
+        native_security_envelope: Some(current_bench_native_security_envelope()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -509,6 +558,7 @@ fn benchmark_tx_receipt(
         k,
         parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
         native_backend_params: Some(current_bench_native_backend_params()),
+        native_security_envelope: Some(current_bench_native_security_envelope()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -601,6 +651,7 @@ fn benchmark_native_tx_validity(
         k,
         parameter_fingerprint: Some(current_parameter_fingerprint_hex()),
         native_backend_params: Some(current_bench_native_backend_params()),
+        native_security_envelope: Some(current_bench_native_security_envelope()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -713,6 +764,7 @@ fn benchmark_native_tx_leaf_receipt_root(
         k,
         parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
+        native_security_envelope: Some(current_bench_native_security_envelope()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -856,6 +908,7 @@ fn benchmark_native_tx_leaf_receipt_arc_whir(
         k,
         parameter_fingerprint: Some(hex48(cold_artifact.metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
+        native_security_envelope: Some(current_bench_native_security_envelope()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: cold_prove_ns,
         total_active_path_verify_ns: cold_residual_verify_ns,
@@ -940,6 +993,7 @@ fn benchmark_tx_leaf_receipt_root(
         k,
         parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
+        native_security_envelope: Some(current_bench_native_security_envelope()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,
@@ -994,6 +1048,7 @@ fn benchmark_verified_tx_receipt(
         k,
         parameter_fingerprint: Some(hex48(metadata.params_fingerprint)),
         native_backend_params: Some(current_bench_native_backend_params()),
+        native_security_envelope: Some(current_bench_native_security_envelope()?),
         bytes_per_tx: total_bytes.div_ceil(k),
         total_active_path_prove_ns: total_prove_ns,
         total_active_path_verify_ns: total_verify_ns,

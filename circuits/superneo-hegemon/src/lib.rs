@@ -911,7 +911,7 @@ pub struct ReceiptRootLeaf {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceiptRootFoldStep {
-    pub challenge: u64,
+    pub challenges: Vec<u64>,
     pub parent_statement_digest: [u8; 48],
     pub parent_commitment: [u8; 48],
     pub parent_rows: Vec<RingElem>,
@@ -1989,8 +1989,10 @@ pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
     material.extend_from_slice(&pk.shape_digest.0);
     material.extend_from_slice(&pk.security_bits.to_le_bytes());
     material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    material.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
     material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
     material.extend_from_slice(&pk.transcript_domain_digest);
+    material.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
     digest48(
         b"hegemon.superneo.receipt-root-profile.digest.v1",
         &material,
@@ -2010,8 +2012,10 @@ pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
     material.extend_from_slice(&pk.shape_digest.0);
     material.extend_from_slice(&pk.security_bits.to_le_bytes());
     material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    material.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
     material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
     material.extend_from_slice(&pk.transcript_domain_digest);
+    material.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
     digest48(b"hegemon.superneo.tx-leaf-profile.digest.v1", &material)
 }
 
@@ -2138,8 +2142,13 @@ pub fn max_native_receipt_root_artifact_bytes_with_params(
     params: &NativeBackendParams,
 ) -> usize {
     let leaf_bytes = tx_count * (48 * 3);
-    let fold_step_bytes =
-        8 + 48 + 48 + 4 + (params.matrix_rows * (4 + (params.matrix_cols * 8))) + 48;
+    let fold_step_bytes = 4
+        + ((params.fold_challenge_count as usize) * 8)
+        + 48
+        + 48
+        + 4
+        + (params.matrix_rows * (4 + (params.matrix_cols * 8)))
+        + 48;
     let fold_bytes = tx_count.saturating_sub(1) * fold_step_bytes;
     2 + 48 + 32 + 32 + 4 + 4 + leaf_bytes + fold_bytes + 48 + 48
 }
@@ -2561,7 +2570,7 @@ pub fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
             if let Some(right) = iter.next() {
                 let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
                 folds.push(ReceiptRootFoldStep {
-                    challenge: proof.challenge,
+                    challenges: proof.challenges.clone(),
                     parent_statement_digest: parent.statement_digest.0,
                     parent_commitment: parent.witness_commitment.digest,
                     parent_rows: proof.parent_rows.clone(),
@@ -2693,8 +2702,8 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
                 fold_index += 1;
                 let (parent, expected_proof) = backend.fold_pair(&pk, &left, &right)?;
                 ensure!(
-                    fold.challenge == expected_proof.challenge,
-                    "native receipt-root fold challenge mismatch"
+                    fold.challenges == expected_proof.challenges,
+                    "native receipt-root fold challenge vector mismatch"
                 );
                 ensure!(
                     fold.parent_statement_digest == parent.statement_digest.0,
@@ -2844,8 +2853,8 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
                 fold_index += 1;
                 let (parent, expected_proof) = backend.fold_pair(&pk, &left, &right)?;
                 ensure!(
-                    fold.challenge == expected_proof.challenge,
-                    "native receipt-root fold challenge mismatch"
+                    fold.challenges == expected_proof.challenges,
+                    "native receipt-root fold challenge vector mismatch"
                 );
                 ensure!(
                     fold.parent_statement_digest == parent.statement_digest.0,
@@ -2952,7 +2961,7 @@ pub fn build_verified_tx_proof_receipt_root_artifact_bytes(
             if let Some(right) = iter.next() {
                 let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
                 folds.push(ReceiptRootFoldStep {
-                    challenge: proof.challenge,
+                    challenges: proof.challenges.clone(),
                     parent_statement_digest: parent.statement_digest.0,
                     parent_commitment: parent.witness_commitment.digest,
                     parent_rows: proof.parent_rows.clone(),
@@ -3041,7 +3050,7 @@ pub fn build_receipt_root_artifact_bytes(
             if let Some(right) = iter.next() {
                 let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
                 folds.push(ReceiptRootFoldStep {
-                    challenge: proof.challenge,
+                    challenges: proof.challenges.clone(),
                     parent_statement_digest: parent.statement_digest.0,
                     parent_commitment: parent.witness_commitment.digest,
                     parent_rows: proof.parent_rows.clone(),
@@ -3157,8 +3166,8 @@ pub fn verify_verified_tx_proof_receipt_root_artifact_bytes(
                 fold_index += 1;
                 let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
                 ensure!(
-                    fold.challenge == proof.challenge,
-                    "receipt-root fold challenge mismatch"
+                    fold.challenges == proof.challenges,
+                    "receipt-root fold challenge vector mismatch"
                 );
                 ensure!(
                     fold.parent_statement_digest == parent.statement_digest.0,
@@ -3286,8 +3295,8 @@ pub fn verify_receipt_root_artifact_bytes(
                 fold_index += 1;
                 let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
                 ensure!(
-                    fold.challenge == proof.challenge,
-                    "receipt-root fold challenge mismatch"
+                    fold.challenges == proof.challenges,
+                    "receipt-root fold challenge vector mismatch"
                 );
                 ensure!(
                     fold.parent_statement_digest == parent.statement_digest.0,
@@ -3354,7 +3363,10 @@ fn encode_receipt_root_artifact(artifact: &ReceiptRootArtifact) -> Vec<u8> {
         bytes.extend_from_slice(&leaf.proof_digest);
     }
     for fold in &artifact.folds {
-        bytes.extend_from_slice(&fold.challenge.to_le_bytes());
+        bytes.extend_from_slice(&(fold.challenges.len() as u32).to_le_bytes());
+        for challenge in &fold.challenges {
+            bytes.extend_from_slice(&challenge.to_le_bytes());
+        }
         bytes.extend_from_slice(&fold.parent_statement_digest);
         bytes.extend_from_slice(&fold.parent_commitment);
         bytes.extend_from_slice(&(fold.parent_rows.len() as u32).to_le_bytes());
@@ -3810,7 +3822,11 @@ fn decode_receipt_root_artifact(bytes: &[u8]) -> Result<ReceiptRootArtifact> {
     }
     let mut folds = Vec::with_capacity(fold_count);
     for _ in 0..fold_count {
-        let challenge = read_u64(bytes, &mut cursor)?;
+        let challenge_count = read_u32(bytes, &mut cursor)? as usize;
+        let mut challenges = Vec::with_capacity(challenge_count);
+        for _ in 0..challenge_count {
+            challenges.push(read_u64(bytes, &mut cursor)?);
+        }
         let parent_statement_digest = read_array::<48>(bytes, &mut cursor)?;
         let parent_commitment = read_array::<48>(bytes, &mut cursor)?;
         let row_count = read_u32(bytes, &mut cursor)? as usize;
@@ -3824,7 +3840,7 @@ fn decode_receipt_root_artifact(bytes: &[u8]) -> Result<ReceiptRootArtifact> {
             parent_rows.push(RingElem::from_coeffs(coeffs));
         }
         folds.push(ReceiptRootFoldStep {
-            challenge,
+            challenges,
             parent_statement_digest,
             parent_commitment,
             parent_rows,
@@ -3929,6 +3945,7 @@ fn blake3_384_bytes(bytes: &[u8]) -> [u8; 48] {
 
 #[cfg(test)]
 mod tests {
+    use superneo_backend_lattice::BackendManifest;
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
     use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
@@ -4215,8 +4232,10 @@ mod tests {
 
     fn alternate_native_backend_params() -> NativeBackendParams {
         NativeBackendParams {
-            opening_randomness_bits: 12,
-            version_tag: "native-backend-v3-alt",
+            manifest: BackendManifest {
+                family_label: "goldilocks_128b_rewrite_alt",
+                ..native_backend_params().manifest
+            },
             ..native_backend_params()
         }
     }

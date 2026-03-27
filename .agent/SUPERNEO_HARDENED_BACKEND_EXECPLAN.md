@@ -4,6 +4,8 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 This document follows [`.agent/PLANS.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/PLANS.md) and must be maintained in accordance with that file.
 
+Historical note: this plan finished the hardening pass and ended with a research-keep verdict. That verdict was later superseded by [`.agent/FINISH_NATIVE_PROOF_LINE_EXECPLAN.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/FINISH_NATIVE_PROOF_LINE_EXECPLAN.md), which closed the native line with an explicit `KILL` as Hegemon’s promoted proof-native mainline candidate. Future backend rewrite work now lives in [`.agent/REBUILD_NATIVE_BACKEND_EXECPLAN.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/REBUILD_NATIVE_BACKEND_EXECPLAN.md).
+
 This plan supersedes the remaining work from:
 
 - [`.agent/NATIVE_TX_VALIDITY_MAINLINE_EXECPLAN.md`](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/NATIVE_TX_VALIDITY_MAINLINE_EXECPLAN.md)
@@ -26,7 +28,7 @@ After this plan, a contributor should be able to run one canonical native benchm
 - [x] (2026-03-26 22:10Z) Locked `NativeBackendParams` as the native backend control surface and derived native verifier profiles, artifact versions, receipt-root metadata, and benchmark JSON from fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c`.
 - [x] (2026-03-26 22:48Z) Replaced the native tx-leaf deterministic commitment shortcut with randomized commitments, explicit commitment openings, and negative tests that mutate randomness, malformed openings, and parameter sets.
 - [x] (2026-03-26 23:12Z) Replaced digest-style fold checks with algebraic fold proofs that carry explicit parent rows, reject malformed fold state, and fail on mixed parent/child commitments.
-- [x] (2026-03-26 23:37Z) Corrected the overstated `native-backend-v1` record twice: `native-backend-v2` fixed the 16-bit challenge lie, and `native-backend-v3` pulled `max_fold_arity` plus `transcript_domain_label` into the explicit parameter object, fingerprint, and setup checks. The canonical benchmark on this tree records fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c` and bytes per tx `18,073..18,552`, while verifier ns are now documented only as rerun-dependent wall-clock observations.
+- [x] (2026-03-26 23:37Z) Corrected the overstated early backend record in two steps before the line was later frozen as `heuristic_goldilocks_baseline`: first fixing the 16-bit challenge lie, then pulling `max_fold_arity` plus `transcript_domain_label` into the explicit parameter object, fingerprint, and setup checks. The canonical benchmark on the current manifestized baseline now records fingerprint `bd223455a9f9f3157fedd0d6d4c8da3526c9f5cc81fffa00e3c2fd0898398c0bb1d0a91288bb2a3c584b45806ad08424` and bytes per tx `18,073..18,552`, while verifier ns remain documented only as rerun-dependent wall-clock observations.
 
 ## Surprises & Discoveries
 
@@ -39,8 +41,8 @@ After this plan, a contributor should be able to run one canonical native benchm
 - Observation: the first cold-import line consumed time without producing a win.
   Evidence: `receipt_accumulation` is warm-store-only, and the current diagnostic `receipt_arc_whir` lane honestly reports replay of native leaf verification instead of a real sublinear cold verifier.
 
-- Observation: review found two real overclaims, and both had to be fixed in code instead of hand-waved in docs.
-  Evidence: the old `native-backend-v1` write-up recorded verifier numbers that did not match the current tree, `derive_fold_challenge()` had been silently capping the configured challenge width to 16 bits until the `native-backend-v2` correction, and the `max_fold_arity` plus transcript-domain settings were still ambient until the `native-backend-v3` correction.
+- Observation: review found multiple real overclaims, and all of them had to be fixed in code instead of hand-waved in docs.
+  Evidence: the early backend write-up recorded verifier numbers that did not match the current tree, `derive_fold_challenge()` had been silently capping the configured challenge width to 16 bits before the correction, and `max_fold_arity` plus transcript-domain settings were still ambient until they were pulled into the explicit parameter object and fingerprint.
 
 - Observation: Hegemon’s proof-neutral consensus boundary survived all of the above failure and churn.
   Evidence: the verifier registry and block-artifact boundary in [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs#L188) did not need another rewrite when the accumulation line failed.
@@ -77,14 +79,14 @@ After this plan, a contributor should be able to run one canonical native benchm
   Date/Author: 2026-03-26 / Codex
 
 - Decision: keep the hardened native backend as the primary experimental native-folding candidate on this branch, but stop describing it as a 128-bit PQ candidate or freezing one verifier ns curve into the docs.
-  Rationale: the `native-backend-v3` correction fixed the ambient-parameter drift without blowing up the byte curve; the lane still lands around `18.5KB/tx` on the canonical benchmark instead of inline-proof payloads that remain hundreds of kB per tx on the same harness, while verifier ns remain a host/load-sensitive observation.
+  Rationale: the pre-closure hardening correction fixed the ambient-parameter drift without blowing up the byte curve; the lane still landed around `18.5KB/tx` on the canonical benchmark instead of inline-proof payloads that remain hundreds of kB per tx on the same harness, while verifier ns remained a host/load-sensitive observation.
   Date/Author: 2026-03-26 / Codex
 
 ## Outcomes & Retrospective
 
 At completion, the branch still has one real experimental loss and one now-hardened experimental keep. The loss remains cold-import accumulation: no cold verifier win exists here, and this plan did not pretend otherwise. The keep is narrower and more useful than the pre-hardening state: the native lane now has one versioned parameter set, one randomized commitment opening path, one algebraic fold proof shape, one parameter fingerprint in the benchmark JSON, and one benchmark verdict that can be discussed without subtracting “digest placeholder” first.
 
-The benchmark verdict is a keep for research, not for a production PQ claim. Under fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c`, the canonical native lane still lands at roughly `18.5KB/tx`, and the exact rerun outputs are archived in [run_a](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_a_20260326.json) and [run_b](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_b_20260326.json) instead of being re-frozen into prose. That keeps the native lane materially smaller than the inline-proof baseline while remaining honest that verification is still linear, wall-clock timing is rerun-dependent, and the backend is still an in-repo approximation with a 63-bit challenge-limited story rather than a production-strength 128-bit Module-SIS proof system.
+The benchmark verdict is a keep for research, not for a production PQ claim. Under the current manifestized baseline fingerprint `bd223455a9f9f3157fedd0d6d4c8da3526c9f5cc81fffa00e3c2fd0898398c0bb1d0a91288bb2a3c584b45806ad08424`, the canonical native lane still lands at roughly `18.5KB/tx`, and the exact rerun outputs remain archived instead of being re-frozen into prose. That keeps the native lane materially smaller than the inline-proof baseline while remaining honest that verification is still linear, wall-clock timing is rerun-dependent, and the backend is still an in-repo approximation with a 63-bit challenge-limited story rather than a production-strength Module-SIS proof system.
 
 ## Context and Orientation
 
@@ -190,7 +192,7 @@ The JSON output from that command must include:
 
 The diagnostic accumulation lanes remain available for regression only. They are not part of acceptance for this plan.
 
-Observed 2026-03-26 output summary for `native-backend-v3` / fingerprint `d062b963d3e064a04ba3b2d9acecf17203e3f9afb9ec2608bfc21e9ca58d21d05ce072f5520edbbb197fe35a0c6ff64c`:
+Observed 2026-03-26 output summary for the current manifestized baseline `heuristic_goldilocks_baseline` / fingerprint `bd223455a9f9f3157fedd0d6d4c8da3526c9f5cc81fffa00e3c2fd0898398c0bb1d0a91288bb2a3c584b45806ad08424`:
 
 - Stable outputs across reruns: fingerprint above, `18,073..18,552 B/tx`, `max_fold_arity = 2`, and `transcript_domain_label = "hegemon.superneo.fold.v1"`
 - Archived current-tree rerun A: [native_tx_leaf_receipt_root_v3_run_a_20260326.json](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/benchmarks/native_tx_leaf_receipt_root_v3_run_a_20260326.json)
@@ -236,4 +238,4 @@ Expose a stable verifier-profile derivation function that takes `&NativeBackendP
 
 Revision note: this file now absorbs the remaining work from plans 1, 2, 3, and 4. The native lane surface and prover-kernel work are treated as baseline assumptions, the accumulation plan is treated as a completed negative result, and the only remaining live work is backend hardening plus the final keep/kill benchmark verdict.
 
-Revision note (2026-03-26 / Codex): completed the hardening work, then corrected the review-found overclaims by promoting `native-backend-v3`, widening the fold challenge path to its actual 63-bit field-limited width, pulling `max_fold_arity` plus `transcript_domain_label` into the explicit parameter object and fingerprint, and rewriting the recorded benchmark verdict so wall-clock verifier ns are treated as rerun-dependent observations rather than a canonical curve.
+Revision note (2026-03-26 / Codex): completed the hardening work, then corrected the review-found overclaims by widening the fold challenge path to its actual 63-bit field-limited width, pulling `max_fold_arity` plus `transcript_domain_label` into the explicit parameter object and fingerprint, and rewriting the recorded benchmark verdict so wall-clock verifier ns are treated as rerun-dependent observations rather than a canonical curve. Later manifest cleanup renamed the frozen baseline to `heuristic_goldilocks_baseline` and removed the old `v*` public tags.

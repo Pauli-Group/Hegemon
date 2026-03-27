@@ -1040,6 +1040,10 @@ pub fn experimental_native_receipt_root_verifier_profile() -> VerifierProfileDig
     native_receipt_root_profile()
 }
 
+pub fn experimental_native_receipt_root_params_fingerprint() -> [u8; 48] {
+    superneo_hegemon::native_backend_params().parameter_fingerprint()
+}
+
 pub fn experimental_receipt_arc_whir_artifact_kind() -> ProofArtifactKind {
     receipt_arc_whir_kind()
 }
