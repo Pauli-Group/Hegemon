@@ -2,6 +2,7 @@ use anyhow::Result;
 use p3_goldilocks::Goldilocks;
 use serde::Serialize;
 use std::{hint::black_box, time::Instant};
+use superneo_backend_lattice::NativeBackendParams;
 use superneo_hegemon::{
     build_native_tx_leaf_artifact_bytes_with_params_and_seed, native_backend_params,
 };
@@ -30,29 +31,40 @@ struct TimingReport {
     note: String,
 }
 
+const SAMPLE_COUNT: usize = 64;
+const WARMUP_COUNT: usize = 8;
+
 fn main() -> Result<()> {
     let params = native_backend_params();
-    let class_a = measure_class(|idx| sample_witness(idx as u64 + 1, 0x11))?;
-    let class_b = measure_class(|idx| sample_witness(idx as u64 + 1, 0xe1))?;
+    let (class_a, class_b) = measure_classes()?;
+    let class_a_mean = mean(&class_a);
+    let class_b_mean = mean(&class_b);
+    let class_a_median = median(&class_a);
+    let class_b_median = median(&class_b);
+    let class_a_stddev = stddev(&class_a);
+    let class_b_stddev = stddev(&class_b);
+    let welch_t = welch_t_statistic(&class_a, &class_b);
+    let relative_mean_delta = relative_delta(class_a_mean, class_b_mean);
+    let relative_median_delta = relative_delta(class_a_median, class_b_median);
     let report = TimingReport {
         family_label: params.manifest.family_label.to_owned(),
         spec_label: params.manifest.spec_label.to_owned(),
         sample_count: class_a.len(),
-        class_a_mean_ns: mean(&class_a),
-        class_b_mean_ns: mean(&class_b),
-        class_a_median_ns: median(&class_a),
-        class_b_median_ns: median(&class_b),
-        class_a_stddev_ns: stddev(&class_a),
-        class_b_stddev_ns: stddev(&class_b),
-        welch_t_statistic: welch_t_statistic(&class_a, &class_b),
+        class_a_mean_ns: class_a_mean,
+        class_b_mean_ns: class_b_mean,
+        class_a_median_ns: class_a_median,
+        class_b_median_ns: class_b_median,
+        class_a_stddev_ns: class_a_stddev,
+        class_b_stddev_ns: class_b_stddev,
+        welch_t_statistic: welch_t,
         t_threshold: 5.0,
-        relative_mean_delta: relative_delta(mean(&class_a), mean(&class_b)),
-        relative_median_delta: relative_delta(median(&class_a), median(&class_b)),
+        relative_mean_delta,
+        relative_median_delta,
         relative_delta_threshold: 0.25,
-        pass: welch_t_statistic(&class_a, &class_b).abs() < 5.0
-            && relative_delta(mean(&class_a), mean(&class_b)) < 0.25
-            && relative_delta(median(&class_a), median(&class_b)) < 0.25,
-        note: "This harness only screens for gross secret-dependent timing separation on the deterministic native tx-leaf build path; it is not a proof of constant time.".to_owned(),
+        pass: welch_t.abs() < 5.0
+            && relative_mean_delta < 0.25
+            && relative_median_delta < 0.25,
+        note: "This harness only screens for gross secret-dependent timing separation on the deterministic native tx-leaf build path; it interleaves the two witness classes with warmup rounds to reduce spurious host-drift bias, and it is not a proof of constant time.".to_owned(),
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     if !report.pass {
@@ -61,19 +73,45 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn measure_class(make_witness: impl Fn(usize) -> TransactionWitness) -> Result<Vec<f64>> {
+fn measure_classes() -> Result<(Vec<f64>, Vec<f64>)> {
     let params = native_backend_params();
-    let mut samples = Vec::with_capacity(64);
-    for idx in 0..64usize {
-        let witness = make_witness(idx);
-        let seed = review_seed(idx as u8 + 1);
-        let start = Instant::now();
-        let artifact =
-            build_native_tx_leaf_artifact_bytes_with_params_and_seed(&params, &witness, seed)?;
-        black_box(artifact);
-        samples.push(start.elapsed().as_nanos() as f64);
+    let mut class_a = Vec::with_capacity(SAMPLE_COUNT);
+    let mut class_b = Vec::with_capacity(SAMPLE_COUNT);
+    for idx in 0..(SAMPLE_COUNT + WARMUP_COUNT) {
+        let logical_idx = idx.saturating_sub(WARMUP_COUNT);
+        let seed = review_seed(logical_idx as u8 + 1);
+        let witness_a = sample_witness(logical_idx as u64 + 1, 0x11);
+        let witness_b = sample_witness(logical_idx as u64 + 1, 0xe1);
+        let (first_is_a, first_witness, second_witness) = if idx % 2 == 0 {
+            (true, witness_a, witness_b)
+        } else {
+            (false, witness_b, witness_a)
+        };
+        let first_elapsed = measure_once(&params, &first_witness, seed)?;
+        let second_elapsed = measure_once(&params, &second_witness, seed)?;
+        if idx < WARMUP_COUNT {
+            continue;
+        }
+        if first_is_a {
+            class_a.push(first_elapsed);
+            class_b.push(second_elapsed);
+        } else {
+            class_b.push(first_elapsed);
+            class_a.push(second_elapsed);
+        }
     }
-    Ok(samples)
+    Ok((class_a, class_b))
+}
+
+fn measure_once(
+    params: &NativeBackendParams,
+    witness: &TransactionWitness,
+    seed: [u8; 32],
+) -> Result<f64> {
+    let start = Instant::now();
+    let artifact = build_native_tx_leaf_artifact_bytes_with_params_and_seed(params, witness, seed)?;
+    black_box(artifact);
+    Ok(start.elapsed().as_nanos() as f64)
 }
 
 fn mean(values: &[f64]) -> f64 {

@@ -10,10 +10,18 @@ Current code-derived claim:
 - `claimed_security_bits = 128`
 - `transcript_soundness_bits = 157`
 - `opening_hiding_bits = 128`
+- `commitment_codomain_bits = 4032`
+- `commitment_same_seed_search_bits = 36936`
+- `commitment_random_matrix_bits = 0`
 - `commitment_binding_bits = 128`
 - `composition_loss_bits = 7`
 - `soundness_floor_bits = 128`
 - `review_state = candidate_under_review`
+
+Interpretation:
+
+- The live `128`-bit floor still depends on the explicit `commitment_assumption_bits = 128` input.
+- The repo now reports the raw bounded-message random-matrix term separately, and for the current `8 x 8` geometry that term is `0`.
 
 Exact assumption ids:
 

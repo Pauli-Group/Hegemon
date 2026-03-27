@@ -148,6 +148,7 @@ struct BenchNativeBackendParams {
     decomposition_bits: u32,
     opening_randomness_bits: u32,
     commitment_assumption_bits: u32,
+    max_commitment_message_ring_elems: u32,
     max_claimed_receipt_root_leaves: u32,
 }
 
@@ -156,6 +157,9 @@ struct BenchNativeSecurityClaim {
     claimed_security_bits: u32,
     transcript_soundness_bits: u32,
     opening_hiding_bits: u32,
+    commitment_codomain_bits: u32,
+    commitment_same_seed_search_bits: u32,
+    commitment_random_matrix_bits: u32,
     commitment_binding_bits: u32,
     composition_loss_bits: u32,
     soundness_floor_bits: u32,
@@ -207,6 +211,7 @@ struct ReviewBackendParams {
     decomposition_bits: u32,
     opening_randomness_bits: u32,
     commitment_assumption_bits: u32,
+    max_commitment_message_ring_elems: u32,
     max_claimed_receipt_root_leaves: u32,
 }
 
@@ -506,6 +511,7 @@ fn current_bench_native_backend_params() -> BenchNativeBackendParams {
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
         commitment_assumption_bits: params.commitment_assumption_bits,
+        max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
         max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
     }
 }
@@ -515,6 +521,9 @@ fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
         claimed_security_bits,
         transcript_soundness_bits,
         opening_hiding_bits,
+        commitment_codomain_bits,
+        commitment_same_seed_search_bits,
+        commitment_random_matrix_bits,
         commitment_binding_bits,
         composition_loss_bits,
         soundness_floor_bits,
@@ -525,6 +534,9 @@ fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
         claimed_security_bits,
         transcript_soundness_bits,
         opening_hiding_bits,
+        commitment_codomain_bits,
+        commitment_same_seed_search_bits,
+        commitment_random_matrix_bits,
         commitment_binding_bits,
         composition_loss_bits,
         soundness_floor_bits,
@@ -551,6 +563,7 @@ fn review_backend_params(params: &NativeBackendParams) -> ReviewBackendParams {
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
         commitment_assumption_bits: params.commitment_assumption_bits,
+        max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
         max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
     }
 }

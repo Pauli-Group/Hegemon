@@ -76,6 +76,7 @@ pub struct NativeBackendParams {
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
     pub commitment_assumption_bits: u32,
+    pub max_commitment_message_ring_elems: u32,
     pub max_claimed_receipt_root_leaves: u32,
 }
 
@@ -94,6 +95,9 @@ pub struct NativeSecurityClaim {
     pub claimed_security_bits: u32,
     pub transcript_soundness_bits: u32,
     pub opening_hiding_bits: u32,
+    pub commitment_codomain_bits: u32,
+    pub commitment_same_seed_search_bits: u32,
+    pub commitment_random_matrix_bits: u32,
     pub commitment_binding_bits: u32,
     pub composition_loss_bits: u32,
     pub soundness_floor_bits: u32,
@@ -116,6 +120,7 @@ impl NativeBackendParams {
             decomposition_bits: 8,
             opening_randomness_bits: 16,
             commitment_assumption_bits: 63,
+            max_commitment_message_ring_elems: 513,
             max_claimed_receipt_root_leaves: 128,
         }
     }
@@ -134,6 +139,7 @@ impl NativeBackendParams {
             decomposition_bits: 8,
             opening_randomness_bits: 256,
             commitment_assumption_bits: 128,
+            max_commitment_message_ring_elems: 513,
             max_claimed_receipt_root_leaves: 128,
         }
     }
@@ -200,6 +206,10 @@ impl NativeBackendParams {
             "commitment_assumption_bits must be strictly positive"
         );
         ensure!(
+            self.max_commitment_message_ring_elems > 0,
+            "max_commitment_message_ring_elems must be strictly positive"
+        );
+        ensure!(
             self.max_claimed_receipt_root_leaves > 0,
             "max_claimed_receipt_root_leaves must be strictly positive"
         );
@@ -236,6 +246,10 @@ impl NativeBackendParams {
             "commitment_assumption_bits must be strictly positive"
         );
         ensure!(
+            self.max_commitment_message_ring_elems > 0,
+            "max_commitment_message_ring_elems must be strictly positive"
+        );
+        ensure!(
             self.max_claimed_receipt_root_leaves > 0,
             "max_claimed_receipt_root_leaves must be strictly positive"
         );
@@ -245,6 +259,15 @@ impl NativeBackendParams {
             .saturating_mul(self.fold_challenge_count)
             / 2;
         let opening_hiding_bits = (self.opening_randomness_bits / 2).min(128);
+        let commitment_codomain_bits = goldilocks_field_capacity_bits(self.ring_profile)
+            .saturating_mul(self.matrix_rows as u32)
+            .saturating_mul(self.ring_degree() as u32);
+        let commitment_same_seed_search_bits = self
+            .max_commitment_message_ring_elems
+            .saturating_mul(self.ring_degree() as u32)
+            .saturating_mul(self.decomposition_bits.saturating_add(1));
+        let commitment_random_matrix_bits =
+            commitment_codomain_bits.saturating_sub(commitment_same_seed_search_bits);
         let commitment_binding_bits = self.commitment_assumption_bits;
         let composition_loss_bits = ceil_log2_u32(self.max_claimed_receipt_root_leaves);
         let transcript_floor_bits = transcript_soundness_bits.saturating_sub(composition_loss_bits);
@@ -291,6 +314,9 @@ impl NativeBackendParams {
             claimed_security_bits: self.security_bits,
             transcript_soundness_bits,
             opening_hiding_bits,
+            commitment_codomain_bits,
+            commitment_same_seed_search_bits,
+            commitment_random_matrix_bits,
             commitment_binding_bits,
             composition_loss_bits,
             soundness_floor_bits,
@@ -325,6 +351,9 @@ impl NativeBackendParams {
         hasher.update(self.transcript_domain_label.as_bytes());
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
+        hasher.update(&self.commitment_assumption_bits.to_le_bytes());
+        hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
+        hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash48(hasher)
     }
 
@@ -346,6 +375,9 @@ impl NativeBackendParams {
         hasher.update(self.transcript_domain_label.as_bytes());
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
+        hasher.update(&self.commitment_assumption_bits.to_le_bytes());
+        hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
+        hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash32(hasher)
     }
 
@@ -380,6 +412,10 @@ fn ceil_log2_u32(value: u32) -> u32 {
     } else {
         u32::BITS - (value - 1).leading_zeros()
     }
+}
+
+fn goldilocks_field_capacity_bits(_profile: RingProfile) -> u32 {
+    63
 }
 
 impl Default for NativeBackendParams {
@@ -1457,6 +1493,12 @@ fn commit_with_seed(
     let key = native_commitment_key(params);
     let ring_message =
         embed_packed_witness_with_layout(params.ring_degree(), params.digit_bits(), packed)?;
+    ensure!(
+        ring_message.len() as u32 <= params.max_commitment_message_ring_elems,
+        "embedded commitment message length {} exceeds max_commitment_message_ring_elems {}",
+        ring_message.len(),
+        params.max_commitment_message_ring_elems
+    );
     let deterministic_rows = commit_ring_message(&key, &ring_message);
     let randomizer_rows = derive_randomizer_rows(params, randomness_seed);
     let rows = add_ring_rows(&deterministic_rows, &randomizer_rows)?;
@@ -2529,6 +2571,33 @@ mod tests {
             different_arity.parameter_fingerprint()
         );
 
+        let different_commitment_assumption = NativeBackendParams {
+            commitment_assumption_bits: 96,
+            ..base.clone()
+        };
+        assert_ne!(
+            base.parameter_fingerprint(),
+            different_commitment_assumption.parameter_fingerprint()
+        );
+
+        let different_message_cap = NativeBackendParams {
+            max_commitment_message_ring_elems: 1024,
+            ..base.clone()
+        };
+        assert_ne!(
+            base.parameter_fingerprint(),
+            different_message_cap.parameter_fingerprint()
+        );
+
+        let different_receipt_cap = NativeBackendParams {
+            max_claimed_receipt_root_leaves: 64,
+            ..base.clone()
+        };
+        assert_ne!(
+            base.parameter_fingerprint(),
+            different_receipt_cap.parameter_fingerprint()
+        );
+
         let different_domain = NativeBackendParams {
             transcript_domain_label: "hegemon.superneo.fold.alt",
             ..base
@@ -2581,6 +2650,9 @@ mod tests {
         assert_eq!(claim.claimed_security_bits, 128);
         assert_eq!(claim.transcript_soundness_bits, 157);
         assert_eq!(claim.opening_hiding_bits, 128);
+        assert_eq!(claim.commitment_codomain_bits, 4032);
+        assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
+        assert_eq!(claim.commitment_random_matrix_bits, 0);
         assert_eq!(claim.commitment_binding_bits, 128);
         assert_eq!(claim.composition_loss_bits, 7);
         assert_eq!(claim.soundness_floor_bits, 128);

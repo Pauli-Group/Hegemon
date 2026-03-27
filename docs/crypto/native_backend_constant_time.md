@@ -62,9 +62,10 @@ The harness:
 
 1. builds two controlled witness classes over the same public shape,
 2. fixes the commitment-opening seeds so OS randomness does not dominate the measurement,
-3. runs the deterministic native tx-leaf build path repeatedly for each class,
-4. computes a Welch-style t-statistic over the two timing distributions, and
-5. fails closed if the absolute statistic exceeds the current screening threshold.
+3. runs warmup rounds that are discarded from the final sample set,
+4. interleaves class-A and class-B samples so run-order drift does not masquerade as a class signal,
+5. computes a Welch-style t-statistic over the two timing distributions, and
+6. fails closed if the statistic or relative deltas exceed the current screening threshold.
 
 Current screening thresholds:
 
@@ -77,13 +78,13 @@ These thresholds are still crude. They are only guards against obvious secret-de
 Latest local rerun on this branch:
 
 - `sample_count = 64`
-- `class_a_mean_ns = 1,220,065.11`
-- `class_b_mean_ns = 1,025,864.64`
-- `class_a_median_ns = 942,770.5`
-- `class_b_median_ns = 942,333.5`
-- `relative_mean_delta = 0.1592`
-- `relative_median_delta = 0.00046`
-- `welch_t_statistic = 0.8824`
+- `class_a_mean_ns = 1,101,892.64`
+- `class_b_mean_ns = 1,115,794.98`
+- `class_a_median_ns = 946,917.0`
+- `class_b_median_ns = 945,437.5`
+- `relative_mean_delta = 0.01246`
+- `relative_median_delta = 0.00156`
+- `welch_t_statistic = -0.0913`
 - result: `pass`
 
 ## What This Note Does Not Claim

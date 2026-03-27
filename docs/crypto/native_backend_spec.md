@@ -46,6 +46,7 @@ The current active parameter object also carries:
 - `decomposition_bits = 8`
 - `opening_randomness_bits = 256`
 - `commitment_assumption_bits = 128`
+- `max_commitment_message_ring_elems = 513`
 - `max_claimed_receipt_root_leaves = 128`
 
 ## Global Encoding Rules
@@ -96,7 +97,8 @@ The parameter fingerprint is a 48-byte Blake3-derived digest over:
 15. `decomposition_bits`
 16. `opening_randomness_bits`
 17. `commitment_assumption_bits`
-18. `max_claimed_receipt_root_leaves`
+18. `max_commitment_message_ring_elems`
+19. `max_claimed_receipt_root_leaves`
 
 The spec digest is a separate 32-byte Blake3-derived digest over the same ordered fields under a distinct domain tag:
 
@@ -121,9 +123,10 @@ The current backend also computes a security claim from:
 - transcript challenge width and count
 - opening entropy width
 - explicit commitment-binding assumption width
+- explicit maximum commitment message length
 - composition loss from the configured maximum receipt-root leaf count
 
-The current code does not derive commitment binding directly from the ring geometry alone. It derives the final floor from the parameter object, which includes an explicit `commitment_assumption_bits` input and an explicit `max_claimed_receipt_root_leaves` bound.
+The current code does not derive commitment binding directly from the ring geometry alone. It derives the final floor from the parameter object, which includes an explicit `commitment_assumption_bits` input, an explicit `max_commitment_message_ring_elems` bound, and an explicit `max_claimed_receipt_root_leaves` bound. The security-analysis document records the resulting raw bounded-message random-matrix term separately from the assumption-fed commitment floor.
 
 This specification freezes the wire and transcript surface. The security-analysis document is the place where those ingredients are translated into a security claim.
 

@@ -5983,6 +5983,7 @@ dependencies = [
  "p3-goldilocks",
  "serde",
  "serde_json",
+ "superneo-backend-lattice",
  "superneo-hegemon",
  "transaction-circuit",
 ]

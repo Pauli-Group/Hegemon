@@ -54,6 +54,8 @@ pub struct ReviewBackendParams {
     pub opening_randomness_bits: u32,
     #[serde(default = "default_commitment_assumption_bits")]
     pub commitment_assumption_bits: u32,
+    #[serde(default = "default_max_commitment_message_ring_elems")]
+    pub max_commitment_message_ring_elems: u32,
     #[serde(default = "default_max_claimed_receipt_root_leaves")]
     pub max_claimed_receipt_root_leaves: u32,
 }
@@ -63,6 +65,12 @@ pub struct ReviewSecurityClaim {
     pub claimed_security_bits: u32,
     pub transcript_soundness_bits: u32,
     pub opening_hiding_bits: u32,
+    #[serde(default)]
+    pub commitment_codomain_bits: u32,
+    #[serde(default)]
+    pub commitment_same_seed_search_bits: u32,
+    #[serde(default)]
+    pub commitment_random_matrix_bits: u32,
     pub commitment_binding_bits: u32,
     pub composition_loss_bits: u32,
     pub soundness_floor_bits: u32,
@@ -684,6 +692,7 @@ pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBac
     params.decomposition_bits = review.decomposition_bits;
     params.opening_randomness_bits = review.opening_randomness_bits;
     params.commitment_assumption_bits = review.commitment_assumption_bits;
+    params.max_commitment_message_ring_elems = review.max_commitment_message_ring_elems;
     params.max_claimed_receipt_root_leaves = review.max_claimed_receipt_root_leaves;
     validate_review_params(&params)?;
     Ok(params)
@@ -945,6 +954,10 @@ fn default_commitment_assumption_bits() -> u32 {
     128
 }
 
+fn default_max_commitment_message_ring_elems() -> u32 {
+    513
+}
+
 fn default_max_claimed_receipt_root_leaves() -> u32 {
     128
 }
@@ -976,6 +989,9 @@ fn review_parameter_fingerprint(params: &NativeBackendParams) -> [u8; 48] {
     hasher.update(params.transcript_domain_label.as_bytes());
     hasher.update(&params.decomposition_bits.to_le_bytes());
     hasher.update(&params.opening_randomness_bits.to_le_bytes());
+    hasher.update(&params.commitment_assumption_bits.to_le_bytes());
+    hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
+    hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     review_hash48(hasher)
 }
 
@@ -997,6 +1013,9 @@ fn review_spec_digest(params: &NativeBackendParams) -> [u8; 32] {
     hasher.update(params.transcript_domain_label.as_bytes());
     hasher.update(&params.decomposition_bits.to_le_bytes());
     hasher.update(&params.opening_randomness_bits.to_le_bytes());
+    hasher.update(&params.commitment_assumption_bits.to_le_bytes());
+    hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
+    hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     review_hash32(hasher)
 }
 

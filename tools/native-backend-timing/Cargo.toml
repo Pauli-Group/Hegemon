@@ -11,6 +11,7 @@ anyhow = "1"
 p3-goldilocks = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+superneo-backend-lattice = { path = "../../circuits/superneo-backend-lattice" }
 superneo-hegemon = { path = "../../circuits/superneo-hegemon" }
 transaction-circuit = { path = "../../circuits/transaction" }
 
