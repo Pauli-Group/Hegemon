@@ -60,6 +60,17 @@ impl BackendManifest {
             maturity_label: "rewrite_candidate",
         }
     }
+
+    pub fn goldilocks_128b_structural_commitment() -> Self {
+        Self {
+            family_label: "goldilocks_128b_structural_commitment",
+            spec_label:
+                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3",
+            commitment_scheme_label: "bounded_message_random_matrix_commitment",
+            challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
+            maturity_label: "structural_candidate",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -76,6 +87,7 @@ pub struct NativeBackendParams {
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
     pub commitment_assumption_bits: u32,
+    pub derive_commitment_binding_from_geometry: bool,
     pub max_commitment_message_ring_elems: u32,
     pub max_claimed_receipt_root_leaves: u32,
 }
@@ -120,6 +132,7 @@ impl NativeBackendParams {
             decomposition_bits: 8,
             opening_randomness_bits: 16,
             commitment_assumption_bits: 63,
+            derive_commitment_binding_from_geometry: false,
             max_commitment_message_ring_elems: 513,
             max_claimed_receipt_root_leaves: 128,
         }
@@ -139,6 +152,27 @@ impl NativeBackendParams {
             decomposition_bits: 8,
             opening_randomness_bits: 256,
             commitment_assumption_bits: 128,
+            derive_commitment_binding_from_geometry: false,
+            max_commitment_message_ring_elems: 513,
+            max_claimed_receipt_root_leaves: 128,
+        }
+    }
+
+    pub fn goldilocks_128b_structural_commitment() -> Self {
+        Self {
+            manifest: BackendManifest::goldilocks_128b_structural_commitment(),
+            security_bits: 128,
+            ring_profile: RingProfile::GoldilocksCyclotomic24,
+            matrix_rows: 74,
+            matrix_cols: 8,
+            challenge_bits: 63,
+            fold_challenge_count: 5,
+            max_fold_arity: 2,
+            transcript_domain_label: "hegemon.superneo.fold.v3",
+            decomposition_bits: 8,
+            opening_randomness_bits: 256,
+            commitment_assumption_bits: 0,
+            derive_commitment_binding_from_geometry: true,
             max_commitment_message_ring_elems: 513,
             max_claimed_receipt_root_leaves: 128,
         }
@@ -201,10 +235,12 @@ impl NativeBackendParams {
             self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
             "opening_randomness_bits must be in 1..=256"
         );
-        ensure!(
-            self.commitment_assumption_bits > 0,
-            "commitment_assumption_bits must be strictly positive"
-        );
+        if !self.derive_commitment_binding_from_geometry {
+            ensure!(
+                self.commitment_assumption_bits > 0,
+                "commitment_assumption_bits must be strictly positive when geometry binding is disabled"
+            );
+        }
         ensure!(
             self.max_commitment_message_ring_elems > 0,
             "max_commitment_message_ring_elems must be strictly positive"
@@ -241,10 +277,12 @@ impl NativeBackendParams {
             self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
             "opening_randomness_bits must be in 1..=256"
         );
-        ensure!(
-            self.commitment_assumption_bits > 0,
-            "commitment_assumption_bits must be strictly positive"
-        );
+        if !self.derive_commitment_binding_from_geometry {
+            ensure!(
+                self.commitment_assumption_bits > 0,
+                "commitment_assumption_bits must be strictly positive when geometry binding is disabled"
+            );
+        }
         ensure!(
             self.max_commitment_message_ring_elems > 0,
             "max_commitment_message_ring_elems must be strictly positive"
@@ -268,7 +306,11 @@ impl NativeBackendParams {
             .saturating_mul(self.decomposition_bits.saturating_add(1));
         let commitment_random_matrix_bits =
             commitment_codomain_bits.saturating_sub(commitment_same_seed_search_bits);
-        let commitment_binding_bits = self.commitment_assumption_bits;
+        let commitment_binding_bits = if self.derive_commitment_binding_from_geometry {
+            commitment_random_matrix_bits
+        } else {
+            self.commitment_assumption_bits
+        };
         let composition_loss_bits = ceil_log2_u32(self.max_claimed_receipt_root_leaves);
         let transcript_floor_bits = transcript_soundness_bits.saturating_sub(composition_loss_bits);
         let soundness_floor_bits = transcript_floor_bits
@@ -296,6 +338,20 @@ impl NativeBackendParams {
                     "fs.quint_goldilocks_negacyclic_fold_challenges",
                     "opening.canonical_256b_mask_seed",
                     "commitment.neo_class_linear_binding",
+                ],
+                ReviewState::CandidateUnderReview,
+            ),
+            (
+                "goldilocks_128b_structural_commitment",
+                "quint_goldilocks_fs_challenge_negacyclic_mix",
+                5,
+            ) => (
+                vec![
+                    "random_oracle.blake3_fiat_shamir",
+                    "serialization.canonical_native_artifact_bytes",
+                    "fs.quint_goldilocks_negacyclic_fold_challenges",
+                    "opening.canonical_256b_mask_seed",
+                    "commitment.bounded_message_random_matrix_union_bound",
                 ],
                 ReviewState::CandidateUnderReview,
             ),
@@ -352,6 +408,7 @@ impl NativeBackendParams {
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
         hasher.update(&self.commitment_assumption_bits.to_le_bytes());
+        hasher.update(&[self.derive_commitment_binding_from_geometry as u8]);
         hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
         hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash48(hasher)
@@ -376,6 +433,7 @@ impl NativeBackendParams {
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
         hasher.update(&self.commitment_assumption_bits.to_le_bytes());
+        hasher.update(&[self.derive_commitment_binding_from_geometry as u8]);
         hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
         hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash32(hasher)
@@ -420,7 +478,7 @@ fn goldilocks_field_capacity_bits(_profile: RingProfile) -> u32 {
 
 impl Default for NativeBackendParams {
     fn default() -> Self {
-        Self::goldilocks_128b_rewrite()
+        Self::goldilocks_128b_structural_commitment()
     }
 }
 
@@ -2598,6 +2656,15 @@ mod tests {
             different_receipt_cap.parameter_fingerprint()
         );
 
+        let different_binding_model = NativeBackendParams {
+            derive_commitment_binding_from_geometry: !base.derive_commitment_binding_from_geometry,
+            ..base.clone()
+        };
+        assert_ne!(
+            base.parameter_fingerprint(),
+            different_binding_model.parameter_fingerprint()
+        );
+
         let different_domain = NativeBackendParams {
             transcript_domain_label: "hegemon.superneo.fold.alt",
             ..base
@@ -2660,6 +2727,26 @@ mod tests {
         assert!(claim
             .assumption_ids
             .contains(&"fs.quint_goldilocks_negacyclic_fold_challenges"));
+    }
+
+    #[test]
+    fn structural_128b_security_claim_matches_current_floor() {
+        let claim = NativeBackendParams::goldilocks_128b_structural_commitment()
+            .security_claim()
+            .unwrap();
+        assert_eq!(claim.claimed_security_bits, 128);
+        assert_eq!(claim.transcript_soundness_bits, 157);
+        assert_eq!(claim.opening_hiding_bits, 128);
+        assert_eq!(claim.commitment_codomain_bits, 37_296);
+        assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
+        assert_eq!(claim.commitment_random_matrix_bits, 360);
+        assert_eq!(claim.commitment_binding_bits, 360);
+        assert_eq!(claim.composition_loss_bits, 7);
+        assert_eq!(claim.soundness_floor_bits, 128);
+        assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
+        assert!(claim
+            .assumption_ids
+            .contains(&"commitment.bounded_message_random_matrix_union_bound"));
     }
 
     #[test]

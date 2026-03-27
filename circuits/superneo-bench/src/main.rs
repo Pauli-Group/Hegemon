@@ -148,6 +148,7 @@ struct BenchNativeBackendParams {
     decomposition_bits: u32,
     opening_randomness_bits: u32,
     commitment_assumption_bits: u32,
+    derive_commitment_binding_from_geometry: bool,
     max_commitment_message_ring_elems: u32,
     max_claimed_receipt_root_leaves: u32,
 }
@@ -211,6 +212,7 @@ struct ReviewBackendParams {
     decomposition_bits: u32,
     opening_randomness_bits: u32,
     commitment_assumption_bits: u32,
+    derive_commitment_binding_from_geometry: bool,
     max_commitment_message_ring_elems: u32,
     max_claimed_receipt_root_leaves: u32,
 }
@@ -511,6 +513,7 @@ fn current_bench_native_backend_params() -> BenchNativeBackendParams {
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
         commitment_assumption_bits: params.commitment_assumption_bits,
+        derive_commitment_binding_from_geometry: params.derive_commitment_binding_from_geometry,
         max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
         max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
     }
@@ -563,6 +566,7 @@ fn review_backend_params(params: &NativeBackendParams) -> ReviewBackendParams {
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
         commitment_assumption_bits: params.commitment_assumption_bits,
+        derive_commitment_binding_from_geometry: params.derive_commitment_binding_from_geometry,
         max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
         max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
     }

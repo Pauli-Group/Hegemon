@@ -54,6 +54,8 @@ pub struct ReviewBackendParams {
     pub opening_randomness_bits: u32,
     #[serde(default = "default_commitment_assumption_bits")]
     pub commitment_assumption_bits: u32,
+    #[serde(default)]
+    pub derive_commitment_binding_from_geometry: bool,
     #[serde(default = "default_max_commitment_message_ring_elems")]
     pub max_commitment_message_ring_elems: u32,
     #[serde(default = "default_max_claimed_receipt_root_leaves")]
@@ -656,11 +658,15 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
 pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBackendParams> {
     let baseline = NativeBackendParams::heuristic_goldilocks_baseline();
     let rewrite = NativeBackendParams::goldilocks_128b_rewrite();
+    let structural = NativeBackendParams::goldilocks_128b_structural_commitment();
     let mut params = match review.family_label.as_str() {
         "heuristic_goldilocks_baseline" => baseline,
         "goldilocks_128b_rewrite" => rewrite,
+        "goldilocks_128b_structural_commitment" => structural,
         other => {
-            let base = if review.security_bits >= 128 {
+            let base = if review.derive_commitment_binding_from_geometry {
+                structural
+            } else if review.security_bits >= 128 {
                 rewrite
             } else {
                 baseline
@@ -682,6 +688,7 @@ pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBac
         }
     };
     params.security_bits = review.security_bits;
+    params.ring_profile = parse_review_ring_profile(&review.ring_profile)?;
     params.matrix_rows = review.matrix_rows;
     params.matrix_cols = review.matrix_cols;
     params.challenge_bits = review.challenge_bits;
@@ -692,6 +699,7 @@ pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBac
     params.decomposition_bits = review.decomposition_bits;
     params.opening_randomness_bits = review.opening_randomness_bits;
     params.commitment_assumption_bits = review.commitment_assumption_bits;
+    params.derive_commitment_binding_from_geometry = review.derive_commitment_binding_from_geometry;
     params.max_commitment_message_ring_elems = review.max_commitment_message_ring_elems;
     params.max_claimed_receipt_root_leaves = review.max_claimed_receipt_root_leaves;
     validate_review_params(&params)?;
@@ -990,6 +998,7 @@ fn review_parameter_fingerprint(params: &NativeBackendParams) -> [u8; 48] {
     hasher.update(&params.decomposition_bits.to_le_bytes());
     hasher.update(&params.opening_randomness_bits.to_le_bytes());
     hasher.update(&params.commitment_assumption_bits.to_le_bytes());
+    hasher.update(&[params.derive_commitment_binding_from_geometry as u8]);
     hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
     hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     review_hash48(hasher)
@@ -1014,6 +1023,7 @@ fn review_spec_digest(params: &NativeBackendParams) -> [u8; 32] {
     hasher.update(&params.decomposition_bits.to_le_bytes());
     hasher.update(&params.opening_randomness_bits.to_le_bytes());
     hasher.update(&params.commitment_assumption_bits.to_le_bytes());
+    hasher.update(&[params.derive_commitment_binding_from_geometry as u8]);
     hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
     hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     review_hash32(hasher)
@@ -1023,6 +1033,16 @@ fn review_ring_profile_label(profile: superneo_backend_lattice::RingProfile) -> 
     match profile {
         superneo_backend_lattice::RingProfile::GoldilocksCyclotomic24 => b"goldilocks-cyclotomic24",
         superneo_backend_lattice::RingProfile::GoldilocksFrog => b"goldilocks-frog",
+    }
+}
+
+fn parse_review_ring_profile(value: &str) -> Result<superneo_backend_lattice::RingProfile> {
+    match value {
+        "GoldilocksCyclotomic24" => {
+            Ok(superneo_backend_lattice::RingProfile::GoldilocksCyclotomic24)
+        }
+        "GoldilocksFrog" => Ok(superneo_backend_lattice::RingProfile::GoldilocksFrog),
+        other => Err(anyhow!("unsupported ring_profile {other}")),
     }
 }
 
@@ -1772,10 +1792,12 @@ fn validate_review_params(params: &NativeBackendParams) -> Result<()> {
         params.opening_randomness_bits > 0 && params.opening_randomness_bits <= 256,
         "opening_randomness_bits must be in 1..=256"
     );
-    ensure!(
-        params.commitment_assumption_bits > 0,
-        "commitment_assumption_bits must be strictly positive"
-    );
+    if !params.derive_commitment_binding_from_geometry {
+        ensure!(
+            params.commitment_assumption_bits > 0,
+            "commitment_assumption_bits must be strictly positive when geometry binding is disabled"
+        );
+    }
     ensure!(
         params.max_claimed_receipt_root_leaves > 0,
         "max_claimed_receipt_root_leaves must be strictly positive"
@@ -2151,6 +2173,7 @@ fn read_array<const N: usize>(bytes: &[u8], cursor: &mut usize) -> Result<[u8; N
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hex::encode as hex_encode;
     use std::path::PathBuf;
 
     #[test]
@@ -2169,6 +2192,73 @@ mod tests {
             summary.failed_cases, 0,
             "unexpected vector failures: {:?}",
             results
+        );
+    }
+
+    #[test]
+    fn review_bundle_params_round_trip_to_matching_fingerprint() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("tools dir")
+            .parent()
+            .expect("repo root")
+            .join("testdata/native_backend_vectors");
+        if !root.exists() {
+            return;
+        }
+        let bundle = load_bundle(&root.join("bundle.json")).expect("bundle load");
+        let params = review_params_to_native(&bundle.native_backend_params).expect("params");
+        let bundle_fingerprint =
+            decode_hex_array::<48>(&bundle.parameter_fingerprint).expect("bundle fingerprint");
+        let production_fingerprint = params.parameter_fingerprint();
+        let reference_fingerprint = review_parameter_fingerprint(&params);
+        assert_eq!(
+            hex_encode(production_fingerprint),
+            hex_encode(bundle_fingerprint),
+            "production fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} assumption={} geom={} max_msg={} max_leaves={}",
+            params.manifest.family_label,
+            params.manifest.spec_label,
+            params.manifest.commitment_scheme_label,
+            params.manifest.challenge_schedule_label,
+            params.manifest.maturity_label,
+            params.security_bits,
+            params.ring_profile,
+            params.matrix_rows,
+            params.matrix_cols,
+            params.challenge_bits,
+            params.fold_challenge_count,
+            params.max_fold_arity,
+            params.transcript_domain_label,
+            params.decomposition_bits,
+            params.opening_randomness_bits,
+            params.commitment_assumption_bits,
+            params.derive_commitment_binding_from_geometry,
+            params.max_commitment_message_ring_elems,
+            params.max_claimed_receipt_root_leaves,
+        );
+        assert_eq!(
+            hex_encode(reference_fingerprint),
+            hex_encode(bundle_fingerprint),
+            "reference fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} assumption={} geom={} max_msg={} max_leaves={}",
+            params.manifest.family_label,
+            params.manifest.spec_label,
+            params.manifest.commitment_scheme_label,
+            params.manifest.challenge_schedule_label,
+            params.manifest.maturity_label,
+            params.security_bits,
+            params.ring_profile,
+            params.matrix_rows,
+            params.matrix_cols,
+            params.challenge_bits,
+            params.fold_challenge_count,
+            params.max_fold_arity,
+            params.transcript_domain_label,
+            params.decomposition_bits,
+            params.opening_randomness_bits,
+            params.commitment_assumption_bits,
+            params.derive_commitment_binding_from_geometry,
+            params.max_commitment_message_ring_elems,
+            params.max_claimed_receipt_root_leaves,
         );
     }
 }

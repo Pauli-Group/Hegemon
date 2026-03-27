@@ -6,36 +6,36 @@ This document describes the current code-derived security claim for Hegemon's ac
 
 Active family:
 
-- `family_label = "goldilocks_128b_rewrite"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2"`
-- `commitment_scheme_label = "neo_class_linear_commitment_128b_masking"`
+- `family_label = "goldilocks_128b_structural_commitment"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3"`
+- `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
-- `maturity_label = "rewrite_candidate"`
+- `maturity_label = "structural_candidate"`
 
 The exact wire/transcript surface for that family is frozen in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md). The current `spec_digest` is derived from the full parameter regime in code and currently evaluates to:
 
-- `spec_digest = 2eb42e627cf84f7cda3a719be8d35ccc4f5681e5d9bfff0646e53da975cc8c5e`
+- `spec_digest = 5c11c4456ae0492ecefca5301e1d76816ec55283d9e4b697818f8d0a4d67dc67`
 
 ## Claim Model
 
-The backend exports one `NativeSecurityClaim` from [superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). The claim is computed mechanically from the active `NativeBackendParams`, including the configured challenge schedule, opening entropy, explicit commitment-assumption bound, explicit commitment message cap, and explicit receipt-root composition bound.
+The backend exports one `NativeSecurityClaim` from [superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). The claim is computed mechanically from the active `NativeBackendParams`, including the configured challenge schedule, opening entropy, explicit commitment message cap, and explicit receipt-root composition bound.
 
 For the active family the code currently computes:
 
 - `claimed_security_bits = 128`
 - `transcript_soundness_bits = floor(challenge_bits * fold_challenge_count / 2) = floor(63 * 5 / 2) = 157`
 - `opening_hiding_bits = min(opening_randomness_bits / 2, 128) = min(256 / 2, 128) = 128`
-- `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 8 * 8 = 4032`
+- `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 74 * 8 = 37,296`
 - `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 513 * 8 * 9 = 36,936`
-- `commitment_random_matrix_bits = max(commitment_codomain_bits - commitment_same_seed_search_bits, 0) = 0`
-- `commitment_binding_bits = commitment_assumption_bits = 128`
+- `commitment_random_matrix_bits = max(commitment_codomain_bits - commitment_same_seed_search_bits, 0) = 360`
+- `commitment_binding_bits = commitment_random_matrix_bits = 360`
 - `composition_loss_bits = ceil(log2(max_claimed_receipt_root_leaves)) = ceil(log2(128)) = 7`
-- `soundness_floor_bits = min(157 - 7, 128, 128) = 128`
+- `soundness_floor_bits = min(157 - 7, 128, 360) = 128`
 - `review_state = candidate_under_review`
 
 The code rejects setup whenever `claimed_security_bits > soundness_floor_bits`.
 
-The important ugly fact is explicit now: the current 8x8 bounded-message linear map does not yield a positive first-principles random-matrix binding floor under the repo's conservative union bound. The live `128`-bit floor therefore still depends on the explicit `commitment_assumption_bits = 128` input, not on `commitment_random_matrix_bits`.
+The important structural fact is explicit now: the active family no longer relies on `commitment_assumption_bits` to hit the claimed floor. The current `74 x 8` bounded-message linear map yields a positive first-principles random-matrix term of `360` bits under the repo's conservative union bound, so the live `128`-bit floor is geometry-derived on the commitment side.
 
 The current code also emits this claim directly through:
 
@@ -51,7 +51,7 @@ The active family currently emits these `assumption_ids`:
 2. `serialization.canonical_native_artifact_bytes`
 3. `fs.quint_goldilocks_negacyclic_fold_challenges`
 4. `opening.canonical_256b_mask_seed`
-5. `commitment.neo_class_linear_binding`
+5. `commitment.bounded_message_random_matrix_union_bound`
 
 These mean:
 
@@ -67,8 +67,8 @@ These mean:
 4. `opening.canonical_256b_mask_seed`
    Hiding for the current commitment-opening path assumes the canonicalized 256-bit mask seed contributes at least 128 bits after the conservative halving rule in the code-derived claim model.
 
-5. `commitment.neo_class_linear_binding`
-   Binding for the current linear commitment path is claimed under the repo's Neo-class commitment model for this exact family and parameter set. In code, this currently enters the floor through the explicit `commitment_assumption_bits` field. The repository now also reports the raw bounded-message random-matrix term separately, and that term is currently `0` bits for the implemented `8 x 8` geometry with `max_commitment_message_ring_elems = 513`. So the repo is no longer pretending the current line earns `128` bits from geometry alone.
+5. `commitment.bounded_message_random_matrix_union_bound`
+   Binding for the current commitment path is claimed under the repository's conservative bounded-message random-matrix union bound for this exact family and parameter set. In code, the active family now sets `commitment_binding_bits = commitment_random_matrix_bits`, and that structural term is currently `360` bits for the implemented `74 x 8` geometry with `max_commitment_message_ring_elems = 513`. So the repo is no longer relying on a separate commitment-assumption override on the active family.
 
 ## What The Claim Does Not Say
 
@@ -89,7 +89,7 @@ The current review state is intentionally not `accepted`.
 Reasons:
 
 - the repo still does not have completed external cryptanalysis,
-- the current commitment binding floor is still partly assumption-fed instead of fully derived from the implemented ring/module geometry,
+- the current commitment binding floor is derived from a conservative in-repo model, not from a paper-equivalent Neo/SuperNeo reduction,
 - the public break-it phase has been packaged but not yet closed,
 - the timing harness is only a regression screen, not a proof,
 - and the backend remains an in-repo approximation rather than a paper-equivalent Neo/SuperNeo implementation.

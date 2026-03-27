@@ -4,9 +4,9 @@ This worksheet is the concrete attack ledger for the active native backend famil
 
 ## Active Target
 
-- `family_label = "goldilocks_128b_rewrite"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2"`
-- `spec_digest = 44c57f55d010b7f1c96b7405c4c262394d7cff5fe765089040a7e36d211f068d`
+- `family_label = "goldilocks_128b_structural_commitment"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3"`
+- `spec_digest = 5c11c4456ae0492ecefca5301e1d76816ec55283d9e4b697818f8d0a4d67dc67`
 
 ## Break Classes
 
@@ -47,7 +47,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ### 4. Commitment opening mismatch acceptance
 
 - Targeted claim:
-  - `commitment.neo_class_linear_binding`
+  - `commitment.bounded_message_random_matrix_union_bound`
 - What to exercise:
   - wrong witness, same digest
   - wrong seed, same digest
@@ -60,7 +60,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 
 - Targeted claims:
   - `fs.quint_goldilocks_negacyclic_fold_challenges`
-  - `commitment.neo_class_linear_binding`
+  - `commitment.bounded_message_random_matrix_union_bound`
 - What to exercise:
   - mutated parent rows
   - swapped left/right child commitments

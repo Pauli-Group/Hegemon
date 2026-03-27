@@ -19,13 +19,13 @@ This specification does not define the full transaction AIR or the full STARK pr
 
 The active family at the time this document was written is:
 
-- `family_label = "goldilocks_128b_rewrite"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2"`
-- `commitment_scheme_label = "neo_class_linear_commitment_128b_masking"`
+- `family_label = "goldilocks_128b_structural_commitment"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3"`
+- `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
-- `maturity_label = "rewrite_candidate"`
+- `maturity_label = "structural_candidate"`
 
-The frozen comparison family is:
+Frozen comparison families are:
 
 - `family_label = "heuristic_goldilocks_baseline"`
 - `spec_label = "hegemon.superneo.native-backend-spec.heuristic-goldilocks-baseline.v1"`
@@ -33,11 +33,17 @@ The frozen comparison family is:
 - `challenge_schedule_label = "single_goldilocks_fs_challenge"`
 - `maturity_label = "experimental_baseline"`
 
+- `family_label = "goldilocks_128b_rewrite"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2"`
+- `commitment_scheme_label = "neo_class_linear_commitment_128b_masking"`
+- `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
+- `maturity_label = "rewrite_candidate"`
+
 The current active parameter object also carries:
 
 - `security_bits = 128`
 - `ring_profile = GoldilocksCyclotomic24`
-- `matrix_rows = 8`
+- `matrix_rows = 74`
 - `matrix_cols = 8`
 - `challenge_bits = 63`
 - `fold_challenge_count = 5`
@@ -45,7 +51,8 @@ The current active parameter object also carries:
 - `transcript_domain_label = "hegemon.superneo.fold.v3"`
 - `decomposition_bits = 8`
 - `opening_randomness_bits = 256`
-- `commitment_assumption_bits = 128`
+- `commitment_assumption_bits = 0`
+- `derive_commitment_binding_from_geometry = true`
 - `max_commitment_message_ring_elems = 513`
 - `max_claimed_receipt_root_leaves = 128`
 
@@ -97,8 +104,9 @@ The parameter fingerprint is a 48-byte Blake3-derived digest over:
 15. `decomposition_bits`
 16. `opening_randomness_bits`
 17. `commitment_assumption_bits`
-18. `max_commitment_message_ring_elems`
-19. `max_claimed_receipt_root_leaves`
+18. `derive_commitment_binding_from_geometry`
+19. `max_commitment_message_ring_elems`
+20. `max_claimed_receipt_root_leaves`
 
 The spec digest is a separate 32-byte Blake3-derived digest over the same ordered fields under a distinct domain tag:
 
@@ -122,11 +130,11 @@ The current backend also computes a security claim from:
 
 - transcript challenge width and count
 - opening entropy width
-- explicit commitment-binding assumption width
+- bounded-message random-matrix commitment geometry
 - explicit maximum commitment message length
 - composition loss from the configured maximum receipt-root leaf count
 
-The current code does not derive commitment binding directly from the ring geometry alone. It derives the final floor from the parameter object, which includes an explicit `commitment_assumption_bits` input, an explicit `max_commitment_message_ring_elems` bound, and an explicit `max_claimed_receipt_root_leaves` bound. The security-analysis document records the resulting raw bounded-message random-matrix term separately from the assumption-fed commitment floor.
+For the active family, the code derives commitment binding directly from the bounded-message random-matrix term computed from the concrete matrix geometry, decomposition width, and message-length cap. Historical families may still use a nonzero `commitment_assumption_bits`, but the active family sets `commitment_assumption_bits = 0` and `derive_commitment_binding_from_geometry = true`. The security-analysis document records the resulting structural term and the final floor explicitly.
 
 This specification freezes the wire and transcript surface. The security-analysis document is the place where those ingredients are translated into a security claim.
 
