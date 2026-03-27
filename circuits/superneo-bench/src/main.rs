@@ -147,6 +147,8 @@ struct BenchNativeBackendParams {
     transcript_domain_label: String,
     decomposition_bits: u32,
     opening_randomness_bits: u32,
+    commitment_assumption_bits: u32,
+    max_claimed_receipt_root_leaves: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +206,8 @@ struct ReviewBackendParams {
     transcript_domain_label: String,
     decomposition_bits: u32,
     opening_randomness_bits: u32,
+    commitment_assumption_bits: u32,
+    max_claimed_receipt_root_leaves: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -501,6 +505,8 @@ fn current_bench_native_backend_params() -> BenchNativeBackendParams {
         transcript_domain_label: params.transcript_domain_label.to_owned(),
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
+        commitment_assumption_bits: params.commitment_assumption_bits,
+        max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
     }
 }
 
@@ -544,6 +550,8 @@ fn review_backend_params(params: &NativeBackendParams) -> ReviewBackendParams {
         transcript_domain_label: params.transcript_domain_label.to_owned(),
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
+        commitment_assumption_bits: params.commitment_assumption_bits,
+        max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
     }
 }
 
@@ -733,8 +741,17 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
     let invalid_leaf_params_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_params)?;
 
     let mut invalid_leaf_seed = valid_leaf.clone();
-    invalid_leaf_seed.commitment_opening.randomness_seed[31] = 1;
+    if params.opening_randomness_bits < 256 {
+        invalid_leaf_seed.commitment_opening.randomness_seed[31] ^= 0x80;
+    } else {
+        invalid_leaf_seed.commitment_opening.randomness_seed[31] ^= 0x01;
+    }
     let invalid_leaf_seed_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_seed)?;
+    let invalid_leaf_seed_error = if params.opening_randomness_bits < 256 {
+        "randomness seed is not canonical"
+    } else {
+        "mismatch"
+    };
 
     let mut invalid_leaf_proof = valid_leaf.clone();
     invalid_leaf_proof.leaf.proof.proof_digest[0] ^= 0x01;
@@ -820,7 +837,7 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
                 "native_tx_leaf_invalid_noncanonical_seed",
                 "native_tx_leaf",
                 false,
-                Some("randomness seed is not canonical"),
+                Some(invalid_leaf_seed_error),
                 &invalid_leaf_seed_bytes,
                 Some(valid_leaf_context),
                 None,

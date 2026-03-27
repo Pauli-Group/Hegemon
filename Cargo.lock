@@ -5959,8 +5959,10 @@ name = "native-backend-ref"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "clap",
  "hex",
+ "p3-field",
  "p3-goldilocks",
  "protocol-versioning",
  "serde",

@@ -7,7 +7,7 @@ This document is the repository's explicit constant-time and canonicality note f
 Active family:
 
 - `family_label = "goldilocks_128b_rewrite"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v1"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2"`
 
 Covered code paths:
 
@@ -66,18 +66,24 @@ The harness:
 4. computes a Welch-style t-statistic over the two timing distributions, and
 5. fails closed if the absolute statistic exceeds the current screening threshold.
 
-Current screening threshold:
+Current screening thresholds:
 
-- `abs(t) < 10.0`
+- `abs(t) < 5.0`
+- `relative_mean_delta < 0.25`
+- `relative_median_delta < 0.25`
 
-This threshold is intentionally crude. It is only a guard against obvious secret-dependent timing separation in the exercised path.
+These thresholds are still crude. They are only guards against obvious secret-dependent timing separation in the exercised path.
 
 Latest local rerun on this branch:
 
-- `sample_count = 24`
-- `class_a_mean_ns = 4,562,491.42`
-- `class_b_mean_ns = 2,660,336.67`
-- `welch_t_statistic = 1.2463`
+- `sample_count = 64`
+- `class_a_mean_ns = 1,220,065.11`
+- `class_b_mean_ns = 1,025,864.64`
+- `class_a_median_ns = 942,770.5`
+- `class_b_median_ns = 942,333.5`
+- `relative_mean_delta = 0.1592`
+- `relative_median_delta = 0.00046`
+- `welch_t_statistic = 0.8824`
 - result: `pass`
 
 ## What This Note Does Not Claim

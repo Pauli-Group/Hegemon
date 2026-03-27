@@ -20,9 +20,9 @@ This specification does not define the full transaction AIR or the full STARK pr
 The active family at the time this document was written is:
 
 - `family_label = "goldilocks_128b_rewrite"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v1"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2"`
 - `commitment_scheme_label = "neo_class_linear_commitment_128b_masking"`
-- `challenge_schedule_label = "triple_goldilocks_fs_challenge_negacyclic_mix"`
+- `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "rewrite_candidate"`
 
 The frozen comparison family is:
@@ -40,11 +40,13 @@ The current active parameter object also carries:
 - `matrix_rows = 8`
 - `matrix_cols = 8`
 - `challenge_bits = 63`
-- `fold_challenge_count = 3`
+- `fold_challenge_count = 5`
 - `max_fold_arity = 2`
 - `transcript_domain_label = "hegemon.superneo.fold.v3"`
 - `decomposition_bits = 8`
-- `opening_randomness_bits = 128`
+- `opening_randomness_bits = 256`
+- `commitment_assumption_bits = 128`
+- `max_claimed_receipt_root_leaves = 128`
 
 ## Global Encoding Rules
 
@@ -93,6 +95,8 @@ The parameter fingerprint is a 48-byte Blake3-derived digest over:
 14. `transcript_domain_label`
 15. `decomposition_bits`
 16. `opening_randomness_bits`
+17. `commitment_assumption_bits`
+18. `max_claimed_receipt_root_leaves`
 
 The spec digest is a separate 32-byte Blake3-derived digest over the same ordered fields under a distinct domain tag:
 
@@ -116,7 +120,10 @@ The current backend also computes a security claim from:
 
 - transcript challenge width and count
 - opening entropy width
-- family-owned commitment-binding assumption
+- explicit commitment-binding assumption width
+- composition loss from the configured maximum receipt-root leaf count
+
+The current code does not derive commitment binding directly from the ring geometry alone. It derives the final floor from the parameter object, which includes an explicit `commitment_assumption_bits` input and an explicit `max_claimed_receipt_root_leaves` bound.
 
 This specification freezes the wire and transcript surface. The security-analysis document is the place where those ingredients are translated into a security claim.
 
@@ -151,10 +158,7 @@ Before the seed is used, it is canonicalized to the configured entropy budget:
 - if there is a partial byte, keep only its low `opening_randomness_bits % 8` bits
 - zero all higher bits and all remaining bytes
 
-For the active family, `opening_randomness_bits = 128`, so canonicalization means:
-
-- keep the first 16 bytes
-- zero the final 16 bytes
+For the active family, `opening_randomness_bits = 256`, so canonicalization means the full 32-byte seed is already canonical.
 
 The verifier must reject an artifact if the stored `randomness_seed` is not already canonical for the configured entropy width.
 
@@ -245,7 +249,7 @@ Each challenge is then derived with Blake3 XOF over:
 - the transcript bytes above
 - `challenge_index` as `u64`
 
-Each challenge is reduced into the configured `challenge_bits` width using the backend’s current reduction rule. The current family derives exactly `fold_challenge_count = 3` challenges.
+Each challenge is reduced into the configured `challenge_bits` width using the backend’s current reduction rule. The current family derives exactly `fold_challenge_count = 5` challenges.
 
 The fold verifier must reject if:
 

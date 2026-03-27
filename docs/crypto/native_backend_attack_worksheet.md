@@ -5,8 +5,8 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ## Active Target
 
 - `family_label = "goldilocks_128b_rewrite"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v1"`
-- `spec_digest = c8e67688913af08b80d7011e2a7225ac467fb3e12cdd1ba69e533823b75b64b4`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2"`
+- `spec_digest = 44c57f55d010b7f1c96b7405c4c262394d7cff5fe765089040a7e36d211f068d`
 
 ## Break Classes
 
@@ -25,7 +25,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 
 - Targeted claims:
   - `random_oracle.blake3_fiat_shamir`
-  - `fs.triple_goldilocks_negacyclic_fold_challenges`
+  - `fs.quint_goldilocks_negacyclic_fold_challenges`
 - What to exercise:
   - distinct fold inputs producing identical transcript bytes
   - domain-separation collisions across leaf/fold/opening subtranscripts
@@ -36,13 +36,13 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ### 3. Opening-seed canonicality failures
 
 - Targeted claim:
-  - `opening.canonical_128b_mask_seed`
+  - `opening.canonical_256b_mask_seed`
 - What to exercise:
-  - noncanonical high bits
-  - truncated seed variants
+  - seed tampering on the active 256-bit family
+  - noncanonical high bits on any lower-entropy historical family
   - alternate encodings that map to the same accepted seed
 - Break condition:
-  - verifier accepts two encodings for the same canonical seed or accepts a seed outside the configured entropy envelope
+  - verifier accepts two encodings for the same canonical seed, accepts a seed outside the configured entropy envelope, or accepts a tampered seed/opening pair without tripping the opening checks
 
 ### 4. Commitment opening mismatch acceptance
 
@@ -59,7 +59,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ### 5. Fold-row forgery
 
 - Targeted claims:
-  - `fs.triple_goldilocks_negacyclic_fold_challenges`
+  - `fs.quint_goldilocks_negacyclic_fold_challenges`
   - `commitment.neo_class_linear_binding`
 - What to exercise:
   - mutated parent rows

@@ -54,9 +54,9 @@ impl BackendManifest {
     pub fn goldilocks_128b_rewrite() -> Self {
         Self {
             family_label: "goldilocks_128b_rewrite",
-            spec_label: "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v1",
+            spec_label: "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2",
             commitment_scheme_label: "neo_class_linear_commitment_128b_masking",
-            challenge_schedule_label: "triple_goldilocks_fs_challenge_negacyclic_mix",
+            challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
             maturity_label: "rewrite_candidate",
         }
     }
@@ -75,6 +75,8 @@ pub struct NativeBackendParams {
     pub transcript_domain_label: &'static str,
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
+    pub commitment_assumption_bits: u32,
+    pub max_claimed_receipt_root_leaves: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +115,8 @@ impl NativeBackendParams {
             transcript_domain_label: "hegemon.superneo.fold.v1",
             decomposition_bits: 8,
             opening_randomness_bits: 16,
+            commitment_assumption_bits: 63,
+            max_claimed_receipt_root_leaves: 128,
         }
     }
 
@@ -124,11 +128,13 @@ impl NativeBackendParams {
             matrix_rows: 8,
             matrix_cols: 8,
             challenge_bits: 63,
-            fold_challenge_count: 3,
+            fold_challenge_count: 5,
             max_fold_arity: 2,
             transcript_domain_label: "hegemon.superneo.fold.v3",
             decomposition_bits: 8,
-            opening_randomness_bits: 128,
+            opening_randomness_bits: 256,
+            commitment_assumption_bits: 128,
+            max_claimed_receipt_root_leaves: 128,
         }
     }
 
@@ -166,8 +172,8 @@ impl NativeBackendParams {
             "challenge_bits must be in 1..=63"
         );
         ensure!(
-            (1..=4).contains(&self.fold_challenge_count),
-            "fold_challenge_count must be in 1..=4"
+            (1..=8).contains(&self.fold_challenge_count),
+            "fold_challenge_count must be in 1..=8"
         );
         ensure!(
             self.security_bits > 0,
@@ -189,6 +195,14 @@ impl NativeBackendParams {
             self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
             "opening_randomness_bits must be in 1..=256"
         );
+        ensure!(
+            self.commitment_assumption_bits > 0,
+            "commitment_assumption_bits must be strictly positive"
+        );
+        ensure!(
+            self.max_claimed_receipt_root_leaves > 0,
+            "max_claimed_receipt_root_leaves must be strictly positive"
+        );
         let claim = self.security_claim()?;
         ensure!(
             self.security_bits <= claim.soundness_floor_bits,
@@ -206,8 +220,8 @@ impl NativeBackendParams {
             "challenge_bits must be in 1..=63"
         );
         ensure!(
-            (1..=4).contains(&self.fold_challenge_count),
-            "fold_challenge_count must be in 1..=4"
+            (1..=8).contains(&self.fold_challenge_count),
+            "fold_challenge_count must be in 1..=8"
         );
         ensure!(
             self.max_fold_arity == 2,
@@ -217,24 +231,26 @@ impl NativeBackendParams {
             self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
             "opening_randomness_bits must be in 1..=256"
         );
+        ensure!(
+            self.commitment_assumption_bits > 0,
+            "commitment_assumption_bits must be strictly positive"
+        );
+        ensure!(
+            self.max_claimed_receipt_root_leaves > 0,
+            "max_claimed_receipt_root_leaves must be strictly positive"
+        );
 
         let transcript_soundness_bits = self
             .challenge_bits
-            .saturating_mul(self.fold_challenge_count);
-        let opening_hiding_bits = self.opening_randomness_bits.min(128);
-        let commitment_binding_bits = match (
-            self.manifest.family_label,
-            self.manifest.commitment_scheme_label,
-        ) {
-            ("heuristic_goldilocks_baseline", "ajtai_linear_masked_commitment") => 63,
-            ("goldilocks_128b_rewrite", "neo_class_linear_commitment_128b_masking") => 128,
-            _ => opening_hiding_bits.min(transcript_soundness_bits),
-        };
-        let composition_loss_bits = 0;
-        let pre_loss_floor_bits = transcript_soundness_bits
+            .saturating_mul(self.fold_challenge_count)
+            / 2;
+        let opening_hiding_bits = (self.opening_randomness_bits / 2).min(128);
+        let commitment_binding_bits = self.commitment_assumption_bits;
+        let composition_loss_bits = ceil_log2_u32(self.max_claimed_receipt_root_leaves);
+        let transcript_floor_bits = transcript_soundness_bits.saturating_sub(composition_loss_bits);
+        let soundness_floor_bits = transcript_floor_bits
             .min(opening_hiding_bits)
             .min(commitment_binding_bits);
-        let soundness_floor_bits = pre_loss_floor_bits.saturating_sub(composition_loss_bits);
         let (assumption_ids, review_state) = match (
             self.manifest.family_label,
             self.manifest.challenge_schedule_label,
@@ -250,12 +266,12 @@ impl NativeBackendParams {
                 ],
                 ReviewState::Killed,
             ),
-            ("goldilocks_128b_rewrite", "triple_goldilocks_fs_challenge_negacyclic_mix", 3) => (
+            ("goldilocks_128b_rewrite", "quint_goldilocks_fs_challenge_negacyclic_mix", 5) => (
                 vec![
                     "random_oracle.blake3_fiat_shamir",
                     "serialization.canonical_native_artifact_bytes",
-                    "fs.triple_goldilocks_negacyclic_fold_challenges",
-                    "opening.canonical_128b_mask_seed",
+                    "fs.quint_goldilocks_negacyclic_fold_challenges",
+                    "opening.canonical_256b_mask_seed",
                     "commitment.neo_class_linear_binding",
                 ],
                 ReviewState::CandidateUnderReview,
@@ -355,6 +371,14 @@ impl NativeBackendParams {
 
     pub fn randomness_bytes(&self) -> usize {
         self.opening_randomness_bits.div_ceil(8) as usize
+    }
+}
+
+fn ceil_log2_u32(value: u32) -> u32 {
+    if value <= 1 {
+        0
+    } else {
+        u32::BITS - (value - 1).leading_zeros()
     }
 }
 
@@ -2425,6 +2449,9 @@ mod tests {
             security_bits: 20,
             challenge_bits: 20,
             fold_challenge_count: 2,
+            opening_randomness_bits: 40,
+            commitment_assumption_bits: 20,
+            max_claimed_receipt_root_leaves: 1,
             ..NativeBackendParams::default()
         };
         let backend = LatticeBackend::new(params);
@@ -2535,11 +2562,11 @@ mod tests {
             .security_claim()
             .unwrap();
         assert_eq!(claim.claimed_security_bits, 63);
-        assert_eq!(claim.transcript_soundness_bits, 63);
-        assert_eq!(claim.opening_hiding_bits, 16);
+        assert_eq!(claim.transcript_soundness_bits, 31);
+        assert_eq!(claim.opening_hiding_bits, 8);
         assert_eq!(claim.commitment_binding_bits, 63);
-        assert_eq!(claim.composition_loss_bits, 0);
-        assert_eq!(claim.soundness_floor_bits, 16);
+        assert_eq!(claim.composition_loss_bits, 7);
+        assert_eq!(claim.soundness_floor_bits, 8);
         assert_eq!(claim.review_state, ReviewState::Killed);
         assert!(claim
             .assumption_ids
@@ -2552,15 +2579,15 @@ mod tests {
             .security_claim()
             .unwrap();
         assert_eq!(claim.claimed_security_bits, 128);
-        assert_eq!(claim.transcript_soundness_bits, 189);
+        assert_eq!(claim.transcript_soundness_bits, 157);
         assert_eq!(claim.opening_hiding_bits, 128);
         assert_eq!(claim.commitment_binding_bits, 128);
-        assert_eq!(claim.composition_loss_bits, 0);
+        assert_eq!(claim.composition_loss_bits, 7);
         assert_eq!(claim.soundness_floor_bits, 128);
         assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
         assert!(claim
             .assumption_ids
-            .contains(&"fs.triple_goldilocks_negacyclic_fold_challenges"));
+            .contains(&"fs.quint_goldilocks_negacyclic_fold_challenges"));
     }
 
     #[test]

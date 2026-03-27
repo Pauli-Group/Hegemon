@@ -17,10 +17,15 @@ struct TimingReport {
     sample_count: usize,
     class_a_mean_ns: f64,
     class_b_mean_ns: f64,
+    class_a_median_ns: f64,
+    class_b_median_ns: f64,
     class_a_stddev_ns: f64,
     class_b_stddev_ns: f64,
     welch_t_statistic: f64,
-    threshold: f64,
+    t_threshold: f64,
+    relative_mean_delta: f64,
+    relative_median_delta: f64,
+    relative_delta_threshold: f64,
     pass: bool,
     note: String,
 }
@@ -35,11 +40,18 @@ fn main() -> Result<()> {
         sample_count: class_a.len(),
         class_a_mean_ns: mean(&class_a),
         class_b_mean_ns: mean(&class_b),
+        class_a_median_ns: median(&class_a),
+        class_b_median_ns: median(&class_b),
         class_a_stddev_ns: stddev(&class_a),
         class_b_stddev_ns: stddev(&class_b),
         welch_t_statistic: welch_t_statistic(&class_a, &class_b),
-        threshold: 10.0,
-        pass: welch_t_statistic(&class_a, &class_b).abs() < 10.0,
+        t_threshold: 5.0,
+        relative_mean_delta: relative_delta(mean(&class_a), mean(&class_b)),
+        relative_median_delta: relative_delta(median(&class_a), median(&class_b)),
+        relative_delta_threshold: 0.25,
+        pass: welch_t_statistic(&class_a, &class_b).abs() < 5.0
+            && relative_delta(mean(&class_a), mean(&class_b)) < 0.25
+            && relative_delta(median(&class_a), median(&class_b)) < 0.25,
         note: "This harness only screens for gross secret-dependent timing separation on the deterministic native tx-leaf build path; it is not a proof of constant time.".to_owned(),
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -51,8 +63,8 @@ fn main() -> Result<()> {
 
 fn measure_class(make_witness: impl Fn(usize) -> TransactionWitness) -> Result<Vec<f64>> {
     let params = native_backend_params();
-    let mut samples = Vec::with_capacity(24);
-    for idx in 0..24usize {
+    let mut samples = Vec::with_capacity(64);
+    for idx in 0..64usize {
         let witness = make_witness(idx);
         let seed = review_seed(idx as u8 + 1);
         let start = Instant::now();
@@ -66,6 +78,22 @@ fn measure_class(make_witness: impl Fn(usize) -> TransactionWitness) -> Result<V
 
 fn mean(values: &[f64]) -> f64 {
     values.iter().sum::<f64>() / values.len() as f64
+}
+
+fn median(values: &[f64]) -> f64 {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|left, right| left.total_cmp(right));
+    let mid = sorted.len() / 2;
+    if sorted.len() % 2 == 0 {
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[mid]
+    }
+}
+
+fn relative_delta(left: f64, right: f64) -> f64 {
+    let baseline = left.max(right).max(1.0);
+    (left - right).abs() / baseline
 }
 
 fn variance(values: &[f64]) -> f64 {

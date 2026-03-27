@@ -1,20 +1,20 @@
 use anyhow::{anyhow, ensure, Context, Result};
+use blake3::Hasher;
+use p3_field::PrimeField64;
+use p3_goldilocks::Goldilocks;
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 use superneo_backend_lattice::{
-    canonical_opening_randomness_seed, commit_packed_witness_with_seed, review_fold_challenges,
-    review_fold_proof_digest, review_fold_rows, review_fold_statement_digest, CommitmentOpening,
-    LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams, RingElem,
+    BackendKey, CommitmentOpening, LatticeCommitment, LeafDigestProof, NativeBackendParams,
+    RingElem,
 };
-use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
-use superneo_core::{Backend, FoldedInstance, LeafArtifact};
+use superneo_ccs::{digest_shape, Relation, RelationId, ShapeDigest, StatementDigest};
+use superneo_core::{FoldedInstance, LeafArtifact};
 use superneo_hegemon::{
-    experimental_native_tx_leaf_verifier_profile_for_params, native_leaf_proof_digest_for_review,
-    native_tx_validity_statement_from_witness_with_params,
-    serialized_stark_inputs_from_witness_for_review, CanonicalTxValidityReceipt,
-    NativeTxLeafArtifact, NativeTxLeafOpening, NativeTxLeafRecord, NativeTxValidityRelation,
-    ReceiptRootArtifact, ReceiptRootFoldStep, ReceiptRootLeaf,
+    CanonicalTxValidityReceipt, NativeTxLeafArtifact, NativeTxLeafOpening, NativeTxLeafRecord,
+    NativeTxValidityRelation, NativeTxValidityStatement, ReceiptRootArtifact, ReceiptRootFoldStep,
+    ReceiptRootLeaf,
 };
 use superneo_ring::{
     GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWidthSummary, WitnessPacker,
@@ -52,6 +52,10 @@ pub struct ReviewBackendParams {
     pub transcript_domain_label: String,
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
+    #[serde(default = "default_commitment_assumption_bits")]
+    pub commitment_assumption_bits: u32,
+    #[serde(default = "default_max_claimed_receipt_root_leaves")]
+    pub max_claimed_receipt_root_leaves: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,8 +290,7 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
     let params = review_params_to_native(&ctx.backend_params)?;
     let artifact = parse_native_tx_leaf_artifact(artifact_bytes)?;
     let relation = NativeTxValidityRelation::default();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend.setup(&params.security_params(), relation.shape())?;
+    let shape_digest = digest_shape(relation.shape());
 
     ensure!(
         artifact.version == ctx.expected_version,
@@ -298,7 +301,15 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         "native tx-leaf parameter fingerprint mismatch"
     );
     ensure!(
+        artifact.params_fingerprint == review_parameter_fingerprint(&params),
+        "native tx-leaf parameter fingerprint mismatch"
+    );
+    ensure!(
         artifact.spec_digest == decode_hex_array::<32>(&ctx.spec_digest_hex)?,
+        "native tx-leaf spec digest mismatch"
+    );
+    ensure!(
+        artifact.spec_digest == review_spec_digest(&params),
         "native tx-leaf spec digest mismatch"
     );
     ensure!(
@@ -314,7 +325,7 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         "native tx-leaf relation id mismatch"
     );
     ensure!(
-        artifact.shape_digest == pk.shape_digest.0,
+        artifact.shape_digest == shape_digest.0,
         "native tx-leaf shape digest mismatch"
     );
     ensure!(
@@ -326,12 +337,16 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         "native tx-leaf inner relation id mismatch"
     );
     ensure!(
-        artifact.leaf.shape_digest == pk.shape_digest,
+        artifact.leaf.shape_digest == shape_digest,
         "native tx-leaf inner shape digest mismatch"
     );
 
     let witness = review_tx_context_to_witness(ctx)?;
-    let expected_stark_inputs = serialized_stark_inputs_from_witness_for_review(&witness)?;
+    let public_inputs = witness
+        .public_inputs()
+        .map_err(|err| anyhow!("failed to derive native tx public inputs: {err}"))?;
+    let expected_stark_inputs =
+        review_serialized_stark_inputs_from_witness(&witness, &public_inputs)?;
     ensure!(
         expected_stark_inputs == artifact.stark_public_inputs,
         "native tx-leaf serialized STARK inputs mismatch"
@@ -346,7 +361,7 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         "native tx-leaf opening mismatch"
     );
 
-    let statement = native_tx_validity_statement_from_witness_with_params(&witness, &params)?;
+    let statement = review_native_tx_validity_statement_from_witness(&witness, &params)?;
     let encoding = relation.encode_statement(&statement)?;
     ensure!(
         artifact.statement_digest == decode_hex_array::<48>(&ctx.statement_digest_hex)?,
@@ -365,7 +380,12 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         statement_hash: statement.statement_hash,
         proof_digest: decode_hex_array::<48>(&ctx.receipt.proof_digest_hex)?,
         public_inputs_digest: statement.public_inputs_digest,
-        verifier_profile: experimental_native_tx_leaf_verifier_profile_for_params(&params),
+        verifier_profile: review_verifier_profile(
+            &params,
+            &relation.relation_id(),
+            &shape_digest,
+            b"native-tx-leaf",
+        ),
     };
     ensure!(
         artifact.receipt.statement_hash == decode_hex_array::<48>(&ctx.receipt.statement_hash_hex)?,
@@ -408,13 +428,13 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
 
     ensure!(
         artifact.commitment_opening.randomness_seed
-            == canonical_opening_randomness_seed(
+            == review_canonical_opening_randomness_seed(
                 &params,
                 artifact.commitment_opening.randomness_seed,
             ),
         "randomness seed is not canonical"
     );
-    let (expected_commitment, expected_opening) = commit_packed_witness_with_seed(
+    let (expected_commitment, expected_opening) = review_commit_packed_witness_with_seed(
         &params,
         &packed,
         artifact.commitment_opening.randomness_seed,
@@ -432,7 +452,7 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         "native tx-leaf proof/commitment digest mismatch"
     );
 
-    let expected_proof_digest = native_leaf_proof_digest_for_review(
+    let expected_proof_digest = review_native_leaf_proof_digest(
         &params,
         &relation.relation_id(),
         &encoding.statement_digest,
@@ -457,8 +477,7 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
         .ok_or_else(|| anyhow!("receipt_root case {} is missing block_context", case.name))?;
     let params = review_params_to_native(&ctx.backend_params)?;
     let relation = NativeTxValidityRelation::default();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend.setup(&params.security_params(), relation.shape())?;
+    let shape_digest = digest_shape(relation.shape());
     let artifact = parse_receipt_root_artifact(artifact_bytes)?;
 
     ensure!(
@@ -470,7 +489,15 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
         "native receipt-root parameter fingerprint mismatch"
     );
     ensure!(
+        artifact.params_fingerprint == review_parameter_fingerprint(&params),
+        "native receipt-root parameter fingerprint mismatch"
+    );
+    ensure!(
         artifact.spec_digest == decode_hex_array::<32>(&ctx.spec_digest_hex)?,
+        "native receipt-root spec digest mismatch"
+    );
+    ensure!(
+        artifact.spec_digest == review_spec_digest(&params),
         "native receipt-root spec digest mismatch"
     );
     ensure!(
@@ -486,7 +513,7 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
         "native receipt-root relation id mismatch"
     );
     ensure!(
-        artifact.shape_digest == pk.shape_digest.0,
+        artifact.shape_digest == shape_digest.0,
         "native receipt-root shape digest mismatch"
     );
     ensure!(
@@ -522,7 +549,7 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
         );
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
-            shape_digest: pk.shape_digest,
+            shape_digest,
             statement_digest: StatementDigest(leaf.statement_digest),
             witness_commitment: commitment,
         });
@@ -539,7 +566,7 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
                 })?;
                 fold_index += 1;
                 let expected_challenges =
-                    review_fold_challenges(&params, pk.shape_digest, &left, &right)?;
+                    review_fold_challenges(&params, shape_digest, &left, &right)?;
                 ensure!(
                     fold.challenges == expected_challenges,
                     "fold challenge vector mismatch"
@@ -567,7 +594,7 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
                 );
                 let expected_proof_digest = review_fold_proof_digest(
                     &params,
-                    pk.shape_digest,
+                    shape_digest,
                     &relation.relation_id(),
                     &left,
                     &right,
@@ -581,7 +608,7 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
                 );
                 next.push(FoldedInstance {
                     relation_id: relation.relation_id(),
-                    shape_digest: pk.shape_digest,
+                    shape_digest,
                     statement_digest: expected_statement_digest,
                     witness_commitment: expected_commitment,
                 });
@@ -656,7 +683,9 @@ pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBac
         Box::leak(review.transcript_domain_label.clone().into_boxed_str());
     params.decomposition_bits = review.decomposition_bits;
     params.opening_randomness_bits = review.opening_randomness_bits;
-    params.validate()?;
+    params.commitment_assumption_bits = review.commitment_assumption_bits;
+    params.max_claimed_receipt_root_leaves = review.max_claimed_receipt_root_leaves;
+    validate_review_params(&params)?;
     Ok(params)
 }
 
@@ -910,6 +939,829 @@ fn signed_value(sign: u8, magnitude: u64, label: &str) -> Result<i128> {
     } else {
         -i128::from(magnitude)
     })
+}
+
+fn default_commitment_assumption_bits() -> u32 {
+    128
+}
+
+fn default_max_claimed_receipt_root_leaves() -> u32 {
+    128
+}
+
+const GOLDILOCKS_MODULUS_I128: i128 = 18_446_744_069_414_584_321;
+const COMMITMENT_WINDOW_COLUMNS: usize = 32;
+
+#[derive(Clone, Debug)]
+struct ReviewEmbeddedRingElem {
+    ring: RingElem,
+    source_width_bits: u16,
+}
+
+fn review_parameter_fingerprint(params: &NativeBackendParams) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.native-backend-params.v2");
+    hasher.update(params.manifest.family_label.as_bytes());
+    hasher.update(params.manifest.spec_label.as_bytes());
+    hasher.update(params.manifest.commitment_scheme_label.as_bytes());
+    hasher.update(params.manifest.challenge_schedule_label.as_bytes());
+    hasher.update(params.manifest.maturity_label.as_bytes());
+    hasher.update(&params.security_bits.to_le_bytes());
+    hasher.update(review_ring_profile_label(params.ring_profile));
+    hasher.update(&(params.matrix_rows as u64).to_le_bytes());
+    hasher.update(&(params.matrix_cols as u64).to_le_bytes());
+    hasher.update(&params.challenge_bits.to_le_bytes());
+    hasher.update(&params.fold_challenge_count.to_le_bytes());
+    hasher.update(&params.max_fold_arity.to_le_bytes());
+    hasher.update(params.transcript_domain_label.as_bytes());
+    hasher.update(&params.decomposition_bits.to_le_bytes());
+    hasher.update(&params.opening_randomness_bits.to_le_bytes());
+    review_hash48(hasher)
+}
+
+fn review_spec_digest(params: &NativeBackendParams) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.native-backend-spec-digest.v1");
+    hasher.update(params.manifest.family_label.as_bytes());
+    hasher.update(params.manifest.spec_label.as_bytes());
+    hasher.update(params.manifest.commitment_scheme_label.as_bytes());
+    hasher.update(params.manifest.challenge_schedule_label.as_bytes());
+    hasher.update(params.manifest.maturity_label.as_bytes());
+    hasher.update(&params.security_bits.to_le_bytes());
+    hasher.update(review_ring_profile_label(params.ring_profile));
+    hasher.update(&(params.matrix_rows as u64).to_le_bytes());
+    hasher.update(&(params.matrix_cols as u64).to_le_bytes());
+    hasher.update(&params.challenge_bits.to_le_bytes());
+    hasher.update(&params.fold_challenge_count.to_le_bytes());
+    hasher.update(&params.max_fold_arity.to_le_bytes());
+    hasher.update(params.transcript_domain_label.as_bytes());
+    hasher.update(&params.decomposition_bits.to_le_bytes());
+    hasher.update(&params.opening_randomness_bits.to_le_bytes());
+    review_hash32(hasher)
+}
+
+fn review_ring_profile_label(profile: superneo_backend_lattice::RingProfile) -> &'static [u8] {
+    match profile {
+        superneo_backend_lattice::RingProfile::GoldilocksCyclotomic24 => b"goldilocks-cyclotomic24",
+        superneo_backend_lattice::RingProfile::GoldilocksFrog => b"goldilocks-frog",
+    }
+}
+
+fn review_digest32_with_label(label: &[u8], payload: &[u8]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(label);
+    hasher.update(payload);
+    review_hash32(hasher)
+}
+
+fn review_digest48_with_parts(label: &[u8], parts: &[&[u8]]) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(label);
+    for part in parts {
+        hasher.update(part);
+    }
+    review_hash48(hasher)
+}
+
+fn review_hash48(hasher: Hasher) -> [u8; 48] {
+    let mut out = [0u8; 48];
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
+fn review_hash32(hasher: Hasher) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
+fn review_bla3_384_bytes(bytes: &[u8]) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    review_hash48(hasher)
+}
+
+fn review_verifier_profile(
+    params: &NativeBackendParams,
+    relation_id: &RelationId,
+    shape_digest: &ShapeDigest,
+    profile_label: &[u8],
+) -> [u8; 48] {
+    review_digest48_with_parts(
+        b"hegemon.superneo.explicit-verifier-profile.v1",
+        &[
+            profile_label,
+            &review_parameter_fingerprint(params),
+            &review_spec_digest(params),
+            &relation_id.0,
+            &shape_digest.0,
+        ],
+    )
+}
+
+fn review_serialized_stark_inputs_from_witness(
+    witness: &TransactionWitness,
+    public_inputs: &transaction_circuit::public_inputs::TransactionPublicInputs,
+) -> Result<SerializedStarkInputs> {
+    ensure!(
+        public_inputs.balance_slots.len() == BALANCE_SLOTS,
+        "native tx public inputs balance slot count {} does not match {}",
+        public_inputs.balance_slots.len(),
+        BALANCE_SLOTS
+    );
+    let value_balance_sign = u8::from(witness.value_balance < 0);
+    let value_balance_magnitude = witness.value_balance.unsigned_abs() as u64;
+    let stablecoin_issuance_sign = u8::from(witness.stablecoin.issuance_delta < 0);
+    let stablecoin_issuance_magnitude = witness.stablecoin.issuance_delta.unsigned_abs() as u64;
+    Ok(SerializedStarkInputs {
+        input_flags: (0..MAX_INPUTS)
+            .map(|idx| u8::from(idx < witness.inputs.len()))
+            .collect(),
+        output_flags: (0..MAX_OUTPUTS)
+            .map(|idx| u8::from(idx < witness.outputs.len()))
+            .collect(),
+        fee: witness.fee,
+        value_balance_sign,
+        value_balance_magnitude,
+        merkle_root: witness.merkle_root,
+        balance_slot_asset_ids: public_inputs
+            .balance_slots
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect(),
+        stablecoin_enabled: u8::from(witness.stablecoin.enabled),
+        stablecoin_asset_id: witness.stablecoin.asset_id,
+        stablecoin_policy_version: witness.stablecoin.policy_version,
+        stablecoin_issuance_sign,
+        stablecoin_issuance_magnitude,
+        stablecoin_policy_hash: witness.stablecoin.policy_hash,
+        stablecoin_oracle_commitment: witness.stablecoin.oracle_commitment,
+        stablecoin_attestation_commitment: witness.stablecoin.attestation_commitment,
+    })
+}
+
+fn review_transaction_statement_hash_from_public_inputs(
+    public_inputs: &transaction_circuit::public_inputs::TransactionPublicInputs,
+) -> [u8; 48] {
+    let mut message = Vec::new();
+    message.extend_from_slice(transaction_circuit::proof::TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(&public_inputs.merkle_root);
+    for nf in &public_inputs.nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for cm in &public_inputs.commitments {
+        message.extend_from_slice(cm);
+    }
+    for ct in &public_inputs.ciphertext_hashes {
+        message.extend_from_slice(ct);
+    }
+    message.extend_from_slice(&public_inputs.native_fee.to_le_bytes());
+    message.extend_from_slice(&public_inputs.value_balance.to_le_bytes());
+    message.extend_from_slice(&public_inputs.balance_tag);
+    message.extend_from_slice(&public_inputs.circuit_version.to_le_bytes());
+    message.extend_from_slice(&public_inputs.crypto_suite.to_le_bytes());
+    message.push(public_inputs.stablecoin.enabled as u8);
+    message.extend_from_slice(&public_inputs.stablecoin.asset_id.to_le_bytes());
+    message.extend_from_slice(&public_inputs.stablecoin.policy_hash);
+    message.extend_from_slice(&public_inputs.stablecoin.oracle_commitment);
+    message.extend_from_slice(&public_inputs.stablecoin.attestation_commitment);
+    message.extend_from_slice(&public_inputs.stablecoin.issuance_delta.to_le_bytes());
+    message.extend_from_slice(&public_inputs.stablecoin.policy_version.to_le_bytes());
+    review_bla3_384_bytes(&message)
+}
+
+fn review_native_tx_validity_statement_from_witness(
+    witness: &TransactionWitness,
+    params: &NativeBackendParams,
+) -> Result<NativeTxValidityStatement> {
+    witness
+        .validate()
+        .map_err(|err| anyhow!("native tx witness validation failed: {err}"))?;
+    let public_inputs = witness
+        .public_inputs()
+        .map_err(|err| anyhow!("failed to derive native tx public inputs: {err}"))?;
+    let serialized = review_serialized_stark_inputs_from_witness(witness, &public_inputs)?;
+    Ok(NativeTxValidityStatement {
+        statement_hash: review_transaction_statement_hash_from_public_inputs(&public_inputs),
+        public_inputs_digest:
+            transaction_circuit::proof::transaction_public_inputs_digest_from_serialized(
+                &serialized,
+            )
+            .map_err(|err| anyhow!("failed to hash native tx public inputs: {err}"))?,
+        verifier_profile: review_verifier_profile(
+            params,
+            &NativeTxValidityRelation::default().relation_id(),
+            &digest_shape(NativeTxValidityRelation::default().shape()),
+            b"native-tx",
+        ),
+    })
+}
+
+fn review_canonical_opening_randomness_seed(
+    params: &NativeBackendParams,
+    randomness_seed: [u8; 32],
+) -> [u8; 32] {
+    let allowed_bits = params.opening_randomness_bits.min(256) as usize;
+    if allowed_bits >= 256 {
+        return randomness_seed;
+    }
+    let mut canonical = [0u8; 32];
+    let full_bytes = allowed_bits / 8;
+    let partial_bits = allowed_bits % 8;
+    if full_bytes > 0 {
+        canonical[..full_bytes].copy_from_slice(&randomness_seed[..full_bytes]);
+    }
+    if partial_bits > 0 && full_bytes < canonical.len() {
+        canonical[full_bytes] = randomness_seed[full_bytes] & ((1u8 << partial_bits) - 1);
+    }
+    canonical
+}
+
+fn review_commitment_opening_digest(
+    params: &NativeBackendParams,
+    packed: &superneo_ring::PackedWitness<u64>,
+    randomness_seed: &[u8; 32],
+) -> [u8; 48] {
+    let randomness_seed = review_canonical_opening_randomness_seed(params, *randomness_seed);
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.commitment-opening.v1");
+    hasher.update(&review_parameter_fingerprint(params));
+    hasher.update(&(packed.original_len as u64).to_le_bytes());
+    hasher.update(&(packed.used_bits as u64).to_le_bytes());
+    hasher.update(&(packed.coeffs.len() as u64).to_le_bytes());
+    for coeff in &packed.coeffs {
+        hasher.update(&coeff.to_le_bytes());
+    }
+    hasher.update(&(packed.value_bit_widths.len() as u64).to_le_bytes());
+    for width in &packed.value_bit_widths {
+        hasher.update(&width.to_le_bytes());
+    }
+    hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
+    hasher.update(&randomness_seed);
+    review_hash48(hasher)
+}
+
+fn review_reduce_goldilocks_signed(value: i128) -> u64 {
+    let mut reduced = value % GOLDILOCKS_MODULUS_I128;
+    if reduced < 0 {
+        reduced += GOLDILOCKS_MODULUS_I128;
+    }
+    reduced as u64
+}
+
+fn review_reduce_goldilocks_u128(value: u128) -> u64 {
+    (value % (GOLDILOCKS_MODULUS_I128 as u128)) as u64
+}
+
+fn review_goldilocks_from_signed(value: i128) -> Goldilocks {
+    Goldilocks::new(review_reduce_goldilocks_signed(value))
+}
+
+fn review_operand_bit_width(value: u64) -> u16 {
+    let width = u64::BITS - value.leading_zeros();
+    width.max(1) as u16
+}
+
+fn review_expand_packed_bits(packed: &superneo_ring::PackedWitness<u64>) -> Result<Vec<u8>> {
+    ensure!(
+        (1..=64).contains(&packed.coeff_capacity_bits),
+        "packed witness coeff capacity must be in 1..=64"
+    );
+    let coeff_capacity = packed.coeff_capacity_bits as usize;
+    let mut bits = Vec::with_capacity(packed.used_bits);
+    for bit_index in 0..packed.used_bits {
+        let coeff_index = bit_index / coeff_capacity;
+        let bit_offset = (bit_index % coeff_capacity) as u16;
+        let coeff = *packed
+            .coeffs
+            .get(coeff_index)
+            .ok_or_else(|| anyhow!("packed witness ended early while expanding bits"))?;
+        bits.push(((coeff >> bit_offset) & 1) as u8);
+    }
+    Ok(bits)
+}
+
+fn review_expand_packed_bit_source_widths(
+    packed: &superneo_ring::PackedWitness<u64>,
+) -> Result<Vec<u16>> {
+    let total_value_bits = packed
+        .value_bit_widths
+        .iter()
+        .map(|width| usize::from(*width))
+        .sum::<usize>();
+    ensure!(
+        total_value_bits == packed.used_bits,
+        "packed witness width metadata covers {} bits but used_bits is {}",
+        total_value_bits,
+        packed.used_bits
+    );
+    let mut bit_source_widths = Vec::with_capacity(packed.used_bits);
+    for width in &packed.value_bit_widths {
+        bit_source_widths.extend(std::iter::repeat_n(*width, usize::from(*width)));
+    }
+    Ok(bit_source_widths)
+}
+
+fn review_expand_packed_digits(
+    packed: &superneo_ring::PackedWitness<u64>,
+    digit_bits: u16,
+) -> Result<(Vec<u64>, Vec<u16>)> {
+    ensure!(
+        (1..=16).contains(&digit_bits),
+        "digit_bits must be in 1..=16"
+    );
+    let bits = review_expand_packed_bits(packed)?;
+    let bit_source_widths = review_expand_packed_bit_source_widths(packed)?;
+    let mut digits = Vec::with_capacity(bits.len().div_ceil(digit_bits as usize));
+    let mut digit_source_widths = Vec::with_capacity(bits.len().div_ceil(digit_bits as usize));
+    let mut cursor = 0usize;
+    while cursor < bits.len() {
+        let mut digit = 0u64;
+        let mut source_width_bits = 1u16;
+        for offset in 0..digit_bits as usize {
+            let bit_index = cursor + offset;
+            if bit_index >= bits.len() {
+                break;
+            }
+            digit |= u64::from(bits[bit_index]) << offset;
+            source_width_bits = source_width_bits.max(bit_source_widths[bit_index]);
+        }
+        digits.push(digit);
+        digit_source_widths.push(source_width_bits);
+        cursor += digit_bits as usize;
+    }
+    Ok((digits, digit_source_widths))
+}
+
+fn review_embed_packed_witness_with_layout(
+    ring_degree: usize,
+    digit_bits: u16,
+    packed: &superneo_ring::PackedWitness<u64>,
+) -> Result<Vec<ReviewEmbeddedRingElem>> {
+    ensure!(
+        packed.value_bit_widths.len() == packed.original_len,
+        "packed witness width metadata length {} does not match original_len {}",
+        packed.value_bit_widths.len(),
+        packed.original_len
+    );
+    ensure!(ring_degree > 0, "ring degree must be strictly positive");
+    let (digits, digit_source_widths) = review_expand_packed_digits(packed, digit_bits)?;
+    let mut ring_elems = Vec::with_capacity(digits.len().div_ceil(ring_degree));
+    for (chunk_index, chunk) in digits.chunks(ring_degree).enumerate() {
+        let mut coeffs = vec![0u64; ring_degree];
+        for (idx, digit) in chunk.iter().enumerate() {
+            coeffs[idx] = *digit;
+        }
+        let source_width_bits = digit_source_widths
+            .iter()
+            .skip(chunk_index * ring_degree)
+            .take(chunk.len())
+            .copied()
+            .max()
+            .unwrap_or(1);
+        ring_elems.push(ReviewEmbeddedRingElem {
+            ring: RingElem::from_coeffs(coeffs),
+            source_width_bits,
+        });
+    }
+    Ok(ring_elems)
+}
+
+fn review_backend_key_for_shape(
+    params: &NativeBackendParams,
+    shape_digest: ShapeDigest,
+    native_commitment_domain: bool,
+) -> BackendKey {
+    let label = if native_commitment_domain {
+        b"hegemon.superneo.native-commitment-domain.v1".as_slice()
+    } else {
+        b"hegemon.superneo.transcript-domain.v1".as_slice()
+    };
+    BackendKey {
+        params_fingerprint: review_parameter_fingerprint(params),
+        shape_digest,
+        security_bits: params.security_bits,
+        challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
+        max_fold_arity: params.max_fold_arity,
+        transcript_domain_digest: review_digest32_with_label(
+            label,
+            params.transcript_domain_label.as_bytes(),
+        ),
+        ring_profile: params.ring_profile,
+        commitment_rows: params.matrix_rows,
+        ring_degree: params.matrix_cols,
+        digit_bits: params.decomposition_bits as u16,
+        opening_randomness_bits: params.opening_randomness_bits,
+    }
+}
+
+fn review_matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem {
+    let mut coeffs = Vec::with_capacity(pk.ring_degree);
+    for coeff_index in 0..pk.ring_degree {
+        let mut hasher = Hasher::new();
+        hasher.update(b"hegemon.superneo.ajtai-matrix.v1");
+        hasher.update(&pk.params_fingerprint);
+        hasher.update(review_ring_profile_label(pk.ring_profile));
+        hasher.update(&pk.shape_digest.0);
+        hasher.update(&pk.security_bits.to_le_bytes());
+        hasher.update(&pk.challenge_bits.to_le_bytes());
+        hasher.update(&pk.max_fold_arity.to_le_bytes());
+        hasher.update(&pk.transcript_domain_digest);
+        hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+        hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+        hasher.update(&pk.digit_bits.to_le_bytes());
+        hasher.update(&pk.opening_randomness_bits.to_le_bytes());
+        hasher.update(&(row_index as u64).to_le_bytes());
+        hasher.update(&(col_index as u64).to_le_bytes());
+        hasher.update(&(coeff_index as u64).to_le_bytes());
+        let mut out = [0u8; 8];
+        hasher.finalize_xof().fill(&mut out);
+        coeffs.push(Goldilocks::new(u64::from_le_bytes(out)).as_canonical_u64());
+    }
+    RingElem::from_coeffs(coeffs)
+}
+
+fn review_accumulate_negacyclic_product(
+    accumulator: &mut [i128],
+    left: &RingElem,
+    right: &RingElem,
+) {
+    let degree = left.coeffs.len();
+    for (i, left_coeff) in left.coeffs.iter().enumerate() {
+        for (j, right_coeff) in right.coeffs.iter().enumerate() {
+            if *right_coeff == 0 {
+                continue;
+            }
+            let target = i + j;
+            let product = if review_operand_bit_width(*right_coeff) <= 16 {
+                i128::from(*left_coeff) * i128::from((*right_coeff) as u16)
+            } else {
+                i128::from(*left_coeff) * i128::from(*right_coeff)
+            };
+            if target < degree {
+                accumulator[target] += product;
+            } else {
+                accumulator[target - degree] -= product;
+            }
+        }
+    }
+}
+
+fn review_commit_ring_message(
+    pk: &BackendKey,
+    message: &[ReviewEmbeddedRingElem],
+) -> Vec<RingElem> {
+    let window_size = message.len().max(1).min(COMMITMENT_WINDOW_COLUMNS);
+    let mut accumulators = vec![vec![0i128; pk.ring_degree]; pk.commitment_rows];
+    for (window_index, chunk) in message.chunks(window_size).enumerate() {
+        let base_col = window_index * window_size;
+        for (offset, message_elem) in chunk.iter().enumerate() {
+            let col_index = base_col + offset;
+            for row_index in 0..pk.commitment_rows {
+                let matrix_elem = review_matrix_entry(pk, row_index, col_index);
+                let _ = message_elem.source_width_bits;
+                review_accumulate_negacyclic_product(
+                    &mut accumulators[row_index],
+                    &matrix_elem,
+                    &message_elem.ring,
+                );
+            }
+        }
+    }
+    accumulators
+        .into_iter()
+        .map(|coeffs| {
+            RingElem::from_coeffs(
+                coeffs
+                    .into_iter()
+                    .map(review_reduce_goldilocks_signed)
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn review_derive_randomizer_rows(
+    params: &NativeBackendParams,
+    randomness_seed: [u8; 32],
+) -> Vec<RingElem> {
+    let canonical_seed = review_canonical_opening_randomness_seed(params, randomness_seed);
+    (0..params.matrix_rows)
+        .map(|row_index| {
+            let coeffs = (0..params.matrix_cols)
+                .map(|coeff_index| {
+                    let mut hasher = Hasher::new();
+                    hasher.update(b"hegemon.superneo.commitment-randomizer.v1");
+                    hasher.update(&review_parameter_fingerprint(params));
+                    hasher.update(&canonical_seed);
+                    hasher.update(&(row_index as u64).to_le_bytes());
+                    hasher.update(&(coeff_index as u64).to_le_bytes());
+                    let mut out = [0u8; 16];
+                    hasher.finalize_xof().fill(&mut out);
+                    review_reduce_goldilocks_u128(u128::from_le_bytes(out))
+                })
+                .collect();
+            RingElem::from_coeffs(coeffs)
+        })
+        .collect()
+}
+
+fn review_add_ring_rows(left: &[RingElem], right: &[RingElem]) -> Result<Vec<RingElem>> {
+    ensure!(
+        left.len() == right.len(),
+        "cannot add {} commitment rows to {} randomizer rows",
+        left.len(),
+        right.len()
+    );
+    let mut rows = Vec::with_capacity(left.len());
+    for (left_row, right_row) in left.iter().zip(right) {
+        ensure!(
+            left_row.coeffs.len() == right_row.coeffs.len(),
+            "cannot combine ring elements with different degrees"
+        );
+        let coeffs = left_row
+            .coeffs
+            .iter()
+            .zip(&right_row.coeffs)
+            .map(|(left_coeff, right_coeff)| {
+                let value = i128::from(*left_coeff) + i128::from(*right_coeff);
+                review_reduce_goldilocks_signed(value)
+            })
+            .collect();
+        rows.push(RingElem::from_coeffs(coeffs));
+    }
+    Ok(rows)
+}
+
+fn review_digest_commitment_rows(rows: &[RingElem]) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.commitment-digest.v2");
+    hasher.update(&(rows.len() as u64).to_le_bytes());
+    for row in rows {
+        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        for coeff in &row.coeffs {
+            hasher.update(&coeff.to_le_bytes());
+        }
+    }
+    review_hash48(hasher)
+}
+
+fn review_commit_packed_witness_with_seed(
+    params: &NativeBackendParams,
+    witness: &superneo_ring::PackedWitness<u64>,
+    randomness_seed: [u8; 32],
+) -> Result<(LatticeCommitment, CommitmentOpening)> {
+    let randomness_seed = review_canonical_opening_randomness_seed(params, randomness_seed);
+    let key = review_backend_key_for_shape(params, ShapeDigest([0u8; 32]), true);
+    let ring_message =
+        review_embed_packed_witness_with_layout(key.ring_degree, key.digit_bits, witness)?;
+    let deterministic_rows = review_commit_ring_message(&key, &ring_message);
+    let randomizer_rows = review_derive_randomizer_rows(params, randomness_seed);
+    let rows = review_add_ring_rows(&deterministic_rows, &randomizer_rows)?;
+    let commitment = LatticeCommitment {
+        digest: review_digest_commitment_rows(&rows),
+        rows,
+    };
+    let opening = CommitmentOpening {
+        params_fingerprint: review_parameter_fingerprint(params),
+        packed_witness: witness.clone(),
+        randomness_seed,
+        opening_digest: review_commitment_opening_digest(params, witness, &randomness_seed),
+    };
+    Ok((commitment, opening))
+}
+
+fn review_reduce_fold_challenge(challenge_bits: u32, raw: u64) -> u64 {
+    let mask_bits = challenge_bits.min(63);
+    let modulus = 1u64 << mask_bits;
+    let reduced = if modulus <= 1 {
+        1
+    } else {
+        (raw % (modulus - 1)) + 1
+    };
+    Goldilocks::new(reduced).as_canonical_u64()
+}
+
+fn review_negacyclic_rotated_coeff(row: &RingElem, coeff_index: usize, rotation: usize) -> i128 {
+    let degree = row.coeffs.len();
+    let source_index = coeff_index + rotation;
+    let wraps = source_index / degree;
+    let index = source_index % degree;
+    let coeff = i128::from(row.coeffs[index]);
+    if wraps % 2 == 0 {
+        coeff
+    } else {
+        -coeff
+    }
+}
+
+fn review_fold_challenges(
+    params: &NativeBackendParams,
+    shape_digest: ShapeDigest,
+    left: &FoldedInstance<LatticeCommitment>,
+    right: &FoldedInstance<LatticeCommitment>,
+) -> Result<Vec<u64>> {
+    superneo_core::validate_fold_pair(left, right)?;
+    ensure!(
+        left.shape_digest == shape_digest && right.shape_digest == shape_digest,
+        "review fold challenge shape digest mismatch"
+    );
+    let pk = review_backend_key_for_shape(params, shape_digest, false);
+    let mut transcript = Vec::new();
+    transcript.extend_from_slice(&pk.params_fingerprint);
+    transcript.extend_from_slice(review_ring_profile_label(pk.ring_profile));
+    transcript.extend_from_slice(&pk.shape_digest.0);
+    transcript.extend_from_slice(&left.relation_id.0);
+    transcript.extend_from_slice(&pk.security_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
+    transcript.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
+    transcript.extend_from_slice(&pk.transcript_domain_digest);
+    transcript.extend_from_slice(&(pk.commitment_rows as u64).to_le_bytes());
+    transcript.extend_from_slice(&(pk.ring_degree as u64).to_le_bytes());
+    transcript.extend_from_slice(&pk.digit_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
+    transcript.extend_from_slice(&left.statement_digest.0);
+    transcript.extend_from_slice(&right.statement_digest.0);
+    transcript.extend_from_slice(&left.witness_commitment.digest);
+    transcript.extend_from_slice(&right.witness_commitment.digest);
+    Ok((0..pk.fold_challenge_count as usize)
+        .map(|challenge_index| {
+            let mut hasher = Hasher::new();
+            hasher.update(b"hegemon.superneo.fold-challenge.v3");
+            hasher.update(&transcript);
+            hasher.update(&(challenge_index as u64).to_le_bytes());
+            let mut out = [0u8; 8];
+            hasher.finalize_xof().fill(&mut out);
+            review_reduce_fold_challenge(pk.challenge_bits, u64::from_le_bytes(out))
+        })
+        .collect())
+}
+
+fn review_fold_rows(
+    left: &LatticeCommitment,
+    right: &LatticeCommitment,
+    challenges: &[u64],
+) -> Result<Vec<RingElem>> {
+    ensure!(
+        !left.rows.is_empty() && !right.rows.is_empty(),
+        "folded commitments require concrete row data"
+    );
+    ensure!(
+        left.rows.len() == right.rows.len(),
+        "folded commitments must have the same row length"
+    );
+    ensure!(
+        !challenges.is_empty(),
+        "folded commitments require at least one challenge"
+    );
+    let mut rows = Vec::with_capacity(left.rows.len());
+    for (left_row, right_row) in left.rows.iter().zip(&right.rows) {
+        ensure!(
+            left_row.coeffs.len() == right_row.coeffs.len(),
+            "cannot combine ring elements with different degrees"
+        );
+        let mut coeffs = Vec::with_capacity(left_row.coeffs.len());
+        for (coeff_index, left_coeff) in left_row.coeffs.iter().enumerate() {
+            let mut value = Goldilocks::new(*left_coeff);
+            for (rotation, challenge) in challenges.iter().copied().enumerate() {
+                let right_coeff = review_negacyclic_rotated_coeff(right_row, coeff_index, rotation);
+                value += Goldilocks::new(challenge) * review_goldilocks_from_signed(right_coeff);
+            }
+            coeffs.push(value.as_canonical_u64());
+        }
+        rows.push(RingElem::from_coeffs(coeffs));
+    }
+    Ok(rows)
+}
+
+fn review_fold_statement_digest(
+    left: &StatementDigest,
+    right: &StatementDigest,
+    challenges: &[u64],
+    parent_commitment_digest: &[u8; 48],
+) -> StatementDigest {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.fold-statement.v3");
+    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    for challenge in challenges {
+        hasher.update(&challenge.to_le_bytes());
+    }
+    hasher.update(&left.0);
+    hasher.update(&right.0);
+    hasher.update(parent_commitment_digest);
+    StatementDigest(review_hash48(hasher))
+}
+
+fn review_fold_proof_digest(
+    params: &NativeBackendParams,
+    shape_digest: ShapeDigest,
+    relation_id: &RelationId,
+    left: &FoldedInstance<LatticeCommitment>,
+    right: &FoldedInstance<LatticeCommitment>,
+    challenges: &[u64],
+    parent_statement_digest: &StatementDigest,
+    parent_rows: &[RingElem],
+) -> Result<[u8; 48]> {
+    superneo_core::validate_fold_pair(left, right)?;
+    ensure!(
+        left.shape_digest == shape_digest && right.shape_digest == shape_digest,
+        "review fold proof shape digest mismatch"
+    );
+    let pk = review_backend_key_for_shape(params, shape_digest, false);
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.fold-proof.v3");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(review_ring_profile_label(pk.ring_profile));
+    hasher.update(&pk.shape_digest.0);
+    hasher.update(&relation_id.0);
+    hasher.update(&pk.security_bits.to_le_bytes());
+    hasher.update(&pk.challenge_bits.to_le_bytes());
+    hasher.update(&pk.fold_challenge_count.to_le_bytes());
+    hasher.update(&pk.max_fold_arity.to_le_bytes());
+    hasher.update(&pk.transcript_domain_digest);
+    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+    hasher.update(&pk.digit_bits.to_le_bytes());
+    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
+    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    for challenge in challenges {
+        hasher.update(&challenge.to_le_bytes());
+    }
+    hasher.update(&left.statement_digest.0);
+    hasher.update(&right.statement_digest.0);
+    hasher.update(&left.witness_commitment.digest);
+    hasher.update(&right.witness_commitment.digest);
+    hasher.update(&parent_statement_digest.0);
+    hasher.update(&review_digest_commitment_rows(parent_rows));
+    hasher.update(&(parent_rows.len() as u64).to_le_bytes());
+    for row in parent_rows {
+        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        for coeff in &row.coeffs {
+            hasher.update(&coeff.to_le_bytes());
+        }
+    }
+    Ok(review_hash48(hasher))
+}
+
+fn review_native_leaf_proof_digest(
+    params: &NativeBackendParams,
+    relation_id: &RelationId,
+    statement_digest: &StatementDigest,
+    commitment_digest: &[u8; 48],
+    opening_digest: &[u8; 48],
+) -> [u8; 48] {
+    review_digest48_with_parts(
+        b"hegemon.superneo.native-leaf-proof.v1",
+        &[
+            &review_parameter_fingerprint(params),
+            &relation_id.0,
+            &statement_digest.0,
+            commitment_digest,
+            opening_digest,
+        ],
+    )
+}
+
+fn validate_review_params(params: &NativeBackendParams) -> Result<()> {
+    ensure!(
+        params.matrix_rows > 0,
+        "matrix_rows must be strictly positive"
+    );
+    ensure!(
+        params.matrix_cols > 0,
+        "matrix_cols must be strictly positive"
+    );
+    ensure!(
+        (1..=63).contains(&params.challenge_bits),
+        "challenge_bits must be in 1..=63"
+    );
+    ensure!(
+        (1..=8).contains(&params.fold_challenge_count),
+        "fold_challenge_count must be in 1..=8"
+    );
+    ensure!(
+        params.max_fold_arity == 2,
+        "binary fold backend requires max_fold_arity == 2"
+    );
+    ensure!(
+        (1..=16).contains(&params.decomposition_bits),
+        "decomposition_bits must be in 1..=16"
+    );
+    ensure!(
+        params.opening_randomness_bits > 0 && params.opening_randomness_bits <= 256,
+        "opening_randomness_bits must be in 1..=256"
+    );
+    ensure!(
+        params.commitment_assumption_bits > 0,
+        "commitment_assumption_bits must be strictly positive"
+    );
+    ensure!(
+        params.max_claimed_receipt_root_leaves > 0,
+        "max_claimed_receipt_root_leaves must be strictly positive"
+    );
+    Ok(())
 }
 
 fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N]> {
