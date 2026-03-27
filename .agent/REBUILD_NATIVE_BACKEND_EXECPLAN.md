@@ -68,7 +68,7 @@ This plan is complete. The active experimental backend is `goldilocks_128b_rewri
 
 ## Context and Orientation
 
-The current backend lives in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). That file defines `NativeBackendParams`, the commitment/opening path, fold proofs, and the computed `NativeSecurityEnvelope`. The frozen baseline still uses the old single-challenge / 16-bit-opening story and remains killed. The active rewrite now uses a three-challenge schedule plus canonical 128-bit opening entropy, but it still needs the final benchmark verdict before it can replace the baseline as the promoted proof-native line.
+The current backend lives in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). That file defines `NativeBackendParams`, the commitment/opening path, fold proofs, and the computed `NativeSecurityEnvelope`. The frozen baseline still uses the old single-challenge / 16-bit-opening story and remains killed. The active rewrite now uses a three-challenge schedule plus canonical 128-bit opening entropy, and the final benchmark verdict is already recorded in this plan as `KEEP` for the live experimental proof-native candidate.
 
 The Hegemon-specific artifact layer lives in [circuits/superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs). That file turns the backend parameters into native `TxLeaf` and `ReceiptRoot` artifacts and derives verifier profiles from the parameter fingerprint.
 
