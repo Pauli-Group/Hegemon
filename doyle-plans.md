@@ -34,7 +34,11 @@ Parameters are settings for the blockchain. Early on they will be controlled by 
 
 ## Mixed consensus
 
-PoW + PoS where the PoS happens on the host side based on the distribution of the asset. A parameter controls the ratio of blocks produced via PoW vs PoS. 
+PoW + PoS where the PoS happens on the host side based on the distribution of the asset. A parameter controls the ratio of blocks produced via PoW vs PoS. As Hanna Montanna put it... you mix it all together and you get the best of both worlds... PoW really does give you a lot... but off setting it with proof of stake gives you even more.
+
+## Partnerchain of Cardano
+
+
 
 ## Mixed Public + Private Ledger
 
