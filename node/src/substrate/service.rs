@@ -2289,10 +2289,10 @@ fn build_candidate_context(
         ));
     }
     let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
-    if statement_bindings.len() != proofs.len() {
+    if statement_bindings.len() != transactions.len() {
         return Err(format!(
             "tx statement binding count mismatch (expected {}, got {})",
-            proofs.len(),
+            transactions.len(),
             statement_bindings.len()
         ));
     }
@@ -2327,11 +2327,26 @@ fn build_commitment_block_proof_from_materials(
     client: &HegemonFullClient,
     parent_hash: H256,
     statement_hashes: &[[u8; 48]],
-    proofs: &[TransactionProof],
+    transactions: &[consensus::types::Transaction],
+    statement_bindings: &[consensus::types::TxStatementBinding],
     da_root: DaRoot,
 ) -> Result<Option<CommitmentBlockProof>, String> {
-    if proofs.is_empty() {
+    if transactions.is_empty() {
         return Ok(None);
+    }
+    if statement_hashes.len() != transactions.len() {
+        return Err(format!(
+            "tx statement hash count mismatch (expected {}, got {})",
+            transactions.len(),
+            statement_hashes.len()
+        ));
+    }
+    if statement_bindings.len() != transactions.len() {
+        return Err(format!(
+            "tx statement binding count mismatch (expected {}, got {})",
+            transactions.len(),
+            statement_bindings.len()
+        ));
     }
 
     // Use compact runtime snapshots (root/frontier/history) instead of replaying the entire
@@ -2339,14 +2354,14 @@ fn build_commitment_block_proof_from_materials(
     // height grows.
     let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
     let starting_root = tree.root();
-    for (index, proof) in proofs.iter().enumerate() {
-        let anchor = proof.public_inputs.merkle_root;
+    for (index, (tx, binding)) in transactions.iter().zip(statement_bindings).enumerate() {
+        let anchor = binding.anchor;
         if !tree.contains_root(&anchor) {
             return Err(format!(
                 "transaction {index} anchor not found in commitment tree history"
             ));
         }
-        for &commitment in proof.commitments.iter().filter(|c| **c != [0u8; 48]) {
+        for &commitment in tx.commitments.iter().filter(|c| **c != [0u8; 48]) {
             tree.append(commitment)
                 .map_err(|err| format!("commitment tree append failed: {err}"))?;
         }
@@ -2354,8 +2369,11 @@ fn build_commitment_block_proof_from_materials(
     let ending_root = tree.root();
 
     let mut nullifiers = Vec::new();
-    for proof in proofs {
-        nullifiers.extend_from_slice(&proof.nullifiers);
+    for tx in transactions {
+        nullifiers.extend_from_slice(&tx.nullifiers);
+        for _ in tx.nullifiers.len()..MAX_INPUTS {
+            nullifiers.push([0u8; 48]);
+        }
     }
     let mut sorted_nullifiers = nullifiers.clone();
     sorted_nullifiers.sort_unstable();
@@ -2428,8 +2446,8 @@ fn build_finalize_bundle_inputs(
         pending_ciphertexts,
         pending_proofs,
     )?;
-    let proofs = context.tx_proofs.as_ref();
-    if proofs.is_empty() {
+    let transactions = context.extracted_transactions.as_slice();
+    if transactions.is_empty() {
         return Ok(None);
     }
 
@@ -2441,14 +2459,18 @@ fn build_finalize_bundle_inputs(
 
     let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
     let starting_state_root = tree.root();
-    for (index, proof) in proofs.iter().enumerate() {
-        let anchor = proof.public_inputs.merkle_root;
+    for (index, (tx, binding)) in transactions
+        .iter()
+        .zip(context.statement_bindings.iter())
+        .enumerate()
+    {
+        let anchor = binding.anchor;
         if !tree.contains_root(&anchor) {
             return Err(format!(
                 "transaction {index} anchor not found in commitment tree history"
             ));
         }
-        for &commitment in proof.commitments.iter().filter(|c| **c != [0u8; 48]) {
+        for &commitment in tx.commitments.iter().filter(|c| **c != [0u8; 48]) {
             tree.append(commitment)
                 .map_err(|err| format!("commitment tree append failed: {err}"))?;
         }
@@ -2456,8 +2478,11 @@ fn build_finalize_bundle_inputs(
     let ending_state_root = tree.root();
 
     let mut nullifiers = Vec::new();
-    for proof in proofs {
-        nullifiers.extend_from_slice(&proof.nullifiers);
+    for tx in transactions {
+        nullifiers.extend_from_slice(&tx.nullifiers);
+        for _ in tx.nullifiers.len()..MAX_INPUTS {
+            nullifiers.push([0u8; 48]);
+        }
     }
     let mut sorted_nullifiers = nullifiers.clone();
     sorted_nullifiers.sort_unstable();
@@ -3711,7 +3736,6 @@ fn prepare_block_proof_bundle(
         return Err("candidate tx set has no shielded transfers".to_string());
     }
 
-    let proofs_for_commitment = Arc::clone(&context.tx_proofs);
     let proofs_for_batching = Arc::clone(&context.tx_proofs);
     let tx_artifacts_for_batching = context.tx_validity_artifacts.clone();
     let transactions_for_batching = context.extracted_transactions.clone();
@@ -3739,7 +3763,8 @@ fn prepare_block_proof_bundle(
     let _ = commitment_block_fast;
     let (commitment_join, aggregation_join) = std::thread::scope(|scope| {
         let commitment_statement_hashes = statement_hashes.clone();
-        let commitment_proofs = Arc::clone(&proofs_for_commitment);
+        let commitment_transactions = context.extracted_transactions.clone();
+        let commitment_bindings = context.statement_bindings.clone();
         let commitment_handle = scope.spawn(move || {
             tracing::info!(
                 block_number,
@@ -3751,7 +3776,8 @@ fn prepare_block_proof_bundle(
                 client,
                 parent_hash,
                 &commitment_statement_hashes,
-                commitment_proofs.as_ref(),
+                &commitment_transactions,
+                &commitment_bindings,
                 da_root,
             );
             (stage_result, stage_started.elapsed().as_millis())
@@ -4193,31 +4219,71 @@ fn extract_shielded_transfers_for_parallel_verification(
                         .map(encrypted_note_bytes)
                         .collect::<Vec<_>>(),
                 };
-                let proof = pallet_shielded_pool::types::StarkProof::from_bytes(args.proof.clone());
-                let binding_hash = pallet_shielded_pool::types::BindingHash {
-                    data: args.binding_hash,
+                let (tx_proof, tx_artifact) = if let Ok(native_artifact) =
+                    tx_validity_artifact_from_native_tx_leaf_bytes(args.proof.clone())
+                {
+                    (None, Some(native_artifact))
+                } else {
+                    let proof =
+                        pallet_shielded_pool::types::StarkProof::from_bytes(args.proof.clone());
+                    let binding_hash = pallet_shielded_pool::types::BindingHash {
+                        data: args.binding_hash,
+                    };
+                    let proof_bytes =
+                        resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
+                    let materialized = build_transaction_proof(
+                        proof_bytes,
+                        nullifiers.clone(),
+                        args.commitments.clone(),
+                        &ciphertexts,
+                        args.anchor,
+                        args.balance_slot_asset_ids,
+                        args.stablecoin.clone(),
+                        args.fee,
+                        0,
+                    )?;
+                    (Some(materialized), None)
                 };
-                let proof_bytes =
-                    resolve_sidecar_proof_bytes(&proof, &binding_hash, pending_proofs)?;
-                let tx_proof = build_transaction_proof(
-                    proof_bytes,
-                    nullifiers.clone(),
-                    args.commitments.clone(),
-                    &ciphertexts,
-                    args.anchor,
-                    args.balance_slot_asset_ids,
-                    args.stablecoin.clone(),
-                    args.fee,
-                    0,
-                )?;
-                let tx = crate::transaction::proof_to_transaction(&tx_proof, version, ciphertexts);
+                let tx_artifact = match (tx_artifact, tx_proof.as_ref()) {
+                    (Some(tx_artifact), _) => Some(tx_artifact),
+                    (None, Some(tx_proof)) => {
+                        Some(tx_validity_artifact_from_proof(tx_proof).map_err(|err| {
+                            format!("inline tx artifact derivation failed: {err}")
+                        })?)
+                    }
+                    (None, None) => None,
+                };
+                let tx = if let Some(ref tx_proof) = tx_proof {
+                    crate::transaction::proof_to_transaction(&tx_proof, version, ciphertexts)
+                } else {
+                    let ciphertext_hashes = ciphertexts
+                        .iter()
+                        .map(|ciphertext| ciphertext_hash_bytes(ciphertext))
+                        .collect::<Vec<_>>();
+                    let materialized_public = materialize_transaction_public_inputs_with_hashes(
+                        nullifiers.clone(),
+                        args.commitments.clone(),
+                        ciphertext_hashes,
+                        args.anchor,
+                        args.balance_slot_asset_ids,
+                        args.stablecoin.clone(),
+                        args.fee,
+                        0,
+                    )?;
+                    consensus::types::Transaction::new(
+                        nullifiers.clone(),
+                        args.commitments.clone(),
+                        materialized_public.public_inputs.balance_tag,
+                        version,
+                        ciphertexts,
+                    )
+                };
                 transactions.push(tx);
-                tx_validity_artifacts
-                    .push(Some(tx_validity_artifact_from_proof(&tx_proof).map_err(
-                        |err| format!("inline tx artifact derivation failed: {err}"),
-                    )?));
-                proofs.push(tx_proof);
-                proof_binding_hashes.push(args.binding_hash);
+                tx_validity_artifacts.push(tx_artifact);
+                if let Some(tx_proof) = tx_proof {
+                    proofs.push(tx_proof);
+                    proof_binding_hashes.push(args.binding_hash);
+                }
             }
             ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
                 let nullifiers_vec = nullifiers.clone();
@@ -12207,6 +12273,11 @@ mod tests {
     use sp_database::Database as _;
     use sp_database::MemDb;
     use std::sync::MutexGuard as StdMutexGuard;
+    use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
+    use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
+    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::witness::TransactionWitness;
 
     fn dummy_receipt(profile: consensus::VerifierProfileDigest) -> consensus::TxValidityReceipt {
         consensus::TxValidityReceipt {
@@ -12244,6 +12315,126 @@ mod tests {
             [5u8; 48],
             DEFAULT_VERSION_BINDING,
             Vec::new(),
+        )
+    }
+
+    fn test_native_sample_witness(seed: u8) -> TransactionWitness {
+        let sk_spend = [seed.wrapping_add(42); 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [seed.wrapping_add(2); 32],
+            pk_auth,
+            rho: [seed.wrapping_add(3); 32],
+            r: [seed.wrapping_add(4); 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: u64::from(seed) + 100,
+            pk_recipient: [seed.wrapping_add(5); 32],
+            pk_auth,
+            rho: [seed.wrapping_add(6); 32],
+            r: [seed.wrapping_add(7); 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+
+        let output_native = OutputNoteWitness {
+            note: NoteData {
+                value: 3,
+                asset_id: NATIVE_ASSET_ID,
+                pk_recipient: [seed.wrapping_add(11); 32],
+                pk_auth: [seed.wrapping_add(12); 32],
+                rho: [seed.wrapping_add(13); 32],
+                r: [seed.wrapping_add(14); 32],
+            },
+        };
+        let output_asset = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: u64::from(seed) + 100,
+                pk_recipient: [seed.wrapping_add(21); 32],
+                pk_auth: [seed.wrapping_add(22); 32],
+                rho: [seed.wrapping_add(23); 32],
+                r: [seed.wrapping_add(24); 32],
+            },
+        };
+
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [seed.wrapping_add(9); 32],
+                    merkle_path: merkle_path0,
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [seed.wrapping_add(10); 32],
+                    merkle_path: merkle_path1,
+                },
+            ],
+            outputs: vec![output_native, output_asset],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&merkle_root),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: transaction_circuit::StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn build_two_leaf_merkle_tree(
+        leaf0: HashFelt,
+        leaf1: HashFelt,
+    ) -> (MerklePath, MerklePath, HashFelt) {
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..CIRCUIT_MERKLE_DEPTH {
+            let zero = [Felt::new(0); 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        (
+            MerklePath {
+                siblings: siblings0,
+            },
+            MerklePath {
+                siblings: siblings1,
+            },
+            current,
+        )
+    }
+
+    fn test_inline_transfer_extrinsic_with_proof(
+        proof_bytes: Vec<u8>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
+        balance_slot_asset_ids: [u64; 4],
+    ) -> runtime::UncheckedExtrinsic {
+        kernel_shielded_extrinsic(
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            nullifiers,
+            pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+                proof: proof_bytes,
+                commitments: commitments.clone(),
+                ciphertexts: vec![
+                    pallet_shielded_pool::types::EncryptedNote::default();
+                    commitments.len()
+                ],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids,
+                binding_hash: [9u8; 64],
+                stablecoin: None,
+                fee: 5,
+            }
+            .encode(),
         )
     }
 
@@ -12797,6 +12988,47 @@ mod tests {
             .encode(),
         )
         .encode()
+    }
+
+    #[test]
+    fn extract_inline_transfer_accepts_native_tx_leaf_payload() {
+        let witness = test_native_sample_witness(31);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let public_inputs = witness.public_inputs().expect("public inputs");
+        let balance_slot_asset_ids: [u64; 4] = witness
+            .balance_slots()
+            .expect("balance slots")
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("four balance slots");
+        let extrinsic = test_inline_transfer_extrinsic_with_proof(
+            built.artifact_bytes.clone(),
+            public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
+            public_inputs.commitments[..witness.outputs.len()].to_vec(),
+            balance_slot_asset_ids,
+        );
+
+        let (_transactions, proofs, artifacts, _bindings) =
+            extract_shielded_transfers_for_parallel_verification(&[extrinsic], None, None, true)
+                .expect("native tx-leaf inline payload should extract");
+
+        assert!(
+            proofs.is_empty(),
+            "native tx leaf payloads should not materialize inline STARK proofs"
+        );
+        let artifact = artifacts
+            .into_iter()
+            .next()
+            .flatten()
+            .expect("native tx-leaf artifact should be present");
+        let proof = artifact.proof.expect("proof envelope");
+        assert_eq!(proof.kind, consensus::ProofArtifactKind::TxLeaf);
+        assert_eq!(
+            proof.verifier_profile,
+            consensus::experimental_native_tx_leaf_verifier_profile()
+        );
     }
 
     #[test]

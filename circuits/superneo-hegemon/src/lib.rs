@@ -1848,21 +1848,6 @@ fn push_bytes48_bytes(out: &mut Vec<Goldilocks>, bytes: &[u8; 48]) {
     out.extend(bytes.iter().map(|byte| Goldilocks::new(u64::from(*byte))));
 }
 
-fn push_note_bytes(out: &mut Vec<Goldilocks>, note: &transaction_circuit::note::NoteData) {
-    out.push(Goldilocks::new(note.value));
-    out.push(Goldilocks::new(note.asset_id));
-    push_bytes32(out, &note.pk_recipient);
-    push_bytes32(out, &note.pk_auth);
-    push_bytes32(out, &note.rho);
-    push_bytes32(out, &note.r);
-}
-
-fn push_zero_note_bytes(out: &mut Vec<Goldilocks>) {
-    out.push(Goldilocks::new(0));
-    out.push(Goldilocks::new(0));
-    out.extend(std::iter::repeat_n(Goldilocks::new(0), 32 * 4));
-}
-
 fn push_padded_input_note_fields(
     out: &mut Vec<Goldilocks>,
     inputs: &[InputNoteWitness],
@@ -1874,10 +1859,44 @@ fn push_padded_input_note_fields(
         MAX_INPUTS
     );
     for idx in 0..MAX_INPUTS {
+        out.push(Goldilocks::new(
+            inputs.get(idx).map(|input| input.note.value).unwrap_or(0),
+        ));
+    }
+    for idx in 0..MAX_INPUTS {
+        out.push(Goldilocks::new(
+            inputs
+                .get(idx)
+                .map(|input| input.note.asset_id)
+                .unwrap_or(0),
+        ));
+    }
+    for idx in 0..MAX_INPUTS {
         if let Some(input) = inputs.get(idx) {
-            push_note_bytes(out, &input.note);
+            push_bytes32(out, &input.note.pk_recipient);
         } else {
-            push_zero_note_bytes(out);
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
+        }
+    }
+    for idx in 0..MAX_INPUTS {
+        if let Some(input) = inputs.get(idx) {
+            push_bytes32(out, &input.note.pk_auth);
+        } else {
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
+        }
+    }
+    for idx in 0..MAX_INPUTS {
+        if let Some(input) = inputs.get(idx) {
+            push_bytes32(out, &input.note.rho);
+        } else {
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
+        }
+    }
+    for idx in 0..MAX_INPUTS {
+        if let Some(input) = inputs.get(idx) {
+            push_bytes32(out, &input.note.r);
+        } else {
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
         }
     }
     for idx in 0..MAX_INPUTS {
@@ -1926,10 +1945,47 @@ fn push_padded_output_note_fields(
         MAX_OUTPUTS
     );
     for idx in 0..MAX_OUTPUTS {
+        out.push(Goldilocks::new(
+            outputs
+                .get(idx)
+                .map(|output| output.note.value)
+                .unwrap_or(0),
+        ));
+    }
+    for idx in 0..MAX_OUTPUTS {
+        out.push(Goldilocks::new(
+            outputs
+                .get(idx)
+                .map(|output| output.note.asset_id)
+                .unwrap_or(0),
+        ));
+    }
+    for idx in 0..MAX_OUTPUTS {
         if let Some(output) = outputs.get(idx) {
-            push_note_bytes(out, &output.note);
+            push_bytes32(out, &output.note.pk_recipient);
         } else {
-            push_zero_note_bytes(out);
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
+        }
+    }
+    for idx in 0..MAX_OUTPUTS {
+        if let Some(output) = outputs.get(idx) {
+            push_bytes32(out, &output.note.pk_auth);
+        } else {
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
+        }
+    }
+    for idx in 0..MAX_OUTPUTS {
+        if let Some(output) = outputs.get(idx) {
+            push_bytes32(out, &output.note.rho);
+        } else {
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
+        }
+    }
+    for idx in 0..MAX_OUTPUTS {
+        if let Some(output) = outputs.get(idx) {
+            push_bytes32(out, &output.note.r);
+        } else {
+            out.extend(std::iter::repeat_n(Goldilocks::new(0), 32));
         }
     }
     Ok(())

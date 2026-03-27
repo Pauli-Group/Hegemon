@@ -19,6 +19,8 @@ scale-info = { workspace = true }
 log = { version = "0.4", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 sha2 = { version = "0.10", default-features = false }
+blake3 = { version = "1", default-features = false }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 p3-field = { workspace = true }
 async-trait = { version = "0.1", optional = true }
 pallet-coinbase = { path = "../coinbase", default-features = false }

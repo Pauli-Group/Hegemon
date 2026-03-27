@@ -187,6 +187,7 @@ substrate = [
 
 [dev-dependencies]
 rand = "0.8"
+superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 tempfile = "3.8"
 tokio-tungstenite = "0.21"
 

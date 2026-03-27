@@ -53,6 +53,7 @@ use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
 use protocol_kernel::traits::{ActionSourceClass, ValidActionMeta};
+use protocol_versioning::VersionBinding;
 use sp_core::Pair;
 use sp_runtime::traits::Saturating;
 use sp_runtime::transaction_validity::{
@@ -61,7 +62,8 @@ use sp_runtime::transaction_validity::{
 };
 use sp_std::vec;
 use sp_std::vec::Vec;
-use transaction_core::hashing_pq::ciphertext_hash_bytes;
+use transaction_core::hashing_pq::{balance_commitment_bytes, ciphertext_hash_bytes};
+use transaction_core::types::BalanceSlot;
 
 /// Zero nullifier constant.
 ///
@@ -138,6 +140,387 @@ fn is_zero_nullifier(nf: &[u8; 48]) -> bool {
 /// Check if a commitment is the zero value (which is invalid for active outputs).
 fn is_zero_commitment(cm: &[u8; 48]) -> bool {
     *cm == ZERO_COMMITMENT
+}
+
+const NATIVE_TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
+const NATIVE_TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
+
+mod native_serde_bytes48 {
+    use serde::Serializer;
+
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct NativeSerializedStarkInputsDigest {
+    input_flags: Vec<u8>,
+    output_flags: Vec<u8>,
+    fee: u64,
+    value_balance_sign: u8,
+    value_balance_magnitude: u64,
+    #[serde(with = "native_serde_bytes48")]
+    merkle_root: [u8; 48],
+    balance_slot_asset_ids: Vec<u64>,
+    stablecoin_enabled: u8,
+    stablecoin_asset_id: u64,
+    stablecoin_policy_version: u32,
+    stablecoin_issuance_sign: u8,
+    stablecoin_issuance_magnitude: u64,
+    #[serde(with = "native_serde_bytes48")]
+    stablecoin_policy_hash: [u8; 48],
+    #[serde(with = "native_serde_bytes48")]
+    stablecoin_oracle_commitment: [u8; 48],
+    #[serde(with = "native_serde_bytes48")]
+    stablecoin_attestation_commitment: [u8; 48],
+}
+
+#[derive(Clone, Debug)]
+struct NativeTxLeafReceiptLite {
+    statement_hash: [u8; 48],
+    proof_digest: [u8; 48],
+    public_inputs_digest: [u8; 48],
+    verifier_profile: [u8; 48],
+}
+
+#[derive(Clone, Debug)]
+struct NativeTxLeafLite {
+    receipt: NativeTxLeafReceiptLite,
+    stark_inputs: NativeSerializedStarkInputsDigest,
+}
+
+fn blake3_384_digest(message: &[u8]) -> [u8; 48] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(message);
+    let mut out = [0u8; 48];
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
+fn read_u8_checked(bytes: &[u8], cursor: &mut usize) -> Result<u8, InvalidTransaction> {
+    if *cursor >= bytes.len() {
+        return Err(InvalidTransaction::BadProof);
+    }
+    let value = bytes[*cursor];
+    *cursor += 1;
+    Ok(value)
+}
+
+fn read_u16_checked(bytes: &[u8], cursor: &mut usize) -> Result<u16, InvalidTransaction> {
+    if bytes.len().saturating_sub(*cursor) < 2 {
+        return Err(InvalidTransaction::BadProof);
+    }
+    let mut buf = [0u8; 2];
+    buf.copy_from_slice(&bytes[*cursor..*cursor + 2]);
+    *cursor += 2;
+    Ok(u16::from_le_bytes(buf))
+}
+
+fn read_u32_checked(bytes: &[u8], cursor: &mut usize) -> Result<u32, InvalidTransaction> {
+    if bytes.len().saturating_sub(*cursor) < 4 {
+        return Err(InvalidTransaction::BadProof);
+    }
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(&bytes[*cursor..*cursor + 4]);
+    *cursor += 4;
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn read_u64_checked(bytes: &[u8], cursor: &mut usize) -> Result<u64, InvalidTransaction> {
+    if bytes.len().saturating_sub(*cursor) < 8 {
+        return Err(InvalidTransaction::BadProof);
+    }
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&bytes[*cursor..*cursor + 8]);
+    *cursor += 8;
+    Ok(u64::from_le_bytes(buf))
+}
+
+fn read_array_checked<const N: usize>(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<[u8; N], InvalidTransaction> {
+    if bytes.len().saturating_sub(*cursor) < N {
+        return Err(InvalidTransaction::BadProof);
+    }
+    let mut out = [0u8; N];
+    out.copy_from_slice(&bytes[*cursor..*cursor + N]);
+    *cursor += N;
+    Ok(out)
+}
+
+fn read_bytes_checked(
+    bytes: &[u8],
+    cursor: &mut usize,
+    len: usize,
+) -> Result<Vec<u8>, InvalidTransaction> {
+    if bytes.len().saturating_sub(*cursor) < len {
+        return Err(InvalidTransaction::BadProof);
+    }
+    let out = bytes[*cursor..*cursor + len].to_vec();
+    *cursor += len;
+    Ok(out)
+}
+
+fn decode_native_tx_leaf_lite(
+    proof_bytes: &[u8],
+) -> Result<Option<NativeTxLeafLite>, InvalidTransaction> {
+    let mut cursor = 0usize;
+    let _version = read_u16_checked(proof_bytes, &mut cursor)?;
+    let _params_fingerprint = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    let _spec_digest = read_array_checked::<32>(proof_bytes, &mut cursor)?;
+    let _relation_id = read_array_checked::<32>(proof_bytes, &mut cursor)?;
+    let _shape_digest = read_array_checked::<32>(proof_bytes, &mut cursor)?;
+    let _statement_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    let receipt = NativeTxLeafReceiptLite {
+        statement_hash: read_array_checked::<48>(proof_bytes, &mut cursor)?,
+        proof_digest: read_array_checked::<48>(proof_bytes, &mut cursor)?,
+        public_inputs_digest: read_array_checked::<48>(proof_bytes, &mut cursor)?,
+        verifier_profile: read_array_checked::<48>(proof_bytes, &mut cursor)?,
+    };
+    let input_flag_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if input_flag_count > transaction_core::constants::MAX_INPUTS {
+        return Ok(None);
+    }
+    let input_flags = read_bytes_checked(proof_bytes, &mut cursor, input_flag_count)?;
+    let output_flag_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if output_flag_count > transaction_core::constants::MAX_OUTPUTS {
+        return Ok(None);
+    }
+    let output_flags = read_bytes_checked(proof_bytes, &mut cursor, output_flag_count)?;
+    let fee = read_u64_checked(proof_bytes, &mut cursor)?;
+    let value_balance_sign = read_u8_checked(proof_bytes, &mut cursor)?;
+    let value_balance_magnitude = read_u64_checked(proof_bytes, &mut cursor)?;
+    let merkle_root = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    let balance_slot_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if balance_slot_count > transaction_core::constants::BALANCE_SLOTS {
+        return Ok(None);
+    }
+    let mut balance_slot_asset_ids = Vec::with_capacity(balance_slot_count);
+    for _ in 0..balance_slot_count {
+        balance_slot_asset_ids.push(read_u64_checked(proof_bytes, &mut cursor)?);
+    }
+    let stark_inputs = NativeSerializedStarkInputsDigest {
+        input_flags,
+        output_flags,
+        fee,
+        value_balance_sign,
+        value_balance_magnitude,
+        merkle_root,
+        balance_slot_asset_ids,
+        stablecoin_enabled: read_u8_checked(proof_bytes, &mut cursor)?,
+        stablecoin_asset_id: read_u64_checked(proof_bytes, &mut cursor)?,
+        stablecoin_policy_version: read_u32_checked(proof_bytes, &mut cursor)?,
+        stablecoin_issuance_sign: read_u8_checked(proof_bytes, &mut cursor)?,
+        stablecoin_issuance_magnitude: read_u64_checked(proof_bytes, &mut cursor)?,
+        stablecoin_policy_hash: read_array_checked::<48>(proof_bytes, &mut cursor)?,
+        stablecoin_oracle_commitment: read_array_checked::<48>(proof_bytes, &mut cursor)?,
+        stablecoin_attestation_commitment: read_array_checked::<48>(proof_bytes, &mut cursor)?,
+    };
+    Ok(Some(NativeTxLeafLite {
+        receipt,
+        stark_inputs,
+    }))
+}
+
+fn signed_magnitude_to_i128(sign: u8, magnitude: u64) -> Result<i128, InvalidTransaction> {
+    match sign {
+        0 => Ok(i128::from(magnitude)),
+        1 => Ok(-i128::from(magnitude)),
+        _ => Err(InvalidTransaction::BadProof),
+    }
+}
+
+fn canonical_balance_slots_from_public_args(
+    balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
+    fee: u64,
+    value_balance: i128,
+    stablecoin: &Option<StablecoinPolicyBinding>,
+) -> Result<Vec<BalanceSlot>, InvalidTransaction> {
+    use transaction_core::constants::NATIVE_ASSET_ID;
+
+    if balance_slot_asset_ids[0] != NATIVE_ASSET_ID {
+        return Err(InvalidTransaction::BadProof);
+    }
+
+    let mut saw_padding = false;
+    let mut prev_asset = NATIVE_ASSET_ID;
+    for asset_id in balance_slot_asset_ids.iter().skip(1) {
+        if *asset_id == u64::MAX {
+            saw_padding = true;
+            continue;
+        }
+        if saw_padding || *asset_id == NATIVE_ASSET_ID || *asset_id <= prev_asset {
+            return Err(InvalidTransaction::BadProof);
+        }
+        prev_asset = *asset_id;
+    }
+
+    if let Some(binding) = stablecoin {
+        if !balance_slot_asset_ids[1..].contains(&binding.asset_id) {
+            return Err(InvalidTransaction::BadProof);
+        }
+    }
+
+    let native_delta = i128::from(fee) - value_balance;
+    Ok(balance_slot_asset_ids
+        .into_iter()
+        .map(|asset_id| {
+            let delta = match stablecoin {
+                Some(binding) if asset_id == binding.asset_id => binding.issuance_delta,
+                _ if asset_id == NATIVE_ASSET_ID => native_delta,
+                _ => 0,
+            };
+            BalanceSlot { asset_id, delta }
+        })
+        .collect())
+}
+
+fn verify_native_stark_inputs_match_public_args(
+    stark_inputs: &NativeSerializedStarkInputsDigest,
+    input_count: usize,
+    output_count: usize,
+    anchor: &[u8; 48],
+    balance_slot_asset_ids: &[u64; transaction_core::constants::BALANCE_SLOTS],
+    stablecoin: &Option<StablecoinPolicyBinding>,
+    fee: u64,
+) -> Result<(), InvalidTransaction> {
+    if stark_inputs.input_flags.len() != transaction_core::constants::MAX_INPUTS
+        || stark_inputs.output_flags.len() != transaction_core::constants::MAX_OUTPUTS
+        || stark_inputs.balance_slot_asset_ids.len() != transaction_core::constants::BALANCE_SLOTS
+    {
+        return Err(InvalidTransaction::BadProof);
+    }
+    for (idx, flag) in stark_inputs.input_flags.iter().enumerate() {
+        let expected = u8::from(idx < input_count);
+        if *flag != expected {
+            return Err(InvalidTransaction::BadProof);
+        }
+    }
+    for (idx, flag) in stark_inputs.output_flags.iter().enumerate() {
+        let expected = u8::from(idx < output_count);
+        if *flag != expected {
+            return Err(InvalidTransaction::BadProof);
+        }
+    }
+    if stark_inputs.fee != fee
+        || stark_inputs.value_balance_sign != 0
+        || stark_inputs.value_balance_magnitude != 0
+        || stark_inputs.merkle_root != *anchor
+        || stark_inputs.balance_slot_asset_ids.as_slice() != balance_slot_asset_ids
+    {
+        return Err(InvalidTransaction::BadProof);
+    }
+
+    match stablecoin {
+        Some(binding) => {
+            let (issuance_sign, issuance_magnitude) = if binding.issuance_delta < 0 {
+                (1u8, binding.issuance_delta.unsigned_abs() as u64)
+            } else {
+                (0u8, binding.issuance_delta.unsigned_abs() as u64)
+            };
+            if stark_inputs.stablecoin_enabled != 1
+                || stark_inputs.stablecoin_asset_id != binding.asset_id
+                || stark_inputs.stablecoin_policy_version != binding.policy_version
+                || stark_inputs.stablecoin_issuance_sign != issuance_sign
+                || stark_inputs.stablecoin_issuance_magnitude != issuance_magnitude
+                || stark_inputs.stablecoin_policy_hash != binding.policy_hash
+                || stark_inputs.stablecoin_oracle_commitment != binding.oracle_commitment
+                || stark_inputs.stablecoin_attestation_commitment != binding.attestation_commitment
+            {
+                return Err(InvalidTransaction::BadProof);
+            }
+        }
+        _ => {
+            if stark_inputs.stablecoin_enabled != 0
+                || stark_inputs.stablecoin_asset_id != 0
+                || stark_inputs.stablecoin_policy_version != 0
+                || stark_inputs.stablecoin_issuance_sign != 0
+                || stark_inputs.stablecoin_issuance_magnitude != 0
+                || stark_inputs.stablecoin_policy_hash != [0u8; 48]
+                || stark_inputs.stablecoin_oracle_commitment != [0u8; 48]
+                || stark_inputs.stablecoin_attestation_commitment != [0u8; 48]
+            {
+                return Err(InvalidTransaction::BadProof);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn native_public_inputs_digest(
+    stark_inputs: &NativeSerializedStarkInputsDigest,
+) -> Result<[u8; 48], InvalidTransaction> {
+    let encoded = postcard::to_allocvec(stark_inputs).map_err(|_| InvalidTransaction::BadProof)?;
+    let mut message =
+        Vec::with_capacity(NATIVE_TX_PUBLIC_INPUTS_DIGEST_DOMAIN.len() + encoded.len());
+    message.extend_from_slice(NATIVE_TX_PUBLIC_INPUTS_DIGEST_DOMAIN);
+    message.extend_from_slice(&encoded);
+    Ok(blake3_384_digest(&message))
+}
+
+fn native_statement_hash_from_public_args(
+    nullifiers: &[[u8; 48]],
+    commitments: &[[u8; 48]],
+    ciphertext_hashes: &[[u8; 48]],
+    balance_tag: &[u8; 48],
+    version: VersionBinding,
+    stark_inputs: &NativeSerializedStarkInputsDigest,
+) -> Result<[u8; 48], InvalidTransaction> {
+    if nullifiers.len() > transaction_core::constants::MAX_INPUTS
+        || commitments.len() > transaction_core::constants::MAX_OUTPUTS
+        || ciphertext_hashes.len() > transaction_core::constants::MAX_OUTPUTS
+    {
+        return Err(InvalidTransaction::BadProof);
+    }
+    let value_balance = signed_magnitude_to_i128(
+        stark_inputs.value_balance_sign,
+        stark_inputs.value_balance_magnitude,
+    )?;
+    let stablecoin_issuance = signed_magnitude_to_i128(
+        stark_inputs.stablecoin_issuance_sign,
+        stark_inputs.stablecoin_issuance_magnitude,
+    )?;
+
+    let mut message = Vec::new();
+    message.extend_from_slice(NATIVE_TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(&stark_inputs.merkle_root);
+    for nf in nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for _ in nullifiers.len()..transaction_core::constants::MAX_INPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    for cm in commitments {
+        message.extend_from_slice(cm);
+    }
+    for _ in commitments.len()..transaction_core::constants::MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    for ct in ciphertext_hashes {
+        message.extend_from_slice(ct);
+    }
+    for _ in ciphertext_hashes.len()..transaction_core::constants::MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    message.extend_from_slice(&stark_inputs.fee.to_le_bytes());
+    message.extend_from_slice(&value_balance.to_le_bytes());
+    message.extend_from_slice(balance_tag);
+    message.extend_from_slice(&version.circuit.to_le_bytes());
+    message.extend_from_slice(&version.crypto.to_le_bytes());
+    message.push(stark_inputs.stablecoin_enabled);
+    message.extend_from_slice(&stark_inputs.stablecoin_asset_id.to_le_bytes());
+    message.extend_from_slice(&stark_inputs.stablecoin_policy_hash);
+    message.extend_from_slice(&stark_inputs.stablecoin_oracle_commitment);
+    message.extend_from_slice(&stark_inputs.stablecoin_attestation_commitment);
+    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
+    message.extend_from_slice(&stark_inputs.stablecoin_policy_version.to_le_bytes());
+    Ok(blake3_384_digest(&message))
 }
 
 fn kem_ciphertext_len_for_suite(crypto_suite: u16) -> Option<usize> {
@@ -801,6 +1184,7 @@ pub mod pallet {
                 binding_hash,
                 stablecoin,
                 fee,
+                protocol_versioning::DEFAULT_VERSION_BINDING,
             )
         }
 
@@ -1106,6 +1490,7 @@ pub mod pallet {
             binding_hash: &BindingHash,
             stablecoin: &Option<StablecoinPolicyBinding>,
             fee: u64,
+            version: VersionBinding,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if Self::ensure_stablecoin_binding(stablecoin).is_err() {
                 return Err(InvalidTransaction::Custom(7));
@@ -1179,6 +1564,21 @@ pub mod pallet {
             };
 
             let verifier = T::ProofVerifier::default();
+            if let Some(meta) = Self::try_validate_native_tx_leaf_unsigned_action(
+                &proof.data,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin,
+                fee,
+                version,
+            )? {
+                return Ok(meta);
+            }
+
             match verifier.verify_stark(proof, &inputs, &vk) {
                 VerificationResult::Valid => {}
                 _ => return Err(InvalidTransaction::BadProof),
@@ -1195,6 +1595,90 @@ pub mod pallet {
                 propagate: true,
                 source_class: ActionSourceClass::External,
             })
+        }
+
+        fn try_validate_native_tx_leaf_unsigned_action(
+            proof_bytes: &[u8],
+            nullifiers: &BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: &BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertexts: &BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
+            anchor: &[u8; 48],
+            balance_slot_asset_ids: &[u64; transaction_core::constants::BALANCE_SLOTS],
+            binding_hash: &BindingHash,
+            stablecoin: &Option<StablecoinPolicyBinding>,
+            fee: u64,
+            version: VersionBinding,
+        ) -> Result<Option<ValidActionMeta>, InvalidTransaction> {
+            let Some(decoded) = (match decode_native_tx_leaf_lite(proof_bytes) {
+                Ok(decoded) => decoded,
+                Err(_) => None,
+            }) else {
+                return Ok(None);
+            };
+
+            let ciphertext_hashes = Self::ciphertext_hashes(ciphertexts.as_slice());
+            let inputs = ShieldedTransferInputs {
+                anchor: *anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                balance_slot_asset_ids: *balance_slot_asset_ids,
+                fee,
+                value_balance: 0,
+                stablecoin: stablecoin.clone(),
+            };
+            let verifier = T::ProofVerifier::default();
+            if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                return Err(InvalidTransaction::BadSigner);
+            }
+
+            verify_native_stark_inputs_match_public_args(
+                &decoded.stark_inputs,
+                nullifiers.len(),
+                commitments.len(),
+                anchor,
+                balance_slot_asset_ids,
+                stablecoin,
+                fee,
+            )?;
+
+            let balance_slots = canonical_balance_slots_from_public_args(
+                *balance_slot_asset_ids,
+                fee,
+                0,
+                stablecoin,
+            )?;
+            let balance_tag = balance_commitment_bytes(i128::from(fee), &balance_slots)
+                .map_err(|_| InvalidTransaction::BadProof)?;
+            let expected_statement_hash = native_statement_hash_from_public_args(
+                nullifiers.as_slice(),
+                commitments.as_slice(),
+                &ciphertext_hashes,
+                &balance_tag,
+                version,
+                &decoded.stark_inputs,
+            )?;
+            if decoded.receipt.statement_hash != expected_statement_hash {
+                return Err(InvalidTransaction::BadProof);
+            }
+            let expected_public_inputs_digest = native_public_inputs_digest(&decoded.stark_inputs)?;
+            if decoded.receipt.public_inputs_digest != expected_public_inputs_digest {
+                return Err(InvalidTransaction::BadProof);
+            }
+            if decoded.receipt.proof_digest == [0u8; 48]
+                || decoded.receipt.verifier_profile == [0u8; 48]
+            {
+                return Err(InvalidTransaction::BadProof);
+            }
+
+            Ok(Some(ValidActionMeta {
+                priority: 100,
+                longevity: 64,
+                provides: Self::nullifier_tags(nullifiers.as_slice(), false),
+                requires: Vec::new(),
+                propagate: true,
+                source_class: ActionSourceClass::External,
+            }))
         }
 
         pub(crate) fn validate_shielded_transfer_unsigned_sidecar_action(
@@ -1614,6 +2098,7 @@ pub mod pallet {
             binding_hash: BindingHash,
             stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
+            version: VersionBinding,
         ) -> DispatchResult {
             ensure!(
                 matches!(
@@ -1690,24 +2175,41 @@ pub mod pallet {
             let vk = VerifyingKeyStorage::<T>::get();
             ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
             let verifier = T::ProofVerifier::default();
-            match verifier.verify_stark(&proof, &inputs, &vk) {
-                VerificationResult::Valid => {}
-                VerificationResult::InvalidProofFormat => {
-                    warn!(target: "shielded-pool", "Invalid proof format for unsigned transfer");
-                    return Err(Error::<T>::InvalidProofFormat.into());
+            let native_applied = matches!(
+                Self::try_validate_native_tx_leaf_unsigned_action(
+                    &proof.data,
+                    &nullifiers,
+                    &commitments,
+                    &ciphertexts,
+                    &anchor,
+                    &balance_slot_asset_ids,
+                    &binding_hash,
+                    &stablecoin,
+                    fee,
+                    version,
+                ),
+                Ok(Some(_))
+            );
+            if !native_applied {
+                match verifier.verify_stark(&proof, &inputs, &vk) {
+                    VerificationResult::Valid => {}
+                    VerificationResult::InvalidProofFormat => {
+                        warn!(target: "shielded-pool", "Invalid proof format for unsigned transfer");
+                        return Err(Error::<T>::InvalidProofFormat.into());
+                    }
+                    VerificationResult::InvalidPublicInputs => {
+                        warn!(target: "shielded-pool", "Invalid public inputs for unsigned transfer");
+                        return Err(Error::<T>::InvalidProofFormat.into());
+                    }
+                    VerificationResult::VerificationFailed => {
+                        warn!(target: "shielded-pool", "Proof verification failed for unsigned transfer");
+                        return Err(Error::<T>::ProofVerificationFailed.into());
+                    }
+                    VerificationResult::KeyNotFound => {
+                        return Err(Error::<T>::VerifyingKeyNotFound.into());
+                    }
+                    _ => return Err(Error::<T>::ProofVerificationFailed.into()),
                 }
-                VerificationResult::InvalidPublicInputs => {
-                    warn!(target: "shielded-pool", "Invalid public inputs for unsigned transfer");
-                    return Err(Error::<T>::InvalidProofFormat.into());
-                }
-                VerificationResult::VerificationFailed => {
-                    warn!(target: "shielded-pool", "Proof verification failed for unsigned transfer");
-                    return Err(Error::<T>::ProofVerificationFailed.into());
-                }
-                VerificationResult::KeyNotFound => {
-                    return Err(Error::<T>::VerifyingKeyNotFound.into());
-                }
-                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
             }
             ensure!(
                 verifier.verify_binding_hash(&binding_hash, &inputs),
@@ -2648,6 +3150,7 @@ pub mod pallet {
                         binding_hash,
                         stablecoin,
                         *fee,
+                        protocol_versioning::DEFAULT_VERSION_BINDING,
                     ) {
                         Ok(meta) => {
                             Self::action_meta_to_validity(_source, "ShieldedPoolUnsigned", meta)

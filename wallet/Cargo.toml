@@ -33,6 +33,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 transaction-circuit = { path = "../circuits/transaction", default-features = false, features = ["plonky3"] }
 disclosure-circuit = { path = "../circuits/disclosure" }
 batch-circuit = { path = "../circuits/batch", default-features = false, features = ["plonky3"], optional = true }
+superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 synthetic-crypto = { path = "../crypto" }
 protocol-versioning = { path = "../protocol/versioning" }
 protocol-kernel = { path = "../protocol/kernel" }

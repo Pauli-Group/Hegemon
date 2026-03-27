@@ -1,5 +1,6 @@
 use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::rngs::OsRng;
+use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, merkle_node,
@@ -28,6 +29,96 @@ pub struct BuiltTransaction {
     pub nullifiers: Vec<[u8; 48]>,
     pub spent_note_indexes: Vec<usize>,
     pub outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
+}
+
+struct SubmissionProofMaterial {
+    proof_bytes: Vec<u8>,
+    nullifiers: Vec<[u8; 48]>,
+    commitments: Vec<[u8; 48]>,
+    anchor: [u8; 48],
+    balance_slot_asset_ids: [u64; 4],
+    fee: u64,
+    value_balance: i128,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalletTxArtifactMode {
+    InlineTx,
+    NativeTxLeaf,
+}
+
+fn wallet_tx_artifact_mode_from_env() -> WalletTxArtifactMode {
+    let Ok(raw) = std::env::var("HEGEMON_WALLET_TX_ARTIFACT_MODE") else {
+        return WalletTxArtifactMode::InlineTx;
+    };
+    let value = raw.trim();
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("inline_tx")
+        || value.eq_ignore_ascii_case("inline")
+        || value.eq_ignore_ascii_case("stark")
+    {
+        return WalletTxArtifactMode::InlineTx;
+    }
+    if value.eq_ignore_ascii_case("native")
+        || value.eq_ignore_ascii_case("native_tx_leaf")
+        || value.eq_ignore_ascii_case("tx_leaf")
+    {
+        return WalletTxArtifactMode::NativeTxLeaf;
+    }
+    WalletTxArtifactMode::InlineTx
+}
+
+fn balance_slot_asset_ids_from_witness(
+    witness: &TransactionWitness,
+) -> Result<[u64; 4], WalletError> {
+    let slots = witness
+        .balance_slots()
+        .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
+    let ids = slots.iter().map(|slot| slot.asset_id).collect::<Vec<_>>();
+    ids.try_into()
+        .map_err(|_| WalletError::InvalidState("balance slot count mismatch"))
+}
+
+fn submission_proof_material_from_witness(
+    witness: &TransactionWitness,
+) -> Result<SubmissionProofMaterial, WalletError> {
+    match wallet_tx_artifact_mode_from_env() {
+        WalletTxArtifactMode::InlineTx => {
+            let prover = build_stark_prover();
+            let proof_result = prover.prove(witness)?;
+            Ok(SubmissionProofMaterial {
+                proof_bytes: proof_result.proof_bytes,
+                nullifiers: proof_result.nullifiers,
+                commitments: proof_result.commitments,
+                anchor: proof_result.anchor,
+                balance_slot_asset_ids: proof_result.balance_slot_asset_ids,
+                fee: proof_result.fee,
+                value_balance: proof_result.value_balance,
+            })
+        }
+        WalletTxArtifactMode::NativeTxLeaf => {
+            witness.validate().map_err(|err| {
+                WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str()))
+            })?;
+            let public_inputs = witness.public_inputs().map_err(|err| {
+                WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str()))
+            })?;
+            let built = build_native_tx_leaf_artifact_bytes(witness).map_err(|err| {
+                WalletError::Serialization(format!(
+                    "native tx-leaf artifact generation failed: {err}"
+                ))
+            })?;
+            Ok(SubmissionProofMaterial {
+                proof_bytes: built.artifact_bytes,
+                nullifiers: public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
+                commitments: public_inputs.commitments[..witness.outputs.len()].to_vec(),
+                anchor: witness.merkle_root,
+                balance_slot_asset_ids: balance_slot_asset_ids_from_witness(witness)?,
+                fee: witness.fee,
+                value_balance: witness.value_balance,
+            })
+        }
+    }
 }
 
 fn build_stark_prover() -> StarkProver {
@@ -315,39 +406,36 @@ pub fn build_transaction_with_binding(
         version: TransactionWitness::default_version_binding(),
     };
 
-    // Generate STARK proof using the real prover
-    let prover = build_stark_prover();
-    let proof_result = prover.prove(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness)?;
 
     // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
     let binding_hash = compute_binding_hash(
-        &proof_result.anchor,
-        &proof_result.nullifiers,
-        &proof_result.commitments,
+        &submission.anchor,
+        &submission.nullifiers,
+        &submission.commitments,
         &ciphertext_hashes,
-        proof_result.balance_slot_asset_ids,
-        proof_result.fee,
-        proof_result.value_balance,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
         to_pallet_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
-        proof_result.proof_bytes,
-        proof_result.nullifiers.to_vec(),
-        proof_result.commitments.to_vec(),
+        submission.proof_bytes,
+        submission.nullifiers.clone(),
+        submission.commitments.clone(),
         &ciphertexts,
-        proof_result.anchor,
+        submission.anchor,
         binding_hash,
-        proof_result.balance_slot_asset_ids,
-        proof_result.fee,
-        proof_result.value_balance,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
         witness.stablecoin.clone(),
     )?;
     let spent_indexes = plan_inputs.iter().map(|note| note.index).collect();
 
     Ok(BuiltTransaction {
         bundle,
-        // Use prover nullifiers, not wallet-computed, to match what's actually submitted
-        nullifiers: proof_result.nullifiers.to_vec(),
+        nullifiers: submission.nullifiers,
         spent_note_indexes: spent_indexes,
         outgoing_disclosures,
     })
@@ -525,36 +613,35 @@ pub fn build_stablecoin_burn(
         version: TransactionWitness::default_version_binding(),
     };
 
-    let prover = build_stark_prover();
-    let proof_result = prover.prove(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness)?;
 
     let binding_hash = compute_binding_hash(
-        &proof_result.anchor,
-        &proof_result.nullifiers,
-        &proof_result.commitments,
+        &submission.anchor,
+        &submission.nullifiers,
+        &submission.commitments,
         &ciphertext_hashes,
-        proof_result.balance_slot_asset_ids,
-        proof_result.fee,
-        proof_result.value_balance,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
         to_pallet_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
-        proof_result.proof_bytes,
-        proof_result.nullifiers.to_vec(),
-        proof_result.commitments.to_vec(),
+        submission.proof_bytes,
+        submission.nullifiers.clone(),
+        submission.commitments.clone(),
         &ciphertexts,
-        proof_result.anchor,
+        submission.anchor,
         binding_hash,
-        proof_result.balance_slot_asset_ids,
-        proof_result.fee,
-        proof_result.value_balance,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
         witness.stablecoin.clone(),
     )?;
     let spent_indexes = spent_notes.iter().map(|note| note.index).collect();
 
     Ok(BuiltTransaction {
         bundle,
-        nullifiers: proof_result.nullifiers.to_vec(),
+        nullifiers: submission.nullifiers,
         spent_note_indexes: spent_indexes,
         outgoing_disclosures,
     })
@@ -703,35 +790,34 @@ pub fn build_consolidation_transaction(
         version: TransactionWitness::default_version_binding(),
     };
 
-    let prover = build_stark_prover();
-    let proof_result = prover.prove(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness)?;
 
     let binding_hash = compute_binding_hash(
-        &proof_result.anchor,
-        &proof_result.nullifiers,
-        &proof_result.commitments,
+        &submission.anchor,
+        &submission.nullifiers,
+        &submission.commitments,
         &ciphertext_hashes,
-        proof_result.balance_slot_asset_ids,
-        proof_result.fee,
-        proof_result.value_balance,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
         to_pallet_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
-        proof_result.proof_bytes,
-        proof_result.nullifiers.to_vec(),
-        proof_result.commitments.to_vec(),
+        submission.proof_bytes,
+        submission.nullifiers.clone(),
+        submission.commitments.clone(),
         &[ciphertext],
-        proof_result.anchor,
+        submission.anchor,
         binding_hash,
-        proof_result.balance_slot_asset_ids,
-        proof_result.fee,
-        proof_result.value_balance,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
         witness.stablecoin.clone(),
     )?;
 
     Ok(BuiltTransaction {
         bundle,
-        nullifiers: proof_result.nullifiers.to_vec(),
+        nullifiers: submission.nullifiers,
         spent_note_indexes: vec![note_a.index, note_b.index],
         outgoing_disclosures,
     })
@@ -1039,6 +1125,7 @@ fn build_output(
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
+    use superneo_hegemon::decode_native_tx_leaf_artifact_bytes;
     use tempfile::tempdir;
 
     use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
@@ -1186,5 +1273,56 @@ mod tests {
 
         assert_eq!(decoded_hashes, ciphertext_hashes);
         assert_eq!(bundle.binding_hash, expected.data);
+    }
+
+    #[test]
+    fn build_transaction_can_emit_native_tx_leaf_payloads() {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
+
+        let sender_ivk = sender.incoming_key().unwrap();
+        let sender_addr = sender_ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(777);
+
+        for (position, value) in [(0u64, 150_000_000u64), (1u64, 160_000_000u64)] {
+            let note = NotePlaintext::random(value, 0, MemoPlaintext::default(), &mut rng);
+            let ciphertext = NoteCiphertext::encrypt(&sender_addr, &note, &mut rng).unwrap();
+            let recovered = sender_ivk.decrypt_note(&ciphertext).unwrap();
+            let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+            sender
+                .append_commitments(&[(position, commitment)])
+                .unwrap();
+            sender.register_ciphertext_index(position).unwrap();
+            sender
+                .record_recovered_note(recovered, position, position)
+                .unwrap();
+        }
+
+        let original = std::env::var("HEGEMON_WALLET_TX_ARTIFACT_MODE").ok();
+        std::env::set_var("HEGEMON_WALLET_TX_ARTIFACT_MODE", "native_tx_leaf");
+
+        let recipient = Recipient {
+            address: recipient_store.primary_address().unwrap(),
+            value: 100_000_000,
+            asset_id: 0,
+            memo: MemoPlaintext::new(b"native tx leaf".to_vec()),
+        };
+        let built = build_transaction(&sender, &[recipient], 0).unwrap();
+
+        match original {
+            Some(value) => std::env::set_var("HEGEMON_WALLET_TX_ARTIFACT_MODE", value),
+            None => std::env::remove_var("HEGEMON_WALLET_TX_ARTIFACT_MODE"),
+        }
+
+        let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
+            .expect("native tx-leaf payload should decode");
+        assert_eq!(
+            decoded.receipt.verifier_profile,
+            superneo_hegemon::experimental_native_tx_leaf_verifier_profile()
+        );
+        assert_eq!(built.bundle.nullifiers.len(), built.nullifiers.len());
     }
 }
