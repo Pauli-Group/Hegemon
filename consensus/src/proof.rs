@@ -1422,11 +1422,11 @@ impl ProofVerifier for ParallelProofVerifier {
         }
 
         let mut tx_verify_ms = 0u128;
-        let aggregation_cache_hit = None;
-        let aggregation_cache_build_ms = None;
-        let aggregation_cache_prewarm_hit = None;
-        let aggregation_cache_prewarm_build_ms = None;
-        let aggregation_cache_prewarm_total_ms = None;
+        let aggregation_cache_hit = false;
+        let aggregation_cache_build_ms = 0u128;
+        let aggregation_cache_prewarm_hit = false;
+        let aggregation_cache_prewarm_build_ms = 0u128;
+        let aggregation_cache_prewarm_total_ms = 0u128;
         let block_artifact = block
             .block_artifact
             .clone()
@@ -1552,11 +1552,11 @@ impl ProofVerifier for ParallelProofVerifier {
             commitment_verify_ms,
             aggregation_verify_ms,
             aggregation_verify_batch_ms,
-            aggregation_cache_hit = aggregation_cache_hit.unwrap_or(false),
-            aggregation_cache_build_ms = aggregation_cache_build_ms.unwrap_or(0),
-            aggregation_cache_prewarm_hit = aggregation_cache_prewarm_hit.unwrap_or(false),
-            aggregation_cache_prewarm_build_ms = aggregation_cache_prewarm_build_ms.unwrap_or(0),
-            aggregation_cache_prewarm_total_ms = aggregation_cache_prewarm_total_ms.unwrap_or(0),
+            aggregation_cache_hit,
+            aggregation_cache_build_ms,
+            aggregation_cache_prewarm_hit,
+            aggregation_cache_prewarm_build_ms,
+            aggregation_cache_prewarm_total_ms,
             tx_verify_ms,
             total_verify_ms = start_total.elapsed().as_millis(),
             aggregation_verified,
