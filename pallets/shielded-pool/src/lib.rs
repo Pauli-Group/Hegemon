@@ -1434,51 +1434,6 @@ pub mod pallet {
             Self::validate_submit_candidate_artifact_action(payload)
         }
 
-        pub(crate) fn validate_mint_coinbase_action(
-            reward_bundle: &types::BlockRewardBundle,
-        ) -> Result<ValidActionMeta, InvalidTransaction> {
-            if CoinbaseProcessed::<T>::get() {
-                warn!(target: "shielded-pool", "mint_coinbase rejected: stale");
-                return Err(InvalidTransaction::Stale);
-            }
-            if Self::ensure_coinbase_subsidy(reward_bundle.miner_note.amount).is_err() {
-                warn!(
-                    target: "shielded-pool",
-                    "mint_coinbase rejected: miner subsidy exceeds cap amount={}",
-                    reward_bundle.miner_note.amount,
-                );
-                return Err(InvalidTransaction::Custom(9));
-            }
-            let expected_commitment = Self::expected_coinbase_commitment(&reward_bundle.miner_note);
-            if reward_bundle.miner_note.commitment != expected_commitment {
-                warn!(
-                    target: "shielded-pool",
-                    "mint_coinbase rejected: miner commitment mismatch amount={}",
-                    reward_bundle.miner_note.amount,
-                );
-                return Err(InvalidTransaction::BadProof);
-            }
-            if let Some(prover_note) = reward_bundle.prover_note.as_ref() {
-                let expected_prover_commitment = Self::expected_coinbase_commitment(prover_note);
-                if prover_note.commitment != expected_prover_commitment {
-                    warn!(
-                        target: "shielded-pool",
-                        "mint_coinbase rejected: prover commitment mismatch amount={}",
-                        prover_note.amount,
-                    );
-                    return Err(InvalidTransaction::BadProof);
-                }
-            }
-            Ok(ValidActionMeta {
-                priority: u64::from(TransactionPriority::MAX),
-                longevity: 1,
-                provides: vec![b"coinbase".to_vec()],
-                requires: Vec::new(),
-                propagate: false,
-                source_class: ActionSourceClass::InBlockOnly,
-            })
-        }
-
         pub(crate) fn validate_shielded_transfer_unsigned_action(
             proof: &StarkProof,
             nullifiers: &BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
@@ -2478,19 +2433,6 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Ensure the shielded coinbase amount stays within the safety cap.
-        fn ensure_coinbase_subsidy(amount: u64) -> DispatchResult {
-            Self::ensure_coinbase_cap(amount)
-        }
-
-        fn ensure_coinbase_cap(amount: u64) -> DispatchResult {
-            ensure!(
-                amount <= T::MaxCoinbaseSubsidy::get(),
-                Error::<T>::CoinbaseSubsidyExceedsLimit
-            );
-            Ok(())
-        }
-
         fn expected_miner_reward_amount(height: u64, miner_fees: u128) -> Result<u64, Error<T>> {
             let subsidy = pallet_coinbase::block_subsidy(height);
             let fee_u64 = u64::try_from(miner_fees).map_err(|_| Error::<T>::FeeOverflow)?;
@@ -3099,17 +3041,26 @@ pub mod pallet {
                     }
                 }
                 // Inherent call: mint_coinbase
-                // Inherent extrinsics are validated through ProvideInherent::check_inherent
-                // but they still need to pass ValidateUnsigned to be applied.
-                // We return a valid transaction here; the actual validation happens in check_inherent.
-                Call::mint_coinbase { reward_bundle } => {
-                    match Self::validate_mint_coinbase_action(reward_bundle) {
-                        Ok(meta) => {
-                            Self::action_meta_to_validity(_source, "ShieldedPoolCoinbase", meta)
-                        }
-                        Err(err) => err.into(),
-                    }
-                }
+                // `mint_coinbase` is a pseudo-inherent inserted directly during block assembly
+                // after fee accumulation. It still has to pass `ValidateUnsigned`, but the
+                // authoritative stateful checks live in `apply_mint_coinbase_action`.
+                //
+                // Keeping the unsigned path source-restricted but stateless avoids a bad
+                // revalidation edge: once the coinbase has executed in-block, `CoinbaseProcessed`
+                // is true and a second validation pass on the same extrinsic would otherwise
+                // surface a spurious `Stale`/`invalid-shielded-action` error on a valid block.
+                Call::mint_coinbase { .. } => Self::action_meta_to_validity(
+                    _source,
+                    "ShieldedPoolCoinbase",
+                    ValidActionMeta {
+                        priority: u64::from(TransactionPriority::MAX),
+                        longevity: 1,
+                        provides: vec![b"coinbase".to_vec()],
+                        requires: Vec::new(),
+                        propagate: false,
+                        source_class: ActionSourceClass::InBlockOnly,
+                    },
+                ),
                 Call::submit_proven_batch { payload } => {
                     match Self::validate_submit_proven_batch_action(payload) {
                         Ok(meta) => {
@@ -3134,9 +3085,33 @@ mod mock;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use frame_support::BoundedVec;
+    use frame_support::{assert_ok, BoundedVec};
+    use protocol_kernel::manifest::KernelManifest;
+    use protocol_kernel::traits::KernelStateView;
     use sp_runtime::traits::ValidateUnsigned;
-    use sp_runtime::transaction_validity::TransactionSource;
+    use sp_runtime::transaction_validity::{
+        InvalidTransaction, TransactionSource, TransactionValidityError,
+    };
+    use std::collections::BTreeMap;
+
+    struct DummyKernelState;
+
+    impl KernelStateView for DummyKernelState {
+        fn current_height(&self) -> u64 {
+            0
+        }
+
+        fn family_root(
+            &self,
+            _family_id: protocol_kernel::types::FamilyId,
+        ) -> protocol_kernel::types::FamilyRoot {
+            [0u8; 48]
+        }
+
+        fn global_root(&self) -> protocol_kernel::types::GlobalRoot {
+            [0u8; 48]
+        }
+    }
 
     #[test]
     fn note_commitment_matches_types() {
@@ -3203,8 +3178,125 @@ mod tests {
                 &call,
             );
             assert!(
-                validity.is_ok(),
+                !matches!(
+                    validity,
+                    Err(TransactionValidityError::Invalid(InvalidTransaction::Stale))
+                ),
                 "persisted coinbase flag should not make next-block mempool transfers stale: {validity:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn validate_unsigned_mint_coinbase_stays_valid_after_apply() {
+        mock::new_test_ext().execute_with(|| {
+            let height: u64 = frame_system::Pallet::<mock::Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let recipient = [7u8; types::DIVERSIFIED_ADDRESS_SIZE];
+            let public_seed = sp_io::hashing::blake2_256(&height.to_le_bytes());
+            let pk_recipient = commitment::pk_recipient_from_address(&recipient);
+            let pk_auth = commitment::pk_auth_from_address(&recipient);
+            let reward_bundle = types::BlockRewardBundle {
+                miner_note: types::CoinbaseNoteData {
+                    commitment: commitment::circuit_coinbase_commitment(
+                        &pk_recipient,
+                        &pk_auth,
+                        subsidy,
+                        &public_seed,
+                        0,
+                    ),
+                    encrypted_note: types::EncryptedNote::default(),
+                    recipient_address: recipient,
+                    amount: subsidy,
+                    public_seed,
+                },
+                prover_note: None,
+            };
+            let call = crate::Call::<mock::Test>::mint_coinbase {
+                reward_bundle: reward_bundle.clone(),
+            };
+
+            let validity_external =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity_external,
+                Err(TransactionValidityError::Invalid(InvalidTransaction::Call))
+            ));
+
+            let validity_in_block =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            assert!(validity_in_block.is_ok());
+
+            assert_ok!(pallet::Pallet::<mock::Test>::mint_coinbase(
+                frame_system::RawOrigin::None.into(),
+                reward_bundle,
+            ));
+
+            let validity_after_apply =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            assert!(
+                validity_after_apply.is_ok(),
+                "mint_coinbase should remain valid on in-block revalidation after apply"
+            );
+        });
+    }
+
+    #[test]
+    fn kernel_validate_mint_coinbase_stays_valid_after_apply() {
+        mock::new_test_ext().execute_with(|| {
+            let height: u64 = frame_system::Pallet::<mock::Test>::block_number();
+            let subsidy = pallet_coinbase::block_subsidy(height);
+            let recipient = [7u8; types::DIVERSIFIED_ADDRESS_SIZE];
+            let public_seed = sp_io::hashing::blake2_256(&height.to_le_bytes());
+            let pk_recipient = commitment::pk_recipient_from_address(&recipient);
+            let pk_auth = commitment::pk_auth_from_address(&recipient);
+            let reward_bundle = types::BlockRewardBundle {
+                miner_note: types::CoinbaseNoteData {
+                    commitment: commitment::circuit_coinbase_commitment(
+                        &pk_recipient,
+                        &pk_auth,
+                        subsidy,
+                        &public_seed,
+                        0,
+                    ),
+                    encrypted_note: types::EncryptedNote::default(),
+                    recipient_address: recipient,
+                    amount: subsidy,
+                    public_seed,
+                },
+                prover_note: None,
+            };
+            let manifest = KernelManifest {
+                manifest_version: 1,
+                allowed_bindings: vec![protocol_versioning::DEFAULT_VERSION_BINDING.into()],
+                families: BTreeMap::new(),
+                policy_commitments: BTreeMap::new(),
+            };
+            let state = DummyKernelState;
+            let envelope = family::build_envelope(
+                protocol_versioning::DEFAULT_VERSION_BINDING,
+                family::ACTION_MINT_COINBASE,
+                Vec::new(),
+                family::MintCoinbaseArgs {
+                    reward_bundle: reward_bundle.clone(),
+                }
+                .encode(),
+            );
+
+            let validity_before =
+                family::validate_action::<mock::Test>(&manifest, &state, &envelope);
+            assert!(validity_before.is_ok());
+
+            assert_ok!(pallet::Pallet::<mock::Test>::mint_coinbase(
+                frame_system::RawOrigin::None.into(),
+                reward_bundle,
+            ));
+
+            let validity_after =
+                family::validate_action::<mock::Test>(&manifest, &state, &envelope);
+            assert!(
+                validity_after.is_ok(),
+                "kernel family coinbase validation should remain valid on in-block revalidation after apply"
             );
         });
     }

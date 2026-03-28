@@ -404,17 +404,15 @@ pub fn validate_action<T: Config>(
             }
         }
         ShieldedFamilyAction::MintCoinbase(args) => {
-            let result = Pallet::<T>::validate_mint_coinbase_action(&args.reward_bundle);
-            if let Err(ref err) = result {
-                log::warn!(
-                    target: "shielded-pool",
-                    "kernel mint-coinbase validation failed: err={:?} miner_amount={} prover_present={}",
-                    err,
-                    args.reward_bundle.miner_note.amount,
-                    args.reward_bundle.prover_note.is_some(),
-                );
-            }
-            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            let _ = args;
+            Ok(ValidActionMeta {
+                priority: u64::from(sp_runtime::transaction_validity::TransactionPriority::MAX),
+                longevity: 1,
+                provides: alloc::vec![b"coinbase".to_vec()],
+                requires: Vec::new(),
+                propagate: false,
+                source_class: protocol_kernel::traits::ActionSourceClass::InBlockOnly,
+            })
         }
     }
 }

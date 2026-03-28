@@ -142,7 +142,7 @@ use consensus::proof::{
 };
 use consensus::{ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal};
 use crypto::hashes::blake3_384;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use hyper::http::{header, Method};
 use network::{
     BootstrapNode, PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent,
@@ -209,6 +209,55 @@ use jsonrpsee::server::ServerBuilder;
 
 // Import sync service
 use crate::substrate::sync::{ChainSyncService, DownloadedBlock};
+
+#[derive(Clone)]
+struct TxPoolEssentialSpawner {
+    inner: sc_service::SpawnEssentialTaskHandle,
+}
+
+impl TxPoolEssentialSpawner {
+    fn new(inner: sc_service::SpawnEssentialTaskHandle) -> Self {
+        Self { inner }
+    }
+
+    fn wrap_task(
+        name: &'static str,
+        future: futures::future::BoxFuture<'static, ()>,
+    ) -> futures::future::BoxFuture<'static, ()> {
+        async move {
+            future.await;
+            if name == "txpool-background" {
+                tracing::debug!(
+                    task = name,
+                    "Transaction-pool background task returned; awaiting service shutdown"
+                );
+                futures::future::pending::<()>().await;
+            }
+        }
+        .boxed()
+    }
+}
+
+impl sp_core::traits::SpawnEssentialNamed for TxPoolEssentialSpawner {
+    fn spawn_essential_blocking(
+        &self,
+        name: &'static str,
+        group: Option<&'static str>,
+        future: futures::future::BoxFuture<'static, ()>,
+    ) {
+        self.inner
+            .spawn_blocking(name, group, Self::wrap_task(name, future));
+    }
+
+    fn spawn_essential(
+        &self,
+        name: &'static str,
+        group: Option<&'static str>,
+        future: futures::future::BoxFuture<'static, ()>,
+    ) {
+        self.inner.spawn(name, group, Self::wrap_task(name, future));
+    }
+}
 
 // =============================================================================
 // Storage Changes Cache
@@ -7465,7 +7514,7 @@ pub fn new_partial_with_client(
     // Reference: polkadot-evm/frontier template/node/src/service.rs lines 174-183
     let transaction_pool = Arc::from(
         sc_transaction_pool::Builder::new(
-            task_manager.spawn_essential_handle(),
+            TxPoolEssentialSpawner::new(task_manager.spawn_essential_handle()),
             client.clone(),
             config.role.is_authority().into(),
         )
@@ -7855,7 +7904,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 })
                 .await;
 
-            tracing::info!("Transaction pool maintenance task stopped");
+            tracing::info!(
+                "Transaction pool maintenance notification streams closed; awaiting shutdown"
+            );
+            futures::future::pending::<()>().await;
         },
     );
     tracing::info!(
