@@ -41,26 +41,6 @@ pub struct BackendManifest {
 }
 
 impl BackendManifest {
-    pub fn heuristic_goldilocks_baseline() -> Self {
-        Self {
-            family_label: "heuristic_goldilocks_baseline",
-            spec_label: "hegemon.superneo.native-backend-spec.heuristic-goldilocks-baseline.v1",
-            commitment_scheme_label: "ajtai_linear_masked_commitment",
-            challenge_schedule_label: "single_goldilocks_fs_challenge",
-            maturity_label: "experimental_baseline",
-        }
-    }
-
-    pub fn goldilocks_128b_rewrite() -> Self {
-        Self {
-            family_label: "goldilocks_128b_rewrite",
-            spec_label: "hegemon.superneo.native-backend-spec.goldilocks-128b-rewrite.v2",
-            commitment_scheme_label: "neo_class_linear_commitment_128b_masking",
-            challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
-            maturity_label: "rewrite_candidate",
-        }
-    }
-
     pub fn goldilocks_128b_structural_commitment() -> Self {
         Self {
             family_label: "goldilocks_128b_structural_commitment",
@@ -118,46 +98,6 @@ pub struct NativeSecurityClaim {
 }
 
 impl NativeBackendParams {
-    pub fn heuristic_goldilocks_baseline() -> Self {
-        Self {
-            manifest: BackendManifest::heuristic_goldilocks_baseline(),
-            security_bits: 63,
-            ring_profile: RingProfile::GoldilocksCyclotomic24,
-            matrix_rows: 8,
-            matrix_cols: 8,
-            challenge_bits: 63,
-            fold_challenge_count: 1,
-            max_fold_arity: 2,
-            transcript_domain_label: "hegemon.superneo.fold.v1",
-            decomposition_bits: 8,
-            opening_randomness_bits: 16,
-            commitment_assumption_bits: 63,
-            derive_commitment_binding_from_geometry: false,
-            max_commitment_message_ring_elems: 513,
-            max_claimed_receipt_root_leaves: 128,
-        }
-    }
-
-    pub fn goldilocks_128b_rewrite() -> Self {
-        Self {
-            manifest: BackendManifest::goldilocks_128b_rewrite(),
-            security_bits: 128,
-            ring_profile: RingProfile::GoldilocksCyclotomic24,
-            matrix_rows: 8,
-            matrix_cols: 8,
-            challenge_bits: 63,
-            fold_challenge_count: 5,
-            max_fold_arity: 2,
-            transcript_domain_label: "hegemon.superneo.fold.v3",
-            decomposition_bits: 8,
-            opening_randomness_bits: 256,
-            commitment_assumption_bits: 128,
-            derive_commitment_binding_from_geometry: false,
-            max_commitment_message_ring_elems: 513,
-            max_claimed_receipt_root_leaves: 128,
-        }
-    }
-
     pub fn goldilocks_128b_structural_commitment() -> Self {
         Self {
             manifest: BackendManifest::goldilocks_128b_structural_commitment(),
@@ -321,26 +261,6 @@ impl NativeBackendParams {
             self.manifest.challenge_schedule_label,
             self.fold_challenge_count,
         ) {
-            ("heuristic_goldilocks_baseline", "single_goldilocks_fs_challenge", 1) => (
-                vec![
-                    "random_oracle.blake3_fiat_shamir",
-                    "serialization.canonical_native_artifact_bytes",
-                    "fs.single_goldilocks_fold_challenge",
-                    "opening.truncated_mask_seed_entropy",
-                    "commitment.heuristic_linear_binding",
-                ],
-                ReviewState::Killed,
-            ),
-            ("goldilocks_128b_rewrite", "quint_goldilocks_fs_challenge_negacyclic_mix", 5) => (
-                vec![
-                    "random_oracle.blake3_fiat_shamir",
-                    "serialization.canonical_native_artifact_bytes",
-                    "fs.quint_goldilocks_negacyclic_fold_challenges",
-                    "opening.canonical_256b_mask_seed",
-                    "commitment.neo_class_linear_binding",
-                ],
-                ReviewState::CandidateUnderReview,
-            ),
             (
                 "goldilocks_128b_structural_commitment",
                 "quint_goldilocks_fs_challenge_negacyclic_mix",
@@ -2610,7 +2530,7 @@ mod tests {
         let base = NativeBackendParams::default();
         let different_manifest = NativeBackendParams {
             manifest: BackendManifest {
-                family_label: "heuristic_goldilocks_baseline_alt",
+                family_label: "goldilocks_structural_commitment_alt",
                 ..base.manifest
             },
             ..base.clone()
@@ -2693,43 +2613,6 @@ mod tests {
     }
 
     #[test]
-    fn heuristic_goldilocks_baseline_security_claim_matches_current_floor() {
-        let claim = NativeBackendParams::heuristic_goldilocks_baseline()
-            .security_claim()
-            .unwrap();
-        assert_eq!(claim.claimed_security_bits, 63);
-        assert_eq!(claim.transcript_soundness_bits, 31);
-        assert_eq!(claim.opening_hiding_bits, 8);
-        assert_eq!(claim.commitment_binding_bits, 63);
-        assert_eq!(claim.composition_loss_bits, 7);
-        assert_eq!(claim.soundness_floor_bits, 8);
-        assert_eq!(claim.review_state, ReviewState::Killed);
-        assert!(claim
-            .assumption_ids
-            .contains(&"fs.single_goldilocks_fold_challenge"));
-    }
-
-    #[test]
-    fn rewrite_128b_security_claim_matches_current_floor() {
-        let claim = NativeBackendParams::goldilocks_128b_rewrite()
-            .security_claim()
-            .unwrap();
-        assert_eq!(claim.claimed_security_bits, 128);
-        assert_eq!(claim.transcript_soundness_bits, 157);
-        assert_eq!(claim.opening_hiding_bits, 128);
-        assert_eq!(claim.commitment_codomain_bits, 4032);
-        assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
-        assert_eq!(claim.commitment_random_matrix_bits, 0);
-        assert_eq!(claim.commitment_binding_bits, 128);
-        assert_eq!(claim.composition_loss_bits, 7);
-        assert_eq!(claim.soundness_floor_bits, 128);
-        assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
-        assert!(claim
-            .assumption_ids
-            .contains(&"fs.quint_goldilocks_negacyclic_fold_challenges"));
-    }
-
-    #[test]
     fn structural_128b_security_claim_matches_current_floor() {
         let claim = NativeBackendParams::goldilocks_128b_structural_commitment()
             .security_claim()
@@ -2751,7 +2634,7 @@ mod tests {
 
     #[test]
     fn fold_challenges_change_when_transcript_domain_changes() {
-        let params = NativeBackendParams::goldilocks_128b_rewrite();
+        let params = NativeBackendParams::goldilocks_128b_structural_commitment();
         let mut alternate = params.clone();
         alternate.transcript_domain_label = "hegemon.superneo.fold.alt";
         let shape_digest = ShapeDigest([9u8; 32]);
@@ -2785,7 +2668,7 @@ mod tests {
 
     #[test]
     fn leaf_proof_digest_changes_when_relation_id_changes() {
-        let params = NativeBackendParams::goldilocks_128b_rewrite();
+        let params = NativeBackendParams::goldilocks_128b_structural_commitment();
         let packed = PackedWitness {
             coeffs: vec![1, 2],
             original_len: 2,
@@ -2826,7 +2709,7 @@ mod tests {
     fn validate_rejects_security_target_above_soundness_floor() {
         let params = NativeBackendParams {
             security_bits: 129,
-            ..NativeBackendParams::goldilocks_128b_rewrite()
+            ..NativeBackendParams::goldilocks_128b_structural_commitment()
         };
         let error = params
             .validate()

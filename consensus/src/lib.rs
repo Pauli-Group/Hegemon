@@ -4,12 +4,10 @@ pub mod bft;
 pub mod commitment_tree;
 pub mod error;
 pub mod header;
-pub mod merge_root_layout;
 pub mod mining;
 pub mod nullifier;
 pub mod pow;
 pub mod proof;
-pub mod receipt_arc_whir;
 pub mod reward;
 pub mod substrate;
 pub mod substrate_pow;
@@ -35,10 +33,6 @@ pub use commitment_tree::{
 };
 pub use error::{ConsensusError, ProofError, SlashingEvidence};
 pub use header::{BlockHeader, ConsensusMode, PowSeal};
-pub use merge_root_layout::{
-    merge_root_arity_from_env, merge_root_leaf_fan_in_from_env,
-    merge_root_leaf_manifest_commitment, merge_root_tree_levels_for_tx_count,
-};
 pub use mining::{
     MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorkTrace, MiningWorker,
 };
@@ -47,24 +41,17 @@ pub use pow::PowConsensus;
 pub use proof::{
     ArtifactVerifier, BlockArtifactVerifyReport, CommitmentNullifierLists,
     ExperimentalReceiptRootArtifact, HashVerifier, ParallelProofVerifier, ProofVerifier,
-    ReceiptAccumulator, VerifierRegistry, build_experimental_native_receipt_accumulation_artifact,
-    build_experimental_native_receipt_root_artifact, build_experimental_receipt_arc_whir_artifact,
+    VerifierRegistry, build_experimental_native_receipt_root_artifact,
     build_experimental_receipt_root_artifact, build_experimental_receipt_root_artifact_from_proofs,
     clear_verified_native_tx_leaf_store, commitment_nullifier_lists,
     experimental_native_receipt_root_params_fingerprint,
     experimental_native_receipt_root_verifier_profile,
-    experimental_native_tx_leaf_verifier_profile, experimental_receipt_accumulation_artifact_kind,
-    experimental_receipt_accumulation_verifier_profile,
-    experimental_receipt_arc_whir_artifact_kind, experimental_receipt_arc_whir_verifier_profile,
-    experimental_receipt_root_verifier_profile, experimental_tx_leaf_verifier_profile,
-    prewarm_verified_native_tx_leaf_store, receipt_statement_commitment,
-    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof,
-    tx_validity_artifact_from_receipt, tx_validity_artifact_from_tx_leaf_proof,
-    tx_validity_receipt_from_proof, verify_commitment_proof_payload,
-    verify_experimental_native_receipt_accumulation_artifact,
-    verify_experimental_native_receipt_root_artifact,
-    verify_experimental_receipt_arc_whir_artifact,
-    verify_experimental_receipt_arc_whir_artifact_detailed,
+    experimental_native_tx_leaf_verifier_profile, experimental_receipt_root_verifier_profile,
+    experimental_tx_leaf_verifier_profile, prewarm_verified_native_tx_leaf_store,
+    receipt_statement_commitment, tx_validity_artifact_from_native_tx_leaf_bytes,
+    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt,
+    tx_validity_artifact_from_tx_leaf_proof, tx_validity_receipt_from_proof,
+    verify_commitment_proof_payload, verify_experimental_native_receipt_root_artifact,
     verify_experimental_receipt_root_artifact,
     verify_experimental_receipt_root_artifact_from_proofs,
 };
@@ -72,22 +59,20 @@ pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CRYPTO_SUITE_GAMMA,
     CircuitVersion, CryptoSuiteId, DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
 };
-pub use receipt_arc_whir::ReceiptArcWhirVerifyDetails;
 pub use substrate::{BlockOrigin, ImportReceipt, import_pow_block};
 pub use substrate_pow::{
     Sha256dAlgorithm, Sha256dSeal, compact_to_target, compute_work, counter_to_nonce, mine_round,
     nonce_counter_prefix, seal_meets_target, target_to_compact, verify_seal,
 };
 pub use types::{
-    ArtifactAnnouncement, ArtifactClaim, BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, BatchProofItem,
-    CandidateArtifact, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk,
-    DaChunkProof, DaEncoding, DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot,
-    FeeCommitment, MergeRootMetadata, MergeRootProofPayload, Nullifier, ProofArtifactKind,
-    ProofEnvelope, ProvenBatchMode, ReceiptRootMetadata, ReceiptRootProofPayload, StarkCommitment,
-    SupplyDigest, Transaction, TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest,
-    VersionCommitment, build_da_blob, da_root, encode_da_blob, encode_da_blob_multipage,
-    legacy_block_artifact_verifier_profile, proof_artifact_kind_from_mode, verify_da_chunk,
-    verify_da_multi_chunk,
+    ArtifactAnnouncement, ArtifactClaim, BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, CandidateArtifact,
+    CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof, DaEncoding,
+    DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot, FeeCommitment, Nullifier,
+    ProofArtifactKind, ProofEnvelope, ProvenBatchMode, ReceiptRootMetadata,
+    ReceiptRootProofPayload, StarkCommitment, SupplyDigest, Transaction, TxValidityArtifact,
+    TxValidityReceipt, VerifierProfileDigest, VersionCommitment, build_da_blob, da_root,
+    encode_da_blob, encode_da_blob_multipage, legacy_block_artifact_verifier_profile,
+    proof_artifact_kind_from_mode, verify_da_chunk, verify_da_multi_chunk,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

@@ -9,12 +9,6 @@ pub fn consensus_proven_batch_mode_from_pallet(
         pallet_shielded_pool::types::BlockProofMode::InlineTx => {
             consensus::ProvenBatchMode::InlineTx
         }
-        pallet_shielded_pool::types::BlockProofMode::FlatBatches => {
-            consensus::ProvenBatchMode::FlatBatches
-        }
-        pallet_shielded_pool::types::BlockProofMode::MergeRoot => {
-            consensus::ProvenBatchMode::MergeRoot
-        }
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             consensus::ProvenBatchMode::ReceiptRoot
         }
@@ -30,12 +24,6 @@ pub fn consensus_proof_artifact_kind_from_pallet(
         }
         pallet_shielded_pool::types::ProofArtifactKind::TxLeaf => {
             consensus::ProofArtifactKind::TxLeaf
-        }
-        pallet_shielded_pool::types::ProofArtifactKind::FlatBatches => {
-            consensus::ProofArtifactKind::FlatBatches
-        }
-        pallet_shielded_pool::types::ProofArtifactKind::MergeRoot => {
-            consensus::ProofArtifactKind::MergeRoot
         }
         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot => {
             consensus::ProofArtifactKind::ReceiptRoot
@@ -97,7 +85,7 @@ mod tests {
 
     fn artifact() -> pallet_shielded_pool::types::CandidateArtifact {
         let (proof_kind, verifier_profile) = legacy_pallet_artifact_identity(
-            pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
         );
         pallet_shielded_pool::types::CandidateArtifact {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
@@ -106,11 +94,9 @@ mod tests {
             da_root: [8u8; 48],
             da_chunk_count: 1,
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2, 3]),
-            proof_mode: pallet_shielded_pool::types::BlockProofMode::FlatBatches,
+            proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
             proof_kind,
             verifier_profile,
-            flat_batches: vec![],
-            merge_root: None,
             receipt_root: None,
             artifact_claim: None,
         }
@@ -133,13 +119,11 @@ mod tests {
         assert_eq!(announcement.tx_statements_commitment, [7u8; 48]);
         assert_eq!(
             announcement.proof_kind,
-            consensus::ProofArtifactKind::FlatBatches
+            consensus::ProofArtifactKind::ReceiptRoot
         );
         assert_eq!(
             announcement.verifier_profile,
-            consensus::legacy_block_artifact_verifier_profile(
-                consensus::ProofArtifactKind::FlatBatches
-            )
+            consensus::experimental_native_receipt_root_verifier_profile()
         );
     }
 

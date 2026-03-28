@@ -197,10 +197,5 @@ name = "hegemon-node"
 path = "src/bin/substrate_node.rs"
 required-features = ["substrate"]
 
-[[bin]]
-name = "hegemon-prover-worker"
-path = "src/bin/prover_worker.rs"
-required-features = ["substrate"]
-
 [lints]
 workspace = true

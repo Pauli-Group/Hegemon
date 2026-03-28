@@ -10,16 +10,9 @@ use consensus::types::{
 };
 use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    build_experimental_native_receipt_accumulation_artifact,
-    build_experimental_native_receipt_root_artifact, build_experimental_receipt_arc_whir_artifact,
-    clear_verified_native_tx_leaf_store, commitment_nullifier_lists,
+    build_experimental_native_receipt_root_artifact, commitment_nullifier_lists,
     experimental_native_receipt_root_verifier_profile,
-    experimental_receipt_accumulation_artifact_kind,
-    experimental_receipt_accumulation_verifier_profile,
-    experimental_receipt_arc_whir_artifact_kind, experimental_receipt_arc_whir_verifier_profile,
-    prewarm_verified_native_tx_leaf_store, receipt_statement_commitment,
-    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_receipt,
-    verify_experimental_receipt_arc_whir_artifact_detailed,
+    tx_validity_artifact_from_native_tx_leaf_bytes,
 };
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
@@ -97,6 +90,69 @@ fn build_four_leaf_merkle_tree(leaves: [HashFelt; 4]) -> ([MerklePath; 4], HashF
         ],
         root,
     )
+}
+
+fn build_power_of_two_merkle_tree(leaves: &[HashFelt]) -> (Vec<MerklePath>, HashFelt) {
+    assert!(
+        !leaves.is_empty() && leaves.len().is_power_of_two(),
+        "leaf count must be a non-zero power of two"
+    );
+    assert!(
+        leaves.len() <= (1usize << CIRCUIT_MERKLE_DEPTH),
+        "leaf count exceeds circuit tree capacity"
+    );
+
+    let defaults = default_subtrees();
+    let mut levels = vec![leaves.to_vec()];
+    while levels.last().expect("at least one level").len() > 1 {
+        let current = levels.last().expect("current level");
+        let mut next = Vec::with_capacity(current.len() / 2);
+        for chunk in current.chunks_exact(2) {
+            next.push(merkle_node(chunk[0], chunk[1]));
+        }
+        levels.push(next);
+    }
+
+    let mut root = levels.last().expect("root level")[0];
+    let occupied_levels = levels.len() - 1;
+    for default in defaults
+        .iter()
+        .take(CIRCUIT_MERKLE_DEPTH)
+        .skip(occupied_levels)
+    {
+        root = merkle_node(root, *default);
+    }
+
+    let mut paths = Vec::with_capacity(leaves.len());
+    for leaf_index in 0..leaves.len() {
+        let mut siblings = Vec::with_capacity(CIRCUIT_MERKLE_DEPTH);
+        let mut index = leaf_index;
+        for level in levels.iter().take(occupied_levels) {
+            let sibling_index = index ^ 1;
+            siblings.push(level[sibling_index]);
+            index >>= 1;
+        }
+        for default in defaults
+            .iter()
+            .take(CIRCUIT_MERKLE_DEPTH)
+            .skip(occupied_levels)
+        {
+            siblings.push(*default);
+        }
+        paths.push(MerklePath { siblings });
+    }
+
+    (paths, root)
+}
+
+fn nullifier_root_for_transactions(transactions: &[Transaction]) -> [u8; 48] {
+    let mut set = NullifierSet::new();
+    for tx in transactions {
+        for nullifier in &tx.nullifiers {
+            set.insert(*nullifier).expect("test nullifier insertion");
+        }
+    }
+    set.commitment()
 }
 
 fn make_input_note(seed: u8, value: u64, asset_id: u64, pk_auth: [u8; 32]) -> NoteData {
@@ -348,8 +404,6 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         verifier_profile: consensus::legacy_block_artifact_verifier_profile(
             consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
         ),
-        flat_batches: Vec::new(),
-        merge_root: None,
         receipt_root: None,
     });
     block.tx_statement_bindings = Some(statement_bindings);
@@ -419,105 +473,312 @@ fn build_receipt_root_block_artifacts(
     (tx_validity_artifacts, payload, envelope)
 }
 
-fn build_receipt_accumulation_block_artifacts(
-    witnesses: &[TransactionWitness],
-) -> (
-    Vec<TxValidityArtifact>,
-    Vec<TxValidityArtifact>,
-    ReceiptRootProofPayload,
-    ProofEnvelope,
+fn build_upgrade_transition_blocks() -> (
+    CommitmentTreeState,
+    ConsensusBlock,
+    CommitmentTreeState,
+    ConsensusBlock,
+    [u8; 48],
 ) {
-    let tx_validity_artifacts = witnesses
-        .iter()
-        .map(|witness| {
-            let built = build_native_tx_leaf_artifact_bytes(witness).expect("native tx leaf bytes");
-            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes)
-                .expect("native tx leaf artifact")
-        })
-        .collect::<Vec<_>>();
-    let receipt_only_artifacts = tx_validity_artifacts
-        .iter()
-        .map(|artifact| tx_validity_artifact_from_receipt(artifact.receipt.clone()))
-        .collect::<Vec<_>>();
-    let receipts = tx_validity_artifacts
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
-    let built = build_experimental_native_receipt_accumulation_artifact(&tx_validity_artifacts)
-        .expect("native receipt accumulation bytes");
-    let verifier_profile = experimental_receipt_accumulation_verifier_profile();
-    let payload = ReceiptRootProofPayload {
-        root_proof: built.artifact_bytes.clone(),
-        metadata: ReceiptRootMetadata {
-            params_fingerprint: built.metadata.params_fingerprint,
-            relation_id: built.metadata.relation_id,
-            shape_digest: built.metadata.shape_digest,
-            leaf_count: built.metadata.leaf_count,
-            fold_count: built.metadata.fold_count,
-        },
-        receipts: receipts.to_vec(),
-    };
-    let envelope = ProofEnvelope {
-        kind: experimental_receipt_accumulation_artifact_kind(),
-        verifier_profile,
-        artifact_bytes: built.artifact_bytes,
-    };
-    (
-        tx_validity_artifacts,
-        receipt_only_artifacts,
-        payload,
-        envelope,
-    )
-}
+    let sk_spend_a = [42u8; 32];
+    let sk_spend_b = [77u8; 32];
+    let sk_spend_c = [123u8; 32];
+    let pk_auth_a = spend_auth_key_bytes(&sk_spend_a);
+    let pk_auth_b = spend_auth_key_bytes(&sk_spend_b);
+    let pk_auth_c = spend_auth_key_bytes(&sk_spend_c);
 
-fn build_receipt_arc_whir_block_artifacts(
-    witnesses: &[TransactionWitness],
-) -> (
-    Vec<TxValidityArtifact>,
-    Vec<TxValidityArtifact>,
-    ReceiptRootProofPayload,
-    ProofEnvelope,
-) {
-    let tx_validity_artifacts = witnesses
-        .iter()
-        .map(|witness| {
-            let built = build_native_tx_leaf_artifact_bytes(witness).expect("native tx leaf bytes");
-            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes)
-                .expect("native tx leaf artifact")
-        })
-        .collect::<Vec<_>>();
-    let receipt_only_artifacts = tx_validity_artifacts
-        .iter()
-        .map(|artifact| tx_validity_artifact_from_receipt(artifact.receipt.clone()))
-        .collect::<Vec<_>>();
-    let receipts = tx_validity_artifacts
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
-    let built =
-        build_experimental_receipt_arc_whir_artifact(&receipts).expect("receipt_arc_whir bytes");
-    let verifier_profile = experimental_receipt_arc_whir_verifier_profile();
-    let payload = ReceiptRootProofPayload {
-        root_proof: built.artifact_bytes.clone(),
-        metadata: ReceiptRootMetadata {
-            params_fingerprint: built.metadata.params_fingerprint,
-            relation_id: built.metadata.relation_id,
-            shape_digest: built.metadata.shape_digest,
-            leaf_count: built.metadata.leaf_count,
-            fold_count: built.metadata.fold_count,
-        },
-        receipts: receipts.to_vec(),
+    let input_a0 = make_input_note(
+        10,
+        8,
+        transaction_circuit::constants::NATIVE_ASSET_ID,
+        pk_auth_a,
+    );
+    let input_a1 = make_input_note(20, 5, 1, pk_auth_a);
+    let input_b0 = make_input_note(
+        30,
+        7,
+        transaction_circuit::constants::NATIVE_ASSET_ID,
+        pk_auth_b,
+    );
+    let input_b1 = make_input_note(40, 4, 1, pk_auth_b);
+
+    let first_leaves = [
+        input_a0.commitment(),
+        input_a1.commitment(),
+        input_b0.commitment(),
+        input_b1.commitment(),
+    ];
+    let (first_paths, first_root) = build_four_leaf_merkle_tree(first_leaves);
+    let first_root_bytes = felts_to_bytes48(&first_root);
+
+    let witness_a = TransactionWitness {
+        inputs: vec![
+            InputNoteWitness {
+                note: input_a0.clone(),
+                position: 0,
+                rho_seed: [11u8; 32],
+                merkle_path: first_paths[0].clone(),
+            },
+            InputNoteWitness {
+                note: input_a1.clone(),
+                position: 1,
+                rho_seed: [12u8; 32],
+                merkle_path: first_paths[1].clone(),
+            },
+        ],
+        outputs: vec![
+            OutputNoteWitness {
+                note: NoteData {
+                    value: 3,
+                    asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+                    pk_recipient: [50u8; 32],
+                    pk_auth: pk_auth_c,
+                    rho: [51u8; 32],
+                    r: [52u8; 32],
+                },
+            },
+            OutputNoteWitness {
+                note: NoteData {
+                    value: 5,
+                    asset_id: 1,
+                    pk_recipient: [60u8; 32],
+                    pk_auth: pk_auth_c,
+                    rho: [61u8; 32],
+                    r: [62u8; 32],
+                },
+            },
+        ],
+        ciphertext_hashes: vec![[1u8; 48]; 2],
+        sk_spend: sk_spend_a,
+        merkle_root: first_root_bytes,
+        fee: 5,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
     };
-    let envelope = ProofEnvelope {
-        kind: experimental_receipt_arc_whir_artifact_kind(),
-        verifier_profile,
-        artifact_bytes: built.artifact_bytes,
+    let witness_b = TransactionWitness {
+        inputs: vec![
+            InputNoteWitness {
+                note: input_b0.clone(),
+                position: 2,
+                rho_seed: [21u8; 32],
+                merkle_path: first_paths[2].clone(),
+            },
+            InputNoteWitness {
+                note: input_b1.clone(),
+                position: 3,
+                rho_seed: [22u8; 32],
+                merkle_path: first_paths[3].clone(),
+            },
+        ],
+        outputs: vec![
+            make_output(70, 3, transaction_circuit::constants::NATIVE_ASSET_ID),
+            make_output(80, 4, 1),
+        ],
+        ciphertext_hashes: vec![[2u8; 48]; 2],
+        sk_spend: sk_spend_b,
+        merkle_root: first_root_bytes,
+        fee: 4,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
     };
+
+    let (proving_key, _) = generate_keys();
+    let proof_a = prove(&witness_a, &proving_key).expect("first tx proof");
+    let proof_b = prove(&witness_b, &proving_key).expect("second tx proof");
+    let first_transactions = [proof_a.clone(), proof_b.clone()]
+        .iter()
+        .map(transaction_from_proof)
+        .collect::<Vec<_>>();
+
+    let mut first_base_tree = CommitmentTreeState::default();
+    for input in witness_a.inputs.iter().chain(witness_b.inputs.iter()) {
+        first_base_tree
+            .append(felts_to_bytes48(&input.note.commitment()))
+            .expect("append first-phase input commitment");
+    }
+
+    let first_base_nullifiers = NullifierSet::new();
+    let mut miners = make_validators(1, 0);
+    let miner = miners.remove(0);
+    let first_params = PowBlockParams {
+        height: 1,
+        parent_hash: [0u8; 32],
+        timestamp_ms: 1_000,
+        transactions: first_transactions,
+        miner: &miner,
+        base_nullifiers: &first_base_nullifiers,
+        base_commitment_tree: &first_base_tree,
+        pow_bits: DEFAULT_GENESIS_POW_BITS,
+        nonce: [0u8; 32],
+        parent_supply: 0,
+        coinbase: dummy_coinbase(1),
+    };
+    let (mut first_block, first_updated_nullifiers, first_updated_tree) =
+        assemble_pow_block(first_params).expect("assemble first inline block");
+
+    let first_statement_bindings = [proof_a.clone(), proof_b.clone()]
+        .iter()
+        .map(statement_binding_from_proof)
+        .collect::<Vec<_>>();
+    let first_statement_hashes = first_statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let first_lists =
+        commitment_nullifier_lists(&first_block.transactions).expect("first nullifier lists");
+    let first_commitment_proof = CommitmentBlockProver::new()
+        .prove_from_statement_hashes_with_inputs(
+            &first_statement_hashes,
+            first_base_tree.root(),
+            first_updated_tree.root(),
+            kernel_root_from_shielded_root(&first_base_tree.root()),
+            kernel_root_from_shielded_root(&first_updated_tree.root()),
+            first_updated_nullifiers.commitment(),
+            first_block.header.da_root,
+            first_lists.nullifiers,
+            first_lists.sorted_nullifiers,
+        )
+        .expect("first commitment proof");
+    let first_tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&first_statement_hashes)
+            .expect("first tx statements commitment");
+
+    first_block.proven_batch = Some(ProvenBatch {
+        version: 2,
+        tx_count: first_block.transactions.len() as u32,
+        tx_statements_commitment: first_tx_statements_commitment,
+        da_root: first_block.header.da_root,
+        da_chunk_count: 1,
+        commitment_proof: first_commitment_proof,
+        mode: ProvenBatchMode::InlineTx,
+        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
+        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
+            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
+        ),
+        receipt_root: None,
+    });
+    first_block.tx_statement_bindings = Some(first_statement_bindings);
+    first_block.tx_statements_commitment = Some(first_tx_statements_commitment);
+    first_block.tx_validity_artifacts = Some(
+        [proof_a.clone(), proof_b.clone()]
+            .iter()
+            .map(|proof| {
+                consensus::proof::tx_validity_artifact_from_proof(proof)
+                    .expect("first tx validity artifact")
+            })
+            .collect(),
+    );
+    first_block.proof_verification_mode = ProofVerificationMode::InlineRequired;
+
+    let upgrade_leaves = vec![
+        input_a0.commitment(),
+        input_a1.commitment(),
+        input_b0.commitment(),
+        input_b1.commitment(),
+        witness_a.outputs[0].note.commitment(),
+        witness_a.outputs[1].note.commitment(),
+        witness_b.outputs[0].note.commitment(),
+        witness_b.outputs[1].note.commitment(),
+    ];
+    let (upgrade_paths, upgrade_root) = build_power_of_two_merkle_tree(&upgrade_leaves);
+    let upgrade_root_bytes = felts_to_bytes48(&upgrade_root);
+    assert_eq!(upgrade_root_bytes, first_updated_tree.root());
+
+    let witness_c = TransactionWitness {
+        inputs: vec![
+            InputNoteWitness {
+                note: witness_a.outputs[0].note.clone(),
+                position: 4,
+                rho_seed: [31u8; 32],
+                merkle_path: upgrade_paths[4].clone(),
+            },
+            InputNoteWitness {
+                note: witness_a.outputs[1].note.clone(),
+                position: 5,
+                rho_seed: [32u8; 32],
+                merkle_path: upgrade_paths[5].clone(),
+            },
+        ],
+        outputs: vec![
+            make_output(90, 2, transaction_circuit::constants::NATIVE_ASSET_ID),
+            make_output(100, 5, 1),
+        ],
+        ciphertext_hashes: vec![[3u8; 48]; 2],
+        sk_spend: sk_spend_c,
+        merkle_root: upgrade_root_bytes,
+        fee: 1,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    };
+    let proof_c = prove(&witness_c, &proving_key).expect("upgrade tx proof");
+    let second_transactions = vec![transaction_from_proof(&proof_c)];
+    let second_params = PowBlockParams {
+        height: 2,
+        parent_hash: [1u8; 32],
+        timestamp_ms: 2_000,
+        transactions: second_transactions,
+        miner: &miner,
+        base_nullifiers: &first_updated_nullifiers,
+        base_commitment_tree: &first_updated_tree,
+        pow_bits: DEFAULT_GENESIS_POW_BITS,
+        nonce: [1u8; 32],
+        parent_supply: 1,
+        coinbase: dummy_coinbase(2),
+    };
+    let (mut second_block, _second_updated_nullifiers, second_updated_tree) =
+        assemble_pow_block(second_params).expect("assemble second native block");
+    let second_statement_bindings = vec![statement_binding_from_proof(&proof_c)];
+    let second_statement_hashes = second_statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let second_lists =
+        commitment_nullifier_lists(&second_block.transactions).expect("second nullifier lists");
+    let second_commitment_proof = CommitmentBlockProver::new()
+        .prove_from_statement_hashes_with_inputs(
+            &second_statement_hashes,
+            first_updated_tree.root(),
+            second_updated_tree.root(),
+            kernel_root_from_shielded_root(&first_updated_tree.root()),
+            kernel_root_from_shielded_root(&second_updated_tree.root()),
+            nullifier_root_for_transactions(&second_block.transactions),
+            second_block.header.da_root,
+            second_lists.nullifiers,
+            second_lists.sorted_nullifiers,
+        )
+        .expect("second commitment proof");
+    let second_tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&second_statement_hashes)
+            .expect("second tx statements commitment");
+    let (tx_validity_artifacts, receipt_root, envelope) =
+        build_receipt_root_block_artifacts(&[witness_c]);
+    second_block.proven_batch = Some(ProvenBatch {
+        version: 2,
+        tx_count: second_block.transactions.len() as u32,
+        tx_statements_commitment: second_tx_statements_commitment,
+        da_root: second_block.header.da_root,
+        da_chunk_count: 1,
+        commitment_proof: second_commitment_proof,
+        mode: ProvenBatchMode::ReceiptRoot,
+        proof_kind: ProofArtifactKind::ReceiptRoot,
+        verifier_profile: experimental_native_receipt_root_verifier_profile(),
+        receipt_root: Some(receipt_root),
+    });
+    second_block.tx_statement_bindings = Some(second_statement_bindings);
+    second_block.tx_statements_commitment = Some(second_tx_statements_commitment);
+    second_block.tx_validity_artifacts = Some(tx_validity_artifacts);
+    second_block.block_artifact = Some(envelope);
+    second_block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+
     (
-        tx_validity_artifacts,
-        receipt_only_artifacts,
-        payload,
-        envelope,
+        first_base_tree,
+        first_block,
+        first_updated_tree,
+        second_block,
+        second_updated_tree.root(),
     )
 }
 
@@ -605,127 +866,20 @@ fn receipt_root_block_is_accepted() {
 }
 
 #[test]
-fn receipt_accumulation_block_is_accepted_with_prewarmed_store() {
-    let fixture = raw_active_fixture();
-    clear_verified_native_tx_leaf_store();
-    let mut block = fixture.block.clone();
-    let (native_artifacts, receipt_only_artifacts, receipt_root, envelope) =
-        build_receipt_accumulation_block_artifacts(&fixture.witnesses);
-    prewarm_verified_native_tx_leaf_store(&block.transactions, &native_artifacts)
-        .expect("prewarm verified native tx leaf store");
-    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
-    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
-    proven_batch.proof_kind = experimental_receipt_accumulation_artifact_kind();
-    proven_batch.verifier_profile = experimental_receipt_accumulation_verifier_profile();
-    proven_batch.receipt_root = Some(receipt_root);
-    block.tx_validity_artifacts = Some(receipt_only_artifacts);
-    block.block_artifact = Some(envelope);
-    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
-
+fn inline_history_can_transition_to_native_receipt_root() {
+    let (first_base_tree, first_block, second_base_tree, second_block, final_root) =
+        build_upgrade_transition_blocks();
     let verifier = ParallelProofVerifier::new();
-    let updated = verifier
-        .verify_block(&block, &fixture.base_tree)
-        .expect("valid receipt accumulation block should verify");
-    assert_eq!(updated.root(), fixture.updated_root);
-    clear_verified_native_tx_leaf_store();
-}
 
-#[test]
-fn receipt_accumulation_rejects_store_miss() {
-    let fixture = raw_active_fixture();
-    clear_verified_native_tx_leaf_store();
-    let mut block = fixture.block.clone();
-    let (_native_artifacts, receipt_only_artifacts, receipt_root, envelope) =
-        build_receipt_accumulation_block_artifacts(&fixture.witnesses);
-    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
-    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
-    proven_batch.proof_kind = experimental_receipt_accumulation_artifact_kind();
-    proven_batch.verifier_profile = experimental_receipt_accumulation_verifier_profile();
-    proven_batch.receipt_root = Some(receipt_root);
-    block.tx_validity_artifacts = Some(receipt_only_artifacts);
-    block.block_artifact = Some(envelope);
-    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+    let first_updated = verifier
+        .verify_block(&first_block, &first_base_tree)
+        .expect("historical inline block should verify on the upgraded verifier");
+    assert_eq!(first_updated.root(), second_base_tree.root());
 
-    let verifier = ParallelProofVerifier::new();
-    let err = verifier
-        .verify_block(&block, &fixture.base_tree)
-        .expect_err("receipt accumulation must reject an unprepared store miss");
-    assert!(matches!(
-        err,
-        ProofError::VerifiedTxArtifactUnavailable { .. }
-    ));
-    clear_verified_native_tx_leaf_store();
-}
-
-#[test]
-fn receipt_arc_whir_block_is_accepted_from_native_tx_leaf_artifacts() {
-    let fixture = raw_active_fixture();
-    let mut block = fixture.block.clone();
-    let (native_artifacts, _receipt_only_artifacts, receipt_root, envelope) =
-        build_receipt_arc_whir_block_artifacts(&fixture.witnesses);
-    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
-    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
-    proven_batch.proof_kind = experimental_receipt_arc_whir_artifact_kind();
-    proven_batch.verifier_profile = experimental_receipt_arc_whir_verifier_profile();
-    proven_batch.receipt_root = Some(receipt_root);
-    block.tx_validity_artifacts = Some(native_artifacts);
-    block.block_artifact = Some(envelope);
-    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
-
-    let verifier = ParallelProofVerifier::new();
-    let updated = verifier
-        .verify_block(&block, &fixture.base_tree)
-        .expect("valid receipt_arc_whir block should verify");
-    assert_eq!(updated.root(), fixture.updated_root);
-}
-
-#[test]
-fn receipt_arc_whir_rejects_receipt_only_tx_artifacts() {
-    let fixture = raw_active_fixture();
-    let mut block = fixture.block.clone();
-    let (_native_artifacts, receipt_only_artifacts, receipt_root, envelope) =
-        build_receipt_arc_whir_block_artifacts(&fixture.witnesses);
-    let proven_batch = block.proven_batch.as_mut().expect("proven batch");
-    proven_batch.mode = ProvenBatchMode::ReceiptRoot;
-    proven_batch.proof_kind = experimental_receipt_arc_whir_artifact_kind();
-    proven_batch.verifier_profile = experimental_receipt_arc_whir_verifier_profile();
-    proven_batch.receipt_root = Some(receipt_root);
-    block.tx_validity_artifacts = Some(receipt_only_artifacts);
-    block.block_artifact = Some(envelope);
-    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
-
-    let verifier = ParallelProofVerifier::new();
-    let err = verifier
-        .verify_block(&block, &fixture.base_tree)
-        .expect_err("receipt_arc_whir must reject proofless receipt-only tx artifacts");
-    assert!(matches!(err, ProofError::MissingTransactionProofs));
-}
-
-#[test]
-fn receipt_arc_whir_measures_native_leaf_replay_without_old_backend() {
-    let fixture = raw_active_fixture();
-    let (native_artifacts, _receipt_only_artifacts, _receipt_root, envelope) =
-        build_receipt_arc_whir_block_artifacts(&fixture.witnesses);
-    let receipts = native_artifacts
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
-    let expected_commitment =
-        receipt_statement_commitment(&receipts).expect("receipt statement commitment");
-    clear_verified_native_tx_leaf_store();
-    let details = verify_experimental_receipt_arc_whir_artifact_detailed(
-        fixture.block.transactions.as_slice(),
-        native_artifacts.as_slice(),
-        &expected_commitment,
-        &envelope,
-    )
-    .expect("receipt_arc_whir verification details");
-    assert_eq!(
-        details.residual_report.replayed_leaf_verifications,
-        fixture.witnesses.len()
-    );
-    assert!(!details.residual_report.used_old_aggregation_backend);
-    clear_verified_native_tx_leaf_store();
+    let second_updated = verifier
+        .verify_block(&second_block, &second_base_tree)
+        .expect("native receipt_root block should verify after inline history");
+    assert_eq!(second_updated.root(), final_root);
 }
 
 #[test]

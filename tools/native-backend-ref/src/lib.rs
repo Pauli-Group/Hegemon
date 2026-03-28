@@ -656,36 +656,23 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
 }
 
 pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBackendParams> {
-    let baseline = NativeBackendParams::heuristic_goldilocks_baseline();
-    let rewrite = NativeBackendParams::goldilocks_128b_rewrite();
     let structural = NativeBackendParams::goldilocks_128b_structural_commitment();
     let mut params = match review.family_label.as_str() {
-        "heuristic_goldilocks_baseline" => baseline,
-        "goldilocks_128b_rewrite" => rewrite,
         "goldilocks_128b_structural_commitment" => structural,
-        other => {
-            let base = if review.derive_commitment_binding_from_geometry {
-                structural
-            } else if review.security_bits >= 128 {
-                rewrite
-            } else {
-                baseline
-            };
-            NativeBackendParams {
-                manifest: superneo_backend_lattice::BackendManifest {
-                    family_label: Box::leak(other.to_owned().into_boxed_str()),
-                    spec_label: Box::leak(review.spec_label.clone().into_boxed_str()),
-                    commitment_scheme_label: Box::leak(
-                        review.commitment_scheme_label.clone().into_boxed_str(),
-                    ),
-                    challenge_schedule_label: Box::leak(
-                        review.challenge_schedule_label.clone().into_boxed_str(),
-                    ),
-                    maturity_label: Box::leak(review.maturity_label.clone().into_boxed_str()),
-                },
-                ..base
-            }
-        }
+        other => NativeBackendParams {
+            manifest: superneo_backend_lattice::BackendManifest {
+                family_label: Box::leak(other.to_owned().into_boxed_str()),
+                spec_label: Box::leak(review.spec_label.clone().into_boxed_str()),
+                commitment_scheme_label: Box::leak(
+                    review.commitment_scheme_label.clone().into_boxed_str(),
+                ),
+                challenge_schedule_label: Box::leak(
+                    review.challenge_schedule_label.clone().into_boxed_str(),
+                ),
+                maturity_label: Box::leak(review.maturity_label.clone().into_boxed_str()),
+            },
+            ..structural
+        },
     };
     params.security_bits = review.security_bits;
     params.ring_profile = parse_review_ring_profile(&review.ring_profile)?;

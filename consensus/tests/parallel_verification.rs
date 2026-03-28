@@ -231,13 +231,11 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         da_root: block.header.da_root,
         da_chunk_count: 1,
         commitment_proof,
-        mode: ProvenBatchMode::FlatBatches,
-        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::FlatBatches),
+        mode: ProvenBatchMode::ReceiptRoot,
+        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::ReceiptRoot),
         verifier_profile: consensus::legacy_block_artifact_verifier_profile(
-            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::FlatBatches),
+            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::ReceiptRoot),
         ),
-        flat_batches: Vec::new(),
-        merge_root: None,
         receipt_root: None,
     });
     block.tx_statements_commitment = Some(tx_statements_commitment);

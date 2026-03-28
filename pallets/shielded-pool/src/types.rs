@@ -224,10 +224,6 @@ pub type ProverCompensationClaim = ArtifactClaim;
 pub enum BlockProofMode {
     /// Verify ordered inline tx proofs directly plus the commitment proof.
     InlineTx,
-    /// Verify a deterministic set of flat proof batches.
-    FlatBatches,
-    /// Verify a recursion root proof over leaf batches.
-    MergeRoot,
     /// Verify an experimental receipt root over canonical tx-validity receipts.
     ReceiptRoot,
 }
@@ -250,8 +246,6 @@ pub enum BlockProofMode {
 pub enum ProofArtifactKind {
     InlineTx,
     TxLeaf,
-    FlatBatches,
-    MergeRoot,
     ReceiptRoot,
     Custom([u8; 16]),
 }
@@ -261,8 +255,6 @@ impl ProofArtifactKind {
         match self {
             Self::InlineTx => "inline_tx",
             Self::TxLeaf => "tx_leaf",
-            Self::FlatBatches => "flat_batches",
-            Self::MergeRoot => "merge_root",
             Self::ReceiptRoot => "receipt_root",
             Self::Custom(_) => "custom",
         }
@@ -272,49 +264,8 @@ impl ProofArtifactKind {
 pub fn proof_artifact_kind_from_mode(mode: BlockProofMode) -> ProofArtifactKind {
     match mode {
         BlockProofMode::InlineTx => ProofArtifactKind::InlineTx,
-        BlockProofMode::FlatBatches => ProofArtifactKind::FlatBatches,
-        BlockProofMode::MergeRoot => ProofArtifactKind::MergeRoot,
         BlockProofMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
     }
-}
-
-/// Flat batch proof item.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
-pub struct BatchProofItem {
-    /// Start index of the first transaction (inclusive) covered by this item.
-    pub start_tx_index: u32,
-    /// Number of transactions covered by this item.
-    pub tx_count: u16,
-    /// Proof format id (must be BLOCK_PROOF_FORMAT_ID_V5 in this branch).
-    pub proof_format: u8,
-    /// Opaque proof bytes for this batch item.
-    pub proof: StarkProof,
-}
-
-/// Recursion root metadata.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
-)]
-pub struct MergeRootMetadata {
-    /// Tree arity used to build recursion levels.
-    pub tree_arity: u16,
-    /// Total recursion levels from leaves to root.
-    pub tree_levels: u16,
-    /// Number of active leaf proofs.
-    pub leaf_count: u32,
-    /// Commitment to the ordered leaf manifest.
-    pub leaf_manifest_commitment: [u8; 48],
-}
-
-/// Merge-root proof payload.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
-pub struct MergeRootProofPayload {
-    /// Root proof bytes.
-    pub root_proof: StarkProof,
-    /// Tree metadata bound by the root proof.
-    pub metadata: MergeRootMetadata,
-    /// Optional leaf diagnostics; not consensus-required when root is valid.
-    pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
 }
 
 #[derive(
@@ -355,10 +306,6 @@ pub struct CandidateArtifact {
     pub proof_kind: ProofArtifactKind,
     /// Verifier profile digest for the artifact family and parameter profile.
     pub verifier_profile: VerifierProfileDigest,
-    /// Flat proof batches (required in FlatBatches mode).
-    pub flat_batches: Vec<BatchProofItem>,
-    /// Optional merge-root proof payload (required in MergeRoot mode).
-    pub merge_root: Option<MergeRootProofPayload>,
     /// Optional receipt-root proof payload (required in ReceiptRoot mode).
     pub receipt_root: Option<ReceiptRootProofPayload>,
     /// Optional external artifact payout claim.

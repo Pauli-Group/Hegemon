@@ -261,7 +261,7 @@ mod legacy_tests {
     }
 
     fn valid_proven_batch() -> crate::types::BlockProofBundle {
-        let proof_mode = BlockProofMode::FlatBatches;
+        let proof_mode = BlockProofMode::ReceiptRoot;
         crate::types::BlockProofBundle {
             version: BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count: 1,
@@ -272,14 +272,21 @@ mod legacy_tests {
             proof_mode,
             proof_kind: crate::types::proof_artifact_kind_from_mode(proof_mode),
             verifier_profile: [7u8; 48],
-            flat_batches: vec![BatchProofItem {
-                start_tx_index: 0,
-                tx_count: 1,
-                proof_format: BLOCK_PROOF_FORMAT_ID_V5,
-                proof: valid_proof(),
-            }],
-            merge_root: None,
-            receipt_root: None,
+            receipt_root: Some(ReceiptRootProofPayload {
+                root_proof: valid_proof(),
+                metadata: ReceiptRootMetadata {
+                    relation_id: [1u8; 32],
+                    shape_digest: [2u8; 32],
+                    leaf_count: 1,
+                    fold_count: 0,
+                },
+                receipts: vec![TxValidityReceipt {
+                    statement_hash: [3u8; 48],
+                    proof_digest: [4u8; 48],
+                    public_inputs_digest: [5u8; 48],
+                    verifier_profile: [7u8; 48],
+                }],
+            }),
             artifact_claim: None,
         }
     }

@@ -226,8 +226,6 @@ impl Default for ProofVerificationMode {
 pub enum ProofArtifactKind {
     InlineTx,
     TxLeaf,
-    FlatBatches,
-    MergeRoot,
     ReceiptRoot,
     Custom([u8; 16]),
 }
@@ -237,8 +235,6 @@ impl ProofArtifactKind {
         match self {
             Self::InlineTx => "inline_tx",
             Self::TxLeaf => "tx_leaf",
-            Self::FlatBatches => "flat_batches",
-            Self::MergeRoot => "merge_root",
             Self::ReceiptRoot => "receipt_root",
             Self::Custom(_) => "custom",
         }
@@ -248,8 +244,6 @@ impl ProofArtifactKind {
 pub fn proof_artifact_kind_from_mode(mode: ProvenBatchMode) -> ProofArtifactKind {
     match mode {
         ProvenBatchMode::InlineTx => ProofArtifactKind::InlineTx,
-        ProvenBatchMode::FlatBatches => ProofArtifactKind::FlatBatches,
-        ProvenBatchMode::MergeRoot => ProofArtifactKind::MergeRoot,
         ProvenBatchMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
     }
 }
@@ -286,32 +280,7 @@ pub struct TxValidityArtifact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProvenBatchMode {
     InlineTx,
-    FlatBatches,
-    MergeRoot,
     ReceiptRoot,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BatchProofItem {
-    pub start_tx_index: u32,
-    pub tx_count: u16,
-    pub proof_format: u8,
-    pub proof: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MergeRootMetadata {
-    pub tree_arity: u16,
-    pub tree_levels: u16,
-    pub leaf_count: u32,
-    pub leaf_manifest_commitment: [u8; 48],
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MergeRootProofPayload {
-    pub root_proof: Vec<u8>,
-    pub metadata: MergeRootMetadata,
-    pub diagnostics_leaf_proofs: Vec<BatchProofItem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -341,8 +310,6 @@ pub struct ProvenBatch {
     pub mode: ProvenBatchMode,
     pub proof_kind: ProofArtifactKind,
     pub verifier_profile: VerifierProfileDigest,
-    pub flat_batches: Vec<BatchProofItem>,
-    pub merge_root: Option<MergeRootProofPayload>,
     pub receipt_root: Option<ReceiptRootProofPayload>,
 }
 

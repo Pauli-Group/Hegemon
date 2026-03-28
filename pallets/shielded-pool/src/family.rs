@@ -388,15 +388,14 @@ pub fn validate_action<T: Config>(
                     };
                     log::warn!(
                         target: "shielded-pool",
-                        "kernel submit-candidate-artifact validation failed: detail={} err={:?} version={} tx_count={} proof_mode={:?} commitment_proof_bytes={} flat_batches={} merge_root_present={} da_chunk_count={} artifact_claim_present={}",
+                        "kernel submit-candidate-artifact validation failed: detail={} err={:?} version={} tx_count={} proof_mode={:?} commitment_proof_bytes={} receipt_root_present={} da_chunk_count={} artifact_claim_present={}",
                         detail,
                         err,
                         args.payload.version,
                         args.payload.tx_count,
                         args.payload.proof_mode,
                         args.payload.commitment_proof.data.len(),
-                        args.payload.flat_batches.len(),
-                        args.payload.merge_root.is_some(),
+                        args.payload.receipt_root.is_some(),
                         args.payload.da_chunk_count,
                         args.payload.artifact_claim.is_some(),
                     );

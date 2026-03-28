@@ -35,7 +35,7 @@ hen assembling payloads.
   - `TxValidityReceipt { statement_hash, proof_digest, public_inputs_digest, verifier_profile }`
   - `TxValidityArtifact { receipt, proof }`
   - `ConsensusBlock` carries `tx_validity_artifacts` plus an optional `block_artifact` instead of a raw `transaction_proofs` field.
-- Import routes proof checks through `VerifierRegistry`, which currently has adapters for `InlineTx`, `MergeRoot`, and the experimental `ReceiptRoot` artifact family.
+- Import routes proof checks through `VerifierRegistry`, which currently has adapters for the shipped `InlineTx` compatibility lane and the experimental native `ReceiptRoot` artifact family.
 - The consensus crate also exposes the temporary receipt-root backend façade:
   - `experimental_receipt_root_verifier_profile()`
   - `build_experimental_receipt_root_artifact(receipts)`
@@ -198,51 +198,25 @@ Block validity and data-availability RPC methods exposed by the Substrate node:
 - `da_getParams() -> DaParams`
   - Returns global DA parameters (chunk size, sample count, encoding scheme).
 
-Experimental prover-market RPC methods exposed on the Substrate node:
+Prepared-artifact discovery RPC methods exposed on the Substrate node:
 
-- `prover_getWorkPackage() -> Option<WorkPackageResponse>`
-- `prover_getStageWorkPackage() -> Option<WorkPackageResponse>`
-- `prover_submitWorkResult(request) -> SubmitWorkResultResponse`
-- `prover_submitStageWorkResult(request) -> SubmitWorkResultResponse`
-- `prover_getWorkStatus(package_id) -> Option<WorkStatusResponse>`
-- `prover_getMarketParams() -> MarketParamsResponse`
-- `prover_getStagePlanStatus() -> StagePlanStatusResponse`
 - `prover_listArtifactAnnouncements() -> Vec<ArtifactAnnouncementResponse>`
-- `prover_getCandidateArtifact(tx_statements_commitment: String, tx_count: u32) -> Option<CandidateArtifactResponse>`
+- `prover_getCandidateArtifact(artifact_hash: String) -> Option<CandidateArtifactResponse>`
 
-These prover RPCs are experimental surfaces for recursive / market research. The live
-`InlineTx` path does not publish external proving work by default.
-
-`WorkPackageResponse` can now carry `root_finalize_payload` for standalone private
-prover workers. In the current branch this payload is intended for the
-experimental `MergeRoot` root-finalize path and includes:
-
-- resolved transaction proof material (bincode + base64)
-- statement hashes
-- `tx_statements_commitment`
-- DA metadata
-- commitment-proof public inputs (starting/ending roots and nullifier data)
-
-Standalone private prover worker binary:
-
-- `hegemon-prover-worker`
-  - Polls `prover_getStageWorkPackage`
-  - Builds commitment proof + merge-root payload for `root_finalize`
-  - Submits the completed bundle with `prover_submitStageWorkResult`
-  - Remains experimental and is not required for the normal `InlineTx` deployment path
+These prover RPCs now expose only reusable prepared artifacts on the live native-only branch. The external work-package / standalone-worker market surface was removed with the dead recursive proof lanes.
 
 Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursive epoch proofs are temporarily disabled until a Plonky3 recursion path is reintroduced.
 
 Artifact market RPC notes:
 
 - `prover_listArtifactAnnouncements` returns lightweight reusable-artifact metadata for prepared candidate artifacts. Each entry now includes legacy `proof_mode` plus explicit `proof_kind` and `verifier_profile` fields so clients can distinguish backend family from compatibility transport labels.
-- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a matching `(tx_statements_commitment, tx_count)` pair when one is available. The response also includes the artifact’s explicit `proof_kind` and `verifier_profile`; the request tuple remains `(tx_statements_commitment, tx_count)` for compatibility in the current branch.
+- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a prepared artifact hash when one is available. The response also includes the artifact’s explicit `proof_kind` and `verifier_profile`.
 
 `ArtifactAnnouncementResponse` fields:
 - `artifact_hash: String` (`0x`-prefixed hex)
 - `tx_statements_commitment: String` (`0x`-prefixed hex)
 - `tx_count: u32`
-- `proof_mode: String` (legacy compatibility label: `inline_tx` | `flat_batches` | `merge_root` | `receipt_root`)
+- `proof_mode: String` (legacy compatibility label: `inline_tx` | `receipt_root`)
 - `proof_kind: String` (backend-neutral artifact family label)
 - `verifier_profile: String` (`0x`-prefixed 48-byte digest)
 - `claimed_payout_amount: u64`

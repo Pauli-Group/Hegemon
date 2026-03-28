@@ -4434,7 +4434,7 @@ mod tests {
     fn alternate_native_backend_params() -> NativeBackendParams {
         NativeBackendParams {
             manifest: BackendManifest {
-                family_label: "goldilocks_128b_rewrite_alt",
+                family_label: "goldilocks_128b_structural_commitment_alt",
                 ..native_backend_params().manifest
             },
             ..native_backend_params()

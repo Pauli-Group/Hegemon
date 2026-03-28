@@ -1379,11 +1379,10 @@ pub mod pallet {
             if let Err(err) = Self::validate_block_proof_bundle_mode(payload) {
                 warn!(
                     target: "shielded-pool",
-                    "submit_candidate_artifact rejected: invalid proof-mode payload err={:?} proof_mode={:?} flat_batches={} merge_root_present={} da_chunk_count={} artifact_claim_present={}",
+                    "submit_candidate_artifact rejected: invalid proof-mode payload err={:?} proof_mode={:?} receipt_root_present={} da_chunk_count={} artifact_claim_present={}",
                     err,
                     payload.proof_mode,
-                    payload.flat_batches.len(),
-                    payload.merge_root.is_some(),
+                    payload.receipt_root.is_some(),
                     payload.da_chunk_count,
                     payload.artifact_claim.is_some(),
                 );
@@ -2609,23 +2608,6 @@ pub mod pallet {
         }
 
         pub(crate) fn total_block_proof_bytes(bundle: &types::BlockProofBundle) -> usize {
-            let flat_batches_bytes = bundle
-                .flat_batches
-                .iter()
-                .map(|item| item.proof.data.len())
-                .sum::<usize>();
-            let merge_root_bytes = bundle
-                .merge_root
-                .as_ref()
-                .map(|merge| {
-                    merge.root_proof.data.len()
-                        + merge
-                            .diagnostics_leaf_proofs
-                            .iter()
-                            .map(|item| item.proof.data.len())
-                            .sum::<usize>()
-                })
-                .unwrap_or(0);
             let receipt_root_bytes = bundle
                 .receipt_root
                 .as_ref()
@@ -2633,8 +2615,6 @@ pub mod pallet {
                 .unwrap_or(0);
             let aggregation_bytes = match bundle.proof_mode {
                 types::BlockProofMode::InlineTx => 0,
-                types::BlockProofMode::FlatBatches => flat_batches_bytes,
-                types::BlockProofMode::MergeRoot => merge_root_bytes,
                 types::BlockProofMode::ReceiptRoot => receipt_root_bytes,
             };
             bundle.commitment_proof.data.len() + aggregation_bytes
@@ -2651,66 +2631,11 @@ pub mod pallet {
             }
             match bundle.proof_mode {
                 types::BlockProofMode::InlineTx => {
-                    if !bundle.flat_batches.is_empty()
-                        || bundle.merge_root.is_some()
-                        || bundle.receipt_root.is_some()
-                    {
+                    if bundle.receipt_root.is_some() {
                         return Err(Error::<T>::InvalidProofFormat);
-                    }
-                }
-                types::BlockProofMode::FlatBatches => {
-                    if bundle.flat_batches.is_empty()
-                        || bundle.flat_batches.len() > types::MAX_FLAT_BATCHES_PER_BLOCK
-                    {
-                        return Err(Error::<T>::InvalidProofFormat);
-                    }
-                    if bundle.merge_root.is_some() || bundle.receipt_root.is_some() {
-                        return Err(Error::<T>::InvalidProofFormat);
-                    }
-                    for item in &bundle.flat_batches {
-                        if item.tx_count == 0 {
-                            return Err(Error::<T>::InvalidProofFormat);
-                        }
-                        if item.proof_format != types::BLOCK_PROOF_FORMAT_ID_V5 {
-                            return Err(Error::<T>::InvalidProofFormat);
-                        }
-                        if item.proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
-                            return Err(Error::<T>::ProofTooLarge);
-                        }
-                    }
-                }
-                types::BlockProofMode::MergeRoot => {
-                    if !bundle.flat_batches.is_empty() || bundle.receipt_root.is_some() {
-                        return Err(Error::<T>::InvalidProofFormat);
-                    }
-                    let merge_root = bundle
-                        .merge_root
-                        .as_ref()
-                        .ok_or(Error::<T>::InvalidProofFormat)?;
-                    if merge_root.root_proof.data.is_empty()
-                        || merge_root.root_proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE
-                    {
-                        return Err(Error::<T>::ProofTooLarge);
-                    }
-                    if merge_root.metadata.leaf_count == 0 || merge_root.metadata.tree_arity < 2 {
-                        return Err(Error::<T>::InvalidProofFormat);
-                    }
-                    for item in &merge_root.diagnostics_leaf_proofs {
-                        if item.tx_count == 0 {
-                            return Err(Error::<T>::InvalidProofFormat);
-                        }
-                        if item.proof_format != types::BLOCK_PROOF_FORMAT_ID_V5 {
-                            return Err(Error::<T>::InvalidProofFormat);
-                        }
-                        if item.proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
-                            return Err(Error::<T>::ProofTooLarge);
-                        }
                     }
                 }
                 types::BlockProofMode::ReceiptRoot => {
-                    if !bundle.flat_batches.is_empty() || bundle.merge_root.is_some() {
-                        return Err(Error::<T>::InvalidProofFormat);
-                    }
                     let receipt_root = bundle
                         .receipt_root
                         .as_ref()

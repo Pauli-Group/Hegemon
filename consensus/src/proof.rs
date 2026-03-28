@@ -1,40 +1,17 @@
-use crate::aggregation::{
-    aggregation_proof_uncompressed_len, verify_aggregation_proof_with_metrics,
-    warm_aggregation_cache_from_proof_bytes,
-};
-use crate::batch_proof::{
-    FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK, FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST,
-    decode_flat_batch_proof_bytes,
-};
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
-use crate::merge_root_layout::{
-    merge_root_leaf_fan_in_from_env, merge_root_leaf_manifest_commitment,
-    merge_root_tree_levels_for_tx_count,
-};
-use crate::receipt_arc_whir::{
-    ReceiptArcWhirResidualReport, ReceiptArcWhirVerifyDetails,
-    build_receipt_arc_whir_artifact_from_receipts,
-    experimental_receipt_arc_whir_artifact_kind as receipt_arc_whir_kind,
-    experimental_receipt_arc_whir_verifier_profile as receipt_arc_whir_profile,
-    receipt_arc_whir_metadata, verify_receipt_arc_whir_artifact_from_receipts,
-};
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofArtifactKind, ProofEnvelope,
     ProofVerificationMode, ProvenBatchMode, ReceiptRootMetadata, StarkCommitment, StateRoot,
     TxStatementBinding, TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest,
     VersionCommitment, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment, da_root, kernel_root_from_shielded_root,
-    legacy_block_artifact_verifier_profile,
 };
-use batch_circuit::{BatchPublicInputs, verify_batch_proof_bytes};
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use crypto::hashes::blake3_384;
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::any::Any;
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
@@ -48,12 +25,11 @@ use superneo_hegemon::{
     experimental_native_tx_leaf_verifier_profile as native_tx_leaf_profile,
     max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
     native_tx_leaf_record_from_artifact, verify_native_tx_leaf_artifact_bytes,
-    verify_native_tx_leaf_receipt_root_artifact_bytes,
-    verify_native_tx_leaf_receipt_root_artifact_from_records, verify_receipt_root_artifact_bytes,
+    verify_native_tx_leaf_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
     verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
 };
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::{Felt, ciphertext_hash_bytes, felts_to_bytes48};
+use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{
     SerializedStarkInputs, TransactionProof, transaction_proof_digest,
@@ -61,8 +37,6 @@ use transaction_circuit::proof::{
     transaction_statement_hash, transaction_verifier_profile_digest,
     transaction_verifier_profile_digest_for_version, verify as verify_transaction_proof,
 };
-#[cfg(test)]
-use tx_proof_manifest::TxProofManifestPublicInputs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExperimentalReceiptRootArtifact {
@@ -77,19 +51,6 @@ pub struct CommitmentNullifierLists {
 }
 
 const DEFAULT_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY: usize = 4096;
-const RECEIPT_ACCUMULATION_ARTIFACT_VERSION: u16 = 1;
-const RECEIPT_ACCUMULATION_ARTIFACT_KIND_BYTES: [u8; 16] = *b"rcpt_accum_v0001";
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct ReceiptArcWhirExecutionTrace {
-    replayed_leaf_verifications: usize,
-    used_old_aggregation_backend: bool,
-}
-
-thread_local! {
-    static RECEIPT_ARC_WHIR_EXECUTION_TRACE: RefCell<Option<ReceiptArcWhirExecutionTrace>> =
-        const { RefCell::new(None) };
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VerifiedNativeTxLeaf {
@@ -144,35 +105,6 @@ impl NativeTxLeafVerifyCache {
     }
 }
 
-fn with_receipt_arc_whir_execution_trace<T>(
-    f: impl FnOnce() -> Result<T, ProofError>,
-) -> Result<(T, ReceiptArcWhirExecutionTrace), ProofError> {
-    RECEIPT_ARC_WHIR_EXECUTION_TRACE.with(|trace| {
-        let previous = trace.replace(Some(ReceiptArcWhirExecutionTrace::default()));
-        let result = f();
-        let current = trace
-            .replace(previous)
-            .expect("receipt_arc_whir execution trace must be present");
-        result.map(|value| (value, current))
-    })
-}
-
-fn note_receipt_arc_whir_leaf_verification() {
-    RECEIPT_ARC_WHIR_EXECUTION_TRACE.with(|trace| {
-        if let Some(current) = trace.borrow_mut().as_mut() {
-            current.replayed_leaf_verifications += 1;
-        }
-    });
-}
-
-fn note_receipt_arc_whir_old_aggregation_backend() {
-    RECEIPT_ARC_WHIR_EXECUTION_TRACE.with(|trace| {
-        if let Some(current) = trace.borrow_mut().as_mut() {
-            current.used_old_aggregation_backend = true;
-        }
-    });
-}
-
 fn load_native_tx_leaf_verify_cache_capacity() -> usize {
     std::env::var("HEGEMON_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY")
         .ok()
@@ -200,28 +132,6 @@ pub struct BlockArtifactVerifyReport {
     pub verify_batch_ms: u128,
     pub cache_hit: Option<bool>,
     pub cache_build_ms: Option<u128>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ReceiptAccumulationArtifact {
-    root_artifact_bytes: Vec<u8>,
-    artifact_hashes: Vec<[u8; 48]>,
-}
-
-pub trait ReceiptAccumulator: Send + Sync {
-    fn kind(&self) -> ProofArtifactKind;
-    fn verifier_profile(&self) -> VerifierProfileDigest;
-    fn build(
-        &self,
-        receipts: &[TxValidityReceipt],
-        artifacts: &[TxValidityArtifact],
-    ) -> Result<ProofEnvelope, ProofError>;
-    fn verify(
-        &self,
-        receipts: &[TxValidityReceipt],
-        expected_commitment: &[u8; 48],
-        envelope: &ProofEnvelope,
-    ) -> Result<BlockArtifactVerifyReport, ProofError>;
 }
 
 pub trait ArtifactVerifier: Send + Sync {
@@ -268,10 +178,7 @@ impl Default for VerifierRegistry {
         }));
         registry.register(Arc::new(TxLeafVerifier));
         registry.register(Arc::new(NativeTxLeafVerifier));
-        registry.register(Arc::new(MergeRootP3Verifier));
         registry.register(Arc::new(ReceiptRootVerifier));
-        registry.register(Arc::new(ReceiptArcWhirVerifier));
-        registry.register(Arc::new(ReceiptAccumulationVerifier));
         registry
     }
 }
@@ -466,8 +373,6 @@ fn verify_native_tx_leaf_artifact_record(
         });
     }
 
-    note_receipt_arc_whir_leaf_verification();
-
     let canonical = canonical_receipt_from_tx_receipt(&artifact.receipt);
     let tx_view = tx_leaf_public_tx_from_consensus_tx(tx);
     let metadata =
@@ -512,52 +417,6 @@ impl ArtifactVerifier for NativeTxLeafVerifier {
         artifact: &TxValidityArtifact,
     ) -> Result<TxStatementBinding, ProofError> {
         verify_native_tx_leaf_artifact_record(tx, artifact, None).map(|record| record.binding)
-    }
-}
-
-struct MergeRootP3Verifier;
-
-impl ArtifactVerifier for MergeRootP3Verifier {
-    fn kind(&self) -> ProofArtifactKind {
-        ProofArtifactKind::MergeRoot
-    }
-
-    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
-        verifier_profile == legacy_block_artifact_verifier_profile(self.kind())
-    }
-
-    fn verify_block_artifact(
-        &self,
-        txs: &[crate::types::Transaction],
-        _tx_artifacts: Option<&[TxValidityArtifact]>,
-        expected_commitment: &[u8; 48],
-        envelope: &ProofEnvelope,
-    ) -> Result<BlockArtifactVerifyReport, ProofError> {
-        if envelope.kind != self.kind() {
-            return Err(ProofError::UnsupportedProofArtifact(format!(
-                "expected {} block artifact, got {}",
-                self.kind().label(),
-                envelope.kind.label()
-            )));
-        }
-        if envelope.verifier_profile != legacy_block_artifact_verifier_profile(self.kind()) {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "merge-root verifier profile mismatch".to_string(),
-            ));
-        }
-        let verify_metrics = verify_aggregation_proof_safely(
-            &envelope.artifact_bytes,
-            txs.len(),
-            expected_commitment,
-        )?;
-        Ok(BlockArtifactVerifyReport {
-            tx_count: txs.len(),
-            verified_statement_commitment: *expected_commitment,
-            verify_ms: verify_metrics.total_ms,
-            verify_batch_ms: verify_metrics.verify_batch_ms,
-            cache_hit: Some(verify_metrics.cache_hit),
-            cache_build_ms: Some(verify_metrics.cache_build_ms),
-        })
     }
 }
 
@@ -637,145 +496,6 @@ impl ArtifactVerifier for ReceiptRootVerifier {
             cache_build_ms: None,
         })
     }
-}
-
-struct ReceiptAccumulationVerifier;
-
-impl ArtifactVerifier for ReceiptAccumulationVerifier {
-    fn kind(&self) -> ProofArtifactKind {
-        experimental_receipt_accumulation_artifact_kind()
-    }
-
-    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
-        verifier_profile == experimental_receipt_accumulation_verifier_profile()
-    }
-
-    fn verify_block_artifact(
-        &self,
-        txs: &[crate::types::Transaction],
-        tx_artifacts: Option<&[TxValidityArtifact]>,
-        expected_commitment: &[u8; 48],
-        envelope: &ProofEnvelope,
-    ) -> Result<BlockArtifactVerifyReport, ProofError> {
-        if envelope.kind != self.kind() {
-            return Err(ProofError::UnsupportedProofArtifact(format!(
-                "expected {} block artifact, got {}",
-                self.kind().label(),
-                envelope.kind.label()
-            )));
-        }
-        if envelope.verifier_profile != experimental_receipt_accumulation_verifier_profile() {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "receipt accumulation requires the accumulation verifier profile".to_string(),
-            ));
-        }
-        if envelope.artifact_bytes.len() > max_receipt_accumulation_artifact_bytes(txs.len()) {
-            return Err(ProofError::AggregationProofInputsMismatch(format!(
-                "receipt accumulation artifact size {} exceeds {} for tx_count {}",
-                envelope.artifact_bytes.len(),
-                max_receipt_accumulation_artifact_bytes(txs.len()),
-                txs.len()
-            )));
-        }
-        let artifacts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-        let receipts = artifacts
-            .iter()
-            .map(|artifact| artifact.receipt.clone())
-            .collect::<Vec<_>>();
-        verify_experimental_native_receipt_accumulation_artifact(
-            txs,
-            &receipts,
-            Some(artifacts),
-            expected_commitment,
-            &envelope.artifact_bytes,
-        )
-    }
-}
-
-struct ReceiptArcWhirVerifier;
-
-impl ArtifactVerifier for ReceiptArcWhirVerifier {
-    fn kind(&self) -> ProofArtifactKind {
-        experimental_receipt_arc_whir_artifact_kind()
-    }
-
-    fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
-        verifier_profile == experimental_receipt_arc_whir_verifier_profile()
-    }
-
-    fn verify_block_artifact(
-        &self,
-        txs: &[crate::types::Transaction],
-        tx_artifacts: Option<&[TxValidityArtifact]>,
-        expected_commitment: &[u8; 48],
-        envelope: &ProofEnvelope,
-    ) -> Result<BlockArtifactVerifyReport, ProofError> {
-        let artifacts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-        let details = verify_receipt_arc_whir_native_artifacts_detailed(
-            txs,
-            artifacts,
-            expected_commitment,
-            envelope,
-        )?;
-        if details.residual_report.used_old_aggregation_backend {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "receipt_arc_whir touched the old aggregation backend".to_string(),
-            ));
-        }
-        Ok(details.block_report)
-    }
-}
-
-fn verify_receipt_arc_whir_native_artifacts_detailed(
-    txs: &[crate::types::Transaction],
-    tx_artifacts: &[TxValidityArtifact],
-    expected_commitment: &[u8; 48],
-    envelope: &ProofEnvelope,
-) -> Result<ReceiptArcWhirVerifyDetails, ProofError> {
-    if tx_artifacts.len() != txs.len() {
-        return Err(ProofError::TransactionProofCountMismatch {
-            expected: txs.len(),
-            observed: tx_artifacts.len(),
-        });
-    }
-
-    let start_verify = Instant::now();
-    let (residual_report, execution_trace) = with_receipt_arc_whir_execution_trace(|| {
-        let mut verified_bindings = Vec::with_capacity(txs.len());
-        let mut receipts = Vec::with_capacity(txs.len());
-        for (index, (tx, artifact)) in txs.iter().zip(tx_artifacts).enumerate() {
-            let record = verify_native_tx_leaf_artifact_record(tx, artifact, None)
-                .map_err(|err| reindex_tx_artifact_error(index, err))?;
-            verified_bindings.push(record.binding);
-            receipts.push(record.receipt);
-        }
-
-        let derived_statement_commitment = commitment_from_statement_bindings(&verified_bindings)?;
-        if derived_statement_commitment != *expected_commitment {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "receipt_arc_whir statement commitment mismatch".to_string(),
-            ));
-        }
-
-        verify_receipt_arc_whir_artifact_from_receipts(&receipts, expected_commitment, envelope)
-    })?;
-
-    Ok(ReceiptArcWhirVerifyDetails {
-        block_report: BlockArtifactVerifyReport {
-            tx_count: txs.len(),
-            verified_statement_commitment: *expected_commitment,
-            verify_ms: start_verify.elapsed().as_millis(),
-            verify_batch_ms: 0,
-            cache_hit: None,
-            cache_build_ms: None,
-        },
-        residual_report: ReceiptArcWhirResidualReport {
-            row_count: residual_report.row_count,
-            artifact_bytes: residual_report.artifact_bytes,
-            replayed_leaf_verifications: execution_trace.replayed_leaf_verifications,
-            used_old_aggregation_backend: execution_trace.used_old_aggregation_backend,
-        },
-    })
 }
 
 pub fn commitment_nullifier_lists(
@@ -1044,234 +764,6 @@ pub fn experimental_native_receipt_root_params_fingerprint() -> [u8; 48] {
     superneo_hegemon::native_backend_params().parameter_fingerprint()
 }
 
-pub fn experimental_receipt_arc_whir_artifact_kind() -> ProofArtifactKind {
-    receipt_arc_whir_kind()
-}
-
-pub fn experimental_receipt_arc_whir_verifier_profile() -> VerifierProfileDigest {
-    receipt_arc_whir_profile()
-}
-
-pub fn experimental_receipt_accumulation_artifact_kind() -> ProofArtifactKind {
-    ProofArtifactKind::Custom(RECEIPT_ACCUMULATION_ARTIFACT_KIND_BYTES)
-}
-
-pub fn experimental_receipt_accumulation_verifier_profile() -> VerifierProfileDigest {
-    let mut material = Vec::new();
-    material.extend_from_slice(b"hegemon.native.receipt-accumulation-profile.v1");
-    material.extend_from_slice(&RECEIPT_ACCUMULATION_ARTIFACT_KIND_BYTES);
-    material.extend_from_slice(&experimental_native_receipt_root_verifier_profile());
-    blake3_384(&material)
-}
-
-struct NativeReceiptAccumulation;
-
-impl ReceiptAccumulator for NativeReceiptAccumulation {
-    fn kind(&self) -> ProofArtifactKind {
-        experimental_receipt_accumulation_artifact_kind()
-    }
-
-    fn verifier_profile(&self) -> VerifierProfileDigest {
-        experimental_receipt_accumulation_verifier_profile()
-    }
-
-    fn build(
-        &self,
-        receipts: &[TxValidityReceipt],
-        artifacts: &[TxValidityArtifact],
-    ) -> Result<ProofEnvelope, ProofError> {
-        if receipts.len() != artifacts.len() {
-            return Err(ProofError::TransactionProofCountMismatch {
-                expected: receipts.len(),
-                observed: artifacts.len(),
-            });
-        }
-        for (index, (receipt, artifact)) in receipts.iter().zip(artifacts).enumerate() {
-            if *receipt != artifact.receipt {
-                return Err(ProofError::TransactionProofInputsMismatch {
-                    index,
-                    message: "receipt accumulation receipt mismatch".to_string(),
-                });
-            }
-        }
-        let built_root = build_experimental_native_receipt_root_artifact(artifacts)?;
-        let artifact_hashes = artifacts
-            .iter()
-            .enumerate()
-            .map(|(index, artifact)| native_receipt_accumulation_leaf_hash(index, artifact))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(ProofEnvelope {
-            kind: self.kind(),
-            verifier_profile: self.verifier_profile(),
-            artifact_bytes: encode_receipt_accumulation_artifact(&ReceiptAccumulationArtifact {
-                root_artifact_bytes: built_root.artifact_bytes,
-                artifact_hashes,
-            }),
-        })
-    }
-
-    fn verify(
-        &self,
-        receipts: &[TxValidityReceipt],
-        expected_commitment: &[u8; 48],
-        envelope: &ProofEnvelope,
-    ) -> Result<BlockArtifactVerifyReport, ProofError> {
-        if envelope.kind != self.kind() {
-            return Err(ProofError::UnsupportedProofArtifact(format!(
-                "expected {} block artifact, got {}",
-                self.kind().label(),
-                envelope.kind.label()
-            )));
-        }
-        if envelope.verifier_profile != self.verifier_profile() {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "receipt accumulation verifier profile mismatch".to_string(),
-            ));
-        }
-
-        let artifact = decode_receipt_accumulation_artifact(&envelope.artifact_bytes)?;
-        if artifact.artifact_hashes.len() != receipts.len() {
-            return Err(ProofError::AggregationProofInputsMismatch(format!(
-                "receipt accumulation artifact hash count {} does not match receipt count {}",
-                artifact.artifact_hashes.len(),
-                receipts.len()
-            )));
-        }
-
-        let derived_commitment = commitment_from_receipts(receipts)?;
-        if derived_commitment != *expected_commitment {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "receipt accumulation statement commitment mismatch".to_string(),
-            ));
-        }
-
-        let mut records = Vec::with_capacity(receipts.len());
-        for (index, (receipt, artifact_hash)) in
-            receipts.iter().zip(&artifact.artifact_hashes).enumerate()
-        {
-            let Some(record) = NATIVE_TX_LEAF_VERIFY_CACHE.lock().get(*artifact_hash) else {
-                return Err(ProofError::VerifiedTxArtifactUnavailable {
-                    index,
-                    message: format!(
-                        "verified native tx-leaf store miss for artifact hash 0x{}",
-                        hex::encode(artifact_hash)
-                    ),
-                });
-            };
-            if record.receipt != *receipt {
-                return Err(ProofError::AggregationProofInputsMismatch(format!(
-                    "receipt accumulation store entry mismatch at index {index}"
-                )));
-            }
-            records.push(record.leaf);
-        }
-
-        let start_verify = Instant::now();
-        let _metadata = verify_native_tx_leaf_receipt_root_artifact_from_records(
-            &records,
-            &artifact.root_artifact_bytes,
-        )
-        .map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "receipt accumulation verification failed: {err}"
-            ))
-        })?;
-        Ok(BlockArtifactVerifyReport {
-            tx_count: receipts.len(),
-            verified_statement_commitment: *expected_commitment,
-            verify_ms: start_verify.elapsed().as_millis(),
-            verify_batch_ms: 0,
-            cache_hit: Some(true),
-            cache_build_ms: Some(0),
-        })
-    }
-}
-
-fn native_receipt_accumulation_leaf_hash(
-    index: usize,
-    artifact: &TxValidityArtifact,
-) -> Result<[u8; 48], ProofError> {
-    let envelope = artifact
-        .proof
-        .as_ref()
-        .ok_or(ProofError::MissingTransactionProofs)?;
-    if envelope.kind != ProofArtifactKind::TxLeaf
-        || envelope.verifier_profile != experimental_native_tx_leaf_verifier_profile()
-    {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index,
-            message: "receipt accumulation requires native tx-leaf artifacts".to_string(),
-        });
-    }
-    Ok(native_tx_leaf_artifact_hash(&envelope.artifact_bytes))
-}
-
-fn encode_receipt_accumulation_artifact(artifact: &ReceiptAccumulationArtifact) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(
-        2 + 4 + 4 + artifact.root_artifact_bytes.len() + artifact.artifact_hashes.len() * 48,
-    );
-    bytes.extend_from_slice(&RECEIPT_ACCUMULATION_ARTIFACT_VERSION.to_le_bytes());
-    bytes.extend_from_slice(&(artifact.root_artifact_bytes.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&(artifact.artifact_hashes.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&artifact.root_artifact_bytes);
-    for artifact_hash in &artifact.artifact_hashes {
-        bytes.extend_from_slice(artifact_hash);
-    }
-    bytes
-}
-
-fn decode_receipt_accumulation_artifact(
-    bytes: &[u8],
-) -> Result<ReceiptAccumulationArtifact, ProofError> {
-    let mut cursor = 0usize;
-    let version = read_u16(bytes, &mut cursor, "receipt accumulation artifact")?;
-    if version != RECEIPT_ACCUMULATION_ARTIFACT_VERSION {
-        return Err(ProofError::AggregationProofInputsMismatch(format!(
-            "unsupported receipt accumulation artifact version {version}"
-        )));
-    }
-    let root_len = read_u32(bytes, &mut cursor, "receipt accumulation artifact")? as usize;
-    let hash_count = read_u32(bytes, &mut cursor, "receipt accumulation artifact")? as usize;
-    let root_artifact_bytes = read_bytes(
-        bytes,
-        &mut cursor,
-        root_len,
-        "receipt accumulation artifact",
-    )?;
-    let mut artifact_hashes = Vec::with_capacity(hash_count);
-    for _ in 0..hash_count {
-        artifact_hashes.push(read_array(
-            bytes,
-            &mut cursor,
-            "receipt accumulation artifact",
-        )?);
-    }
-    if cursor != bytes.len() {
-        return Err(ProofError::AggregationProofInputsMismatch(format!(
-            "receipt accumulation artifact has {} trailing bytes",
-            bytes.len().saturating_sub(cursor)
-        )));
-    }
-    Ok(ReceiptAccumulationArtifact {
-        root_artifact_bytes,
-        artifact_hashes,
-    })
-}
-
-fn max_receipt_accumulation_artifact_bytes(tx_count: usize) -> usize {
-    2 + 4 + 4 + max_native_receipt_root_artifact_bytes(tx_count) + (tx_count * 48)
-}
-
-pub fn build_experimental_receipt_arc_whir_artifact(
-    receipts: &[TxValidityReceipt],
-) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
-    let envelope = build_receipt_arc_whir_artifact_from_receipts(receipts)?;
-    Ok(ExperimentalReceiptRootArtifact {
-        artifact_bytes: envelope.artifact_bytes,
-        metadata: receipt_arc_whir_metadata(receipts.len()),
-    })
-}
-
 pub fn build_experimental_receipt_root_artifact(
     receipts: &[TxValidityReceipt],
 ) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
@@ -1346,24 +838,6 @@ pub fn build_experimental_native_receipt_root_artifact(
     })
 }
 
-pub fn build_experimental_native_receipt_accumulation_artifact(
-    tx_artifacts: &[TxValidityArtifact],
-) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
-    let built_root = build_experimental_native_receipt_root_artifact(tx_artifacts)?;
-    let artifact_hashes = tx_artifacts
-        .iter()
-        .enumerate()
-        .map(|(index, artifact)| native_receipt_accumulation_leaf_hash(index, artifact))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(ExperimentalReceiptRootArtifact {
-        artifact_bytes: encode_receipt_accumulation_artifact(&ReceiptAccumulationArtifact {
-            root_artifact_bytes: built_root.artifact_bytes,
-            artifact_hashes,
-        }),
-        metadata: built_root.metadata,
-    })
-}
-
 pub fn clear_verified_native_tx_leaf_store() {
     let mut guard = NATIVE_TX_LEAF_VERIFY_CACHE.lock();
     guard.order.clear();
@@ -1401,35 +875,6 @@ pub fn verify_experimental_receipt_root_artifact(
         leaf_count: metadata.leaf_count,
         fold_count: metadata.fold_count,
     })
-}
-
-pub fn verify_experimental_receipt_arc_whir_artifact(
-    transactions: &[crate::types::Transaction],
-    tx_artifacts: &[TxValidityArtifact],
-    expected_commitment: &[u8; 48],
-    envelope: &ProofEnvelope,
-) -> Result<BlockArtifactVerifyReport, ProofError> {
-    verify_receipt_arc_whir_native_artifacts_detailed(
-        transactions,
-        tx_artifacts,
-        expected_commitment,
-        envelope,
-    )
-    .map(|details| details.block_report)
-}
-
-pub fn verify_experimental_receipt_arc_whir_artifact_detailed(
-    transactions: &[crate::types::Transaction],
-    tx_artifacts: &[TxValidityArtifact],
-    expected_commitment: &[u8; 48],
-    envelope: &ProofEnvelope,
-) -> Result<ReceiptArcWhirVerifyDetails, ProofError> {
-    verify_receipt_arc_whir_native_artifacts_detailed(
-        transactions,
-        tx_artifacts,
-        expected_commitment,
-        envelope,
-    )
 }
 
 pub fn verify_experimental_receipt_root_artifact_from_proofs(
@@ -1483,64 +928,6 @@ pub fn verify_experimental_native_receipt_root_artifact(
         leaf_count: metadata.leaf_count,
         fold_count: metadata.fold_count,
     })
-}
-
-pub fn verify_experimental_native_receipt_accumulation_artifact(
-    transactions: &[crate::types::Transaction],
-    receipts: &[TxValidityReceipt],
-    tx_artifacts: Option<&[TxValidityArtifact]>,
-    expected_commitment: &[u8; 48],
-    artifact_bytes: &[u8],
-) -> Result<BlockArtifactVerifyReport, ProofError> {
-    if transactions.len() != receipts.len() {
-        return Err(ProofError::TransactionProofCountMismatch {
-            expected: transactions.len(),
-            observed: receipts.len(),
-        });
-    }
-
-    let receipt_artifacts_storage;
-    let receipt_artifacts = if let Some(artifacts) = tx_artifacts {
-        if artifacts.len() != receipts.len() {
-            return Err(ProofError::TransactionProofCountMismatch {
-                expected: receipts.len(),
-                observed: artifacts.len(),
-            });
-        }
-        artifacts
-    } else {
-        receipt_artifacts_storage = receipts
-            .iter()
-            .cloned()
-            .map(tx_validity_artifact_from_receipt)
-            .collect::<Vec<_>>();
-        receipt_artifacts_storage.as_slice()
-    };
-
-    let envelope = ProofEnvelope {
-        kind: experimental_receipt_accumulation_artifact_kind(),
-        verifier_profile: experimental_receipt_accumulation_verifier_profile(),
-        artifact_bytes: artifact_bytes.to_vec(),
-    };
-    let accumulation = decode_receipt_accumulation_artifact(artifact_bytes)?;
-    if receipt_artifacts.len() != accumulation.artifact_hashes.len() {
-        return Err(ProofError::TransactionProofCountMismatch {
-            expected: accumulation.artifact_hashes.len(),
-            observed: receipt_artifacts.len(),
-        });
-    }
-    for (index, ((tx, artifact), expected_hash)) in transactions
-        .iter()
-        .zip(receipt_artifacts)
-        .zip(&accumulation.artifact_hashes)
-        .enumerate()
-    {
-        if artifact.proof.is_some() {
-            verify_native_tx_leaf_artifact_record(tx, artifact, Some(*expected_hash))
-                .map_err(|err| reindex_tx_artifact_error(index, err))?;
-        }
-    }
-    NativeReceiptAccumulation.verify(receipts, expected_commitment, &envelope)
 }
 
 fn canonical_receipts_from_tx_receipts(
@@ -1795,56 +1182,6 @@ fn verify_tx_validity_artifacts(
         .collect()
 }
 
-fn verify_batch_proof_bytes_safely(
-    proof_bytes: &[u8],
-    batch_public_inputs: &BatchPublicInputs,
-    start: usize,
-    end: usize,
-) -> Result<(), ProofError> {
-    run_verifier(
-        format!("flat batch STARK verification at tx range [{start}, {end})"),
-        || verify_batch_proof_bytes(proof_bytes, batch_public_inputs),
-        |err| {
-            ProofError::AggregationProofVerification(format!(
-                "flat batch STARK verification failed at tx range [{start}, {end}): {err}"
-            ))
-        },
-    )
-}
-
-fn warm_aggregation_cache_safely(
-    proof_bytes: &[u8],
-    tx_count: usize,
-    expected_commitment: &[u8; 48],
-) -> Result<crate::aggregation::AggregationCacheWarmup, ProofError> {
-    run_verifier(
-        format!("aggregation cache prewarm for {tx_count} txs"),
-        || warm_aggregation_cache_from_proof_bytes(proof_bytes, tx_count, expected_commitment),
-        |err| {
-            ProofError::AggregationProofVerification(format!(
-                "aggregation cache prewarm failed: {err}"
-            ))
-        },
-    )
-}
-
-fn verify_aggregation_proof_safely(
-    proof_bytes: &[u8],
-    tx_count: usize,
-    expected_commitment: &[u8; 48],
-) -> Result<crate::aggregation::AggregationVerifyMetrics, ProofError> {
-    note_receipt_arc_whir_old_aggregation_backend();
-    run_verifier(
-        format!("aggregation proof verification for {tx_count} txs"),
-        || verify_aggregation_proof_with_metrics(proof_bytes, tx_count, expected_commitment),
-        |err| {
-            ProofError::AggregationProofVerification(format!(
-                "aggregation proof verification failed: {err}"
-            ))
-        },
-    )
-}
-
 pub trait ProofVerifier: Send + Sync {
     fn verify_block<BH>(
         &self,
@@ -1874,15 +1211,13 @@ impl ProofVerifier for HashVerifier {
 
 #[derive(Clone)]
 pub struct ParallelProofVerifier {
-    verifying_key: transaction_circuit::keys::VerifyingKey,
     verifier_registry: VerifierRegistry,
 }
 
 impl ParallelProofVerifier {
     pub fn new() -> Self {
-        let (_, verifying_key) = generate_keys();
+        let _ = generate_keys();
         Self {
-            verifying_key,
             verifier_registry: VerifierRegistry::default(),
         }
     }
@@ -2087,25 +1422,15 @@ impl ProofVerifier for ParallelProofVerifier {
         }
 
         let mut tx_verify_ms = 0u128;
-        let mut aggregation_cache_hit = None;
-        let mut aggregation_cache_build_ms = None;
-        let mut aggregation_cache_prewarm_hit = None;
-        let mut aggregation_cache_prewarm_build_ms = None;
-        let mut aggregation_cache_prewarm_total_ms = None;
+        let aggregation_cache_hit = None;
+        let aggregation_cache_build_ms = None;
+        let aggregation_cache_prewarm_hit = None;
+        let aggregation_cache_prewarm_build_ms = None;
+        let aggregation_cache_prewarm_total_ms = None;
         let block_artifact = block
             .block_artifact
             .clone()
             .or_else(|| match proven_batch.mode {
-                ProvenBatchMode::MergeRoot => {
-                    proven_batch
-                        .merge_root
-                        .as_ref()
-                        .map(|merge_root| ProofEnvelope {
-                            kind: proven_batch.proof_kind,
-                            verifier_profile: proven_batch.verifier_profile,
-                            artifact_bytes: merge_root.root_proof.clone(),
-                        })
-                }
                 ProvenBatchMode::ReceiptRoot => {
                     proven_batch
                         .receipt_root
@@ -2116,106 +1441,12 @@ impl ProofVerifier for ParallelProofVerifier {
                             artifact_bytes: receipt_root.root_proof.clone(),
                         })
                 }
-                ProvenBatchMode::InlineTx | ProvenBatchMode::FlatBatches => None,
+                ProvenBatchMode::InlineTx => None,
             });
 
-        let synthesized_receipt_artifacts;
         let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
             match proven_batch.mode {
                 ProvenBatchMode::InlineTx => (false, 0u128, 0u128),
-                ProvenBatchMode::FlatBatches => {
-                    let statement_bindings = resolved_statement_bindings
-                        .as_deref()
-                        .ok_or(ProofError::MissingTransactionStatementBindings)?;
-                    let start_flat = Instant::now();
-                    verify_flat_batch_payload(
-                        &self.verifying_key,
-                        &proven_batch.flat_batches,
-                        &block.transactions,
-                        statement_bindings,
-                        &expected_commitment,
-                    )?;
-                    let verify_ms = start_flat.elapsed().as_millis();
-                    (true, verify_ms, verify_ms)
-                }
-                ProvenBatchMode::MergeRoot => {
-                    let merge_root = proven_batch.merge_root.as_ref().ok_or_else(|| {
-                        ProofError::ProvenBatchBindingMismatch(
-                            "missing merge_root payload for MergeRoot mode".to_string(),
-                        )
-                    })?;
-                    let statement_bindings = resolved_statement_bindings
-                        .as_deref()
-                        .ok_or(ProofError::MissingTransactionStatementBindings)?;
-                    let statement_hashes = statement_bindings
-                        .iter()
-                        .map(|binding| binding.statement_hash)
-                        .collect::<Vec<_>>();
-                    let expected_leaf_count = statement_hashes
-                        .len()
-                        .div_ceil(merge_root_leaf_fan_in_from_env())
-                        as u32;
-                    if merge_root.metadata.leaf_count != expected_leaf_count {
-                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                            "merge-root leaf_count mismatch (payload {}, expected {})",
-                            merge_root.metadata.leaf_count, expected_leaf_count
-                        )));
-                    }
-                    let expected_tree_levels = merge_root_tree_levels_for_tx_count(tx_count);
-                    if merge_root.metadata.tree_levels != expected_tree_levels {
-                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                            "merge-root tree_levels mismatch (payload {}, expected {})",
-                            merge_root.metadata.tree_levels, expected_tree_levels
-                        )));
-                    }
-                    let expected_leaf_manifest =
-                        merge_root_leaf_manifest_commitment(&statement_hashes)
-                            .map_err(ProofError::AggregationProofInputsMismatch)?;
-                    if merge_root.metadata.leaf_manifest_commitment != expected_leaf_manifest {
-                        return Err(ProofError::ProvenBatchBindingMismatch(
-                            "merge-root leaf_manifest_commitment mismatch".to_string(),
-                        ));
-                    }
-                    if merge_root.root_proof.is_empty() {
-                        return Err(ProofError::MissingAggregationProofForSelfContainedMode);
-                    }
-
-                    let prewarm_start = Instant::now();
-                    match warm_aggregation_cache_safely(
-                        &merge_root.root_proof,
-                        tx_count,
-                        &expected_commitment,
-                    ) {
-                        Ok(warmup) => {
-                            aggregation_cache_prewarm_hit = Some(warmup.cache_hit);
-                            aggregation_cache_prewarm_build_ms = Some(warmup.cache_build_ms);
-                        }
-                        Err(err) => {
-                            tracing::debug!(
-                                target: "consensus::metrics",
-                                ?err,
-                                tx_count,
-                                "aggregation cache prewarm failed"
-                            );
-                        }
-                    }
-                    aggregation_cache_prewarm_total_ms = Some(prewarm_start.elapsed().as_millis());
-
-                    let merge_root_verifier = self
-                        .verifier_registry
-                        .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
-                    let verify_report = merge_root_verifier.verify_block_artifact(
-                        &block.transactions,
-                        tx_validity_artifacts.map(|artifacts| artifacts.as_slice()),
-                        &expected_commitment,
-                        block_artifact
-                            .as_ref()
-                            .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?,
-                    )?;
-                    aggregation_cache_hit = verify_report.cache_hit;
-                    aggregation_cache_build_ms = verify_report.cache_build_ms;
-                    (true, verify_report.verify_ms, verify_report.verify_batch_ms)
-                }
                 ProvenBatchMode::ReceiptRoot => {
                     let receipt_root = proven_batch.receipt_root.as_ref().ok_or_else(|| {
                         ProofError::ProvenBatchBindingMismatch(
@@ -2237,14 +1468,6 @@ impl ProofVerifier for ParallelProofVerifier {
                     }
                     let artifacts = if let Some(artifacts) = tx_validity_artifacts {
                         artifacts.as_slice()
-                    } else if proof_kind_uses_receipt_only_tx_artifacts(proven_batch.proof_kind) {
-                        synthesized_receipt_artifacts = receipt_root
-                            .receipts
-                            .iter()
-                            .cloned()
-                            .map(tx_validity_artifact_from_receipt)
-                            .collect::<Vec<_>>();
-                        synthesized_receipt_artifacts.as_slice()
                     } else {
                         return Err(ProofError::MissingTransactionProofs);
                     };
@@ -2450,61 +1673,9 @@ pub fn receipt_statement_commitment(
     commitment_from_receipts(receipts)
 }
 
-fn proof_kind_uses_receipt_only_tx_artifacts(kind: ProofArtifactKind) -> bool {
-    kind == experimental_receipt_accumulation_artifact_kind()
-}
-
-fn read_u16(bytes: &[u8], cursor: &mut usize, context: &str) -> Result<u16, ProofError> {
-    Ok(u16::from_le_bytes(read_array::<2>(bytes, cursor, context)?))
-}
-
-fn read_u32(bytes: &[u8], cursor: &mut usize, context: &str) -> Result<u32, ProofError> {
-    Ok(u32::from_le_bytes(read_array::<4>(bytes, cursor, context)?))
-}
-
-fn read_bytes(
-    bytes: &[u8],
-    cursor: &mut usize,
-    len: usize,
-    context: &str,
-) -> Result<Vec<u8>, ProofError> {
-    if bytes.len().saturating_sub(*cursor) < len {
-        return Err(ProofError::AggregationProofInputsMismatch(format!(
-            "{context} ended early while reading {len} bytes"
-        )));
-    }
-    let out = bytes[*cursor..*cursor + len].to_vec();
-    *cursor += len;
-    Ok(out)
-}
-
-fn read_array<const N: usize>(
-    bytes: &[u8],
-    cursor: &mut usize,
-    context: &str,
-) -> Result<[u8; N], ProofError> {
-    if bytes.len().saturating_sub(*cursor) < N {
-        return Err(ProofError::AggregationProofInputsMismatch(format!(
-            "{context} ended early while reading {N} bytes"
-        )));
-    }
-    let mut out = [0u8; N];
-    out.copy_from_slice(&bytes[*cursor..*cursor + N]);
-    *cursor += N;
-    Ok(out)
-}
-
 fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
     match batch.mode {
         ProvenBatchMode::InlineTx => 0,
-        ProvenBatchMode::FlatBatches => {
-            batch.flat_batches.iter().map(|item| item.proof.len()).sum()
-        }
-        ProvenBatchMode::MergeRoot => batch
-            .merge_root
-            .as_ref()
-            .map(|merge| merge.root_proof.len())
-            .unwrap_or(0),
         ProvenBatchMode::ReceiptRoot => batch
             .receipt_root
             .as_ref()
@@ -2516,364 +1687,12 @@ fn total_batch_proof_payload_bytes(batch: &crate::types::ProvenBatch) -> usize {
 fn total_batch_proof_uncompressed_bytes(batch: &crate::types::ProvenBatch) -> usize {
     match batch.mode {
         ProvenBatchMode::InlineTx => 0,
-        ProvenBatchMode::FlatBatches => {
-            batch.flat_batches.iter().map(|item| item.proof.len()).sum()
-        }
-        ProvenBatchMode::MergeRoot => batch
-            .merge_root
-            .as_ref()
-            .map(|merge| aggregation_proof_uncompressed_len(&merge.root_proof))
-            .unwrap_or(0),
         ProvenBatchMode::ReceiptRoot => batch
             .receipt_root
             .as_ref()
             .map(|receipt_root| receipt_root.root_proof.len())
             .unwrap_or(0),
     }
-}
-
-fn verify_flat_batch_payload(
-    _verifying_key: &transaction_circuit::keys::VerifyingKey,
-    flat_batches: &[crate::types::BatchProofItem],
-    transactions: &[crate::types::Transaction],
-    statement_bindings: &[TxStatementBinding],
-    expected_commitment: &[u8; 48],
-) -> Result<(), ProofError> {
-    if flat_batches.is_empty() {
-        return Err(ProofError::MissingAggregationProofForSelfContainedMode);
-    }
-    if transactions.is_empty() {
-        return Err(ProofError::AggregationProofEmptyBlock);
-    }
-    if statement_bindings.len() != transactions.len() {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "statement binding count mismatch (expected {}, got {})",
-            transactions.len(),
-            statement_bindings.len()
-        )));
-    }
-
-    let mut ordered: Vec<&crate::types::BatchProofItem> = flat_batches.iter().collect();
-    ordered.sort_by_key(|item| item.start_tx_index);
-
-    let mut expected_start: usize = 0;
-    let mut all_statement_hashes: Vec<[u8; 48]> = Vec::with_capacity(transactions.len());
-
-    for item in ordered {
-        if item.tx_count == 0 {
-            return Err(ProofError::FlatBatchCoverage(
-                "flat batch item tx_count must be non-zero".to_string(),
-            ));
-        }
-        if item.proof_format != crate::types::BLOCK_PROOF_FORMAT_ID_V5 {
-            return Err(ProofError::FlatBatchCoverage(format!(
-                "flat batch item uses unsupported proof format {}",
-                item.proof_format
-            )));
-        }
-
-        let start = item.start_tx_index as usize;
-        if start != expected_start {
-            let reason = if start < expected_start {
-                "overlap"
-            } else {
-                "gap"
-            };
-            return Err(ProofError::FlatBatchCoverage(format!(
-                "flat batch coverage {reason}: expected start {expected_start}, got {start}"
-            )));
-        }
-
-        let end = start.checked_add(item.tx_count as usize).ok_or_else(|| {
-            ProofError::FlatBatchCoverage("flat batch coverage overflow".to_string())
-        })?;
-        if end > transactions.len() {
-            return Err(ProofError::FlatBatchCoverage(format!(
-                "flat batch range [{start}, {end}) exceeds tx_count {}",
-                transactions.len()
-            )));
-        }
-
-        let binding_subset = &statement_bindings[start..end];
-        let tx_subset = &transactions[start..end];
-        let payload = decode_flat_batch_proof_bytes(&item.proof)?;
-        match payload.proof_kind {
-            FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK => {
-                let batch_public_inputs = decode_batch_public_inputs(&payload.batch_public_values)?;
-                if batch_public_inputs.batch_size as usize != (end - start) {
-                    return Err(ProofError::FlatBatchCoverage(format!(
-                        "flat batch public input tx_count mismatch: expected {}, got {}",
-                        end - start,
-                        batch_public_inputs.batch_size
-                    )));
-                }
-
-                verify_flat_batch_public_inputs_binding(
-                    &batch_public_inputs,
-                    binding_subset,
-                    start,
-                    end,
-                )?;
-                verify_batch_proof_bytes_safely(
-                    &payload.batch_proof,
-                    &batch_public_inputs,
-                    start,
-                    end,
-                )?;
-                verify_flat_batch_bindings_against_transactions(
-                    &batch_public_inputs,
-                    tx_subset,
-                    start,
-                    end,
-                )?;
-            }
-            FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST => {
-                return Err(ProofError::FlatBatchProofDecodeFailed(
-                    "tx-proof-manifest flat batches were removed after the local lane benchmark showed raw tx-proof shipping wins".to_string(),
-                ));
-            }
-            unsupported => {
-                return Err(ProofError::FlatBatchProofDecodeFailed(format!(
-                    "unsupported flat batch proof kind {unsupported}"
-                )));
-            }
-        }
-
-        all_statement_hashes.extend(binding_subset.iter().map(|binding| binding.statement_hash));
-        expected_start = end;
-    }
-
-    if expected_start != transactions.len() {
-        return Err(ProofError::FlatBatchCoverage(format!(
-            "flat batch coverage incomplete: covered {expected_start}, expected {}",
-            transactions.len()
-        )));
-    }
-
-    let observed_commitment =
-        CommitmentBlockProver::commitment_from_statement_hashes(&all_statement_hashes)
-            .map_err(|err| ProofError::AggregationProofInputsMismatch(err.to_string()))?;
-    if &observed_commitment != expected_commitment {
-        return Err(ProofError::ProvenBatchBindingMismatch(
-            "flat batch statement commitment mismatch".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
-fn decode_batch_public_inputs(values: &[u64]) -> Result<BatchPublicInputs, ProofError> {
-    let felts: Vec<Felt> = values.iter().map(|value| Felt::from_u64(*value)).collect();
-    BatchPublicInputs::try_from_slice(&felts).map_err(|err| {
-        ProofError::FlatBatchProofDecodeFailed(format!(
-            "flat batch public input decode failed: {err}"
-        ))
-    })
-}
-
-fn padded_nullifiers_from_transactions(
-    transactions: &[crate::types::Transaction],
-) -> Vec<[u8; 48]> {
-    let mut out = Vec::with_capacity(transactions.len().saturating_mul(MAX_INPUTS));
-    for tx in transactions {
-        out.extend_from_slice(&tx.nullifiers);
-        out.extend(std::iter::repeat_n(
-            [0u8; 48],
-            MAX_INPUTS.saturating_sub(tx.nullifiers.len()),
-        ));
-    }
-    out
-}
-
-fn padded_commitments_from_transactions(
-    transactions: &[crate::types::Transaction],
-) -> Vec<[u8; 48]> {
-    let mut out = Vec::with_capacity(transactions.len().saturating_mul(MAX_OUTPUTS));
-    for tx in transactions {
-        out.extend_from_slice(&tx.commitments);
-        out.extend(std::iter::repeat_n(
-            [0u8; 48],
-            MAX_OUTPUTS.saturating_sub(tx.commitments.len()),
-        ));
-    }
-    out
-}
-
-fn verify_flat_batch_public_inputs_binding(
-    batch_public_inputs: &BatchPublicInputs,
-    bindings: &[TxStatementBinding],
-    start: usize,
-    end: usize,
-) -> Result<(), ProofError> {
-    let first = bindings.first().ok_or_else(|| {
-        ProofError::FlatBatchCoverage("empty statement binding subset".to_string())
-    })?;
-    let expected_anchor = first.anchor;
-    if bindings
-        .iter()
-        .any(|binding| binding.anchor != expected_anchor)
-    {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch statement bindings contain mixed anchors in tx range [{start}, {end})"
-        )));
-    }
-
-    let observed_anchor = felts_to_bytes48(&batch_public_inputs.anchor);
-    if observed_anchor != expected_anchor {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch anchor mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    let expected_fee = bindings.iter().fold(0u128, |acc, binding| {
-        acc.saturating_add(u128::from(binding.fee))
-    });
-    let observed_fee = u128::from(batch_public_inputs.total_fee.as_canonical_u64());
-    if observed_fee != expected_fee {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch total fee mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    let expected_circuit_version = first.circuit_version;
-    if bindings
-        .iter()
-        .any(|binding| binding.circuit_version != expected_circuit_version)
-    {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch statement bindings contain mixed circuit versions in tx range [{start}, {end})"
-        )));
-    }
-    if batch_public_inputs.circuit_version != expected_circuit_version {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch circuit version mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-fn verify_tx_proof_manifest_public_inputs_binding(
-    batch_public_inputs: &TxProofManifestPublicInputs,
-    bindings: &[TxStatementBinding],
-    start: usize,
-    end: usize,
-) -> Result<(), ProofError> {
-    let expected_fee = bindings.iter().fold(0u128, |acc, binding| {
-        acc.saturating_add(u128::from(binding.fee))
-    });
-    if expected_fee > u64::MAX as u128 {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "tx-proof-manifest total fee overflows u64 in tx range [{start}, {end})"
-        )));
-    }
-    if batch_public_inputs.total_fee != expected_fee as u64 {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "tx-proof-manifest total fee mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    let expected_circuit_version = bindings.first().map(|binding| binding.circuit_version);
-    if bindings
-        .iter()
-        .any(|binding| Some(binding.circuit_version) != expected_circuit_version)
-    {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "tx-proof-manifest statement bindings contain mixed circuit versions in tx range [{start}, {end})"
-        )));
-    }
-    if batch_public_inputs.circuit_version != expected_circuit_version.unwrap_or(0) {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "tx-proof-manifest circuit version mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    let expected_statement_hashes: Vec<[u8; 48]> = bindings
-        .iter()
-        .map(|binding| binding.statement_hash)
-        .collect();
-    if batch_public_inputs.statement_hashes != expected_statement_hashes {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "tx-proof-manifest statement hash mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    Ok(())
-}
-
-fn verify_flat_batch_bindings_against_transactions(
-    batch_public_inputs: &BatchPublicInputs,
-    transactions: &[crate::types::Transaction],
-    start: usize,
-    end: usize,
-) -> Result<(), ProofError> {
-    let expected_nullifiers = padded_nullifiers_from_transactions(transactions);
-    let expected_commitments = padded_commitments_from_transactions(transactions);
-    let active_nullifier_len = (end - start) * MAX_INPUTS;
-    let active_commitment_len = (end - start) * MAX_OUTPUTS;
-
-    if batch_public_inputs.nullifiers.len() < active_nullifier_len {
-        return Err(ProofError::FlatBatchCoverage(format!(
-            "flat batch public nullifier vector too short: expected at least {}, got {}",
-            active_nullifier_len,
-            batch_public_inputs.nullifiers.len()
-        )));
-    }
-    if batch_public_inputs.commitments.len() < active_commitment_len {
-        return Err(ProofError::FlatBatchCoverage(format!(
-            "flat batch public commitment vector too short: expected at least {}, got {}",
-            active_commitment_len,
-            batch_public_inputs.commitments.len()
-        )));
-    }
-
-    let observed_active_nullifiers: Vec<[u8; 48]> = batch_public_inputs
-        .nullifiers
-        .iter()
-        .take(active_nullifier_len)
-        .map(felts_to_bytes48)
-        .collect();
-    if observed_active_nullifiers != expected_nullifiers {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch nullifier mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    let observed_active_commitments: Vec<[u8; 48]> = batch_public_inputs
-        .commitments
-        .iter()
-        .take(active_commitment_len)
-        .map(felts_to_bytes48)
-        .collect();
-    if observed_active_commitments != expected_commitments {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch commitment mismatch in tx range [{start}, {end})"
-        )));
-    }
-
-    if batch_public_inputs
-        .nullifiers
-        .iter()
-        .skip(active_nullifier_len)
-        .any(|value| felts_to_bytes48(value) != [0u8; 48])
-    {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch inactive nullifier tail is non-zero in tx range [{start}, {end})"
-        )));
-    }
-    if batch_public_inputs
-        .commitments
-        .iter()
-        .skip(active_commitment_len)
-        .any(|value| felts_to_bytes48(value) != [0u8; 48])
-    {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "flat batch inactive commitment tail is non-zero in tx range [{start}, {end})"
-        )));
-    }
-
-    Ok(())
 }
 
 fn statement_hash_from_proof(proof: &transaction_circuit::TransactionProof) -> [u8; 48] {
@@ -2979,8 +1798,6 @@ fn verify_and_apply_tree_transition_without_anchors(
 mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
-    use transaction_circuit::hashing_pq::bytes48_to_felts;
-    use tx_proof_manifest::TxProofManifestPublicInputs;
 
     fn tx_with_commitments(commitments: Vec<[u8; 48]>) -> crate::types::Transaction {
         crate::types::Transaction::new(
@@ -3056,93 +1873,6 @@ mod tests {
         )
         .expect("valid transition");
         assert_eq!(updated.root(), expected.root());
-    }
-
-    fn binding(anchor: [u8; 48], fee: u64, circuit_version: u32) -> TxStatementBinding {
-        TxStatementBinding {
-            statement_hash: [5u8; 48],
-            anchor,
-            fee,
-            circuit_version,
-        }
-    }
-
-    fn batch_inputs(anchor: [u8; 48], fee: u64, circuit_version: u32) -> BatchPublicInputs {
-        let mut inputs = BatchPublicInputs::default();
-        inputs.batch_size = 1;
-        inputs.anchor = bytes48_to_felts(&anchor).expect("canonical anchor");
-        inputs.total_fee = Felt::from_u64(fee);
-        inputs.circuit_version = circuit_version;
-        inputs
-    }
-
-    fn tx_proof_manifest_inputs(
-        statement_hash: [u8; 48],
-        fee: u64,
-        circuit_version: u32,
-    ) -> TxProofManifestPublicInputs {
-        TxProofManifestPublicInputs {
-            batch_size: 1,
-            statement_hashes: vec![statement_hash],
-            nullifiers: vec![[0u8; 48]; MAX_INPUTS],
-            commitments: vec![[0u8; 48]; MAX_OUTPUTS],
-            total_fee: fee,
-            circuit_version,
-        }
-    }
-
-    #[test]
-    fn flat_batch_binding_rejects_anchor_mismatch() {
-        let inputs = batch_inputs([1u8; 48], 10, 1);
-        let bindings = vec![binding([2u8; 48], 10, 1)];
-        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 1)
-            .expect_err("anchor mismatch should fail");
-        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
-    }
-
-    #[test]
-    fn flat_batch_binding_rejects_fee_mismatch() {
-        let inputs = batch_inputs([1u8; 48], 11, 1);
-        let bindings = vec![binding([1u8; 48], 10, 1)];
-        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 1)
-            .expect_err("fee mismatch should fail");
-        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
-    }
-
-    #[test]
-    fn flat_batch_binding_rejects_circuit_version_mismatch() {
-        let inputs = batch_inputs([1u8; 48], 10, 2);
-        let bindings = vec![binding([1u8; 48], 10, 1)];
-        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 1)
-            .expect_err("version mismatch should fail");
-        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
-    }
-
-    #[test]
-    fn flat_batch_binding_rejects_mixed_anchor_context() {
-        let inputs = batch_inputs([1u8; 48], 20, 1);
-        let bindings = vec![binding([1u8; 48], 10, 1), binding([2u8; 48], 10, 1)];
-        let err = verify_flat_batch_public_inputs_binding(&inputs, &bindings, 0, 2)
-            .expect_err("mixed anchor context should fail");
-        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
-    }
-
-    #[test]
-    fn tx_proof_manifest_binding_rejects_statement_hash_mismatch() {
-        let inputs = tx_proof_manifest_inputs([1u8; 48], 10, 1);
-        let bindings = vec![binding([9u8; 48], 10, 1)];
-        let err = verify_tx_proof_manifest_public_inputs_binding(&inputs, &bindings, 0, 1)
-            .expect_err("statement hash mismatch should fail");
-        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
-    }
-
-    #[test]
-    fn tx_proof_manifest_binding_rejects_fee_mismatch() {
-        let inputs = tx_proof_manifest_inputs([5u8; 48], 11, 1);
-        let bindings = vec![binding([1u8; 48], 10, 1)];
-        let err = verify_tx_proof_manifest_public_inputs_binding(&inputs, &bindings, 0, 1)
-            .expect_err("fee mismatch should fail");
-        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
     }
 
     #[test]

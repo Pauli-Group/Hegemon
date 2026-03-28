@@ -42,16 +42,16 @@ The current scaling lever is proof-ready transaction production.
 - More proof-ready transactions means the authoring node has more admissible work ready at block assembly time.
 - The parent-bound block step is only the commitment proof, not recursive tx-proof compression.
 
-Local validation already resolved the low-TPS question: `InlineTx` beats `MergeRoot` on the active path, so the live system should scale by parallel tx-proof generation before it revisits any post-proof compression idea.
+Local validation already resolved the low-TPS question: the dead recursive block-proof lane lost, so the live system should scale by parallel tx-proof generation and smaller native transaction artifacts before it revisits any post-proof compression idea.
 
 ## Near-term roadmap
 
-### Phase 0: ship `InlineTx`
+### Phase 0: ship native direct verification
 
 - one public authoring node;
-- wallets and private provers produce proof-ready txs;
-- full nodes verify inline tx proofs plus the commitment proof;
-- no `hegemon-prover`, no public recursive work queue, no pooled/private-prover desktop roles.
+- wallets and private provers produce proof-ready native `TxLeaf` artifacts;
+- full nodes verify ordered native tx artifacts plus the commitment proof;
+- no external prover-worker market, no public recursive work queue, no pooled/private-prover desktop roles.
 
 ### Phase 1: raise proof-ready throughput
 
@@ -75,7 +75,7 @@ If Hegemon later needs recursive compression, it belongs off the hot admission p
 The following are not part of the current shipping topology:
 
 - `hegemon-prover` as a required deployment host,
-- `hegemon-prover-worker` as part of the normal authoring path,
+- any external prover-worker market as part of the normal authoring path,
 - pooled hash-worker participation in the desktop app,
 - private-prover participation in the desktop app,
 - recursive hot-path block proving as the default low-TPS lane.
