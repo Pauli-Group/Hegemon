@@ -25,5 +25,8 @@ if package_tar.name != expected_name:
 PY
 
 tar -xzf "$PACKAGE_TAR" -C "$WORKDIR"
+test -f "$WORKDIR/native-backend-128b-review-package/source/tools/native-backend-ref/src/lib.rs"
+test -f "$WORKDIR/native-backend-128b-review-package/source/circuits/superneo-hegemon/src/lib.rs"
+test -f "$WORKDIR/native-backend-128b-review-package/source/circuits/superneo-backend-lattice/src/lib.rs"
 cargo run -p native-backend-ref -- verify-vectors \
   "$WORKDIR/native-backend-128b-review-package/testdata/native_backend_vectors"

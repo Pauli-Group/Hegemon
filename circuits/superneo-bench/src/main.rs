@@ -27,13 +27,12 @@ use superneo_hegemon::{
     canonical_tx_validity_receipt_from_transaction_proof, decode_native_tx_leaf_artifact_bytes,
     decode_receipt_root_artifact_bytes, encode_native_tx_leaf_artifact_bytes,
     encode_receipt_root_artifact_bytes, native_backend_params,
-    native_tx_validity_statement_from_witness, serialized_stark_inputs_from_witness_for_review,
-    tx_leaf_public_tx_from_transaction_proof, tx_leaf_public_tx_from_witness,
-    verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_receipt_root_artifact_bytes,
-    verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
-    verify_verified_tx_proof_receipt_root_artifact_bytes, CanonicalTxValidityReceipt,
-    NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness,
-    TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
+    native_tx_validity_statement_from_witness, tx_leaf_public_tx_from_transaction_proof,
+    tx_leaf_public_tx_from_witness, verify_native_tx_leaf_artifact_bytes,
+    verify_native_tx_leaf_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
+    verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
+    CanonicalTxValidityReceipt, NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement,
+    ToyBalanceWitness, TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -217,13 +216,6 @@ struct ReviewReceipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReviewPackedWitness {
-    coeffs: Vec<u64>,
-    coeff_capacity_bits: u16,
-    value_bit_widths: Vec<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ReviewSerializedStarkInputs {
     input_flags: Vec<u8>,
     output_flags: Vec<u8>,
@@ -243,26 +235,13 @@ struct ReviewSerializedStarkInputs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReviewNoteData {
-    value: u64,
-    asset_id: u64,
-    pk_recipient_hex: String,
-    pk_auth_hex: String,
-    rho_hex: String,
-    r_hex: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReviewInputNoteWitness {
-    note: ReviewNoteData,
-    position: u64,
-    rho_seed_hex: String,
-    merkle_siblings_hex: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReviewOutputNoteWitness {
-    note: ReviewNoteData,
+struct ReviewTxPublicTx {
+    nullifiers_hex: Vec<String>,
+    commitments_hex: Vec<String>,
+    ciphertext_hashes_hex: Vec<String>,
+    balance_tag_hex: String,
+    version_circuit: u16,
+    version_crypto: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,14 +254,9 @@ struct ReviewTxContext {
     shape_digest_hex: String,
     statement_digest_hex: String,
     receipt: ReviewReceipt,
+    tx: ReviewTxPublicTx,
     stark_public_inputs: ReviewSerializedStarkInputs,
-    ciphertext_hashes_hex: Vec<String>,
-    witness_version_circuit: u16,
-    witness_version_crypto: u16,
-    opening_sk_spend_hex: String,
-    opening_inputs: Vec<ReviewInputNoteWitness>,
-    opening_outputs: Vec<ReviewOutputNoteWitness>,
-    packed_witness: ReviewPackedWitness,
+    commitment_rows: Vec<Vec<u64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -566,14 +540,6 @@ fn review_receipt(receipt: &CanonicalTxValidityReceipt) -> ReviewReceipt {
     }
 }
 
-fn review_packed_witness(packed: &superneo_ring::PackedWitness<u64>) -> ReviewPackedWitness {
-    ReviewPackedWitness {
-        coeffs: packed.coeffs.clone(),
-        coeff_capacity_bits: packed.coeff_capacity_bits,
-        value_bit_widths: packed.value_bit_widths.clone(),
-    }
-}
-
 fn review_stark_inputs(
     stark: &transaction_circuit::proof::SerializedStarkInputs,
 ) -> ReviewSerializedStarkInputs {
@@ -596,40 +562,23 @@ fn review_stark_inputs(
     }
 }
 
-fn review_note_data(note: &NoteData) -> ReviewNoteData {
-    ReviewNoteData {
-        value: note.value,
-        asset_id: note.asset_id,
-        pk_recipient_hex: hex::encode(note.pk_recipient),
-        pk_auth_hex: hex::encode(note.pk_auth),
-        rho_hex: hex::encode(note.rho),
-        r_hex: hex::encode(note.r),
-    }
-}
-
-fn review_input_witness(input: &InputNoteWitness) -> ReviewInputNoteWitness {
-    ReviewInputNoteWitness {
-        note: review_note_data(&input.note),
-        position: input.position,
-        rho_seed_hex: hex::encode(input.rho_seed),
-        merkle_siblings_hex: input
-            .merkle_path
-            .siblings
+fn review_tx_public(tx: &superneo_hegemon::TxLeafPublicTx) -> ReviewTxPublicTx {
+    ReviewTxPublicTx {
+        nullifiers_hex: tx.nullifiers.iter().map(|bytes| hex48(*bytes)).collect(),
+        commitments_hex: tx.commitments.iter().map(|bytes| hex48(*bytes)).collect(),
+        ciphertext_hashes_hex: tx
+            .ciphertext_hashes
             .iter()
-            .map(|sibling| hex48(felts_to_bytes48(sibling)))
+            .map(|bytes| hex48(*bytes))
             .collect(),
-    }
-}
-
-fn review_output_witness(output: &OutputNoteWitness) -> ReviewOutputNoteWitness {
-    ReviewOutputNoteWitness {
-        note: review_note_data(&output.note),
+        balance_tag_hex: hex48(tx.balance_tag),
+        version_circuit: tx.version.circuit,
+        version_crypto: tx.version.crypto,
     }
 }
 
 fn build_review_tx_context(
     params: &NativeBackendParams,
-    witness: &TransactionWitness,
     artifact: &superneo_hegemon::NativeTxLeafArtifact,
 ) -> ReviewTxContext {
     ReviewTxContext {
@@ -641,31 +590,14 @@ fn build_review_tx_context(
         shape_digest_hex: hex::encode(artifact.shape_digest),
         statement_digest_hex: hex48(artifact.statement_digest),
         receipt: review_receipt(&artifact.receipt),
-        stark_public_inputs: review_stark_inputs(
-            &serialized_stark_inputs_from_witness_for_review(witness)
-                .expect("review vector stark inputs"),
-        ),
-        ciphertext_hashes_hex: witness
-            .ciphertext_hashes
+        tx: review_tx_public(&artifact.tx),
+        stark_public_inputs: review_stark_inputs(&artifact.stark_public_inputs),
+        commitment_rows: artifact
+            .commitment
+            .rows
             .iter()
-            .map(|bytes| hex48(*bytes))
+            .map(|row| row.coeffs.clone())
             .collect(),
-        witness_version_circuit: witness.version.circuit,
-        witness_version_crypto: witness.version.crypto,
-        opening_sk_spend_hex: hex::encode(artifact.opening.sk_spend),
-        opening_inputs: artifact
-            .opening
-            .inputs
-            .iter()
-            .map(review_input_witness)
-            .collect(),
-        opening_outputs: artifact
-            .opening
-            .outputs
-            .iter()
-            .map(review_output_witness)
-            .collect(),
-        packed_witness: review_packed_witness(&artifact.commitment_opening.packed_witness),
     }
 }
 
@@ -732,7 +664,7 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
         review_vector_seed(1),
     )?;
     let valid_leaf = decode_native_tx_leaf_artifact_bytes(&built_leaf.artifact_bytes)?;
-    let valid_leaf_context = build_review_tx_context(&params, &leaf_witness, &valid_leaf);
+    let valid_leaf_context = build_review_tx_context(&params, &valid_leaf);
 
     let mut invalid_leaf_spec = valid_leaf.clone();
     invalid_leaf_spec.spec_digest[0] ^= 0x01;
@@ -742,18 +674,10 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
     invalid_leaf_params.params_fingerprint[0] ^= 0x01;
     let invalid_leaf_params_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_params)?;
 
-    let mut invalid_leaf_seed = valid_leaf.clone();
-    if params.opening_randomness_bits < 256 {
-        invalid_leaf_seed.commitment_opening.randomness_seed[31] ^= 0x80;
-    } else {
-        invalid_leaf_seed.commitment_opening.randomness_seed[31] ^= 0x01;
-    }
-    let invalid_leaf_seed_bytes = encode_native_tx_leaf_artifact_bytes(&invalid_leaf_seed)?;
-    let invalid_leaf_seed_error = if params.opening_randomness_bits < 256 {
-        "randomness seed is not canonical"
-    } else {
-        "mismatch"
-    };
+    let mut invalid_leaf_stark_proof = valid_leaf.clone();
+    invalid_leaf_stark_proof.stark_proof[0] ^= 0x80;
+    let invalid_leaf_stark_proof_bytes =
+        encode_native_tx_leaf_artifact_bytes(&invalid_leaf_stark_proof)?;
 
     let mut invalid_leaf_proof = valid_leaf.clone();
     invalid_leaf_proof.leaf.proof.proof_digest[0] ^= 0x01;
@@ -836,11 +760,11 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
                 None,
             ),
             review_case(
-                "native_tx_leaf_invalid_noncanonical_seed",
+                "native_tx_leaf_invalid_stark_proof",
                 "native_tx_leaf",
                 false,
-                Some(invalid_leaf_seed_error),
-                &invalid_leaf_seed_bytes,
+                Some("canonical receipt mismatch"),
+                &invalid_leaf_stark_proof_bytes,
                 Some(valid_leaf_context),
                 None,
             ),
@@ -850,7 +774,7 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
                 false,
                 Some("proof digest mismatch"),
                 &invalid_leaf_proof_bytes,
-                Some(build_review_tx_context(&params, &leaf_witness, &valid_leaf)),
+                Some(build_review_tx_context(&params, &valid_leaf)),
                 None,
             ),
             review_case(
@@ -859,7 +783,7 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
                 false,
                 Some("trailing bytes"),
                 &invalid_leaf_trailing,
-                Some(build_review_tx_context(&params, &leaf_witness, &valid_leaf)),
+                Some(build_review_tx_context(&params, &valid_leaf)),
                 None,
             ),
             review_case(
@@ -1739,8 +1663,6 @@ mod tests {
         verify_native_tx_leaf_artifact_bytes_with_params,
         verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
     };
-    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-    use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
 
     #[test]
     fn default_cli_relation_is_canonical_native_receipt_root() {
@@ -1887,8 +1809,7 @@ mod tests {
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("native_tx_leaf case missing tx_context"))?;
                 let params = current_native_backend_params();
-                let witness = tx_witness_from_review(ctx)?;
-                let tx = tx_leaf_public_tx_from_witness(&witness)?;
+                let tx = tx_from_review(ctx)?;
                 let receipt = CanonicalTxValidityReceipt {
                     statement_hash: decode_hex_array_for_test::<48>(
                         &ctx.receipt.statement_hash_hex,
@@ -1935,52 +1856,30 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("hex string has {} bytes, expected {}", len, N))
     }
 
-    fn tx_witness_from_review(ctx: &ReviewTxContext) -> Result<TransactionWitness> {
-        Ok(TransactionWitness {
-            inputs: ctx
-                .opening_inputs
+    fn tx_from_review(ctx: &ReviewTxContext) -> Result<superneo_hegemon::TxLeafPublicTx> {
+        Ok(superneo_hegemon::TxLeafPublicTx {
+            nullifiers: ctx
+                .tx
+                .nullifiers_hex
                 .iter()
-                .map(input_note_from_review)
+                .map(|value| decode_hex_array_for_test::<48>(value))
                 .collect::<Result<Vec<_>>>()?,
-            outputs: ctx
-                .opening_outputs
+            commitments: ctx
+                .tx
+                .commitments_hex
                 .iter()
-                .map(output_note_from_review)
+                .map(|value| decode_hex_array_for_test::<48>(value))
                 .collect::<Result<Vec<_>>>()?,
             ciphertext_hashes: ctx
+                .tx
                 .ciphertext_hashes_hex
                 .iter()
                 .map(|value| decode_hex_array_for_test::<48>(value))
                 .collect::<Result<Vec<_>>>()?,
-            sk_spend: decode_hex_array_for_test::<32>(&ctx.opening_sk_spend_hex)?,
-            merkle_root: decode_hex_array_for_test::<48>(&ctx.stark_public_inputs.merkle_root_hex)?,
-            fee: ctx.stark_public_inputs.fee,
-            value_balance: signed_review_value(
-                ctx.stark_public_inputs.value_balance_sign,
-                ctx.stark_public_inputs.value_balance_magnitude,
-            )?,
-            stablecoin: StablecoinPolicyBinding {
-                enabled: ctx.stark_public_inputs.stablecoin_enabled != 0,
-                asset_id: ctx.stark_public_inputs.stablecoin_asset_id,
-                policy_version: ctx.stark_public_inputs.stablecoin_policy_version,
-                issuance_delta: signed_review_value(
-                    ctx.stark_public_inputs.stablecoin_issuance_sign,
-                    ctx.stark_public_inputs.stablecoin_issuance_magnitude,
-                )?,
-                policy_hash: decode_hex_array_for_test::<48>(
-                    &ctx.stark_public_inputs.stablecoin_policy_hash_hex,
-                )?,
-                oracle_commitment: decode_hex_array_for_test::<48>(
-                    &ctx.stark_public_inputs.stablecoin_oracle_commitment_hex,
-                )?,
-                attestation_commitment: decode_hex_array_for_test::<48>(
-                    &ctx.stark_public_inputs
-                        .stablecoin_attestation_commitment_hex,
-                )?,
-            },
+            balance_tag: decode_hex_array_for_test::<48>(&ctx.tx.balance_tag_hex)?,
             version: protocol_versioning::VersionBinding::new(
-                ctx.witness_version_circuit,
-                ctx.witness_version_crypto,
+                ctx.tx.version_circuit,
+                ctx.tx.version_crypto,
             ),
         })
     }
@@ -2013,50 +1912,5 @@ mod tests {
                     .expect("proof digest"),
             })
             .collect())
-    }
-
-    fn input_note_from_review(review: &ReviewInputNoteWitness) -> Result<InputNoteWitness> {
-        let siblings = review
-            .merkle_siblings_hex
-            .iter()
-            .map(|value| {
-                let bytes = decode_hex_array_for_test::<48>(value)?;
-                transaction_circuit::hashing_pq::bytes48_to_felts(&bytes).ok_or_else(|| {
-                    anyhow::anyhow!("native tx-leaf merkle sibling is non-canonical")
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(InputNoteWitness {
-            note: note_from_review(&review.note)?,
-            position: review.position,
-            rho_seed: decode_hex_array_for_test::<32>(&review.rho_seed_hex)?,
-            merkle_path: MerklePath { siblings },
-        })
-    }
-
-    fn output_note_from_review(review: &ReviewOutputNoteWitness) -> Result<OutputNoteWitness> {
-        Ok(OutputNoteWitness {
-            note: note_from_review(&review.note)?,
-        })
-    }
-
-    fn note_from_review(review: &ReviewNoteData) -> Result<NoteData> {
-        Ok(NoteData {
-            value: review.value,
-            asset_id: review.asset_id,
-            pk_recipient: decode_hex_array_for_test::<32>(&review.pk_recipient_hex)?,
-            pk_auth: decode_hex_array_for_test::<32>(&review.pk_auth_hex)?,
-            rho: decode_hex_array_for_test::<32>(&review.rho_hex)?,
-            r: decode_hex_array_for_test::<32>(&review.r_hex)?,
-        })
-    }
-
-    fn signed_review_value(sign: u8, magnitude: u64) -> Result<i128> {
-        ensure!(sign <= 1, "review sign flag must be binary");
-        Ok(if sign == 0 {
-            i128::from(magnitude)
-        } else {
-            -i128::from(magnitude)
-        })
     }
 }

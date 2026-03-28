@@ -9,7 +9,7 @@ This document does not claim the current backend is paper-equivalent to Neo or S
 This specification covers:
 
 - the backend manifest and parameter object in [circuits/superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs)
-- the commitment opening and fold challenge derivation in that backend
+- the deterministic commitment derivation and fold challenge derivation in that backend
 - the native `TxLeaf` and `ReceiptRoot` artifact byte formats in [circuits/superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs)
 - the exact rejection rules that apply at decode and verification time
 
@@ -20,7 +20,7 @@ This specification does not define the full transaction AIR or the full STARK pr
 The active family at the time this document was written is:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "structural_candidate"`
@@ -69,9 +69,10 @@ All counted sequences are encoded as:
 
 The artifact parser must reject any sequence whose count exceeds the configured repository limits, including:
 
-- `MAX_INPUTS` for native input-note openings
-- `MAX_OUTPUTS` for native output-note openings
+- `MAX_INPUTS` for native tx-leaf nullifier and input-flag counts
+- `MAX_OUTPUTS` for native tx-leaf commitment/ciphertext-hash and output-flag counts
 - `BALANCE_SLOTS` for serialized STARK balance-slot arrays
+- `max_claimed_receipt_root_leaves` for receipt-root leaf counts
 
 Canonicality matters. When this document says a field is canonicalized before use, both the builder and verifier must apply the same canonicalization rule, and the verifier must reject an artifact whose stored field is not already canonical.
 
@@ -140,84 +141,30 @@ This specification freezes the wire and transcript surface. The security-analysi
 
 ## Packed Witness Message Space
 
-The backend commits to `PackedWitness<u64>` values produced by the pay-per-bit packer in [circuits/superneo-ring/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-ring/src/lib.rs).
+The backend still commits to `PackedWitness<u64>` values produced by the pay-per-bit packer in [circuits/superneo-ring/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-ring/src/lib.rs), but the packed witness is now an internal verifier reconstruction, not a serialized artifact field.
 
-The packed witness object contains:
+The verifier derives the packed witness from:
 
-- `coeffs: Vec<u64>`
-- `original_len`
-- `used_bits`
-- `coeff_capacity_bits`
-- `value_bit_widths: Vec<u16>`
+- the public `TxLeaf` transaction view,
+- the serialized STARK public inputs,
+- the fixed `TxLeafPublicRelation` witness layout,
+- and the active backend parameters.
 
-The current artifact encoding carries:
+The artifact no longer carries:
 
-- the coefficient vector
-- `coeff_capacity_bits`
-- `value_bit_widths`
+- `sk_spend`
+- note openings
+- Merkle paths
+- packed witness coefficients
+- commitment-opening objects
 
-The verifier reconstructs the expected packed witness from the native transaction opening plus the serialized STARK public inputs. The verifier must reject any artifact whose stored `packed_witness` differs from that reconstructed value.
+The verifier recomputes the expected packed witness from the public artifact fields and rejects if the resulting commitment or leaf proof does not match.
 
-## Opening Randomness Canonicalization
+## Internal Commitment Masking
 
-The native commitment opening stores a 32-byte `randomness_seed`.
+`opening_randomness_bits` remains part of the active parameter set because the bounded-message random-matrix commitment still uses internal mask entropy when the prover builds the commitment. That entropy is no longer serialized in the native artifact surface.
 
-Before the seed is used, it is canonicalized to the configured entropy budget:
-
-- if `opening_randomness_bits >= 256`, use the full 32 bytes unchanged
-- otherwise keep the first `opening_randomness_bits / 8` full bytes
-- if there is a partial byte, keep only its low `opening_randomness_bits % 8` bits
-- zero all higher bits and all remaining bytes
-
-For the active family, `opening_randomness_bits = 256`, so canonicalization means the full 32-byte seed is already canonical.
-
-The verifier must reject an artifact if the stored `randomness_seed` is not already canonical for the configured entropy width.
-
-## Commitment Opening Digest
-
-The commitment opening digest is a 48-byte Blake3-derived digest over:
-
-- domain tag `hegemon.superneo.commitment-opening.v1`
-- `params_fingerprint`
-- `packed.original_len`
-- `packed.used_bits`
-- `packed.coeffs.len()`
-- each packed coefficient as `u64`
-- `packed.value_bit_widths.len()`
-- each width as `u16`
-- `packed.coeff_capacity_bits`
-- canonicalized `randomness_seed`
-
-The opening object stores:
-
-- `params_fingerprint`
-- `packed_witness`
-- `randomness_seed`
-- `opening_digest`
-
-The verifier must reject if:
-
-- the stored `params_fingerprint` differs from the active params
-- the stored `packed_witness` differs from the reconstructed packed witness
-- the stored `randomness_seed` is not canonical
-- the commitment computed from the opening does not match the stored commitment
-
-## Commitment Randomizer Derivation
-
-The commitment randomizer rows are derived independently for each `(row_index, coeff_index)` pair using Blake3 XOF over:
-
-- domain tag `hegemon.superneo.commitment-randomizer.v1`
-- `params_fingerprint`
-- canonicalized `randomness_seed`
-- `row_index` as `u64`
-- `coeff_index` as `u64`
-
-Each sample consumes 16 output bytes, interprets them as a `u128`, and reduces that `u128` into a Goldilocks coefficient with the backend’s current reduction rule.
-
-The deterministic commitment matrix entries are derived independently using Blake3 XOF over:
-
-- domain tag `hegemon.superneo.ajtai-matrix.v1`
-- `params_fingerprint`
+The verifier therefore does **not** accept a public commitment-opening object. Instead it recomputes the deterministic commitment implied by the public witness and rejects any artifact whose commitment rows or digest do not match that reconstruction.
 - `ring_profile.label()`
 - `shape_digest`
 - `security_bits`
@@ -301,24 +248,25 @@ The native tx-leaf artifact is encoded in this exact order:
    - `stablecoin_policy_hash: [u8; 48]`
    - `stablecoin_oracle_commitment: [u8; 48]`
    - `stablecoin_attestation_commitment: [u8; 48]`
-9. native tx-leaf opening:
-   - `sk_spend: [u8; 32]`
-   - `input_count: u32`
-   - encoded input-note witnesses
-   - `output_count: u32`
-   - encoded output-note witnesses
-10. commitment opening:
-   - `params_fingerprint: [u8; 48]`
-   - packed witness
-   - `randomness_seed: [u8; 32]`
-   - `opening_digest: [u8; 48]`
-11. lattice commitment:
+9. public tx view:
+   - `nullifier_count: u32`
+   - each nullifier as `[u8; 48]`
+   - `commitment_count: u32`
+   - each commitment as `[u8; 48]`
+   - `ciphertext_hash_count: u32`
+   - each ciphertext hash as `[u8; 48]`
+   - `balance_tag: [u8; 48]`
+   - `version.circuit: u16`
+   - `version.crypto: u16`
+10. `stark_proof_len: u32`
+11. `stark_proof` bytes
+12. lattice commitment:
    - `digest: [u8; 48]`
    - `row_count: u32`
    - for each row:
      - `coeff_count: u32`
      - each `coeff: u64`
-12. leaf artifact:
+13. leaf artifact:
    - `version: u16`
    - `relation_id: [u8; 32]`
    - `shape_digest: [u8; 32]`
@@ -335,11 +283,11 @@ The verifier must reject the native tx-leaf artifact if any of the following fai
 - shape digest mismatch
 - canonical receipt mismatch
 - receipt verifier-profile mismatch
-- reconstructed witness mismatch
+- public tx mismatch
+- serialized STARK public inputs mismatch
+- STARK proof verification failure
 - reconstructed statement hash or public-input digest mismatch
-- packed witness mismatch
-- noncanonical randomness seed
-- commitment-opening verification failure
+- deterministic commitment mismatch
 - proof digest mismatch
 - trailing bytes
 

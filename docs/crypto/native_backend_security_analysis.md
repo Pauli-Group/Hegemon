@@ -7,14 +7,14 @@ This document describes the current code-derived security claim for Hegemon's ac
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "structural_candidate"`
 
 The exact wire/transcript surface for that family is frozen in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md). The current `spec_digest` is derived from the full parameter regime in code and currently evaluates to:
 
-- `spec_digest = 5c11c4456ae0492ecefca5301e1d76816ec55283d9e4b697818f8d0a4d67dc67`
+- `spec_digest = 08eae1920eaf6e3cc1a8f9a149885221aed8172a5d33ae21a264d239b4b2cf88`
 
 ## Claim Model
 
@@ -36,6 +36,17 @@ For the active family the code currently computes:
 The code rejects setup whenever `claimed_security_bits > soundness_floor_bits`.
 
 The important structural fact is explicit now: the active family no longer relies on `commitment_assumption_bits` to hit the claimed floor. The current `74 x 8` bounded-message linear map yields a positive first-principles random-matrix term of `360` bits under the repo's conservative union bound, so the live `128`-bit floor is geometry-derived on the commitment side.
+
+The live tx-leaf artifact surface is also now witness-free. The public bytes contain:
+
+- the canonical receipt,
+- serialized STARK public inputs,
+- the public tx view,
+- the STARK proof bytes,
+- the derived lattice commitment,
+- and the native leaf proof.
+
+They do **not** contain `sk_spend`, note witnesses, Merkle paths, packed-witness coefficients, or a public commitment-opening object.
 
 The current code also emits this claim directly through:
 
@@ -65,7 +76,7 @@ These mean:
    Soundness for the fold schedule assumes five independently derived transcript challenges over Goldilocks, mixed through the implemented negacyclic linear fold schedule.
 
 4. `opening.canonical_256b_mask_seed`
-   Hiding for the current commitment-opening path assumes the canonicalized 256-bit mask seed contributes at least 128 bits after the conservative halving rule in the code-derived claim model.
+   Hiding for the internal commitment-masking path assumes the canonicalized 256-bit mask seed contributes at least 128 bits after the conservative halving rule in the code-derived claim model.
 
 5. `commitment.bounded_message_random_matrix_union_bound`
    Binding for the current commitment path is claimed under the repository's conservative bounded-message random-matrix union bound for this exact family and parameter set. In code, the active family now sets `commitment_binding_bits = commitment_random_matrix_bits`, and that structural term is currently `360` bits for the implemented `74 x 8` geometry with `max_commitment_message_ring_elems = 513`. So the repo is no longer relying on a separate commitment-assumption override on the active family.
@@ -109,10 +120,11 @@ The current in-tree review package now includes:
 - attack ledger: [native_backend_attack_worksheet.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_attack_worksheet.md)
 - constant-time note plus timing harness: [native_backend_constant_time.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_constant_time.md), `cargo run -p native-backend-timing --release`
 - fixed vectors: [testdata/native_backend_vectors/bundle.json](/Users/pldd/Projects/Reflexivity/Hegemon/testdata/native_backend_vectors/bundle.json)
-- independent verifier: [tools/native-backend-ref](/Users/pldd/Projects/Reflexivity/Hegemon/tools/native-backend-ref) using its own parsers, transcript builder, challenge derivation, commitment-opening check, and fold checks without calling the production verification helpers
+- independent verifier: [tools/native-backend-ref](/Users/pldd/Projects/Reflexivity/Hegemon/tools/native-backend-ref) using its own parsers, tx/public-input reconstruction, STARK-proof check, commitment reconstruction, and fold checks without calling the production verification helpers
 - external-review tarball: [native-backend-128b-review-package.tar.gz](/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b/native-backend-128b-review-package.tar.gz)
 - review-package checksum file: [package.sha256](/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b/package.sha256)
 - packaged code fingerprint: `code_fingerprint.json`, which now records `HEAD`, tracked/staged diff hashes, untracked file hashes, and a composite `worktree_fingerprint`
+- packaged source snapshot: `source/`, which now carries the exact review-relevant source tree staged into the tarball
 
 The fixed vector bundle currently contains `11` cases: 2 valid acceptance cases and 9 explicit rejection cases. The reference verifier and production verifier agree on the full set.
 

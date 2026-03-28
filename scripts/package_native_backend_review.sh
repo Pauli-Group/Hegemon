@@ -17,7 +17,8 @@ mkdir -p \
   "$STAGE/docs/crypto" \
   "$STAGE/testdata/native_backend_vectors" \
   "$STAGE/audits/native-backend-128b" \
-  "$STAGE/benchmarks"
+  "$STAGE/benchmarks" \
+  "$STAGE/source"
 
 cp "$ROOT/docs/crypto/native_backend_spec.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_security_analysis.md" "$STAGE/docs/crypto/"
@@ -31,6 +32,51 @@ cp "$ROOT/audits/native-backend-128b/REPORT_TEMPLATE.md" "$STAGE/audits/native-b
 cp "$ROOT/audits/native-backend-128b/KNOWN_GAPS.md" "$STAGE/audits/native-backend-128b/"
 cp "$ROOT/audits/native-backend-128b/BREAKIT_RULES.md" "$STAGE/audits/native-backend-128b/"
 cp "$BENCHMARK_JSON" "$STAGE/benchmarks/native_tx_leaf_receipt_root_release.json"
+
+python3 - <<'PY' "$ROOT" "$STAGE/source"
+from __future__ import annotations
+
+from pathlib import Path
+import shutil
+import sys
+
+root = Path(sys.argv[1])
+out = Path(sys.argv[2])
+
+paths = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "circuits/superneo-backend-lattice/Cargo.toml",
+    "circuits/superneo-backend-lattice/src",
+    "circuits/superneo-ccs/Cargo.toml",
+    "circuits/superneo-ccs/src",
+    "circuits/superneo-core/Cargo.toml",
+    "circuits/superneo-core/src",
+    "circuits/superneo-hegemon/Cargo.toml",
+    "circuits/superneo-hegemon/src",
+    "circuits/superneo-ring/Cargo.toml",
+    "circuits/superneo-ring/src",
+    "circuits/transaction/Cargo.toml",
+    "circuits/transaction/src",
+    "circuits/transaction-core/Cargo.toml",
+    "circuits/transaction-core/src",
+    "protocol/versioning/Cargo.toml",
+    "protocol/versioning/src",
+    "tools/native-backend-ref/Cargo.toml",
+    "tools/native-backend-ref/src",
+    "scripts/package_native_backend_review.sh",
+    "scripts/verify_native_backend_review_package.sh",
+]
+
+for rel in paths:
+    src = root / rel
+    dst = out / rel
+    if src.is_dir():
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+    else:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+PY
 
 python3 - <<'PY' "$ROOT" "$STAGE/code_fingerprint.json"
 from __future__ import annotations

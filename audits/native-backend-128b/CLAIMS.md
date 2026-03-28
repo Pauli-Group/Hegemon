@@ -3,7 +3,7 @@
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4"`
 
 Current code-derived claim:
 
@@ -22,6 +22,7 @@ Interpretation:
 
 - The live `128`-bit floor on the active family now derives commitment binding from the bounded-message random-matrix geometry itself.
 - The current `74 x 8` geometry yields a structural commitment term of `360` bits under the repo's conservative union bound.
+- The live tx-leaf artifact surface is public-only: it no longer ships `sk_spend`, note witnesses, or commitment-opening bytes.
 
 Exact assumption ids:
 
@@ -45,3 +46,7 @@ Current packaged review checksum file:
 Current packaged code fingerprint file:
 
 - `code_fingerprint.json`
+
+Current packaged source snapshot:
+
+- `source/`

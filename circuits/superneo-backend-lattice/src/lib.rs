@@ -45,7 +45,7 @@ impl BackendManifest {
         Self {
             family_label: "goldilocks_128b_structural_commitment",
             spec_label:
-                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3",
+                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4",
             commitment_scheme_label: "bounded_message_random_matrix_commitment",
             challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
             maturity_label: "structural_candidate",
