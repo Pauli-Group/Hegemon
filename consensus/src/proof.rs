@@ -1182,6 +1182,13 @@ fn verify_tx_validity_artifacts(
         .collect()
 }
 
+pub fn tx_statement_bindings_from_tx_artifacts(
+    transactions: &[crate::types::Transaction],
+    artifacts: &[TxValidityArtifact],
+) -> Result<Vec<TxStatementBinding>, ProofError> {
+    verify_tx_validity_artifacts(&VerifierRegistry::default(), transactions, artifacts)
+}
+
 pub trait ProofVerifier: Send + Sync {
     fn verify_block<BH>(
         &self,
@@ -1292,97 +1299,42 @@ impl ProofVerifier for ParallelProofVerifier {
                 observed: artifacts.len(),
             });
         }
-        if matches!(verification_mode, ProofVerificationMode::InlineRequired)
-            && tx_validity_artifacts.is_none()
-        {
+        if tx_validity_artifacts.is_none() {
             return Err(ProofError::MissingTransactionProofs);
         }
-
-        if block.proven_batch.is_none() {
-            if matches!(
-                verification_mode,
-                ProofVerificationMode::SelfContainedAggregation
-            ) {
-                return Err(ProofError::MissingProvenBatchForSelfContained);
-            }
-
-            let tx_artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-            let start_tx = Instant::now();
-            let bindings = verify_tx_validity_artifacts(
-                &self.verifier_registry,
-                &block.transactions,
-                tx_artifacts,
-            )?;
-            let tx_verify_ms = start_tx.elapsed().as_millis();
-
-            let expected_tree = apply_commitments(parent_commitment_tree, &block.transactions)?;
-            let anchors: Vec<[u8; 48]> = bindings.iter().map(|binding| binding.anchor).collect();
-            let result = verify_and_apply_tree_transition(
-                parent_commitment_tree,
-                parent_commitment_tree.root(),
-                expected_tree.root(),
-                &block.transactions,
-                &anchors,
-            )?;
-
-            tracing::info!(
-                target: "consensus::metrics",
-                tx_count,
-                tx_proof_bytes_total,
-                commitment_proof_bytes,
-                aggregation_proof_bytes,
-                aggregation_proof_uncompressed_bytes,
-                ciphertext_bytes_total,
-                commitment_verify_ms = 0u128,
-                aggregation_verify_ms = 0u128,
-                aggregation_verify_batch_ms = 0u128,
-                aggregation_cache_hit = false,
-                aggregation_cache_build_ms = 0u128,
-                aggregation_cache_prewarm_hit = false,
-                aggregation_cache_prewarm_build_ms = 0u128,
-                aggregation_cache_prewarm_total_ms = 0u128,
-                tx_verify_ms,
-                total_verify_ms = start_total.elapsed().as_millis(),
-                aggregation_verified = false,
-                "block_proof_verification_metrics"
-            );
-            return Ok(result);
+        if !matches!(
+            verification_mode,
+            ProofVerificationMode::SelfContainedAggregation
+        ) {
+            return Err(ProofError::UnsupportedProofArtifact(
+                "legacy InlineRequired block verification is no longer supported on the product path"
+                    .to_string(),
+            ));
         }
 
         let proven_batch = block
             .proven_batch
             .as_ref()
-            .ok_or(ProofError::MissingCommitmentProof)?;
+            .ok_or(ProofError::MissingProvenBatchForSelfContained)?;
         let commitment_proof = &proven_batch.commitment_proof;
 
         let start_commitment = Instant::now();
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
         let commitment_verify_ms = start_commitment.elapsed().as_millis();
 
-        let mut verified_tx_bindings: Option<Vec<TxStatementBinding>> = None;
-        let resolved_statement_bindings = if let Some(bindings) =
-            block.tx_statement_bindings.clone()
-        {
-            if bindings.len() != block.transactions.len() {
-                return Err(ProofError::CommitmentProofInputsMismatch(format!(
-                    "transaction statement binding count mismatch (expected {}, got {})",
-                    block.transactions.len(),
-                    bindings.len()
-                )));
-            }
-            Some(bindings)
-        } else if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
-            let artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-            let bindings = verify_tx_validity_artifacts(
-                &self.verifier_registry,
-                &block.transactions,
-                artifacts,
-            )?;
-            verified_tx_bindings = Some(bindings.clone());
-            Some(bindings)
-        } else {
-            None
-        };
+        let resolved_statement_bindings =
+            if let Some(bindings) = block.tx_statement_bindings.clone() {
+                if bindings.len() != block.transactions.len() {
+                    return Err(ProofError::CommitmentProofInputsMismatch(format!(
+                        "transaction statement binding count mismatch (expected {}, got {})",
+                        block.transactions.len(),
+                        bindings.len()
+                    )));
+                }
+                Some(bindings)
+            } else {
+                None
+            };
 
         if matches!(
             verification_mode,
@@ -1421,7 +1373,7 @@ impl ProofVerifier for ParallelProofVerifier {
             ));
         }
 
-        let mut tx_verify_ms = 0u128;
+        let tx_verify_ms = 0u128;
         let aggregation_cache_hit = false;
         let aggregation_cache_build_ms = 0u128;
         let aggregation_cache_prewarm_hit = false;
@@ -1446,7 +1398,12 @@ impl ProofVerifier for ParallelProofVerifier {
 
         let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
             match proven_batch.mode {
-                ProvenBatchMode::InlineTx => (false, 0u128, 0u128),
+                ProvenBatchMode::InlineTx => {
+                    return Err(ProofError::UnsupportedProofArtifact(
+                        "legacy InlineTx proven batches are no longer supported on the product path"
+                            .to_string(),
+                    ));
+                }
                 ProvenBatchMode::ReceiptRoot => {
                     let receipt_root = proven_batch.receipt_root.as_ref().ok_or_else(|| {
                         ProofError::ProvenBatchBindingMismatch(
@@ -1466,11 +1423,9 @@ impl ProofVerifier for ParallelProofVerifier {
                             tx_count
                         )));
                     }
-                    let artifacts = if let Some(artifacts) = tx_validity_artifacts {
-                        artifacts.as_slice()
-                    } else {
-                        return Err(ProofError::MissingTransactionProofs);
-                    };
+                    let artifacts = tx_validity_artifacts
+                        .ok_or(ProofError::MissingTransactionProofs)?
+                        .as_slice();
                     let artifact_receipts = artifacts
                         .iter()
                         .map(|artifact| artifact.receipt.clone())
@@ -1496,50 +1451,15 @@ impl ProofVerifier for ParallelProofVerifier {
                 }
             };
 
-        if !aggregation_verified {
-            match verification_mode {
-                ProofVerificationMode::InlineRequired => {
-                    if verified_tx_bindings.is_none() {
-                        let artifacts =
-                            tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-                        let start_tx = Instant::now();
-                        verified_tx_bindings = Some(verify_tx_validity_artifacts(
-                            &self.verifier_registry,
-                            &block.transactions,
-                            artifacts,
-                        )?);
-                        tx_verify_ms = start_tx.elapsed().as_millis();
-                    }
-                }
-                ProofVerificationMode::SelfContainedAggregation => {
-                    return Err(ProofError::MissingAggregationProofForSelfContainedMode);
-                }
-            }
-        }
-
         let proof_starting_root =
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
         let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
-        let result = if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
-            let bindings = verified_tx_bindings
-                .as_ref()
-                .ok_or(ProofError::MissingTransactionProofs)?;
-            let anchors: Vec<[u8; 48]> = bindings.iter().map(|binding| binding.anchor).collect();
-            verify_and_apply_tree_transition(
-                parent_commitment_tree,
-                proof_starting_root,
-                proof_ending_root,
-                &block.transactions,
-                &anchors,
-            )?
-        } else {
-            verify_and_apply_tree_transition_without_anchors(
-                parent_commitment_tree,
-                proof_starting_root,
-                proof_ending_root,
-                &block.transactions,
-            )?
-        };
+        let result = verify_and_apply_tree_transition_without_anchors(
+            parent_commitment_tree,
+            proof_starting_root,
+            proof_ending_root,
+            &block.transactions,
+        )?;
 
         tracing::info!(
             target: "consensus::metrics",

@@ -48,11 +48,11 @@ pub use proof::{
     experimental_native_receipt_root_verifier_profile,
     experimental_native_tx_leaf_verifier_profile, experimental_receipt_root_verifier_profile,
     experimental_tx_leaf_verifier_profile, prewarm_verified_native_tx_leaf_store,
-    receipt_statement_commitment, tx_validity_artifact_from_native_tx_leaf_bytes,
-    tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt,
-    tx_validity_artifact_from_tx_leaf_proof, tx_validity_receipt_from_proof,
-    verify_commitment_proof_payload, verify_experimental_native_receipt_root_artifact,
-    verify_experimental_receipt_root_artifact,
+    receipt_statement_commitment, tx_statement_bindings_from_tx_artifacts,
+    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof,
+    tx_validity_artifact_from_receipt, tx_validity_artifact_from_tx_leaf_proof,
+    tx_validity_receipt_from_proof, verify_commitment_proof_payload,
+    verify_experimental_native_receipt_root_artifact, verify_experimental_receipt_root_artifact,
     verify_experimental_receipt_root_artifact_from_proofs,
 };
 pub use protocol_versioning::{

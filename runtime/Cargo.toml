@@ -69,6 +69,7 @@ sp-io = { workspace = true, features = ["std"] }
 pallet-coinbase = { path = "../pallets/coinbase", features = ["std"] }
 rand = "0.8"
 tempfile = "3"
+superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 transaction-circuit = { path = "../circuits/transaction" }
 wallet = { path = "../wallet" }
 

@@ -1182,21 +1182,16 @@ impl ProverCoordinator {
     fn prepared_proof_mode_from_env() -> pallet_shielded_pool::types::BlockProofMode {
         let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
         if raw.is_empty()
-            || raw.eq_ignore_ascii_case("inline_tx")
-            || raw.eq_ignore_ascii_case("inline")
-            || raw.eq_ignore_ascii_case("raw")
-            || raw.eq_ignore_ascii_case("raw_active")
+            || raw.eq_ignore_ascii_case("receipt_root")
+            || raw.eq_ignore_ascii_case("receipt-root")
         {
-            return pallet_shielded_pool::types::BlockProofMode::InlineTx;
-        }
-        if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
             return pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
         }
         tracing::warn!(
             mode = raw,
-            "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
+            "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing receipt_root on the product path"
         );
-        pallet_shielded_pool::types::BlockProofMode::InlineTx
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
     }
 
     fn proof_mode_requires_prepared_bundles(

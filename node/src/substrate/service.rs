@@ -2004,6 +2004,44 @@ fn statement_bindings_from_extrinsics(
     Ok(bindings)
 }
 
+fn statement_bindings_for_candidate_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+    resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
+    pending_proofs: Option<&PendingProofStore>,
+    allow_missing_sidecar_proofs: bool,
+) -> Result<Vec<consensus::types::TxStatementBinding>, String> {
+    let extracted = extract_shielded_transfers_for_parallel_verification(
+        extrinsics,
+        resolved_ciphertexts,
+        pending_proofs,
+        allow_missing_sidecar_proofs,
+    );
+
+    match extracted {
+        Ok((transactions, _proofs, tx_validity_artifacts, _binding_hashes)) => {
+            let tx_validity_artifacts = tx_validity_artifacts
+                .into_iter()
+                .collect::<Option<Vec<_>>>();
+            if let Some(tx_artifacts) = tx_validity_artifacts.as_ref() {
+                return consensus::tx_statement_bindings_from_tx_artifacts(
+                    &transactions,
+                    tx_artifacts,
+                )
+                .map_err(|err| format!("tx statement bindings from tx artifacts failed: {err}"));
+            }
+            statement_bindings_from_extrinsics(extrinsics)
+        }
+        Err(error) if allow_missing_sidecar_proofs => {
+            tracing::debug!(
+                error = %error,
+                "falling back to extrinsic-materialized statement bindings for preview candidate"
+            );
+            statement_bindings_from_extrinsics(extrinsics)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn missing_proof_binding_hashes(extrinsics: &[runtime::UncheckedExtrinsic]) -> Vec<[u8; 64]> {
     let mut out = Vec::new();
     for extrinsic in extrinsics {
@@ -2325,7 +2363,15 @@ fn build_candidate_context(
             proof_binding_hashes.len()
         ));
     }
-    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    let tx_validity_artifacts = extracted_tx_artifacts
+        .into_iter()
+        .collect::<Option<Vec<_>>>();
+    let statement_bindings = if let Some(ref tx_artifacts) = tx_validity_artifacts {
+        consensus::tx_statement_bindings_from_tx_artifacts(&transactions, tx_artifacts)
+            .map_err(|err| format!("tx statement bindings from tx artifacts failed: {err}"))?
+    } else {
+        statement_bindings_from_extrinsics(&decoded)?
+    };
     if statement_bindings.len() != transactions.len() {
         return Err(format!(
             "tx statement binding count mismatch (expected {}, got {})",
@@ -2340,9 +2386,6 @@ fn build_candidate_context(
     let tx_statements_commitment =
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
-    let tx_validity_artifacts = extracted_tx_artifacts
-        .into_iter()
-        .collect::<Option<Vec<_>>>();
     let missing_proof_bindings = missing_proof_binding_hashes(&decoded).len();
 
     Ok(CandidateBlockContext {
@@ -2465,21 +2508,16 @@ impl PreparedArtifactSelector {
 fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
     if raw.is_empty()
-        || raw.eq_ignore_ascii_case("inline_tx")
-        || raw.eq_ignore_ascii_case("inline")
-        || raw.eq_ignore_ascii_case("raw")
-        || raw.eq_ignore_ascii_case("raw_active")
+        || raw.eq_ignore_ascii_case("receipt_root")
+        || raw.eq_ignore_ascii_case("receipt-root")
     {
-        return PreparedArtifactSelector::inline_tx();
-    }
-    if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
         return PreparedArtifactSelector::receipt_root();
     }
     tracing::warn!(
         mode = raw,
-        "unknown HEGEMON_BLOCK_PROOF_MODE; falling back to inline_tx"
+        "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing receipt_root on the product path"
     );
-    PreparedArtifactSelector::inline_tx()
+    PreparedArtifactSelector::receipt_root()
 }
 
 fn truthy_env_var(name: &str) -> bool {
@@ -2570,20 +2608,57 @@ fn is_canonical_native_receipt_root_payload(
         && payload.receipt_root.is_some()
 }
 
+fn ensure_product_receipt_root_payload(
+    payload: &pallet_shielded_pool::types::BlockProofBundle,
+) -> Result<(), String> {
+    if !is_canonical_native_receipt_root_payload(payload) {
+        return Err(format!(
+            "non-empty shielded blocks require canonical native receipt_root artifacts; got proof_mode {:?}, proof_kind {:?}, verifier_profile {}",
+            payload.proof_mode,
+            payload.proof_kind,
+            hex::encode(payload.verifier_profile),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_product_receipt_root_outcome(outcome: &PreparedAggregationOutcome) -> Result<(), String> {
+    let report = outcome.native_selection_report.as_ref().ok_or_else(|| {
+        "product receipt_root authoring requires a native selection report".to_string()
+    })?;
+    if !report.used_native_lane {
+        return Err(format!(
+            "product receipt_root authoring forbids InlineTx fallback: {} ({})",
+            report.fallback_reason_label(),
+            report.fallback_detail(),
+        ));
+    }
+    if !matches!(
+        outcome.artifacts,
+        PreparedAggregationArtifacts::ReceiptRoot(_)
+    ) {
+        return Err(
+            "product receipt_root authoring expected a receipt_root aggregation artifact"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn ensure_native_only_receipt_root_payload(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> Result<(), String> {
     if !native_only_receipt_root_required_from_env() {
         return Ok(());
     }
-    if !is_canonical_native_receipt_root_payload(payload) {
-        return Err(format!(
+    ensure_product_receipt_root_payload(payload).map_err(|_| {
+        format!(
             "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; canonical native receipt_root is required",
             payload.proof_mode,
             payload.proof_kind,
             hex::encode(payload.verifier_profile),
-        ));
-    }
+        )
+    })?;
     Ok(())
 }
 
@@ -2795,28 +2870,19 @@ where
         &[consensus::TxValidityArtifact],
     ) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String>,
 {
-    let tx_artifacts = match require_native_tx_leaf_artifacts(tx_artifacts) {
-        Ok(tx_artifacts) => tx_artifacts,
-        Err(report) => {
-            return Ok(PreparedAggregationOutcome::native(
-                PreparedAggregationArtifacts::InlineTx,
-                report,
-            ));
-        }
-    };
-    match build_receipt_root(tx_artifacts) {
-        Ok(payload) => Ok(PreparedAggregationOutcome::native(
-            PreparedAggregationArtifacts::ReceiptRoot(payload),
-            NativeArtifactSelectionReport::native_lane_selected(),
-        )),
-        Err(error) => Ok(PreparedAggregationOutcome::native(
-            PreparedAggregationArtifacts::InlineTx,
-            NativeArtifactSelectionReport::fallback(
-                NativeArtifactFallbackReason::ArtifactValidationFailed,
-                error,
-            ),
-        )),
-    }
+    let tx_artifacts = require_native_tx_leaf_artifacts(tx_artifacts).map_err(|report| {
+        format!(
+            "native receipt_root requires canonical native tx_leaf artifacts: {} ({})",
+            report.fallback_reason_label(),
+            report.fallback_detail(),
+        )
+    })?;
+    let payload = build_receipt_root(tx_artifacts)
+        .map_err(|error| format!("native receipt_root artifact build failed: {error}"))?;
+    Ok(PreparedAggregationOutcome::native(
+        PreparedAggregationArtifacts::ReceiptRoot(payload),
+        NativeArtifactSelectionReport::native_lane_selected(),
+    ))
 }
 
 fn should_store_prove_ahead_aggregation_outcome(
@@ -3262,6 +3328,7 @@ fn prepare_block_proof_bundle(
     let commitment_proof = commitment_result?
         .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
     let aggregation_outcome = aggregation_result?;
+    ensure_product_receipt_root_outcome(&aggregation_outcome)?;
     ensure_native_only_receipt_root_outcome(&aggregation_outcome)?;
     let native_selection_report = aggregation_outcome.native_selection_report.clone();
 
@@ -3274,19 +3341,18 @@ fn prepare_block_proof_bundle(
         commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
             commitment_proof.proof_bytes.clone(),
         ),
-        proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
-        proof_kind: pallet_shielded_pool::types::ProofArtifactKind::InlineTx,
-        verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
-            pallet_shielded_pool::types::BlockProofMode::InlineTx,
-        )
-        .1,
+        proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
+        verifier_profile: consensus::experimental_native_receipt_root_verifier_profile(),
         receipt_root: None,
         artifact_claim: None,
     };
     match aggregation_outcome.artifacts {
         PreparedAggregationArtifacts::InlineTx => {
-            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::InlineTx;
-            payload.receipt_root = None;
+            return Err(
+                "product authoring requires receipt_root aggregation artifacts; received InlineTx"
+                    .to_string(),
+            );
         }
         PreparedAggregationArtifacts::ReceiptRoot(receipt_root) => {
             payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
@@ -3294,6 +3360,7 @@ fn prepare_block_proof_bundle(
         }
     }
     sync_payload_artifact_identity(&mut payload);
+    ensure_product_receipt_root_payload(&payload)?;
     ensure_native_only_receipt_root_payload(&payload)?;
 
     tracing::info!(
@@ -3921,14 +3988,6 @@ fn verify_proof_carrying_block(
             pending_proofs,
             true,
         )?;
-    let tx_statement_bindings = statement_bindings_from_extrinsics(extrinsics)?;
-    if tx_statement_bindings.len() != transactions.len() {
-        return Err(format!(
-            "tx statement binding count mismatch (expected {}, got {})",
-            transactions.len(),
-            tx_statement_bindings.len()
-        ));
-    }
     let missing_proof_bindings = missing_proof_binding_hashes(extrinsics);
     let proof_policy = fetch_proof_availability_policy(client, parent_hash)?;
     let aggregation_mode_enabled = extrinsics.iter().any(|extrinsic| {
@@ -3937,12 +3996,6 @@ fn verify_proof_carrying_block(
             Some((_, ShieldedFamilyAction::EnableAggregationMode))
         )
     });
-    let self_contained_requested = aggregation_mode_enabled
-        && matches!(
-            proof_policy,
-            pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
-        )
-        && proven_batch_payload.is_some();
 
     if transactions.is_empty() {
         if proven_batch_payload.is_some() {
@@ -3951,24 +4004,19 @@ fn verify_proof_carrying_block(
         return Ok(None);
     }
 
-    if !missing_proof_bindings.is_empty() {
-        if !aggregation_mode_enabled {
-            return Err("missing proof bytes are invalid outside aggregation mode".to_string());
-        }
-        if !matches!(
-            proof_policy,
-            pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
-        ) {
-            return Err(
-                "missing proof bytes require ProofAvailabilityPolicy::SelfContained with aggregation mode"
-                    .to_string(),
-            );
-        }
-        if proven_batch_payload.is_none() {
-            return Err(
-                "missing proof bytes require submit_proven_batch in the same block".to_string(),
-            );
-        }
+    if !aggregation_mode_enabled {
+        return Err(
+            "non-empty shielded blocks require enable_aggregation_mode on the product path"
+                .to_string(),
+        );
+    }
+    if !matches!(
+        proof_policy,
+        pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+    ) {
+        return Err(
+            "non-empty shielded blocks require ProofAvailabilityPolicy::SelfContained".to_string(),
+        );
     }
 
     let fee_params = client
@@ -3983,256 +4031,141 @@ fn verify_proof_carrying_block(
     let extracted_tx_artifacts = extracted_tx_artifacts
         .into_iter()
         .collect::<Option<Vec<_>>>();
-    let inline_tx_artifacts = if tx_proofs.len() == transactions.len() {
-        Some(tx_validity_artifacts_from_transaction_proofs(&tx_proofs)?)
+    let tx_statement_bindings = if let Some(ref tx_artifacts) = extracted_tx_artifacts {
+        consensus::tx_statement_bindings_from_tx_artifacts(&transactions, tx_artifacts)
+            .map_err(|err| format!("tx statement bindings from tx artifacts failed: {err}"))?
     } else {
-        extracted_tx_artifacts.clone()
+        statement_bindings_from_extrinsics(extrinsics)?
     };
+    if tx_statement_bindings.len() != transactions.len() {
+        return Err(format!(
+            "tx statement binding count mismatch (expected {}, got {})",
+            transactions.len(),
+            tx_statement_bindings.len()
+        ));
+    }
     let extrinsics_bytes_total: usize = extrinsics.iter().map(|ext| ext.encode().len()).sum();
     let da_blob_bytes_estimate = da_layout_from_extrinsics(extrinsics)
         .map(|layouts| da_blob_len_from_layouts(&layouts))
         .unwrap_or(0);
     let parent_tree = load_parent_commitment_tree_state(client, parent_hash)?;
+    let proven_batch_payload = proven_batch_payload.ok_or_else(|| {
+        "non-empty shielded blocks require submit_candidate_artifact in the same block".to_string()
+    })?;
 
-    if let Some(proven_batch_payload) = proven_batch_payload {
-        let payload = proven_batch_payload.payload;
-        if payload.version != pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA {
-            return Err(format!(
-                "unsupported proven batch version {}",
-                payload.version
-            ));
+    let payload = proven_batch_payload.payload;
+    if payload.version != pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA {
+        return Err(format!(
+            "unsupported proven batch version {}",
+            payload.version
+        ));
+    }
+    if payload.tx_count != transactions.len() as u32 {
+        return Err("proven batch tx_count mismatch".to_string());
+    }
+    ensure_product_receipt_root_payload(&payload)?;
+    ensure_native_only_receipt_root_payload(&payload)?;
+    receipt_root_lane_requires_embedded_proof_bytes(
+        payload.proof_kind,
+        missing_proof_bindings.len(),
+    )?;
+    if let Some(claim) = payload.artifact_claim.as_ref() {
+        if !verify_prover_claim_signature(claim, &payload) {
+            return Err("invalid prover claim signature".to_string());
         }
-        if payload.tx_count != transactions.len() as u32 {
-            return Err("proven batch tx_count mismatch".to_string());
-        }
-        ensure_native_only_receipt_root_payload(&payload)?;
-        if payload.proof_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
-            receipt_root_lane_requires_embedded_proof_bytes(
-                payload.proof_kind,
-                missing_proof_bindings.len(),
-            )?;
-        }
-        if let Some(claim) = payload.artifact_claim.as_ref() {
-            if !verify_prover_claim_signature(claim, &payload) {
-                return Err("invalid prover claim signature".to_string());
+    }
+
+    match payload.artifact_claim.as_ref() {
+        Some(claim) => {
+            let reward_bundle = reward_bundle
+                .ok_or_else(|| "missing mint_coinbase extrinsic for prover claim".to_string())?;
+            let prover_note = reward_bundle
+                .prover_note
+                .as_ref()
+                .ok_or_else(|| "missing prover reward note for prover claim".to_string())?;
+            if claim.prover_amount != expected_prover_fees {
+                return Err("prover claim amount does not match prover fee bucket".to_string());
+            }
+            if prover_note.amount != claim.prover_amount {
+                return Err("prover reward amount does not match prover claim".to_string());
+            }
+            if prover_note.recipient_address != claim.prover_recipient_address {
+                return Err("prover reward recipient does not match prover claim".to_string());
             }
         }
-
-        match payload.artifact_claim.as_ref() {
-            Some(claim) => {
-                let reward_bundle = reward_bundle.ok_or_else(|| {
-                    "missing mint_coinbase extrinsic for prover claim".to_string()
-                })?;
-                let prover_note = reward_bundle
-                    .prover_note
-                    .as_ref()
-                    .ok_or_else(|| "missing prover reward note for prover claim".to_string())?;
-                if claim.prover_amount != expected_prover_fees {
-                    return Err("prover claim amount does not match prover fee bucket".to_string());
-                }
-                if prover_note.amount != claim.prover_amount {
-                    return Err("prover reward amount does not match prover claim".to_string());
-                }
-                if prover_note.recipient_address != claim.prover_recipient_address {
-                    return Err("prover reward recipient does not match prover claim".to_string());
-                }
-            }
-            None => {
-                if reward_bundle
-                    .as_ref()
-                    .and_then(|bundle| bundle.prover_note.as_ref())
-                    .is_some()
-                {
-                    return Err("prover reward note present without prover claim".to_string());
-                }
-            }
-        }
-        let aggregation_payload_bytes = block_proof_payload_aggregation_bytes(&payload);
-        let verification_mode = if self_contained_requested
-            && !matches!(
-                payload.proof_mode,
-                pallet_shielded_pool::types::BlockProofMode::InlineTx
-            ) {
-            consensus::types::ProofVerificationMode::SelfContainedAggregation
-        } else {
-            consensus::types::ProofVerificationMode::InlineRequired
-        };
-        if matches!(
-            verification_mode,
-            consensus::types::ProofVerificationMode::SelfContainedAggregation
-        ) && aggregation_payload_bytes == 0
-        {
-            return Err(
-                "self-contained aggregation block is missing aggregation proof".to_string(),
-            );
-        }
-
-        let requires_full_fetch = matches!(
-            da_policy,
-            pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch
-        );
-        if requires_full_fetch {
-            if transactions
-                .iter()
-                .any(|tx| tx.ciphertexts.is_empty() && !tx.ciphertext_hashes.is_empty())
+        None => {
+            if reward_bundle
+                .as_ref()
+                .and_then(|bundle| bundle.prover_note.as_ref())
+                .is_some()
             {
-                return Err("full DA policy requires resolved ciphertext bytes".to_string());
+                return Err("prover reward note present without prover claim".to_string());
             }
-            let expected_encoding = consensus::encode_da_blob(&transactions, da_params)
-                .map_err(|err| format!("commitment proof da_root encoding failed: {err}"))?;
-            let expected_da_root = expected_encoding.root();
-            let expected_chunk_count = expected_encoding.chunks().len() as u32;
-            if expected_da_root != payload.da_root {
-                return Err("commitment proof da_root mismatch".to_string());
-            }
-            if expected_chunk_count != payload.da_chunk_count {
-                return Err("commitment proof da_chunk_count mismatch".to_string());
-            }
-        } else if payload.da_chunk_count == 0 {
-            return Err("commitment proof da_chunk_count missing".to_string());
         }
+    }
+    let aggregation_payload_bytes = block_proof_payload_aggregation_bytes(&payload);
+    let verification_mode = consensus::types::ProofVerificationMode::SelfContainedAggregation;
+    if aggregation_payload_bytes == 0 {
+        return Err("self-contained aggregation block is missing aggregation proof".to_string());
+    }
 
-        let statement_hashes = tx_statement_bindings
+    let requires_full_fetch = matches!(
+        da_policy,
+        pallet_shielded_pool::types::DaAvailabilityPolicy::FullFetch
+    );
+    if requires_full_fetch {
+        if transactions
             .iter()
-            .map(|binding| binding.statement_hash)
-            .collect::<Vec<_>>();
-        let tx_statements_commitment =
-            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-                .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
-        if payload.tx_statements_commitment != tx_statements_commitment {
-            return Err("proven batch tx_statements_commitment mismatch".to_string());
-        }
-        let commitment_proof = derive_commitment_block_proof_from_bytes(
-            payload.commitment_proof.data.clone(),
-            &transactions,
-            &statement_hashes,
-            &parent_tree,
-            da_params,
-            Some(payload.da_root),
-        )?;
-        if matches!(
-            payload.proof_mode,
-            pallet_shielded_pool::types::BlockProofMode::InlineTx
-        ) && inline_tx_artifacts.is_none()
+            .any(|tx| tx.ciphertexts.is_empty() && !tx.ciphertext_hashes.is_empty())
         {
-            return Err(
-                "inline_tx candidate artifact requires inline transaction proof bytes".to_string(),
-            );
+            return Err("full DA policy requires resolved ciphertext bytes".to_string());
         }
-        let tx_validity_artifacts = match payload.proof_mode {
-            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-                extracted_tx_artifacts.clone()
-            }
-            pallet_shielded_pool::types::BlockProofMode::InlineTx => inline_tx_artifacts.clone(),
-        };
-        let block_artifact = payload.receipt_root.as_ref().map(|receipt_root| {
-            consensus::ProofEnvelope {
-                kind: crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
-                    payload.proof_kind,
-                ),
-                verifier_profile: payload.verifier_profile,
-                artifact_bytes: receipt_root.root_proof.data.clone(),
-            }
-        });
-
-        let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
-        tracing::info!(
-            target: "node::metrics",
-            block_number,
-            tx_count = transactions.len(),
-            extrinsics_bytes_total,
-            da_blob_bytes_estimate,
-            tx_proof_bytes_total,
-            proven_batch_present = true,
-            proven_batch_bytes,
-            proven_batch_build_ms = 0u128,
-            proven_batch_stale_count = 0u64,
-            commitment_proof_bytes = payload.commitment_proof.data.len(),
-            aggregation_proof_bytes = aggregation_payload_bytes,
-            da_chunk_count = payload.da_chunk_count,
-            da_root = %hex::encode(payload.da_root),
-            da_policy = ?da_policy,
-            proof_policy = ?proof_policy,
-            aggregation_mode_enabled,
-            verification_mode = ?verification_mode,
-            "block_payload_size_metrics"
-        );
-
-        let block = consensus::types::Block {
-            header: SubstrateProofHeader { da_params },
-            transactions,
-            coinbase: None,
-            proven_batch: Some(consensus::types::ProvenBatch {
-                mode: crate::substrate::artifact_market::consensus_proven_batch_mode_from_pallet(
-                    payload.proof_mode,
-                ),
-                version: payload.version,
-                tx_count: payload.tx_count,
-                tx_statements_commitment: payload.tx_statements_commitment,
-                da_root: payload.da_root,
-                da_chunk_count: payload.da_chunk_count,
-                commitment_proof: commitment_proof.clone(),
-                proof_kind:
-                    crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
-                        payload.proof_kind,
-                    ),
-                verifier_profile: payload.verifier_profile,
-                receipt_root: payload.receipt_root.as_ref().map(|receipt_root| {
-                    consensus::types::ReceiptRootProofPayload {
-                        root_proof: receipt_root.root_proof.data.clone(),
-                        metadata: consensus::types::ReceiptRootMetadata {
-                            params_fingerprint:
-                                consensus::experimental_native_receipt_root_params_fingerprint(),
-                            relation_id: receipt_root.metadata.relation_id,
-                            shape_digest: receipt_root.metadata.shape_digest,
-                            leaf_count: receipt_root.metadata.leaf_count,
-                            fold_count: receipt_root.metadata.fold_count,
-                        },
-                        receipts: receipt_root
-                            .receipts
-                            .iter()
-                            .cloned()
-                            .map(|receipt| consensus::types::TxValidityReceipt {
-                                statement_hash: receipt.statement_hash,
-                                proof_digest: receipt.proof_digest,
-                                public_inputs_digest: receipt.public_inputs_digest,
-                                verifier_profile: receipt.verifier_profile,
-                            })
-                            .collect(),
-                    }
-                }),
-            }),
-            tx_validity_artifacts,
-            block_artifact,
-            tx_statement_bindings: Some(tx_statement_bindings.clone()),
-            tx_statements_commitment: Some(tx_statements_commitment),
-            proof_verification_mode: verification_mode,
-        };
-
-        let start_verify = Instant::now();
-        verifier
-            .verify_block(&block, &parent_tree)
-            .map_err(|err| format!("proof verification failed ({err:?}): {err}"))?;
-        let verify_ms = start_verify.elapsed().as_millis();
-        tracing::info!(
-            target: "node::metrics",
-            block_number,
-            verify_ms,
-            proven_batch_present = block.proven_batch.is_some(),
-            "block_import_verify_time_ms"
-        );
-
-        return Ok(Some(commitment_proof));
+        let expected_encoding = consensus::encode_da_blob(&transactions, da_params)
+            .map_err(|err| format!("commitment proof da_root encoding failed: {err}"))?;
+        let expected_da_root = expected_encoding.root();
+        let expected_chunk_count = expected_encoding.chunks().len() as u32;
+        if expected_da_root != payload.da_root {
+            return Err("commitment proof da_root mismatch".to_string());
+        }
+        if expected_chunk_count != payload.da_chunk_count {
+            return Err("commitment proof da_chunk_count mismatch".to_string());
+        }
+    } else if payload.da_chunk_count == 0 {
+        return Err("commitment proof da_chunk_count missing".to_string());
     }
 
-    if reward_bundle
+    let statement_hashes = tx_statement_bindings
+        .iter()
+        .map(|binding| binding.statement_hash)
+        .collect::<Vec<_>>();
+    let tx_statements_commitment =
+        CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+            .map_err(|err| format!("tx_statements_commitment failed: {err}"))?;
+    if payload.tx_statements_commitment != tx_statements_commitment {
+        return Err("proven batch tx_statements_commitment mismatch".to_string());
+    }
+    let commitment_proof = derive_commitment_block_proof_from_bytes(
+        payload.commitment_proof.data.clone(),
+        &transactions,
+        &statement_hashes,
+        &parent_tree,
+        da_params,
+        Some(payload.da_root),
+    )?;
+    let tx_validity_artifacts = extracted_tx_artifacts.clone();
+    let receipt_root = payload
+        .receipt_root
         .as_ref()
-        .and_then(|bundle| bundle.prover_note.as_ref())
-        .is_some()
-    {
-        return Err("prover reward note present without prover claim".to_string());
-    }
+        .ok_or_else(|| "receipt_root payload missing from canonical native bundle".to_string())?;
+    let block_artifact = Some(consensus::ProofEnvelope {
+        kind: crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+            payload.proof_kind,
+        ),
+        verifier_profile: payload.verifier_profile,
+        artifact_bytes: receipt_root.root_proof.data.clone(),
+    });
 
+    let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
     tracing::info!(
         target: "node::metrics",
         block_number,
@@ -4240,18 +4173,18 @@ fn verify_proof_carrying_block(
         extrinsics_bytes_total,
         da_blob_bytes_estimate,
         tx_proof_bytes_total,
-        proven_batch_present = false,
-        proven_batch_bytes = 0usize,
+        proven_batch_present = true,
+        proven_batch_bytes,
         proven_batch_build_ms = 0u128,
         proven_batch_stale_count = 0u64,
-        commitment_proof_bytes = 0usize,
-        aggregation_proof_bytes = 0usize,
-        da_chunk_count = 0u32,
-        da_root = %hex::encode([0u8; 48]),
+        commitment_proof_bytes = payload.commitment_proof.data.len(),
+        aggregation_proof_bytes = aggregation_payload_bytes,
+        da_chunk_count = payload.da_chunk_count,
+        da_root = %hex::encode(payload.da_root),
         da_policy = ?da_policy,
         proof_policy = ?proof_policy,
         aggregation_mode_enabled,
-        verification_mode = ?consensus::types::ProofVerificationMode::InlineRequired,
+        verification_mode = ?verification_mode,
         "block_payload_size_metrics"
     );
 
@@ -4259,12 +4192,49 @@ fn verify_proof_carrying_block(
         header: SubstrateProofHeader { da_params },
         transactions,
         coinbase: None,
-        proven_batch: None,
-        tx_validity_artifacts: inline_tx_artifacts,
-        block_artifact: None,
-        tx_statement_bindings: Some(tx_statement_bindings),
-        tx_statements_commitment: None,
-        proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
+        proven_batch: Some(consensus::types::ProvenBatch {
+            mode: crate::substrate::artifact_market::consensus_proven_batch_mode_from_pallet(
+                payload.proof_mode,
+            ),
+            version: payload.version,
+            tx_count: payload.tx_count,
+            tx_statements_commitment: payload.tx_statements_commitment,
+            da_root: payload.da_root,
+            da_chunk_count: payload.da_chunk_count,
+            commitment_proof: commitment_proof.clone(),
+            proof_kind:
+                crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+                    payload.proof_kind,
+                ),
+            verifier_profile: payload.verifier_profile,
+            receipt_root: Some(consensus::types::ReceiptRootProofPayload {
+                root_proof: receipt_root.root_proof.data.clone(),
+                metadata: consensus::types::ReceiptRootMetadata {
+                    params_fingerprint:
+                        consensus::experimental_native_receipt_root_params_fingerprint(),
+                    relation_id: receipt_root.metadata.relation_id,
+                    shape_digest: receipt_root.metadata.shape_digest,
+                    leaf_count: receipt_root.metadata.leaf_count,
+                    fold_count: receipt_root.metadata.fold_count,
+                },
+                receipts: receipt_root
+                    .receipts
+                    .iter()
+                    .cloned()
+                    .map(|receipt| consensus::types::TxValidityReceipt {
+                        statement_hash: receipt.statement_hash,
+                        proof_digest: receipt.proof_digest,
+                        public_inputs_digest: receipt.public_inputs_digest,
+                        verifier_profile: receipt.verifier_profile,
+                    })
+                    .collect(),
+            }),
+        }),
+        tx_validity_artifacts,
+        block_artifact,
+        tx_statement_bindings: Some(tx_statement_bindings.clone()),
+        tx_statements_commitment: Some(tx_statements_commitment),
+        proof_verification_mode: verification_mode,
     };
 
     let start_verify = Instant::now();
@@ -4276,11 +4246,11 @@ fn verify_proof_carrying_block(
         target: "node::metrics",
         block_number,
         verify_ms,
-        proven_batch_present = false,
+        proven_batch_present = block.proven_batch.is_some(),
         "block_import_verify_time_ms"
     );
 
-    Ok(None)
+    Ok(Some(commitment_proof))
 }
 
 // =============================================================================
@@ -4400,7 +4370,7 @@ fn load_aggregation_proofs_enabled() -> bool {
                 "1" | "true" | "yes" | "on"
             )
         })
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 fn load_hold_mining_while_proving() -> bool {
@@ -4482,7 +4452,8 @@ fn ready_proofless_binding_hashes_for_preview(
             return Ok(BTreeSet::new());
         }
 
-        let statement_bindings = statement_bindings_from_extrinsics(&candidate)?;
+        let statement_bindings =
+            statement_bindings_for_candidate_extrinsics(&candidate, None, None, true)?;
         let statement_hashes = statement_bindings
             .iter()
             .map(|binding| binding.statement_hash)
@@ -4561,14 +4532,19 @@ fn mining_pause_reason_for_pending_shielded_batch(
         decoded.push(extrinsic);
     }
 
-    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    let statement_bindings =
+        statement_bindings_for_candidate_extrinsics(&decoded, None, None, true)?;
     let shielded_tx_count = statement_bindings.len() as u32;
     if shielded_tx_count == 0 || shielded_tx_count < min_ready_batch_txs as u32 {
         return Ok(None);
     }
 
+    let require_ready_bundle = matches!(
+        selector.proof_kind,
+        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+    );
     let missing = missing_proof_binding_hashes(&decoded);
-    if missing.is_empty() {
+    if !require_ready_bundle && missing.is_empty() {
         return Ok(None);
     }
 
@@ -4594,7 +4570,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
         ),
         pallet_shielded_pool::types::ProofArtifactKind::TxLeaf => return Ok(None),
         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot => format!(
-            "proofless shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
+            "receipt_root shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
             shielded_tx_count,
             missing.len()
         ),
@@ -4619,7 +4595,7 @@ fn ready_bundle_trace_for_candidate(
     block_number: u64,
     candidate_txs: &[Vec<u8>],
     min_ready_batch_txs: usize,
-    _selector: PreparedArtifactSelector,
+    selector: PreparedArtifactSelector,
 ) -> Result<Option<ReadyBundleTrace>, String> {
     if candidate_txs.is_empty() {
         return Ok(None);
@@ -4632,14 +4608,19 @@ fn ready_bundle_trace_for_candidate(
         decoded.push(extrinsic);
     }
 
-    let statement_bindings = statement_bindings_from_extrinsics(&decoded)?;
+    let statement_bindings =
+        statement_bindings_for_candidate_extrinsics(&decoded, None, None, true)?;
     let shielded_tx_count = statement_bindings.len() as u32;
     if shielded_tx_count == 0 || shielded_tx_count < min_ready_batch_txs as u32 {
         return Ok(None);
     }
 
+    let require_ready_bundle = matches!(
+        selector.proof_kind,
+        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+    );
     let missing = missing_proof_binding_hashes(&decoded);
-    if missing.is_empty() {
+    if !require_ready_bundle && missing.is_empty() {
         return Ok(None);
     }
 
@@ -5594,14 +5575,31 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let statement_bindings = statement_bindings_from_extrinsics(&decoded_applied)?;
+        let statement_bindings =
+            statement_bindings_for_candidate_extrinsics(&decoded_applied, None, None, false)?;
         let statement_hashes = statement_bindings
             .iter()
             .map(|binding| binding.statement_hash)
             .collect::<Vec<_>>();
         let shielded_tx_count = statement_hashes.len() as u32;
-    let requires_proven_batch = shielded_tx_count > 0
-        && (!missing_proof_bindings.is_empty() || aggregation_mode_enabled);
+        if shielded_tx_count > 0
+            && !matches!(
+                proof_policy,
+                pallet_shielded_pool::types::ProofAvailabilityPolicy::SelfContained
+            )
+        {
+            return Err(
+                "product shielded blocks require ProofAvailabilityPolicy::SelfContained"
+                    .to_string(),
+            );
+        }
+        if shielded_tx_count > 0 && !aggregation_mode_enabled {
+            return Err(
+                "product shielded blocks require enable_aggregation_mode before inclusion"
+                    .to_string(),
+            );
+        }
+        let requires_proven_batch = shielded_tx_count > 0;
         let mut selected_prover_claim: Option<pallet_shielded_pool::types::ArtifactClaim> = None;
         let mut template_trace = None;
         if requires_proven_batch {
@@ -5686,11 +5684,10 @@ pub fn wire_block_builder_api(
                     tx_count = shielded_tx_count,
                     tx_statements_commitment = %hex::encode(tx_statements_commitment),
                     ?diagnostics,
-                    "Missing prepared proven batch for mandatory proofless sidecar set (strict mode)"
+                    "Missing prepared receipt_root proven batch for shielded block on the product path"
                 );
                 return Err(
-                    "shielded block with omitted proof bytes requires a ready proven batch (strict mode)"
-                        .to_string(),
+                    "shielded block requires a ready native receipt_root proven batch on the product path".to_string(),
                 );
             }
         }
@@ -11514,6 +11511,31 @@ mod tests {
         )
     }
 
+    fn test_sidecar_transfer_extrinsic_with_proof(
+        proof_bytes: Vec<u8>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
+        ciphertext_hashes: Vec<[u8; 48]>,
+        balance_slot_asset_ids: [u64; 4],
+    ) -> runtime::UncheckedExtrinsic {
+        kernel_shielded_extrinsic(
+            ACTION_SHIELDED_TRANSFER_SIDECAR,
+            nullifiers,
+            ShieldedTransferSidecarArgs {
+                proof: proof_bytes,
+                commitments,
+                ciphertext_hashes: ciphertext_hashes.clone(),
+                ciphertext_sizes: vec![0u32; ciphertext_hashes.len()],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids,
+                binding_hash: [9u8; 64],
+                stablecoin: None,
+                fee: 5,
+            }
+            .encode(),
+        )
+    }
+
     fn dummy_receipt_root_payload() -> pallet_shielded_pool::types::ReceiptRootProofPayload {
         pallet_shielded_pool::types::ReceiptRootProofPayload {
             root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![7u8; 8]),
@@ -11629,13 +11651,14 @@ mod tests {
     }
 
     #[test]
-    fn require_native_receipt_root_rejects_non_canonical_mode() {
+    fn legacy_block_proof_mode_is_forced_to_receipt_root() {
         let _guard = set_block_proof_mode_with_require_native("inline_tx", "1");
         let selector = prepared_artifact_selector_from_env();
-        let err = ensure_native_only_receipt_root_selector(selector)
-            .expect_err("HEGEMON_REQUIRE_NATIVE=1 must reject non-receipt_root modes");
-        assert!(
-            err.contains("HEGEMON_REQUIRE_NATIVE=1 requires HEGEMON_BLOCK_PROOF_MODE=receipt_root")
+        ensure_native_only_receipt_root_selector(selector)
+            .expect("legacy env modes should be forced onto canonical receipt_root");
+        assert_eq!(
+            selector.proof_kind,
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
         );
     }
 
@@ -11767,25 +11790,17 @@ mod tests {
     }
 
     #[test]
-    fn receipt_root_falls_back_when_native_artifacts_are_missing() {
-        let outcome = prepare_native_receipt_root_artifacts(None)
-            .expect("missing native artifacts should fall back");
-        let report = outcome
-            .native_selection_report
-            .expect("native selection report should be present");
-        assert!(!report.used_native_lane);
-        assert_eq!(
-            report.fallback_reason,
-            Some(NativeArtifactFallbackReason::ArtifactsUnavailable)
+    fn receipt_root_errors_when_native_artifacts_are_missing() {
+        let err = prepare_native_receipt_root_artifacts(None)
+            .expect_err("missing native artifacts must fail closed");
+        assert!(
+            err.contains("native_artifacts_unavailable"),
+            "unexpected error: {err}"
         );
-        assert!(matches!(
-            outcome.artifacts,
-            PreparedAggregationArtifacts::InlineTx
-        ));
     }
 
     #[test]
-    fn receipt_root_falls_back_on_verifier_profile_mismatch() {
+    fn receipt_root_errors_on_verifier_profile_mismatch() {
         let artifacts = vec![consensus::TxValidityArtifact {
             receipt: dummy_receipt(consensus::experimental_tx_leaf_verifier_profile()),
             proof: Some(consensus::ProofEnvelope {
@@ -11794,45 +11809,29 @@ mod tests {
                 artifact_bytes: vec![9u8; 8],
             }),
         }];
-        let outcome =
+        let err =
             prepare_native_receipt_root_artifacts_with_builder(Some(artifacts.as_slice()), |_| {
                 unreachable!("profile mismatch should fail before builder invocation")
             })
-            .expect("profile mismatch should fall back");
-        let report = outcome
-            .native_selection_report
-            .expect("native selection report should be present");
-        assert!(!report.used_native_lane);
-        assert_eq!(
-            report.fallback_reason,
-            Some(NativeArtifactFallbackReason::VerifierProfileMismatch)
+            .expect_err("profile mismatch must fail closed");
+        assert!(
+            err.contains("native_verifier_profile_mismatch"),
+            "unexpected error: {err}"
         );
-        assert!(matches!(
-            outcome.artifacts,
-            PreparedAggregationArtifacts::InlineTx
-        ));
     }
 
     #[test]
-    fn receipt_root_falls_back_on_native_artifact_validation_failure() {
+    fn receipt_root_errors_on_native_artifact_validation_failure() {
         let artifacts = vec![dummy_native_tx_validity_artifact()];
-        let outcome =
+        let err =
             prepare_native_receipt_root_artifacts_with_builder(Some(artifacts.as_slice()), |_| {
                 Err("synthetic native artifact validation failure".to_string())
             })
-            .expect("invalid native artifact should fall back");
-        let report = outcome
-            .native_selection_report
-            .expect("native selection report should be present");
-        assert!(!report.used_native_lane);
-        assert_eq!(
-            report.fallback_reason,
-            Some(NativeArtifactFallbackReason::ArtifactValidationFailed)
+            .expect_err("invalid native artifact must fail closed");
+        assert!(
+            err.contains("synthetic native artifact validation failure"),
+            "unexpected error: {err}"
         );
-        assert!(matches!(
-            outcome.artifacts,
-            PreparedAggregationArtifacts::InlineTx
-        ));
     }
 
     #[test]
@@ -11933,6 +11932,51 @@ mod tests {
         assert_eq!(
             proof.verifier_profile,
             consensus::experimental_native_tx_leaf_verifier_profile()
+        );
+    }
+
+    #[test]
+    fn candidate_statement_bindings_prefer_native_tx_artifacts() {
+        let witness = test_native_sample_witness(41);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let public_inputs = witness.public_inputs().expect("public inputs");
+        let balance_slot_asset_ids: [u64; 4] = witness
+            .balance_slots()
+            .expect("balance slots")
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("four balance slots");
+        let decoded = test_sidecar_transfer_extrinsic_with_proof(
+            built.artifact_bytes.clone(),
+            public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
+            public_inputs.commitments[..witness.outputs.len()].to_vec(),
+            witness.ciphertext_hashes.clone(),
+            balance_slot_asset_ids,
+        );
+
+        let preferred =
+            statement_bindings_for_candidate_extrinsics(&[decoded.clone()], None, None, false)
+                .expect("preferred statement bindings");
+        let legacy = statement_bindings_from_extrinsics(&[decoded.clone()])
+            .expect("legacy statement bindings");
+        let (transactions, _proofs, artifacts, _bindings) =
+            extract_shielded_transfers_for_parallel_verification(&[decoded], None, None, false)
+                .expect("extract native tx leaf");
+        let tx_artifacts = artifacts
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .expect("native tx artifacts");
+        let expected =
+            consensus::tx_statement_bindings_from_tx_artifacts(&transactions, &tx_artifacts)
+                .expect("artifact-derived bindings");
+
+        assert_eq!(preferred, expected);
+        assert_ne!(
+            preferred[0].statement_hash,
+            legacy[0].statement_hash,
+            "native tx artifacts must override legacy materialized statement hashing on the product path"
         );
     }
 
@@ -12388,6 +12432,108 @@ mod tests {
         assert!(
             reason.is_none(),
             "mining should resume once the matching prepared bundle exists"
+        );
+    }
+
+    #[test]
+    fn mining_pause_reason_requires_ready_bundle_for_native_receipt_root_batch() {
+        let parent_hash = H256::repeat_byte(0x44);
+        let coordinator = ProverCoordinator::new(
+            ProverCoordinatorConfig {
+                workers: 0,
+                target_txs: 1,
+                queue_capacity: 1,
+                max_inflight_per_level: 1,
+                liveness_lane: true,
+                adaptive_liveness_timeout: Duration::from_millis(0),
+                incremental_upsizing: false,
+                poll_interval: Duration::from_millis(50),
+                job_timeout: Duration::from_secs(30),
+            },
+            Arc::new(move || (parent_hash, 7u64)),
+            Arc::new(|_max_txs| Vec::new()),
+            Arc::new(|_, _, _| Err("unused".to_string())),
+        );
+
+        let witness = test_native_sample_witness(55);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let public_inputs = witness.public_inputs().expect("public inputs");
+        let balance_slot_asset_ids: [u64; 4] = witness
+            .balance_slots()
+            .expect("balance slots")
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("four balance slots");
+        let candidate = test_sidecar_transfer_extrinsic_with_proof(
+            built.artifact_bytes,
+            public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
+            public_inputs.commitments[..witness.outputs.len()].to_vec(),
+            witness.ciphertext_hashes.clone(),
+            balance_slot_asset_ids,
+        )
+        .encode();
+        let candidate_txs = vec![candidate];
+
+        let reason = mining_pause_reason_for_pending_shielded_batch(
+            coordinator.as_ref(),
+            parent_hash,
+            &candidate_txs,
+            1,
+            PreparedArtifactSelector::receipt_root(),
+        )
+        .expect("pause reason evaluation succeeds");
+        assert!(
+            reason.is_some(),
+            "native receipt_root batches should pause mining until the prepared bundle is ready"
+        );
+
+        let decoded = runtime::UncheckedExtrinsic::decode(&mut &candidate_txs[0][..])
+            .expect("candidate decodes");
+        let statement_bindings =
+            statement_bindings_for_candidate_extrinsics(&[decoded], None, None, false)
+                .expect("statement bindings");
+        let statement_hashes = statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>();
+        let tx_statements_commitment =
+            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
+                .expect("commitment");
+        coordinator.import_network_artifact(
+            parent_hash,
+            pallet_shielded_pool::types::CandidateArtifact {
+                version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment,
+                da_root: [0u8; 48],
+                da_chunk_count: 0,
+                commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
+                proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+                proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
+                verifier_profile:
+                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+                    )
+                    .1,
+                receipt_root: Some(dummy_receipt_root_payload()),
+                artifact_claim: None,
+            },
+            candidate_txs.clone(),
+        );
+
+        let reason = mining_pause_reason_for_pending_shielded_batch(
+            coordinator.as_ref(),
+            parent_hash,
+            &candidate_txs,
+            1,
+            PreparedArtifactSelector::receipt_root(),
+        )
+        .expect("pause reason evaluation succeeds");
+        assert!(
+            reason.is_none(),
+            "mining should resume once the matching native receipt_root bundle exists"
         );
     }
 

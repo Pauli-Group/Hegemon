@@ -8573,6 +8573,7 @@ dependencies = [
  "sp-transaction-pool",
  "sp-version",
  "substrate-wasm-builder",
+ "superneo-hegemon",
  "synthetic-crypto",
  "tempfile",
  "transaction-circuit",

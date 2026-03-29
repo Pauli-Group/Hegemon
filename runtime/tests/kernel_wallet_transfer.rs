@@ -6,9 +6,13 @@ use runtime::{Kernel, Runtime, RuntimeOrigin, ShieldedPool, System, Timestamp};
 use sp_io::TestExternalities;
 use sp_runtime::traits::ValidateUnsigned;
 use sp_runtime::transaction_validity::TransactionSource;
+use superneo_hegemon::decode_native_tx_leaf_artifact_bytes;
 use tempfile::tempdir;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing_pq::felts_to_bytes48;
+use transaction_circuit::hashing_pq::{
+    balance_commitment_bytes, ciphertext_hash_bytes, felts_to_bytes48,
+};
+use transaction_circuit::public_inputs::BalanceSlot;
 use wallet::{
     build_transaction, MemoPlaintext, NoteCiphertext, NotePlaintext, Recipient, WalletStore,
 };
@@ -127,6 +131,17 @@ fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
                     .expect("decode note")
             })
             .collect::<Vec<_>>();
+        let ciphertext_hashes = ciphertexts
+            .iter()
+            .map(|ciphertext| {
+                let mut bytes = Vec::with_capacity(
+                    ciphertext.ciphertext.len() + ciphertext.kem_ciphertext.len(),
+                );
+                bytes.extend_from_slice(&ciphertext.ciphertext);
+                bytes.extend_from_slice(&ciphertext.kem_ciphertext);
+                ciphertext_hash_bytes(&bytes)
+            })
+            .collect::<Vec<_>>();
 
         let args = pallet_shielded_pool::family::ShieldedTransferInlineArgs {
             proof: built.bundle.proof_bytes.clone(),
@@ -138,6 +153,46 @@ fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
             stablecoin: None,
             fee: built.bundle.fee,
         };
+        let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
+            .expect("decode tx leaf");
+        let balance_slots = args
+            .balance_slot_asset_ids
+            .into_iter()
+            .map(|asset_id| BalanceSlot {
+                asset_id: if asset_id == u64::MAX {
+                    4_294_967_294
+                } else {
+                    asset_id
+                },
+                delta: 0,
+            })
+            .collect::<Vec<_>>();
+        let canonical_balance_slot_asset_ids = args
+            .balance_slot_asset_ids
+            .into_iter()
+            .map(|asset_id| {
+                if asset_id == u64::MAX {
+                    4_294_967_294
+                } else {
+                    asset_id
+                }
+            })
+            .collect::<Vec<_>>();
+        let expected_balance_tag =
+            balance_commitment_bytes(i128::from(args.fee), &balance_slots).expect("balance tag");
+        assert_eq!(decoded.tx.nullifiers, built.bundle.nullifiers);
+        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
+        assert_eq!(decoded.tx.ciphertext_hashes, ciphertext_hashes);
+        assert_eq!(decoded.tx.balance_tag, expected_balance_tag);
+        assert_eq!(
+            decoded.stark_public_inputs.merkle_root, built.bundle.anchor,
+            "artifact anchor mismatch"
+        );
+        assert_eq!(
+            decoded.stark_public_inputs.balance_slot_asset_ids, canonical_balance_slot_asset_ids,
+            "artifact balance slots mismatch"
+        );
+        assert_eq!(decoded.stark_public_inputs.fee, args.fee);
         let envelope = pallet_shielded_pool::family::build_envelope(
             protocol_versioning::DEFAULT_VERSION_BINDING,
             pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
@@ -152,7 +207,7 @@ fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
             pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
         assert!(
             validity.is_ok(),
-            "wallet-built kernel action should validate"
+            "wallet-built kernel action should validate: {validity:?}"
         );
 
         let prior_commitment_index = ShieldedPool::commitment_index();
@@ -238,6 +293,42 @@ fn kernel_wallet_rejects_non_native_transfer_payload() {
         assert!(
             validity.is_err(),
             "runtime must reject non-native transfer payloads"
+        );
+    });
+}
+
+#[test]
+fn kernel_enable_aggregation_mode_revalidation_stays_valid_in_block() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_ENABLE_AGGREGATION_MODE,
+            Vec::new(),
+            pallet_shielded_pool::family::EnableAggregationModeArgs.encode(),
+        );
+        let call = pallet_kernel::Call::<Runtime>::submit_action {
+            envelope: envelope.clone(),
+        };
+
+        let validity_before =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::InBlock, &call);
+        assert!(
+            validity_before.is_ok(),
+            "aggregation-mode control action should validate before execution: {validity_before:?}"
+        );
+
+        assert_ok!(Kernel::submit_action(RuntimeOrigin::none(), envelope.clone()));
+
+        let validity_after =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::InBlock, &call);
+        assert!(
+            validity_after.is_ok(),
+            "aggregation-mode control action should remain valid on in-block revalidation: {validity_after:?}"
         );
     });
 }

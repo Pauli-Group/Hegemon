@@ -144,6 +144,9 @@ fn is_zero_commitment(cm: &[u8; 48]) -> bool {
 
 const NATIVE_TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
 const NATIVE_TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
+const NATIVE_TX_LITE_COMMITMENT_MAX_ROWS: usize = 256;
+const NATIVE_TX_LITE_COMMITMENT_MAX_COLS: usize = 256;
+const NATIVE_TX_CANONICAL_PADDING_ASSET_ID: u64 = 4_294_967_294;
 
 mod native_serde_bytes48 {
     use serde::Serializer;
@@ -191,6 +194,16 @@ struct NativeTxLeafReceiptLite {
 struct NativeTxLeafLite {
     receipt: NativeTxLeafReceiptLite,
     stark_inputs: NativeSerializedStarkInputsDigest,
+    tx: NativeTxPublicTxLite,
+}
+
+#[derive(Clone, Debug)]
+struct NativeTxPublicTxLite {
+    nullifiers: Vec<[u8; 48]>,
+    commitments: Vec<[u8; 48]>,
+    ciphertext_hashes: Vec<[u8; 48]>,
+    balance_tag: [u8; 48],
+    version: VersionBinding,
 }
 
 fn blake3_384_digest(message: &[u8]) -> [u8; 48] {
@@ -321,9 +334,73 @@ fn decode_native_tx_leaf_lite(
         stablecoin_oracle_commitment: read_array_checked::<48>(proof_bytes, &mut cursor)?,
         stablecoin_attestation_commitment: read_array_checked::<48>(proof_bytes, &mut cursor)?,
     };
+    let nullifier_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if nullifier_count > transaction_core::constants::MAX_INPUTS {
+        return Ok(None);
+    }
+    let mut tx_nullifiers = Vec::with_capacity(nullifier_count);
+    for _ in 0..nullifier_count {
+        tx_nullifiers.push(read_array_checked::<48>(proof_bytes, &mut cursor)?);
+    }
+    let commitment_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if commitment_count > transaction_core::constants::MAX_OUTPUTS {
+        return Ok(None);
+    }
+    let mut tx_commitments = Vec::with_capacity(commitment_count);
+    for _ in 0..commitment_count {
+        tx_commitments.push(read_array_checked::<48>(proof_bytes, &mut cursor)?);
+    }
+    let ciphertext_hash_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if ciphertext_hash_count > transaction_core::constants::MAX_OUTPUTS {
+        return Ok(None);
+    }
+    let mut tx_ciphertext_hashes = Vec::with_capacity(ciphertext_hash_count);
+    for _ in 0..ciphertext_hash_count {
+        tx_ciphertext_hashes.push(read_array_checked::<48>(proof_bytes, &mut cursor)?);
+    }
+    let tx_balance_tag = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    let tx_version = VersionBinding {
+        circuit: read_u16_checked(proof_bytes, &mut cursor)?,
+        crypto: read_u16_checked(proof_bytes, &mut cursor)?,
+    };
+    let proof_len = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if proof_len > crate::types::STARK_PROOF_MAX_SIZE {
+        return Ok(None);
+    }
+    let _proof = read_bytes_checked(proof_bytes, &mut cursor, proof_len)?;
+    let _commitment_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    let commitment_row_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+    if commitment_row_count > NATIVE_TX_LITE_COMMITMENT_MAX_ROWS {
+        return Ok(None);
+    }
+    for _ in 0..commitment_row_count {
+        let coeff_count = read_u32_checked(proof_bytes, &mut cursor)? as usize;
+        if coeff_count > NATIVE_TX_LITE_COMMITMENT_MAX_COLS {
+            return Ok(None);
+        }
+        for _ in 0..coeff_count {
+            let _coeff = read_u64_checked(proof_bytes, &mut cursor)?;
+        }
+    }
+    let _leaf_version = read_u16_checked(proof_bytes, &mut cursor)?;
+    let _leaf_relation_id = read_array_checked::<32>(proof_bytes, &mut cursor)?;
+    let _leaf_shape_digest = read_array_checked::<32>(proof_bytes, &mut cursor)?;
+    let _leaf_statement_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    let _leaf_witness_commitment_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    let _leaf_proof_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    if cursor != proof_bytes.len() {
+        return Err(InvalidTransaction::BadProof);
+    }
     Ok(Some(NativeTxLeafLite {
         receipt,
         stark_inputs,
+        tx: NativeTxPublicTxLite {
+            nullifiers: tx_nullifiers,
+            commitments: tx_commitments,
+            ciphertext_hashes: tx_ciphertext_hashes,
+            balance_tag: tx_balance_tag,
+            version: tx_version,
+        },
     }))
 }
 
@@ -335,6 +412,14 @@ fn signed_magnitude_to_i128(sign: u8, magnitude: u64) -> Result<i128, InvalidTra
     }
 }
 
+fn canonicalize_native_balance_slot_asset_id(asset_id: u64) -> u64 {
+    if asset_id == u64::MAX {
+        NATIVE_TX_CANONICAL_PADDING_ASSET_ID
+    } else {
+        asset_id
+    }
+}
+
 fn canonical_balance_slots_from_public_args(
     balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
     fee: u64,
@@ -343,14 +428,16 @@ fn canonical_balance_slots_from_public_args(
 ) -> Result<Vec<BalanceSlot>, InvalidTransaction> {
     use transaction_core::constants::NATIVE_ASSET_ID;
 
-    if balance_slot_asset_ids[0] != NATIVE_ASSET_ID {
+    let canonical_asset_ids = balance_slot_asset_ids.map(canonicalize_native_balance_slot_asset_id);
+
+    if canonical_asset_ids[0] != NATIVE_ASSET_ID {
         return Err(InvalidTransaction::BadProof);
     }
 
     let mut saw_padding = false;
     let mut prev_asset = NATIVE_ASSET_ID;
-    for asset_id in balance_slot_asset_ids.iter().skip(1) {
-        if *asset_id == u64::MAX {
+    for asset_id in canonical_asset_ids.iter().skip(1) {
+        if *asset_id == NATIVE_TX_CANONICAL_PADDING_ASSET_ID {
             saw_padding = true;
             continue;
         }
@@ -361,13 +448,13 @@ fn canonical_balance_slots_from_public_args(
     }
 
     if let Some(binding) = stablecoin {
-        if !balance_slot_asset_ids[1..].contains(&binding.asset_id) {
+        if !canonical_asset_ids[1..].contains(&binding.asset_id) {
             return Err(InvalidTransaction::BadProof);
         }
     }
 
     let native_delta = i128::from(fee) - value_balance;
-    Ok(balance_slot_asset_ids
+    Ok(canonical_asset_ids
         .into_iter()
         .map(|asset_id| {
             let delta = match stablecoin {
@@ -389,6 +476,8 @@ fn verify_native_stark_inputs_match_public_args(
     stablecoin: &Option<StablecoinPolicyBinding>,
     fee: u64,
 ) -> Result<(), InvalidTransaction> {
+    let canonical_balance_slot_asset_ids =
+        balance_slot_asset_ids.map(canonicalize_native_balance_slot_asset_id);
     if stark_inputs.input_flags.len() != transaction_core::constants::MAX_INPUTS
         || stark_inputs.output_flags.len() != transaction_core::constants::MAX_OUTPUTS
         || stark_inputs.balance_slot_asset_ids.len() != transaction_core::constants::BALANCE_SLOTS
@@ -411,7 +500,7 @@ fn verify_native_stark_inputs_match_public_args(
         || stark_inputs.value_balance_sign != 0
         || stark_inputs.value_balance_magnitude != 0
         || stark_inputs.merkle_root != *anchor
-        || stark_inputs.balance_slot_asset_ids.as_slice() != balance_slot_asset_ids
+        || stark_inputs.balance_slot_asset_ids.as_slice() != canonical_balance_slot_asset_ids
     {
         return Err(InvalidTransaction::BadProof);
     }
@@ -1323,12 +1412,10 @@ pub mod pallet {
 
         pub(crate) fn validate_enable_aggregation_mode_action(
         ) -> Result<ValidActionMeta, InvalidTransaction> {
-            if AggregationProofRequired::<T>::get() {
-                return Err(InvalidTransaction::Stale);
-            }
-            if ShieldedTransfersProcessed::<T>::get() {
-                return Err(InvalidTransaction::Custom(11));
-            }
+            // `enable_aggregation_mode` is an in-block control action inserted by the authoring
+            // path. Like coinbase, it may be revalidated after execution while the block is still
+            // being assembled, so the unsigned path must stay stateless and source-restricted.
+            // The authoritative state checks live in `apply_enable_aggregation_mode_action`.
             Ok(ValidActionMeta {
                 priority: u64::from(TransactionPriority::MAX),
                 longevity: 1,
@@ -1567,6 +1654,14 @@ pub mod pallet {
             )?;
             let balance_tag = balance_commitment_bytes(i128::from(fee), &balance_slots)
                 .map_err(|_| InvalidTransaction::BadProof)?;
+            if decoded.tx.nullifiers.as_slice() != nullifiers.as_slice()
+                || decoded.tx.commitments.as_slice() != commitments.as_slice()
+                || decoded.tx.ciphertext_hashes.as_slice() != ciphertext_hashes.as_slice()
+                || decoded.tx.balance_tag != balance_tag
+                || decoded.tx.version != version
+            {
+                return Err(InvalidTransaction::BadProof);
+            }
             let expected_statement_hash = native_statement_hash_from_public_args(
                 nullifiers.as_slice(),
                 commitments.as_slice(),

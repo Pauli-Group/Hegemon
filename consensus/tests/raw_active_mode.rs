@@ -392,6 +392,8 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
             .expect("tx statements commitment");
 
+    let (tx_validity_artifacts, receipt_root, envelope) =
+        build_receipt_root_block_artifacts(&[witness_a.clone(), witness_b.clone()]);
     block.proven_batch = Some(ProvenBatch {
         version: 2,
         tx_count: block.transactions.len() as u32,
@@ -399,25 +401,16 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         da_root: block.header.da_root,
         da_chunk_count: 1,
         commitment_proof,
-        mode: ProvenBatchMode::InlineTx,
-        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
-        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
-            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
-        ),
-        receipt_root: None,
+        mode: ProvenBatchMode::ReceiptRoot,
+        proof_kind: ProofArtifactKind::ReceiptRoot,
+        verifier_profile: experimental_native_receipt_root_verifier_profile(),
+        receipt_root: Some(receipt_root),
     });
     block.tx_statement_bindings = Some(statement_bindings);
     block.tx_statements_commitment = Some(tx_statements_commitment);
-    block.tx_validity_artifacts = Some(
-        proofs
-            .iter()
-            .map(|proof| {
-                consensus::proof::tx_validity_artifact_from_proof(proof)
-                    .expect("tx validity artifact")
-            })
-            .collect(),
-    );
-    block.proof_verification_mode = ProofVerificationMode::InlineRequired;
+    block.tx_validity_artifacts = Some(tx_validity_artifacts);
+    block.block_artifact = Some(envelope);
+    block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
 
     RawActiveFixture {
         base_tree,
@@ -645,6 +638,8 @@ fn build_upgrade_transition_blocks() -> (
         CommitmentBlockProver::commitment_from_statement_hashes(&first_statement_hashes)
             .expect("first tx statements commitment");
 
+    let (first_tx_validity_artifacts, first_receipt_root, first_envelope) =
+        build_receipt_root_block_artifacts(&[witness_a.clone(), witness_b.clone()]);
     first_block.proven_batch = Some(ProvenBatch {
         version: 2,
         tx_count: first_block.transactions.len() as u32,
@@ -652,25 +647,16 @@ fn build_upgrade_transition_blocks() -> (
         da_root: first_block.header.da_root,
         da_chunk_count: 1,
         commitment_proof: first_commitment_proof,
-        mode: ProvenBatchMode::InlineTx,
-        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
-        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
-            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::InlineTx),
-        ),
-        receipt_root: None,
+        mode: ProvenBatchMode::ReceiptRoot,
+        proof_kind: ProofArtifactKind::ReceiptRoot,
+        verifier_profile: experimental_native_receipt_root_verifier_profile(),
+        receipt_root: Some(first_receipt_root),
     });
     first_block.tx_statement_bindings = Some(first_statement_bindings);
     first_block.tx_statements_commitment = Some(first_tx_statements_commitment);
-    first_block.tx_validity_artifacts = Some(
-        [proof_a.clone(), proof_b.clone()]
-            .iter()
-            .map(|proof| {
-                consensus::proof::tx_validity_artifact_from_proof(proof)
-                    .expect("first tx validity artifact")
-            })
-            .collect(),
-    );
-    first_block.proof_verification_mode = ProofVerificationMode::InlineRequired;
+    first_block.tx_validity_artifacts = Some(first_tx_validity_artifacts);
+    first_block.block_artifact = Some(first_envelope);
+    first_block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
 
     let upgrade_leaves = vec![
         input_a0.commitment(),
@@ -792,15 +778,12 @@ fn raw_active_rejects_bad_tx_proof() {
         .expect("tx artifacts present")
         .first_mut()
         .expect("first tx artifact");
-    let envelope = artifact.proof.as_mut().expect("inline tx proof envelope");
-    let mut proof: TransactionProof =
-        bincode::deserialize(&envelope.artifact_bytes).expect("decode tx proof");
-    let stark_inputs = proof
-        .stark_public_inputs
-        .as_mut()
-        .expect("serialized stark inputs present");
-    stark_inputs.fee = stark_inputs.fee.saturating_add(1);
-    envelope.artifact_bytes = bincode::serialize(&proof).expect("encode tx proof");
+    let envelope = artifact.proof.as_mut().expect("native tx proof envelope");
+    let first_byte = *envelope
+        .artifact_bytes
+        .first()
+        .expect("non-empty native tx artifact bytes");
+    envelope.artifact_bytes[0] = first_byte.wrapping_add(1);
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
@@ -810,6 +793,7 @@ fn raw_active_rejects_bad_tx_proof() {
         err,
         ProofError::TransactionProofInputsMismatch { .. }
             | ProofError::TransactionProofVerification { .. }
+            | ProofError::UnsupportedProofArtifact(_)
     ));
 }
 
@@ -866,19 +850,19 @@ fn receipt_root_block_is_accepted() {
 }
 
 #[test]
-fn inline_history_can_transition_to_native_receipt_root() {
+fn native_history_can_transition_to_native_receipt_root() {
     let (first_base_tree, first_block, second_base_tree, second_block, final_root) =
         build_upgrade_transition_blocks();
     let verifier = ParallelProofVerifier::new();
 
     let first_updated = verifier
         .verify_block(&first_block, &first_base_tree)
-        .expect("historical inline block should verify on the upgraded verifier");
+        .expect("historical native receipt_root block should verify");
     assert_eq!(first_updated.root(), second_base_tree.root());
 
     let second_updated = verifier
         .verify_block(&second_block, &second_base_tree)
-        .expect("native receipt_root block should verify after inline history");
+        .expect("native receipt_root block should verify after native history");
     assert_eq!(second_updated.root(), final_root);
 }
 

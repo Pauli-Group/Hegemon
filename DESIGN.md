@@ -195,24 +195,25 @@ None of these tricks negate the inherent bandwidth hit of transparent proofs, bu
 
 The `circuits/formal/transaction_balance.tla` model captures the MASP balance rules (nullifier uniqueness + per-asset conservation) using a compact TLA+ spec. Any change to the AIR/witness layout must update that spec plus rerun TLC/Apalache, recording the outcome in the associated README and in `docs/SECURITY_REVIEWS.md`. On the implementation side, `circuits/transaction/tests/security_fuzz.rs` performs property-based fuzzing of `TransactionWitness::balance_slots` and `public_inputs` to catch serialization edge cases. Both the formal model and the fuzz harness are wired into the `security-adversarial` CI job, so contributors get immediate feedback when the balance/tag logic drifts.
 
-### 2.6 Aggregation mode (proofless L1 lane)
+### 2.6 Aggregation mode (native product lane)
 
-Per-transaction transparent STARK proofs are too large to ship in every transfer extrinsic if the goal is “world commerce.” The chain therefore supports a per-block **aggregation mode** that moves per-tx proof bytes off-chain while keeping block validity enforced during import:
+The fresh-chain 0.10.x product path is now a mandatory same-block native aggregation lane for every non-empty shielded block. Wallets submit native `tx_leaf` artifacts in each transfer extrinsic, and block authors must also include the native `receipt_root` candidate artifact in the same block so import verifies the block through `SelfContainedAggregation` instead of the removed `InlineRequired` product path.
 
-* Block authors include `pallet_shielded_pool::Call::enable_aggregation_mode` as a **mandatory unsigned** extrinsic early in the block.
-* A chain-level `ProofAvailabilityPolicy` now has only two modes: `InlineRequired` and `SelfContained`.
-* In aggregation mode + `SelfContained`, `shielded_transfer_unsigned_sidecar` may omit `proof.data` and the runtime skips `verify_stark` (it still enforces binding hashes, nullifier uniqueness, anchor checks, and fee rules).
-* In aggregation mode + `SelfContained`, proofless transfers are fail-closed: they require `submit_proven_batch` in the same block. If proof bytes are present inline, import can still verify via the inline path.
-* Proof bytes may still be staged to the block author via `da_submitProofs` keyed by `binding_hash` (wallets can enable this via `HEGEMON_WALLET_PROOF_SIDECAR=1`), but this is **off-chain proposer staging only**. It is not part of consensus validity in Phase C.
-* The node import pipeline verifies commitment proof + aggregation proof using transaction statement commitments (`tx_statements_commitment`) and does not fetch/validate proof-DA manifests or proof-DA commitments.
+* Block authors include `pallet_shielded_pool::Call::enable_aggregation_mode` as a mandatory unsigned extrinsic early in every non-empty shielded block.
+* A chain-level `ProofAvailabilityPolicy` still has the wire values `InlineRequired` and `SelfContained`, but the fresh-chain product manifest defaults to `SelfContained` and consensus rejects non-empty shielded blocks that try to rely on the legacy inline-required lane.
+* The shipped unsigned transfer format remains native `tx_leaf`; there is no product fallback to legacy inline STARK transfer verification.
+* Non-empty shielded blocks fail closed unless a ready same-block `submit_candidate_artifact` / `submit_proven_batch` payload carrying the native `receipt_root` artifact is present and valid.
+* Authoring pauses on shielded candidates until the prepared native bundle is ready, rather than sealing a hybrid block with `proven_batch: None`.
+* Proof sidecars (`da_submitProofs`) remain optional off-chain proposer coordination only. They are not part of consensus validity on the product path.
+* Import verifies the commitment proof plus the native `receipt_root` artifact against the block’s canonical `tx_statements_commitment`; it no longer accepts non-empty product blocks that only provide ordered tx artifacts without the block artifact.
 
-This preserves the PQ security bar while shifting “lots of proofs” work off-chain and reducing the on-chain payload to O(1) proofs per block.
+This keeps the product path honest: native shielded transactions are now matched by native block verification instead of a hidden inline-required fallback.
 
 ---
 
 ### 2.7 Experimental post-proof folding stack
 
-For the fresh-chain 0.10.0 line, the shipped transaction-validity path is now direct native `tx_leaf` verification: wallets emit native tx-leaf artifact bytes by default, the runtime accepts only that format on the live unsigned transfer path, and blocks without an explicit block artifact verify those ordered per-transaction artifacts directly. The repo still carries an additive experimental workspace under `circuits/superneo-*` for witness-free post-proof compression and block-artifact research, but those block-level experiments are no longer allowed to define the shipping architecture by implication.
+For the fresh-chain 0.10.0 line, the shipped shielded path is now native end to end: wallets emit native `tx_leaf` artifact bytes by default, the runtime accepts only that format on the live unsigned transfer path, and every non-empty shielded block must also carry a same-block native `receipt_root` artifact that import verifies through `SelfContainedAggregation`. The repo still carries an additive workspace under `circuits/superneo-*`, but that workspace is now the implementation of the live block-artifact lane rather than an optional experiment hidden behind an inline-required product fallback.
 
 That stack is intentionally split into a Hegemon-owned relation layer (`superneo-ccs`), a backend trait layer (`superneo-core`), Goldilocks pay-per-bit witness packing (`superneo-ring`), a direct in-repo folding backend (`superneo-backend-lattice`), Hegemon-specific relations (`superneo-hegemon`), and a benchmark CLI (`superneo-bench`). The first real relation is a transaction-proof receipt relation rather than a full transaction AIR port. That is deliberate: any future compression win has to come from a post-proof primitive that sits after tx proving, not from re-running the hot witness path in another proof system.
 

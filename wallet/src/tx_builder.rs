@@ -1072,14 +1072,14 @@ mod tests {
         let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
         let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
 
-        let sender_ivk = sender.incoming_key().unwrap();
-        let sender_addr = sender_ivk.shielded_address(0).unwrap();
+        let sender_fvk = sender.full_viewing_key().unwrap().unwrap();
+        let sender_addr = sender_fvk.incoming().shielded_address(0).unwrap();
         let mut rng = StdRng::seed_from_u64(123);
 
         for (position, value) in [(0u64, 150_000_000u64), (1u64, 160_000_000u64)] {
             let note = NotePlaintext::random(value, 0, MemoPlaintext::default(), &mut rng);
             let ciphertext = NoteCiphertext::encrypt(&sender_addr, &note, &mut rng).unwrap();
-            let recovered = sender_ivk.decrypt_note(&ciphertext).unwrap();
+            let recovered = sender_fvk.decrypt_note(&ciphertext).unwrap();
             let commitment = felts_to_bytes48(&recovered.note_data.commitment());
             sender
                 .append_commitments(&[(position, commitment)])
@@ -1214,14 +1214,14 @@ mod tests {
         let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
         let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
 
-        let sender_ivk = sender.incoming_key().unwrap();
-        let sender_addr = sender_ivk.shielded_address(0).unwrap();
+        let sender_fvk = sender.full_viewing_key().unwrap().unwrap();
+        let sender_addr = sender_fvk.incoming().shielded_address(0).unwrap();
         let mut rng = StdRng::seed_from_u64(777);
 
         for (position, value) in [(0u64, 150_000_000u64), (1u64, 160_000_000u64)] {
             let note = NotePlaintext::random(value, 0, MemoPlaintext::default(), &mut rng);
             let ciphertext = NoteCiphertext::encrypt(&sender_addr, &note, &mut rng).unwrap();
-            let recovered = sender_ivk.decrypt_note(&ciphertext).unwrap();
+            let recovered = sender_fvk.decrypt_note(&ciphertext).unwrap();
             let commitment = felts_to_bytes48(&recovered.note_data.commitment());
             sender
                 .append_commitments(&[(position, commitment)])

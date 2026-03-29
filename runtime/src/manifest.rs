@@ -79,11 +79,11 @@ pub fn protocol_manifest() -> ProtocolManifest {
         fee_parameters: FeeParameters::default(),
         da_policy: DaAvailabilityPolicy::default(),
         ciphertext_policy: CiphertextPolicy::default(),
-        // Fresh testnets now ship the direct native tx-artifact lane by default:
-        // wallets carry canonical native tx-leaf bytes on each transfer and
-        // authors/importers verify those per-tx artifacts directly unless an
-        // explicit experimental block-artifact lane is enabled.
-        proof_availability_policy: ProofAvailabilityPolicy::InlineRequired,
+        // Fresh 0.10.x chains treat native receipt-root aggregation as the
+        // product path: every non-empty shielded block must carry a same-block
+        // native candidate artifact, and import verifies through that receipt
+        // root instead of the legacy per-tx inline-required lane.
+        proof_availability_policy: ProofAvailabilityPolicy::SelfContained,
         stablecoin_policies: vec![StablecoinPolicyManifestEntry {
             asset_id: 1001,
             oracle_feed: 1,
