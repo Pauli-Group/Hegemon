@@ -200,6 +200,19 @@ impl NativeBackendParams {
         Ok(())
     }
 
+    pub fn security_claim_uses_opening_hiding(&self) -> bool {
+        !matches!(
+            (
+                self.manifest.family_label,
+                self.manifest.commitment_scheme_label,
+            ),
+            (
+                "goldilocks_128b_structural_commitment",
+                "bounded_message_random_matrix_commitment",
+            )
+        )
+    }
+
     pub fn security_claim(&self) -> Result<NativeSecurityClaim> {
         ensure!(
             (1..=63).contains(&self.challenge_bits),
@@ -236,7 +249,11 @@ impl NativeBackendParams {
             .challenge_bits
             .saturating_mul(self.fold_challenge_count)
             / 2;
-        let opening_hiding_bits = (self.opening_randomness_bits / 2).min(128);
+        let opening_hiding_bits = if self.security_claim_uses_opening_hiding() {
+            (self.opening_randomness_bits / 2).min(128)
+        } else {
+            0
+        };
         let commitment_codomain_bits = goldilocks_field_capacity_bits(self.ring_profile)
             .saturating_mul(self.matrix_rows as u32)
             .saturating_mul(self.ring_degree() as u32);
@@ -253,34 +270,47 @@ impl NativeBackendParams {
         };
         let composition_loss_bits = ceil_log2_u32(self.max_claimed_receipt_root_leaves);
         let transcript_floor_bits = transcript_soundness_bits.saturating_sub(composition_loss_bits);
-        let soundness_floor_bits = transcript_floor_bits
-            .min(opening_hiding_bits)
-            .min(commitment_binding_bits);
+        let mut soundness_floor_bits = transcript_floor_bits.min(commitment_binding_bits);
+        if self.security_claim_uses_opening_hiding() {
+            soundness_floor_bits = soundness_floor_bits.min(opening_hiding_bits);
+        }
         let (assumption_ids, review_state) = match (
             self.manifest.family_label,
             self.manifest.challenge_schedule_label,
             self.fold_challenge_count,
+            self.security_claim_uses_opening_hiding(),
         ) {
             (
                 "goldilocks_128b_structural_commitment",
                 "quint_goldilocks_fs_challenge_negacyclic_mix",
                 5,
+                false,
             ) => (
                 vec![
                     "random_oracle.blake3_fiat_shamir",
                     "serialization.canonical_native_artifact_bytes",
                     "fs.quint_goldilocks_negacyclic_fold_challenges",
-                    "opening.canonical_256b_mask_seed",
+                    "commitment.deterministic_public_witness_reconstruction",
                     "commitment.bounded_message_random_matrix_union_bound",
                 ],
                 ReviewState::CandidateUnderReview,
+            ),
+            (_, _, _, true) => (
+                vec![
+                    "random_oracle.family_owned_fiat_shamir",
+                    "serialization.canonical_native_artifact_bytes",
+                    "fs.custom_multichallenge_fold_schedule",
+                    "opening.explicit_mask_seed_entropy",
+                    "commitment.family_owned_linear_binding",
+                ],
+                ReviewState::Experimental,
             ),
             _ => (
                 vec![
                     "random_oracle.family_owned_fiat_shamir",
                     "serialization.canonical_native_artifact_bytes",
                     "fs.custom_multichallenge_fold_schedule",
-                    "opening.explicit_mask_seed_entropy",
+                    "commitment.deterministic_public_witness_reconstruction",
                     "commitment.family_owned_linear_binding",
                 ],
                 ReviewState::Experimental,
@@ -2619,14 +2649,17 @@ mod tests {
             .unwrap();
         assert_eq!(claim.claimed_security_bits, 128);
         assert_eq!(claim.transcript_soundness_bits, 157);
-        assert_eq!(claim.opening_hiding_bits, 128);
+        assert_eq!(claim.opening_hiding_bits, 0);
         assert_eq!(claim.commitment_codomain_bits, 37_296);
         assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
         assert_eq!(claim.commitment_random_matrix_bits, 360);
         assert_eq!(claim.commitment_binding_bits, 360);
         assert_eq!(claim.composition_loss_bits, 7);
-        assert_eq!(claim.soundness_floor_bits, 128);
+        assert_eq!(claim.soundness_floor_bits, 150);
         assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
+        assert!(claim
+            .assumption_ids
+            .contains(&"commitment.deterministic_public_witness_reconstruction"));
         assert!(claim
             .assumption_ids
             .contains(&"commitment.bounded_message_random_matrix_union_bound"));

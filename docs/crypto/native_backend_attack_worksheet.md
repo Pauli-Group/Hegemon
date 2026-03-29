@@ -5,8 +5,8 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ## Active Target
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v3"`
-- `spec_digest = 5c11c4456ae0492ecefca5301e1d76816ec55283d9e4b697818f8d0a4d67dc67`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4"`
+- `spec_digest = 08eae1920eaf6e3cc1a8f9a149885221aed8172a5d33ae21a264d239b4b2cf88`
 
 ## Break Classes
 
@@ -36,25 +36,24 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ### 3. Opening-seed canonicality failures
 
 - Targeted claim:
-  - `opening.canonical_256b_mask_seed`
+  - `commitment.deterministic_public_witness_reconstruction`
 - What to exercise:
-  - seed tampering on the active 256-bit family
-  - noncanonical high bits on any lower-entropy historical family
-  - alternate encodings that map to the same accepted seed
+  - mutate serialized STARK public inputs without changing the public tx view
+  - mutate the public tx view without changing serialized STARK public inputs
+  - mutate commitment rows or commitment digest while preserving the rest of the artifact
 - Break condition:
-  - verifier accepts two encodings for the same canonical seed, accepts a seed outside the configured entropy envelope, or accepts a tampered seed/opening pair without tripping the opening checks
+  - verifier accepts an artifact whose deterministic public-witness reconstruction does not match the committed rows or digest
 
 ### 4. Commitment opening mismatch acceptance
 
 - Targeted claim:
   - `commitment.bounded_message_random_matrix_union_bound`
 - What to exercise:
-  - wrong witness, same digest
-  - wrong seed, same digest
+  - wrong witness reconstruction, same digest
   - wrong rows, same digest
   - mixed params with same shape
 - Break condition:
-  - verifier accepts an opening that does not reconstruct the committed witness under the configured params
+  - verifier accepts a commitment that does not reconstruct the committed witness under the configured params
 
 ### 5. Fold-row forgery
 
@@ -98,7 +97,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
   - constant-time/canonicality discipline, once added
 - What to exercise:
   - witness-dependent prover inputs
-  - seed-dependent opening paths
+  - deterministic public-witness commitment generation
   - branch-heavy edge cases
 - Break condition:
   - timing harness shows gross, stable separation driven by secret-dependent data on the claimed constant-time paths

@@ -20,7 +20,7 @@ use superneo_backend_lattice::{
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
 use superneo_hegemon::{
-    build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_artifact_bytes_with_params_and_seed,
+    build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_artifact_bytes_with_params,
     build_native_tx_leaf_receipt_root_artifact_bytes, build_receipt_root_artifact_bytes,
     build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
     build_verified_tx_proof_receipt_root_artifact_bytes,
@@ -658,11 +658,7 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
     let params = current_native_backend_params();
 
     let leaf_witness = sample_witness(1);
-    let built_leaf = build_native_tx_leaf_artifact_bytes_with_params_and_seed(
-        &params,
-        &leaf_witness,
-        review_vector_seed(1),
-    )?;
+    let built_leaf = build_native_tx_leaf_artifact_bytes_with_params(&params, &leaf_witness)?;
     let valid_leaf = decode_native_tx_leaf_artifact_bytes(&built_leaf.artifact_bytes)?;
     let valid_leaf_context = build_review_tx_context(&params, &valid_leaf);
 
@@ -687,11 +683,7 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
     invalid_leaf_trailing.push(0xff);
 
     let leaf_witness_2 = sample_witness(2);
-    let built_leaf_2 = build_native_tx_leaf_artifact_bytes_with_params_and_seed(
-        &params,
-        &leaf_witness_2,
-        review_vector_seed(2),
-    )?;
+    let built_leaf_2 = build_native_tx_leaf_artifact_bytes_with_params(&params, &leaf_witness_2)?;
     let valid_leaf_2 = decode_native_tx_leaf_artifact_bytes(&built_leaf_2.artifact_bytes)?;
 
     let built_root = build_native_tx_leaf_receipt_root_artifact_bytes(&[
@@ -851,14 +843,6 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
         }))?
     );
     Ok(())
-}
-
-fn review_vector_seed(tag: u8) -> [u8; 32] {
-    let mut seed = [0u8; 32];
-    for (idx, byte) in seed.iter_mut().enumerate() {
-        *byte = tag.wrapping_add(idx as u8);
-    }
-    seed
 }
 
 fn review_state_label(state: ReviewState) -> &'static str {

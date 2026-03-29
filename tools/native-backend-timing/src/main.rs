@@ -3,9 +3,7 @@ use p3_goldilocks::Goldilocks;
 use serde::Serialize;
 use std::{hint::black_box, time::Instant};
 use superneo_backend_lattice::NativeBackendParams;
-use superneo_hegemon::{
-    build_native_tx_leaf_artifact_bytes_with_params_and_seed, native_backend_params,
-};
+use superneo_hegemon::{build_native_tx_leaf_artifact_bytes_with_params, native_backend_params};
 use transaction_circuit::constants::NATIVE_ASSET_ID;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
@@ -79,7 +77,6 @@ fn measure_classes() -> Result<(Vec<f64>, Vec<f64>)> {
     let mut class_b = Vec::with_capacity(SAMPLE_COUNT);
     for idx in 0..(SAMPLE_COUNT + WARMUP_COUNT) {
         let logical_idx = idx.saturating_sub(WARMUP_COUNT);
-        let seed = review_seed(logical_idx as u8 + 1);
         let witness_a = sample_witness(logical_idx as u64 + 1, 0x11);
         let witness_b = sample_witness(logical_idx as u64 + 1, 0xe1);
         let (first_is_a, first_witness, second_witness) = if idx % 2 == 0 {
@@ -87,8 +84,8 @@ fn measure_classes() -> Result<(Vec<f64>, Vec<f64>)> {
         } else {
             (false, witness_b, witness_a)
         };
-        let first_elapsed = measure_once(&params, &first_witness, seed)?;
-        let second_elapsed = measure_once(&params, &second_witness, seed)?;
+        let first_elapsed = measure_once(&params, &first_witness)?;
+        let second_elapsed = measure_once(&params, &second_witness)?;
         if idx < WARMUP_COUNT {
             continue;
         }
@@ -103,13 +100,9 @@ fn measure_classes() -> Result<(Vec<f64>, Vec<f64>)> {
     Ok((class_a, class_b))
 }
 
-fn measure_once(
-    params: &NativeBackendParams,
-    witness: &TransactionWitness,
-    seed: [u8; 32],
-) -> Result<f64> {
+fn measure_once(params: &NativeBackendParams, witness: &TransactionWitness) -> Result<f64> {
     let start = Instant::now();
-    let artifact = build_native_tx_leaf_artifact_bytes_with_params_and_seed(params, witness, seed)?;
+    let artifact = build_native_tx_leaf_artifact_bytes_with_params(params, witness)?;
     black_box(artifact);
     Ok(start.elapsed().as_nanos() as f64)
 }
@@ -158,14 +151,6 @@ fn welch_t_statistic(left: &[f64], right: &[f64]) -> f64 {
     } else {
         mean_delta / denom.sqrt()
     }
-}
-
-fn review_seed(tag: u8) -> [u8; 32] {
-    let mut seed = [0u8; 32];
-    for (idx, byte) in seed.iter_mut().enumerate() {
-        *byte = tag.wrapping_add(idx as u8);
-    }
-    seed
 }
 
 fn sample_witness(seed: u64, class_tag: u8) -> TransactionWitness {

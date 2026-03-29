@@ -130,10 +130,11 @@ The backend converts the parameter object into `SecurityParams` using:
 The current backend also computes a security claim from:
 
 - transcript challenge width and count
-- opening entropy width
 - bounded-message random-matrix commitment geometry
 - explicit maximum commitment message length
 - composition loss from the configured maximum receipt-root leaf count
+
+Historical families may also count opening entropy if their live artifact path uses an explicit commitment-opening flow. The active tx-leaf/receipt-root lane does not.
 
 For the active family, the code derives commitment binding directly from the bounded-message random-matrix term computed from the concrete matrix geometry, decomposition width, and message-length cap. Historical families may still use a nonzero `commitment_assumption_bits`, but the active family sets `commitment_assumption_bits = 0` and `derive_commitment_binding_from_geometry = true`. The security-analysis document records the resulting structural term and the final floor explicitly.
 
@@ -160,11 +161,16 @@ The artifact no longer carries:
 
 The verifier recomputes the expected packed witness from the public artifact fields and rejects if the resulting commitment or leaf proof does not match.
 
-## Internal Commitment Masking
+## Internal Commitment API
 
-`opening_randomness_bits` remains part of the active parameter set because the bounded-message random-matrix commitment still uses internal mask entropy when the prover builds the commitment. That entropy is no longer serialized in the native artifact surface.
+`opening_randomness_bits` remains part of the backend parameter set because the backend still exposes a randomized commitment-opening API for non-product review/testing paths. That API canonicalizes the mask seed to the configured entropy width and checks it during `verify_opening`.
 
-The verifier therefore does **not** accept a public commitment-opening object. Instead it recomputes the deterministic commitment implied by the public witness and rejects any artifact whose commitment rows or digest do not match that reconstruction.
+The active tx-leaf/receipt-root product lane does **not** use that randomized opening flow and does **not** count an opening-hiding term in its live security floor.
+
+The product verifier therefore does **not** accept a public commitment-opening object. Instead it recomputes the deterministic commitment implied by the public witness and rejects any artifact whose commitment rows or digest do not match that reconstruction.
+
+When the non-product randomized opening API is used, its randomizer rows are derived from:
+
 - `ring_profile.label()`
 - `shape_digest`
 - `security_bits`

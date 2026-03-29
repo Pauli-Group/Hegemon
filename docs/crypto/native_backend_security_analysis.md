@@ -18,24 +18,28 @@ The exact wire/transcript surface for that family is frozen in [native_backend_s
 
 ## Claim Model
 
-The backend exports one `NativeSecurityClaim` from [superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). The claim is computed mechanically from the active `NativeBackendParams`, including the configured challenge schedule, opening entropy, explicit commitment message cap, and explicit receipt-root composition bound.
+The backend exports one `NativeSecurityClaim` from [superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). The claim is computed mechanically from the active `NativeBackendParams`, including the configured challenge schedule, explicit commitment message cap, and explicit receipt-root composition bound. Historical families may still count opening entropy when their live artifact path actually uses an explicit mask-seed commitment-opening flow, but the active tx-leaf/receipt-root product lane does not.
 
 For the active family the code currently computes:
 
 - `claimed_security_bits = 128`
 - `transcript_soundness_bits = floor(challenge_bits * fold_challenge_count / 2) = floor(63 * 5 / 2) = 157`
-- `opening_hiding_bits = min(opening_randomness_bits / 2, 128) = min(256 / 2, 128) = 128`
+- `opening_hiding_bits = 0` because the shipped tx-leaf/receipt-root lane reconstructs its commitment deterministically from public witness data instead of using a live public opening/seed path
 - `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 74 * 8 = 37,296`
 - `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 513 * 8 * 9 = 36,936`
 - `commitment_random_matrix_bits = max(commitment_codomain_bits - commitment_same_seed_search_bits, 0) = 360`
 - `commitment_binding_bits = commitment_random_matrix_bits = 360`
 - `composition_loss_bits = ceil(log2(max_claimed_receipt_root_leaves)) = ceil(log2(128)) = 7`
-- `soundness_floor_bits = min(157 - 7, 128, 360) = 128`
+- `soundness_floor_bits = min(157 - 7, 360) = 150`
 - `review_state = candidate_under_review`
 
 The code rejects setup whenever `claimed_security_bits > soundness_floor_bits`.
 
-The important structural fact is explicit now: the active family no longer relies on `commitment_assumption_bits` to hit the claimed floor. The current `74 x 8` bounded-message linear map yields a positive first-principles random-matrix term of `360` bits under the repo's conservative union bound, so the live `128`-bit floor is geometry-derived on the commitment side.
+The important structural facts are explicit now:
+
+- the active family no longer relies on `commitment_assumption_bits` to hit the claimed floor,
+- the active tx-leaf/receipt-root lane does not count any opening-hiding term because it does not use a live public opening/seed path,
+- and the current `74 x 8` bounded-message linear map yields a positive first-principles random-matrix term of `360` bits under the repo's conservative union bound, so the active `128`-bit claim is bounded by transcript soundness and geometry-derived commitment binding, not by an opening term.
 
 The live tx-leaf artifact surface is also now witness-free. The public bytes contain:
 
@@ -61,7 +65,7 @@ The active family currently emits these `assumption_ids`:
 1. `random_oracle.blake3_fiat_shamir`
 2. `serialization.canonical_native_artifact_bytes`
 3. `fs.quint_goldilocks_negacyclic_fold_challenges`
-4. `opening.canonical_256b_mask_seed`
+4. `commitment.deterministic_public_witness_reconstruction`
 5. `commitment.bounded_message_random_matrix_union_bound`
 
 These mean:
@@ -75,8 +79,8 @@ These mean:
 3. `fs.quint_goldilocks_negacyclic_fold_challenges`
    Soundness for the fold schedule assumes five independently derived transcript challenges over Goldilocks, mixed through the implemented negacyclic linear fold schedule.
 
-4. `opening.canonical_256b_mask_seed`
-   Hiding for the internal commitment-masking path assumes the canonicalized 256-bit mask seed contributes at least 128 bits after the conservative halving rule in the code-derived claim model.
+4. `commitment.deterministic_public_witness_reconstruction`
+   The live tx-leaf verifier must reconstruct the exact packed witness and deterministic commitment from the public tx view, serialized STARK public inputs, and fixed relation layout. The active security floor assumes that this reconstruction is canonical and that the verifier rejects mismatches.
 
 5. `commitment.bounded_message_random_matrix_union_bound`
    Binding for the current commitment path is claimed under the repository's conservative bounded-message random-matrix union bound for this exact family and parameter set. In code, the active family now sets `commitment_binding_bits = commitment_random_matrix_bits`, and that structural term is currently `360` bits for the implemented `74 x 8` geometry with `max_commitment_message_ring_elems = 513`. So the repo is no longer relying on a separate commitment-assumption override on the active family.

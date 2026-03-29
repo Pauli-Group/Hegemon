@@ -2352,27 +2352,10 @@ pub fn build_native_tx_leaf_artifact_bytes(
     build_native_tx_leaf_artifact_bytes_with_params(&native_backend_params(), witness)
 }
 
-pub fn build_native_tx_leaf_artifact_bytes_with_params_and_seed(
-    params: &NativeBackendParams,
-    witness: &TransactionWitness,
-    randomness_seed: [u8; 32],
-) -> Result<BuiltNativeTxLeafArtifact> {
-    build_native_tx_leaf_artifact_bytes_internal(params, witness, Some(randomness_seed))
-}
-
 pub fn build_native_tx_leaf_artifact_bytes_with_params(
     params: &NativeBackendParams,
     witness: &TransactionWitness,
 ) -> Result<BuiltNativeTxLeafArtifact> {
-    build_native_tx_leaf_artifact_bytes_internal(params, witness, None)
-}
-
-fn build_native_tx_leaf_artifact_bytes_internal(
-    params: &NativeBackendParams,
-    witness: &TransactionWitness,
-    randomness_seed: Option<[u8; 32]>,
-) -> Result<BuiltNativeTxLeafArtifact> {
-    let _ = randomness_seed;
     let proof = prove_transaction_with_params(
         witness,
         transaction_proving_key(),
