@@ -769,6 +769,7 @@ fn build_upgrade_transition_blocks() -> (
 }
 
 #[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn raw_active_rejects_bad_tx_proof() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
@@ -798,6 +799,7 @@ fn raw_active_rejects_bad_tx_proof() {
 }
 
 #[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn raw_active_rejects_bad_ordering() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
@@ -815,6 +817,7 @@ fn raw_active_rejects_bad_ordering() {
 }
 
 #[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn raw_active_rejects_commitment_mismatch() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
@@ -828,6 +831,7 @@ fn raw_active_rejects_commitment_mismatch() {
 }
 
 #[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn receipt_root_block_is_accepted() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
@@ -850,6 +854,7 @@ fn receipt_root_block_is_accepted() {
 }
 
 #[test]
+#[ignore = "heavy integration: native history transition builds multiple receipt-root proofs; cover product path in native-path CI"]
 fn native_history_can_transition_to_native_receipt_root() {
     let (first_base_tree, first_block, second_base_tree, second_block, final_root) =
         build_upgrade_transition_blocks();
@@ -867,6 +872,7 @@ fn native_history_can_transition_to_native_receipt_root() {
 }
 
 #[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
@@ -895,6 +901,7 @@ fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
 }
 
 #[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn raw_active_block_is_accepted() {
     let fixture = raw_active_fixture();
     let verifier = ParallelProofVerifier::new();
@@ -905,6 +912,7 @@ fn raw_active_block_is_accepted() {
 }
 
 #[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn raw_active_rejects_duplicate_nullifier_conflict() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();

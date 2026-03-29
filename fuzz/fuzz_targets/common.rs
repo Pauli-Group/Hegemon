@@ -1,6 +1,7 @@
 use p3_goldilocks::Goldilocks;
+use std::sync::OnceLock;
 use superneo_hegemon::{
-    build_native_tx_leaf_artifact_bytes_with_params_and_seed,
+    build_native_tx_leaf_artifact_bytes_with_params,
     build_native_tx_leaf_receipt_root_artifact_bytes_with_params,
     decode_native_tx_leaf_artifact_bytes, native_backend_params, tx_leaf_public_tx_from_witness,
     CanonicalTxValidityReceipt, NativeTxLeafRecord,
@@ -80,59 +81,53 @@ pub fn sample_witness(seed: u64) -> TransactionWitness {
     }
 }
 
-pub fn review_vector_seed(tag: u8) -> [u8; 32] {
-    let mut seed = [0u8; 32];
-    for (idx, byte) in seed.iter_mut().enumerate() {
-        *byte = tag.wrapping_add(idx as u8);
-    }
-    seed
-}
-
 pub fn valid_native_tx_leaf_case() -> (
     superneo_hegemon::TxLeafPublicTx,
     CanonicalTxValidityReceipt,
     Vec<u8>,
 ) {
-    let params = native_backend_params();
-    let witness = sample_witness(1);
-    let tx = tx_leaf_public_tx_from_witness(&witness).expect("tx view");
-    let built = build_native_tx_leaf_artifact_bytes_with_params_and_seed(
-        &params,
-        &witness,
-        review_vector_seed(1),
-    )
-    .expect("build deterministic native leaf");
-    (tx, built.receipt, built.artifact_bytes)
+    static CASE: OnceLock<(
+        superneo_hegemon::TxLeafPublicTx,
+        CanonicalTxValidityReceipt,
+        Vec<u8>,
+    )> = OnceLock::new();
+    CASE.get_or_init(|| {
+        let params = native_backend_params();
+        let witness = sample_witness(1);
+        let tx = tx_leaf_public_tx_from_witness(&witness).expect("tx view");
+        let built = build_native_tx_leaf_artifact_bytes_with_params(&params, &witness)
+            .expect("build deterministic native leaf");
+        (tx, built.receipt, built.artifact_bytes)
+    })
+    .clone()
 }
 
 pub fn valid_receipt_root_case() -> (Vec<NativeTxLeafRecord>, Vec<u8>) {
-    let params = native_backend_params();
-    let built_leaf_a = build_native_tx_leaf_artifact_bytes_with_params_and_seed(
-        &params,
-        &sample_witness(1),
-        review_vector_seed(1),
-    )
-    .expect("leaf a");
-    let built_leaf_b = build_native_tx_leaf_artifact_bytes_with_params_and_seed(
-        &params,
-        &sample_witness(2),
-        review_vector_seed(2),
-    )
-    .expect("leaf b");
-    let leaf_a =
-        decode_native_tx_leaf_artifact_bytes(&built_leaf_a.artifact_bytes).expect("decode leaf a");
-    let leaf_b =
-        decode_native_tx_leaf_artifact_bytes(&built_leaf_b.artifact_bytes).expect("decode leaf b");
-    let built_root = build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
-        &params,
-        &[leaf_a.clone(), leaf_b.clone()],
-    )
-    .expect("build root");
-    let records = vec![
-        superneo_hegemon::native_tx_leaf_record_from_artifact(&leaf_a),
-        superneo_hegemon::native_tx_leaf_record_from_artifact(&leaf_b),
-    ];
-    (records, built_root.artifact_bytes)
+    static CASE: OnceLock<(Vec<NativeTxLeafRecord>, Vec<u8>)> = OnceLock::new();
+    CASE.get_or_init(|| {
+        let params = native_backend_params();
+        let built_leaf_a =
+            build_native_tx_leaf_artifact_bytes_with_params(&params, &sample_witness(1))
+                .expect("leaf a");
+        let built_leaf_b =
+            build_native_tx_leaf_artifact_bytes_with_params(&params, &sample_witness(2))
+                .expect("leaf b");
+        let leaf_a = decode_native_tx_leaf_artifact_bytes(&built_leaf_a.artifact_bytes)
+            .expect("decode leaf a");
+        let leaf_b = decode_native_tx_leaf_artifact_bytes(&built_leaf_b.artifact_bytes)
+            .expect("decode leaf b");
+        let built_root = build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
+            &params,
+            &[leaf_a.clone(), leaf_b.clone()],
+        )
+        .expect("build root");
+        let records = vec![
+            superneo_hegemon::native_tx_leaf_record_from_artifact(&leaf_a),
+            superneo_hegemon::native_tx_leaf_record_from_artifact(&leaf_b),
+        ];
+        (records, built_root.artifact_bytes)
+    })
+    .clone()
 }
 
 pub fn mutate_bytes(valid: &[u8], data: &[u8]) -> Vec<u8> {

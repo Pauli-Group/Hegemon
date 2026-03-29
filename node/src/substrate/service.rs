@@ -2496,11 +2496,6 @@ impl PreparedArtifactSelector {
         }
     }
 
-    #[cfg(test)]
-    fn inline_tx() -> Self {
-        Self::from_mode(pallet_shielded_pool::types::BlockProofMode::InlineTx)
-    }
-
     fn receipt_root() -> Self {
         Self::from_mode(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
     }
@@ -11901,25 +11896,6 @@ mod tests {
         .encode()
     }
 
-    fn test_inline_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
-        kernel_shielded_extrinsic(
-            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
-            vec![nullifier],
-            pallet_shielded_pool::family::ShieldedTransferInlineArgs {
-                proof: vec![binding_byte],
-                commitments: vec![[binding_byte; 48]],
-                ciphertexts: vec![pallet_shielded_pool::types::EncryptedNote::default()],
-                anchor: [7u8; 48],
-                balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
-                binding_hash: [binding_byte; 64],
-                stablecoin: None,
-                fee: 0,
-            }
-            .encode(),
-        )
-        .encode()
-    }
-
     #[test]
     fn extract_inline_transfer_accepts_native_tx_leaf_payload() {
         let witness = test_native_sample_witness(31);
@@ -12591,113 +12567,6 @@ mod tests {
         assert!(
             reason.is_none(),
             "mining should resume once the matching native receipt_root bundle exists"
-        );
-    }
-
-    #[test]
-    fn mining_pause_reason_skips_ready_bundle_for_inline_tx_batch_with_inline_proofs() {
-        let _guard = set_block_proof_mode("inline_tx");
-        let parent_hash = H256::repeat_byte(0x42);
-        let coordinator = ProverCoordinator::new(
-            ProverCoordinatorConfig {
-                workers: 0,
-                target_txs: 1,
-                queue_capacity: 1,
-                max_inflight_per_level: 1,
-                liveness_lane: true,
-                adaptive_liveness_timeout: Duration::from_millis(0),
-                incremental_upsizing: false,
-                poll_interval: Duration::from_millis(50),
-                job_timeout: Duration::from_secs(30),
-            },
-            Arc::new(move || (parent_hash, 7u64)),
-            Arc::new(|_max_txs| Vec::new()),
-            Arc::new(|_, _, _| Err("unused".to_string())),
-        );
-
-        let candidate_txs = vec![test_inline_transfer_extrinsic(5, [4u8; 48])];
-        let reason = mining_pause_reason_for_pending_shielded_batch(
-            coordinator.as_ref(),
-            parent_hash,
-            &candidate_txs,
-            1,
-            PreparedArtifactSelector::inline_tx(),
-        )
-        .expect("pause reason evaluation succeeds");
-        assert!(
-            reason.is_none(),
-            "inline_tx batch with canonical inline proofs should not pause mining"
-        );
-    }
-
-    #[test]
-    fn ready_bundle_trace_skips_inline_tx_batch_with_inline_proofs() {
-        let _guard = set_block_proof_mode("inline_tx");
-        let parent_hash = H256::repeat_byte(0x43);
-        let block_number = 8u64;
-        let coordinator = ProverCoordinator::new(
-            ProverCoordinatorConfig {
-                workers: 0,
-                target_txs: 1,
-                queue_capacity: 1,
-                max_inflight_per_level: 1,
-                liveness_lane: true,
-                adaptive_liveness_timeout: Duration::from_millis(0),
-                incremental_upsizing: false,
-                poll_interval: Duration::from_millis(50),
-                job_timeout: Duration::from_secs(30),
-            },
-            Arc::new(move || (parent_hash, 7u64)),
-            Arc::new(|_max_txs| Vec::new()),
-            Arc::new(|_, _, _| Err("unused".to_string())),
-        );
-
-        let candidate_txs = vec![test_inline_transfer_extrinsic(6, [5u8; 48])];
-        let decoded = runtime::UncheckedExtrinsic::decode(&mut &candidate_txs[0][..])
-            .expect("candidate decodes");
-        let statement_bindings =
-            statement_bindings_from_extrinsics(&[decoded]).expect("statement bindings");
-        let statement_hashes = statement_bindings
-            .iter()
-            .map(|binding| binding.statement_hash)
-            .collect::<Vec<_>>();
-        let tx_statements_commitment =
-            CommitmentBlockProver::commitment_from_statement_hashes(&statement_hashes)
-                .expect("commitment");
-        coordinator.import_network_artifact(
-            parent_hash,
-            pallet_shielded_pool::types::CandidateArtifact {
-                version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
-                tx_count: 1,
-                tx_statements_commitment,
-                da_root: [0u8; 48],
-                da_chunk_count: 0,
-                commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new()),
-                proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
-                proof_kind: pallet_shielded_pool::types::ProofArtifactKind::InlineTx,
-                verifier_profile:
-                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(
-                        pallet_shielded_pool::types::BlockProofMode::InlineTx,
-                    )
-                    .1,
-                receipt_root: None,
-                artifact_claim: None,
-            },
-            candidate_txs.clone(),
-        );
-
-        let trace = ready_bundle_trace_for_candidate(
-            coordinator.as_ref(),
-            parent_hash,
-            block_number,
-            &candidate_txs,
-            1,
-            PreparedArtifactSelector::inline_tx(),
-        )
-        .expect("trace evaluation succeeds");
-        assert!(
-            trace.is_none(),
-            "inline_tx batches with canonical inline proofs should not emit ready-bundle traces"
         );
     }
 }

@@ -72,8 +72,8 @@ jobs:
         run: |
           cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads -- --nocapture
           cargo test -p runtime --test kernel_wallet_transfer -- --nocapture
-          cargo test -p consensus --test raw_active_mode raw_active_rejects_bad_tx_proof -- --nocapture
-          cargo test -p consensus --test raw_active_mode receipt_root_ -- --nocapture
+          cargo test -p consensus --test raw_active_mode raw_active_rejects_bad_tx_proof -- --ignored --nocapture
+          cargo test -p consensus --test raw_active_mode receipt_root_ -- --ignored --nocapture
           cargo test -p hegemon-node extract_inline_transfer_accepts_native_tx_leaf_payload -- --nocapture
           cargo test -p hegemon-node receipt_root -- --nocapture
 

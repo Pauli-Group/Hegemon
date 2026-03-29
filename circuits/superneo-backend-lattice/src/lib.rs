@@ -3011,16 +3011,21 @@ mod tests {
 
     #[test]
     fn validate_rejects_security_target_above_soundness_floor() {
+        let baseline = NativeBackendParams::goldilocks_128b_structural_commitment();
+        let floor = baseline
+            .security_claim()
+            .expect("baseline claim")
+            .soundness_floor_bits;
         let params = NativeBackendParams {
-            security_bits: 129,
-            ..NativeBackendParams::goldilocks_128b_structural_commitment()
+            security_bits: floor.saturating_add(1),
+            ..baseline
         };
         let error = params
             .validate()
             .expect_err("overclaimed security must fail");
         let message = error.to_string();
         assert!(message.contains("exceeds native backend soundness floor"));
-        assert!(message.contains("129"));
-        assert!(message.contains("128"));
+        assert!(message.contains(&(floor.saturating_add(1)).to_string()));
+        assert!(message.contains(&floor.to_string()));
     }
 }
