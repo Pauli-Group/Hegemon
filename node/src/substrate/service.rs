@@ -4737,6 +4737,17 @@ fn filter_parent_included_shielded_transfers(
     Ok((filtered, dropped))
 }
 
+fn sanitize_coordinator_candidate_extrinsics_for_parent(
+    extrinsics: &[Vec<u8>],
+    parent_keys: &std::collections::HashSet<[u8; 32]>,
+) -> Result<(Vec<Vec<u8>>, ShieldedConflictFilterStats, usize), String> {
+    let ordered = reorder_shielded_transfers(extrinsics)?;
+    let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
+    let (filtered, dropped_parent_duplicates) =
+        filter_parent_included_shielded_transfers(&filtered, parent_keys)?;
+    Ok((filtered, filter_stats, dropped_parent_duplicates))
+}
+
 fn ensure_shielded_transfer_ordering(
     extrinsics: &[runtime::UncheckedExtrinsic],
 ) -> Result<(), String> {
@@ -10407,6 +10418,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let pending_for_coord = {
             let pool = Arc::clone(&pool_bridge);
             let tx_pool = transaction_pool.clone();
+            let client = client.clone();
             let overscan_factor = coordinator_candidate_overscan_factor;
             Arc::new(move |target_txs: usize| {
                 use sc_transaction_pool_api::{
@@ -10453,31 +10465,52 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         }
                     }
                 }
-                let ordered = match reorder_shielded_transfers(&txs) {
-                    Ok(ordered) => ordered,
+                let parent_hash = client.chain_info().best_hash;
+                let parent_keys = match parent_shielded_transfer_keys(client.as_ref(), parent_hash)
+                {
+                    Ok(parent_keys) => parent_keys,
                     Err(err) => {
                         tracing::warn!(
                             error = %err,
+                            parent_hash = ?parent_hash,
                             candidate_count = txs.len(),
-                            "Falling back to unsorted tx candidate set for prover coordinator"
+                            "Failed to load parent shielded transfer keys for prover coordinator"
+                        );
+                        std::collections::HashSet::new()
+                    }
+                };
+                let mut candidates = match sanitize_coordinator_candidate_extrinsics_for_parent(
+                    &txs,
+                    &parent_keys,
+                ) {
+                    Ok((filtered, filter_stats, dropped_parent_duplicates)) => {
+                        if filter_stats.dropped_total() > 0 || dropped_parent_duplicates > 0 {
+                            tracing::info!(
+                                target_txs,
+                                fetch_limit,
+                                total_candidates = filter_stats.total,
+                                kept_candidates = filtered.len(),
+                                dropped_decode_errors = filter_stats.dropped_decode_errors,
+                                dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
+                                dropped_nullifier_conflicts =
+                                    filter_stats.dropped_nullifier_conflicts,
+                                dropped_parent_duplicates,
+                                parent_shielded_transfer_count = parent_keys.len(),
+                                "Sanitized shielded transfers for prover candidate set"
+                            );
+                        }
+                        filtered
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            parent_hash = ?parent_hash,
+                            candidate_count = txs.len(),
+                            "Falling back to unsanitized tx candidate set for prover coordinator"
                         );
                         txs
                     }
                 };
-                let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
-                if filter_stats.dropped_total() > 0 {
-                    tracing::info!(
-                        target_txs,
-                        fetch_limit,
-                        total_candidates = filter_stats.total,
-                        kept_candidates = filter_stats.kept,
-                        dropped_decode_errors = filter_stats.dropped_decode_errors,
-                        dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
-                        dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
-                        "Filtered conflicting shielded transfers from prover candidate set"
-                    );
-                }
-                let mut candidates = filtered;
                 candidates.truncate(target_txs);
                 candidates
             })
@@ -10488,17 +10521,23 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let pending_proofs = Arc::clone(&pending_proof_store);
             Arc::new(
                 move |parent_hash: H256, block_number: u64, candidate_txs: Vec<Vec<u8>>| {
-                    let ordered = reorder_shielded_transfers(&candidate_txs)?;
-                    let (filtered, filter_stats) = filter_conflicting_shielded_transfers(&ordered);
-                    if filter_stats.dropped_total() > 0 {
+                    let parent_keys = parent_shielded_transfer_keys(client.as_ref(), parent_hash)?;
+                    let (filtered, filter_stats, dropped_parent_duplicates) =
+                        sanitize_coordinator_candidate_extrinsics_for_parent(
+                            &candidate_txs,
+                            &parent_keys,
+                        )?;
+                    if filter_stats.dropped_total() > 0 || dropped_parent_duplicates > 0 {
                         tracing::warn!(
                             block_number,
                             total_candidates = filter_stats.total,
-                            kept_candidates = filter_stats.kept,
+                            kept_candidates = filtered.len(),
                             dropped_decode_errors = filter_stats.dropped_decode_errors,
                             dropped_binding_conflicts = filter_stats.dropped_binding_conflicts,
                             dropped_nullifier_conflicts = filter_stats.dropped_nullifier_conflicts,
-                            "Filtered conflicting shielded transfers before proven-batch preparation"
+                            dropped_parent_duplicates,
+                            parent_shielded_transfer_count = parent_keys.len(),
+                            "Sanitized shielded transfers before proven-batch preparation"
                         );
                     }
                     // Clone pending sidecar stores up front so we never hold these locks while
@@ -12090,6 +12129,33 @@ mod tests {
 
         assert_eq!(dropped, 1);
         assert_eq!(filtered, vec![second]);
+    }
+
+    #[test]
+    fn sanitize_coordinator_candidate_extrinsics_drops_parent_duplicates_before_truncation() {
+        let first = test_sidecar_transfer_extrinsic(7, [7u8; 48]);
+        let second = test_sidecar_transfer_extrinsic(8, [8u8; 48]);
+        let first_decoded =
+            runtime::UncheckedExtrinsic::decode(&mut &first[..]).expect("decode first");
+        let first_key =
+            shielded_transfer_key_from_extrinsic(&first_decoded).expect("first shielded key");
+        let mut parent_keys = std::collections::HashSet::new();
+        parent_keys.insert(first_key);
+
+        let (sanitized, stats, dropped_parent_duplicates) =
+            sanitize_coordinator_candidate_extrinsics_for_parent(
+                &[first.clone(), second.clone()],
+                &parent_keys,
+            )
+            .expect("sanitize succeeds");
+
+        assert_eq!(
+            sanitized,
+            vec![second],
+            "coordinator candidate sanitization must remove parent duplicates before singleton truncation"
+        );
+        assert_eq!(stats.dropped_total(), 0);
+        assert_eq!(dropped_parent_duplicates, 1);
     }
 
     #[test]
