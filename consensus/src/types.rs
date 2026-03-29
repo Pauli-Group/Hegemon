@@ -313,14 +313,6 @@ pub struct ProvenBatch {
     pub receipt_root: Option<ReceiptRootProofPayload>,
 }
 
-/// Consensus-facing artifact claim for the prover or artifact publisher
-/// whose proof object is included in the winning block.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ArtifactClaim {
-    pub payout_account: [u8; 32],
-    pub payout_amount: u64,
-}
-
 /// Parent-agnostic proof object over an exact ordered transaction set.
 ///
 /// The current fresh-testnet implementation reuses the existing self-contained
@@ -338,7 +330,6 @@ pub struct ArtifactAnnouncement {
     pub proof_mode: ProvenBatchMode,
     pub proof_kind: ProofArtifactKind,
     pub verifier_profile: VerifierProfileDigest,
-    pub claimed_payout_amount: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

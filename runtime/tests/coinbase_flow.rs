@@ -47,7 +47,6 @@ fn coinbase_reward_bundle(
 ) -> BlockRewardBundle {
     BlockRewardBundle {
         miner_note: coinbase_note_data(amount, recipient, public_seed),
-        prover_note: None,
     }
 }
 

@@ -180,31 +180,6 @@ pub const BLOCK_PROOF_FORMAT_ID_V5: u8 = 5;
 pub const MAX_FLAT_BATCHES_PER_BLOCK: usize = 1024;
 /// Maximum cumulative proof bytes accepted in a single block payload.
 pub const BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES: usize = 64 * 1024 * 1024;
-/// Maximum encoded bytes for a prover recipient address (bech32m payload).
-pub const MAX_PROVER_RECIPIENT_LEN: u32 = 2048;
-/// Maximum encoded bytes for a prover claim signature.
-pub const MAX_PROVER_CLAIM_SIGNATURE_LEN: u32 = 4096;
-
-/// Signed artifact claim used to bind an external prover/artifact payout to an included artifact.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
-)]
-pub struct ArtifactClaim {
-    /// Claimed prover account bytes (AccountId32 encoding).
-    pub prover_account: [u8; 32],
-    /// Full shielded address bytes (bech32 string bytes) used for note encryption.
-    pub prover_recipient: BoundedVec<u8, ConstU32<MAX_PROVER_RECIPIENT_LEN>>,
-    /// Shielded recipient address for prover payout.
-    pub prover_recipient_address: [u8; DIVERSIFIED_ADDRESS_SIZE],
-    /// Claimed payout amount for this bundle.
-    pub prover_amount: u64,
-    /// Signature over claim fields.
-    pub claim_signature: BoundedVec<u8, ConstU32<MAX_PROVER_CLAIM_SIGNATURE_LEN>>,
-}
-
-#[allow(deprecated)]
-#[deprecated(note = "Use ArtifactClaim instead.")]
-pub type ProverCompensationClaim = ArtifactClaim;
 
 /// Per-block payload that carries all consensus-required proof material for
 /// self-contained aggregation blocks.
@@ -308,8 +283,6 @@ pub struct CandidateArtifact {
     pub verifier_profile: VerifierProfileDigest,
     /// Optional receipt-root proof payload (required in ReceiptRoot mode).
     pub receipt_root: Option<ReceiptRootProofPayload>,
-    /// Optional external artifact payout claim.
-    pub artifact_claim: Option<ArtifactClaim>,
 }
 
 #[allow(deprecated)]
@@ -326,7 +299,6 @@ pub struct ArtifactAnnouncement {
     pub proof_mode: BlockProofMode,
     pub proof_kind: ProofArtifactKind,
     pub verifier_profile: VerifierProfileDigest,
-    pub claimed_payout_amount: u64,
 }
 
 #[deprecated(note = "Use BLOCK_PROOF_BUNDLE_SCHEMA instead.")]
@@ -528,14 +500,11 @@ pub struct CoinbaseNoteData {
 }
 
 /// Per-block shielded reward bundle.
-///
-/// Miner note is required, prover note is optional.
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
 pub struct BlockRewardBundle {
     pub miner_note: CoinbaseNoteData,
-    pub prover_note: Option<CoinbaseNoteData>,
 }
 
 impl MerklePath {
@@ -658,7 +627,7 @@ pub struct ShieldedFeeBreakdown {
     pub total_fee: u128,
 }
 
-/// Per-block fee accumulators split by beneficiary role.
+/// Per-block fee accumulators credited to the block miner.
 #[derive(
     Clone,
     Copy,
@@ -676,7 +645,6 @@ pub struct ShieldedFeeBreakdown {
 )]
 pub struct BlockFeeBuckets {
     pub miner_fees: u128,
-    pub prover_fees: u128,
 }
 
 /// Public view of a forced inclusion commitment.

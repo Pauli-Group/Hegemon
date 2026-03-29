@@ -54,7 +54,6 @@ use frame_system::pallet_prelude::*;
 use log::{info, warn};
 use protocol_kernel::traits::{ActionSourceClass, ValidActionMeta};
 use protocol_versioning::VersionBinding;
-use sp_core::Pair;
 use sp_runtime::traits::Saturating;
 use sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
@@ -835,11 +834,6 @@ pub mod pallet {
     pub type CoinbaseNotes<T: Config> =
         StorageMap<_, Blake2_128Concat, u64, types::BlockRewardBundle, OptionQuery>;
 
-    /// Optional prover claim attached to the current block's proven bundle.
-    #[pallet::storage]
-    pub type PendingProverClaim<T: Config> =
-        StorageValue<_, types::ProverCompensationClaim, OptionQuery>;
-
     /// Whether coinbase was already processed this block (prevents double-mint).
     #[pallet::storage]
     pub type CoinbaseProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
@@ -1010,14 +1004,6 @@ pub mod pallet {
         VerifyingKeyNotFound,
         /// Coinbase commitment verification failed.
         InvalidCoinbaseCommitment,
-        /// Prover claim signature is invalid.
-        InvalidProverClaimSignature,
-        /// Prover reward note is required but missing.
-        MissingProverRewardNote,
-        /// Prover reward note was provided unexpectedly.
-        UnexpectedProverRewardNote,
-        /// Prover reward metadata does not match the claim or fee bucket.
-        ProverRewardMismatch,
         /// Coinbase already processed for this block.
         CoinbaseAlreadyProcessed,
         /// Proven batch payload already submitted for this block.
@@ -1161,9 +1147,7 @@ pub mod pallet {
 
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
             let pending_buckets = BlockFeeBucketsStorage::<T>::get();
-            let pending_total = pending_buckets
-                .miner_fees
-                .saturating_add(pending_buckets.prover_fees);
+            let pending_total = pending_buckets.miner_fees;
             if pending_total > 0 && !CoinbaseProcessed::<T>::get() {
                 TotalFeesBurned::<T>::mutate(|total| *total = total.saturating_add(pending_total));
             }
@@ -1174,7 +1158,6 @@ pub mod pallet {
             ShieldedTransfersProcessed::<T>::kill();
             ProvenBatchProcessed::<T>::kill();
             AggregationProofRequired::<T>::kill();
-            PendingProverClaim::<T>::kill();
             Weight::from_parts(1_000, 0)
         }
     }
@@ -1218,7 +1201,7 @@ pub mod pallet {
         /// Unlike regular shielded transfers, this creates new coins (no transparent input).
         ///
         /// # Arguments
-        /// * `reward_bundle` - Miner note plus optional prover note
+        /// * `reward_bundle` - Miner reward note
         ///
         /// # Security
         /// - Called via inherent (None origin)
@@ -1466,12 +1449,11 @@ pub mod pallet {
             if let Err(err) = Self::validate_block_proof_bundle_mode(payload) {
                 warn!(
                     target: "shielded-pool",
-                    "submit_candidate_artifact rejected: invalid proof-mode payload err={:?} proof_mode={:?} receipt_root_present={} da_chunk_count={} artifact_claim_present={}",
+                    "submit_candidate_artifact rejected: invalid proof-mode payload err={:?} proof_mode={:?} receipt_root_present={} da_chunk_count={}",
                     err,
                     payload.proof_mode,
                     payload.receipt_root.is_some(),
                     payload.da_chunk_count,
-                    payload.artifact_claim.is_some(),
                 );
                 return Err(InvalidTransaction::BadProof);
             }
@@ -1492,16 +1474,6 @@ pub mod pallet {
                     "submit_candidate_artifact rejected: zero da_chunk_count"
                 );
                 return Err(InvalidTransaction::Custom(10));
-            }
-            if let Some(claim) = payload.artifact_claim.as_ref() {
-                if !Self::verify_prover_claim_signature(claim, payload) {
-                    warn!(
-                        target: "shielded-pool",
-                        "submit_candidate_artifact rejected: invalid prover claim signature prover_amount={}",
-                        claim.prover_amount,
-                    );
-                    return Err(InvalidTransaction::BadProof);
-                }
             }
             Ok(ValidActionMeta {
                 priority: u64::from(TransactionPriority::MAX),
@@ -1946,15 +1918,6 @@ pub mod pallet {
                     chunk_count: payload.da_chunk_count,
                 },
             );
-            if let Some(claim) = payload.artifact_claim.as_ref() {
-                ensure!(
-                    Self::verify_prover_claim_signature(claim, &payload),
-                    Error::<T>::InvalidProverClaimSignature
-                );
-                PendingProverClaim::<T>::put(claim.clone());
-            } else {
-                PendingProverClaim::<T>::kill();
-            }
             ProvenBatchProcessed::<T>::put(true);
             Ok(())
         }
@@ -1992,97 +1955,25 @@ pub mod pallet {
                 Error::<T>::InvalidCoinbaseCommitment
             );
 
-            let pending_claim = PendingProverClaim::<T>::get();
-            let expected_prover_amount =
-                u64::try_from(fee_buckets.prover_fees).map_err(|_| Error::<T>::FeeOverflow)?;
-
-            let validated_prover_note = match (pending_claim.as_ref(), reward_bundle.prover_note) {
-                (Some(claim), Some(note)) => {
-                    ensure!(
-                        claim.prover_amount == expected_prover_amount
-                            && note.amount == expected_prover_amount
-                            && note.recipient_address == claim.prover_recipient_address,
-                        Error::<T>::ProverRewardMismatch
-                    );
-                    let expected_commitment = Self::expected_coinbase_commitment(&note);
-                    ensure!(
-                        note.commitment == expected_commitment,
-                        Error::<T>::InvalidCoinbaseCommitment
-                    );
-                    Some(note)
-                }
-                (Some(_), None) => return Err(Error::<T>::MissingProverRewardNote.into()),
-                (None, Some(note)) => {
-                    ensure!(
-                        note.amount == expected_prover_amount,
-                        Error::<T>::ProverRewardMismatch
-                    );
-                    let expected_commitment = Self::expected_coinbase_commitment(&note);
-                    ensure!(
-                        note.commitment == expected_commitment,
-                        Error::<T>::InvalidCoinbaseCommitment
-                    );
-                    Some(note)
-                }
-                (None, None) => None,
-            };
-
-            if pending_claim.is_none()
-                && validated_prover_note.is_none()
-                && fee_buckets.prover_fees > 0
-            {
-                TotalFeesBurned::<T>::mutate(|total| {
-                    *total = total.saturating_add(fee_buckets.prover_fees)
-                });
-            }
-
             let mut index = CommitmentIndex::<T>::get();
             Commitments::<T>::insert(index, reward_bundle.miner_note.commitment);
             EncryptedNotes::<T>::insert(index, reward_bundle.miner_note.encrypted_note.clone());
-            CoinbaseNotes::<T>::insert(
-                index,
-                types::BlockRewardBundle {
-                    miner_note: reward_bundle.miner_note.clone(),
-                    prover_note: None,
-                },
-            );
+            CoinbaseNotes::<T>::insert(index, reward_bundle.clone());
             index = index.saturating_add(1);
-
-            if let Some(prover_note) = validated_prover_note.as_ref() {
-                Commitments::<T>::insert(index, prover_note.commitment);
-                EncryptedNotes::<T>::insert(index, prover_note.encrypted_note.clone());
-                CoinbaseNotes::<T>::insert(
-                    index,
-                    types::BlockRewardBundle {
-                        miner_note: reward_bundle.miner_note.clone(),
-                        prover_note: Some(prover_note.clone()),
-                    },
-                );
-                index = index.saturating_add(1);
-            }
 
             CommitmentIndex::<T>::put(index);
 
-            let mut minted_commitments = vec![expected_miner_commitment];
-            if let Some(prover_note) = validated_prover_note.as_ref() {
-                minted_commitments.push(prover_note.commitment);
-            }
-            let commitments =
-                BoundedVec::<[u8; 48], T::MaxCommitmentsPerTx>::try_from(minted_commitments)
-                    .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
+            let commitments = BoundedVec::<[u8; 48], T::MaxCommitmentsPerTx>::try_from(vec![
+                expected_miner_commitment,
+            ])
+            .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
             Self::update_merkle_tree(&commitments)?;
 
-            let miner_amount = reward_bundle.miner_note.amount as u128;
-            let prover_amount = validated_prover_note
-                .as_ref()
-                .map(|note| note.amount as u128)
-                .unwrap_or(0);
-            let amount = miner_amount.saturating_add(prover_amount);
+            let amount = reward_bundle.miner_note.amount as u128;
             PoolBalance::<T>::mutate(|b| *b = b.saturating_add(amount));
 
             CoinbaseProcessed::<T>::put(true);
             ShieldedTransfersProcessed::<T>::put(true);
-            PendingProverClaim::<T>::kill();
 
             Self::deposit_event(Event::CoinbaseMinted {
                 commitment_index: index.saturating_sub(1),
@@ -2542,26 +2433,16 @@ pub mod pallet {
 
         fn record_fee_split(
             provided_fee: u128,
-            required: types::ShieldedFeeBreakdown,
+            _required: types::ShieldedFeeBreakdown,
         ) -> Result<(), Error<T>> {
             if provided_fee == 0 {
                 return Ok(());
             }
 
-            // Prover share is deterministic; any sender overpayment stays with miners.
-            let prover_fees = required.prover_fee;
-            let miner_fees = provided_fee
-                .checked_sub(prover_fees)
-                .ok_or(Error::<T>::FeeOverflow)?;
-
             BlockFeeBucketsStorage::<T>::try_mutate(|buckets| {
                 buckets.miner_fees = buckets
                     .miner_fees
-                    .checked_add(miner_fees)
-                    .ok_or(Error::<T>::FeeOverflow)?;
-                buckets.prover_fees = buckets
-                    .prover_fees
-                    .checked_add(prover_fees)
+                    .checked_add(provided_fee)
                     .ok_or(Error::<T>::FeeOverflow)?;
                 Ok::<(), Error<T>>(())
             })?;
@@ -2711,54 +2592,6 @@ pub mod pallet {
                 &coinbase_data.public_seed,
                 0,
             )
-        }
-
-        fn prover_claim_signing_payload(
-            claim: &types::ProverCompensationClaim,
-            bundle: &types::BlockProofBundle,
-        ) -> Vec<u8> {
-            let mut payload = Vec::with_capacity(
-                20 + 48
-                    + 4
-                    + 48
-                    + 4
-                    + 32
-                    + claim.prover_recipient.len()
-                    + types::DIVERSIFIED_ADDRESS_SIZE
-                    + 8,
-            );
-            payload.extend_from_slice(b"hegemon-prover-claim");
-            payload.extend_from_slice(&bundle.tx_statements_commitment);
-            payload.extend_from_slice(&bundle.tx_count.to_le_bytes());
-            payload.extend_from_slice(&bundle.da_root);
-            payload.extend_from_slice(&bundle.da_chunk_count.to_le_bytes());
-            payload.extend_from_slice(&claim.prover_account);
-            payload.extend_from_slice(&claim.prover_recipient);
-            payload.extend_from_slice(&claim.prover_recipient_address);
-            payload.extend_from_slice(&claim.prover_amount.to_le_bytes());
-            payload
-        }
-
-        pub(crate) fn verify_prover_claim_signature(
-            claim: &types::ProverCompensationClaim,
-            bundle: &types::BlockProofBundle,
-        ) -> bool {
-            if claim.claim_signature.len() != 64 {
-                return false;
-            }
-            let mut sig_bytes = [0u8; 64];
-            sig_bytes.copy_from_slice(&claim.claim_signature);
-            let payload = Self::prover_claim_signing_payload(claim, bundle);
-
-            let sr_pub = sp_core::sr25519::Public::from_raw(claim.prover_account);
-            let sr_sig = sp_core::sr25519::Signature::from_raw(sig_bytes);
-            if sp_core::sr25519::Pair::verify(&sr_sig, &payload, &sr_pub) {
-                return true;
-            }
-
-            let ed_pub = sp_core::ed25519::Public::from_raw(claim.prover_account);
-            let ed_sig = sp_core::ed25519::Signature::from_raw(sig_bytes);
-            sp_core::ed25519::Pair::verify(&ed_sig, &payload, &ed_pub)
         }
 
         fn validate_encrypted_note(note: &EncryptedNote) -> Result<(), Error<T>> {
@@ -3305,7 +3138,6 @@ mod tests {
                     amount: subsidy,
                     public_seed,
                 },
-                prover_note: None,
             };
             let call = crate::Call::<mock::Test>::mint_coinbase {
                 reward_bundle: reward_bundle.clone(),
@@ -3359,7 +3191,6 @@ mod tests {
                     amount: subsidy,
                     public_seed,
                 },
-                prover_note: None,
             };
             let manifest = KernelManifest {
                 manifest_version: 1,

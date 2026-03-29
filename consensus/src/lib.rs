@@ -65,9 +65,9 @@ pub use substrate_pow::{
     nonce_counter_prefix, seal_meets_target, target_to_compact, verify_seal,
 };
 pub use types::{
-    ArtifactAnnouncement, ArtifactClaim, BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, CandidateArtifact,
-    CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof, DaEncoding,
-    DaError, DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot, FeeCommitment, Nullifier,
+    ArtifactAnnouncement, BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, CandidateArtifact, CoinbaseData,
+    CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof, DaEncoding, DaError,
+    DaMultiChunkProof, DaMultiEncoding, DaParams, DaRoot, FeeCommitment, Nullifier,
     ProofArtifactKind, ProofEnvelope, ProvenBatchMode, ReceiptRootMetadata,
     ReceiptRootProofPayload, StarkCommitment, SupplyDigest, Transaction, TxValidityArtifact,
     TxValidityReceipt, VerifierProfileDigest, VersionCommitment, build_da_blob, da_root,

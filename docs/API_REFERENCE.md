@@ -219,7 +219,6 @@ Artifact market RPC notes:
 - `proof_mode: String` (legacy compatibility label: `inline_tx` | `receipt_root`)
 - `proof_kind: String` (backend-neutral artifact family label)
 - `verifier_profile: String` (`0x`-prefixed 48-byte digest)
-- `claimed_payout_amount: u64`
 
 `CandidateArtifactResponse` fields:
 - `artifact_hash: String` (`0x`-prefixed hex)

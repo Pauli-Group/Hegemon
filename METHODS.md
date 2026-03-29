@@ -191,11 +191,11 @@ commitment, version commitment, and fork-choice result. Node services call this 
 version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
 receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
 
-On the Substrate runtime side, shielded transfers now accumulate split per-block fee buckets:
-`BlockFeeBuckets { miner_fees, prover_fees }`. The shielded reward mint path (`mint_coinbase` external call name; `mint_block_rewards`
-internal path) validates a `BlockRewardBundle` with a required miner note and optional prover note. Miner reward must equal
-`subsidy + miner_fees`; prover reward, when claimed, must equal `prover_fees` and match the submitted prover claim metadata. If a
-block omits reward minting, both fee buckets are treated as burned and tracked on-chain.
+On the Substrate runtime side, shielded transfers now accumulate one per-block fee bucket:
+`BlockFeeBuckets { miner_fees }`. The shielded reward mint path (`mint_coinbase` external call name; `mint_block_rewards`
+internal path) validates a `BlockRewardBundle` with one required miner note. Miner reward must equal
+`subsidy + miner_fees`. There is no separate prover reward or artifact-claim payout lane on the product path. If a
+block omits reward minting, accumulated miner fees are treated as burned and tracked on-chain.
 
 Fee pricing is parameterized on-chain with deterministic split accounting:
 `prover_fee = proof_fee|batch_proof_fee`,

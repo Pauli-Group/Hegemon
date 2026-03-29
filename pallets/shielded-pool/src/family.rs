@@ -377,18 +377,12 @@ pub fn validate_action<T: Config>(
                         "candidate-artifact-total-proof-bytes"
                     } else if args.payload.da_chunk_count == 0 {
                         "candidate-artifact-zero-da-chunks"
-                    } else if let Some(claim) = args.payload.artifact_claim.as_ref() {
-                        if !Pallet::<T>::verify_prover_claim_signature(claim, &args.payload) {
-                            "candidate-artifact-bad-claim-signature"
-                        } else {
-                            "candidate-artifact-invalid"
-                        }
                     } else {
                         "candidate-artifact-invalid"
                     };
                     log::warn!(
                         target: "shielded-pool",
-                        "kernel submit-candidate-artifact validation failed: detail={} err={:?} version={} tx_count={} proof_mode={:?} commitment_proof_bytes={} receipt_root_present={} da_chunk_count={} artifact_claim_present={}",
+                        "kernel submit-candidate-artifact validation failed: detail={} err={:?} version={} tx_count={} proof_mode={:?} commitment_proof_bytes={} receipt_root_present={} da_chunk_count={}",
                         detail,
                         err,
                         args.payload.version,
@@ -397,7 +391,6 @@ pub fn validate_action<T: Config>(
                         args.payload.commitment_proof.data.len(),
                         args.payload.receipt_root.is_some(),
                         args.payload.da_chunk_count,
-                        args.payload.artifact_claim.is_some(),
                     );
                     Err(DispatchError::Other(detail))
                 }

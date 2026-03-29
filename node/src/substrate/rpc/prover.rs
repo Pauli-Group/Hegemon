@@ -17,7 +17,6 @@ pub struct ArtifactAnnouncementResponse {
     pub proof_mode: String,
     pub proof_kind: String,
     pub verifier_profile: String,
-    pub claimed_payout_amount: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -68,7 +67,6 @@ impl ProverRpc {
             },
             proof_kind: announcement.proof_kind.label().to_string(),
             verifier_profile: format!("0x{}", hex::encode(announcement.verifier_profile)),
-            claimed_payout_amount: announcement.claimed_payout_amount,
         }
     }
 }

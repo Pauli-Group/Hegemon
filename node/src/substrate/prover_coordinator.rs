@@ -1242,15 +1242,6 @@ fn candidate_bundle_key(
     }
 }
 
-fn claim_amount(bundle: &PreparedBundle) -> u64 {
-    bundle
-        .payload
-        .artifact_claim
-        .as_ref()
-        .map(|claim| claim.prover_amount)
-        .unwrap_or(0)
-}
-
 fn compare_prepared_bundles(left: &PreparedBundle, right: &PreparedBundle) -> std::cmp::Ordering {
     left.key
         .tx_count
@@ -1258,7 +1249,6 @@ fn compare_prepared_bundles(left: &PreparedBundle, right: &PreparedBundle) -> st
         .then_with(|| {
             proof_mode_rank(left.payload.proof_mode).cmp(&proof_mode_rank(right.payload.proof_mode))
         })
-        .then_with(|| claim_amount(right).cmp(&claim_amount(left)))
         .then_with(|| {
             crate::substrate::artifact_market::candidate_artifact_hash(&right.payload).cmp(
                 &crate::substrate::artifact_market::candidate_artifact_hash(&left.payload),
@@ -1345,7 +1335,6 @@ mod tests {
                 },
                 receipts: Vec::new(),
             }),
-            artifact_claim: None,
         }
     }
 

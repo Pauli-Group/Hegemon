@@ -71,11 +71,6 @@ pub fn artifact_announcement(
         proof_mode,
         proof_kind: consensus_proof_artifact_kind_from_pallet(artifact.proof_kind),
         verifier_profile: artifact.verifier_profile,
-        claimed_payout_amount: artifact
-            .artifact_claim
-            .as_ref()
-            .map(|claim| claim.prover_amount)
-            .unwrap_or(0),
     }
 }
 
@@ -98,7 +93,6 @@ mod tests {
             proof_kind,
             verifier_profile,
             receipt_root: None,
-            artifact_claim: None,
         }
     }
 
