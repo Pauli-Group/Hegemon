@@ -1382,35 +1382,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn inline_tx_authoring_transactions_expose_selected_candidate() {
-        let _mode = set_block_proof_mode("inline_tx");
-        let parent_hash = H256::repeat_byte(12);
-        let mut config = test_config();
-        config.target_txs = 2;
-        let best = Arc::new(move || (parent_hash, 9u64));
-        let pending = Arc::new(move |_max_txs: usize| vec![vec![1u8], vec![2u8]]);
-        let build = Arc::new(
-            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
-                Err("unused".to_string())
-            },
-        );
-
-        let coordinator = ProverCoordinator::new(config, best, pending, build);
-        coordinator.start();
-        tokio::time::sleep(Duration::from_millis(80)).await;
-        assert_eq!(
-            coordinator.authoring_transactions(8),
-            vec![vec![1u8], vec![2u8]]
-        );
-        assert_eq!(
-            coordinator.pending_transactions(8),
-            vec![vec![1u8], vec![2u8]]
-        );
-        assert_eq!(coordinator.queued_jobs(), 0);
-        assert_eq!(coordinator.active_jobs(), 0);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stale_parent_results_are_preserved_for_reuse() {
         let _mode = set_block_proof_mode("receipt_root");
         let first_parent = H256::repeat_byte(21);

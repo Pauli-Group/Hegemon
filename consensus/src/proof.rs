@@ -1651,6 +1651,7 @@ fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], ProofEr
     Ok(blake3_384(&data))
 }
 
+#[cfg(test)]
 fn verify_and_apply_tree_transition(
     parent_commitment_tree: &CommitmentTreeState,
     proof_starting_root: [u8; 48],

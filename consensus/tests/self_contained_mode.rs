@@ -121,7 +121,7 @@ fn self_contained_mode_rejects_missing_aggregation_proof() {
 }
 
 #[test]
-fn self_contained_mode_rejects_missing_proven_batch() {
+fn self_contained_mode_rejects_missing_tx_validity_artifacts_before_proven_batch() {
     let mut miners = make_validators(1, 0);
     let miner = miners.remove(0);
     let base_nullifiers = NullifierSet::new();
@@ -147,11 +147,8 @@ fn self_contained_mode_rejects_missing_proven_batch() {
     let verifier = ParallelProofVerifier::new();
     let err = verifier
         .verify_block(&block, &base_tree)
-        .expect_err("missing proven batch must be rejected");
-    assert!(matches!(
-        err,
-        ProofError::MissingProvenBatchForSelfContained
-    ));
+        .expect_err("missing tx validity artifacts must be rejected first");
+    assert!(matches!(err, ProofError::MissingTransactionProofs));
 }
 
 #[test]

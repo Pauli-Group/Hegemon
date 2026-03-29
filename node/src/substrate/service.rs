@@ -2496,6 +2496,7 @@ impl PreparedArtifactSelector {
         }
     }
 
+    #[cfg(test)]
     fn inline_tx() -> Self {
         Self::from_mode(pallet_shielded_pool::types::BlockProofMode::InlineTx)
     }
@@ -2727,7 +2728,6 @@ fn build_receipt_root_proof_from_materials(
 enum NativeArtifactFallbackReason {
     ArtifactsUnavailable,
     VerifierProfileMismatch,
-    ArtifactValidationFailed,
 }
 
 impl NativeArtifactFallbackReason {
@@ -2735,7 +2735,6 @@ impl NativeArtifactFallbackReason {
         match self {
             Self::ArtifactsUnavailable => "native_artifacts_unavailable",
             Self::VerifierProfileMismatch => "native_verifier_profile_mismatch",
-            Self::ArtifactValidationFailed => "native_artifact_validation_failed",
         }
     }
 }
@@ -3951,18 +3950,6 @@ fn derive_commitment_block_proof_from_bytes(
         proof_bytes,
         public_inputs,
     })
-}
-
-fn tx_validity_artifacts_from_transaction_proofs(
-    proofs: &[TransactionProof],
-) -> Result<Vec<consensus::TxValidityArtifact>, String> {
-    proofs
-        .iter()
-        .map(|proof| {
-            tx_validity_artifact_from_proof(proof)
-                .map_err(|err| format!("tx validity artifact derivation failed: {err}"))
-        })
-        .collect()
 }
 
 fn verify_proof_carrying_block(
@@ -11995,10 +11982,14 @@ mod tests {
             balance_slot_asset_ids,
         );
 
-        let preferred =
-            statement_bindings_for_candidate_extrinsics(&[decoded.clone()], None, None, false)
-                .expect("preferred statement bindings");
-        let legacy = statement_bindings_from_extrinsics(&[decoded.clone()])
+        let preferred = statement_bindings_for_candidate_extrinsics(
+            std::slice::from_ref(&decoded),
+            None,
+            None,
+            false,
+        )
+        .expect("preferred statement bindings");
+        let legacy = statement_bindings_from_extrinsics(std::slice::from_ref(&decoded))
             .expect("legacy statement bindings");
         let (transactions, _proofs, artifacts, _bindings) =
             extract_shielded_transfers_for_parallel_verification(&[decoded], None, None, false)
