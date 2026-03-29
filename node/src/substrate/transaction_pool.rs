@@ -191,8 +191,8 @@ impl ExternalVerificationCache {
     }
 
     fn insert(&mut self, capacity: usize, hash: [u8; 32], verdict: ExternalVerificationVerdict) {
-        if self.verdicts.contains_key(&hash) {
-            self.verdicts.insert(hash, verdict);
+        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.verdicts.entry(hash) {
+            entry.insert(verdict);
             return;
         }
         self.order.push_back(hash);

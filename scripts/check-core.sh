@@ -17,6 +17,7 @@ run_lint() {
   cargo clippy \
     -p hegemon-node \
     -p runtime \
+    -p pallet-shielded-pool \
     -p wallet \
     -p network \
     -p consensus \
@@ -44,6 +45,7 @@ run_test() {
   cargo test -p block-circuit
   cargo test -p disclosure-circuit
   cargo test -p network
+  cargo test -p pallet-shielded-pool
   cargo test -p wallet
   cargo test -p runtime
   cargo test -p hegemon-node --lib
