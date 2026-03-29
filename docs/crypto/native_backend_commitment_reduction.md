@@ -7,7 +7,7 @@ This note defines the exact commitment-binding problem used by Hegemon's active 
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
 - `commitment_security_model = "bounded_kernel_module_sis"`
 - `commitment_bkmsis_target_bits = 128`
 

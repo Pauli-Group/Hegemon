@@ -3,7 +3,7 @@
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
 
 Current code-derived claim:
 

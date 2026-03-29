@@ -45,7 +45,7 @@ const CANONICAL_RECEIPT_WIRE_BYTES: usize = 48 * 4;
 const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
 const TX_PUBLIC_WIRE_BYTES: usize =
     4 + (MAX_INPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 48 + 2 + 2;
-const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 4 * 1024 * 1024;
+const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToyBalanceStatement {
@@ -4315,6 +4315,19 @@ mod tests {
         artifact.stark_proof[0] ^= 0x5a;
         let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
         assert!(verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &tampered).is_err());
+    }
+
+    #[test]
+    fn native_tx_leaf_rejects_oversized_stark_proof_bytes() {
+        let witness = sample_witness(39);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
+        artifact.stark_proof = vec![0u8; MAX_NATIVE_TX_STARK_PROOF_BYTES + 1];
+        let err = encode_native_tx_leaf_artifact(&artifact).unwrap_err();
+        assert!(
+            err.to_string().contains("proof bytes"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

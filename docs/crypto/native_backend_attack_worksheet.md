@@ -5,8 +5,8 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ## Active Target
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
-- `spec_digest = cfd55becf46559d3e02af6aa3020bae11001269665a750f8644ae1a0ef9a6eb5`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
+- `spec_digest = 182db2cfac8605ee1fddd5c6a397d32ca7f4c3adf52748c3ccd8d9557ee18f64`
 
 ## Break Classes
 

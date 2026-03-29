@@ -24,7 +24,7 @@ const CANONICAL_RECEIPT_WIRE_BYTES: usize = 48 * 4;
 const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
 const TX_PUBLIC_WIRE_BYTES: usize =
     4 + (MAX_INPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 48 + 2 + 2;
-const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 4 * 1024 * 1024;
+const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewVectorBundle {

@@ -7,14 +7,14 @@ This document describes the current code-derived security claim for Hegemon's ac
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "structural_candidate"`
 
 The exact wire and transcript surface for that family is frozen in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md). The exact commitment reduction note for the active family is [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md). The current `spec_digest` derived from the live parameter regime is:
 
-- `spec_digest = cfd55becf46559d3e02af6aa3020bae11001269665a750f8644ae1a0ef9a6eb5`
+- `spec_digest = 182db2cfac8605ee1fddd5c6a397d32ca7f4c3adf52748c3ccd8d9557ee18f64`
 
 ## Claim Model
 

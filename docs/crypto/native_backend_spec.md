@@ -20,7 +20,7 @@ This specification does not define the full transaction AIR or the full STARK pr
 The active family at the time this document was written is:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "structural_candidate"`
@@ -347,6 +347,8 @@ The verifier must reject the receipt-root artifact if any of the following fail:
 ## Native Artifact Size Bounds
 
 The repository also carries exact upper bounds for current native artifact sizes. Those bounds now include the `spec_digest` field. A verifier must reject any native artifact whose encoded byte length exceeds the current bound before attempting deep validation.
+
+For the active `v6` surface, the native `tx_leaf` parser also rejects any embedded STARK proof byte string larger than `512 * 1024` bytes before deep decode. Tightening that bound is a protocol-surface change and must rotate the active spec version.
 
 ## Relationship To The Spec Digest
 
