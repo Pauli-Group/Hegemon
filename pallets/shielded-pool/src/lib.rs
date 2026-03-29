@@ -680,10 +680,6 @@ pub mod pallet {
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
-        /// Default fee schedule parameters for the shielded pool.
-        #[pallet::constant]
-        type DefaultFeeParameters: Get<types::FeeParameters>;
-
         /// Proof verifier implementation.
         type ProofVerifier: ProofVerifier + Default;
 
@@ -812,11 +808,6 @@ pub mod pallet {
     #[pallet::getter(fn pool_balance)]
     pub type PoolBalance<T: Config> = StorageValue<_, u128, ValueQuery>;
 
-    /// Fee parameters for shielded transfers.
-    #[pallet::storage]
-    #[pallet::getter(fn fee_parameters)]
-    pub type FeeParametersStorage<T: Config> = StorageValue<_, types::FeeParameters, ValueQuery>;
-
     /// Split shielded fee buckets accumulated in the current block.
     #[pallet::storage]
     #[pallet::getter(fn block_fee_buckets)]
@@ -931,7 +922,7 @@ pub mod pallet {
             nullifier_count: u32,
             /// Total number of new commitments.
             commitment_count: u32,
-            /// Total fee across all transactions.
+            /// Total optional miner tip across all transactions.
             total_fee: u128,
         },
     }
@@ -1020,8 +1011,6 @@ pub mod pallet {
         FeeOverflow,
         /// Shielded transfers cannot appear after coinbase in a block.
         TransfersAfterCoinbase,
-        /// Provided fee is below the required minimum.
-        FeeTooLow,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
         /// This error indicates a malicious attempt to bypass double-spend protection.
         ZeroNullifierSubmitted,
@@ -1048,8 +1037,6 @@ pub mod pallet {
     pub struct GenesisConfig<T: Config> {
         /// Initial verifying key.
         pub verifying_key: Option<VerifyingKey>,
-        /// Initial fee parameters.
-        pub fee_parameters: Option<types::FeeParameters>,
         /// Initial DA policy (full fetch vs sampling).
         pub da_policy: Option<types::DaAvailabilityPolicy>,
         /// Initial ciphertext policy (inline vs sidecar-only).
@@ -1086,11 +1073,6 @@ pub mod pallet {
                     activated_at: 0,
                 });
             }
-
-            let fee_parameters = self
-                .fee_parameters
-                .unwrap_or_else(T::DefaultFeeParameters::get);
-            FeeParametersStorage::<T>::put(fee_parameters);
 
             DaPolicyStorage::<T>::put(self.da_policy.unwrap_or_default());
             CiphertextPolicyStorage::<T>::put(self.ciphertext_policy.unwrap_or_default());
@@ -1307,7 +1289,7 @@ pub mod pallet {
         /// * `commitments` - All new note commitments from all transactions
         /// * `ciphertexts` - Encrypted notes for all recipients
         /// * `anchor` - Shared Merkle root all transactions were proven against
-        /// * `total_fee` - Total fee across all transactions
+        /// * `total_fee` - Total optional miner tip across all transactions
         ///
         /// # Security
         /// - All transactions must use the same Merkle anchor
@@ -1526,13 +1508,6 @@ pub mod pallet {
             if ciphertexts.len() != commitments.len() {
                 return Err(InvalidTransaction::Custom(2));
             }
-            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())
-                .map_err(|_| InvalidTransaction::Custom(8))?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
-                .map_err(|_| InvalidTransaction::Custom(8))?;
-            if u128::from(fee) < required_fee {
-                return Err(InvalidTransaction::Custom(8));
-            }
             if !MerkleRoots::<T>::contains_key(anchor) {
                 return Err(InvalidTransaction::Custom(3));
             }
@@ -1703,13 +1678,6 @@ pub mod pallet {
                     return Err(InvalidTransaction::Custom(4));
                 }
             }
-            let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())
-                .map_err(|_| InvalidTransaction::Custom(8))?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Single)
-                .map_err(|_| InvalidTransaction::Custom(8))?;
-            if u128::from(fee) < required_fee {
-                return Err(InvalidTransaction::Custom(8));
-            }
             if !MerkleRoots::<T>::contains_key(anchor) {
                 return Err(InvalidTransaction::Custom(3));
             }
@@ -1812,13 +1780,6 @@ pub mod pallet {
                 if Self::validate_encrypted_note(note).is_err() {
                     return Err(InvalidTransaction::Custom(2));
                 }
-            }
-            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())
-                .map_err(|_| InvalidTransaction::Custom(8))?;
-            let required_fee = Self::quote_fee(ciphertext_bytes, types::FeeProofKind::Batch)
-                .map_err(|_| InvalidTransaction::Custom(8))?;
-            if total_fee < required_fee {
-                return Err(InvalidTransaction::Custom(8));
             }
             if !MerkleRoots::<T>::contains_key(anchor) {
                 return Err(InvalidTransaction::Custom(3));
@@ -2032,10 +1993,6 @@ pub mod pallet {
             for note in ciphertexts.iter() {
                 Self::validate_encrypted_note(note)?;
             }
-            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_breakdown =
-                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
             ensure!(
                 MerkleRoots::<T>::contains_key(anchor),
                 Error::<T>::InvalidAnchor
@@ -2108,7 +2065,7 @@ pub mod pallet {
                     return Err(Error::<T>::ProofVerificationFailed.into());
                 }
             }
-            Self::record_fee_split(u128::from(fee), required_breakdown)?;
+            Self::record_miner_tip(u128::from(fee))?;
 
             for nf in nullifiers.iter() {
                 Nullifiers::<T>::insert(nf, ());
@@ -2192,10 +2149,6 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroCiphertextHash.into());
                 }
             }
-            let ciphertext_bytes = Self::ciphertext_sizes_total(ciphertext_sizes.as_slice())?;
-            let required_breakdown =
-                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Single)?;
-            Self::ensure_fee_sufficient(u128::from(fee), required_breakdown.total_fee)?;
             ensure!(
                 MerkleRoots::<T>::contains_key(anchor),
                 Error::<T>::InvalidAnchor
@@ -2261,7 +2214,7 @@ pub mod pallet {
                 verifier.verify_binding_hash(&binding_hash, &inputs),
                 Error::<T>::InvalidBindingHash
             );
-            Self::record_fee_split(u128::from(fee), required_breakdown)?;
+            Self::record_miner_tip(u128::from(fee))?;
 
             for nf in nullifiers.iter() {
                 Nullifiers::<T>::insert(nf, ());
@@ -2322,10 +2275,6 @@ pub mod pallet {
             for note in ciphertexts.iter() {
                 Self::validate_encrypted_note(note)?;
             }
-            let ciphertext_bytes = Self::ciphertext_bytes_total(ciphertexts.as_slice())?;
-            let required_breakdown =
-                Self::quote_fee_breakdown(ciphertext_bytes, types::FeeProofKind::Batch)?;
-            Self::ensure_fee_sufficient(total_fee, required_breakdown.total_fee)?;
             ensure!(
                 MerkleRoots::<T>::contains_key(anchor),
                 Error::<T>::InvalidAnchor
@@ -2381,7 +2330,7 @@ pub mod pallet {
                     return Err(Error::<T>::VerifyingKeyNotFound.into());
                 }
             }
-            Self::record_fee_split(total_fee, required_breakdown)?;
+            Self::record_miner_tip(total_fee)?;
 
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
@@ -2431,98 +2380,20 @@ pub mod pallet {
             Ok(amount)
         }
 
-        fn record_fee_split(
-            provided_fee: u128,
-            _required: types::ShieldedFeeBreakdown,
-        ) -> Result<(), Error<T>> {
-            if provided_fee == 0 {
+        fn record_miner_tip(miner_tip: u128) -> Result<(), Error<T>> {
+            if miner_tip == 0 {
                 return Ok(());
             }
 
             BlockFeeBucketsStorage::<T>::try_mutate(|buckets| {
                 buckets.miner_fees = buckets
                     .miner_fees
-                    .checked_add(provided_fee)
+                    .checked_add(miner_tip)
                     .ok_or(Error::<T>::FeeOverflow)?;
                 Ok::<(), Error<T>>(())
             })?;
-            PoolBalance::<T>::mutate(|balance| *balance = balance.saturating_sub(provided_fee));
+            PoolBalance::<T>::mutate(|balance| *balance = balance.saturating_sub(miner_tip));
             Ok(())
-        }
-
-        fn ensure_fee_sufficient(provided: u128, required: u128) -> Result<(), Error<T>> {
-            if provided < required {
-                return Err(Error::<T>::FeeTooLow);
-            }
-            Ok(())
-        }
-
-        pub fn current_fee_parameters() -> types::FeeParameters {
-            FeeParametersStorage::<T>::get()
-        }
-
-        pub fn quote_fee(
-            ciphertext_bytes: u64,
-            proof_kind: types::FeeProofKind,
-        ) -> Result<u128, Error<T>> {
-            Ok(Self::quote_fee_breakdown(ciphertext_bytes, proof_kind)?.total_fee)
-        }
-
-        pub fn quote_fee_breakdown(
-            ciphertext_bytes: u64,
-            proof_kind: types::FeeProofKind,
-        ) -> Result<types::ShieldedFeeBreakdown, Error<T>> {
-            let params = Self::current_fee_parameters();
-            let prover_fee = match proof_kind {
-                types::FeeProofKind::Single => params.proof_fee,
-                types::FeeProofKind::Batch => params.batch_proof_fee,
-            };
-            let inclusion_fee = match proof_kind {
-                types::FeeProofKind::Single => params.inclusion_fee,
-                types::FeeProofKind::Batch => params.batch_inclusion_fee,
-            };
-            let bytes = u128::from(ciphertext_bytes);
-            let da_fee = bytes
-                .checked_mul(params.da_byte_fee)
-                .ok_or(Error::<T>::FeeOverflow)?;
-            let retention_blocks = u128::from(params.hot_retention_blocks);
-            let retention_fee = bytes
-                .checked_mul(params.retention_byte_fee)
-                .and_then(|value| value.checked_mul(retention_blocks))
-                .ok_or(Error::<T>::FeeOverflow)?;
-            let miner_fee = inclusion_fee
-                .checked_add(da_fee)
-                .and_then(|value| value.checked_add(retention_fee))
-                .ok_or(Error::<T>::FeeOverflow)?;
-            let total_fee = prover_fee
-                .checked_add(miner_fee)
-                .ok_or(Error::<T>::FeeOverflow)?;
-            Ok(types::ShieldedFeeBreakdown {
-                prover_fee,
-                miner_fee,
-                total_fee,
-            })
-        }
-
-        fn ciphertext_bytes_total(ciphertexts: &[EncryptedNote]) -> Result<u64, Error<T>> {
-            let mut total: u64 = 0;
-            for note in ciphertexts {
-                let len = note.ciphertext.len() + note.kem_ciphertext.len();
-                total = total
-                    .checked_add(len as u64)
-                    .ok_or(Error::<T>::FeeOverflow)?;
-            }
-            Ok(total)
-        }
-
-        fn ciphertext_sizes_total(ciphertext_sizes: &[u32]) -> Result<u64, Error<T>> {
-            let mut total: u64 = 0;
-            for size in ciphertext_sizes {
-                total = total
-                    .checked_add(*size as u64)
-                    .ok_or(Error::<T>::FeeOverflow)?;
-            }
-            Ok(total)
         }
 
         pub(crate) fn total_block_proof_bytes(bundle: &types::BlockProofBundle) -> usize {

@@ -286,7 +286,9 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
 * Each PoW block carries a coinbase commitment—either a dedicated transaction referenced by index or a standalone `balance_tag`
   —that spells out how many native units were minted, how many fees were aggregated, and how many were burned. Consensus enforces
   `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `210_000` blocks (height 0 mints nothing).
-  Nodes update the running `supply_digest = parent_digest + minted + fees − burns` inside a 128-bit little-endian counter that
+  Shielded transfer `fee` values are interpreted as optional miner tips, so `fee = 0` remains valid and any provided tip is paid
+  to the miner through the shielded coinbase note rather than a transparent balance credit. Nodes update the running
+  `supply_digest = parent_digest + minted + fees − burns` inside a 128-bit little-endian counter that
   rejects underflows/overflows and compare it against the header before accepting the block. Coinbase metadata that omits the
   balance tag or references an out-of-bounds transaction index fails validation.
 * Data availability is enforced via `da_root` and `da_params` in the header. The block’s ciphertext blob is serialized in

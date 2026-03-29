@@ -799,9 +799,6 @@ parameter_types! {
     /// Number of historical Merkle roots to keep for anchor validation.
     /// Must comfortably exceed the largest expected same-anchor transfer batch.
     pub const MerkleRootHistorySize: u32 = 4096;
-    /// Default fee schedule parameters for shielded transfers.
-    pub DefaultFeeParameters: pallet_shielded_pool::types::FeeParameters =
-        manifest::protocol_manifest().fee_parameters;
 }
 
 pub struct RuntimeStablecoinPolicyProvider;
@@ -875,7 +872,6 @@ impl pallet_shielded_pool::AttestationCommitmentProvider<u64, BlockNumber>
 
 impl pallet_shielded_pool::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type DefaultFeeParameters = DefaultFeeParameters;
     type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
     type BatchProofVerifier = pallet_shielded_pool::verifier::StarkBatchVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
@@ -1252,28 +1248,6 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::MerkleRootHistory::<Runtime>::get().into_inner()
         }
 
-        fn fee_parameters() -> pallet_shielded_pool::types::FeeParameters {
-            pallet_shielded_pool::FeeParametersStorage::<Runtime>::get()
-        }
-
-        fn fee_quote(
-            ciphertext_bytes: u64,
-            proof_kind: pallet_shielded_pool::types::FeeProofKind,
-        ) -> Result<u128, ()> {
-            pallet_shielded_pool::Pallet::<Runtime>::quote_fee(ciphertext_bytes, proof_kind)
-                .map_err(|_| ())
-        }
-
-        fn fee_quote_breakdown(
-            ciphertext_bytes: u64,
-            proof_kind: pallet_shielded_pool::types::FeeProofKind,
-        ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, ()> {
-            pallet_shielded_pool::Pallet::<Runtime>::quote_fee_breakdown(
-                ciphertext_bytes,
-                proof_kind,
-            )
-            .map_err(|_| ())
-        }
     }
 }
 

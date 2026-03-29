@@ -178,12 +178,10 @@ parameter_types! {
     pub const MaxCommitmentsPerBatch: u32 = 64; // 32 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
     pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
-    pub DefaultFeeParameters: crate::types::FeeParameters = crate::types::FeeParameters::default();
 }
 
 impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
-    type DefaultFeeParameters = DefaultFeeParameters;
     type ProofVerifier = TestProofVerifier;
     type BatchProofVerifier = TestBatchProofVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;

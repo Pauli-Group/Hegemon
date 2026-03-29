@@ -29,7 +29,7 @@ pub struct TransactionBundle {
     pub binding_hash: [u8; 64],
     /// Asset ids for the fixed four balance slots used by the transaction proof.
     pub balance_slot_asset_ids: [u64; 4],
-    /// Native fee encoded in the proof.
+    /// Optional miner tip encoded in the proof.
     pub fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,

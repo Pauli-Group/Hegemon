@@ -157,7 +157,7 @@ use pallet_shielded_pool::family::{
 };
 #[cfg(test)]
 use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
-use pallet_shielded_pool::types::{BlockFeeBuckets, FeeParameters, DIVERSIFIED_ADDRESS_SIZE};
+use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
 use sc_client_api::{Backend as ClientBackend, BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
@@ -4837,22 +4837,18 @@ fn filter_conflicting_shielded_transfers(
     (out, stats)
 }
 
-fn split_shielded_fee_buckets(
-    extrinsics: &[Vec<u8>],
-    fee_params: FeeParameters,
-) -> Result<BlockFeeBuckets, String> {
+fn split_shielded_fee_buckets(extrinsics: &[Vec<u8>]) -> Result<BlockFeeBuckets, String> {
     let mut decoded = Vec::with_capacity(extrinsics.len());
     for ext_bytes in extrinsics {
         let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
             .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
         decoded.push(extrinsic);
     }
-    split_shielded_fee_buckets_from_decoded(&decoded, fee_params)
+    split_shielded_fee_buckets_from_decoded(&decoded)
 }
 
 fn split_shielded_fee_buckets_from_decoded(
     extrinsics: &[runtime::UncheckedExtrinsic],
-    fee_params: FeeParameters,
 ) -> Result<BlockFeeBuckets, String> {
     let mut buckets = BlockFeeBuckets::default();
     for extrinsic in extrinsics {
@@ -4860,25 +4856,16 @@ fn split_shielded_fee_buckets_from_decoded(
             continue;
         };
 
-        let (provided, prover_component) = match action {
-            ShieldedFamilyAction::TransferInline { args, .. } => {
-                (u128::from(args.fee), fee_params.proof_fee)
-            }
-            ShieldedFamilyAction::TransferSidecar { args, .. } => {
-                (u128::from(args.fee), fee_params.proof_fee)
-            }
-            ShieldedFamilyAction::BatchTransfer { args, .. } => {
-                (args.total_fee, fee_params.batch_proof_fee)
-            }
+        let miner_tip = match action {
+            ShieldedFamilyAction::TransferInline { args, .. } => u128::from(args.fee),
+            ShieldedFamilyAction::TransferSidecar { args, .. } => u128::from(args.fee),
+            ShieldedFamilyAction::BatchTransfer { args, .. } => args.total_fee,
             _ => continue,
         };
 
-        let miner_component = provided
-            .checked_sub(prover_component)
-            .ok_or_else(|| "shielded fee lower than prover component".to_string())?;
         buckets.miner_fees = buckets
             .miner_fees
-            .checked_add(miner_component.saturating_add(prover_component))
+            .checked_add(miner_tip)
             .ok_or_else(|| "shielded fee total overflowed".to_string())?;
     }
     Ok(buckets)
@@ -5566,11 +5553,7 @@ pub fn wire_block_builder_api(
             }
         }
 
-        let fee_params = client_for_exec
-            .runtime_api()
-            .fee_parameters(parent_substrate_hash)
-            .map_err(|e| format!("failed to fetch fee parameters: {e:?}"))?;
-        let fee_buckets = split_shielded_fee_buckets(&applied, fee_params)?;
+        let fee_buckets = split_shielded_fee_buckets(&applied)?;
 
         if let Some(ref address) = parsed_shielded_address {
             let subsidy = pallet_coinbase::block_subsidy(block_number);

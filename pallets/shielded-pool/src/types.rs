@@ -553,84 +553,10 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     pub binding_hash: BindingHash,
     /// Optional stablecoin policy binding (required for issuance/burn).
     pub stablecoin: Option<StablecoinPolicyBinding>,
-    /// Native fee encoded in the proof.
+    /// Optional miner tip encoded in the proof.
     pub fee: u64,
     /// Net value change (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
-}
-
-/// Proof kinds used for fee quotes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
-pub enum FeeProofKind {
-    Single,
-    Batch,
-}
-
-/// Fee schedule parameters for shielded transfers.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub struct FeeParameters {
-    /// Base fee charged per single-transfer proof.
-    pub proof_fee: u128,
-    /// Base fee charged per batch proof.
-    pub batch_proof_fee: u128,
-    /// Miner inclusion fee for a single-proof transaction.
-    pub inclusion_fee: u128,
-    /// Miner inclusion fee for a batch-proof transaction.
-    pub batch_inclusion_fee: u128,
-    /// Fee per ciphertext byte for DA publication.
-    pub da_byte_fee: u128,
-    /// Fee per ciphertext byte per block of hot retention.
-    pub retention_byte_fee: u128,
-    /// Hot retention window in blocks used for fee quotes.
-    pub hot_retention_blocks: u32,
-}
-
-impl Default for FeeParameters {
-    fn default() -> Self {
-        Self {
-            proof_fee: 0,
-            batch_proof_fee: 0,
-            inclusion_fee: 0,
-            batch_inclusion_fee: 0,
-            da_byte_fee: 0,
-            retention_byte_fee: 0,
-            hot_retention_blocks: 0,
-        }
-    }
-}
-
-/// Deterministic shielded fee split returned by runtime quote APIs.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub struct ShieldedFeeBreakdown {
-    pub prover_fee: u128,
-    pub miner_fee: u128,
-    pub total_fee: u128,
 }
 
 /// Per-block fee accumulators credited to the block miner.
@@ -747,7 +673,7 @@ pub struct BatchShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u3
     pub ciphertexts: BoundedVec<EncryptedNote, MaxCommitments>,
     /// Shared Merkle root all transactions were proven against.
     pub anchor: MerkleRoot,
-    /// Total fee across all transactions.
+    /// Total optional miner tip across all transactions.
     pub total_fee: u128,
 }
 

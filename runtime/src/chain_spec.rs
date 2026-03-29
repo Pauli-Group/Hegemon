@@ -32,7 +32,6 @@ fn base_genesis(endowed: &[(AccountId, Balance)]) -> RuntimeGenesisConfig {
         },
         shielded_pool: ShieldedPoolConfig {
             verifying_key: Some(manifest::shielded_verifying_key()),
-            fee_parameters: Some(manifest.fee_parameters),
             da_policy: Some(manifest.da_policy),
             ciphertext_policy: Some(manifest.ciphertext_policy),
             proof_availability_policy: Some(manifest.proof_availability_policy),

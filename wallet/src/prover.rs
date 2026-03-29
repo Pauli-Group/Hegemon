@@ -338,7 +338,7 @@ pub struct ProofResult {
     pub balance_slot_asset_ids: [u64; 4],
     /// Time taken to generate the proof.
     pub proving_time: Duration,
-    /// Native fee encoded in the proof.
+    /// Optional miner tip encoded in the proof.
     pub fee: u64,
     /// Value balance (transparent delta).
     pub value_balance: i128,

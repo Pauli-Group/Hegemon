@@ -93,7 +93,7 @@ pub struct ShieldedTransferCall {
     pub balance_slot_asset_ids: [u64; 4],
     /// Optional stablecoin policy binding
     pub stablecoin: Option<StablecoinPolicyBinding>,
-    /// Native fee encoded in the proof.
+    /// Optional miner tip encoded in the proof.
     pub fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
@@ -143,7 +143,7 @@ pub struct ShieldedTransferSidecarCall {
     pub balance_slot_asset_ids: [u64; 4],
     /// Optional stablecoin policy binding (must be None for unsigned calls)
     pub stablecoin: Option<StablecoinPolicyBinding>,
-    /// Native fee encoded in the proof.
+    /// Optional miner tip encoded in the proof.
     pub fee: u64,
 }
 

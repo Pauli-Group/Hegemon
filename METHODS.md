@@ -43,7 +43,7 @@ Each **transaction** includes:
   * `cm'[0..N-1]` – commitments for each new note
   * `ct_hash[0..N-1]` – ciphertext hashes for each output note (domain-separated BLAKE3-384)
   * `balance_tag` – a compressed representation of value balance (see below)
-  * optional `memo`s, network fee, etc.
+  * optional `memo`s, optional miner tip, etc.
   * one or a few STARK proofs
 * Hidden (witness in the proof):
 
@@ -191,18 +191,13 @@ commitment, version commitment, and fork-choice result. Node services call this 
 version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
 receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
 
-On the Substrate runtime side, shielded transfers now accumulate one per-block fee bucket:
-`BlockFeeBuckets { miner_fees }`. The shielded reward mint path (`mint_coinbase` external call name; `mint_block_rewards`
-internal path) validates a `BlockRewardBundle` with one required miner note. Miner reward must equal
-`subsidy + miner_fees`. There is no separate prover reward or artifact-claim payout lane on the product path. If a
-block omits reward minting, accumulated miner fees are treated as burned and tracked on-chain.
-
-Fee pricing is parameterized on-chain with deterministic split accounting:
-`prover_fee = proof_fee|batch_proof_fee`,
-`miner_fee = inclusion_fee|batch_inclusion_fee + bytes * da_byte_fee + bytes * retention_byte_fee * hot_retention_blocks`,
-`total_fee = prover_fee + miner_fee`.
-These parameters live in the shielded pool pallet, are seeded from the active protocol manifest, and are exposed via runtime API/RPC as both total
-quote and breakdown (`fee_quote`, `fee_quote_breakdown`) so clients can quote fees without auctions.
+On the Substrate runtime side, shielded transfers now accumulate one per-block tip bucket:
+`BlockFeeBuckets { miner_fees }`. Each transfer’s public `fee` field is interpreted as an optional miner tip. `fee = 0`
+is always valid on the product path. The shielded reward mint path (`mint_coinbase` external call name;
+`mint_block_rewards` internal path) validates a `BlockRewardBundle` with one required miner note. Miner reward must equal
+`subsidy + miner_fees`. There is no separate prover reward or artifact-claim payout lane on the product path, and there is
+no deterministic runtime fee-quote schedule. If a block omits reward minting, accumulated miner tips are treated as burned
+and tracked on-chain.
 
 The legacy forced-inclusion bond queue is removed in the proof-native cut. Censorship resistance for the private lane is now handled by the unsigned shielded submission path itself plus block-import validation, rather than by reserving public balances behind a transparent account.
 

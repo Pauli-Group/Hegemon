@@ -1,7 +1,7 @@
 use alloc::vec;
 use codec::Encode;
 use pallet_shielded_pool::types::{
-    CiphertextPolicy, DaAvailabilityPolicy, FeeParameters, ProofAvailabilityPolicy,
+    CiphertextPolicy, DaAvailabilityPolicy, ProofAvailabilityPolicy,
 };
 use protocol_kernel::manifest::{FamilySpec, KernelManifest};
 use protocol_kernel::types::{compute_kernel_global_root, FamilyId, FamilyRoot};
@@ -65,7 +65,6 @@ pub struct AssetManifestEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolManifest {
     pub version_bindings: Vec<VersionBinding>,
-    pub fee_parameters: FeeParameters,
     pub da_policy: DaAvailabilityPolicy,
     pub ciphertext_policy: CiphertextPolicy,
     pub proof_availability_policy: ProofAvailabilityPolicy,
@@ -76,7 +75,6 @@ pub struct ProtocolManifest {
 pub fn protocol_manifest() -> ProtocolManifest {
     ProtocolManifest {
         version_bindings: vec![DEFAULT_VERSION_BINDING],
-        fee_parameters: FeeParameters::default(),
         da_policy: DaAvailabilityPolicy::default(),
         ciphertext_policy: CiphertextPolicy::default(),
         // Fresh 0.10.x chains treat native receipt-root aggregation as the
@@ -124,7 +122,14 @@ pub fn kernel_global_root() -> [u8; 48] {
 pub fn kernel_manifest() -> KernelManifest {
     let protocol = protocol_manifest();
     let mut families = BTreeMap::new();
-    let params_commitment = hash48(&protocol.fee_parameters.encode());
+    let params_commitment = hash48(
+        &(
+            protocol.da_policy,
+            protocol.ciphertext_policy,
+            protocol.proof_availability_policy,
+        )
+            .encode(),
+    );
 
     families.insert(
         FAMILY_SHIELDED_POOL,

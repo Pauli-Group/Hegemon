@@ -74,9 +74,7 @@ use pallet_shielded_pool::family::{
     ShieldedTransferInlineArgs, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
     FAMILY_SHIELDED_POOL,
 };
-use pallet_shielded_pool::types::{
-    EncryptedNote, FeeParameters, FeeProofKind, StablecoinPolicyBinding,
-};
+use pallet_shielded_pool::types::{EncryptedNote, StablecoinPolicyBinding};
 use pallet_timestamp;
 use parking_lot::Mutex as ParkingMutex;
 use protocol_kernel::types::ActionEnvelope;
@@ -975,33 +973,6 @@ where
 
     fn chain_height(&self) -> u64 {
         self.best_number()
-    }
-
-    fn fee_parameters(&self) -> Result<FeeParameters, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.fee_parameters(best_hash)
-            .map_err(|e| format!("Runtime API error: {:?}", e))
-    }
-
-    fn fee_quote(&self, ciphertext_bytes: u64, proof_kind: FeeProofKind) -> Result<u128, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.fee_quote(best_hash, ciphertext_bytes, proof_kind)
-            .map_err(|e| format!("Runtime API error: {:?}", e))?
-            .map_err(|_| "Fee quote failed".to_string())
-    }
-
-    fn fee_quote_breakdown(
-        &self,
-        ciphertext_bytes: u64,
-        proof_kind: FeeProofKind,
-    ) -> Result<pallet_shielded_pool::types::ShieldedFeeBreakdown, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-        api.fee_quote_breakdown(best_hash, ciphertext_bytes, proof_kind)
-            .map_err(|e| format!("Runtime API error: {:?}", e))?
-            .map_err(|_| "Fee quote breakdown failed".to_string())
     }
 
     fn forced_inclusions(

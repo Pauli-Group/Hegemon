@@ -44,7 +44,6 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
         },
         "shieldedPool": {
             "verifyingKey": verifying_key_value,
-            "feeParameters": protocol_manifest.fee_parameters,
             "daPolicy": protocol_manifest.da_policy,
             "ciphertextPolicy": protocol_manifest.ciphertext_policy,
             "proofAvailabilityPolicy": protocol_manifest.proof_availability_policy

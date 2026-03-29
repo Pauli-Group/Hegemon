@@ -81,7 +81,7 @@ pub struct ShieldedTransferInputs {
     pub ciphertext_hashes: Vec<[u8; 48]>,
     /// Asset ids for the four fixed balance slots used by the transaction proof.
     pub balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
-    /// Native fee encoded in the circuit.
+    /// Optional miner tip encoded in the circuit.
     pub fee: u64,
     /// Net value balance (transparent component).
     pub value_balance: i128,
@@ -806,7 +806,7 @@ pub struct BatchPublicInputs {
     pub commitments: Vec<[u8; 48]>,
     /// Number of transactions in the batch.
     pub batch_size: u32,
-    /// Total fee across all transactions.
+    /// Total optional miner tip across all transactions.
     pub total_fee: u128,
 }
 

@@ -3,7 +3,7 @@ use frame_support::sp_runtime::BuildStorage;
 use frame_support::traits::Hooks;
 use pallet_coinbase::block_subsidy;
 use pallet_shielded_pool::types::{
-    BlockRewardBundle, CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE,
+    BlockFeeBuckets, BlockRewardBundle, CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE,
 };
 use runtime::{RuntimeOrigin, ShieldedPool, System, Timestamp};
 use sp_io::TestExternalities;
@@ -112,5 +112,40 @@ fn rewards_accumulate_over_multiple_blocks() {
             assert_eq!(ShieldedPool::pool_balance(), total_expected);
             assert_eq!(ShieldedPool::commitment_index(), block_num);
         }
+    });
+}
+
+#[test]
+fn coinbase_includes_optional_miner_tips_in_shielded_reward_note() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        let block_number = 1;
+        let miner_tip = 42u128;
+        System::set_block_number(block_number);
+        Timestamp::set_timestamp(1000);
+        ShieldedPool::on_initialize(block_number.into());
+        pallet_shielded_pool::BlockFeeBucketsStorage::<runtime::Runtime>::put(BlockFeeBuckets {
+            miner_fees: miner_tip,
+        });
+
+        let subsidy = block_subsidy(block_number);
+        let expected_amount = subsidy + miner_tip as u64;
+        let recipient = [5u8; DIVERSIFIED_ADDRESS_SIZE];
+        let public_seed = public_seed_from_block(block_number);
+        let reward_bundle = coinbase_reward_bundle(expected_amount, recipient, public_seed);
+
+        assert_ok!(ShieldedPool::mint_coinbase(
+            RuntimeOrigin::none(),
+            reward_bundle.clone(),
+        ));
+
+        assert_eq!(ShieldedPool::pool_balance(), expected_amount as u128);
+        let stored = ShieldedPool::coinbase_notes(0).expect("coinbase note stored");
+        assert_eq!(stored.miner_note.amount, expected_amount);
+        assert_eq!(
+            stored.miner_note.commitment,
+            reward_bundle.miner_note.commitment
+        );
     });
 }
