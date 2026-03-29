@@ -20,7 +20,7 @@ This specification does not define the full transaction AIR or the full STARK pr
 The active family at the time this document was written is:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "structural_candidate"`
@@ -52,7 +52,7 @@ The current active parameter object also carries:
 - `decomposition_bits = 8`
 - `opening_randomness_bits = 256`
 - `commitment_security_model = "bounded_kernel_module_sis"`
-- `commitment_bkmsis_target_bits = 128`
+- `commitment_estimator_model = "sis_lattice_euclidean_adps16"`
 - `max_commitment_message_ring_elems = 513`
 - `max_claimed_receipt_root_leaves = 128`
 
@@ -105,7 +105,7 @@ The parameter fingerprint is a 48-byte Blake3-derived digest over:
 15. `decomposition_bits`
 16. `opening_randomness_bits`
 17. `commitment_security_model`
-18. `commitment_bkmsis_target_bits`
+18. `commitment_estimator_model`
 19. `max_commitment_message_ring_elems`
 20. `max_claimed_receipt_root_leaves`
 
@@ -136,7 +136,7 @@ The current backend also computes a security claim from:
 
 Historical families may also count opening entropy if their live artifact path uses an explicit commitment-opening flow. The active tx-leaf/receipt-root lane does not.
 
-For the active family, the code defines the exact live bounded message class, exact bounded-kernel target problem, and exact reduction note in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md). Historical families may still use different commitment-security models, but the active family binds its live claim to `commitment_security_model = "bounded_kernel_module_sis"` with `commitment_bkmsis_target_bits = 128`. The security-analysis document records the resulting floor explicitly.
+For the active family, the code defines the exact live bounded message class, exact bounded-kernel target problem, and exact reduction note in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md). Historical families may still use different commitment-security models, but the active family binds its live claim to `commitment_security_model = "bounded_kernel_module_sis"` with `commitment_estimator_model = "sis_lattice_euclidean_adps16"`. The security-analysis document records the resulting floor explicitly.
 
 This specification freezes the wire and transcript surface. The security-analysis document is the place where those ingredients are translated into a security claim.
 
@@ -348,7 +348,7 @@ The verifier must reject the receipt-root artifact if any of the following fail:
 
 The repository also carries exact upper bounds for current native artifact sizes. Those bounds now include the `spec_digest` field. A verifier must reject any native artifact whose encoded byte length exceeds the current bound before attempting deep validation.
 
-For the active `v6` surface, the native `tx_leaf` parser also rejects any embedded STARK proof byte string larger than `512 * 1024` bytes before deep decode. Tightening that bound is a protocol-surface change and must rotate the active spec version.
+For the active `v7` surface, the native `tx_leaf` parser also rejects any embedded STARK proof byte string larger than `512 * 1024` bytes before deep decode. Tightening that bound is a protocol-surface change and must rotate the active spec version.
 
 ## Relationship To The Spec Digest
 

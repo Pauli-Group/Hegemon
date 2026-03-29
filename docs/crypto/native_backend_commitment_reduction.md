@@ -7,9 +7,9 @@ This note defines the exact commitment-binding problem used by Hegemon's active 
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
 - `commitment_security_model = "bounded_kernel_module_sis"`
-- `commitment_bkmsis_target_bits = 128`
+- `commitment_estimator_model = "sis_lattice_euclidean_adps16"`
 
 This note is specific to the exact implemented commitment path in:
 
@@ -97,6 +97,37 @@ BK-MSIS(q, n, k, ell, B_inf, B_2)
 
 with the active concrete bounds above and `ell <= M = 513`.
 
+## Concrete Estimator Instance
+
+The repository now turns that exact bounded-kernel target into one concrete coefficient-space Euclidean SIS estimate.
+
+The active flattening is:
+
+- equation dimension `n_eq = k * n = 74 * 8 = 592`
+- witness dimension `m = M * n = 513 * 8 = 4104`
+- modulus `q = 18446744069414584321`
+- Euclidean bound `B_2 = 16336`
+
+The estimator model implemented in [superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs) follows the standard Euclidean SIS-lattice line used in the lattice-estimator literature:
+
+1. map the exact ring/module kernel witness into coefficient space,
+2. keep the exact Euclidean bound `B_2`,
+3. derive the target root-Hermite factor `δ` for the primal lattice attack from `(n_eq, m, q, B_2)`,
+4. derive the required BKZ block size `β` from that `δ`,
+5. translate `β` into concrete classical, quantum, and paranoid bit estimates with the standard linear cost models.
+
+For the active instance the code computes:
+
+- `commitment_problem_equations = 592`
+- `commitment_problem_dimension = 4104`
+- `commitment_problem_coeff_bound = 255`
+- `commitment_problem_l2_bound = 16336`
+- `commitment_estimator_dimension = 4104`
+- `commitment_estimator_block_size = 3267`
+- `commitment_estimator_classical_bits = 953`
+- `commitment_estimator_quantum_bits = 865`
+- `commitment_estimator_paranoid_bits = 677`
+
 ## Reduction
 
 Let an adversary win the implemented collision game by outputting distinct `m, m' ∈ M_live(ell)` with:
@@ -143,9 +174,9 @@ So the code computes:
 
 ```text
 commitment_binding_bits
-  = commitment_bkmsis_target_bits - commitment_reduction_loss_bits
-  = 128 - 0
-  = 128
+  = commitment_estimator_quantum_bits - commitment_reduction_loss_bits
+  = 865 - 0
+  = 865
 ```
 
 The final active floor is then:
@@ -156,15 +187,15 @@ transcript_floor_bits = transcript_soundness_bits - composition_loss_bits
                       = 150
 
 soundness_floor_bits = min(transcript_floor_bits, commitment_binding_bits)
-                     = min(150, 128)
-                     = 128
+                     = min(150, 865)
+                     = 150
 ```
 
 ## What This Note Does Not Establish
 
 This note does **not** establish:
 
-- a concrete external hardness estimate for the active `BK-MSIS` instance,
+- a completed external cryptanalysis of the active coefficient-space SIS estimate,
 - a paper-equivalent Neo/SuperNeo commitment reduction,
 - that the active parameter set has already been externally cryptanalyzed,
 - or that future tighter analysis will not lower the concrete `128`-bit target.
@@ -173,5 +204,5 @@ The current repository meaning is narrower:
 
 - the collision game is now defined exactly for the implemented message class,
 - the reduction target is now stated explicitly as a bounded-kernel Module-SIS style problem,
-- the code-derived claim now uses that reduction target instead of the old geometry-only union-bound proxy,
-- and the remaining open question is the external justification for setting `commitment_bkmsis_target_bits = 128` for this exact instance.
+- the code-derived claim now uses an explicit coefficient-space Euclidean SIS estimate for that exact instance instead of the old geometry-only union-bound proxy,
+- and the remaining open question is independent review of the exact BK-MSIS-to-SIS concretization and estimator model for this implementation.

@@ -1,30 +1,699 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use blake3::Hasher;
+use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
+use p3_uni_stark::verify as verify_uni_stark;
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
-use superneo_backend_lattice::{
-    CommitmentSecurityModel, LatticeBackend, LatticeCommitment, LeafDigestProof,
-    NativeBackendParams, RingElem, RingProfile,
+use superneo_ccs::{
+    digest_shape, digest_statement, Assignment, CcsShape, Relation, RelationId, ShapeDigest,
+    SparseEntry, SparseMatrix, StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
 };
-use superneo_ccs::{Assignment, Relation, RelationId, ShapeDigest, StatementDigest};
-use superneo_core::{Backend, FoldedInstance, LeafArtifact};
-use superneo_hegemon::{CanonicalTxValidityReceipt, TxLeafPublicRelation};
-use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
-use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::bytes48_to_felts;
-use transaction_circuit::proof::{
-    transaction_public_inputs_digest_from_serialized, SerializedStarkInputs,
-    TX_PROOF_DIGEST_DOMAIN, TX_STATEMENT_HASH_DOMAIN,
-};
-use transaction_circuit::{verify_transaction_proof_bytes_p3, TransactionPublicInputsP3};
+use superneo_core::{validate_fold_pair, FoldedInstance, LeafArtifact, SecurityParams};
+use transaction_core::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
+use transaction_core::hashing_pq::bytes48_to_felts;
+use transaction_core::p3_air::TransactionAirP3;
+use transaction_core::p3_config::{config_with_fri, TransactionProofP3};
+use transaction_core::TransactionPublicInputsP3;
 
 const CANONICAL_RECEIPT_WIRE_BYTES: usize = 48 * 4;
 const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
 const TX_PUBLIC_WIRE_BYTES: usize =
     4 + (MAX_INPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 48 + 2 + 2;
 const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
+const TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
+const TX_PROOF_DIGEST_DOMAIN: &[u8] = b"tx-proof-digest-v1";
+const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
+const GOLDILOCKS_MODULUS_I128: i128 = 18_446_744_069_414_584_321;
+const COEFF_CAPACITY_BITS: u16 = 60;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BackendManifest {
+    pub family_label: &'static str,
+    pub spec_label: &'static str,
+    pub commitment_scheme_label: &'static str,
+    pub challenge_schedule_label: &'static str,
+    pub maturity_label: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingProfile {
+    GoldilocksCyclotomic24,
+    GoldilocksFrog,
+}
+
+impl RingProfile {
+    fn label(self) -> &'static [u8] {
+        match self {
+            Self::GoldilocksCyclotomic24 => b"goldilocks-cyclotomic24",
+            Self::GoldilocksFrog => b"goldilocks-frog",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitmentSecurityModel {
+    GeometryProxy,
+    BoundedKernelModuleSis,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitmentEstimatorModel {
+    SisLatticeEuclideanAdps16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeBackendParams {
+    pub manifest: BackendManifest,
+    pub security_bits: u32,
+    pub ring_profile: RingProfile,
+    pub matrix_rows: usize,
+    pub matrix_cols: usize,
+    pub challenge_bits: u32,
+    pub fold_challenge_count: u32,
+    pub max_fold_arity: u32,
+    pub transcript_domain_label: &'static str,
+    pub decomposition_bits: u32,
+    pub opening_randomness_bits: u32,
+    pub commitment_security_model: CommitmentSecurityModel,
+    pub commitment_estimator_model: CommitmentEstimatorModel,
+    pub max_commitment_message_ring_elems: u32,
+    pub max_claimed_receipt_root_leaves: u32,
+}
+
+impl NativeBackendParams {
+    pub fn goldilocks_128b_structural_commitment() -> Self {
+        Self {
+            manifest: BackendManifest {
+                family_label: "goldilocks_128b_structural_commitment",
+                spec_label:
+                    "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7",
+                commitment_scheme_label: "bounded_message_random_matrix_commitment",
+                challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
+                maturity_label: "structural_candidate",
+            },
+            security_bits: 128,
+            ring_profile: RingProfile::GoldilocksCyclotomic24,
+            matrix_rows: 74,
+            matrix_cols: 8,
+            challenge_bits: 63,
+            fold_challenge_count: 5,
+            max_fold_arity: 2,
+            transcript_domain_label: "hegemon.superneo.fold.v3",
+            decomposition_bits: 8,
+            opening_randomness_bits: 256,
+            commitment_security_model: CommitmentSecurityModel::BoundedKernelModuleSis,
+            commitment_estimator_model: CommitmentEstimatorModel::SisLatticeEuclideanAdps16,
+            max_commitment_message_ring_elems: 513,
+            max_claimed_receipt_root_leaves: 128,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.matrix_rows > 0,
+            "matrix_rows must be strictly positive"
+        );
+        ensure!(
+            self.matrix_cols > 0,
+            "matrix_cols must be strictly positive"
+        );
+        ensure!(
+            (1..=63).contains(&self.challenge_bits),
+            "challenge_bits must be in 1..=63"
+        );
+        ensure!(
+            (1..=8).contains(&self.fold_challenge_count),
+            "fold_challenge_count must be in 1..=8"
+        );
+        ensure!(
+            self.max_fold_arity == 2,
+            "binary fold backend requires max_fold_arity == 2"
+        );
+        ensure!(
+            (1..=16).contains(&self.decomposition_bits),
+            "decomposition_bits must be in 1..=16"
+        );
+        ensure!(
+            self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
+            "opening_randomness_bits must be in 1..=256"
+        );
+        ensure!(
+            self.max_commitment_message_ring_elems > 0,
+            "max_commitment_message_ring_elems must be strictly positive"
+        );
+        ensure!(
+            self.max_claimed_receipt_root_leaves > 0,
+            "max_claimed_receipt_root_leaves must be strictly positive"
+        );
+        let _ = self.commitment_estimator_model;
+        Ok(())
+    }
+
+    fn security_params(&self) -> SecurityParams {
+        SecurityParams {
+            target_security_bits: self.security_bits,
+            max_fold_arity: self.max_fold_arity,
+            transcript_domain: self.transcript_domain_label.as_bytes(),
+        }
+    }
+
+    fn parameter_fingerprint(&self) -> [u8; 48] {
+        review_parameter_fingerprint(self)
+    }
+
+    fn ring_degree(&self) -> usize {
+        self.matrix_cols
+    }
+
+    fn digit_bits(&self) -> u16 {
+        self.decomposition_bits as u16
+    }
+}
+
+impl Default for NativeBackendParams {
+    fn default() -> Self {
+        Self::goldilocks_128b_structural_commitment()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackendKey {
+    pub params_fingerprint: [u8; 48],
+    pub shape_digest: ShapeDigest,
+    pub security_bits: u32,
+    pub challenge_bits: u32,
+    pub fold_challenge_count: u32,
+    pub max_fold_arity: u32,
+    pub transcript_domain_digest: [u8; 32],
+    pub ring_profile: RingProfile,
+    pub commitment_rows: usize,
+    pub ring_degree: usize,
+    pub digit_bits: u16,
+    pub opening_randomness_bits: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RingElem {
+    pub coeffs: Vec<u64>,
+}
+
+impl RingElem {
+    pub fn from_coeffs(coeffs: Vec<u64>) -> Self {
+        Self { coeffs }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LatticeCommitment {
+    pub digest: [u8; 48],
+    pub rows: Vec<RingElem>,
+}
+
+impl LatticeCommitment {
+    pub fn from_rows(rows: Vec<RingElem>) -> Self {
+        let digest = digest_commitment_rows(&rows);
+        Self { digest, rows }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeafDigestProof {
+    pub witness_commitment_digest: [u8; 48],
+    pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoldDigestProof {
+    pub params_fingerprint: [u8; 48],
+    pub challenges: Vec<u64>,
+    pub parent_statement_digest: StatementDigest,
+    pub parent_commitment_digest: [u8; 48],
+    pub parent_rows: Vec<RingElem>,
+    pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackedWitness<R> {
+    pub coeffs: Vec<R>,
+    pub original_len: usize,
+    pub used_bits: usize,
+    pub coeff_capacity_bits: u16,
+    pub value_bit_widths: Vec<u16>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GoldilocksPackingConfig {
+    pub limb_bits: u16,
+    pub coeff_capacity_bits: u16,
+    pub reject_out_of_range: bool,
+}
+
+impl Default for GoldilocksPackingConfig {
+    fn default() -> Self {
+        Self {
+            limb_bits: 8,
+            coeff_capacity_bits: COEFF_CAPACITY_BITS,
+            reject_out_of_range: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GoldilocksPayPerBitPacker {
+    pub config: GoldilocksPackingConfig,
+}
+
+impl GoldilocksPayPerBitPacker {
+    pub fn new(config: GoldilocksPackingConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn pack(
+        &self,
+        shape: &CcsShape<Goldilocks>,
+        assignment: &Assignment<Goldilocks>,
+    ) -> Result<PackedWitness<u64>> {
+        ensure!(
+            assignment.witness.len() == shape.expected_witness_len(),
+            "assignment length {} does not match expected witness length {}",
+            assignment.witness.len(),
+            shape.expected_witness_len()
+        );
+        let mut coeffs = Vec::new();
+        let mut current = 0u64;
+        let mut bits_used = 0u16;
+        let mut value_bit_widths = Vec::with_capacity(assignment.witness.len());
+        let mut used_bits = 0usize;
+        let mut witness_idx = 0usize;
+
+        for field in &shape.witness_schema.fields {
+            ensure!(
+                !field.signed,
+                "signed witness fields are not yet supported by GoldilocksPayPerBitPacker"
+            );
+            for _ in 0..field.count {
+                let raw = assignment.witness[witness_idx].as_canonical_u64();
+                witness_idx += 1;
+                value_bit_widths.push(field.bit_width);
+                if self.config.reject_out_of_range && field.bit_width < 64 {
+                    let max = 1u128 << field.bit_width;
+                    ensure!(
+                        u128::from(raw) < max,
+                        "witness field {} value {} exceeds {} bits",
+                        field.name,
+                        raw,
+                        field.bit_width
+                    );
+                }
+
+                let mut remaining = field.bit_width;
+                let mut source_offset = 0u16;
+                while remaining > 0 {
+                    if bits_used == self.config.coeff_capacity_bits {
+                        coeffs.push(current);
+                        current = 0;
+                        bits_used = 0;
+                    }
+                    let available = self.config.coeff_capacity_bits - bits_used;
+                    let take = remaining.min(available);
+                    let chunk = extract_bits(raw, source_offset, take);
+                    current |= chunk << bits_used;
+                    bits_used += take;
+                    source_offset += take;
+                    remaining -= take;
+                    used_bits += usize::from(take);
+                    if bits_used == self.config.coeff_capacity_bits {
+                        coeffs.push(current);
+                        current = 0;
+                        bits_used = 0;
+                    }
+                }
+            }
+        }
+
+        if bits_used > 0 {
+            coeffs.push(current);
+        }
+
+        Ok(PackedWitness {
+            coeffs,
+            original_len: assignment.witness.len(),
+            used_bits,
+            coeff_capacity_bits: self.config.coeff_capacity_bits,
+            value_bit_widths,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalTxValidityReceipt {
+    pub statement_hash: [u8; 48],
+    pub proof_digest: [u8; 48],
+    pub public_inputs_digest: [u8; 48],
+    pub verifier_profile: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalTxValidityReceiptRelation {
+    shape: CcsShape<Goldilocks>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxLeafPublicRelation {
+    shape: CcsShape<Goldilocks>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SerializedStarkInputs {
+    pub input_flags: Vec<u8>,
+    pub output_flags: Vec<u8>,
+    pub fee: u64,
+    pub value_balance_sign: u8,
+    pub value_balance_magnitude: u64,
+    pub merkle_root: [u8; 48],
+    pub balance_slot_asset_ids: Vec<u64>,
+    pub stablecoin_enabled: u8,
+    pub stablecoin_asset_id: u64,
+    pub stablecoin_policy_version: u32,
+    pub stablecoin_issuance_sign: u8,
+    pub stablecoin_issuance_magnitude: u64,
+    pub stablecoin_policy_hash: [u8; 48],
+    pub stablecoin_oracle_commitment: [u8; 48],
+    pub stablecoin_attestation_commitment: [u8; 48],
+}
+
+impl Default for CanonicalTxValidityReceiptRelation {
+    fn default() -> Self {
+        let witness_schema = WitnessSchema {
+            fields: vec![WitnessField {
+                name: "receipt_limb",
+                bit_width: 64,
+                signed: false,
+                count: 24,
+            }],
+        };
+        let shape = CcsShape {
+            num_rows: 32,
+            num_cols: witness_schema.total_witness_elements(),
+            matrices: vec![SparseMatrix {
+                row_count: 32,
+                col_count: witness_schema.total_witness_elements(),
+                entries: vec![SparseEntry {
+                    row: 0,
+                    col: 0,
+                    value: Goldilocks::new(1),
+                }],
+            }],
+            selectors: vec![Goldilocks::new(1)],
+            witness_schema,
+        };
+        Self { shape }
+    }
+}
+
+impl Default for TxLeafPublicRelation {
+    fn default() -> Self {
+        let witness_schema = WitnessSchema {
+            fields: vec![
+                WitnessField {
+                    name: "input_flag_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "output_flag_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "input_flag",
+                    bit_width: 1,
+                    signed: false,
+                    count: MAX_INPUTS,
+                },
+                WitnessField {
+                    name: "output_flag",
+                    bit_width: 1,
+                    signed: false,
+                    count: MAX_OUTPUTS,
+                },
+                WitnessField {
+                    name: "fee",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "value_balance_sign",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "value_balance_magnitude",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "merkle_root_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: 6,
+                },
+                WitnessField {
+                    name: "balance_slot_asset_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "balance_slot_asset_id",
+                    bit_width: 64,
+                    signed: false,
+                    count: BALANCE_SLOTS,
+                },
+                WitnessField {
+                    name: "stablecoin_enabled",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_asset_id",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_policy_version",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_issuance_sign",
+                    bit_width: 1,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_issuance_magnitude",
+                    bit_width: 64,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "stablecoin_policy_hash_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: 6,
+                },
+                WitnessField {
+                    name: "stablecoin_oracle_commitment_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: 6,
+                },
+                WitnessField {
+                    name: "stablecoin_attestation_commitment_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: 6,
+                },
+                WitnessField {
+                    name: "nullifier_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "nullifier_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_INPUTS * 6,
+                },
+                WitnessField {
+                    name: "commitment_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "commitment_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_OUTPUTS * 6,
+                },
+                WitnessField {
+                    name: "ciphertext_hash_len",
+                    bit_width: 16,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "ciphertext_hash_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: MAX_OUTPUTS * 6,
+                },
+                WitnessField {
+                    name: "balance_tag_limb",
+                    bit_width: 64,
+                    signed: false,
+                    count: 6,
+                },
+                WitnessField {
+                    name: "circuit_version",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+                WitnessField {
+                    name: "crypto_suite",
+                    bit_width: 32,
+                    signed: false,
+                    count: 1,
+                },
+            ],
+        };
+        let shape = CcsShape {
+            num_rows: 256,
+            num_cols: witness_schema.total_witness_elements(),
+            matrices: vec![SparseMatrix {
+                row_count: 256,
+                col_count: witness_schema.total_witness_elements(),
+                entries: vec![
+                    SparseEntry {
+                        row: 0,
+                        col: 0,
+                        value: Goldilocks::new(1),
+                    },
+                    SparseEntry {
+                        row: 1,
+                        col: 1,
+                        value: Goldilocks::new(1),
+                    },
+                    SparseEntry {
+                        row: 2,
+                        col: 2,
+                        value: Goldilocks::new(1),
+                    },
+                ],
+            }],
+            selectors: vec![Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)],
+            witness_schema,
+        };
+        Self { shape }
+    }
+}
+
+impl Relation<Goldilocks> for CanonicalTxValidityReceiptRelation {
+    type Statement = CanonicalTxValidityReceipt;
+    type Witness = ();
+
+    fn relation_id(&self) -> RelationId {
+        RelationId::from_label("hegemon.superneo.canonical-tx-validity-receipt")
+    }
+
+    fn shape(&self) -> &CcsShape<Goldilocks> {
+        &self.shape
+    }
+
+    fn encode_statement(
+        &self,
+        statement: &Self::Statement,
+    ) -> Result<StatementEncoding<Goldilocks>> {
+        let bytes = canonical_tx_validity_receipt_bytes(statement);
+        let mut public_inputs = Vec::with_capacity(24);
+        public_inputs.extend(bytes48_to_goldilocks(&statement.statement_hash));
+        public_inputs.extend(bytes48_to_goldilocks(&statement.proof_digest));
+        public_inputs.extend(bytes48_to_goldilocks(&statement.public_inputs_digest));
+        public_inputs.extend(bytes48_to_goldilocks(&statement.verifier_profile));
+        Ok(StatementEncoding {
+            public_inputs,
+            statement_digest: digest_statement(&bytes),
+        })
+    }
+
+    fn build_assignment(
+        &self,
+        statement: &Self::Statement,
+        _witness: &Self::Witness,
+    ) -> Result<Assignment<Goldilocks>> {
+        let mut witness = Vec::with_capacity(24);
+        witness.extend(bytes48_to_goldilocks(&statement.statement_hash));
+        witness.extend(bytes48_to_goldilocks(&statement.proof_digest));
+        witness.extend(bytes48_to_goldilocks(&statement.public_inputs_digest));
+        witness.extend(bytes48_to_goldilocks(&statement.verifier_profile));
+        Ok(Assignment { witness })
+    }
+}
+
+impl Relation<Goldilocks> for TxLeafPublicRelation {
+    type Statement = CanonicalTxValidityReceipt;
+    type Witness = ();
+
+    fn relation_id(&self) -> RelationId {
+        RelationId::from_label("hegemon.superneo.tx-leaf-public")
+    }
+
+    fn shape(&self) -> &CcsShape<Goldilocks> {
+        &self.shape
+    }
+
+    fn encode_statement(
+        &self,
+        statement: &Self::Statement,
+    ) -> Result<StatementEncoding<Goldilocks>> {
+        CanonicalTxValidityReceiptRelation::default().encode_statement(statement)
+    }
+
+    fn build_assignment(
+        &self,
+        _statement: &Self::Statement,
+        _witness: &Self::Witness,
+    ) -> Result<Assignment<Goldilocks>> {
+        Ok(Assignment {
+            witness: Vec::new(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LatticeBackend {
+    params: NativeBackendParams,
+}
+
+impl LatticeBackend {
+    pub fn new(params: NativeBackendParams) -> Self {
+        Self { params }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewVectorBundle {
@@ -53,8 +722,8 @@ pub struct ReviewBackendParams {
     pub opening_randomness_bits: u32,
     #[serde(default = "default_commitment_security_model")]
     pub commitment_security_model: String,
-    #[serde(default = "default_commitment_bkmsis_target_bits")]
-    pub commitment_bkmsis_target_bits: u32,
+    #[serde(default = "default_commitment_estimator_model")]
+    pub commitment_estimator_model: String,
     #[serde(default = "default_max_commitment_message_ring_elems")]
     pub max_commitment_message_ring_elems: u32,
     #[serde(default = "default_max_claimed_receipt_root_leaves")]
@@ -73,11 +742,23 @@ pub struct ReviewSecurityClaim {
     #[serde(default)]
     pub commitment_random_matrix_bits: u32,
     #[serde(default)]
+    pub commitment_problem_equations: u32,
+    #[serde(default)]
     pub commitment_problem_dimension: u32,
     #[serde(default)]
     pub commitment_problem_coeff_bound: u32,
     #[serde(default)]
     pub commitment_problem_l2_bound: u32,
+    #[serde(default)]
+    pub commitment_estimator_dimension: u32,
+    #[serde(default)]
+    pub commitment_estimator_block_size: u32,
+    #[serde(default)]
+    pub commitment_estimator_classical_bits: u32,
+    #[serde(default)]
+    pub commitment_estimator_quantum_bits: u32,
+    #[serde(default)]
+    pub commitment_estimator_paranoid_bits: u32,
     #[serde(default)]
     pub commitment_reduction_loss_bits: u32,
     pub commitment_binding_bits: u32,
@@ -239,6 +920,209 @@ struct RefReceiptRootArtifact {
     folds: Vec<RefReceiptRootFoldStep>,
     root_statement_digest: [u8; 48],
     root_commitment: [u8; 48],
+}
+
+impl LatticeBackend {
+    pub fn setup(
+        &self,
+        security: &SecurityParams,
+        shape: &CcsShape<Goldilocks>,
+    ) -> Result<(BackendKey, BackendKey)> {
+        shape.validate()?;
+        self.params.validate()?;
+        ensure!(
+            security.target_security_bits == self.params.security_bits,
+            "security target {} does not match native backend params {}",
+            security.target_security_bits,
+            self.params.security_bits
+        );
+        ensure!(
+            security.max_fold_arity == self.params.max_fold_arity,
+            "max_fold_arity {} does not match native backend params {}",
+            security.max_fold_arity,
+            self.params.max_fold_arity
+        );
+        ensure!(
+            security.transcript_domain == self.params.transcript_domain_label.as_bytes(),
+            "transcript_domain does not match native backend params {}",
+            self.params.transcript_domain_label
+        );
+        let key = BackendKey {
+            params_fingerprint: self.params.parameter_fingerprint(),
+            shape_digest: digest_shape(shape),
+            security_bits: self.params.security_bits,
+            challenge_bits: self.params.challenge_bits,
+            fold_challenge_count: self.params.fold_challenge_count,
+            max_fold_arity: self.params.max_fold_arity,
+            transcript_domain_digest: digest32_with_label(
+                b"hegemon.superneo.transcript-domain.v1",
+                self.params.transcript_domain_label.as_bytes(),
+            ),
+            ring_profile: self.params.ring_profile,
+            commitment_rows: self.params.matrix_rows,
+            ring_degree: self.params.ring_degree(),
+            digit_bits: self.params.digit_bits(),
+            opening_randomness_bits: self.params.opening_randomness_bits,
+        };
+        Ok((key.clone(), key))
+    }
+
+    pub fn commit_witness(
+        &self,
+        pk: &BackendKey,
+        packed: &PackedWitness<u64>,
+    ) -> Result<LatticeCommitment> {
+        let ring_message = embed_packed_witness(pk, packed)?;
+        let rows = commit_ring_message(pk, &ring_message);
+        Ok(LatticeCommitment::from_rows(rows))
+    }
+
+    pub fn verify_leaf(
+        &self,
+        vk: &BackendKey,
+        relation_id: &RelationId,
+        statement: &StatementEncoding<Goldilocks>,
+        expected_packed: &PackedWitness<u64>,
+        proof: &LeafDigestProof,
+    ) -> Result<()> {
+        let expected_commitment = self.commit_witness(vk, expected_packed)?;
+        ensure!(
+            proof.witness_commitment_digest == expected_commitment.digest,
+            "leaf witness commitment digest mismatch"
+        );
+        let expected_proof_digest = leaf_proof_digest(
+            vk,
+            relation_id,
+            &statement.statement_digest,
+            expected_packed,
+            &expected_commitment.digest,
+        );
+        ensure!(
+            proof.proof_digest == expected_proof_digest,
+            "leaf proof digest mismatch"
+        );
+        Ok(())
+    }
+
+    pub fn fold_pair(
+        &self,
+        pk: &BackendKey,
+        left: &FoldedInstance<LatticeCommitment>,
+        right: &FoldedInstance<LatticeCommitment>,
+    ) -> Result<(FoldedInstance<LatticeCommitment>, FoldDigestProof)> {
+        validate_fold_pair(left, right)?;
+        let challenges = derive_fold_challenges(pk, left, right);
+        let parent_rows = fold_commitment_rows(
+            &left.witness_commitment,
+            &right.witness_commitment,
+            &challenges,
+        )?;
+        let parent_commitment = LatticeCommitment::from_rows(parent_rows.clone());
+        let parent_statement_digest = fold_statement_digest(
+            &left.statement_digest,
+            &right.statement_digest,
+            &challenges,
+            &parent_commitment.digest,
+        );
+        let proof_digest = fold_proof_digest(
+            pk,
+            &left.relation_id,
+            left,
+            right,
+            &challenges,
+            &parent_statement_digest,
+            &parent_rows,
+        );
+        let proof = FoldDigestProof {
+            params_fingerprint: pk.params_fingerprint,
+            challenges: challenges.clone(),
+            parent_statement_digest,
+            parent_commitment_digest: parent_commitment.digest,
+            parent_rows: parent_rows.clone(),
+            proof_digest,
+        };
+        let parent = FoldedInstance {
+            relation_id: left.relation_id,
+            shape_digest: left.shape_digest,
+            statement_digest: parent_statement_digest,
+            witness_commitment: parent_commitment,
+        };
+        Ok((parent, proof))
+    }
+
+    pub fn verify_fold(
+        &self,
+        vk: &BackendKey,
+        parent: &FoldedInstance<LatticeCommitment>,
+        left: &FoldedInstance<LatticeCommitment>,
+        right: &FoldedInstance<LatticeCommitment>,
+        proof: &FoldDigestProof,
+    ) -> Result<()> {
+        validate_fold_pair(left, right)?;
+        ensure!(
+            parent.relation_id == left.relation_id && left.relation_id == right.relation_id,
+            "parent relation id does not match folded children"
+        );
+        ensure!(
+            parent.shape_digest == left.shape_digest && left.shape_digest == right.shape_digest,
+            "parent shape digest does not match folded children"
+        );
+        ensure!(
+            proof.params_fingerprint == vk.params_fingerprint,
+            "fold proof parameter fingerprint mismatch"
+        );
+        let expected_challenges = derive_fold_challenges(vk, left, right);
+        ensure!(
+            proof.challenges == expected_challenges,
+            "fold challenge vector mismatch"
+        );
+        let expected_rows = fold_commitment_rows(
+            &left.witness_commitment,
+            &right.witness_commitment,
+            &expected_challenges,
+        )?;
+        ensure!(
+            proof.parent_rows == expected_rows,
+            "fold proof parent rows mismatch"
+        );
+        let expected_commitment = LatticeCommitment::from_rows(expected_rows.clone());
+        ensure!(
+            parent.witness_commitment.digest == expected_commitment.digest,
+            "folded witness commitment digest mismatch"
+        );
+        ensure!(
+            proof.parent_commitment_digest == expected_commitment.digest,
+            "fold proof parent commitment digest mismatch"
+        );
+        let expected_statement_digest = fold_statement_digest(
+            &left.statement_digest,
+            &right.statement_digest,
+            &expected_challenges,
+            &expected_commitment.digest,
+        );
+        ensure!(
+            parent.statement_digest == expected_statement_digest,
+            "folded statement digest mismatch"
+        );
+        ensure!(
+            proof.parent_statement_digest == expected_statement_digest,
+            "fold proof parent statement digest mismatch"
+        );
+        let expected_proof_digest = fold_proof_digest(
+            vk,
+            &left.relation_id,
+            left,
+            right,
+            &expected_challenges,
+            &expected_statement_digest,
+            &expected_rows,
+        );
+        ensure!(
+            proof.proof_digest == expected_proof_digest,
+            "fold proof digest mismatch"
+        );
+        Ok(())
+    }
 }
 
 pub fn load_bundle(bundle_path: &Path) -> Result<ReviewVectorBundle> {
@@ -637,7 +1521,7 @@ pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBac
     let mut params = match review.family_label.as_str() {
         "goldilocks_128b_structural_commitment" => structural,
         other => NativeBackendParams {
-            manifest: superneo_backend_lattice::BackendManifest {
+            manifest: BackendManifest {
                 family_label: Box::leak(other.to_owned().into_boxed_str()),
                 spec_label: Box::leak(review.spec_label.clone().into_boxed_str()),
                 commitment_scheme_label: Box::leak(
@@ -664,7 +1548,8 @@ pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBac
     params.opening_randomness_bits = review.opening_randomness_bits;
     params.commitment_security_model =
         parse_commitment_security_model(&review.commitment_security_model)?;
-    params.commitment_bkmsis_target_bits = review.commitment_bkmsis_target_bits;
+    params.commitment_estimator_model =
+        parse_commitment_estimator_model(&review.commitment_estimator_model)?;
     params.max_commitment_message_ring_elems = review.max_commitment_message_ring_elems;
     params.max_claimed_receipt_root_leaves = review.max_claimed_receipt_root_leaves;
     validate_review_params(&params)?;
@@ -967,8 +1852,8 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
 fn pack_tx_leaf_public_witness(
     tx: &RefTxLeafPublicTx,
     stark_public_inputs: &SerializedStarkInputs,
-    shape: &superneo_ccs::CcsShape<Goldilocks>,
-) -> Result<superneo_ring::PackedWitness<u64>> {
+    shape: &CcsShape<Goldilocks>,
+) -> Result<PackedWitness<u64>> {
     let mut values = Vec::with_capacity(shape.expected_witness_len());
     values.push(Goldilocks::new(stark_public_inputs.input_flags.len() as u64));
     values.push(Goldilocks::new(
@@ -1495,6 +2380,539 @@ fn max_receipt_root_artifact_bytes_with_params(
     2 + 48 + 32 + 32 + 32 + 4 + 4 + leaf_bytes + fold_bytes + 48 + 48
 }
 
+fn canonical_tx_validity_receipt_bytes(receipt: &CanonicalTxValidityReceipt) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(CANONICAL_RECEIPT_WIRE_BYTES);
+    bytes.extend_from_slice(&receipt.statement_hash);
+    bytes.extend_from_slice(&receipt.proof_digest);
+    bytes.extend_from_slice(&receipt.public_inputs_digest);
+    bytes.extend_from_slice(&receipt.verifier_profile);
+    bytes
+}
+
+fn bytes48_to_goldilocks(bytes: &[u8; 48]) -> Vec<Goldilocks> {
+    bytes
+        .chunks_exact(8)
+        .map(|chunk| Goldilocks::new(u64::from_le_bytes(chunk.try_into().unwrap())))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InferredFriProfileP3 {
+    log_blowup: usize,
+    num_queries: usize,
+}
+
+#[derive(Debug, Clone)]
+enum TransactionVerifyErrorP3 {
+    InvalidProofFormat,
+    InvalidPublicInputs(String),
+    VerificationFailed(String),
+}
+
+impl core::fmt::Display for TransactionVerifyErrorP3 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidProofFormat => write!(f, "Invalid proof format"),
+            Self::InvalidPublicInputs(err) => write!(f, "Invalid public inputs: {err}"),
+            Self::VerificationFailed(err) => write!(f, "Verification failed: {err}"),
+        }
+    }
+}
+
+fn infer_fri_profile_from_proof_p3(
+    proof: &TransactionProofP3,
+) -> Result<InferredFriProfileP3, TransactionVerifyErrorP3> {
+    let num_queries = proof.opening_proof.query_proofs.len();
+    if num_queries == 0 {
+        return Err(TransactionVerifyErrorP3::VerificationFailed(
+            "proof has zero FRI queries".to_owned(),
+        ));
+    }
+    let final_poly_len = proof.opening_proof.final_poly.len();
+    if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
+        return Err(TransactionVerifyErrorP3::VerificationFailed(
+            "proof final polynomial length is invalid".to_owned(),
+        ));
+    }
+    let log_final_poly_len = final_poly_len.ilog2() as usize;
+    let baseline = proof.opening_proof.commit_phase_commits.len() + log_final_poly_len;
+    let mut observed_log_max_height: Option<usize> = None;
+    for (query_index, query_proof) in proof.opening_proof.query_proofs.iter().enumerate() {
+        let query_max = query_proof
+            .input_proof
+            .iter()
+            .map(|batch| batch.opening_proof.len())
+            .max()
+            .ok_or_else(|| {
+                TransactionVerifyErrorP3::VerificationFailed(format!(
+                    "query {query_index} has no input opening proofs"
+                ))
+            })?;
+        if query_max < baseline {
+            return Err(TransactionVerifyErrorP3::VerificationFailed(format!(
+                "query {query_index} opening depth {query_max} smaller than required baseline {baseline}"
+            )));
+        }
+        match observed_log_max_height {
+            Some(expected) if expected != query_max => {
+                return Err(TransactionVerifyErrorP3::VerificationFailed(format!(
+                    "query opening depth mismatch: expected {expected}, got {query_max} at query {query_index}"
+                )));
+            }
+            Some(_) => {}
+            None => observed_log_max_height = Some(query_max),
+        }
+    }
+    let observed_log_max_height = observed_log_max_height.ok_or_else(|| {
+        TransactionVerifyErrorP3::VerificationFailed("proof has no query opening paths".to_owned())
+    })?;
+    let log_blowup = observed_log_max_height
+        .checked_sub(baseline)
+        .ok_or_else(|| {
+            TransactionVerifyErrorP3::VerificationFailed(
+                "failed to infer FRI blowup from proof shape".to_owned(),
+            )
+        })?;
+    Ok(InferredFriProfileP3 {
+        log_blowup,
+        num_queries,
+    })
+}
+
+fn verify_transaction_proof_bytes_p3(
+    proof_bytes: &[u8],
+    pub_inputs: &TransactionPublicInputsP3,
+) -> Result<(), TransactionVerifyErrorP3> {
+    pub_inputs
+        .validate()
+        .map_err(TransactionVerifyErrorP3::InvalidPublicInputs)?;
+    let proof: TransactionProofP3 = postcard::from_bytes(proof_bytes)
+        .map_err(|_| TransactionVerifyErrorP3::InvalidProofFormat)?;
+    let fri_profile = infer_fri_profile_from_proof_p3(&proof)?;
+    let config = config_with_fri(fri_profile.log_blowup, fri_profile.num_queries);
+    verify_uni_stark(
+        &config.config,
+        &TransactionAirP3,
+        &proof,
+        &pub_inputs.to_vec(),
+    )
+    .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
+}
+
+fn transaction_public_inputs_digest_from_serialized(
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<[u8; 48]> {
+    #[derive(Serialize)]
+    struct DigestSerializedStarkInputs<'a> {
+        input_flags: &'a [u8],
+        output_flags: &'a [u8],
+        fee: u64,
+        value_balance_sign: u8,
+        value_balance_magnitude: u64,
+        #[serde(serialize_with = "serialize_bytes_48_ref")]
+        merkle_root: &'a [u8; 48],
+        balance_slot_asset_ids: &'a [u64],
+        stablecoin_enabled: u8,
+        stablecoin_asset_id: u64,
+        stablecoin_policy_version: u32,
+        stablecoin_issuance_sign: u8,
+        stablecoin_issuance_magnitude: u64,
+        #[serde(serialize_with = "serialize_bytes_48_ref")]
+        stablecoin_policy_hash: &'a [u8; 48],
+        #[serde(serialize_with = "serialize_bytes_48_ref")]
+        stablecoin_oracle_commitment: &'a [u8; 48],
+        #[serde(serialize_with = "serialize_bytes_48_ref")]
+        stablecoin_attestation_commitment: &'a [u8; 48],
+    }
+
+    let encoded = postcard::to_allocvec(&DigestSerializedStarkInputs {
+        input_flags: &stark_inputs.input_flags,
+        output_flags: &stark_inputs.output_flags,
+        fee: stark_inputs.fee,
+        value_balance_sign: stark_inputs.value_balance_sign,
+        value_balance_magnitude: stark_inputs.value_balance_magnitude,
+        merkle_root: &stark_inputs.merkle_root,
+        balance_slot_asset_ids: &stark_inputs.balance_slot_asset_ids,
+        stablecoin_enabled: stark_inputs.stablecoin_enabled,
+        stablecoin_asset_id: stark_inputs.stablecoin_asset_id,
+        stablecoin_policy_version: stark_inputs.stablecoin_policy_version,
+        stablecoin_issuance_sign: stark_inputs.stablecoin_issuance_sign,
+        stablecoin_issuance_magnitude: stark_inputs.stablecoin_issuance_magnitude,
+        stablecoin_policy_hash: &stark_inputs.stablecoin_policy_hash,
+        stablecoin_oracle_commitment: &stark_inputs.stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment: &stark_inputs.stablecoin_attestation_commitment,
+    })
+    .map_err(|err| anyhow!("failed to serialize STARK public inputs: {err}"))?;
+    Ok(digest48_with_parts(
+        TX_PUBLIC_INPUTS_DIGEST_DOMAIN,
+        &[&encoded],
+    ))
+}
+
+fn digest_commitment_rows(rows: &[RingElem]) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.commitment-digest.v2");
+    hasher.update(&(rows.len() as u64).to_le_bytes());
+    for row in rows {
+        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        for coeff in &row.coeffs {
+            hasher.update(&coeff.to_le_bytes());
+        }
+    }
+    hash48(hasher)
+}
+
+fn digest32_with_label(label: &[u8], bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(label);
+    hasher.update(bytes);
+    hash32(hasher)
+}
+
+fn embed_packed_witness(pk: &BackendKey, packed: &PackedWitness<u64>) -> Result<Vec<RingElem>> {
+    let digits = expand_packed_digits(packed, pk.digit_bits)?;
+    let mut ring_elems = Vec::with_capacity(digits.len().div_ceil(pk.ring_degree));
+    for chunk in digits.chunks(pk.ring_degree) {
+        let mut coeffs = vec![0u64; pk.ring_degree];
+        for (idx, digit) in chunk.iter().enumerate() {
+            coeffs[idx] = *digit;
+        }
+        ring_elems.push(RingElem::from_coeffs(coeffs));
+    }
+    Ok(ring_elems)
+}
+
+fn expand_packed_digits(packed: &PackedWitness<u64>, digit_bits: u16) -> Result<Vec<u64>> {
+    ensure!(
+        (1..=64).contains(&packed.coeff_capacity_bits),
+        "packed witness coeff capacity must be in 1..=64"
+    );
+    ensure!(
+        (1..=16).contains(&digit_bits),
+        "digit_bits must be in 1..=16"
+    );
+    let total_value_bits = packed
+        .value_bit_widths
+        .iter()
+        .map(|width| usize::from(*width))
+        .sum::<usize>();
+    ensure!(
+        total_value_bits == packed.used_bits,
+        "packed witness width metadata covers {} bits but used_bits is {}",
+        total_value_bits,
+        packed.used_bits
+    );
+    let bits = expand_packed_bits(packed)?;
+    let mut digits = Vec::with_capacity(bits.len().div_ceil(digit_bits as usize));
+    let mut cursor = 0usize;
+    while cursor < bits.len() {
+        let mut digit = 0u64;
+        for offset in 0..digit_bits as usize {
+            let bit_index = cursor + offset;
+            if bit_index >= bits.len() {
+                break;
+            }
+            digit |= u64::from(bits[bit_index]) << offset;
+        }
+        digits.push(digit);
+        cursor += digit_bits as usize;
+    }
+    Ok(digits)
+}
+
+fn expand_packed_bits(packed: &PackedWitness<u64>) -> Result<Vec<u8>> {
+    let coeff_capacity = packed.coeff_capacity_bits as usize;
+    let mut bits = Vec::with_capacity(packed.used_bits);
+    for bit_index in 0..packed.used_bits {
+        let coeff_index = bit_index / coeff_capacity;
+        let bit_offset = (bit_index % coeff_capacity) as u16;
+        let coeff = *packed
+            .coeffs
+            .get(coeff_index)
+            .ok_or_else(|| anyhow!("packed witness ended early while expanding bits"))?;
+        bits.push(((coeff >> bit_offset) & 1) as u8);
+    }
+    Ok(bits)
+}
+
+fn commit_ring_message(pk: &BackendKey, message: &[RingElem]) -> Vec<RingElem> {
+    let mut accumulators = vec![vec![0i128; pk.ring_degree]; pk.commitment_rows];
+    for (col_index, message_elem) in message.iter().enumerate() {
+        for (row_index, accumulator) in accumulators.iter_mut().enumerate() {
+            accumulate_negacyclic_product(
+                accumulator,
+                &matrix_entry(pk, row_index, col_index),
+                message_elem,
+            );
+        }
+    }
+    accumulators
+        .into_iter()
+        .map(|coeffs| {
+            RingElem::from_coeffs(coeffs.into_iter().map(reduce_goldilocks_signed).collect())
+        })
+        .collect()
+}
+
+fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem {
+    let mut coeffs = Vec::with_capacity(pk.ring_degree);
+    for coeff_index in 0..pk.ring_degree {
+        let mut hasher = Hasher::new();
+        hasher.update(b"hegemon.superneo.ajtai-matrix.v1");
+        hasher.update(&pk.params_fingerprint);
+        hasher.update(pk.ring_profile.label());
+        hasher.update(&pk.shape_digest.0);
+        hasher.update(&pk.security_bits.to_le_bytes());
+        hasher.update(&pk.challenge_bits.to_le_bytes());
+        hasher.update(&pk.max_fold_arity.to_le_bytes());
+        hasher.update(&pk.transcript_domain_digest);
+        hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+        hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+        hasher.update(&pk.digit_bits.to_le_bytes());
+        hasher.update(&pk.opening_randomness_bits.to_le_bytes());
+        hasher.update(&(row_index as u64).to_le_bytes());
+        hasher.update(&(col_index as u64).to_le_bytes());
+        hasher.update(&(coeff_index as u64).to_le_bytes());
+        let mut out = [0u8; 8];
+        hasher.finalize_xof().fill(&mut out);
+        coeffs.push(Goldilocks::new(u64::from_le_bytes(out)).as_canonical_u64());
+    }
+    RingElem::from_coeffs(coeffs)
+}
+
+fn accumulate_negacyclic_product(accumulator: &mut [i128], left: &RingElem, right: &RingElem) {
+    let degree = left.coeffs.len();
+    for (i, left_coeff) in left.coeffs.iter().enumerate() {
+        for (j, right_coeff) in right.coeffs.iter().enumerate() {
+            if *right_coeff == 0 {
+                continue;
+            }
+            let target = i + j;
+            let product = i128::from(*left_coeff) * i128::from(*right_coeff);
+            if target < degree {
+                accumulator[target] += product;
+            } else {
+                accumulator[target - degree] -= product;
+            }
+        }
+    }
+}
+
+fn derive_fold_challenges(
+    pk: &BackendKey,
+    left: &FoldedInstance<LatticeCommitment>,
+    right: &FoldedInstance<LatticeCommitment>,
+) -> Vec<u64> {
+    let mut transcript = Vec::with_capacity(48 + 32 + 32 + 48 + 48 + 64);
+    transcript.extend_from_slice(&pk.params_fingerprint);
+    transcript.extend_from_slice(pk.ring_profile.label());
+    transcript.extend_from_slice(&pk.shape_digest.0);
+    transcript.extend_from_slice(&left.relation_id.0);
+    transcript.extend_from_slice(&pk.security_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
+    transcript.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
+    transcript.extend_from_slice(&pk.transcript_domain_digest);
+    transcript.extend_from_slice(&(pk.commitment_rows as u64).to_le_bytes());
+    transcript.extend_from_slice(&(pk.ring_degree as u64).to_le_bytes());
+    transcript.extend_from_slice(&pk.digit_bits.to_le_bytes());
+    transcript.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
+    transcript.extend_from_slice(&left.statement_digest.0);
+    transcript.extend_from_slice(&right.statement_digest.0);
+    transcript.extend_from_slice(&left.witness_commitment.digest);
+    transcript.extend_from_slice(&right.witness_commitment.digest);
+
+    (0..pk.fold_challenge_count as usize)
+        .map(|challenge_index| {
+            let mut hasher = Hasher::new();
+            hasher.update(b"hegemon.superneo.fold-challenge.v3");
+            hasher.update(&transcript);
+            hasher.update(&(challenge_index as u64).to_le_bytes());
+            let mut out = [0u8; 8];
+            hasher.finalize_xof().fill(&mut out);
+            reduce_fold_challenge(pk.challenge_bits, u64::from_le_bytes(out))
+        })
+        .collect()
+}
+
+fn fold_commitment_rows(
+    left: &LatticeCommitment,
+    right: &LatticeCommitment,
+    challenges: &[u64],
+) -> Result<Vec<RingElem>> {
+    ensure!(
+        !left.rows.is_empty() && !right.rows.is_empty(),
+        "folded commitments require concrete row data"
+    );
+    ensure!(
+        left.rows.len() == right.rows.len(),
+        "folded commitments must have the same row length"
+    );
+    ensure!(
+        !challenges.is_empty(),
+        "folded commitments require at least one challenge"
+    );
+    left.rows
+        .iter()
+        .zip(&right.rows)
+        .map(|(left_row, right_row)| {
+            delayed_linear_combine_with_schedule(left_row, right_row, challenges)
+        })
+        .collect()
+}
+
+fn delayed_linear_combine_with_schedule(
+    left: &RingElem,
+    right: &RingElem,
+    challenges: &[u64],
+) -> Result<RingElem> {
+    ensure!(
+        left.coeffs.len() == right.coeffs.len(),
+        "cannot combine ring elements with different degrees"
+    );
+    let mut coeffs = Vec::with_capacity(left.coeffs.len());
+    for (coeff_index, left_coeff) in left.coeffs.iter().enumerate() {
+        let mut value = Goldilocks::new(*left_coeff);
+        for (rotation, challenge) in challenges.iter().copied().enumerate() {
+            let right_coeff = negacyclic_rotated_coeff(right, coeff_index, rotation);
+            value += Goldilocks::new(challenge) * goldilocks_from_signed(right_coeff);
+        }
+        coeffs.push(value.as_canonical_u64());
+    }
+    Ok(RingElem::from_coeffs(coeffs))
+}
+
+fn negacyclic_rotated_coeff(row: &RingElem, coeff_index: usize, rotation: usize) -> i128 {
+    let degree = row.coeffs.len();
+    let source_index = coeff_index + rotation;
+    let wraps = source_index / degree;
+    let index = source_index % degree;
+    let coeff = i128::from(row.coeffs[index]);
+    if wraps.is_multiple_of(2) {
+        coeff
+    } else {
+        -coeff
+    }
+}
+
+fn reduce_fold_challenge(challenge_bits: u32, raw: u64) -> u64 {
+    let mask_bits = challenge_bits.min(63);
+    let modulus = 1u64 << mask_bits;
+    let reduced = if modulus <= 1 {
+        1
+    } else {
+        (raw % (modulus - 1)) + 1
+    };
+    Goldilocks::new(reduced).as_canonical_u64()
+}
+
+fn goldilocks_from_signed(value: i128) -> Goldilocks {
+    Goldilocks::new(reduce_goldilocks_signed(value))
+}
+
+fn reduce_goldilocks_signed(value: i128) -> u64 {
+    let mut reduced = value % GOLDILOCKS_MODULUS_I128;
+    if reduced < 0 {
+        reduced += GOLDILOCKS_MODULUS_I128;
+    }
+    reduced as u64
+}
+
+fn leaf_proof_digest(
+    pk: &BackendKey,
+    relation_id: &RelationId,
+    statement_digest: &StatementDigest,
+    packed: &PackedWitness<u64>,
+    commitment_digest: &[u8; 48],
+) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.leaf-proof.v2");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(pk.ring_profile.label());
+    hasher.update(&pk.shape_digest.0);
+    hasher.update(&relation_id.0);
+    hasher.update(&pk.security_bits.to_le_bytes());
+    hasher.update(&pk.challenge_bits.to_le_bytes());
+    hasher.update(&pk.max_fold_arity.to_le_bytes());
+    hasher.update(&pk.transcript_domain_digest);
+    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+    hasher.update(&pk.digit_bits.to_le_bytes());
+    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
+    hasher.update(&statement_digest.0);
+    hasher.update(commitment_digest);
+    hasher.update(&(packed.original_len as u64).to_le_bytes());
+    hasher.update(&(packed.used_bits as u64).to_le_bytes());
+    hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
+    hasher.update(&(packed.coeffs.len() as u64).to_le_bytes());
+    for coeff in &packed.coeffs {
+        hasher.update(&coeff.to_le_bytes());
+    }
+    hash48(hasher)
+}
+
+fn fold_statement_digest(
+    left: &StatementDigest,
+    right: &StatementDigest,
+    challenges: &[u64],
+    parent_commitment_digest: &[u8; 48],
+) -> StatementDigest {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.fold-statement.v3");
+    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    for challenge in challenges {
+        hasher.update(&challenge.to_le_bytes());
+    }
+    hasher.update(&left.0);
+    hasher.update(&right.0);
+    hasher.update(parent_commitment_digest);
+    StatementDigest(hash48(hasher))
+}
+
+fn fold_proof_digest(
+    pk: &BackendKey,
+    relation_id: &RelationId,
+    left: &FoldedInstance<LatticeCommitment>,
+    right: &FoldedInstance<LatticeCommitment>,
+    challenges: &[u64],
+    parent_statement_digest: &StatementDigest,
+    parent_rows: &[RingElem],
+) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.fold-proof.v3");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(pk.ring_profile.label());
+    hasher.update(&pk.shape_digest.0);
+    hasher.update(&relation_id.0);
+    hasher.update(&pk.security_bits.to_le_bytes());
+    hasher.update(&pk.challenge_bits.to_le_bytes());
+    hasher.update(&pk.fold_challenge_count.to_le_bytes());
+    hasher.update(&pk.max_fold_arity.to_le_bytes());
+    hasher.update(&pk.transcript_domain_digest);
+    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+    hasher.update(&pk.digit_bits.to_le_bytes());
+    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
+    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    for challenge in challenges {
+        hasher.update(&challenge.to_le_bytes());
+    }
+    hasher.update(&left.statement_digest.0);
+    hasher.update(&right.statement_digest.0);
+    hasher.update(&left.witness_commitment.digest);
+    hasher.update(&right.witness_commitment.digest);
+    hasher.update(&parent_statement_digest.0);
+    hasher.update(&digest_commitment_rows(parent_rows));
+    hasher.update(&(parent_rows.len() as u64).to_le_bytes());
+    for row in parent_rows {
+        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        for coeff in &row.coeffs {
+            hasher.update(&coeff.to_le_bytes());
+        }
+    }
+    hash48(hasher)
+}
+
 fn review_parameter_fingerprint(params: &NativeBackendParams) -> [u8; 48] {
     let mut hasher = Hasher::new();
     hasher.update(b"hegemon.superneo.native-backend-params.v2");
@@ -1517,7 +2935,7 @@ fn review_parameter_fingerprint(params: &NativeBackendParams) -> [u8; 48] {
         CommitmentSecurityModel::GeometryProxy => 0u8,
         CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
     }]);
-    hasher.update(&params.commitment_bkmsis_target_bits.to_le_bytes());
+    hasher.update(commitment_estimator_model_label(params.commitment_estimator_model).as_bytes());
     hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
     hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     hash48(hasher)
@@ -1545,7 +2963,7 @@ fn review_spec_digest(params: &NativeBackendParams) -> [u8; 32] {
         CommitmentSecurityModel::GeometryProxy => 0u8,
         CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
     }]);
-    hasher.update(&params.commitment_bkmsis_target_bits.to_le_bytes());
+    hasher.update(commitment_estimator_model_label(params.commitment_estimator_model).as_bytes());
     hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
     hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     hash32(hasher)
@@ -1592,6 +3010,19 @@ fn parse_commitment_security_model(value: &str) -> Result<CommitmentSecurityMode
     }
 }
 
+fn commitment_estimator_model_label(model: CommitmentEstimatorModel) -> &'static str {
+    match model {
+        CommitmentEstimatorModel::SisLatticeEuclideanAdps16 => "sis_lattice_euclidean_adps16",
+    }
+}
+
+fn parse_commitment_estimator_model(value: &str) -> Result<CommitmentEstimatorModel> {
+    match value {
+        "sis_lattice_euclidean_adps16" => Ok(CommitmentEstimatorModel::SisLatticeEuclideanAdps16),
+        other => Err(anyhow!("unsupported commitment_estimator_model {other}")),
+    }
+}
+
 fn validate_review_params(params: &NativeBackendParams) -> Result<()> {
     ensure!(
         params.matrix_rows > 0,
@@ -1621,15 +3052,7 @@ fn validate_review_params(params: &NativeBackendParams) -> Result<()> {
         params.opening_randomness_bits > 0 && params.opening_randomness_bits <= 256,
         "opening_randomness_bits must be in 1..=256"
     );
-    if matches!(
-        params.commitment_security_model,
-        CommitmentSecurityModel::BoundedKernelModuleSis
-    ) {
-        ensure!(
-            params.commitment_bkmsis_target_bits > 0,
-            "commitment_bkmsis_target_bits must be strictly positive under bounded_kernel_module_sis"
-        );
-    }
+    let _ = params.commitment_estimator_model;
     ensure!(
         params.max_claimed_receipt_root_leaves > 0,
         "max_claimed_receipt_root_leaves must be strictly positive"
@@ -1680,12 +3103,22 @@ fn hash32(hasher: Hasher) -> [u8; 32] {
     out
 }
 
+fn serialize_bytes_48_ref<S>(
+    value: &&[u8; 48],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_bytes(*value)
+}
+
 fn default_commitment_security_model() -> String {
     "bounded_kernel_module_sis".to_owned()
 }
 
-fn default_commitment_bkmsis_target_bits() -> u32 {
-    128
+fn default_commitment_estimator_model() -> String {
+    "sis_lattice_euclidean_adps16".to_owned()
 }
 
 fn default_max_commitment_message_ring_elems() -> u32 {
@@ -1694,6 +3127,15 @@ fn default_max_commitment_message_ring_elems() -> u32 {
 
 fn default_max_claimed_receipt_root_leaves() -> u32 {
     128
+}
+
+fn extract_bits(value: u64, offset: u16, width: u16) -> u64 {
+    let shifted = value >> offset;
+    if width == 64 {
+        shifted
+    } else {
+        shifted & ((1u64 << width) - 1)
+    }
 }
 
 fn read_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16> {
@@ -1786,7 +3228,7 @@ mod tests {
         assert_eq!(
             hex_encode(production_fingerprint),
             hex_encode(bundle_fingerprint),
-            "production fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} bkmsis_target={} max_msg={} max_leaves={}",
+            "production fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} estimator_model={:?} max_msg={} max_leaves={}",
             params.manifest.family_label,
             params.manifest.spec_label,
             params.manifest.commitment_scheme_label,
@@ -1803,14 +3245,14 @@ mod tests {
             params.decomposition_bits,
             params.opening_randomness_bits,
             params.commitment_security_model,
-            params.commitment_bkmsis_target_bits,
+            params.commitment_estimator_model,
             params.max_commitment_message_ring_elems,
             params.max_claimed_receipt_root_leaves,
         );
         assert_eq!(
             hex_encode(reference_fingerprint),
             hex_encode(bundle_fingerprint),
-            "reference fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} bkmsis_target={} max_msg={} max_leaves={}",
+            "reference fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} estimator_model={:?} max_msg={} max_leaves={}",
             params.manifest.family_label,
             params.manifest.spec_label,
             params.manifest.commitment_scheme_label,
@@ -1827,7 +3269,7 @@ mod tests {
             params.decomposition_bits,
             params.opening_randomness_bits,
             params.commitment_security_model,
-            params.commitment_bkmsis_target_bits,
+            params.commitment_estimator_model,
             params.max_commitment_message_ring_elems,
             params.max_claimed_receipt_root_leaves,
         );

@@ -45,7 +45,7 @@ impl BackendManifest {
         Self {
             family_label: "goldilocks_128b_structural_commitment",
             spec_label:
-                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6",
+                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7",
             commitment_scheme_label: "bounded_message_random_matrix_commitment",
             challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
             maturity_label: "structural_candidate",
@@ -67,7 +67,7 @@ pub struct NativeBackendParams {
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
     pub commitment_security_model: CommitmentSecurityModel,
-    pub commitment_bkmsis_target_bits: u32,
+    pub commitment_estimator_model: CommitmentEstimatorModel,
     pub max_commitment_message_ring_elems: u32,
     pub max_claimed_receipt_root_leaves: u32,
 }
@@ -77,6 +77,12 @@ pub struct NativeBackendParams {
 pub enum CommitmentSecurityModel {
     GeometryProxy,
     BoundedKernelModuleSis,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitmentEstimatorModel {
+    SisLatticeEuclideanAdps16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,9 +103,15 @@ pub struct NativeSecurityClaim {
     pub commitment_codomain_bits: u32,
     pub commitment_same_seed_search_bits: u32,
     pub commitment_random_matrix_bits: u32,
+    pub commitment_problem_equations: u32,
     pub commitment_problem_dimension: u32,
     pub commitment_problem_coeff_bound: u32,
     pub commitment_problem_l2_bound: u32,
+    pub commitment_estimator_dimension: u32,
+    pub commitment_estimator_block_size: u32,
+    pub commitment_estimator_classical_bits: u32,
+    pub commitment_estimator_quantum_bits: u32,
+    pub commitment_estimator_paranoid_bits: u32,
     pub commitment_reduction_loss_bits: u32,
     pub commitment_binding_bits: u32,
     pub composition_loss_bits: u32,
@@ -123,7 +135,7 @@ impl NativeBackendParams {
             decomposition_bits: 8,
             opening_randomness_bits: 256,
             commitment_security_model: CommitmentSecurityModel::BoundedKernelModuleSis,
-            commitment_bkmsis_target_bits: 128,
+            commitment_estimator_model: CommitmentEstimatorModel::SisLatticeEuclideanAdps16,
             max_commitment_message_ring_elems: 513,
             max_claimed_receipt_root_leaves: 128,
         }
@@ -190,10 +202,7 @@ impl NativeBackendParams {
             self.commitment_security_model,
             CommitmentSecurityModel::BoundedKernelModuleSis
         ) {
-            ensure!(
-                self.commitment_bkmsis_target_bits > 0,
-                "commitment_bkmsis_target_bits must be strictly positive under bounded_kernel_module_sis"
-            );
+            let _ = self.commitment_estimator_model;
         }
         ensure!(
             self.max_commitment_message_ring_elems > 0,
@@ -248,10 +257,7 @@ impl NativeBackendParams {
             self.commitment_security_model,
             CommitmentSecurityModel::BoundedKernelModuleSis
         ) {
-            ensure!(
-                self.commitment_bkmsis_target_bits > 0,
-                "commitment_bkmsis_target_bits must be strictly positive under bounded_kernel_module_sis"
-            );
+            let _ = self.commitment_estimator_model;
         }
         ensure!(
             self.max_commitment_message_ring_elems > 0,
@@ -280,6 +286,8 @@ impl NativeBackendParams {
             .saturating_mul(self.decomposition_bits.saturating_add(1));
         let commitment_random_matrix_bits =
             commitment_codomain_bits.saturating_sub(commitment_same_seed_search_bits);
+        let commitment_problem_equations =
+            self.matrix_rows.saturating_mul(self.ring_degree()) as u32;
         let commitment_problem_dimension = self
             .max_commitment_message_ring_elems
             .saturating_mul(self.ring_degree() as u32);
@@ -290,11 +298,24 @@ impl NativeBackendParams {
                     .saturating_mul(u64::from(commitment_problem_coeff_bound)),
             ),
         ) as u32;
+        let commitment_estimate = match self.commitment_security_model {
+            CommitmentSecurityModel::GeometryProxy => None,
+            CommitmentSecurityModel::BoundedKernelModuleSis => {
+                Some(estimate_bounded_kernel_module_sis(
+                    self.commitment_estimator_model,
+                    commitment_problem_equations,
+                    commitment_problem_dimension,
+                    commitment_problem_l2_bound,
+                )?)
+            }
+        };
         let commitment_reduction_loss_bits = 0;
         let commitment_binding_bits = match self.commitment_security_model {
             CommitmentSecurityModel::GeometryProxy => commitment_random_matrix_bits,
-            CommitmentSecurityModel::BoundedKernelModuleSis => self
-                .commitment_bkmsis_target_bits
+            CommitmentSecurityModel::BoundedKernelModuleSis => commitment_estimate
+                .as_ref()
+                .expect("bounded_kernel_module_sis estimate must exist")
+                .quantum_bits
                 .saturating_sub(commitment_reduction_loss_bits),
         };
         let composition_loss_bits = ceil_log2_u32(self.max_claimed_receipt_root_leaves);
@@ -321,6 +342,7 @@ impl NativeBackendParams {
                     "fs.quint_goldilocks_negacyclic_fold_challenges",
                     "commitment.deterministic_public_witness_reconstruction",
                     "commitment.bounded_kernel_module_sis_exact_reduction",
+                    "commitment.sis_lattice_euclidean_adps16_quantum_estimator",
                 ],
                 ReviewState::CandidateUnderReview,
             ),
@@ -348,6 +370,14 @@ impl NativeBackendParams {
                             "commitment.bounded_kernel_module_sis_exact_reduction"
                         }
                     },
+                    if matches!(
+                        self.commitment_security_model,
+                        CommitmentSecurityModel::BoundedKernelModuleSis
+                    ) {
+                        "commitment.sis_lattice_euclidean_adps16_quantum_estimator"
+                    } else {
+                        "commitment.family_owned_structural_bound"
+                    },
                 ],
                 ReviewState::Experimental,
             ),
@@ -359,9 +389,30 @@ impl NativeBackendParams {
             commitment_codomain_bits,
             commitment_same_seed_search_bits,
             commitment_random_matrix_bits,
+            commitment_problem_equations,
             commitment_problem_dimension,
             commitment_problem_coeff_bound,
             commitment_problem_l2_bound,
+            commitment_estimator_dimension: commitment_estimate
+                .as_ref()
+                .map(|estimate| estimate.dimension)
+                .unwrap_or(0),
+            commitment_estimator_block_size: commitment_estimate
+                .as_ref()
+                .map(|estimate| estimate.block_size)
+                .unwrap_or(0),
+            commitment_estimator_classical_bits: commitment_estimate
+                .as_ref()
+                .map(|estimate| estimate.classical_bits)
+                .unwrap_or(0),
+            commitment_estimator_quantum_bits: commitment_estimate
+                .as_ref()
+                .map(|estimate| estimate.quantum_bits)
+                .unwrap_or(0),
+            commitment_estimator_paranoid_bits: commitment_estimate
+                .as_ref()
+                .map(|estimate| estimate.paranoid_bits)
+                .unwrap_or(0),
             commitment_reduction_loss_bits,
             commitment_binding_bits,
             composition_loss_bits,
@@ -401,7 +452,7 @@ impl NativeBackendParams {
             CommitmentSecurityModel::GeometryProxy => 0u8,
             CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
         }]);
-        hasher.update(&self.commitment_bkmsis_target_bits.to_le_bytes());
+        hasher.update(commitment_estimator_model_label(self.commitment_estimator_model).as_bytes());
         hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
         hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash48(hasher)
@@ -429,7 +480,7 @@ impl NativeBackendParams {
             CommitmentSecurityModel::GeometryProxy => 0u8,
             CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
         }]);
-        hasher.update(&self.commitment_bkmsis_target_bits.to_le_bytes());
+        hasher.update(commitment_estimator_model_label(self.commitment_estimator_model).as_bytes());
         hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
         hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash32(hasher)
@@ -482,6 +533,147 @@ fn ceil_sqrt_u64(value: u64) -> u64 {
 
 fn goldilocks_field_capacity_bits(_profile: RingProfile) -> u32 {
     63
+}
+
+const GOLDILOCKS_MODULUS_U64: u64 = 18_446_744_069_414_584_321;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoundedKernelModuleSisEstimate {
+    dimension: u32,
+    block_size: u32,
+    classical_bits: u32,
+    quantum_bits: u32,
+    paranoid_bits: u32,
+}
+
+fn commitment_estimator_model_label(model: CommitmentEstimatorModel) -> &'static str {
+    match model {
+        CommitmentEstimatorModel::SisLatticeEuclideanAdps16 => "sis_lattice_euclidean_adps16",
+    }
+}
+
+fn estimate_bounded_kernel_module_sis(
+    estimator_model: CommitmentEstimatorModel,
+    equation_dimension: u32,
+    witness_dimension: u32,
+    l2_bound: u32,
+) -> Result<BoundedKernelModuleSisEstimate> {
+    ensure!(
+        equation_dimension > 0,
+        "BK-MSIS equation dimension must be strictly positive"
+    );
+    ensure!(
+        witness_dimension > 0,
+        "BK-MSIS witness dimension must be strictly positive"
+    );
+    ensure!(
+        l2_bound > 0,
+        "BK-MSIS Euclidean bound must be strictly positive"
+    );
+    match estimator_model {
+        CommitmentEstimatorModel::SisLatticeEuclideanAdps16 => {
+            estimate_sis_lattice_euclidean_adps16(equation_dimension, witness_dimension, l2_bound)
+        }
+    }
+}
+
+fn estimate_sis_lattice_euclidean_adps16(
+    equation_dimension: u32,
+    witness_dimension: u32,
+    l2_bound: u32,
+) -> Result<BoundedKernelModuleSisEstimate> {
+    let n = equation_dimension as f64;
+    let m = witness_dimension as f64;
+    let q = GOLDILOCKS_MODULUS_U64 as f64;
+    let bound = l2_bound as f64;
+    ensure!(
+        bound < (q - 1.0) / 2.0,
+        "BK-MSIS Euclidean bound {} must be below (q-1)/2 {}",
+        l2_bound,
+        ((GOLDILOCKS_MODULUS_U64 - 1) / 2)
+    );
+
+    let log2_q = q.log2();
+    let log2_bound = bound.log2();
+    let log_delta = (log2_bound * log2_bound) / (4.0 * n * log2_q);
+    let d = (n * log2_q / log_delta).sqrt().floor().min(m).max(2.0) as u32;
+    let d_f = f64::from(d);
+    let delta_log2 = (log2_bound - ((n / d_f) * log2_q)) / (d_f - 1.0);
+    let delta = 2f64.powf(delta_log2);
+    ensure!(
+        delta >= 1.0,
+        "BK-MSIS Euclidean estimator failed: target delta {} is below 1",
+        delta
+    );
+    let beta = beta_from_root_hermite_factor(delta);
+    ensure!(
+        beta <= d,
+        "BK-MSIS Euclidean estimator failed: required block size {} exceeds lattice dimension {}",
+        beta,
+        d
+    );
+    let lb = (n * q.ln())
+        .sqrt()
+        .min(d_f.sqrt() * 2f64.powf(log2_q * (n / d_f)));
+    ensure!(
+        bound > lb,
+        "BK-MSIS Euclidean estimator failed: bound {} does not exceed success threshold {}",
+        bound,
+        lb
+    );
+
+    Ok(BoundedKernelModuleSisEstimate {
+        dimension: d,
+        block_size: beta,
+        classical_bits: (0.2920 * f64::from(beta)).floor() as u32,
+        quantum_bits: (0.2650 * f64::from(beta)).floor() as u32,
+        paranoid_bits: (0.2075 * f64::from(beta)).floor() as u32,
+    })
+}
+
+fn beta_from_root_hermite_factor(delta: f64) -> u32 {
+    let mut beta = 40u32;
+    while reduction_delta((beta.saturating_mul(2)) as f64) > delta {
+        beta = beta.saturating_mul(2);
+    }
+    while reduction_delta((beta.saturating_add(10)) as f64) > delta {
+        beta = beta.saturating_add(10);
+    }
+    while reduction_delta(beta as f64) >= delta {
+        beta = beta.saturating_add(1);
+    }
+    beta
+}
+
+fn reduction_delta(beta: f64) -> f64 {
+    const SMALL: &[(u32, f64)] = &[
+        (2, 1.02190),
+        (5, 1.01862),
+        (10, 1.01616),
+        (15, 1.01485),
+        (20, 1.01420),
+        (25, 1.01342),
+        (28, 1.01331),
+        (40, 1.01295),
+    ];
+
+    if beta <= 2.0 {
+        return 1.02190;
+    }
+    if beta < 40.0 {
+        for window in SMALL.windows(2) {
+            if f64::from(window[1].0) > beta {
+                return window[0].1;
+            }
+        }
+        return SMALL[SMALL.len() - 2].1;
+    }
+    if (beta - 40.0).abs() < f64::EPSILON {
+        return SMALL[SMALL.len() - 1].1;
+    }
+    (beta / (2.0 * std::f64::consts::PI * std::f64::consts::E)
+        * (std::f64::consts::PI * beta).powf(1.0 / beta))
+    .powf(1.0 / (2.0 * (beta - 1.0)))
 }
 
 impl Default for NativeBackendParams {
@@ -2560,7 +2752,6 @@ mod tests {
             fold_challenge_count: 2,
             opening_randomness_bits: 40,
             commitment_security_model: CommitmentSecurityModel::BoundedKernelModuleSis,
-            commitment_bkmsis_target_bits: 20,
             max_claimed_receipt_root_leaves: 1,
             ..NativeBackendParams::default()
         };
@@ -2639,13 +2830,13 @@ mod tests {
             different_arity.parameter_fingerprint()
         );
 
-        let different_commitment_assumption = NativeBackendParams {
-            commitment_bkmsis_target_bits: 96,
+        let different_commitment_security_model = NativeBackendParams {
+            commitment_security_model: CommitmentSecurityModel::GeometryProxy,
             ..base.clone()
         };
         assert_ne!(
             base.parameter_fingerprint(),
-            different_commitment_assumption.parameter_fingerprint()
+            different_commitment_security_model.parameter_fingerprint()
         );
 
         let different_message_cap = NativeBackendParams {
@@ -2720,13 +2911,19 @@ mod tests {
         assert_eq!(claim.commitment_codomain_bits, 37_296);
         assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
         assert_eq!(claim.commitment_random_matrix_bits, 360);
+        assert_eq!(claim.commitment_problem_equations, 592);
         assert_eq!(claim.commitment_problem_dimension, 4_104);
         assert_eq!(claim.commitment_problem_coeff_bound, 255);
         assert_eq!(claim.commitment_problem_l2_bound, 16_336);
+        assert_eq!(claim.commitment_estimator_dimension, 4_104);
+        assert_eq!(claim.commitment_estimator_block_size, 3_267);
+        assert_eq!(claim.commitment_estimator_classical_bits, 953);
+        assert_eq!(claim.commitment_estimator_quantum_bits, 865);
+        assert_eq!(claim.commitment_estimator_paranoid_bits, 677);
         assert_eq!(claim.commitment_reduction_loss_bits, 0);
-        assert_eq!(claim.commitment_binding_bits, 128);
+        assert_eq!(claim.commitment_binding_bits, 865);
         assert_eq!(claim.composition_loss_bits, 7);
-        assert_eq!(claim.soundness_floor_bits, 128);
+        assert_eq!(claim.soundness_floor_bits, 150);
         assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
         assert!(claim
             .assumption_ids
@@ -2734,6 +2931,9 @@ mod tests {
         assert!(claim
             .assumption_ids
             .contains(&"commitment.bounded_kernel_module_sis_exact_reduction"));
+        assert!(claim
+            .assumption_ids
+            .contains(&"commitment.sis_lattice_euclidean_adps16_quantum_estimator"));
     }
 
     #[test]

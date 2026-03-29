@@ -5,8 +5,8 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ## Active Target
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
-- `spec_digest = 182db2cfac8605ee1fddd5c6a397d32ca7f4c3adf52748c3ccd8d9557ee18f64`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
+- `spec_digest = fc4112b4aed172f792b8440e0d9f098bdc172a4575c138953d92518b63f5f212`
 
 ## Break Classes
 
@@ -120,7 +120,7 @@ Current repository status:
 - mixed-spec rejection: covered by fixed invalid vectors and both verifiers
 - transcript aliasing: covered by transcript-domain and relation-id regression tests plus fuzz smoke, still awaiting outside review
 - public-witness reconstruction: covered by fixed invalid vectors and direct backend regressions
-- BK-MSIS reduction boundary: now explicitly documented and tied to the active claim, still awaiting external review of the concrete hardness target
+- BK-MSIS reduction boundary: now explicitly documented and tied to the active claim, with an in-repo Euclidean SIS estimate for the exact active instance, still awaiting independent review of that concretization and estimator
 - fold-row forgery: covered by fixed invalid vectors and backend regressions
 - overclaim rejection: covered in code and backend regressions
 - parser and fuzz coverage: local smoke complete and CI job added in `.github/workflows/ci.yml`
@@ -133,7 +133,7 @@ That status is why the active review state remains `candidate_under_review`.
 
 The next concrete work is outside review:
 
-1. external cryptanalysis against the packaged BK-MSIS reduction and concrete target,
+1. external cryptanalysis against the packaged BK-MSIS reduction and the exact coefficient-space Euclidean SIS estimate used for the live binding floor,
 2. public break-it submissions against the packaged bundle,
 3. any follow-up claim or parameter changes forced by those findings.
 

@@ -5964,15 +5964,14 @@ dependencies = [
  "hex",
  "p3-field",
  "p3-goldilocks",
+ "p3-uni-stark",
+ "postcard",
  "protocol-versioning",
  "serde",
  "serde_json",
- "superneo-backend-lattice",
  "superneo-ccs",
  "superneo-core",
- "superneo-hegemon",
- "superneo-ring",
- "transaction-circuit",
+ "transaction-core",
 ]
 
 [[package]]

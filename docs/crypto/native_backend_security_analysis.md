@@ -7,14 +7,14 @@ This document describes the current code-derived security claim for Hegemon's ac
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v6"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "structural_candidate"`
 
 The exact wire and transcript surface for that family is frozen in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md). The exact commitment reduction note for the active family is [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md). The current `spec_digest` derived from the live parameter regime is:
 
-- `spec_digest = 182db2cfac8605ee1fddd5c6a397d32ca7f4c3adf52748c3ccd8d9557ee18f64`
+- `spec_digest = fc4112b4aed172f792b8440e0d9f098bdc172a4575c138953d92518b63f5f212`
 
 ## Claim Model
 
@@ -35,13 +35,19 @@ For the active family the code currently computes:
 - `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 74 * 8 = 37,296`
 - `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 513 * 8 * 9 = 36,936`
 - `commitment_random_matrix_bits = max(commitment_codomain_bits - commitment_same_seed_search_bits, 0) = 360`
+- `commitment_problem_equations = matrix_rows * ring_degree = 74 * 8 = 592`
 - `commitment_problem_dimension = max_commitment_message_ring_elems * ring_degree = 513 * 8 = 4104`
 - `commitment_problem_coeff_bound = 2^decomposition_bits - 1 = 255`
 - `commitment_problem_l2_bound = ceil(255 * sqrt(4104)) = 16,336`
+- `commitment_estimator_dimension = 4104`
+- `commitment_estimator_block_size = 3267`
+- `commitment_estimator_classical_bits = 953`
+- `commitment_estimator_quantum_bits = 865`
+- `commitment_estimator_paranoid_bits = 677`
 - `commitment_reduction_loss_bits = 0`
-- `commitment_binding_bits = commitment_bkmsis_target_bits - commitment_reduction_loss_bits = 128 - 0 = 128`
+- `commitment_binding_bits = commitment_estimator_quantum_bits - commitment_reduction_loss_bits = 865 - 0 = 865`
 - `composition_loss_bits = ceil(log2(max_claimed_receipt_root_leaves)) = ceil(log2(128)) = 7`
-- `soundness_floor_bits = min(157 - 7, 128) = 128`
+- `soundness_floor_bits = min(157 - 7, 865) = 150`
 - `review_state = candidate_under_review`
 
 The code rejects setup whenever `claimed_security_bits > soundness_floor_bits`.
@@ -54,14 +60,15 @@ The exact reduction note is [native_backend_commitment_reduction.md](/Users/pldd
 
 1. the verifier reconstructs the exact live message class canonically from public tx data and serialized STARK public inputs,
 2. any accepted collision in that implemented message class yields a nonzero bounded kernel vector for the same commitment matrix,
-3. the repository models that reduction with `commitment_reduction_loss_bits = 0`,
-4. and the remaining concrete hardness input is the explicit parameter `commitment_bkmsis_target_bits = 128`.
+3. the repository flattens that exact BK-MSIS instance into coefficient-space Euclidean SIS with `n_eq = 592`, `m = 4104`, `q = 18446744069414584321`, and `B_2 = 16336`,
+4. the repository models that reduction with `commitment_reduction_loss_bits = 0`,
+5. and the concrete binding floor comes from the in-repo `sis_lattice_euclidean_adps16` estimate of that exact instance.
 
 That makes the claim materially different from the earlier geometry-proxy story:
 
 - the live tx-leaf / receipt-root lane still reports `commitment_random_matrix_bits = 360` as a structural statistic,
 - but the live `commitment_binding_bits` no longer equals that statistic,
-- and the active floor is now bounded by the explicit BK-MSIS target plus transcript-composition accounting, not by the old random-matrix union-bound proxy.
+- and the active floor is now bounded by the explicit coefficient-space SIS estimate plus transcript-composition accounting, not by the old random-matrix union-bound proxy.
 
 The live tx-leaf artifact surface is also witness-free. The public bytes contain:
 
@@ -83,6 +90,7 @@ The active family currently emits these `assumption_ids`:
 3. `fs.quint_goldilocks_negacyclic_fold_challenges`
 4. `commitment.deterministic_public_witness_reconstruction`
 5. `commitment.bounded_kernel_module_sis_exact_reduction`
+6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
 
 These mean:
 
@@ -99,7 +107,10 @@ These mean:
    The live tx-leaf verifier must reconstruct the exact packed witness and deterministic commitment from the public tx view, serialized STARK public inputs, and fixed relation layout. The active security floor assumes that this reconstruction is canonical and that the verifier rejects mismatches.
 
 5. `commitment.bounded_kernel_module_sis_exact_reduction`
-   Binding for the current commitment path is claimed through the exact reduction stated in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md): a collision in the implemented bounded live message class yields a bounded nonzero kernel vector for the same commitment matrix. The concrete hardness input for that target problem is the manifest-owned parameter `commitment_bkmsis_target_bits = 128`.
+   Binding for the current commitment path is claimed through the exact reduction stated in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md): a collision in the implemented bounded live message class yields a bounded nonzero kernel vector for the same commitment matrix. That reduction feeds the exact coefficient-space SIS instance the repository estimates for the active parameter set.
+
+6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
+   The concrete binding floor is taken from the coefficient-space Euclidean SIS estimate the repository computes for the exact active instance. For the current parameters this yields `β = 3267`, `classical = 953`, `quantum = 865`, and `paranoid = 677`, and the live claim uses the quantum line.
 
 ## What The Claim Does Not Say
 
@@ -116,7 +127,8 @@ The current claim is narrower and more honest:
 - the repository now states one exact live bounded-message collision problem for the commitment path,
 - the repository now states one exact in-repo reduction from that collision problem to a bounded-kernel Module-SIS style target,
 - the code now propagates only the explicit reduction loss and receipt-root composition loss into the final floor,
-- and the remaining open question is the external justification for the concrete `128`-bit hardness target assigned to that exact BK-MSIS instance.
+- the code now computes the binding cap from one explicit coefficient-space Euclidean SIS estimate for the exact active instance,
+- and the remaining open question is independent review of that concretization and estimator choice rather than a missing in-repo derivation.
 
 ## Why `review_state = candidate_under_review`
 
@@ -125,7 +137,7 @@ The current review state is intentionally not `accepted`.
 Reasons:
 
 - the repo still does not have completed external cryptanalysis,
-- the active concrete BK-MSIS target is still a manifest-owned hardness input rather than a completed external estimator-backed conclusion,
+- the active coefficient-space Euclidean SIS estimate is still an in-repo concretization rather than a completed external cryptanalytic conclusion,
 - the current commitment reduction note is exact for the implemented message class but still not a paper-equivalent Neo / SuperNeo proof,
 - the public break-it phase has been packaged but not yet closed,
 - the timing harness is only a regression screen, not a proof.
