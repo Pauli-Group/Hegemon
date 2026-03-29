@@ -204,6 +204,8 @@ The fresh-chain 0.10.x product path is now a mandatory same-block native aggrega
 * The shipped unsigned transfer format remains native `tx_leaf`; there is no product fallback to legacy inline STARK transfer verification.
 * Non-empty shielded blocks fail closed unless a ready same-block `submit_candidate_artifact` / `submit_proven_batch` payload carrying the native `receipt_root` artifact is present and valid.
 * Authoring pauses on shielded candidates until the prepared native bundle is ready, rather than sealing a hybrid block with `proven_batch: None`.
+* Network-originated shielded kernel transfers are quarantined until full native `tx_leaf` artifact verification succeeds; only then do they become relay- and block-eligible. Local RPC submissions keep the direct author-local path.
+* The runtime admission cap for native shielded transfer payloads is pegged to the exact live `tx_leaf` artifact envelope, while the inner embedded STARK proof remains separately capped at `512KiB`.
 * Proof sidecars (`da_submitProofs`) remain optional off-chain proposer coordination only. They are not part of consensus validity on the product path.
 * Import verifies the commitment proof plus the native `receipt_root` artifact against the block’s canonical `tx_statements_commitment`; it no longer accepts non-empty product blocks that only provide ordered tx artifacts without the block artifact.
 

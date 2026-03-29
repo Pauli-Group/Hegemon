@@ -48,6 +48,7 @@
 //! ```
 
 use network::PeerId;
+use parking_lot::Mutex as ParkingMutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -170,6 +171,38 @@ pub enum PoolError {
     /// Unknown error
     #[error("Unknown error: {0}")]
     Unknown(String),
+}
+
+#[derive(Debug, Clone)]
+enum ExternalVerificationVerdict {
+    Valid,
+    Invalid(String),
+}
+
+#[derive(Debug, Default)]
+struct ExternalVerificationCache {
+    order: VecDeque<[u8; 32]>,
+    verdicts: HashMap<[u8; 32], ExternalVerificationVerdict>,
+}
+
+impl ExternalVerificationCache {
+    fn get(&self, hash: &[u8; 32]) -> Option<ExternalVerificationVerdict> {
+        self.verdicts.get(hash).cloned()
+    }
+
+    fn insert(&mut self, capacity: usize, hash: [u8; 32], verdict: ExternalVerificationVerdict) {
+        if self.verdicts.contains_key(&hash) {
+            self.verdicts.insert(hash, verdict);
+            return;
+        }
+        self.order.push_back(hash);
+        self.verdicts.insert(hash, verdict);
+        while self.order.len() > capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.verdicts.remove(&evicted);
+            }
+        }
+    }
 }
 
 /// Pending transaction entry
@@ -361,8 +394,12 @@ impl TransactionPool for MockTransactionPool {
 
 use crate::substrate::client::{HegemonFullClient, HegemonTransactionPool};
 use codec::{Decode, Encode};
+use pallet_shielded_pool::family::ShieldedFamilyAction;
 use sc_client_api::HeaderBackend;
 use sc_transaction_pool_api::{InPoolTransaction, TransactionPool as ScTransactionPool};
+use superneo_hegemon::{
+    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
+};
 
 /// Wrapper around the real Substrate transaction pool (Task 11.5.2)
 ///
@@ -376,6 +413,11 @@ pub struct SubstrateTransactionPoolWrapper {
     client: Arc<HegemonFullClient>,
     /// Pool capacity (informational, actual limit is in Substrate pool config)
     capacity: usize,
+    /// Cache full-verification verdicts for external gossip so duplicates do not
+    /// repeatedly burn native verifier CPU before pool admission.
+    external_verification_cache: Arc<ParkingMutex<ExternalVerificationCache>>,
+    /// Maximum cached external-verification verdicts.
+    external_verification_cache_capacity: usize,
 }
 
 impl SubstrateTransactionPoolWrapper {
@@ -389,6 +431,10 @@ impl SubstrateTransactionPoolWrapper {
             pool,
             client,
             capacity,
+            external_verification_cache: Arc::new(ParkingMutex::new(
+                ExternalVerificationCache::default(),
+            )),
+            external_verification_cache_capacity: capacity.max(1024),
         }
     }
 
@@ -402,6 +448,68 @@ impl SubstrateTransactionPoolWrapper {
         use sp_core::hashing::blake2_256;
         blake2_256(data)
     }
+
+    fn cached_external_verification(&self, hash: &[u8; 32]) -> Option<Result<(), PoolError>> {
+        let cache = self.external_verification_cache.lock();
+        cache.get(hash).map(|verdict| match verdict {
+            ExternalVerificationVerdict::Valid => Ok(()),
+            ExternalVerificationVerdict::Invalid(error) => {
+                Err(PoolError::InvalidTransaction(error))
+            }
+        })
+    }
+
+    fn record_external_verification(&self, hash: [u8; 32], verdict: ExternalVerificationVerdict) {
+        let mut cache = self.external_verification_cache.lock();
+        cache.insert(self.external_verification_cache_capacity, hash, verdict);
+    }
+}
+
+fn prevalidate_external_gossip_extrinsic(
+    extrinsic: &runtime::UncheckedExtrinsic,
+) -> Result<(), PoolError> {
+    let runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope }) =
+        &extrinsic.function
+    else {
+        return Ok(());
+    };
+
+    if envelope.family_id != pallet_shielded_pool::family::FAMILY_SHIELDED_POOL {
+        return Ok(());
+    }
+
+    let action = pallet_shielded_pool::family::ShieldedFamilyAction::decode_envelope(envelope)
+        .map_err(|err| {
+            PoolError::InvalidTransaction(format!(
+                "failed to decode shielded kernel envelope: {err:?}"
+            ))
+        })?;
+
+    match action {
+        ShieldedFamilyAction::TransferInline { args, .. } => {
+            prevalidate_native_tx_leaf_artifact(&args.proof)
+        }
+        ShieldedFamilyAction::TransferSidecar { args, .. } => {
+            prevalidate_native_tx_leaf_artifact(&args.proof)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn prevalidate_native_tx_leaf_artifact(proof_bytes: &[u8]) -> Result<(), PoolError> {
+    let artifact = decode_native_tx_leaf_artifact_bytes(proof_bytes).map_err(|err| {
+        PoolError::InvalidTransaction(format!(
+            "external native tx-leaf decode failed before pool admission: {err}"
+        ))
+    })?;
+    verify_native_tx_leaf_artifact_bytes(&artifact.tx, &artifact.receipt, proof_bytes).map_err(
+        |err| {
+            PoolError::InvalidTransaction(format!(
+                "external native tx-leaf verification failed before pool admission: {err}"
+            ))
+        },
+    )?;
+    Ok(())
 }
 
 #[async_trait::async_trait]
@@ -412,6 +520,14 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
         source: TransactionSource,
     ) -> Result<SubmissionResult, PoolError> {
         let hash = Self::compute_hash(tx);
+
+        if matches!(source, TransactionSource::External) {
+            if let Some(cached) = self.cached_external_verification(&hash) {
+                cached?;
+            } else if self.contains(&hash) {
+                return Err(PoolError::AlreadyInPool(hex::encode(hash)));
+            }
+        }
 
         // Basic validation
         if tx.is_empty() {
@@ -438,6 +554,22 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
             return Err(PoolError::InvalidTransaction(
                 "Signed extrinsics are disabled; submit unsigned kernel actions".into(),
             ));
+        }
+
+        if matches!(source, TransactionSource::External) {
+            match prevalidate_external_gossip_extrinsic(&extrinsic) {
+                Ok(()) => {
+                    self.record_external_verification(hash, ExternalVerificationVerdict::Valid);
+                }
+                Err(err) => {
+                    let error = err.to_string();
+                    self.record_external_verification(
+                        hash,
+                        ExternalVerificationVerdict::Invalid(error.clone()),
+                    );
+                    return Err(PoolError::InvalidTransaction(error));
+                }
+            }
         }
 
         // Convert our TransactionSource to Substrate's
@@ -870,6 +1002,15 @@ pub async fn spawn_pool_processor<P: TransactionPool + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codec::Encode;
+    use superneo_hegemon::{
+        build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes,
+        encode_native_tx_leaf_artifact_bytes,
+    };
+    use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
+    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::witness::TransactionWitness;
 
     #[tokio::test]
     async fn test_mock_pool_submit() {
@@ -1116,5 +1257,149 @@ mod tests {
         // 5. Pool should now be empty
         assert_eq!(bridge.pool_size(), 0);
         assert_eq!(bridge.ready_for_block(100).len(), 0);
+    }
+
+    #[test]
+    fn external_kernel_transfer_requires_valid_native_tx_leaf_artifact() {
+        let witness = sample_witness(31);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let extrinsic = kernel_transfer_extrinsic_with_proof(built.artifact_bytes);
+        assert!(prevalidate_external_gossip_extrinsic(&extrinsic).is_ok());
+    }
+
+    #[test]
+    fn external_kernel_transfer_rejects_invalid_native_tx_leaf_artifact() {
+        let witness = sample_witness(32);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let mut artifact =
+            decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).expect("decode artifact");
+        artifact.stark_proof[0] ^= 0x5a;
+        let tampered =
+            encode_native_tx_leaf_artifact_bytes(&artifact).expect("encode tampered artifact");
+        let extrinsic = kernel_transfer_extrinsic_with_proof(tampered);
+        assert!(matches!(
+            prevalidate_external_gossip_extrinsic(&extrinsic),
+            Err(PoolError::InvalidTransaction(_))
+        ));
+    }
+
+    fn kernel_transfer_extrinsic_with_proof(proof_bytes: Vec<u8>) -> runtime::UncheckedExtrinsic {
+        let decoded = decode_native_tx_leaf_artifact_bytes(&proof_bytes).expect("decode tx leaf");
+        let args = pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+            proof: proof_bytes,
+            commitments: decoded.tx.commitments.clone(),
+            ciphertexts: vec![
+                pallet_shielded_pool::types::EncryptedNote::default();
+                decoded.tx.commitments.len()
+            ],
+            anchor: [7u8; 48],
+            balance_slot_asset_ids: [NATIVE_ASSET_ID, u64::MAX, u64::MAX, u64::MAX],
+            binding_hash: [9u8; 64],
+            stablecoin: None,
+            fee: 5,
+        };
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            runtime::manifest::default_version_binding(),
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            decoded.tx.nullifiers,
+            args.encode(),
+        );
+        runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::Kernel(
+            pallet_kernel::Call::submit_action { envelope },
+        ))
+    }
+
+    fn sample_witness(seed: u8) -> TransactionWitness {
+        let sk_spend = [seed.wrapping_add(42); 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [seed.wrapping_add(2); 32],
+            pk_auth,
+            rho: [seed.wrapping_add(3); 32],
+            r: [seed.wrapping_add(4); 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: u64::from(seed) + 100,
+            pk_recipient: [seed.wrapping_add(5); 32],
+            pk_auth,
+            rho: [seed.wrapping_add(6); 32],
+            r: [seed.wrapping_add(7); 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+
+        let output_native = OutputNoteWitness {
+            note: NoteData {
+                value: 3,
+                asset_id: NATIVE_ASSET_ID,
+                pk_recipient: [seed.wrapping_add(11); 32],
+                pk_auth: [seed.wrapping_add(12); 32],
+                rho: [seed.wrapping_add(13); 32],
+                r: [seed.wrapping_add(14); 32],
+            },
+        };
+        let output_asset = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: u64::from(seed) + 100,
+                pk_recipient: [seed.wrapping_add(21); 32],
+                pk_auth: [seed.wrapping_add(22); 32],
+                rho: [seed.wrapping_add(23); 32],
+                r: [seed.wrapping_add(24); 32],
+            },
+        };
+
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [seed.wrapping_add(9); 32],
+                    merkle_path: merkle_path0,
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [seed.wrapping_add(10); 32],
+                    merkle_path: merkle_path1,
+                },
+            ],
+            outputs: vec![output_native, output_asset],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&merkle_root),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: transaction_circuit::StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn build_two_leaf_merkle_tree(
+        leaf0: HashFelt,
+        leaf1: HashFelt,
+    ) -> (MerklePath, MerklePath, HashFelt) {
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..CIRCUIT_MERKLE_DEPTH {
+            let zero = [transaction_circuit::hashing_pq::Felt::new(0); 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        (
+            MerklePath {
+                siblings: siblings0,
+            },
+            MerklePath {
+                siblings: siblings1,
+            },
+            current,
+        )
     }
 }

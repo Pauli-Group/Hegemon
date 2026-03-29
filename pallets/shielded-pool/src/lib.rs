@@ -1514,7 +1514,7 @@ pub mod pallet {
             ) {
                 return Err(InvalidTransaction::Call);
             }
-            if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+            if proof.data.len() > crate::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
                 return Err(InvalidTransaction::ExhaustsResources);
             }
             if nullifiers.is_empty() && commitments.is_empty() {
@@ -1680,7 +1680,7 @@ pub mod pallet {
             if Self::ensure_stablecoin_binding(stablecoin).is_err() {
                 return Err(InvalidTransaction::Custom(7));
             }
-            if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+            if proof.data.len() > crate::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
                 return Err(InvalidTransaction::ExhaustsResources);
             }
             if nullifiers.is_empty() && commitments.is_empty() {
@@ -2015,7 +2015,7 @@ pub mod pallet {
                 Error::<T>::TransfersAfterCoinbase
             );
             ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                proof.data.len() <= crate::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
 
@@ -2160,7 +2160,7 @@ pub mod pallet {
                 Error::<T>::TransfersAfterCoinbase
             );
             ensure!(
-                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                proof.data.len() <= crate::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
                 Error::<T>::ProofTooLarge
             );
             let value_balance: i128 = 0;

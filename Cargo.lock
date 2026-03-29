@@ -7099,6 +7099,7 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-std",
+ "superneo-hegemon",
  "transaction-circuit",
  "transaction-core",
 ]

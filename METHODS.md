@@ -217,6 +217,8 @@ For the fresh-chain 0.10.0 product path, non-empty shielded blocks now always us
 * A chain-level `ProofAvailabilityPolicy` still exposes the wire values `InlineRequired` and `SelfContained`, but the fresh-chain protocol manifest defaults to `SelfContained` and consensus rejects non-empty product blocks that attempt to rely on the legacy inline-required lane.
 * Non-empty shielded blocks fail closed unless a valid same-block `submit_proven_batch` / `submit_candidate_artifact` payload carrying the native `receipt_root` artifact is present.
 * Block template assembly now waits for a ready native bundle for non-empty shielded candidates instead of sealing a hybrid `proven_batch: None` block. Empty and non-shielded blocks can still be sealed immediately.
+* Remote gossip does not get a cheap path into the ready pool: nodes quarantine network-originated shielded kernel transfers until the native `tx_leaf` artifact fully verifies against its public receipt and tx view. Local author-local RPC submissions keep the direct fast path.
+* The unsigned transfer runtime path caps the outer native `tx_leaf` payload at the exact live artifact envelope and caps the embedded STARK proof separately at `512KiB`, so runtime admission and consensus/native verification stay aligned.
 * Proof sidecars may still be staged off-chain via `da_submitProofs` keyed by `binding_hash`, but this is proposer/mempool coordination only and is not part of consensus validity.
 * Import verifies the commitment proof plus the native `receipt_root` artifact and rejects any non-empty shielded block whose native bundle is missing, malformed, or inconsistent with the canonical `tx_statements_commitment`.
 

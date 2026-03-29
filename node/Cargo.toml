@@ -46,6 +46,7 @@ tx-proof-manifest = { path = "../circuits/tx-proof-manifest", optional = true }
 aggregation-circuit = { path = "../circuits/aggregation", optional = true }
 block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
+superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 rand = "0.8"
 rust-embed = "8.0"
 sha2 = "0.10"
@@ -187,7 +188,6 @@ substrate = [
 
 [dev-dependencies]
 rand = "0.8"
-superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 tempfile = "3.8"
 tokio-tungstenite = "0.21"
 

@@ -22,15 +22,21 @@ pub const MAX_NULLIFIERS_PER_TX: u32 = 2;
 /// Maximum number of commitments (output notes) per transaction.
 pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 
-/// Maximum size of a STARK proof in bytes.
-/// STARK proofs require NO trusted setup.
-/// Proof size is configuration-dependent (FRI params, trace width/rows, hash digest).
-/// We cap proofs to prevent DoS via oversized extrinsics while still allowing
-/// production Plonky3 proofs to fit within runtime block length limits.
+/// Maximum size of a raw embedded STARK proof in bytes.
 ///
-/// Note: Production Plonky3 transaction proofs are ~350–500KB today; this limit is a DoS
-/// guardrail, not a target size.
-pub const STARK_PROOF_MAX_SIZE: usize = 2 * 1024 * 1024;
+/// This caps the inner Plonky3 proof payload carried by native `tx_leaf` artifacts
+/// and sidecar proof submissions. It must stay aligned with the active native backend
+/// proof-byte cap (`superneo_hegemon::MAX_NATIVE_TX_STARK_PROOF_BYTES`), which is
+/// currently `512KiB` on the shipped `v7` product lane.
+pub const STARK_PROOF_MAX_SIZE: usize = 512 * 1024;
+
+/// Maximum size of a native `tx_leaf` artifact payload submitted on the unsigned
+/// shielded transfer path.
+///
+/// This is the full artifact envelope, not just the embedded STARK proof bytes.
+/// The value is derived from the active `v7` native backend envelope geometry and
+/// must stay aligned with `superneo_hegemon::max_native_tx_leaf_artifact_bytes()`.
+pub const NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE: usize = 530_603;
 
 /// Size of a binding hash.
 pub const BINDING_HASH_SIZE: usize = 64;
@@ -748,6 +754,15 @@ pub struct BatchShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_tx_leaf_artifact_cap_stays_aligned_with_live_backend() {
+        assert_eq!(
+            NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+            superneo_hegemon::max_native_tx_leaf_artifact_bytes(),
+            "runtime native tx-leaf artifact cap drifted away from the shipped backend envelope"
+        );
+    }
 
     #[test]
     fn note_creation_works() {
