@@ -21,6 +21,7 @@ mkdir -p \
   "$STAGE/source"
 
 cp "$ROOT/docs/crypto/native_backend_spec.md" "$STAGE/docs/crypto/"
+cp "$ROOT/docs/crypto/native_backend_commitment_reduction.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_security_analysis.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_attack_worksheet.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_constant_time.md" "$STAGE/docs/crypto/"

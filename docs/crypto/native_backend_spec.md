@@ -20,7 +20,7 @@ This specification does not define the full transaction AIR or the full STARK pr
 The active family at the time this document was written is:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
 - `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
 - `maturity_label = "structural_candidate"`
@@ -51,8 +51,8 @@ The current active parameter object also carries:
 - `transcript_domain_label = "hegemon.superneo.fold.v3"`
 - `decomposition_bits = 8`
 - `opening_randomness_bits = 256`
-- `commitment_assumption_bits = 0`
-- `derive_commitment_binding_from_geometry = true`
+- `commitment_security_model = "bounded_kernel_module_sis"`
+- `commitment_bkmsis_target_bits = 128`
 - `max_commitment_message_ring_elems = 513`
 - `max_claimed_receipt_root_leaves = 128`
 
@@ -104,8 +104,8 @@ The parameter fingerprint is a 48-byte Blake3-derived digest over:
 14. `transcript_domain_label`
 15. `decomposition_bits`
 16. `opening_randomness_bits`
-17. `commitment_assumption_bits`
-18. `derive_commitment_binding_from_geometry`
+17. `commitment_security_model`
+18. `commitment_bkmsis_target_bits`
 19. `max_commitment_message_ring_elems`
 20. `max_claimed_receipt_root_leaves`
 
@@ -130,13 +130,13 @@ The backend converts the parameter object into `SecurityParams` using:
 The current backend also computes a security claim from:
 
 - transcript challenge width and count
-- bounded-message random-matrix commitment geometry
+- the exact bounded-kernel Module-SIS target for the implemented commitment class
 - explicit maximum commitment message length
 - composition loss from the configured maximum receipt-root leaf count
 
 Historical families may also count opening entropy if their live artifact path uses an explicit commitment-opening flow. The active tx-leaf/receipt-root lane does not.
 
-For the active family, the code derives commitment binding directly from the bounded-message random-matrix term computed from the concrete matrix geometry, decomposition width, and message-length cap. Historical families may still use a nonzero `commitment_assumption_bits`, but the active family sets `commitment_assumption_bits = 0` and `derive_commitment_binding_from_geometry = true`. The security-analysis document records the resulting structural term and the final floor explicitly.
+For the active family, the code defines the exact live bounded message class, exact bounded-kernel target problem, and exact reduction note in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md). Historical families may still use different commitment-security models, but the active family binds its live claim to `commitment_security_model = "bounded_kernel_module_sis"` with `commitment_bkmsis_target_bits = 128`. The security-analysis document records the resulting floor explicitly.
 
 This specification freezes the wire and transcript surface. The security-analysis document is the place where those ingredients are translated into a security claim.
 

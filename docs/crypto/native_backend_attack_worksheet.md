@@ -5,8 +5,8 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ## Active Target
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4"`
-- `spec_digest = 08eae1920eaf6e3cc1a8f9a149885221aed8172a5d33ae21a264d239b4b2cf88`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
+- `spec_digest = cfd55becf46559d3e02af6aa3020bae11001269665a750f8644ae1a0ef9a6eb5`
 
 ## Break Classes
 
@@ -28,12 +28,12 @@ This worksheet is the concrete attack ledger for the active native backend famil
   - `fs.quint_goldilocks_negacyclic_fold_challenges`
 - What to exercise:
   - distinct fold inputs producing identical transcript bytes
-  - domain-separation collisions across leaf/fold/opening subtranscripts
-  - width/length ambiguities in encoded transcript material
+  - domain-separation collisions across leaf and fold subtranscripts
+  - width or length ambiguities in encoded transcript material
 - Break condition:
   - two distinct proof states derive the same challenge stream under accepted encodings
 
-### 3. Opening-seed canonicality failures
+### 3. Public-witness reconstruction mismatch
 
 - Targeted claim:
   - `commitment.deterministic_public_witness_reconstruction`
@@ -44,25 +44,25 @@ This worksheet is the concrete attack ledger for the active native backend famil
 - Break condition:
   - verifier accepts an artifact whose deterministic public-witness reconstruction does not match the committed rows or digest
 
-### 4. Commitment opening mismatch acceptance
+### 4. BK-MSIS reduction mismatch
 
 - Targeted claim:
-  - `commitment.bounded_message_random_matrix_union_bound`
+  - `commitment.bounded_kernel_module_sis_exact_reduction`
 - What to exercise:
-  - wrong witness reconstruction, same digest
-  - wrong rows, same digest
-  - mixed params with same shape
+  - construct accepted live messages at the bound edges
+  - try to produce commitment collisions whose difference vector falls outside the claimed bounds
+  - try to produce accepted artifacts whose verifier reconstruction does not stay inside the claimed bounded message class
 - Break condition:
-  - verifier accepts a commitment that does not reconstruct the committed witness under the configured params
+  - an accepted collision exists that does not map to the exact bounded-kernel problem stated in the reduction note
 
 ### 5. Fold-row forgery
 
 - Targeted claims:
   - `fs.quint_goldilocks_negacyclic_fold_challenges`
-  - `commitment.bounded_message_random_matrix_union_bound`
+  - `commitment.bounded_kernel_module_sis_exact_reduction`
 - What to exercise:
   - mutated parent rows
-  - swapped left/right child commitments
+  - swapped left or right child commitments
   - mutated fold challenge vector
   - invalid negacyclic mix rows
 - Break condition:
@@ -87,14 +87,14 @@ This worksheet is the concrete attack ledger for the active native backend famil
   - truncated artifacts
   - oversized artifacts
   - malformed vector lengths
-  - mixed version/spec/length fields
+  - mixed version, spec, or length fields
 - Break condition:
   - parser panics, allocates absurdly, or accepts malformed bytes
 
 ### 8. Timing leakage on secret-bearing prover paths
 
 - Targeted claim:
-  - constant-time/canonicality discipline, once added
+  - constant-time and canonicality discipline, once added
 - What to exercise:
   - witness-dependent prover inputs
   - deterministic public-witness commitment generation
@@ -119,11 +119,11 @@ Current repository status:
 
 - mixed-spec rejection: covered by fixed invalid vectors and both verifiers
 - transcript aliasing: covered by transcript-domain and relation-id regression tests plus fuzz smoke, still awaiting outside review
-- opening canonicality: covered by fixed invalid vectors and direct backend regressions
-- commitment opening mismatch: covered by backend regressions and cross-verifier review vectors
+- public-witness reconstruction: covered by fixed invalid vectors and direct backend regressions
+- BK-MSIS reduction boundary: now explicitly documented and tied to the active claim, still awaiting external review of the concrete hardness target
 - fold-row forgery: covered by fixed invalid vectors and backend regressions
 - overclaim rejection: covered in code and backend regressions
-- parser/fuzz coverage: local smoke complete and CI job added in `.github/workflows/ci.yml`
+- parser and fuzz coverage: local smoke complete and CI job added in `.github/workflows/ci.yml`
 - timing harness: built and passing
 - cross-verifier agreement: built and passing on the fixed bundle
 
@@ -131,10 +131,10 @@ That status is why the active review state remains `candidate_under_review`.
 
 ## Immediate Next Checks
 
-The next concrete work is no longer package construction. It is outside review:
+The next concrete work is outside review:
 
-1. external cryptanalysis against the packaged claims,
+1. external cryptanalysis against the packaged BK-MSIS reduction and concrete target,
 2. public break-it submissions against the packaged bundle,
-3. and any follow-up claim/parameter changes forced by those findings.
+3. any follow-up claim or parameter changes forced by those findings.
 
 Until that review closes cleanly, the current 128-bit claim remains a serious package under review rather than a settled result.

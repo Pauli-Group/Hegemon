@@ -45,7 +45,7 @@ impl BackendManifest {
         Self {
             family_label: "goldilocks_128b_structural_commitment",
             spec_label:
-                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4",
+                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5",
             commitment_scheme_label: "bounded_message_random_matrix_commitment",
             challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
             maturity_label: "structural_candidate",
@@ -66,10 +66,17 @@ pub struct NativeBackendParams {
     pub transcript_domain_label: &'static str,
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
-    pub commitment_assumption_bits: u32,
-    pub derive_commitment_binding_from_geometry: bool,
+    pub commitment_security_model: CommitmentSecurityModel,
+    pub commitment_bkmsis_target_bits: u32,
     pub max_commitment_message_ring_elems: u32,
     pub max_claimed_receipt_root_leaves: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitmentSecurityModel {
+    GeometryProxy,
+    BoundedKernelModuleSis,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +97,10 @@ pub struct NativeSecurityClaim {
     pub commitment_codomain_bits: u32,
     pub commitment_same_seed_search_bits: u32,
     pub commitment_random_matrix_bits: u32,
+    pub commitment_problem_dimension: u32,
+    pub commitment_problem_coeff_bound: u32,
+    pub commitment_problem_l2_bound: u32,
+    pub commitment_reduction_loss_bits: u32,
     pub commitment_binding_bits: u32,
     pub composition_loss_bits: u32,
     pub soundness_floor_bits: u32,
@@ -111,8 +122,8 @@ impl NativeBackendParams {
             transcript_domain_label: "hegemon.superneo.fold.v3",
             decomposition_bits: 8,
             opening_randomness_bits: 256,
-            commitment_assumption_bits: 0,
-            derive_commitment_binding_from_geometry: true,
+            commitment_security_model: CommitmentSecurityModel::BoundedKernelModuleSis,
+            commitment_bkmsis_target_bits: 128,
             max_commitment_message_ring_elems: 513,
             max_claimed_receipt_root_leaves: 128,
         }
@@ -175,10 +186,13 @@ impl NativeBackendParams {
             self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
             "opening_randomness_bits must be in 1..=256"
         );
-        if !self.derive_commitment_binding_from_geometry {
+        if matches!(
+            self.commitment_security_model,
+            CommitmentSecurityModel::BoundedKernelModuleSis
+        ) {
             ensure!(
-                self.commitment_assumption_bits > 0,
-                "commitment_assumption_bits must be strictly positive when geometry binding is disabled"
+                self.commitment_bkmsis_target_bits > 0,
+                "commitment_bkmsis_target_bits must be strictly positive under bounded_kernel_module_sis"
             );
         }
         ensure!(
@@ -230,10 +244,13 @@ impl NativeBackendParams {
             self.opening_randomness_bits > 0 && self.opening_randomness_bits <= 256,
             "opening_randomness_bits must be in 1..=256"
         );
-        if !self.derive_commitment_binding_from_geometry {
+        if matches!(
+            self.commitment_security_model,
+            CommitmentSecurityModel::BoundedKernelModuleSis
+        ) {
             ensure!(
-                self.commitment_assumption_bits > 0,
-                "commitment_assumption_bits must be strictly positive when geometry binding is disabled"
+                self.commitment_bkmsis_target_bits > 0,
+                "commitment_bkmsis_target_bits must be strictly positive under bounded_kernel_module_sis"
             );
         }
         ensure!(
@@ -263,10 +280,22 @@ impl NativeBackendParams {
             .saturating_mul(self.decomposition_bits.saturating_add(1));
         let commitment_random_matrix_bits =
             commitment_codomain_bits.saturating_sub(commitment_same_seed_search_bits);
-        let commitment_binding_bits = if self.derive_commitment_binding_from_geometry {
-            commitment_random_matrix_bits
-        } else {
-            self.commitment_assumption_bits
+        let commitment_problem_dimension = self
+            .max_commitment_message_ring_elems
+            .saturating_mul(self.ring_degree() as u32);
+        let commitment_problem_coeff_bound = ((1u32 << self.digit_bits()) - 1).max(1);
+        let commitment_problem_l2_bound = ceil_sqrt_u64(
+            u64::from(commitment_problem_dimension).saturating_mul(
+                u64::from(commitment_problem_coeff_bound)
+                    .saturating_mul(u64::from(commitment_problem_coeff_bound)),
+            ),
+        ) as u32;
+        let commitment_reduction_loss_bits = 0;
+        let commitment_binding_bits = match self.commitment_security_model {
+            CommitmentSecurityModel::GeometryProxy => commitment_random_matrix_bits,
+            CommitmentSecurityModel::BoundedKernelModuleSis => self
+                .commitment_bkmsis_target_bits
+                .saturating_sub(commitment_reduction_loss_bits),
         };
         let composition_loss_bits = ceil_log2_u32(self.max_claimed_receipt_root_leaves);
         let transcript_floor_bits = transcript_soundness_bits.saturating_sub(composition_loss_bits);
@@ -291,7 +320,7 @@ impl NativeBackendParams {
                     "serialization.canonical_native_artifact_bytes",
                     "fs.quint_goldilocks_negacyclic_fold_challenges",
                     "commitment.deterministic_public_witness_reconstruction",
-                    "commitment.bounded_message_random_matrix_union_bound",
+                    "commitment.bounded_kernel_module_sis_exact_reduction",
                 ],
                 ReviewState::CandidateUnderReview,
             ),
@@ -311,7 +340,14 @@ impl NativeBackendParams {
                     "serialization.canonical_native_artifact_bytes",
                     "fs.custom_multichallenge_fold_schedule",
                     "commitment.deterministic_public_witness_reconstruction",
-                    "commitment.family_owned_linear_binding",
+                    match self.commitment_security_model {
+                        CommitmentSecurityModel::GeometryProxy => {
+                            "commitment.family_owned_linear_binding"
+                        }
+                        CommitmentSecurityModel::BoundedKernelModuleSis => {
+                            "commitment.bounded_kernel_module_sis_exact_reduction"
+                        }
+                    },
                 ],
                 ReviewState::Experimental,
             ),
@@ -323,6 +359,10 @@ impl NativeBackendParams {
             commitment_codomain_bits,
             commitment_same_seed_search_bits,
             commitment_random_matrix_bits,
+            commitment_problem_dimension,
+            commitment_problem_coeff_bound,
+            commitment_problem_l2_bound,
+            commitment_reduction_loss_bits,
             commitment_binding_bits,
             composition_loss_bits,
             soundness_floor_bits,
@@ -357,8 +397,11 @@ impl NativeBackendParams {
         hasher.update(self.transcript_domain_label.as_bytes());
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
-        hasher.update(&self.commitment_assumption_bits.to_le_bytes());
-        hasher.update(&[self.derive_commitment_binding_from_geometry as u8]);
+        hasher.update(&[match self.commitment_security_model {
+            CommitmentSecurityModel::GeometryProxy => 0u8,
+            CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
+        }]);
+        hasher.update(&self.commitment_bkmsis_target_bits.to_le_bytes());
         hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
         hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash48(hasher)
@@ -382,8 +425,11 @@ impl NativeBackendParams {
         hasher.update(self.transcript_domain_label.as_bytes());
         hasher.update(&self.decomposition_bits.to_le_bytes());
         hasher.update(&self.opening_randomness_bits.to_le_bytes());
-        hasher.update(&self.commitment_assumption_bits.to_le_bytes());
-        hasher.update(&[self.derive_commitment_binding_from_geometry as u8]);
+        hasher.update(&[match self.commitment_security_model {
+            CommitmentSecurityModel::GeometryProxy => 0u8,
+            CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
+        }]);
+        hasher.update(&self.commitment_bkmsis_target_bits.to_le_bytes());
         hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
         hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
         hash32(hasher)
@@ -419,6 +465,18 @@ fn ceil_log2_u32(value: u32) -> u32 {
         0
     } else {
         u32::BITS - (value - 1).leading_zeros()
+    }
+}
+
+fn ceil_sqrt_u64(value: u64) -> u64 {
+    if value <= 1 {
+        return value;
+    }
+    let floor = (value as f64).sqrt().floor() as u64;
+    if floor.saturating_mul(floor) == value {
+        floor
+    } else {
+        floor.saturating_add(1)
     }
 }
 
@@ -2059,9 +2117,10 @@ mod tests {
 
     use super::{
         clear_prepared_matrix_cache, reset_kernel_cost_report, review_fold_challenges,
-        review_leaf_proof_digest, take_kernel_cost_report, BackendManifest, LatticeBackend,
-        LatticeCommitment, NativeBackendParams, NativeCommitmentScheme, PreparedCommitmentMatrix,
-        PreparedMatrixCache, ReviewState, RingElem, RingProfile,
+        review_leaf_proof_digest, take_kernel_cost_report, BackendManifest,
+        CommitmentSecurityModel, LatticeBackend, LatticeCommitment, NativeBackendParams,
+        NativeCommitmentScheme, PreparedCommitmentMatrix, PreparedMatrixCache, ReviewState,
+        RingElem, RingProfile,
     };
     use std::sync::Arc;
 
@@ -2500,7 +2559,8 @@ mod tests {
             challenge_bits: 20,
             fold_challenge_count: 2,
             opening_randomness_bits: 40,
-            commitment_assumption_bits: 20,
+            commitment_security_model: CommitmentSecurityModel::BoundedKernelModuleSis,
+            commitment_bkmsis_target_bits: 20,
             max_claimed_receipt_root_leaves: 1,
             ..NativeBackendParams::default()
         };
@@ -2580,7 +2640,7 @@ mod tests {
         );
 
         let different_commitment_assumption = NativeBackendParams {
-            commitment_assumption_bits: 96,
+            commitment_bkmsis_target_bits: 96,
             ..base.clone()
         };
         assert_ne!(
@@ -2607,7 +2667,14 @@ mod tests {
         );
 
         let different_binding_model = NativeBackendParams {
-            derive_commitment_binding_from_geometry: !base.derive_commitment_binding_from_geometry,
+            commitment_security_model: match base.commitment_security_model {
+                CommitmentSecurityModel::GeometryProxy => {
+                    CommitmentSecurityModel::BoundedKernelModuleSis
+                }
+                CommitmentSecurityModel::BoundedKernelModuleSis => {
+                    CommitmentSecurityModel::GeometryProxy
+                }
+            },
             ..base.clone()
         };
         assert_ne!(
@@ -2653,16 +2720,20 @@ mod tests {
         assert_eq!(claim.commitment_codomain_bits, 37_296);
         assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
         assert_eq!(claim.commitment_random_matrix_bits, 360);
-        assert_eq!(claim.commitment_binding_bits, 360);
+        assert_eq!(claim.commitment_problem_dimension, 4_104);
+        assert_eq!(claim.commitment_problem_coeff_bound, 255);
+        assert_eq!(claim.commitment_problem_l2_bound, 16_336);
+        assert_eq!(claim.commitment_reduction_loss_bits, 0);
+        assert_eq!(claim.commitment_binding_bits, 128);
         assert_eq!(claim.composition_loss_bits, 7);
-        assert_eq!(claim.soundness_floor_bits, 150);
+        assert_eq!(claim.soundness_floor_bits, 128);
         assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
         assert!(claim
             .assumption_ids
             .contains(&"commitment.deterministic_public_witness_reconstruction"));
         assert!(claim
             .assumption_ids
-            .contains(&"commitment.bounded_message_random_matrix_union_bound"));
+            .contains(&"commitment.bounded_kernel_module_sis_exact_reduction"));
     }
 
     #[test]

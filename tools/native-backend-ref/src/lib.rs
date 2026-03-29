@@ -5,7 +5,8 @@ use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 use superneo_backend_lattice::{
-    LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams, RingElem, RingProfile,
+    CommitmentSecurityModel, LatticeBackend, LatticeCommitment, LeafDigestProof,
+    NativeBackendParams, RingElem, RingProfile,
 };
 use superneo_ccs::{Assignment, Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldedInstance, LeafArtifact};
@@ -50,10 +51,10 @@ pub struct ReviewBackendParams {
     pub transcript_domain_label: String,
     pub decomposition_bits: u32,
     pub opening_randomness_bits: u32,
-    #[serde(default = "default_commitment_assumption_bits")]
-    pub commitment_assumption_bits: u32,
-    #[serde(default)]
-    pub derive_commitment_binding_from_geometry: bool,
+    #[serde(default = "default_commitment_security_model")]
+    pub commitment_security_model: String,
+    #[serde(default = "default_commitment_bkmsis_target_bits")]
+    pub commitment_bkmsis_target_bits: u32,
     #[serde(default = "default_max_commitment_message_ring_elems")]
     pub max_commitment_message_ring_elems: u32,
     #[serde(default = "default_max_claimed_receipt_root_leaves")]
@@ -71,6 +72,14 @@ pub struct ReviewSecurityClaim {
     pub commitment_same_seed_search_bits: u32,
     #[serde(default)]
     pub commitment_random_matrix_bits: u32,
+    #[serde(default)]
+    pub commitment_problem_dimension: u32,
+    #[serde(default)]
+    pub commitment_problem_coeff_bound: u32,
+    #[serde(default)]
+    pub commitment_problem_l2_bound: u32,
+    #[serde(default)]
+    pub commitment_reduction_loss_bits: u32,
     pub commitment_binding_bits: u32,
     pub composition_loss_bits: u32,
     pub soundness_floor_bits: u32,
@@ -653,8 +662,9 @@ pub fn review_params_to_native(review: &ReviewBackendParams) -> Result<NativeBac
         Box::leak(review.transcript_domain_label.clone().into_boxed_str());
     params.decomposition_bits = review.decomposition_bits;
     params.opening_randomness_bits = review.opening_randomness_bits;
-    params.commitment_assumption_bits = review.commitment_assumption_bits;
-    params.derive_commitment_binding_from_geometry = review.derive_commitment_binding_from_geometry;
+    params.commitment_security_model =
+        parse_commitment_security_model(&review.commitment_security_model)?;
+    params.commitment_bkmsis_target_bits = review.commitment_bkmsis_target_bits;
     params.max_commitment_message_ring_elems = review.max_commitment_message_ring_elems;
     params.max_claimed_receipt_root_leaves = review.max_claimed_receipt_root_leaves;
     validate_review_params(&params)?;
@@ -1503,8 +1513,11 @@ fn review_parameter_fingerprint(params: &NativeBackendParams) -> [u8; 48] {
     hasher.update(params.transcript_domain_label.as_bytes());
     hasher.update(&params.decomposition_bits.to_le_bytes());
     hasher.update(&params.opening_randomness_bits.to_le_bytes());
-    hasher.update(&params.commitment_assumption_bits.to_le_bytes());
-    hasher.update(&[params.derive_commitment_binding_from_geometry as u8]);
+    hasher.update(&[match params.commitment_security_model {
+        CommitmentSecurityModel::GeometryProxy => 0u8,
+        CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
+    }]);
+    hasher.update(&params.commitment_bkmsis_target_bits.to_le_bytes());
     hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
     hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     hash48(hasher)
@@ -1528,8 +1541,11 @@ fn review_spec_digest(params: &NativeBackendParams) -> [u8; 32] {
     hasher.update(params.transcript_domain_label.as_bytes());
     hasher.update(&params.decomposition_bits.to_le_bytes());
     hasher.update(&params.opening_randomness_bits.to_le_bytes());
-    hasher.update(&params.commitment_assumption_bits.to_le_bytes());
-    hasher.update(&[params.derive_commitment_binding_from_geometry as u8]);
+    hasher.update(&[match params.commitment_security_model {
+        CommitmentSecurityModel::GeometryProxy => 0u8,
+        CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
+    }]);
+    hasher.update(&params.commitment_bkmsis_target_bits.to_le_bytes());
     hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
     hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
     hash32(hasher)
@@ -1568,6 +1584,14 @@ fn parse_review_ring_profile(value: &str) -> Result<RingProfile> {
     }
 }
 
+fn parse_commitment_security_model(value: &str) -> Result<CommitmentSecurityModel> {
+    match value {
+        "geometry_proxy" => Ok(CommitmentSecurityModel::GeometryProxy),
+        "bounded_kernel_module_sis" => Ok(CommitmentSecurityModel::BoundedKernelModuleSis),
+        other => Err(anyhow!("unsupported commitment_security_model {other}")),
+    }
+}
+
 fn validate_review_params(params: &NativeBackendParams) -> Result<()> {
     ensure!(
         params.matrix_rows > 0,
@@ -1597,10 +1621,13 @@ fn validate_review_params(params: &NativeBackendParams) -> Result<()> {
         params.opening_randomness_bits > 0 && params.opening_randomness_bits <= 256,
         "opening_randomness_bits must be in 1..=256"
     );
-    if !params.derive_commitment_binding_from_geometry {
+    if matches!(
+        params.commitment_security_model,
+        CommitmentSecurityModel::BoundedKernelModuleSis
+    ) {
         ensure!(
-            params.commitment_assumption_bits > 0,
-            "commitment_assumption_bits must be strictly positive when geometry binding is disabled"
+            params.commitment_bkmsis_target_bits > 0,
+            "commitment_bkmsis_target_bits must be strictly positive under bounded_kernel_module_sis"
         );
     }
     ensure!(
@@ -1653,7 +1680,11 @@ fn hash32(hasher: Hasher) -> [u8; 32] {
     out
 }
 
-fn default_commitment_assumption_bits() -> u32 {
+fn default_commitment_security_model() -> String {
+    "bounded_kernel_module_sis".to_owned()
+}
+
+fn default_commitment_bkmsis_target_bits() -> u32 {
     128
 }
 
@@ -1755,7 +1786,7 @@ mod tests {
         assert_eq!(
             hex_encode(production_fingerprint),
             hex_encode(bundle_fingerprint),
-            "production fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} assumption={} geom={} max_msg={} max_leaves={}",
+            "production fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} bkmsis_target={} max_msg={} max_leaves={}",
             params.manifest.family_label,
             params.manifest.spec_label,
             params.manifest.commitment_scheme_label,
@@ -1771,15 +1802,15 @@ mod tests {
             params.transcript_domain_label,
             params.decomposition_bits,
             params.opening_randomness_bits,
-            params.commitment_assumption_bits,
-            params.derive_commitment_binding_from_geometry,
+            params.commitment_security_model,
+            params.commitment_bkmsis_target_bits,
             params.max_commitment_message_ring_elems,
             params.max_claimed_receipt_root_leaves,
         );
         assert_eq!(
             hex_encode(reference_fingerprint),
             hex_encode(bundle_fingerprint),
-            "reference fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} assumption={} geom={} max_msg={} max_leaves={}",
+            "reference fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} bkmsis_target={} max_msg={} max_leaves={}",
             params.manifest.family_label,
             params.manifest.spec_label,
             params.manifest.commitment_scheme_label,
@@ -1795,8 +1826,8 @@ mod tests {
             params.transcript_domain_label,
             params.decomposition_bits,
             params.opening_randomness_bits,
-            params.commitment_assumption_bits,
-            params.derive_commitment_binding_from_geometry,
+            params.commitment_security_model,
+            params.commitment_bkmsis_target_bits,
             params.max_commitment_message_ring_elems,
             params.max_claimed_receipt_root_leaves,
         );

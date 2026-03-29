@@ -3,7 +3,7 @@
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v4"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v5"`
 
 Current code-derived claim:
 
@@ -13,17 +13,22 @@ Current code-derived claim:
 - `commitment_codomain_bits = 37296`
 - `commitment_same_seed_search_bits = 36936`
 - `commitment_random_matrix_bits = 360`
-- `commitment_binding_bits = 360`
+- `commitment_problem_dimension = 4104`
+- `commitment_problem_coeff_bound = 255`
+- `commitment_problem_l2_bound = 16336`
+- `commitment_reduction_loss_bits = 0`
+- `commitment_binding_bits = 128`
 - `composition_loss_bits = 7`
-- `soundness_floor_bits = 150`
+- `soundness_floor_bits = 128`
 - `review_state = candidate_under_review`
 
 Interpretation:
 
-- The live `128`-bit floor on the active family now derives commitment binding from the bounded-message random-matrix geometry itself.
-- The live tx-leaf/receipt-root lane does not count an opening-hiding term because the shipped artifact path reconstructs its commitment deterministically from public witness data.
-- The current `74 x 8` geometry yields a structural commitment term of `360` bits under the repo's conservative union bound.
-- The live tx-leaf artifact surface is public-only: it no longer ships `sk_spend`, note witnesses, or commitment-opening bytes.
+- The live `128`-bit floor no longer comes from the old geometry-only union-bound proxy.
+- The live tx-leaf / receipt-root lane does not count an opening-hiding term because the shipped artifact path reconstructs its commitment deterministically from public witness data.
+- The active commitment claim is now tied to the exact bounded-kernel Module-SIS reduction note for the implemented bounded live message class.
+- The structural `commitment_random_matrix_bits = 360` term remains reported as a geometry statistic, but it is no longer the live binding floor.
+- The live tx-leaf artifact surface is public-only: it does not ship `sk_spend`, note witnesses, or commitment-opening bytes.
 
 Exact assumption ids:
 
@@ -31,11 +36,12 @@ Exact assumption ids:
 2. `serialization.canonical_native_artifact_bytes`
 3. `fs.quint_goldilocks_negacyclic_fold_challenges`
 4. `commitment.deterministic_public_witness_reconstruction`
-5. `commitment.bounded_message_random_matrix_union_bound`
+5. `commitment.bounded_kernel_module_sis_exact_reduction`
 
 Source documents:
 
 - `docs/crypto/native_backend_spec.md`
+- `docs/crypto/native_backend_commitment_reduction.md`
 - `docs/crypto/native_backend_security_analysis.md`
 - `docs/crypto/native_backend_attack_worksheet.md`
 - `docs/crypto/native_backend_constant_time.md`

@@ -14,8 +14,8 @@ use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
     clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
-    FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof, NativeBackendParams,
-    NativeSecurityClaim, ReviewState,
+    CommitmentSecurityModel, FoldDigestProof, KernelCostReport, LatticeBackend, LeafDigestProof,
+    NativeBackendParams, NativeSecurityClaim, ReviewState,
 };
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
@@ -137,8 +137,8 @@ struct BenchNativeBackendParams {
     transcript_domain_label: String,
     decomposition_bits: u32,
     opening_randomness_bits: u32,
-    commitment_assumption_bits: u32,
-    derive_commitment_binding_from_geometry: bool,
+    commitment_security_model: String,
+    commitment_bkmsis_target_bits: u32,
     max_commitment_message_ring_elems: u32,
     max_claimed_receipt_root_leaves: u32,
 }
@@ -151,6 +151,10 @@ struct BenchNativeSecurityClaim {
     commitment_codomain_bits: u32,
     commitment_same_seed_search_bits: u32,
     commitment_random_matrix_bits: u32,
+    commitment_problem_dimension: u32,
+    commitment_problem_coeff_bound: u32,
+    commitment_problem_l2_bound: u32,
+    commitment_reduction_loss_bits: u32,
     commitment_binding_bits: u32,
     composition_loss_bits: u32,
     soundness_floor_bits: u32,
@@ -201,8 +205,8 @@ struct ReviewBackendParams {
     transcript_domain_label: String,
     decomposition_bits: u32,
     opening_randomness_bits: u32,
-    commitment_assumption_bits: u32,
-    derive_commitment_binding_from_geometry: bool,
+    commitment_security_model: String,
+    commitment_bkmsis_target_bits: u32,
     max_commitment_message_ring_elems: u32,
     max_claimed_receipt_root_leaves: u32,
 }
@@ -471,8 +475,11 @@ fn current_bench_native_backend_params() -> BenchNativeBackendParams {
         transcript_domain_label: params.transcript_domain_label.to_owned(),
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
-        commitment_assumption_bits: params.commitment_assumption_bits,
-        derive_commitment_binding_from_geometry: params.derive_commitment_binding_from_geometry,
+        commitment_security_model: commitment_security_model_label(
+            params.commitment_security_model,
+        )
+        .to_owned(),
+        commitment_bkmsis_target_bits: params.commitment_bkmsis_target_bits,
         max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
         max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
     }
@@ -486,6 +493,10 @@ fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
         commitment_codomain_bits,
         commitment_same_seed_search_bits,
         commitment_random_matrix_bits,
+        commitment_problem_dimension,
+        commitment_problem_coeff_bound,
+        commitment_problem_l2_bound,
+        commitment_reduction_loss_bits,
         commitment_binding_bits,
         composition_loss_bits,
         soundness_floor_bits,
@@ -499,6 +510,10 @@ fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
         commitment_codomain_bits,
         commitment_same_seed_search_bits,
         commitment_random_matrix_bits,
+        commitment_problem_dimension,
+        commitment_problem_coeff_bound,
+        commitment_problem_l2_bound,
+        commitment_reduction_loss_bits,
         commitment_binding_bits,
         composition_loss_bits,
         soundness_floor_bits,
@@ -524,10 +539,20 @@ fn review_backend_params(params: &NativeBackendParams) -> ReviewBackendParams {
         transcript_domain_label: params.transcript_domain_label.to_owned(),
         decomposition_bits: params.decomposition_bits,
         opening_randomness_bits: params.opening_randomness_bits,
-        commitment_assumption_bits: params.commitment_assumption_bits,
-        derive_commitment_binding_from_geometry: params.derive_commitment_binding_from_geometry,
+        commitment_security_model: commitment_security_model_label(
+            params.commitment_security_model,
+        )
+        .to_owned(),
+        commitment_bkmsis_target_bits: params.commitment_bkmsis_target_bits,
         max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
         max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
+    }
+}
+
+fn commitment_security_model_label(model: CommitmentSecurityModel) -> &'static str {
+    match model {
+        CommitmentSecurityModel::GeometryProxy => "geometry_proxy",
+        CommitmentSecurityModel::BoundedKernelModuleSis => "bounded_kernel_module_sis",
     }
 }
 
