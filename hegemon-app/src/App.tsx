@@ -849,7 +849,7 @@ export default function App() {
   const [recipientAddress, setRecipientAddress] = useState('');
   const [sendAmount, setSendAmount] = useState('');
   const [sendMemo, setSendMemo] = useState('');
-  const [sendFee, setSendFee] = useState('0.01');
+  const [sendFee, setSendFee] = useState('0');
   const [autoConsolidate, setAutoConsolidate] = useState(true);
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -1834,8 +1834,14 @@ export default function App() {
       }
       const amount = toBaseUnits(sendAmount);
       const fee = toBaseUnits(sendFee);
-      if (!amount || !fee) {
-        throw new Error('Amount and fee must be valid numbers.');
+      if (amount === null || fee === null) {
+        throw new Error('Amount and miner tip must be valid numbers.');
+      }
+      if (amount <= 0) {
+        throw new Error('Amount must be greater than 0.');
+      }
+      if (fee < 0) {
+        throw new Error('Miner tip cannot be negative.');
       }
       if (genesisMismatch) {
         throw new Error('Genesis mismatch between wallet and node. Switch nodes or force a rescan before sending.');
@@ -3728,10 +3734,13 @@ export default function App() {
             <input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} placeholder="0.50" />
           </label>
           <label className="space-y-2">
-            <span className="label">Fee (HGM)</span>
-            <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0.01" />
+            <span className="label">Miner tip (optional, HGM)</span>
+            <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0" />
           </label>
         </div>
+        <p className="text-xs text-surfaceMuted">
+          Optional shielded miner tip. Leave at 0 if you do not want to add one.
+        </p>
         <label className="space-y-2">
           <span className="label">Memo</span>
           <textarea rows={2} value={sendMemo} onChange={(event) => setSendMemo(event.target.value)} />
@@ -3820,7 +3829,7 @@ export default function App() {
                         Sent {formatHgm(entry.amount)} to {formatAddress(entry.recipient || 'Unknown')}
                       </p>
                       <p className="text-xs text-surfaceMuted">
-                        Fee {formatHgm(entry.fee)}
+                        Miner tip {formatHgm(entry.fee)}
                         {entry.memo ? ` · Memo: ${entry.memo}` : ''}
                       </p>
                     </div>
