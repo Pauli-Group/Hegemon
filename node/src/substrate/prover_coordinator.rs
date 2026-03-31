@@ -1115,13 +1115,7 @@ impl ProverCoordinator {
     fn best_prepared_candidate_locked(state: &CoordinatorState) -> Option<Vec<Vec<u8>>> {
         let current_parent = state.current_parent;
         let mut best_current_parent: Option<&PreparedBundle> = None;
-        let mut best_any_parent: Option<&PreparedBundle> = None;
         for bundle in state.prepared.values() {
-            if best_any_parent
-                .is_none_or(|current| bundle.candidate_txs.len() > current.candidate_txs.len())
-            {
-                best_any_parent = Some(bundle);
-            }
             if Some(bundle.key.parent_hash) == current_parent
                 && best_current_parent
                     .is_none_or(|current| bundle.candidate_txs.len() > current.candidate_txs.len())
@@ -1130,9 +1124,7 @@ impl ProverCoordinator {
             }
         }
 
-        best_current_parent
-            .or(best_any_parent)
-            .map(|bundle| bundle.candidate_txs.clone())
+        best_current_parent.map(|bundle| bundle.candidate_txs.clone())
     }
 
     fn best_prepared_bundle_for_statement_locked(
@@ -1259,7 +1251,7 @@ fn compare_prepared_bundles(left: &PreparedBundle, right: &PreparedBundle) -> st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::MutexGuard as StdMutexGuard;
 
     struct BlockProofModeGuard {
@@ -1414,6 +1406,64 @@ mod tests {
         let any_parent_lookup = coordinator.lookup_prepared_bundle_any_parent([1u8; 48], 1);
         assert!(any_parent_lookup.is_some());
         assert!(coordinator.stale_count() > 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pending_transactions_do_not_fallback_to_stale_prepared_parent() {
+        let _mode = set_block_proof_mode("receipt_root");
+        let first_parent = H256::repeat_byte(91);
+        let second_parent = H256::repeat_byte(92);
+        let best_state = Arc::new(Mutex::new((first_parent, 30u64)));
+        let include_pending = Arc::new(AtomicBool::new(true));
+        let config = test_config();
+        let best = {
+            let state = Arc::clone(&best_state);
+            Arc::new(move || {
+                let guard = state.lock();
+                (guard.0, guard.1)
+            })
+        };
+        let pending = {
+            let include_pending = Arc::clone(&include_pending);
+            Arc::new(move |_max_txs: usize| {
+                if include_pending.load(Ordering::SeqCst) {
+                    vec![vec![0xABu8]]
+                } else {
+                    Vec::new()
+                }
+            })
+        };
+        let build = Arc::new(
+            move |parent: H256, _number: u64, candidate_txs: Vec<Vec<u8>>| {
+                std::thread::sleep(Duration::from_millis(150));
+                let commitment = [candidate_txs.len() as u8; 48];
+                let payload = ready_payload(candidate_txs.len() as u32, commitment);
+                Ok(PreparedBundle {
+                    key: candidate_bundle_key(parent, &payload),
+                    payload,
+                    candidate_txs,
+                    build_ms: 150,
+                })
+            },
+        );
+
+        let coordinator = ProverCoordinator::new(config, best, pending, build);
+        coordinator.start();
+        tokio::time::sleep(Duration::from_millis(40)).await;
+
+        include_pending.store(false, Ordering::SeqCst);
+        {
+            let mut guard = best_state.lock();
+            guard.0 = second_parent;
+            guard.1 = 31;
+        }
+        tokio::time::sleep(Duration::from_millis(260)).await;
+
+        assert!(coordinator
+            .lookup_prepared_bundle(first_parent, [1u8; 48], 1)
+            .is_some());
+        assert!(coordinator.lookup_prepared_bundle_any_parent([1u8; 48], 1).is_some());
+        assert!(coordinator.pending_transactions(8).is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

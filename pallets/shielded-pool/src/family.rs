@@ -349,9 +349,7 @@ pub fn validate_action<T: Config>(
             match Pallet::<T>::validate_submit_candidate_artifact_action(&args.payload) {
                 Ok(meta) => Ok(meta),
                 Err(err) => {
-                    let detail = if crate::pallet::ProvenBatchProcessed::<T>::get() {
-                        "candidate-artifact-stale"
-                    } else if args.payload.version != crate::types::BLOCK_PROOF_BUNDLE_SCHEMA {
+                    let detail = if args.payload.version != crate::types::BLOCK_PROOF_BUNDLE_SCHEMA {
                         "candidate-artifact-schema"
                     } else if args.payload.tx_count == 0 {
                         "candidate-artifact-zero-tx-count"

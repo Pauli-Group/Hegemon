@@ -1394,15 +1394,10 @@ pub mod pallet {
         pub(crate) fn validate_submit_candidate_artifact_action(
             payload: &types::CandidateArtifact,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
-            if ProvenBatchProcessed::<T>::get() {
-                warn!(
-                    target: "shielded-pool",
-                    "submit_candidate_artifact rejected: stale (already processed this block) tx_count={} proof_mode={:?}",
-                    payload.tx_count,
-                    payload.proof_mode,
-                );
-                return Err(InvalidTransaction::Stale);
-            }
+            // Like coinbase and aggregation mode, candidate artifacts can be revalidated after
+            // execution while the current block is still being assembled. The unsigned validator
+            // must therefore stay stateless and source-restricted; the authoritative block-local
+            // duplicate check lives in `apply_submit_candidate_artifact_action`.
             if payload.version != types::BLOCK_PROOF_BUNDLE_SCHEMA {
                 warn!(
                     target: "shielded-pool",
@@ -2925,6 +2920,35 @@ mod tests {
         assert_eq!(cm.len(), 48);
     }
 
+    fn dummy_candidate_artifact() -> types::CandidateArtifact {
+        types::CandidateArtifact {
+            version: types::BLOCK_PROOF_BUNDLE_SCHEMA,
+            tx_count: 1,
+            tx_statements_commitment: [1u8; 48],
+            da_root: [2u8; 48],
+            da_chunk_count: 1,
+            commitment_proof: types::StarkProof::from_bytes(vec![7u8; 32]),
+            proof_mode: types::BlockProofMode::ReceiptRoot,
+            proof_kind: types::ProofArtifactKind::ReceiptRoot,
+            verifier_profile: [3u8; 48],
+            receipt_root: Some(types::ReceiptRootProofPayload {
+                root_proof: types::StarkProof::from_bytes(vec![8u8; 32]),
+                metadata: types::ReceiptRootMetadata {
+                    relation_id: [4u8; 32],
+                    shape_digest: [5u8; 32],
+                    leaf_count: 1,
+                    fold_count: 0,
+                },
+                receipts: vec![types::TxValidityReceipt {
+                    statement_hash: [6u8; 48],
+                    proof_digest: [7u8; 48],
+                    public_inputs_digest: [8u8; 48],
+                    verifier_profile: [9u8; 48],
+                }],
+            }),
+        }
+    }
+
     #[test]
     fn validate_unsigned_transfer_is_not_rejected_by_persisted_coinbase_flag() {
         mock::new_test_ext().execute_with(|| {
@@ -2983,6 +3007,22 @@ mod tests {
                 ),
                 "persisted coinbase flag should not make next-block mempool transfers stale: {validity:?}"
             );
+        });
+    }
+
+    #[test]
+    fn validate_submit_candidate_artifact_is_not_rejected_by_persisted_flag() {
+        mock::new_test_ext().execute_with(|| {
+            pallet::ProvenBatchProcessed::<mock::Test>::put(true);
+
+            let meta =
+                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
+                    &dummy_candidate_artifact(),
+                )
+                .expect("candidate artifact validate path should be stateless");
+
+            assert!(!meta.propagate);
+            assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));
         });
     }
 
