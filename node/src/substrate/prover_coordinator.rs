@@ -1462,7 +1462,9 @@ mod tests {
         assert!(coordinator
             .lookup_prepared_bundle(first_parent, [1u8; 48], 1)
             .is_some());
-        assert!(coordinator.lookup_prepared_bundle_any_parent([1u8; 48], 1).is_some());
+        assert!(coordinator
+            .lookup_prepared_bundle_any_parent([1u8; 48], 1)
+            .is_some());
         assert!(coordinator.pending_transactions(8).is_empty());
     }
 

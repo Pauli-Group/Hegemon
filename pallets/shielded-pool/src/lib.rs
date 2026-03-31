@@ -3015,11 +3015,10 @@ mod tests {
         mock::new_test_ext().execute_with(|| {
             pallet::ProvenBatchProcessed::<mock::Test>::put(true);
 
-            let meta =
-                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
-                    &dummy_candidate_artifact(),
-                )
-                .expect("candidate artifact validate path should be stateless");
+            let meta = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
+                &dummy_candidate_artifact(),
+            )
+            .expect("candidate artifact validate path should be stateless");
 
             assert!(!meta.propagate);
             assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));
