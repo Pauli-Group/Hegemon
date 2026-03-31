@@ -1,0 +1,96 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">HEGEMON social preview card</title>
+  <desc id="desc">A dark branded banner for HEGEMON with the protocol emblem, a commerce grid, and the headline Quantum-resistant private settlement.</desc>
+  <defs>
+    <linearGradient id="bg" x1="64" y1="44" x2="1148" y2="590" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E1C36"/>
+      <stop offset="1" stop-color="#081224"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(944 236) rotate(140.712) scale(368.629 393.651)">
+      <stop stop-color="#1BE7FF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#1BE7FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="amberGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(862 332) rotate(52.9767) scale(236.74 228.026)">
+      <stop stop-color="#F5A623" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#F5A623" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" stroke="#1BE7FF" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="630" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="630" rx="24" fill="url(#grid)"/>
+  <rect x="62" y="46" width="1076" height="538" rx="28" stroke="#1BE7FF" stroke-opacity="0.14"/>
+  <circle cx="944" cy="236" r="360" fill="url(#glow)"/>
+  <circle cx="862" cy="332" r="224" fill="url(#amberGlow)"/>
+
+  <path d="M812 104C878 126 924 164 964 236C1004 308 1028 357 1100 398" stroke="#1BE7FF" stroke-opacity="0.18" stroke-width="2"/>
+  <path d="M760 418C842 394 916 406 996 454C1042 482 1078 502 1122 510" stroke="#F5A623" stroke-opacity="0.28" stroke-width="2"/>
+  <path d="M732 148C784 200 812 268 824 352" stroke="#1BE7FF" stroke-opacity="0.14" stroke-width="2"/>
+
+  <g>
+    <path d="M98 86L122 38L146 86Z" fill="none" stroke="#F5A623" stroke-width="4"/>
+    <path d="M98 86L122 38L146 86Z" fill="#F5A623" fill-opacity="0.15"/>
+    <circle cx="122" cy="62" r="16" fill="none" stroke="#F5A623" stroke-width="3"/>
+    <circle cx="122" cy="62" r="10" fill="#F5A623" fill-opacity="0.1"/>
+    <text x="166" y="71" fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="28" font-weight="700" letter-spacing="5">HEGEMON</text>
+  </g>
+
+  <g>
+    <rect x="96" y="116" width="162" height="38" rx="19" fill="#0E1C36" stroke="#F5A623" stroke-opacity="0.75"/>
+    <text x="177" y="141" fill="#F5A623" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="16" font-weight="700" letter-spacing="2" text-anchor="middle">ALPHA RELEASE</text>
+  </g>
+
+  <text fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="74" font-weight="700" letter-spacing="-1.6">
+    <tspan x="96" y="246">Quantum-resistant</tspan>
+    <tspan x="96" y="332" fill="#1BE7FF">private settlement</tspan>
+  </text>
+
+  <text fill="#E1E6EE" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="28" font-weight="400">
+    <tspan x="96" y="392">A shielded settlement layer for invoices, payroll, and</tspan>
+    <tspan x="96" y="430">cross-border trade. One pool from genesis.</tspan>
+  </text>
+
+  <g>
+    <rect x="96" y="486" width="156" height="54" rx="27" fill="#102445" stroke="#1BE7FF" stroke-opacity="0.25"/>
+    <text x="174" y="520" fill="#F4F7FB" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="18" font-weight="700" letter-spacing="1.2" text-anchor="middle">PQ-FIRST</text>
+
+    <rect x="268" y="486" width="224" height="54" rx="27" fill="#102445" stroke="#1BE7FF" stroke-opacity="0.25"/>
+    <text x="380" y="520" fill="#F4F7FB" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="18" font-weight="700" letter-spacing="1.2" text-anchor="middle">ONE SHIELDED POOL</text>
+
+    <rect x="508" y="486" width="196" height="54" rx="27" fill="#102445" stroke="#F5A623" stroke-opacity="0.35"/>
+    <text x="606" y="520" fill="#F4F7FB" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="18" font-weight="700" letter-spacing="1.2" text-anchor="middle">STARK PROOFS</text>
+  </g>
+
+  <g transform="translate(842 126)">
+    <circle cx="180" cy="160" r="132" fill="none" stroke="#1BE7FF" stroke-opacity="0.28" stroke-width="2"/>
+    <circle cx="180" cy="160" r="108" fill="none" stroke="#1BE7FF" stroke-opacity="0.18" stroke-width="2"/>
+    <circle cx="180" cy="160" r="82" fill="none" stroke="#F5A623" stroke-opacity="0.38" stroke-width="2"/>
+
+    <path d="M180 44L88 228H272L180 44Z" fill="none" stroke="#F5A623" stroke-width="6"/>
+    <path d="M180 44L88 228H272L180 44Z" fill="#F5A623" fill-opacity="0.12"/>
+    <circle cx="180" cy="160" r="58" fill="none" stroke="#F5A623" stroke-width="4"/>
+    <circle cx="180" cy="160" r="40" fill="#F5A623" fill-opacity="0.09"/>
+
+    <path d="M134 114L226 206" stroke="#1BE7FF" stroke-opacity="0.35" stroke-width="2"/>
+    <path d="M134 206L226 114" stroke="#1BE7FF" stroke-opacity="0.25" stroke-width="2"/>
+    <path d="M180 102V218" stroke="#1BE7FF" stroke-opacity="0.18" stroke-width="2"/>
+    <path d="M122 160H238" stroke="#1BE7FF" stroke-opacity="0.18" stroke-width="2"/>
+
+    <circle cx="180" cy="44" r="7" fill="#F5A623"/>
+    <circle cx="88" cy="228" r="7" fill="#F5A623"/>
+    <circle cx="272" cy="228" r="7" fill="#F5A623"/>
+    <circle cx="180" cy="160" r="9" fill="#1BE7FF"/>
+  </g>
+
+  <g>
+    <rect x="804" y="448" width="286" height="94" rx="22" fill="#0D1A31" stroke="#1BE7FF" stroke-opacity="0.2"/>
+    <text x="834" y="480" fill="#1BE7FF" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="700" letter-spacing="1.8">COMMERCE / PRIVACY / POW</text>
+    <path d="M834 500H1060" stroke="#1BE7FF" stroke-opacity="0.16"/>
+    <text x="834" y="526" fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="24" font-weight="600">No trusted setup.</text>
+    <text x="834" y="555" fill="#E1E6EE" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="21">Privacy by default.</text>
+  </g>
+
+  <text x="98" y="579" fill="#E1E6EE" fill-opacity="0.82" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="17" font-weight="500" letter-spacing="1.2">hegemonprotocol.com</text>
+</svg>
