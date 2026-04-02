@@ -31,7 +31,7 @@ use wallet::{
     transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, WalletError, MAX_INPUTS,
 };
 
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WalletdMode {
@@ -137,6 +137,7 @@ struct WalletStatusResponse {
     last_synced_height: u64,
     balances: Vec<BalanceEntry>,
     pending: Vec<PendingEntry>,
+    recent: Vec<PendingEntry>,
     notes: Option<NoteSummary>,
     genesis_hash: Option<String>,
 }
@@ -517,6 +518,9 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
     let pending_txs = store
         .pending_transactions()
         .map_err(WalletdError::internal)?;
+    let recent_txs = store
+        .recent_transactions()
+        .map_err(WalletdError::internal)?;
 
     let primary_address = if mode == WalletMode::Full {
         store
@@ -567,6 +571,10 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
         .iter()
         .map(|tx| render_pending(tx, latest))
         .collect();
+    let recent_entries = recent_txs
+        .iter()
+        .map(|tx| render_recent(tx, latest))
+        .collect();
 
     let notes = summarize_notes(store)?;
     let genesis_hash = store
@@ -591,6 +599,7 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
         last_synced_height: latest,
         balances: balance_entries,
         pending: pending_entries,
+        recent: recent_entries,
         notes,
         genesis_hash,
     })
@@ -646,6 +655,38 @@ fn render_pending(tx: &wallet::PendingTransaction, latest_height: u64) -> Pendin
             PendingStatus::InMempool => "pending".to_string(),
             PendingStatus::Mined { .. } => "confirmed".to_string(),
         },
+        confirmations: tx.confirmations(latest_height),
+        created_at: Utc
+            .timestamp_opt(tx.submitted_at as i64, 0)
+            .single()
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| {
+                Utc.timestamp_opt(0, 0)
+                    .single()
+                    .expect("unix epoch")
+                    .to_rfc3339()
+            }),
+    }
+}
+
+fn render_recent(tx: &wallet::RecentTransaction, latest_height: u64) -> PendingEntry {
+    let tx_id = hex::encode(tx.tx_id);
+    let amount: u64 = tx.recipients.iter().map(|rec| rec.value).sum();
+    let address = tx
+        .recipients
+        .first()
+        .map(|rec| rec.address.clone())
+        .unwrap_or_else(|| "—".to_string());
+    let memo = tx.recipients.first().and_then(|rec| rec.memo.clone());
+    PendingEntry {
+        id: tx_id.clone(),
+        tx_id,
+        direction: "outgoing".to_string(),
+        address,
+        memo,
+        amount,
+        fee: tx.fee,
+        status: "confirmed".to_string(),
         confirmations: tx.confirmations(latest_height),
         created_at: Utc
             .timestamp_opt(tx.submitted_at as i64, 0)

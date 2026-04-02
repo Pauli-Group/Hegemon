@@ -20,7 +20,10 @@ use crate::{
     notes::MemoPlaintext,
     provisional_pending_tx_id,
     rpc::WalletRpcClient,
-    store::{PendingStatus, PendingTransaction, TransferRecipient, WalletMode, WalletStore},
+    store::{
+        PendingStatus, PendingTransaction, RecentTransaction, TransferRecipient, WalletMode,
+        WalletStore,
+    },
     tx_builder::Recipient,
     WalletError,
 };
@@ -84,6 +87,7 @@ pub struct WalletStatusResponse {
     pub balances: BTreeMap<u64, u64>,
     pub last_synced_height: u64,
     pub pending: Vec<TransferRecord>,
+    pub recent: Vec<TransferRecord>,
 }
 
 #[derive(Serialize)]
@@ -202,11 +206,15 @@ async fn submit_transfer(
 fn snapshot_transfers(store: &Arc<WalletStore>) -> Result<TransfersResponse, WalletError> {
     let latest = store.last_synced_height()?;
     let mut pending = store.pending_transactions()?;
+    let mut recent = store.recent_transactions()?;
     pending.sort_by_key(|tx| Reverse(tx.submitted_at));
-    let transfers = pending
+    recent.sort_by_key(|tx| Reverse(tx.submitted_at));
+    let mut transfers: Vec<TransferRecord> = pending
         .iter()
         .map(|tx| render_transfer(tx, latest))
         .collect();
+    transfers.extend(recent.iter().map(|tx| render_recent_transfer(tx, latest)));
+    transfers.sort_by_key(|tx| Reverse(parse_timestamp(&tx.created_at)));
     Ok(TransfersResponse { transfers })
 }
 
@@ -215,6 +223,7 @@ fn snapshot_status(store: &Arc<WalletStore>) -> Result<WalletStatusResponse, Wal
     let balances = store.balances()?;
     let latest = store.last_synced_height()?;
     let pending = store.pending_transactions()?;
+    let recent = store.recent_transactions()?;
     let primary_address = if mode == WalletMode::Full {
         store
             .derived_keys()?
@@ -232,12 +241,17 @@ fn snapshot_status(store: &Arc<WalletStore>) -> Result<WalletStatusResponse, Wal
         .iter()
         .map(|tx| render_transfer(tx, latest))
         .collect();
+    let recent_records: Vec<TransferRecord> = recent
+        .iter()
+        .map(|tx| render_recent_transfer(tx, latest))
+        .collect();
     Ok(WalletStatusResponse {
         mode,
         primary_address,
         balances,
         last_synced_height: latest,
         pending: pending_records,
+        recent: recent_records,
     })
 }
 
@@ -265,6 +279,35 @@ fn render_transfer(tx: &PendingTransaction, latest_height: u64) -> TransferRecor
         confirmations: tx.confirmations(latest_height),
         created_at: format_timestamp(tx.submitted_at),
     }
+}
+
+fn render_recent_transfer(tx: &RecentTransaction, latest_height: u64) -> TransferRecord {
+    let tx_id = hex::encode(tx.tx_id);
+    let amount: u64 = tx.recipients.iter().map(|rec| rec.value).sum();
+    let address = tx
+        .recipients
+        .first()
+        .map(|rec| rec.address.clone())
+        .unwrap_or_else(|| "—".to_string());
+    let memo = tx.recipients.first().and_then(|rec| rec.memo.clone());
+    TransferRecord {
+        id: tx_id.clone(),
+        tx_id,
+        direction: "outgoing".to_string(),
+        address,
+        memo,
+        amount,
+        fee: tx.fee,
+        status: "confirmed".to_string(),
+        confirmations: tx.confirmations(latest_height),
+        created_at: format_timestamp(tx.submitted_at),
+    }
+}
+
+fn parse_timestamp(value: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|ts| ts.timestamp())
+        .unwrap_or(0)
 }
 
 fn process_transfer_submission(

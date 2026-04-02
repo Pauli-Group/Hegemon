@@ -72,6 +72,7 @@ impl WalletStore {
             next_address_index: 0,
             notes: Vec::new(),
             pending: Vec::new(),
+            recent: Vec::new(),
             commitments: Vec::new(),
             next_commitment_index: 0,
             next_ciphertext_index: 0,
@@ -99,6 +100,7 @@ impl WalletStore {
             next_address_index: 0,
             notes: Vec::new(),
             pending: Vec::new(),
+            recent: Vec::new(),
             commitments: Vec::new(),
             next_commitment_index: 0,
             next_ciphertext_index: 0,
@@ -283,6 +285,7 @@ impl WalletStore {
         self.with_mut(|state| {
             state.notes.clear();
             state.pending.clear();
+            state.recent.clear();
             state.commitments.clear();
             state.next_commitment_index = 0;
             state.next_ciphertext_index = 0;
@@ -690,7 +693,18 @@ impl WalletStore {
     }
 
     pub fn pending_transactions(&self) -> Result<Vec<PendingTransaction>, WalletError> {
-        self.with_state(|state| Ok(state.pending.clone()))
+        self.with_state(|state| {
+            Ok(state
+                .pending
+                .iter()
+                .filter(|tx| matches!(tx.status, PendingStatus::InMempool))
+                .cloned()
+                .collect())
+        })
+    }
+
+    pub fn recent_transactions(&self) -> Result<Vec<RecentTransaction>, WalletError> {
+        self.with_state(|state| Ok(state.recent.clone()))
     }
 
     pub fn outgoing_disclosures(&self) -> Result<Vec<OutgoingDisclosureRecord>, WalletError> {
@@ -808,6 +822,7 @@ impl WalletStore {
 
         self.with_mut(|state| {
             let mut expired_indexes: Vec<usize> = Vec::new();
+            let mut mined_indexes: Vec<usize> = Vec::new();
 
             // Debug: print chain nullifiers
             if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
@@ -822,6 +837,7 @@ impl WalletStore {
 
             for (i, tx) in state.pending.iter_mut().enumerate() {
                 if matches!(tx.status, PendingStatus::Mined { .. }) {
+                    mined_indexes.push(i);
                     continue;
                 }
 
@@ -857,6 +873,7 @@ impl WalletStore {
                             note.pending_spend = false;
                         }
                     }
+                    mined_indexes.push(i);
                 } else {
                     let is_consolidation = tx
                         .recipients
@@ -881,6 +898,25 @@ impl WalletStore {
                     }
                 }
             }
+
+            const MAX_RECENT_TRANSACTIONS: usize = 128;
+            for i in mined_indexes.into_iter().rev() {
+                let tx = state.pending.remove(i);
+                let PendingStatus::Mined { height } = tx.status else {
+                    continue;
+                };
+                state.recent.push(RecentTransaction {
+                    tx_id: tx.tx_id,
+                    submitted_at: tx.submitted_at,
+                    mined_height: height,
+                    recipients: tx.recipients,
+                    fee: tx.fee,
+                });
+            }
+            state
+                .recent
+                .sort_by_key(|tx| std::cmp::Reverse(tx.submitted_at));
+            state.recent.truncate(MAX_RECENT_TRANSACTIONS);
 
             // Remove expired transactions (iterate in reverse to preserve indexes)
             for i in expired_indexes.into_iter().rev() {
@@ -1000,6 +1036,8 @@ struct WalletState {
     next_address_index: u32,
     notes: Vec<TrackedNote>,
     pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
     #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
     next_commitment_index: u64,
@@ -1047,6 +1085,24 @@ impl PendingTransaction {
             PendingStatus::Mined { height } => latest_height.saturating_sub(height) + 1,
             PendingStatus::InMempool => 0,
         }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecentTransaction {
+    #[serde(with = "serde_bytes32")]
+    pub tx_id: [u8; 32],
+    pub submitted_at: u64,
+    pub mined_height: u64,
+    #[serde(default)]
+    pub recipients: Vec<TransferRecipient>,
+    #[serde(default)]
+    pub fee: u64,
+}
+
+impl RecentTransaction {
+    pub fn confirmations(&self, latest_height: u64) -> u64 {
+        latest_height.saturating_sub(self.mined_height) + 1
     }
 }
 
@@ -1438,6 +1494,61 @@ mod tests {
         let pending = store.pending_spend_notes(0).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].index, idx0);
+    }
+
+    #[test]
+    fn mined_transactions_move_from_pending_to_recent_history() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(17);
+
+        let note = NotePlaintext::random(25, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+
+        store.append_commitments(&[(0, commitment)]).unwrap();
+        store.register_ciphertext_index(0).unwrap();
+        store.record_recovered_note(recovered, 0, 0).unwrap();
+
+        let note_index = store.spendable_notes(0).unwrap()[0].index;
+        let nullifier = store
+            .tracked_notes()
+            .unwrap()
+            .into_iter()
+            .find(|note| note.position == 0)
+            .and_then(|note| note.nullifier)
+            .expect("tracked note nullifier");
+
+        store.mark_notes_pending(&[note_index], true).unwrap();
+        store
+            .record_pending_submission(
+                [9u8; 32],
+                vec![nullifier],
+                vec![note_index],
+                vec![TransferRecipient {
+                    address: "test".to_string(),
+                    value: 25,
+                    asset_id: 0,
+                    memo: None,
+                }],
+                0,
+            )
+            .unwrap();
+
+        let mut chain_nullifiers = HashSet::new();
+        chain_nullifiers.insert(nullifier);
+        store.refresh_pending(7, &chain_nullifiers).unwrap();
+
+        assert!(store.pending_transactions().unwrap().is_empty());
+        let recent = store.recent_transactions().unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].tx_id, [9u8; 32]);
+        assert_eq!(recent[0].mined_height, 7);
+        assert_eq!(recent[0].confirmations(9), 3);
     }
 
     #[test]

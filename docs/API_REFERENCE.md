@@ -60,7 +60,7 @@ p budgets.
 
 - `walletd` is a sidecar daemon that speaks newline-delimited JSON over stdin/stdout for GUI clients.
 - Requests: `{ id, method, params }`. Responses: `{ id, ok, result?, error?, error_code? }`. `error_code` is snake_case.
-- `status.get` returns `protocolVersion`, `capabilities`, `walletMode`, `storePath`, balances, pending entries, note summary, and `genesisHash`.
+- `status.get` returns `protocolVersion`, `capabilities`, `walletMode`, `storePath`, balances, `pending` entries (still in mempool), `recent` confirmed outgoing entries, note summary, and `genesisHash`.
 - `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
 - The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
 

@@ -2217,17 +2217,22 @@ export default function App() {
 
   const normalizedStorePath = storePath.trim();
   const pendingTransactions = walletStatus?.pending ?? [];
+  const recentTransactions = walletStatus?.recent ?? [];
+  const walletActivity = useMemo(
+    () => [...pendingTransactions, ...recentTransactions],
+    [pendingTransactions, recentTransactions]
+  );
   const walletNoteDetails = walletStatus?.noteDetails ?? [];
-  const pendingByTxId = useMemo(() => {
-    const map = new Map<string, typeof pendingTransactions[number]>();
-    pendingTransactions.forEach((entry) => {
+  const activityByTxId = useMemo(() => {
+    const map = new Map<string, typeof walletActivity[number]>();
+    walletActivity.forEach((entry) => {
       const normalized = normalizeTxId(entry.txId);
       if (normalized) {
         map.set(normalized, entry);
       }
     });
     return map;
-  }, [pendingTransactions]);
+  }, [walletActivity]);
 
   const attemptsForStore = useMemo(
     () => sendAttempts.filter((attempt) => attempt.storePath === normalizedStorePath),
@@ -2235,10 +2240,10 @@ export default function App() {
   );
 
   const activityEntries = useMemo(() => {
-    const consolidationEntries = pendingTransactions.filter(
+    const consolidationEntries = walletActivity.filter(
       (entry) => entry.memo?.toLowerCase() === 'consolidation'
     );
-    const pendingEntries: ActivityEntry[] = pendingTransactions.map((entry) => ({
+    const pendingEntries: ActivityEntry[] = walletActivity.map((entry) => ({
       id: entry.txId,
       source: 'wallet',
       createdAt: entry.createdAt,
@@ -2257,7 +2262,7 @@ export default function App() {
     const consolidationTxIds = new Set<string>();
     const attemptEntries: ActivityEntry[] = sortedAttempts.map((attempt, index) => {
       const windowEnd = index > 0 ? sortedAttempts[index - 1]?.createdAt : null;
-      const pending = attempt.txId ? pendingByTxId.get(attempt.txId) : null;
+      const pending = attempt.txId ? activityByTxId.get(attempt.txId) : null;
       const missingWalletPending =
         attempt.status === 'pending' && !pending && walletUnlocked && !walletError;
       const status = pending
@@ -2339,7 +2344,7 @@ export default function App() {
     ];
     merged.sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
     return merged;
-  }, [attemptsForStore, pendingTransactions, pendingByTxId, walletError, walletUnlocked]);
+  }, [attemptsForStore, walletActivity, activityByTxId, walletError, walletUnlocked]);
 
   const sendInFlight = attemptsForStore.some((attempt) => attempt.status === 'processing');
 

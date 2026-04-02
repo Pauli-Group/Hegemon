@@ -218,6 +218,7 @@ export type WalletStatus = {
   lastSyncedHeight: number;
   balances: WalletBalance[];
   pending: WalletPending[];
+  recent?: WalletPending[];
   notes?: WalletNotes | null;
   noteDetails?: WalletNoteDetail[] | null;
   genesisHash?: string | null;
