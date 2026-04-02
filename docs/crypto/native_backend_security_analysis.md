@@ -31,6 +31,8 @@ For the active family the code currently computes:
 
 - `claimed_security_bits = 128`
 - `transcript_soundness_bits = floor(challenge_bits * fold_challenge_count / 2) = floor(63 * 5 / 2) = 157`
+
+  **Rationale for the `/2` divisor:** the repository currently uses `floor(k * b / 2)` as a conservative engineering cap for transcript soundness pending theorem-backed analysis of the exact composed Fiat-Shamir fold schedule. This is not derived from a specific birthday-bound theorem for this construction; it is a blanket halving applied as a safety margin. Tightening or replacing this term with a proven bound for the exact negacyclic multi-challenge fold schedule is an open review item.
 - `opening_hiding_bits = 0` because the shipped tx-leaf / receipt-root lane reconstructs its commitment deterministically from public witness data instead of using a live public opening / seed path
 - `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 74 * 8 = 37,296`
 - `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 513 * 8 * 9 = 36,936`
@@ -116,8 +118,11 @@ These mean:
 
 This claim does not say:
 
+- that the backend implements the Neo/SuperNeo sum-check interactive reduction (Π_CCS), random-linear-combination reduction (Π_RLC), or decomposition reduction (Π_DEC) — it does not,
+- that the folding layer alone provides knowledge soundness over the CCS relation — it does not; live-path soundness depends on the STARK-verification gate at leaf construction and import,
 - that the backend is already externally cryptanalyzed,
 - that the in-repo construction is paper-equivalent to Neo, SuperNeo, or any final Module-SIS commitment construction,
+- that the active ring `Z_q[X]/(X^8 + 1)` provides ring-structured hardness — it is fully splitting over the Goldilocks field, and the claim deliberately operates at the flattened coefficient-space SIS level,
 - that the timing harness proves constant time,
 - that a one-minute local fuzz smoke test is the same thing as exhaustive parser verification,
 - or that the current line is production-ready.

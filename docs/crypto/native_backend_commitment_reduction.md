@@ -28,6 +28,8 @@ The active family works over:
 - maximum committed message ring elements `M = 513`
 - digit width `d = 8`
 
+**Note on ring splitting:** with the Goldilocks modulus `q`, the polynomial `X^8 + 1` splits completely into linear factors over `Z_q` because `q ≡ 1 mod 16`. This means `R_q ≅ Z_q^8` and the ring structure provides no algebraic hardness beyond the unstructured base field. The repository's security claim deliberately operates at the flattened coefficient-space SIS level (see the concrete estimator instance below) rather than relying on ring-structured hardness assumptions. External reviewers should verify that the full splitting does not enable algebraic or combinatorial attacks below the stated coefficient-space SIS floor.
+
 The active commitment matrix is an element of `R_q^{k x ell}` for `1 <= ell <= M`, derived deterministically from the manifest-owned parameter fingerprint plus row and column indices. The exact deterministic derivation is part of the frozen protocol surface in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md).
 
 For a committed message vector `m ∈ R_q^ell`, the commitment map is:
