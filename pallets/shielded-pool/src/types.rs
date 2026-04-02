@@ -27,16 +27,16 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// This caps the inner Plonky3 proof payload carried by native `tx_leaf` artifacts
 /// and sidecar proof submissions. It must stay aligned with the active native backend
 /// proof-byte cap (`superneo_hegemon::MAX_NATIVE_TX_STARK_PROOF_BYTES`), which is
-/// currently `512KiB` on the shipped `v7` product lane.
+/// currently `512KiB` on the shipped `v8` product lane.
 pub const STARK_PROOF_MAX_SIZE: usize = 512 * 1024;
 
 /// Maximum size of a native `tx_leaf` artifact payload submitted on the unsigned
 /// shielded transfer path.
 ///
 /// This is the full artifact envelope, not just the embedded STARK proof bytes.
-/// The value is derived from the active `v7` native backend envelope geometry and
+/// The value is derived from the active `v8` native backend envelope geometry and
 /// must stay aligned with `superneo_hegemon::max_native_tx_leaf_artifact_bytes()`.
-pub const NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE: usize = 530_603;
+pub const NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE: usize = 530_367;
 
 /// Size of a binding hash.
 pub const BINDING_HASH_SIZE: usize = 64;

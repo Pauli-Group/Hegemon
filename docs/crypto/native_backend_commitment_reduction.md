@@ -7,7 +7,7 @@ This note defines the exact commitment-binding problem used by Hegemon's active 
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8"`
 - `commitment_security_model = "bounded_kernel_module_sis"`
 - `commitment_estimator_model = "sis_lattice_euclidean_adps16"`
 
@@ -22,13 +22,13 @@ This note is specific to the exact implemented commitment path in:
 The active family works over:
 
 - prime field modulus `q = 18446744069414584321`
-- ring degree `n = 8`
-- ring `R_q = Z_q[X] / (X^n + 1)`
-- commitment row count `k = 74`
-- maximum committed message ring elements `M = 513`
+- ring degree `n = 54`
+- ring `R_q = Z_q[X] / (X^54 + X^27 + 1)`
+- commitment row count `k = 11`
+- maximum committed message ring elements `M = 76`
 - digit width `d = 8`
 
-**Note on ring splitting:** with the Goldilocks modulus `q`, the polynomial `X^8 + 1` splits completely into linear factors over `Z_q` because `q ≡ 1 mod 16`. This means `R_q ≅ Z_q^8` and the ring structure provides no algebraic hardness beyond the unstructured base field. The repository's security claim deliberately operates at the flattened coefficient-space SIS level (see the concrete estimator instance below) rather than relying on ring-structured hardness assumptions. External reviewers should verify that the full splitting does not enable algebraic or combinatorial attacks below the stated coefficient-space SIS floor.
+**Note on ring structure:** the active family no longer uses the fully-splitting `X^8 + 1` quotient. The live `GoldilocksFrog` profile uses the trinomial quotient `X^54 + X^27 + 1` so the backend is no longer relying on the old degree-8 cyclotomic line reviewers flagged. The repository's security claim still deliberately operates at the flattened coefficient-space SIS level (see the concrete estimator instance below) rather than relying on ring-structured hardness assumptions. External reviewers should verify that this frog quotient does not enable an algebraic or combinatorial attack below the stated coefficient-space SIS floor.
 
 The active commitment matrix is an element of `R_q^{k x ell}` for `1 <= ell <= M`, derived deterministically from the manifest-owned parameter fingerprint plus row and column indices. The exact deterministic derivation is part of the frozen protocol surface in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md).
 
@@ -57,7 +57,7 @@ For every `m ∈ M_live(ell)`:
 For a collision difference vector `z = m - m'` with `m, m' ∈ M_live(ell)`, the repo uses the exact coefficient bounds:
 
 - `B_inf = 255`
-- ambient coefficient dimension `N = M * n = 513 * 8 = 4104`
+- ambient coefficient dimension `N = M * n = 76 * 54 = 4104`
 - `B_2 = ceil(B_inf * sqrt(N)) = ceil(255 * sqrt(4104)) = 16336`
 
 Those are exactly the values exported in `NativeSecurityClaim` as:
@@ -98,6 +98,7 @@ BK-MSIS(q, n, k, ell, B_inf, B_2)
 ```
 
 with the active concrete bounds above and `ell <= M = 513`.
+with the active concrete bounds above and `ell <= M = 76`.
 
 ## Concrete Estimator Instance
 
@@ -105,8 +106,8 @@ The repository now turns that exact bounded-kernel target into one concrete coef
 
 The active flattening is:
 
-- equation dimension `n_eq = k * n = 74 * 8 = 592`
-- witness dimension `m = M * n = 513 * 8 = 4104`
+- equation dimension `n_eq = k * n = 11 * 54 = 594`
+- witness dimension `m = M * n = 76 * 54 = 4104`
 - modulus `q = 18446744069414584321`
 - Euclidean bound `B_2 = 16336`
 
@@ -120,15 +121,15 @@ The estimator model implemented in [superneo-backend-lattice/src/lib.rs](/Users/
 
 For the active instance the code computes:
 
-- `commitment_problem_equations = 592`
+- `commitment_problem_equations = 594`
 - `commitment_problem_dimension = 4104`
 - `commitment_problem_coeff_bound = 255`
 - `commitment_problem_l2_bound = 16336`
 - `commitment_estimator_dimension = 4104`
-- `commitment_estimator_block_size = 3267`
-- `commitment_estimator_classical_bits = 953`
-- `commitment_estimator_quantum_bits = 865`
-- `commitment_estimator_paranoid_bits = 677`
+- `commitment_estimator_block_size = 3294`
+- `commitment_estimator_classical_bits = 961`
+- `commitment_estimator_quantum_bits = 872`
+- `commitment_estimator_paranoid_bits = 683`
 
 ## Reduction
 
@@ -177,8 +178,8 @@ So the code computes:
 ```text
 commitment_binding_bits
   = commitment_estimator_quantum_bits - commitment_reduction_loss_bits
-  = 865 - 0
-  = 865
+  = 872 - 0
+  = 872
 ```
 
 The final active floor is then:
@@ -189,7 +190,7 @@ transcript_floor_bits = transcript_soundness_bits - composition_loss_bits
                       = 150
 
 soundness_floor_bits = min(transcript_floor_bits, commitment_binding_bits)
-                     = min(150, 865)
+                     = min(150, 872)
                      = 150
 ```
 

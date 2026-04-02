@@ -29,6 +29,20 @@ impl RingProfile {
             Self::GoldilocksFrog => b"goldilocks-frog",
         }
     }
+
+    fn degree(self) -> usize {
+        match self {
+            Self::GoldilocksCyclotomic24 => 8,
+            Self::GoldilocksFrog => 54,
+        }
+    }
+
+    fn reduction_terms(self) -> &'static [(usize, i8)] {
+        match self {
+            Self::GoldilocksCyclotomic24 => &[(0, -1)],
+            Self::GoldilocksFrog => &[(0, -1), (27, -1)],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -45,9 +59,9 @@ impl BackendManifest {
         Self {
             family_label: "goldilocks_128b_structural_commitment",
             spec_label:
-                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7",
+                "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8",
             commitment_scheme_label: "bounded_message_random_matrix_commitment",
-            challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
+            challenge_schedule_label: "quint_goldilocks_fs_challenge_profile_mix",
             maturity_label: "structural_candidate",
         }
     }
@@ -125,9 +139,9 @@ impl NativeBackendParams {
         Self {
             manifest: BackendManifest::goldilocks_128b_structural_commitment(),
             security_bits: 128,
-            ring_profile: RingProfile::GoldilocksCyclotomic24,
-            matrix_rows: 74,
-            matrix_cols: 8,
+            ring_profile: RingProfile::GoldilocksFrog,
+            matrix_rows: 11,
+            matrix_cols: 54,
             challenge_bits: 63,
             fold_challenge_count: 5,
             max_fold_arity: 2,
@@ -136,7 +150,7 @@ impl NativeBackendParams {
             opening_randomness_bits: 256,
             commitment_security_model: CommitmentSecurityModel::BoundedKernelModuleSis,
             commitment_estimator_model: CommitmentEstimatorModel::SisLatticeEuclideanAdps16,
-            max_commitment_message_ring_elems: 513,
+            max_commitment_message_ring_elems: 76,
             max_claimed_receipt_root_leaves: 128,
         }
     }
@@ -169,6 +183,12 @@ impl NativeBackendParams {
         ensure!(
             self.matrix_cols > 0,
             "matrix_cols must be strictly positive"
+        );
+        ensure!(
+            self.matrix_cols == self.ring_profile.degree(),
+            "matrix_cols {} must match ring profile degree {}",
+            self.matrix_cols,
+            self.ring_profile.degree()
         );
         ensure!(
             (1..=63).contains(&self.challenge_bits),
@@ -332,14 +352,14 @@ impl NativeBackendParams {
         ) {
             (
                 "goldilocks_128b_structural_commitment",
-                "quint_goldilocks_fs_challenge_negacyclic_mix",
+                "quint_goldilocks_fs_challenge_profile_mix",
                 5,
                 false,
             ) => (
                 vec![
                     "random_oracle.blake3_fiat_shamir",
                     "serialization.canonical_native_artifact_bytes",
-                    "fs.quint_goldilocks_negacyclic_fold_challenges",
+                    "fs.quint_goldilocks_profile_fold_challenges",
                     "commitment.deterministic_public_witness_reconstruction",
                     "commitment.bounded_kernel_module_sis_exact_reduction",
                     "commitment.sis_lattice_euclidean_adps16_quantum_estimator",
@@ -499,7 +519,7 @@ impl NativeBackendParams {
     }
 
     pub fn ring_degree(&self) -> usize {
-        self.matrix_cols
+        self.ring_profile.degree()
     }
 
     pub fn digit_bits(&self) -> u16 {
@@ -1149,11 +1169,12 @@ pub fn review_fold_challenges(
 }
 
 pub fn review_fold_rows(
+    params: &NativeBackendParams,
     left: &LatticeCommitment,
     right: &LatticeCommitment,
     challenges: &[u64],
 ) -> Result<Vec<RingElem>> {
-    fold_commitment_rows(left, right, challenges)
+    fold_commitment_rows(params.ring_profile, left, right, challenges)
 }
 
 pub fn review_fold_statement_digest(
@@ -1332,7 +1353,7 @@ impl Backend<Goldilocks> for LatticeBackend {
             ),
             ring_profile: self.params.ring_profile,
             commitment_rows: self.params.matrix_rows,
-            ring_degree: self.params.matrix_cols,
+            ring_degree: self.params.ring_degree(),
             digit_bits: self.params.digit_bits(),
             opening_randomness_bits: self.params.opening_randomness_bits,
         };
@@ -1411,6 +1432,7 @@ impl Backend<Goldilocks> for LatticeBackend {
         let challenges = derive_fold_challenges(pk, left, right);
         let fold_start = Instant::now();
         let parent_rows = fold_commitment_rows(
+            pk.ring_profile,
             &left.witness_commitment,
             &right.witness_commitment,
             &challenges,
@@ -1492,6 +1514,7 @@ impl Backend<Goldilocks> for LatticeBackend {
         );
 
         let expected_rows = fold_commitment_rows(
+            vk.ring_profile,
             &left.witness_commitment,
             &right.witness_commitment,
             &expected_challenges,
@@ -1704,14 +1727,16 @@ fn commit_ring_message(pk: &BackendKey, message: &[EmbeddedRingElem]) -> Vec<Rin
             let col_index = base_col + offset;
             for (row_index, accumulator) in accumulators.iter_mut().enumerate().take(row_count) {
                 if message_elem.source_width_bits <= 16 {
-                    accumulate_negacyclic_product_narrow_source(
+                    accumulate_ring_product_narrow_source(
+                        pk.ring_profile,
                         accumulator,
                         &prepared.rows[row_index][col_index],
                         &message_elem.ring,
                         &mut stats,
                     );
                 } else {
-                    accumulate_negacyclic_product_generic_source(
+                    accumulate_ring_product_generic_source(
+                        pk.ring_profile,
                         accumulator,
                         &prepared.rows[row_index][col_index],
                         &message_elem.ring,
@@ -1759,7 +1784,7 @@ fn commit_with_seed(
     );
     let deterministic_rows = commit_ring_message(&key, &ring_message);
     let randomizer_rows = derive_randomizer_rows(params, randomness_seed);
-    let rows = add_ring_rows(&deterministic_rows, &randomizer_rows)?;
+    let rows = add_ring_rows(params.ring_profile, &deterministic_rows, &randomizer_rows)?;
     let commitment = LatticeCommitment::from_rows(rows);
     let opening = CommitmentOpening {
         params_fingerprint: params.parameter_fingerprint(),
@@ -1816,7 +1841,11 @@ fn derive_randomizer_rows(
         .collect()
 }
 
-fn add_ring_rows(left: &[RingElem], right: &[RingElem]) -> Result<Vec<RingElem>> {
+fn add_ring_rows(
+    ring_profile: RingProfile,
+    left: &[RingElem],
+    right: &[RingElem],
+) -> Result<Vec<RingElem>> {
     ensure!(
         left.len() == right.len(),
         "cannot add {} commitment rows to {} randomizer rows",
@@ -1828,7 +1857,13 @@ fn add_ring_rows(left: &[RingElem], right: &[RingElem]) -> Result<Vec<RingElem>>
         .iter()
         .zip(right)
         .map(|(left_row, right_row)| {
-            delayed_linear_combine_with_schedule(left_row, right_row, &[1], &mut stats)
+            delayed_linear_combine_with_schedule(
+                ring_profile,
+                left_row,
+                right_row,
+                &[1],
+                &mut stats,
+            )
         })
         .collect::<Result<Vec<_>>>()?;
     flush_kernel_stats(&stats);
@@ -2008,6 +2043,7 @@ fn derive_fold_challenges(
 }
 
 fn fold_commitment_rows(
+    ring_profile: RingProfile,
     left: &LatticeCommitment,
     right: &LatticeCommitment,
     challenges: &[u64],
@@ -2030,7 +2066,13 @@ fn fold_commitment_rows(
         .iter()
         .zip(&right.rows)
         .map(|(left_row, right_row)| {
-            delayed_linear_combine_with_schedule(left_row, right_row, challenges, &mut stats)
+            delayed_linear_combine_with_schedule(
+                ring_profile,
+                left_row,
+                right_row,
+                challenges,
+                &mut stats,
+            )
         })
         .collect::<Result<Vec<_>>>()?;
     flush_kernel_stats(&stats);
@@ -2038,6 +2080,7 @@ fn fold_commitment_rows(
 }
 
 fn delayed_linear_combine_with_schedule(
+    ring_profile: RingProfile,
     left: &RingElem,
     right: &RingElem,
     challenges: &[u64],
@@ -2051,36 +2094,32 @@ fn delayed_linear_combine_with_schedule(
         !challenges.is_empty(),
         "fold schedule must contain at least one challenge"
     );
+    ensure!(
+        left.coeffs.len() == ring_profile.degree(),
+        "left row degree {} does not match ring profile degree {}",
+        left.coeffs.len(),
+        ring_profile.degree()
+    );
     stats.delayed_reduction_batches += 1;
+    ensure!(
+        challenges.len() <= ring_profile.degree(),
+        "fold schedule length {} exceeds ring profile degree {}",
+        challenges.len(),
+        ring_profile.degree()
+    );
+    let mut challenge_coeffs = vec![0u64; ring_profile.degree()];
+    for (rotation, challenge) in challenges.iter().copied().enumerate() {
+        challenge_coeffs[rotation] = challenge;
+    }
+    let challenge_poly = RingElem::from_coeffs(challenge_coeffs);
+    let folded_right =
+        multiply_ring_elems_with_mode(ring_profile, &challenge_poly, right, stats, false)?;
     let mut coeffs = Vec::with_capacity(left.coeffs.len());
-    for (coeff_index, left_coeff) in left.coeffs.iter().enumerate() {
-        let mut value = Goldilocks::new(*left_coeff);
-        for (rotation, challenge) in challenges.iter().copied().enumerate() {
-            let right_coeff = negacyclic_rotated_coeff(right, coeff_index, rotation);
-            classify_mul_widths(
-                operand_bit_width(challenge),
-                operand_bit_width(right_coeff.unsigned_abs() as u64),
-                1,
-                stats,
-            );
-            value += Goldilocks::new(challenge) * goldilocks_from_signed(right_coeff);
-        }
+    for (left_coeff, folded_coeff) in left.coeffs.iter().zip(folded_right) {
+        let value = Goldilocks::new(*left_coeff) + goldilocks_from_signed(folded_coeff);
         coeffs.push(value.as_canonical_u64());
     }
     Ok(RingElem::from_coeffs(coeffs))
-}
-
-fn negacyclic_rotated_coeff(row: &RingElem, coeff_index: usize, rotation: usize) -> i128 {
-    let degree = row.coeffs.len();
-    let source_index = coeff_index + rotation;
-    let wraps = source_index / degree;
-    let index = source_index % degree;
-    let coeff = i128::from(row.coeffs[index]);
-    if wraps.is_multiple_of(2) {
-        coeff
-    } else {
-        -coeff
-    }
 }
 
 fn reduce_fold_challenge(challenge_bits: u32, raw: u64) -> u64 {
@@ -2096,16 +2135,6 @@ fn reduce_fold_challenge(challenge_bits: u32, raw: u64) -> u64 {
 
 fn goldilocks_from_signed(value: i128) -> Goldilocks {
     Goldilocks::new(reduce_goldilocks_signed(value))
-}
-
-fn classify_mul_widths(left_bits: u16, right_bits: u16, count: u64, stats: &mut KernelLocalStats) {
-    let left_small = left_bits <= 16;
-    let right_small = right_bits <= 16;
-    match (left_small, right_small) {
-        (true, true) => stats.small_small_ops += count,
-        (false, false) => stats.big_big_ops += count,
-        _ => stats.small_big_ops += count,
-    }
 }
 
 fn leaf_proof_digest(
@@ -2203,33 +2232,81 @@ fn fold_proof_digest(
     hash48(hasher)
 }
 
-fn accumulate_negacyclic_product_narrow_source(
+fn accumulate_ring_product_narrow_source(
+    ring_profile: RingProfile,
     accumulator: &mut [i128],
     left: &RingElem,
     right: &RingElem,
     stats: &mut KernelLocalStats,
 ) {
-    accumulate_negacyclic_product_with_mode(accumulator, left, right, stats, true);
+    accumulate_ring_product_with_mode(ring_profile, accumulator, left, right, stats, true)
+        .expect("narrow ring product must succeed");
 }
 
-fn accumulate_negacyclic_product_generic_source(
+fn accumulate_ring_product_generic_source(
+    ring_profile: RingProfile,
     accumulator: &mut [i128],
     left: &RingElem,
     right: &RingElem,
     stats: &mut KernelLocalStats,
 ) {
-    accumulate_negacyclic_product_with_mode(accumulator, left, right, stats, false);
+    accumulate_ring_product_with_mode(ring_profile, accumulator, left, right, stats, false)
+        .expect("generic ring product must succeed");
 }
 
-fn accumulate_negacyclic_product_with_mode(
+fn accumulate_ring_product_with_mode(
+    ring_profile: RingProfile,
     accumulator: &mut [i128],
     left: &RingElem,
     right: &RingElem,
     stats: &mut KernelLocalStats,
     narrow_source: bool,
-) {
+) -> Result<()> {
     let degree = left.coeffs.len();
+    ensure!(
+        degree == ring_profile.degree(),
+        "left ring degree {} does not match profile degree {}",
+        degree,
+        ring_profile.degree()
+    );
+    ensure!(
+        right.coeffs.len() == degree,
+        "cannot multiply ring elements with different degrees"
+    );
+    ensure!(
+        accumulator.len() == degree,
+        "ring accumulator length {} does not match degree {}",
+        accumulator.len(),
+        degree
+    );
     stats.delayed_reduction_batches += 1;
+    let mut reduced =
+        multiply_ring_elems_with_mode(ring_profile, left, right, stats, narrow_source)?;
+    for (slot, value) in accumulator.iter_mut().zip(reduced.drain(..)) {
+        *slot += value;
+    }
+    Ok(())
+}
+
+fn multiply_ring_elems_with_mode(
+    ring_profile: RingProfile,
+    left: &RingElem,
+    right: &RingElem,
+    stats: &mut KernelLocalStats,
+    narrow_source: bool,
+) -> Result<Vec<i128>> {
+    let degree = left.coeffs.len();
+    ensure!(
+        degree == ring_profile.degree(),
+        "left ring degree {} does not match profile degree {}",
+        degree,
+        ring_profile.degree()
+    );
+    ensure!(
+        right.coeffs.len() == degree,
+        "cannot multiply ring elements with different degrees"
+    );
+    let mut raw = vec![0i128; degree.saturating_mul(2).saturating_sub(1)];
     for (i, left_coeff) in left.coeffs.iter().enumerate() {
         for (j, right_coeff) in right.coeffs.iter().enumerate() {
             if *right_coeff == 0 {
@@ -2243,13 +2320,41 @@ fn accumulate_negacyclic_product_with_mode(
                 stats.big_big_ops += 1;
                 i128::from(*left_coeff) * i128::from(*right_coeff)
             };
-            if target < degree {
-                accumulator[target] += product;
-            } else {
-                accumulator[target - degree] -= product;
-            }
+            raw[target] += i128::from(reduce_goldilocks_signed(product));
         }
     }
+    reduce_ring_polynomial(ring_profile, &mut raw)?;
+    raw.truncate(degree);
+    Ok(raw)
+}
+
+fn reduce_ring_polynomial(ring_profile: RingProfile, coeffs: &mut [i128]) -> Result<()> {
+    let degree = ring_profile.degree();
+    ensure!(
+        coeffs.len() >= degree,
+        "coefficient buffer length {} must be at least ring degree {}",
+        coeffs.len(),
+        degree
+    );
+    for index in (degree..coeffs.len()).rev() {
+        let carry = coeffs[index];
+        if carry == 0 {
+            continue;
+        }
+        coeffs[index] = 0;
+        let base = index - degree;
+        for (shift, factor) in ring_profile.reduction_terms() {
+            let target = base + shift;
+            ensure!(
+                target < coeffs.len(),
+                "ring reduction target {} exceeds coefficient buffer {}",
+                target,
+                coeffs.len()
+            );
+            coeffs[target] += carry * i128::from(*factor);
+        }
+    }
+    Ok(())
 }
 
 fn reduce_goldilocks_signed(value: i128) -> u64 {
@@ -2262,11 +2367,6 @@ fn reduce_goldilocks_signed(value: i128) -> u64 {
 
 fn reduce_goldilocks_u128(value: u128) -> u64 {
     (value % (GOLDILOCKS_MODULUS_I128 as u128)) as u64
-}
-
-fn operand_bit_width(value: u64) -> u16 {
-    let width = u64::BITS - value.leading_zeros();
-    width.max(1) as u16
 }
 
 fn hash48(hasher: Hasher) -> [u8; 48] {
@@ -2677,11 +2777,14 @@ mod tests {
         };
         let packed = packer.pack(&shape(), &assignment).unwrap();
 
-        let cyclotomic_backend = LatticeBackend::new(NativeBackendParams::default());
-        let frog_backend = LatticeBackend::new(NativeBackendParams {
-            ring_profile: RingProfile::GoldilocksFrog,
+        let cyclotomic_backend = LatticeBackend::new(NativeBackendParams {
+            ring_profile: RingProfile::GoldilocksCyclotomic24,
+            matrix_rows: 74,
+            matrix_cols: 8,
+            max_commitment_message_ring_elems: 513,
             ..NativeBackendParams::default()
         });
+        let frog_backend = LatticeBackend::new(NativeBackendParams::default());
         let cyclotomic_security = cyclotomic_backend.security_params();
         let frog_security = frog_backend.security_params();
         let (cyclotomic_pk, _) = cyclotomic_backend
@@ -2908,23 +3011,26 @@ mod tests {
         assert_eq!(claim.claimed_security_bits, 128);
         assert_eq!(claim.transcript_soundness_bits, 157);
         assert_eq!(claim.opening_hiding_bits, 0);
-        assert_eq!(claim.commitment_codomain_bits, 37_296);
+        assert_eq!(claim.commitment_codomain_bits, 37_422);
         assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
-        assert_eq!(claim.commitment_random_matrix_bits, 360);
-        assert_eq!(claim.commitment_problem_equations, 592);
+        assert_eq!(claim.commitment_random_matrix_bits, 486);
+        assert_eq!(claim.commitment_problem_equations, 594);
         assert_eq!(claim.commitment_problem_dimension, 4_104);
         assert_eq!(claim.commitment_problem_coeff_bound, 255);
         assert_eq!(claim.commitment_problem_l2_bound, 16_336);
         assert_eq!(claim.commitment_estimator_dimension, 4_104);
-        assert_eq!(claim.commitment_estimator_block_size, 3_267);
-        assert_eq!(claim.commitment_estimator_classical_bits, 953);
-        assert_eq!(claim.commitment_estimator_quantum_bits, 865);
-        assert_eq!(claim.commitment_estimator_paranoid_bits, 677);
+        assert_eq!(claim.commitment_estimator_block_size, 3_294);
+        assert_eq!(claim.commitment_estimator_classical_bits, 961);
+        assert_eq!(claim.commitment_estimator_quantum_bits, 872);
+        assert_eq!(claim.commitment_estimator_paranoid_bits, 683);
         assert_eq!(claim.commitment_reduction_loss_bits, 0);
-        assert_eq!(claim.commitment_binding_bits, 865);
+        assert_eq!(claim.commitment_binding_bits, 872);
         assert_eq!(claim.composition_loss_bits, 7);
         assert_eq!(claim.soundness_floor_bits, 150);
         assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
+        assert!(claim
+            .assumption_ids
+            .contains(&"fs.quint_goldilocks_profile_fold_challenges"));
         assert!(claim
             .assumption_ids
             .contains(&"commitment.deterministic_public_witness_reconstruction"));

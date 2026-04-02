@@ -6,7 +6,7 @@ OUT_DIR="${1:-$ROOT/audits/native-backend-128b}"
 PACKAGE_BASENAME="native-backend-128b-review-package"
 PACKAGE_TAR="$OUT_DIR/${PACKAGE_BASENAME}.tar.gz"
 PACKAGE_SHA="$OUT_DIR/package.sha256"
-BENCHMARK_JSON="${NATIVE_BACKEND_BENCHMARK_JSON:-$ROOT/.agent/benchmarks/native_tx_leaf_receipt_root_claim_alignment_20260328.json}"
+BENCHMARK_JSON="${NATIVE_BACKEND_BENCHMARK_JSON:-$ROOT/.agent/benchmarks/native_tx_leaf_receipt_root_claim_alignment_20260402.json}"
 
 mkdir -p "$OUT_DIR"
 WORKDIR="$(mktemp -d)"

@@ -50,6 +50,20 @@ impl RingProfile {
             Self::GoldilocksFrog => b"goldilocks-frog",
         }
     }
+
+    fn degree(self) -> usize {
+        match self {
+            Self::GoldilocksCyclotomic24 => 8,
+            Self::GoldilocksFrog => 54,
+        }
+    }
+
+    fn reduction_terms(self) -> &'static [(usize, i8)] {
+        match self {
+            Self::GoldilocksCyclotomic24 => &[(0, -1)],
+            Self::GoldilocksFrog => &[(0, -1), (27, -1)],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,15 +102,15 @@ impl NativeBackendParams {
             manifest: BackendManifest {
                 family_label: "goldilocks_128b_structural_commitment",
                 spec_label:
-                    "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7",
+                    "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8",
                 commitment_scheme_label: "bounded_message_random_matrix_commitment",
-                challenge_schedule_label: "quint_goldilocks_fs_challenge_negacyclic_mix",
+                challenge_schedule_label: "quint_goldilocks_fs_challenge_profile_mix",
                 maturity_label: "structural_candidate",
             },
             security_bits: 128,
-            ring_profile: RingProfile::GoldilocksCyclotomic24,
-            matrix_rows: 74,
-            matrix_cols: 8,
+            ring_profile: RingProfile::GoldilocksFrog,
+            matrix_rows: 11,
+            matrix_cols: 54,
             challenge_bits: 63,
             fold_challenge_count: 5,
             max_fold_arity: 2,
@@ -105,7 +119,7 @@ impl NativeBackendParams {
             opening_randomness_bits: 256,
             commitment_security_model: CommitmentSecurityModel::BoundedKernelModuleSis,
             commitment_estimator_model: CommitmentEstimatorModel::SisLatticeEuclideanAdps16,
-            max_commitment_message_ring_elems: 513,
+            max_commitment_message_ring_elems: 76,
             max_claimed_receipt_root_leaves: 128,
         }
     }
@@ -118,6 +132,12 @@ impl NativeBackendParams {
         ensure!(
             self.matrix_cols > 0,
             "matrix_cols must be strictly positive"
+        );
+        ensure!(
+            self.matrix_cols == self.ring_profile.degree(),
+            "matrix_cols {} must match ring profile degree {}",
+            self.matrix_cols,
+            self.ring_profile.degree()
         );
         ensure!(
             (1..=63).contains(&self.challenge_bits),
@@ -164,7 +184,7 @@ impl NativeBackendParams {
     }
 
     fn ring_degree(&self) -> usize {
-        self.matrix_cols
+        self.ring_profile.degree()
     }
 
     fn digit_bits(&self) -> u16 {
@@ -1013,6 +1033,7 @@ impl LatticeBackend {
         validate_fold_pair(left, right)?;
         let challenges = derive_fold_challenges(pk, left, right);
         let parent_rows = fold_commitment_rows(
+            pk.ring_profile,
             &left.witness_commitment,
             &right.witness_commitment,
             &challenges,
@@ -1077,6 +1098,7 @@ impl LatticeBackend {
             "fold challenge vector mismatch"
         );
         let expected_rows = fold_commitment_rows(
+            vk.ring_profile,
             &left.witness_commitment,
             &right.witness_commitment,
             &expected_challenges,
@@ -2639,7 +2661,8 @@ fn commit_ring_message(pk: &BackendKey, message: &[RingElem]) -> Vec<RingElem> {
     let mut accumulators = vec![vec![0i128; pk.ring_degree]; pk.commitment_rows];
     for (col_index, message_elem) in message.iter().enumerate() {
         for (row_index, accumulator) in accumulators.iter_mut().enumerate() {
-            accumulate_negacyclic_product(
+            accumulate_ring_product(
+                pk.ring_profile,
                 accumulator,
                 &matrix_entry(pk, row_index, col_index),
                 message_elem,
@@ -2680,8 +2703,17 @@ fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem
     RingElem::from_coeffs(coeffs)
 }
 
-fn accumulate_negacyclic_product(accumulator: &mut [i128], left: &RingElem, right: &RingElem) {
+fn accumulate_ring_product(
+    ring_profile: RingProfile,
+    accumulator: &mut [i128],
+    left: &RingElem,
+    right: &RingElem,
+) {
     let degree = left.coeffs.len();
+    assert_eq!(degree, ring_profile.degree());
+    assert_eq!(right.coeffs.len(), degree);
+    assert_eq!(accumulator.len(), degree);
+    let mut raw = vec![0i128; degree.saturating_mul(2).saturating_sub(1)];
     for (i, left_coeff) in left.coeffs.iter().enumerate() {
         for (j, right_coeff) in right.coeffs.iter().enumerate() {
             if *right_coeff == 0 {
@@ -2689,12 +2721,12 @@ fn accumulate_negacyclic_product(accumulator: &mut [i128], left: &RingElem, righ
             }
             let target = i + j;
             let product = i128::from(*left_coeff) * i128::from(*right_coeff);
-            if target < degree {
-                accumulator[target] += product;
-            } else {
-                accumulator[target - degree] -= product;
-            }
+            raw[target] += i128::from(reduce_goldilocks_signed(product));
         }
+    }
+    reduce_ring_polynomial(ring_profile, &mut raw);
+    for (slot, value) in accumulator.iter_mut().zip(raw.into_iter().take(degree)) {
+        *slot += value;
     }
 }
 
@@ -2736,6 +2768,7 @@ fn derive_fold_challenges(
 }
 
 fn fold_commitment_rows(
+    ring_profile: RingProfile,
     left: &LatticeCommitment,
     right: &LatticeCommitment,
     challenges: &[u64],
@@ -2756,12 +2789,13 @@ fn fold_commitment_rows(
         .iter()
         .zip(&right.rows)
         .map(|(left_row, right_row)| {
-            delayed_linear_combine_with_schedule(left_row, right_row, challenges)
+            delayed_linear_combine_with_schedule(ring_profile, left_row, right_row, challenges)
         })
         .collect()
 }
 
 fn delayed_linear_combine_with_schedule(
+    ring_profile: RingProfile,
     left: &RingElem,
     right: &RingElem,
     challenges: &[u64],
@@ -2770,28 +2804,76 @@ fn delayed_linear_combine_with_schedule(
         left.coeffs.len() == right.coeffs.len(),
         "cannot combine ring elements with different degrees"
     );
+    ensure!(
+        left.coeffs.len() == ring_profile.degree(),
+        "row degree {} does not match ring profile degree {}",
+        left.coeffs.len(),
+        ring_profile.degree()
+    );
+    ensure!(
+        challenges.len() <= ring_profile.degree(),
+        "fold schedule length {} exceeds ring profile degree {}",
+        challenges.len(),
+        ring_profile.degree()
+    );
+    let mut challenge_coeffs = vec![0u64; ring_profile.degree()];
+    for (rotation, challenge) in challenges.iter().copied().enumerate() {
+        challenge_coeffs[rotation] = challenge;
+    }
+    let challenge_poly = RingElem::from_coeffs(challenge_coeffs);
+    let folded_right = multiply_ring_elems(ring_profile, &challenge_poly, right)?;
     let mut coeffs = Vec::with_capacity(left.coeffs.len());
-    for (coeff_index, left_coeff) in left.coeffs.iter().enumerate() {
-        let mut value = Goldilocks::new(*left_coeff);
-        for (rotation, challenge) in challenges.iter().copied().enumerate() {
-            let right_coeff = negacyclic_rotated_coeff(right, coeff_index, rotation);
-            value += Goldilocks::new(challenge) * goldilocks_from_signed(right_coeff);
-        }
+    for (left_coeff, folded_coeff) in left.coeffs.iter().zip(folded_right) {
+        let value = Goldilocks::new(*left_coeff) + goldilocks_from_signed(folded_coeff);
         coeffs.push(value.as_canonical_u64());
     }
     Ok(RingElem::from_coeffs(coeffs))
 }
 
-fn negacyclic_rotated_coeff(row: &RingElem, coeff_index: usize, rotation: usize) -> i128 {
-    let degree = row.coeffs.len();
-    let source_index = coeff_index + rotation;
-    let wraps = source_index / degree;
-    let index = source_index % degree;
-    let coeff = i128::from(row.coeffs[index]);
-    if wraps.is_multiple_of(2) {
-        coeff
-    } else {
-        -coeff
+fn multiply_ring_elems(
+    ring_profile: RingProfile,
+    left: &RingElem,
+    right: &RingElem,
+) -> Result<Vec<i128>> {
+    let degree = left.coeffs.len();
+    ensure!(
+        degree == ring_profile.degree(),
+        "left ring degree {} does not match ring profile degree {}",
+        degree,
+        ring_profile.degree()
+    );
+    ensure!(
+        right.coeffs.len() == degree,
+        "cannot multiply ring elements with different degrees"
+    );
+    let mut raw = vec![0i128; degree.saturating_mul(2).saturating_sub(1)];
+    for (i, left_coeff) in left.coeffs.iter().enumerate() {
+        for (j, right_coeff) in right.coeffs.iter().enumerate() {
+            if *right_coeff == 0 {
+                continue;
+            }
+            let product = i128::from(*left_coeff) * i128::from(*right_coeff);
+            raw[i + j] += i128::from(reduce_goldilocks_signed(product));
+        }
+    }
+    reduce_ring_polynomial(ring_profile, &mut raw);
+    raw.truncate(degree);
+    Ok(raw)
+}
+
+fn reduce_ring_polynomial(ring_profile: RingProfile, coeffs: &mut [i128]) {
+    let degree = ring_profile.degree();
+    assert!(coeffs.len() >= degree);
+    for index in (degree..coeffs.len()).rev() {
+        let carry = coeffs[index];
+        if carry == 0 {
+            continue;
+        }
+        coeffs[index] = 0;
+        let base = index - degree;
+        for (shift, factor) in ring_profile.reduction_terms() {
+            coeffs[base + shift] += carry * i128::from(*factor);
+        }
     }
 }
 

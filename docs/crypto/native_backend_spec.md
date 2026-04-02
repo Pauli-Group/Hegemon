@@ -20,9 +20,9 @@ This specification does not define the full transaction AIR or the full STARK pr
 The active family at the time this document was written is:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
-- `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
+- `challenge_schedule_label = "quint_goldilocks_fs_challenge_profile_mix"`
 - `maturity_label = "structural_candidate"`
 
 Frozen comparison families are:
@@ -42,9 +42,9 @@ Frozen comparison families are:
 The current active parameter object also carries:
 
 - `security_bits = 128`
-- `ring_profile = GoldilocksCyclotomic24`
-- `matrix_rows = 74`
-- `matrix_cols = 8`
+- `ring_profile = GoldilocksFrog`
+- `matrix_rows = 11`
+- `matrix_cols = 54`
 - `challenge_bits = 63`
 - `fold_challenge_count = 5`
 - `max_fold_arity = 2`
@@ -53,7 +53,7 @@ The current active parameter object also carries:
 - `opening_randomness_bits = 256`
 - `commitment_security_model = "bounded_kernel_module_sis"`
 - `commitment_estimator_model = "sis_lattice_euclidean_adps16"`
-- `max_commitment_message_ring_elems = 513`
+- `max_commitment_message_ring_elems = 76`
 - `max_claimed_receipt_root_leaves = 128`
 
 ## Global Encoding Rules
@@ -214,6 +214,12 @@ Each challenge is then derived with Blake3 XOF over:
 - `challenge_index` as `u64`
 
 Each challenge is reduced into the configured `challenge_bits` width using the backend’s current reduction rule. The current family derives exactly `fold_challenge_count = 5` challenges.
+
+The active schedule no longer assumes a negacyclic degree-8 quotient. It derives five Goldilocks transcript challenges and interprets them as the low-degree coefficients of a profile-owned challenge polynomial. For `GoldilocksFrog`, ring multiplication and fold mixing are performed in the quotient:
+
+- `R_q = Z_q[X] / (X^54 + X^27 + 1)`
+
+So the live fold schedule is now “profile mix,” not “negacyclic mix.” Historical families may still use the old negacyclic schedule, but the active family does not.
 
 The fold verifier must reject if:
 

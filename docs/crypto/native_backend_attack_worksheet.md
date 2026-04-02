@@ -5,8 +5,8 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ## Active Target
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
-- `spec_digest = fc4112b4aed172f792b8440e0d9f098bdc172a4575c138953d92518b63f5f212`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8"`
+- `spec_digest = c441d06521bf6e604fda75378aea05e341ad3f4a8769d74a9cca4e3ff582eb23`
 
 ## Break Classes
 
@@ -25,7 +25,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 
 - Targeted claims:
   - `random_oracle.blake3_fiat_shamir`
-  - `fs.quint_goldilocks_negacyclic_fold_challenges`
+  - `fs.quint_goldilocks_profile_fold_challenges`
 - What to exercise:
   - distinct fold inputs producing identical transcript bytes
   - domain-separation collisions across leaf and fold subtranscripts

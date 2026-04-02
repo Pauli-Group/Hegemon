@@ -7,14 +7,14 @@ This document describes the current code-derived security claim for Hegemon's ac
 Active family:
 
 - `family_label = "goldilocks_128b_structural_commitment"`
-- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v7"`
+- `spec_label = "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8"`
 - `commitment_scheme_label = "bounded_message_random_matrix_commitment"`
-- `challenge_schedule_label = "quint_goldilocks_fs_challenge_negacyclic_mix"`
+- `challenge_schedule_label = "quint_goldilocks_fs_challenge_profile_mix"`
 - `maturity_label = "structural_candidate"`
 
 The exact wire and transcript surface for that family is frozen in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md). The exact commitment reduction note for the active family is [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md). The current `spec_digest` derived from the live parameter regime is:
 
-- `spec_digest = fc4112b4aed172f792b8440e0d9f098bdc172a4575c138953d92518b63f5f212`
+- `spec_digest = c441d06521bf6e604fda75378aea05e341ad3f4a8769d74a9cca4e3ff582eb23`
 
 ## Claim Model
 
@@ -32,24 +32,25 @@ For the active family the code currently computes:
 - `claimed_security_bits = 128`
 - `transcript_soundness_bits = floor(challenge_bits * fold_challenge_count / 2) = floor(63 * 5 / 2) = 157`
 
-  **Rationale for the `/2` divisor:** the repository currently uses `floor(k * b / 2)` as a conservative engineering cap for transcript soundness pending theorem-backed analysis of the exact composed Fiat-Shamir fold schedule. This is not derived from a specific birthday-bound theorem for this construction; it is a blanket halving applied as a safety margin. Tightening or replacing this term with a proven bound for the exact negacyclic multi-challenge fold schedule is an open review item.
+  **Rationale for the `/2` divisor:** the repository currently uses `floor(k * b / 2)` as a conservative engineering cap for transcript soundness pending theorem-backed analysis of the exact composed Fiat-Shamir fold schedule. This is not derived from a specific theorem for this construction; it is a blanket halving applied as a safety margin. Tightening or replacing this term with a proven bound for the exact profile-owned multi-challenge fold schedule is an open review item.
 - `opening_hiding_bits = 0` because the shipped tx-leaf / receipt-root lane reconstructs its commitment deterministically from public witness data instead of using a live public opening / seed path
-- `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 74 * 8 = 37,296`
+- `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 11 * 54 = 37,422`
 - `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 513 * 8 * 9 = 36,936`
-- `commitment_random_matrix_bits = max(commitment_codomain_bits - commitment_same_seed_search_bits, 0) = 360`
-- `commitment_problem_equations = matrix_rows * ring_degree = 74 * 8 = 592`
-- `commitment_problem_dimension = max_commitment_message_ring_elems * ring_degree = 513 * 8 = 4104`
+- `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 76 * 54 * 9 = 36,936`
+- `commitment_random_matrix_bits = max(commitment_codomain_bits - commitment_same_seed_search_bits, 0) = 486`
+- `commitment_problem_equations = matrix_rows * ring_degree = 11 * 54 = 594`
+- `commitment_problem_dimension = max_commitment_message_ring_elems * ring_degree = 76 * 54 = 4104`
 - `commitment_problem_coeff_bound = 2^decomposition_bits - 1 = 255`
 - `commitment_problem_l2_bound = ceil(255 * sqrt(4104)) = 16,336`
 - `commitment_estimator_dimension = 4104`
-- `commitment_estimator_block_size = 3267`
-- `commitment_estimator_classical_bits = 953`
-- `commitment_estimator_quantum_bits = 865`
-- `commitment_estimator_paranoid_bits = 677`
+- `commitment_estimator_block_size = 3294`
+- `commitment_estimator_classical_bits = 961`
+- `commitment_estimator_quantum_bits = 872`
+- `commitment_estimator_paranoid_bits = 683`
 - `commitment_reduction_loss_bits = 0`
-- `commitment_binding_bits = commitment_estimator_quantum_bits - commitment_reduction_loss_bits = 865 - 0 = 865`
+- `commitment_binding_bits = commitment_estimator_quantum_bits - commitment_reduction_loss_bits = 872 - 0 = 872`
 - `composition_loss_bits = ceil(log2(max_claimed_receipt_root_leaves)) = ceil(log2(128)) = 7`
-- `soundness_floor_bits = min(157 - 7, 865) = 150`
+- `soundness_floor_bits = min(157 - 7, 872) = 150`
 - `review_state = candidate_under_review`
 
 The code rejects setup whenever `claimed_security_bits > soundness_floor_bits`.
@@ -89,7 +90,7 @@ The active family currently emits these `assumption_ids`:
 
 1. `random_oracle.blake3_fiat_shamir`
 2. `serialization.canonical_native_artifact_bytes`
-3. `fs.quint_goldilocks_negacyclic_fold_challenges`
+3. `fs.quint_goldilocks_profile_fold_challenges`
 4. `commitment.deterministic_public_witness_reconstruction`
 5. `commitment.bounded_kernel_module_sis_exact_reduction`
 6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
@@ -102,8 +103,8 @@ These mean:
 2. `serialization.canonical_native_artifact_bytes`
    The security claim assumes the byte encodings described in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md) are canonical, injective over accepted inputs, and rejected on malformed or noncanonical encodings.
 
-3. `fs.quint_goldilocks_negacyclic_fold_challenges`
-   Soundness for the fold schedule assumes five independently derived transcript challenges over Goldilocks, mixed through the implemented negacyclic linear fold schedule.
+3. `fs.quint_goldilocks_profile_fold_challenges`
+   Soundness for the fold schedule assumes five independently derived transcript challenges over Goldilocks, mixed through the implemented profile-owned ring fold schedule. For the active family that schedule is the low-degree challenge polynomial applied in `Z_q[X] / (X^54 + X^27 + 1)`.
 
 4. `commitment.deterministic_public_witness_reconstruction`
    The live tx-leaf verifier must reconstruct the exact packed witness and deterministic commitment from the public tx view, serialized STARK public inputs, and fixed relation layout. The active security floor assumes that this reconstruction is canonical and that the verifier rejects mismatches.
@@ -112,7 +113,7 @@ These mean:
    Binding for the current commitment path is claimed through the exact reduction stated in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md): a collision in the implemented bounded live message class yields a bounded nonzero kernel vector for the same commitment matrix. That reduction feeds the exact coefficient-space SIS instance the repository estimates for the active parameter set.
 
 6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
-   The concrete binding floor is taken from the coefficient-space Euclidean SIS estimate the repository computes for the exact active instance. For the current parameters this yields `β = 3267`, `classical = 953`, `quantum = 865`, and `paranoid = 677`, and the live claim uses the quantum line.
+   The concrete binding floor is taken from the coefficient-space Euclidean SIS estimate the repository computes for the exact active instance. For the current parameters this yields `β = 3294`, `classical = 961`, `quantum = 872`, and `paranoid = 683`, and the live claim uses the quantum line.
 
 ## What The Claim Does Not Say
 
@@ -122,7 +123,7 @@ This claim does not say:
 - that the folding layer alone provides knowledge soundness over the CCS relation — it does not; live-path soundness depends on the STARK-verification gate at leaf construction and import,
 - that the backend is already externally cryptanalyzed,
 - that the in-repo construction is paper-equivalent to Neo, SuperNeo, or any final Module-SIS commitment construction,
-- that the active ring `Z_q[X]/(X^8 + 1)` provides ring-structured hardness — it is fully splitting over the Goldilocks field, and the claim deliberately operates at the flattened coefficient-space SIS level,
+- that the active ring `Z_q[X]/(X^54 + X^27 + 1)` provides ring-structured hardness — the claim deliberately operates at the flattened coefficient-space SIS level, and external review is still expected to confirm that the frog quotient does not introduce an easier algebraic attack than the stated coefficient-space estimate,
 - that the timing harness proves constant time,
 - that a one-minute local fuzz smoke test is the same thing as exhaustive parser verification,
 - or that the current line is production-ready.
