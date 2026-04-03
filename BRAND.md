@@ -1,18 +1,18 @@
 # Branding Guidelines
 
-These branding guidelines ensure that every user-facing artifact communicates the project's values of resilience, clarity, and trust.
+These branding guidelines ensure that every user-facing artifact communicates the project's values of resilience, clarity, and autonomy.
 
 ## Core Principles
 - **Legibility first** – interfaces must remain usable in low-light trading floors and bright control rooms.
-- **High-trust neutrality** – visual tone should feel neutral but precise, highlighting data integrity over hype.
+- **Quiet autonomy** – visual tone should feel self-possessed and precise, emphasizing user control and privacy over institutional authority or hype.
 - **Efficient scalability** – every element should scale across dashboards, CLI renderers, and documentation illustrations.
-- **Secure, seamless delight** – every interaction must reinforce safety, reduce friction, and end with a positive confirmation
-  cue so operators feel confident and delighted.
+- **Calm confirmation** – every interaction must reinforce user control, reduce friction, and end with a clear confirmation
+  cue so operators feel confident without theatrics.
 
 ## Color System
 | Role | Color | Usage | Justification |
 | --- | --- | --- | --- |
-| Primary base | `#0E1C36` (Deep Midnight) | Backgrounds, nav bars, modal chrome | Deep desaturated blue conveys institutional trust and gives high contrast for light text. |
+| Primary base | `#0E1C36` (Deep Midnight) | Backgrounds, nav bars, modal chrome | Deep desaturated blue anchors the interface, keeps contrast high for light text, and supports a privacy-first tone without visual noise. |
 | Accent | `#1BE7FF` (Ionosphere) | Links, focus states, important actionable elements | Cyan accent pairs with the primary base to feel technical and precise while meeting WCAG contrast requirements. |
 | Secondary highlight | `#F5A623` (Molten Amber) | Alerts, badge counts, algorithm states | Warm accent draws attention to risk while staying distinguishable from the cyan action color. |
 | Positive state | `#19B37E` (Proof Green) | Success toasts, upward trends | Saturated green signals growth and validation without overpowering primary elements. |

@@ -7,14 +7,14 @@ Quantum-resistant private payments
 ## Whitepaper
 
 ### Abstract
-HEGEMON (HGN) establishes a unified, privacy-preserving settlement layer that remains secure even in the presence of large-scale quantum adversaries. The project combines a post-quantum shielded pool, manifest-driven protocol evolution, and settlement-grade consensus into a single monetary primitive that can serve both retail and interbank use cases. This whitepaper summarizes the core principles guiding the repo and connects them to the implementation artifacts contained in this monorepo.
+HEGEMON (HGN) establishes a unified, privacy-preserving settlement layer built for users who want autonomy over money even in the presence of large-scale quantum adversaries. The project combines a post-quantum shielded pool, manifest-driven protocol evolution, and permissionless PoW consensus into a single self-custodied monetary primitive for private payments and proof of disclosure. This whitepaper summarizes the core principles guiding the repo and connects them to the implementation artifacts contained in this monorepo.
 
 ### Motivation
-HGN is a post-quantum, Zcash-inspired settlement layer focused entirely on shielded transactions. The motivation comes from two converging pressures. First, Shor/Grover-class adversaries threaten to rewind the privacy guarantees of legacy shielded pools that still rely on elliptic curves or pairings. Second, the most commercially interesting private-payment applications still need instant settlement, programmability, and selective disclosure without surrendering supply controls. HGN combines PQ cryptography, MASP-style circuits, and explicit protocol-release schedules to deliver that blend. Privacy is a first-order commercial requirement because merchants, suppliers, and consumers routinely expose strategic information—such as inventory positions, negotiated discounts, or sensitive purchase histories—when forced to transact on transparent ledgers. Once adversaries or competitors can scrape that data, they can front-run contracts, profile customers for coercive price discrimination, or deanonymize activists, making private commerce practically impossible. The motivating use cases are:
+HGN is a post-quantum, Zcash-inspired settlement layer focused entirely on shielded transactions. The motivation comes from two converging pressures. First, Shor/Grover-class adversaries threaten to rewind the privacy guarantees of legacy shielded pools that still rely on elliptic curves or pairings. Second, private digital money still needs instant settlement, local custody, and the ability to prove honesty without exposing the rest of a user's history. HGN combines PQ cryptography, MASP-style circuits, and explicit protocol-release schedules to deliver that blend. Privacy is a first-order autonomy requirement because transparent ledgers expose balances, counterparties, and behavioral patterns to anyone willing to watch. Once outsiders can scrape that data, they can map relationships, infer strategy, pressure users, or deanonymize activists and businesses alike, making practical financial privacy impossible. The motivating use cases are:
 
 1. **Digital bearer instrument** – Users custody notes locally via the `wallet/` client and transact without revealing balances, ownership, or memo data.
-2. **Cross-border settlement rail** – Miners running the PoW `consensus/` stack deliver eventual finality for interbank transfers and bridge interfaces while preserving the privacy pool semantics.
-3. **Programmable safety net** – Protocol manifests and version schedules can enact capped issuance, capital controls, or demurrage in response to macro shocks, while remaining auditable.
+2. **Borderless settlement rail** – Miners running the PoW `consensus/` stack deliver eventual finality for cross-border payments, payroll, and bilateral settlement without publishing the relationship graph.
+3. **Proof of disclosure** – Proofs of disclosure and scoped disclosures let users prove a payment, balance claim, or source-of-funds fact without revealing unrelated history.
 
 ### Protocol overview
 The HGN protocol consists of four tightly-coupled subsystems:
@@ -22,7 +22,7 @@ The HGN protocol consists of four tightly-coupled subsystems:
 1. **Shielded pool and cryptography (`crypto/`, `circuits/`, `wallet/`)** – The pool is modeled as a sparse Merkle accumulator proven via STARKs. ML-DSA/SLH-DSA signature primitives, ML-KEM key encapsulation, and hash-based commitments (Blake3/SHA3, no Pedersen or ECC) underpin the spend authorization flow. Notes transition between states through the circuits defined in `circuits/`, and users interface with them via the wallet note-management APIs.
 2. **Consensus and networking (`consensus/`, `network/`)** - A PoW protocol seals batches of shielded transactions. The Go `netbench` tooling simulates adversarial bandwidth conditions, while the Rust consensus service validates blocks by checking a commitment proof plus parallel transaction-proof verification and performing per-node randomized data-availability sampling of erasure-coded chunks.
 3. **State and execution (`state/`, `protocol/`)** – Mining nodes maintain on-disk Merkle forests, aggregate optional miner tips into the shielded coinbase path, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, and proof verification limits.
-4. **Protocol release artifacts and runbooks (`governance/`, `runbooks/`)** – Version schedules define monetary policy, allowed proof bindings, and emergency upgrade paths. Operational runbooks document incident response, upgrade ceremonies, and regulator disclosures for PoW operators; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
+4. **Protocol release artifacts and runbooks (`governance/`, `runbooks/`)** – Version schedules define supported proof bindings, issuance parameters, and emergency upgrade paths. Operational runbooks document incident response, upgrade ceremonies, and miner-facing procedures; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
 
 ```mermaid
 flowchart TB
@@ -120,33 +120,25 @@ The privacy layer is engineered as a single, MASP-style shielded pool from genes
 
 **Anonymity set**: All notes share a single shielded pool—the anonymity set equals the total note count (currently 2³²–2⁴⁰ capacity). Unlike Zcash's fragmented pools (Sprout/Sapling/Orchard), version upgrades do not partition users.
 
-**Information leakage**: Transaction timing and proof size are observable; sender, recipient, amounts, and asset types remain hidden. Viewing keys enable selective disclosure without breaking pool-wide privacy.
+**Information leakage**: Transaction timing and proof size are observable; sender, recipient, amounts, and asset types remain hidden. Viewing keys and proofs of disclosure enable targeted disclosure without breaking pool-wide privacy.
 
 ### Monetary model
-HGN targets a basket-pegged unit of account. Key levers include:
+HGN's core monetary posture is simple: shielded bearer money, predictable issuance, and local custody. Supply is enforced inside the protocol's value-balance rules; block subsidies follow the time-normalized halving schedule described in `TOKENOMICS_CALCULATION.md`, fees can be burned, and all rewards land directly inside the shielded pool rather than a transparent account class.
 
-- **Supply management** – Mining nodes enforce capped issuance defined in `DESIGN.md`, and surplus fees route to a stabilization reserve to dampen volatility.
-- **Liquidity incentives** – Wallet and miner clients expose hooks for automated market makers to provide cross-asset liquidity while preserving shielded ownership.
-- **Stability metrics** – Oracles feed transparent macro indicators (CPI baskets, FX indices) into protocol-validated policy updates to automatically adjust collateral ratios.
+Three properties matter operationally:
 
-Stablecoin mint and burn happen inside the shielded pool rather than through transparent balances. Issuers submit proof-native shielded transfers whose proofs bind to a protocol policy hash plus the current oracle and attestation commitments from the active manifest. The verifier rejects stale or disputed inputs before state transition, so issuance remains private while policy compliance stays deterministic.
+- **Predictable issuance** – the emission curve is explicit in protocol constants instead of discretionary intervention.
+- **Shielded rewards** – miner and any protocol-level allocations are created as shielded outputs, preserving a single anonymity set from issuance onward.
+- **Portable ownership** – users hold notes directly via `wallet/`, and the chain only sees commitments, nullifiers, and proofs.
 
-In the live system, these levers become explicit mining duties wired through protocol manifests and `state/`. Issuance limits are encoded in `VersionProposal`s that describe the capped schedule alongside any reserve-ratio tweaks; once published they are shipped inside the consensus `VersionSchedule`, so every block producer rejects mint transactions whose proofs exceed the supply cap recorded in protocol metadata. Fees and demurrage routed into the stabilization reserve are audited inside the same ledger trees, and any rebalancing logic must remain protocol-defined rather than admin-defined.
+Protocol manifests and version schedules still coordinate supported bindings and emergency upgrades, but their job is continuity of the privacy pool, not macroeconomic steering. The release machinery exists to preserve compatibility, ship cryptographic repairs, and keep one canonical shielded pool alive across upgrades.
 
-Liquidity hooks live in `protocol/` where transaction structs expose sidecar commitments for AMM routers, and miners enforce that those hooks only net out if they reference bindings blessed by the active `VersionSchedule`. The `wallet/` glue code simply passes through the hook payload so shielded ownership never leaves the MASP. Because the same versioning apparatus backs these hooks, rolling out a new liquidity primitive is as simple as drafting a `VersionProposal` with an `UpgradeDirective` that migrates existing liquidity notes without fragmenting the pool.
-
-Stability oracles are modeled as miners consuming commitments produced by adapters implemented in `protocol/` and then anchoring the values into the Merkle forests maintained under `state/`. Protocol schedules define which CPI/FX feeds are valid and how deviations drive collateral-ratio changes. Miners must attest that each oracle update references a `VersionSchedule`-approved binding; otherwise the block is rejected, ensuring that a rogue oracle cannot silently erode the supply controls or liquidity programs.
-
-Policy changes and primitive upgrades therefore share the same lifecycle: a `VersionProposal` describes the new cap, reserve policy, oracle feed, or liquidity hook; a `VersionSchedule` entry sets the activation/retirement heights; and an optional `UpgradeDirective` codifies how in-flight notes migrate (e.g., swapping to a patched stabilization reserve circuit). This keeps monetary policy atomic—operators only need to track the schedule rather than bespoke forks—and the relevant code paths stay discoverable in protocol-release artifacts, `protocol/`, and `state/`.
-
-Emergency actions reuse the checklist in `runbooks/emergency_version_swap.md`. If the stabilization reserve circuit or an oracle binding is compromised, operators follow that runbook to draft a fast-track `VersionProposal`, regenerate the required proving/verifying keys, and push the updated `VersionSchedule` to all miners. The runbook’s upgrade circuit requirements ensure that reserve balances or oracle attestations can be rolled forward without losing assets, while the staged miner rollout (keys → binaries → monitoring) keeps the monetary safety net intact: consensus refuses unsupported bindings, upgrade transactions prove reserve/oracle continuity, and the final retirement step prunes the vulnerable path once all miners attest to the new schedule.
-
-### Privacy, security, and compliance
+### Privacy, security, and proof of disclosure
 The architecture prioritizes defense-in-depth:
 
 - **Post-quantum guarantees** – All signatures and key exchanges default to PQ-safe primitives maintained in `crypto/`.
 - **Soundness and correctness** – Every critical path change must update `DESIGN.md`, `METHODS.md`, and any relevant specification artifacts to keep the implementation auditable.
-- **Selective disclosure** – View keys allow auditors or regulators to inspect specific flows without deanonymizing the entire ledger, aligning with multi-jurisdiction privacy requirements.
+- **Proof of disclosure** – Proofs of disclosure and scoped viewing keys let users prove specific facts to counterparties or other verifiers without surrendering the rest of their history.
 
 #### Security and assurance program
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) documents the baseline adversary: Shor/Grover-era attackers can compromise miners on demand, replay malformed traffic, and attempt to bias randomness. This is why every primitive in `crypto/` sticks to ML-DSA/SLH-DSA signatures, ML-KEM key exchange, ≥256-bit symmetric hashes, and 48-byte digests for commitments, why the STARK proving system avoids trusted setups entirely, and why adaptive compromise controls (view-key rotation, nullifier privacy, parameter pinning) must survive even when an attacker briefly controls wallets or consensus nodes.
@@ -158,7 +150,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 ### Roadmap
 1. **Alpha** – Deliver end-to-end shielded transfers with synthetic test assets, benchmarked via `circuits-bench` and `wallet-bench`.
 2. **Beta** – Harden the PoW consensus path, finalize protocol-manifest operations, and document how external miners can sync, mine, and upgrade safely.
-3. **Launch** – Freeze the monetary policy smart contracts, publish third-party audits, and release reproducible builds for wallet and mining node binaries.
+3. **Launch** – Freeze the core issuance schedule and proof surfaces, publish third-party audits, and release reproducible builds for wallet and mining node binaries.
 
 ---
 
