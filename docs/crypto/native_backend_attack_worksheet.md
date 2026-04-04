@@ -68,7 +68,21 @@ This worksheet is the concrete attack ledger for the active native backend famil
 - Break condition:
   - verifier accepts a fold proof whose parent rows are not the challenge-mixed children
 
-### 6. Overclaim acceptance
+### 6. Verified-leaf aggregation mismatch
+
+- Targeted claims:
+  - `serialization.canonical_native_artifact_bytes`
+  - `commitment.deterministic_public_witness_reconstruction`
+  - the verified-leaf aggregation note
+- What to exercise:
+  - mutate root-artifact leaf `statement_digest`
+  - mutate root-artifact leaf `proof_digest`
+  - swap or replace supplied tx-leaf artifacts after the root artifact is built
+  - try to keep the same root digest while changing the verified child set
+- Break condition:
+  - receipt-root verification accepts a root whose recorded leaf set does not match the individually verified tx-leaf artifacts it claims to aggregate
+
+### 7. Overclaim acceptance
 
 - Targeted claim:
   - repository claim discipline itself
@@ -79,7 +93,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 - Break condition:
   - setup succeeds even though the code-derived floor is below the requested claim
 
-### 7. Parser and length-bound failures
+### 8. Parser and length-bound failures
 
 - Targeted claim:
   - `serialization.canonical_native_artifact_bytes`
@@ -91,7 +105,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 - Break condition:
   - parser panics, allocates absurdly, or accepts malformed bytes
 
-### 8. Timing leakage on secret-bearing prover paths
+### 9. Timing leakage on secret-bearing prover paths
 
 - Targeted claim:
   - constant-time and canonicality discipline, once added
@@ -102,7 +116,7 @@ This worksheet is the concrete attack ledger for the active native backend famil
 - Break condition:
   - timing harness shows gross, stable separation driven by secret-dependent data on the claimed constant-time paths
 
-### 9. Cross-verifier disagreement
+### 10. Cross-verifier disagreement
 
 - Targeted claim:
   - the package as a whole
@@ -122,10 +136,12 @@ Current repository status:
 - public-witness reconstruction: covered by fixed invalid vectors and direct backend regressions
 - BK-MSIS reduction boundary: now explicitly documented and tied to the active claim, with an in-repo Euclidean SIS estimate for the exact active instance, still awaiting independent review of that concretization and estimator
 - fold-row forgery: covered by fixed invalid vectors and backend regressions
+- verified-leaf aggregation mismatch: covered by mixed-child regressions plus direct root-leaf digest tamper regressions
 - overclaim rejection: covered in code and backend regressions
 - parser and fuzz coverage: local smoke complete and CI job added in `.github/workflows/ci.yml`
 - timing harness: built and passing
 - cross-verifier agreement: built and passing on the fixed bundle
+- packaged claim arithmetic: machine-readable `attack_model.json`, `message_class.json`, and `claim_sweep.json` now ship with an independent `native-backend-ref verify-claim` recomputation path
 
 That status is why the active review state remains `candidate_under_review`.
 

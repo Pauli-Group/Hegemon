@@ -21,10 +21,13 @@ mkdir -p \
   "$STAGE/source"
 
 cp "$ROOT/docs/crypto/native_backend_spec.md" "$STAGE/docs/crypto/"
+cp "$ROOT/docs/crypto/native_backend_formal_theorems.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_commitment_reduction.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_security_analysis.md" "$STAGE/docs/crypto/"
+cp "$ROOT/docs/crypto/native_backend_verified_aggregation.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_attack_worksheet.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_constant_time.md" "$STAGE/docs/crypto/"
+cp "$ROOT/docs/SECURITY_REVIEWS.md" "$STAGE/docs/"
 cp "$ROOT/testdata/native_backend_vectors/bundle.json" "$STAGE/testdata/native_backend_vectors/"
 cp "$ROOT/audits/native-backend-128b/CLAIMS.md" "$STAGE/audits/native-backend-128b/"
 cp "$ROOT/audits/native-backend-128b/THREAT_MODEL.md" "$STAGE/audits/native-backend-128b/"
@@ -55,6 +58,8 @@ paths = [
     "circuits/superneo-core/src",
     "circuits/superneo-hegemon/Cargo.toml",
     "circuits/superneo-hegemon/src",
+    "circuits/superneo-bench/Cargo.toml",
+    "circuits/superneo-bench/src",
     "circuits/superneo-ring/Cargo.toml",
     "circuits/superneo-ring/src",
     "circuits/transaction/Cargo.toml",
@@ -142,8 +147,16 @@ out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
 
 cargo run -p superneo-bench -- --print-native-security-claim > "$STAGE/current_claim.json"
-cargo run -p native-backend-ref -- verify-vectors "$ROOT/testdata/native_backend_vectors" \
+cargo run -p superneo-bench -- --print-native-review-manifest > "$STAGE/review_manifest.json"
+cargo run -p superneo-bench -- --print-native-attack-model > "$STAGE/attack_model.json"
+cargo run -p superneo-bench -- --print-native-message-class > "$STAGE/message_class.json"
+cargo run -p superneo-bench -- --print-native-claim-sweep > "$STAGE/claim_sweep.json"
+cargo run -p native-backend-ref -- verify-vectors "$STAGE/testdata/native_backend_vectors" \
   > "$STAGE/reference_verifier_report.json"
+cargo run -p native-backend-ref -- verify-claim --package-dir "$STAGE" \
+  > "$STAGE/reference_claim_verifier_report.json"
+cargo run -p superneo-bench -- --verify-review-bundle-production "$STAGE/testdata/native_backend_vectors" \
+  > "$STAGE/production_verifier_report.json"
 
 python3 - <<'PY' "$STAGE" "$PACKAGE_TAR" "$PACKAGE_SHA"
 import hashlib

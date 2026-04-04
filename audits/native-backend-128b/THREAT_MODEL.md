@@ -3,7 +3,7 @@
 Reviewer target:
 
 - forge a verifying native `TxLeaf` artifact without the claimed witness/opening relation
-- forge a verifying `ReceiptRoot` artifact without the claimed fold relation
+- forge a verifying `ReceiptRoot` artifact without the claimed verified-leaf aggregation relation
 - make production and reference verifiers disagree on the same fixed vector
 - find a noncanonical encoding that changes semantics without changing accepted meaning
 - find a transcript/domain-separation alias that preserves bytes while changing proof meaning
@@ -18,6 +18,6 @@ In scope:
 
 - native artifact parsing
 - commitment opening binding/hiding under the claimed parameter regime
-- fold transcript derivation and domain separation
+- fold transcript derivation, verified-leaf replay, and domain separation
 - spec identity / manifest identity drift
 - prover-side timing drift on the exercised native tx-leaf build path

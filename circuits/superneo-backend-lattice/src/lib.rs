@@ -112,6 +112,7 @@ pub enum ReviewState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct NativeSecurityClaim {
     pub claimed_security_bits: u32,
+    pub soundness_scope_label: &'static str,
     pub transcript_soundness_bits: u32,
     pub opening_hiding_bits: u32,
     pub commitment_codomain_bits: u32,
@@ -344,7 +345,7 @@ impl NativeBackendParams {
         if self.security_claim_uses_opening_hiding() {
             soundness_floor_bits = soundness_floor_bits.min(opening_hiding_bits);
         }
-        let (assumption_ids, review_state) = match (
+        let (soundness_scope_label, assumption_ids, review_state) = match (
             self.manifest.family_label,
             self.manifest.challenge_schedule_label,
             self.fold_challenge_count,
@@ -356,10 +357,12 @@ impl NativeBackendParams {
                 5,
                 false,
             ) => (
+                "verified_leaf_aggregation",
                 vec![
                     "random_oracle.blake3_fiat_shamir",
                     "serialization.canonical_native_artifact_bytes",
                     "fs.quint_goldilocks_profile_fold_challenges",
+                    "aggregation.native_receipt_root_replays_verified_tx_leaves",
                     "commitment.deterministic_public_witness_reconstruction",
                     "commitment.bounded_kernel_module_sis_exact_reduction",
                     "commitment.sis_lattice_euclidean_adps16_quantum_estimator",
@@ -367,6 +370,7 @@ impl NativeBackendParams {
                 ReviewState::CandidateUnderReview,
             ),
             (_, _, _, true) => (
+                "structural_canonicality_only",
                 vec![
                     "random_oracle.family_owned_fiat_shamir",
                     "serialization.canonical_native_artifact_bytes",
@@ -377,6 +381,7 @@ impl NativeBackendParams {
                 ReviewState::Experimental,
             ),
             _ => (
+                "structural_canonicality_only",
                 vec![
                     "random_oracle.family_owned_fiat_shamir",
                     "serialization.canonical_native_artifact_bytes",
@@ -404,6 +409,7 @@ impl NativeBackendParams {
         };
         Ok(NativeSecurityClaim {
             claimed_security_bits: self.security_bits,
+            soundness_scope_label,
             transcript_soundness_bits,
             opening_hiding_bits,
             commitment_codomain_bits,
@@ -3025,6 +3031,7 @@ mod tests {
             .security_claim()
             .unwrap();
         assert_eq!(claim.claimed_security_bits, 128);
+        assert_eq!(claim.soundness_scope_label, "verified_leaf_aggregation");
         assert_eq!(claim.transcript_soundness_bits, 312);
         assert_eq!(claim.opening_hiding_bits, 0);
         assert_eq!(claim.commitment_codomain_bits, 37_422);
@@ -3047,6 +3054,9 @@ mod tests {
         assert!(claim
             .assumption_ids
             .contains(&"fs.quint_goldilocks_profile_fold_challenges"));
+        assert!(claim
+            .assumption_ids
+            .contains(&"aggregation.native_receipt_root_replays_verified_tx_leaves"));
         assert!(claim
             .assumption_ids
             .contains(&"commitment.deterministic_public_witness_reconstruction"));

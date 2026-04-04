@@ -70,6 +70,42 @@ Audit execution steps:
    - Update to `DESIGN.md` or `METHODS.md` describing the mitigation rationale and any impact on mining pool workflows.
 4. **Integration** – After merging fixes, append a short summary to `DESIGN.md` (architecture impact) and to the relevant runbook.
 
+## 2.2 Native Backend Lattice Review (verified-leaf aggregation + BK-MSIS)
+
+The native backend review package under `audits/native-backend-128b/` is its own track. It is not the same thing as the Plonky3 QROM review above. Reviewers for this track should be given:
+
+- `docs/crypto/native_backend_spec.md`
+- `docs/crypto/native_backend_formal_theorems.md`
+- `docs/crypto/native_backend_verified_aggregation.md`
+- `docs/crypto/native_backend_commitment_reduction.md`
+- `docs/crypto/native_backend_security_analysis.md`
+- `audits/native-backend-128b/CLAIMS.md`
+- `audits/native-backend-128b/REVIEW_QUESTIONS.md`
+- the packaged `review_manifest.json`
+- the packaged `current_claim.json`
+- the packaged `attack_model.json`
+- the packaged `message_class.json`
+- the packaged `claim_sweep.json`
+- the packaged `reference_verifier_report.json`
+- the packaged `reference_claim_verifier_report.json`
+- the packaged `production_verifier_report.json`
+
+Scope split:
+
+1. **Verified-leaf aggregation review** – Confirm that the shipped `receipt_root` lane really does replay every tx-leaf verification and every fold recomputation, and that the repo does not overstate this as CCS soundness.
+2. **Exact reduction review** – Confirm that the deterministic-commitment collision game, exact live message subclass, conservative padded cap, and zero-loss coefficient flattening are stated correctly for the active parameter set.
+3. **Concrete attack-model review** – Evaluate whether the chosen coefficient-space SIS estimate and conservative instance are the right attack model for the active quotient `Z_q[X] / (X^54 + X^27 + 1)`.
+
+Required deliverables:
+
+1. A written statement on whether the native fold layer is accurately described as verified-leaf aggregation rather than Neo/SuperNeo CCS soundness.
+2. A written statement on whether the exact BK-MSIS reduction and coefficient flattening note are correct for the active implementation.
+3. A written statement on whether the chosen estimator model is acceptable, too optimistic, or missing a stronger known attack path.
+4. Reproduction notes using the packaged `review_manifest.json`, fixed vectors, and `native-backend-ref`.
+5. Independent claim-recomputation notes using the packaged `attack_model.json`, `current_claim.json`, and `native-backend-ref verify-claim`.
+
+Whenever the active native backend parameters, live witness schema, or claim model change, regenerate the package and attach the new `review_manifest.json` and `package.sha256` to the next external review request.
+
 ## 3. Formal verification & continuous security testing
 
 - Formal specs live under `circuits/formal/` and `consensus/spec/formal/`. Run them with either [TLC](https://github.com/tlaplus/tlaplus) or [Apalache](https://apalache.informal.systems/):

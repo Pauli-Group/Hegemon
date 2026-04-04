@@ -17,6 +17,7 @@ The exact wire and transcript surface for that family is frozen in [native_backe
 - `spec_digest = c441d06521bf6e604fda75378aea05e341ad3f4a8769d74a9cca4e3ff582eb23`
 
 The theorem-grade derivations for the active line are in [native_backend_formal_theorems.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_formal_theorems.md).
+The exact shipped `tx_leaf -> receipt_root` aggregation object is defined in [native_backend_verified_aggregation.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_verified_aggregation.md).
 
 ## Claim Model
 
@@ -32,6 +33,7 @@ Historical families may still count opening entropy when their live artifact pat
 For the active family the code currently computes:
 
 - `claimed_security_bits = 128`
+- `soundness_scope_label = verified_leaf_aggregation`
 - `transcript_soundness_bits = floor(320 - 5 log2(3)) = 312`
 
   **Rationale for the active value:** each fold challenge is derived from an indexed uniform 64-bit BLAKE3 XOF word reduced by `raw mod (2^63 - 1) + 1`. Because `2^64 = 2(2^63 - 1) + 2`, every challenge value has at most `3` preimages, so the exact indexed five-tuple has point probability at most `3^5 / 2^320`. The theorem note proves this exact bound and the corresponding `312`-bit tuple min-entropy. This is the correct theorem-backed replacement for the old blanket halving rule. It is a bound on the exact challenge-tuple law of the implemented schedule, not a claim that the folding layer implements Neo/SuperNeo CCS soundness.
@@ -94,9 +96,10 @@ The active family currently emits these `assumption_ids`:
 1. `random_oracle.blake3_fiat_shamir`
 2. `serialization.canonical_native_artifact_bytes`
 3. `fs.quint_goldilocks_profile_fold_challenges`
-4. `commitment.deterministic_public_witness_reconstruction`
-5. `commitment.bounded_kernel_module_sis_exact_reduction`
-6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
+4. `aggregation.native_receipt_root_replays_verified_tx_leaves`
+5. `commitment.deterministic_public_witness_reconstruction`
+6. `commitment.bounded_kernel_module_sis_exact_reduction`
+7. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
 
 These mean:
 
@@ -109,13 +112,16 @@ These mean:
 3. `fs.quint_goldilocks_profile_fold_challenges`
    The active schedule derives five indexed transcript challenges over Goldilocks, interprets them as the coefficients of a low-degree challenge polynomial in `Z_q[X] / (X^54 + X^27 + 1)`, and relies on the theorem note's exact tuple-min-entropy bound for that derivation. Accepted folds themselves are deterministic canonicalization checks, not a separate CCS soundness protocol.
 
-4. `commitment.deterministic_public_witness_reconstruction`
+4. `aggregation.native_receipt_root_replays_verified_tx_leaves`
+   The shipped `receipt_root` lane is not treated as generic fold soundness. Its claim scope is explicitly `verified_leaf_aggregation`: receipt-root verification must replay every tx-leaf verification under the same params and then replay every fold recomputation over those verified leaves. That exact security object is defined in [native_backend_verified_aggregation.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_verified_aggregation.md).
+
+5. `commitment.deterministic_public_witness_reconstruction`
    The live tx-leaf verifier must reconstruct the exact packed witness and deterministic commitment from the public tx view, serialized STARK public inputs, and fixed relation layout. The active security floor assumes that this reconstruction is canonical and that the verifier rejects mismatches.
 
-5. `commitment.bounded_kernel_module_sis_exact_reduction`
+6. `commitment.bounded_kernel_module_sis_exact_reduction`
    Binding for the current commitment path is claimed through the exact reduction stated in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md): a collision in the implemented bounded live message class yields a bounded nonzero kernel vector for the same commitment matrix. The theorem note proves that exact reduction and the zero-loss flattening from the active ring/module kernel to the coefficient-space SIS instance the repository estimates.
 
-6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
+7. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
    The concrete binding floor is taken from the coefficient-space Euclidean SIS estimate the repository computes for the exact active instance. For the current parameters this yields `β = 3294`, `classical = 961`, `quantum = 872`, and `paranoid = 683`, and the live claim uses the quantum line.
 
 ## What The Claim Does Not Say
@@ -135,6 +141,7 @@ The current claim is narrower and more honest:
 
 - the repository now states one exact live bounded-message collision problem for the commitment path,
 - the repository now proves the active GoldilocksFrog fold schedule's exact challenge-tuple law and canonicality properties,
+- the repository now packages the actual shipped `receipt_root` guarantee as verified-leaf aggregation instead of leaving that property implicit in code,
 - the repository now states one exact in-repo reduction from that collision problem to a bounded-kernel Module-SIS style target,
 - the code now propagates only the explicit reduction loss and receipt-root composition loss into the final floor,
 - the code now computes the binding cap from one explicit coefficient-space Euclidean SIS estimate for the exact active instance,
@@ -164,11 +171,18 @@ So the current meaning of the claim is:
 The current in-tree review package includes:
 
 - exact protocol spec: [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md)
+- verified-leaf aggregation note: [native_backend_verified_aggregation.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_verified_aggregation.md)
 - exact commitment reduction note: [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md)
 - attack ledger: [native_backend_attack_worksheet.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_attack_worksheet.md)
 - constant-time note plus timing harness: [native_backend_constant_time.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_constant_time.md), `cargo run -p native-backend-timing --release`
 - fixed vectors: [testdata/native_backend_vectors/bundle.json](/Users/pldd/Projects/Reflexivity/Hegemon/testdata/native_backend_vectors/bundle.json)
 - independent verifier: [tools/native-backend-ref](/Users/pldd/Projects/Reflexivity/Hegemon/tools/native-backend-ref)
+- packaged attack-model artifact: `attack_model.json`
+- packaged live message-class artifact: `message_class.json`
+- packaged claim-sensitivity sweep: `claim_sweep.json`
+- generated review manifest: `review_manifest.json`
+- packaged independent claim-verifier report: `reference_claim_verifier_report.json`
+- packaged production verifier parity report: `production_verifier_report.json`
 - external-review tarball: [native-backend-128b-review-package.tar.gz](/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b/native-backend-128b-review-package.tar.gz)
 - review-package checksum file: [package.sha256](/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b/package.sha256)
 - packaged code fingerprint: `code_fingerprint.json`

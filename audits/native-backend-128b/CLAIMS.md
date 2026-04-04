@@ -8,6 +8,7 @@ Active family:
 Current code-derived claim:
 
 - `claimed_security_bits = 128`
+- `soundness_scope_label = verified_leaf_aggregation`
 - `transcript_soundness_bits = 312`
 - `opening_hiding_bits = 0`
 - `commitment_codomain_bits = 37422`
@@ -33,6 +34,7 @@ Interpretation:
 - The live `128`-bit floor no longer comes from the old geometry-only union-bound proxy or the old `/2` transcript heuristic.
 - The active `transcript_soundness_bits = 312` line is the theorem-backed exact min-entropy bound of the indexed five-challenge reduction rule `raw mod (2^63 - 1) + 1`, not a blanket halving rule.
 - The live tx-leaf / receipt-root lane does not count an opening-hiding term because the shipped artifact path reconstructs its commitment deterministically from public witness data.
+- The shipped `receipt_root` lane is now explicitly packaged as verified-leaf aggregation: it replays every tx-leaf verification and every fold recomputation over those verified leaves. It is still not Neo/SuperNeo CCS soundness.
 - The active commitment claim is now tied to the exact bounded-kernel Module-SIS reduction note for the implemented bounded live message class plus an explicit coefficient-space Euclidean SIS estimate of that exact instance.
 - The structural `commitment_random_matrix_bits = 486` term remains reported as a geometry statistic, but it is no longer the live binding floor.
 - The exact currently shipped `TxLeafPublicRelation` occupies only `12` ring elements after pack-then-digit embedding; the exported `76`-element instance is a deliberate conservative cap.
@@ -43,14 +45,16 @@ Exact assumption ids:
 1. `random_oracle.blake3_fiat_shamir`
 2. `serialization.canonical_native_artifact_bytes`
 3. `fs.quint_goldilocks_profile_fold_challenges`
-4. `commitment.deterministic_public_witness_reconstruction`
-5. `commitment.bounded_kernel_module_sis_exact_reduction`
-6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
+4. `aggregation.native_receipt_root_replays_verified_tx_leaves`
+5. `commitment.deterministic_public_witness_reconstruction`
+6. `commitment.bounded_kernel_module_sis_exact_reduction`
+7. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
 
 Source documents:
 
 - `docs/crypto/native_backend_spec.md`
 - `docs/crypto/native_backend_formal_theorems.md`
+- `docs/crypto/native_backend_verified_aggregation.md`
 - `docs/crypto/native_backend_commitment_reduction.md`
 - `docs/crypto/native_backend_security_analysis.md`
 - `docs/crypto/native_backend_attack_worksheet.md`
@@ -67,3 +71,14 @@ Current packaged code fingerprint file:
 Current packaged source snapshot:
 
 - `source/`
+
+Current packaged machine-readable review artifacts:
+
+- `review_manifest.json`
+- `current_claim.json`
+- `attack_model.json`
+- `message_class.json`
+- `claim_sweep.json`
+- `reference_verifier_report.json`
+- `reference_claim_verifier_report.json`
+- `production_verifier_report.json`

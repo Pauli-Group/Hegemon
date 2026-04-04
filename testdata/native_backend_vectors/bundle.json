@@ -24,7 +24,8 @@
   },
   "native_security_claim": {
     "claimed_security_bits": 128,
-    "transcript_soundness_bits": 157,
+    "soundness_scope_label": "verified_leaf_aggregation",
+    "transcript_soundness_bits": 312,
     "opening_hiding_bits": 0,
     "commitment_codomain_bits": 37422,
     "commitment_same_seed_search_bits": 36936,
@@ -41,11 +42,12 @@
     "commitment_reduction_loss_bits": 0,
     "commitment_binding_bits": 872,
     "composition_loss_bits": 7,
-    "soundness_floor_bits": 150,
+    "soundness_floor_bits": 305,
     "assumption_ids": [
       "random_oracle.blake3_fiat_shamir",
       "serialization.canonical_native_artifact_bytes",
       "fs.quint_goldilocks_profile_fold_challenges",
+      "aggregation.native_receipt_root_replays_verified_tx_leaves",
       "commitment.deterministic_public_witness_reconstruction",
       "commitment.bounded_kernel_module_sis_exact_reduction",
       "commitment.sis_lattice_euclidean_adps16_quantum_estimator"

@@ -47,6 +47,18 @@ const TX_PUBLIC_WIRE_BYTES: usize =
     4 + (MAX_INPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 48 + 2 + 2;
 const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeTxLeafCommitmentStats {
+    pub witness_bits: usize,
+    pub digit_bits: u16,
+    pub packed_digits: usize,
+    pub ring_degree: usize,
+    pub live_message_ring_elems: usize,
+    pub live_coefficient_dimension: usize,
+    pub live_problem_coeff_bound: u32,
+    pub live_problem_l2_bound: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToyBalanceStatement {
     pub total_inputs: u64,
@@ -2072,6 +2084,48 @@ fn push_padded_ciphertext_hashes(
 
 pub fn native_backend_params() -> NativeBackendParams {
     NativeBackendParams::default()
+}
+
+fn ceil_sqrt_u64(value: u64) -> u64 {
+    if value <= 1 {
+        return value;
+    }
+    let floor = (value as f64).sqrt().floor() as u64;
+    if floor.saturating_mul(floor) == value {
+        floor
+    } else {
+        floor.saturating_add(1)
+    }
+}
+
+pub fn native_tx_leaf_commitment_stats() -> NativeTxLeafCommitmentStats {
+    native_tx_leaf_commitment_stats_with_params(&native_backend_params())
+}
+
+pub fn native_tx_leaf_commitment_stats_with_params(
+    params: &NativeBackendParams,
+) -> NativeTxLeafCommitmentStats {
+    let relation = TxLeafPublicRelation::default();
+    let witness_bits = relation.shape().witness_schema.total_witness_bits();
+    let digit_bits = params.digit_bits();
+    let packed_digits = witness_bits.div_ceil(digit_bits as usize);
+    let ring_degree = params.ring_degree();
+    let live_message_ring_elems = packed_digits.div_ceil(ring_degree);
+    let live_coefficient_dimension = live_message_ring_elems * ring_degree;
+    let live_problem_coeff_bound = ((1u32 << digit_bits) - 1).max(1);
+    let live_problem_l2_bound = ceil_sqrt_u64((live_coefficient_dimension as u64).saturating_mul(
+        u64::from(live_problem_coeff_bound).saturating_mul(u64::from(live_problem_coeff_bound)),
+    )) as u32;
+    NativeTxLeafCommitmentStats {
+        witness_bits,
+        digit_bits,
+        packed_digits,
+        ring_degree,
+        live_message_ring_elems,
+        live_coefficient_dimension,
+        live_problem_coeff_bound,
+        live_problem_l2_bound,
+    }
 }
 
 fn receipt_root_artifact_version(params: &NativeBackendParams) -> u16 {
@@ -4307,6 +4361,19 @@ mod tests {
     }
 
     #[test]
+    fn native_tx_leaf_commitment_stats_match_current_relation() {
+        let stats = native_tx_leaf_commitment_stats();
+        assert_eq!(stats.witness_bits, 4_935);
+        assert_eq!(stats.digit_bits, 8);
+        assert_eq!(stats.packed_digits, 617);
+        assert_eq!(stats.ring_degree, 54);
+        assert_eq!(stats.live_message_ring_elems, 12);
+        assert_eq!(stats.live_coefficient_dimension, 648);
+        assert_eq!(stats.live_problem_coeff_bound, 255);
+        assert_eq!(stats.live_problem_l2_bound, 6_492);
+    }
+
+    #[test]
     fn native_tx_leaf_rejects_tampered_stark_proof() {
         let witness = sample_witness(19);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
@@ -4455,6 +4522,42 @@ mod tests {
             &built.artifact_bytes
         )
         .is_err());
+    }
+
+    #[test]
+    fn native_receipt_root_rejects_tampered_leaf_proof_digest() {
+        let witnesses = [sample_witness(40), sample_witness(41)];
+        let artifacts = witnesses
+            .iter()
+            .map(|witness| {
+                build_native_tx_leaf_artifact_bytes(witness)
+                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
+        let mut decoded = decode_receipt_root_artifact(&built.artifact_bytes).unwrap();
+        decoded.leaves[0].proof_digest[0] ^= 0x5a;
+        let tampered = encode_receipt_root_artifact(&decoded);
+        assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &tampered).is_err());
+    }
+
+    #[test]
+    fn native_receipt_root_rejects_tampered_leaf_statement_digest() {
+        let witnesses = [sample_witness(42), sample_witness(43)];
+        let artifacts = witnesses
+            .iter()
+            .map(|witness| {
+                build_native_tx_leaf_artifact_bytes(witness)
+                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
+        let mut decoded = decode_receipt_root_artifact(&built.artifact_bytes).unwrap();
+        decoded.leaves[0].statement_digest[0] ^= 0x5a;
+        let tampered = encode_receipt_root_artifact(&decoded);
+        assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &tampered).is_err());
     }
 
     #[test]

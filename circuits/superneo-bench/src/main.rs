@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
     clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
     CommitmentEstimatorModel, CommitmentSecurityModel, FoldDigestProof, KernelCostReport,
-    LatticeBackend, LeafDigestProof, NativeBackendParams, NativeSecurityClaim, ReviewState,
+    LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams, NativeSecurityClaim,
+    ReviewState, RingElem,
 };
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
@@ -27,11 +28,14 @@ use superneo_hegemon::{
     canonical_tx_validity_receipt_from_transaction_proof, decode_native_tx_leaf_artifact_bytes,
     decode_receipt_root_artifact_bytes, encode_native_tx_leaf_artifact_bytes,
     encode_receipt_root_artifact_bytes, native_backend_params,
-    native_tx_validity_statement_from_witness, tx_leaf_public_tx_from_transaction_proof,
-    tx_leaf_public_tx_from_witness, verify_native_tx_leaf_artifact_bytes,
-    verify_native_tx_leaf_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
-    verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
-    CanonicalTxValidityReceipt, NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement,
+    native_tx_leaf_commitment_stats_with_params, native_tx_validity_statement_from_witness,
+    tx_leaf_public_tx_from_transaction_proof, tx_leaf_public_tx_from_witness,
+    verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes_with_params,
+    verify_native_tx_leaf_receipt_root_artifact_bytes,
+    verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
+    verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
+    verify_verified_tx_proof_receipt_root_artifact_bytes, CanonicalTxValidityReceipt,
+    NativeTxLeafCommitmentStats, NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement,
     ToyBalanceWitness, TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
@@ -41,6 +45,8 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::{prove, TransactionProof};
 use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
+
+const GOLDILOCKS_MODULUS_U64: u64 = 18_446_744_069_414_584_321;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "snake_case")]
@@ -87,9 +93,34 @@ struct Cli {
     print_native_security_claim: bool,
     #[arg(
         long,
+        help = "Print the current native backend review manifest as JSON and exit"
+    )]
+    print_native_review_manifest: bool,
+    #[arg(
+        long,
+        help = "Print the current native backend attack-model artifact as JSON and exit"
+    )]
+    print_native_attack_model: bool,
+    #[arg(
+        long,
+        help = "Print the current native backend live message-class artifact as JSON and exit"
+    )]
+    print_native_message_class: bool,
+    #[arg(
+        long,
+        help = "Print the current native backend claim-sensitivity sweep as JSON and exit"
+    )]
+    print_native_claim_sweep: bool,
+    #[arg(
+        long,
         help = "Emit deterministic native backend review vectors into this directory"
     )]
     emit_review_vectors: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Replay a review bundle through the production verifier and print a JSON report"
+    )]
+    verify_review_bundle_production: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +177,8 @@ struct BenchNativeBackendParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BenchNativeSecurityClaim {
     claimed_security_bits: u32,
+    #[serde(default)]
+    soundness_scope_label: String,
     transcript_soundness_bits: u32,
     opening_hiding_bits: u32,
     commitment_codomain_bits: u32,
@@ -169,10 +202,122 @@ struct BenchNativeSecurityClaim {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct NativeAttackModelReport {
+    parameter_fingerprint: String,
+    native_backend_params: BenchNativeBackendParams,
+    native_security_claim: BenchNativeSecurityClaim,
+    exact_live_tx_leaf_commitment: NativeTxLeafCommitmentStats,
+    transcript_model: TranscriptAttackModel,
+    estimator_trace: EstimatorTraceReport,
+    theorem_documents: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TranscriptAttackModel {
+    challenge_bits: u32,
+    fold_challenge_count: u32,
+    support_size: u64,
+    raw_space_bits: u32,
+    max_preimage_count: u64,
+    transcript_soundness_bits: u32,
+    tuple_min_entropy_bits: f64,
+    composition_loss_bits: u32,
+    transcript_floor_bits: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct EstimatorTraceReport {
+    equation_dimension: u32,
+    witness_dimension: u32,
+    modulus: u64,
+    l2_bound: u32,
+    log2_q: f64,
+    log2_bound: f64,
+    log_delta: f64,
+    reduced_dimension: u32,
+    target_delta: f64,
+    block_size: u32,
+    classical_bits: u32,
+    quantum_bits: u32,
+    paranoid_bits: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NativeClaimSweepReport {
+    fixed_security_target_bits: u32,
+    active_message_cap: u32,
+    active_receipt_root_leaf_cap: u32,
+    message_cap_rows: Vec<ClaimSweepRow>,
+    receipt_root_leaf_rows: Vec<ClaimSweepRow>,
+    first_message_cap_failure: Option<ClaimSweepRow>,
+    first_receipt_root_leaf_failure: Option<ClaimSweepRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaimSweepRow {
+    max_commitment_message_ring_elems: u32,
+    max_claimed_receipt_root_leaves: u32,
+    transcript_soundness_bits: u32,
+    commitment_binding_bits: u32,
+    soundness_floor_bits: u32,
+    claim_supported: bool,
+    claim_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProductionReviewReport {
+    summary: ProductionReviewVerificationSummary,
+    results: Vec<ProductionReviewCaseResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProductionReviewVerificationSummary {
+    bundle_path: String,
+    case_count: usize,
+    passed_cases: usize,
+    failed_cases: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProductionReviewCaseResult {
+    name: String,
+    expected_valid: bool,
+    passed: bool,
+    detail: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct NativeSecurityClaimReport {
     parameter_fingerprint: String,
     native_backend_params: BenchNativeBackendParams,
     native_security_claim: BenchNativeSecurityClaim,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NativeReviewGuaranteeSummary {
+    security_object: String,
+    verified_tx_leaf_replay: bool,
+    leaf_statement_digest_rechecked: bool,
+    leaf_commitment_digest_rechecked: bool,
+    leaf_proof_digest_rechecked: bool,
+    fold_challenges_recomputed: bool,
+    fold_parent_rows_recomputed: bool,
+    fold_parent_statement_digest_recomputed: bool,
+    fold_parent_commitment_recomputed: bool,
+    fold_proof_digest_recomputed: bool,
+    ccs_soundness_from_fold_layer_alone: bool,
+    external_cryptanalysis_completed: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NativeReviewManifestReport {
+    parameter_fingerprint: String,
+    native_backend_params: BenchNativeBackendParams,
+    native_security_claim: BenchNativeSecurityClaim,
+    exact_live_tx_leaf_commitment: NativeTxLeafCommitmentStats,
+    guarantee_summary: NativeReviewGuaranteeSummary,
+    theorem_documents: Vec<String>,
+    review_workflow_documents: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -312,8 +457,37 @@ fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
+    if cli.print_native_review_manifest {
+        let report = current_native_review_manifest()?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if cli.print_native_attack_model {
+        let report = current_native_attack_model()?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if cli.print_native_message_class {
+        let report = current_native_tx_leaf_message_class();
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if cli.print_native_claim_sweep {
+        let report = current_native_claim_sweep()?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if let Some(dir) = &cli.emit_review_vectors {
         emit_review_vectors(dir)?;
+        return Ok(());
+    }
+    if let Some(dir) = &cli.verify_review_bundle_production {
+        let report = verify_review_bundle_production(dir)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        ensure!(
+            report.summary.failed_cases == 0,
+            "one or more production review cases failed"
+        );
         return Ok(());
     }
     ensure!(!cli.k.is_empty(), "at least one k value is required");
@@ -497,6 +671,7 @@ fn current_bench_native_backend_params() -> BenchNativeBackendParams {
 fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
     let NativeSecurityClaim {
         claimed_security_bits,
+        soundness_scope_label,
         transcript_soundness_bits,
         opening_hiding_bits,
         commitment_codomain_bits,
@@ -520,6 +695,7 @@ fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
     } = current_native_backend_params().security_claim()?;
     Ok(BenchNativeSecurityClaim {
         claimed_security_bits,
+        soundness_scope_label: soundness_scope_label.to_owned(),
         transcript_soundness_bits,
         opening_hiding_bits,
         commitment_codomain_bits,
@@ -541,6 +717,293 @@ fn current_bench_native_security_claim() -> Result<BenchNativeSecurityClaim> {
         assumption_ids: assumption_ids.iter().map(|id| (*id).to_owned()).collect(),
         review_state: review_state_label(review_state).to_owned(),
     })
+}
+
+fn current_native_review_manifest() -> Result<NativeReviewManifestReport> {
+    let params = current_native_backend_params();
+    Ok(NativeReviewManifestReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        native_backend_params: current_bench_native_backend_params(),
+        native_security_claim: current_bench_native_security_claim()?,
+        exact_live_tx_leaf_commitment: native_tx_leaf_commitment_stats_with_params(&params),
+        guarantee_summary: NativeReviewGuaranteeSummary {
+            security_object: "verified_leaf_aggregation".to_owned(),
+            verified_tx_leaf_replay: true,
+            leaf_statement_digest_rechecked: true,
+            leaf_commitment_digest_rechecked: true,
+            leaf_proof_digest_rechecked: true,
+            fold_challenges_recomputed: true,
+            fold_parent_rows_recomputed: true,
+            fold_parent_statement_digest_recomputed: true,
+            fold_parent_commitment_recomputed: true,
+            fold_proof_digest_recomputed: true,
+            ccs_soundness_from_fold_layer_alone: false,
+            external_cryptanalysis_completed: false,
+        },
+        theorem_documents: vec![
+            "docs/crypto/native_backend_formal_theorems.md".to_owned(),
+            "docs/crypto/native_backend_verified_aggregation.md".to_owned(),
+        ],
+        review_workflow_documents: vec![
+            "docs/SECURITY_REVIEWS.md".to_owned(),
+            "docs/crypto/native_backend_security_analysis.md".to_owned(),
+            "docs/crypto/native_backend_commitment_reduction.md".to_owned(),
+        ],
+    })
+}
+
+fn current_native_tx_leaf_message_class() -> NativeTxLeafCommitmentStats {
+    native_tx_leaf_commitment_stats_with_params(&current_native_backend_params())
+}
+
+fn current_native_attack_model() -> Result<NativeAttackModelReport> {
+    let params = current_native_backend_params();
+    let claim = current_bench_native_security_claim()?;
+    let exact_live_tx_leaf_commitment = native_tx_leaf_commitment_stats_with_params(&params);
+    Ok(NativeAttackModelReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        native_backend_params: current_bench_native_backend_params(),
+        native_security_claim: claim,
+        transcript_model: current_transcript_attack_model(&params)?,
+        estimator_trace: current_estimator_trace(&params)?,
+        exact_live_tx_leaf_commitment,
+        theorem_documents: vec![
+            "docs/crypto/native_backend_formal_theorems.md".to_owned(),
+            "docs/crypto/native_backend_verified_aggregation.md".to_owned(),
+        ],
+    })
+}
+
+fn current_transcript_attack_model(params: &NativeBackendParams) -> Result<TranscriptAttackModel> {
+    Ok(transcript_attack_model(params))
+}
+
+fn transcript_attack_model(params: &NativeBackendParams) -> TranscriptAttackModel {
+    let support_size = (1u64 << params.challenge_bits.min(63)) - 1;
+    let raw_space = 1u128 << 64;
+    let max_preimage_count = raw_space.div_ceil(u128::from(support_size)) as u64;
+    let tuple_min_entropy_bits = 64.0 * f64::from(params.fold_challenge_count)
+        - f64::from(params.fold_challenge_count) * (max_preimage_count as f64).log2();
+    let transcript_soundness_bits = tuple_min_entropy_bits.floor().max(0.0) as u32;
+    let composition_loss_bits = params.max_claimed_receipt_root_leaves.ilog2()
+        + u32::from(!params.max_claimed_receipt_root_leaves.is_power_of_two());
+    let transcript_floor_bits = transcript_soundness_bits.saturating_sub(composition_loss_bits);
+    TranscriptAttackModel {
+        challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
+        support_size,
+        raw_space_bits: 64,
+        max_preimage_count,
+        transcript_soundness_bits,
+        tuple_min_entropy_bits,
+        composition_loss_bits,
+        transcript_floor_bits,
+    }
+}
+
+fn current_estimator_trace(params: &NativeBackendParams) -> Result<EstimatorTraceReport> {
+    let claim = params.security_claim()?;
+    Ok(estimator_trace(
+        claim.commitment_problem_equations,
+        claim.commitment_problem_dimension,
+        claim.commitment_problem_l2_bound,
+    ))
+}
+
+fn estimator_trace(
+    equation_dimension: u32,
+    witness_dimension: u32,
+    l2_bound: u32,
+) -> EstimatorTraceReport {
+    let n = equation_dimension as f64;
+    let m = witness_dimension as f64;
+    let q = GOLDILOCKS_MODULUS_U64 as f64;
+    let bound = l2_bound as f64;
+    let log2_q = q.log2();
+    let log2_bound = bound.log2();
+    let log_delta = (log2_bound * log2_bound) / (4.0 * n * log2_q);
+    let d = (n * log2_q / log_delta).sqrt().floor().min(m).max(2.0) as u32;
+    let d_f = f64::from(d);
+    let target_delta = 2f64.powf((log2_bound - ((n / d_f) * log2_q)) / (d_f - 1.0));
+    let block_size = beta_from_root_hermite_factor(target_delta);
+    EstimatorTraceReport {
+        equation_dimension,
+        witness_dimension,
+        modulus: GOLDILOCKS_MODULUS_U64,
+        l2_bound,
+        log2_q,
+        log2_bound,
+        log_delta,
+        reduced_dimension: d,
+        target_delta,
+        block_size,
+        classical_bits: (0.2920 * f64::from(block_size)).floor() as u32,
+        quantum_bits: (0.2650 * f64::from(block_size)).floor() as u32,
+        paranoid_bits: (0.2075 * f64::from(block_size)).floor() as u32,
+    }
+}
+
+fn current_native_claim_sweep() -> Result<NativeClaimSweepReport> {
+    let params = current_native_backend_params();
+    let message_cap_values = [
+        12u32, 16, 24, 32, 48, 64, 76, 96, 128, 160, 192, 256, 384, 512, 768, 1024,
+    ];
+    let receipt_root_values = [1u32, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 4096];
+    let message_cap_rows = message_cap_values
+        .into_iter()
+        .map(|message_cap| {
+            claim_sweep_row(&NativeBackendParams {
+                max_commitment_message_ring_elems: message_cap,
+                ..params.clone()
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let receipt_root_leaf_rows = receipt_root_values
+        .into_iter()
+        .map(|leaf_cap| {
+            claim_sweep_row(&NativeBackendParams {
+                max_claimed_receipt_root_leaves: leaf_cap,
+                ..params.clone()
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(NativeClaimSweepReport {
+        fixed_security_target_bits: params.security_bits,
+        active_message_cap: params.max_commitment_message_ring_elems,
+        active_receipt_root_leaf_cap: params.max_claimed_receipt_root_leaves,
+        first_message_cap_failure: first_message_cap_failure(&params)?,
+        first_receipt_root_leaf_failure: first_receipt_root_leaf_failure(&params)?,
+        message_cap_rows,
+        receipt_root_leaf_rows,
+    })
+}
+
+fn claim_sweep_row(params: &NativeBackendParams) -> Result<ClaimSweepRow> {
+    let transcript = transcript_attack_model(params);
+    Ok(match params.security_claim() {
+        Ok(claim) => ClaimSweepRow {
+            max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
+            max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
+            transcript_soundness_bits: claim.transcript_soundness_bits,
+            commitment_binding_bits: claim.commitment_binding_bits,
+            soundness_floor_bits: claim.soundness_floor_bits,
+            claim_supported: params.security_bits <= claim.soundness_floor_bits,
+            claim_error: None,
+        },
+        Err(err) => ClaimSweepRow {
+            max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
+            max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
+            transcript_soundness_bits: transcript.transcript_soundness_bits,
+            commitment_binding_bits: 0,
+            soundness_floor_bits: 0,
+            claim_supported: false,
+            claim_error: Some(err.to_string()),
+        },
+    })
+}
+
+fn first_message_cap_failure(params: &NativeBackendParams) -> Result<Option<ClaimSweepRow>> {
+    first_failure_monotone(params.max_commitment_message_ring_elems, |probe| {
+        NativeBackendParams {
+            max_commitment_message_ring_elems: probe,
+            ..params.clone()
+        }
+    })
+}
+
+fn first_receipt_root_leaf_failure(params: &NativeBackendParams) -> Result<Option<ClaimSweepRow>> {
+    first_failure_monotone(params.max_claimed_receipt_root_leaves, |probe| {
+        NativeBackendParams {
+            max_claimed_receipt_root_leaves: probe,
+            ..params.clone()
+        }
+    })
+}
+
+fn first_failure_monotone<F>(start: u32, mut build: F) -> Result<Option<ClaimSweepRow>>
+where
+    F: FnMut(u32) -> NativeBackendParams,
+{
+    let start_row = claim_sweep_row(&build(start))?;
+    if !start_row.claim_supported {
+        return Ok(Some(start_row));
+    }
+    let mut lo = start;
+    let mut hi = start.max(1);
+    loop {
+        if hi == u32::MAX {
+            return Ok(None);
+        }
+        let next = hi.saturating_mul(2).min(u32::MAX);
+        let row = claim_sweep_row(&build(next))?;
+        if !row.claim_supported {
+            hi = next;
+            break;
+        }
+        if next == u32::MAX {
+            return Ok(None);
+        }
+        lo = next;
+        hi = next;
+    }
+
+    let mut best = claim_sweep_row(&build(hi))?;
+    while lo.saturating_add(1) < hi {
+        let mid = lo + (hi - lo) / 2;
+        let row = claim_sweep_row(&build(mid))?;
+        if row.claim_supported {
+            lo = mid;
+        } else {
+            hi = mid;
+            best = row;
+        }
+    }
+    Ok(Some(best))
+}
+
+fn beta_from_root_hermite_factor(delta: f64) -> u32 {
+    let mut beta = 40u32;
+    while reduction_delta((beta.saturating_mul(2)) as f64) > delta {
+        beta = beta.saturating_mul(2);
+    }
+    while reduction_delta((beta.saturating_add(10)) as f64) > delta {
+        beta = beta.saturating_add(10);
+    }
+    while reduction_delta(beta as f64) >= delta {
+        beta = beta.saturating_add(1);
+    }
+    beta
+}
+
+fn reduction_delta(beta: f64) -> f64 {
+    const SMALL: &[(u32, f64)] = &[
+        (2, 1.02190),
+        (5, 1.01862),
+        (10, 1.01616),
+        (15, 1.01485),
+        (20, 1.01420),
+        (25, 1.01342),
+        (28, 1.01331),
+        (40, 1.01295),
+    ];
+
+    if beta <= 2.0 {
+        return 1.02190;
+    }
+    if beta < 40.0 {
+        for window in SMALL.windows(2) {
+            if f64::from(window[1].0) > beta {
+                return window[0].1;
+            }
+        }
+        return SMALL[SMALL.len() - 2].1;
+    }
+    if (beta - 40.0).abs() < f64::EPSILON {
+        return SMALL[SMALL.len() - 1].1;
+    }
+    (beta / (2.0 * std::f64::consts::PI * std::f64::consts::E)
+        * (std::f64::consts::PI * beta).powf(1.0 / beta))
+    .powf(1.0 / (2.0 * (beta - 1.0)))
 }
 
 fn review_backend_params(params: &NativeBackendParams) -> ReviewBackendParams {
@@ -898,6 +1361,181 @@ fn emit_review_vectors(dir: &Path) -> Result<()> {
         }))?
     );
     Ok(())
+}
+
+fn verify_review_bundle_production(dir: &Path) -> Result<ProductionReviewReport> {
+    let bundle_path = dir.join("bundle.json");
+    let bundle: ReviewVectorBundle = serde_json::from_slice(&fs::read(&bundle_path)?)
+        .with_context(|| {
+            format!(
+                "failed to parse production review bundle {}",
+                bundle_path.display()
+            )
+        })?;
+    let mut results = Vec::with_capacity(bundle.cases.len());
+    let mut passed_cases = 0usize;
+    for case in &bundle.cases {
+        match verify_production_review_case(case) {
+            Ok(()) if case.expected_valid => {
+                passed_cases += 1;
+                results.push(ProductionReviewCaseResult {
+                    name: case.name.clone(),
+                    expected_valid: true,
+                    passed: true,
+                    detail: "accepted".to_owned(),
+                });
+            }
+            Ok(()) => {
+                results.push(ProductionReviewCaseResult {
+                    name: case.name.clone(),
+                    expected_valid: false,
+                    passed: false,
+                    detail: "unexpected acceptance".to_owned(),
+                });
+            }
+            Err(err) if !case.expected_valid => {
+                let detail = err.to_string();
+                let passed = case
+                    .expected_error_substring
+                    .as_deref()
+                    .map(|expected| detail.contains(expected))
+                    .unwrap_or(true);
+                if passed {
+                    passed_cases += 1;
+                }
+                results.push(ProductionReviewCaseResult {
+                    name: case.name.clone(),
+                    expected_valid: false,
+                    passed,
+                    detail,
+                });
+            }
+            Err(err) => {
+                results.push(ProductionReviewCaseResult {
+                    name: case.name.clone(),
+                    expected_valid: true,
+                    passed: false,
+                    detail: err.to_string(),
+                });
+            }
+        }
+    }
+    Ok(ProductionReviewReport {
+        summary: ProductionReviewVerificationSummary {
+            bundle_path: bundle_path.display().to_string(),
+            case_count: results.len(),
+            passed_cases,
+            failed_cases: results.len().saturating_sub(passed_cases),
+        },
+        results,
+    })
+}
+
+fn verify_production_review_case(case: &ReviewVectorCase) -> Result<()> {
+    let artifact_bytes =
+        hex::decode(&case.artifact_hex).context("case artifact_hex must be valid hex")?;
+    match case.kind.as_str() {
+        "native_tx_leaf" => {
+            let ctx = case
+                .tx_context
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("native_tx_leaf case missing tx_context"))?;
+            let params = current_native_backend_params();
+            let tx = tx_from_review(ctx)?;
+            let receipt = CanonicalTxValidityReceipt {
+                statement_hash: decode_hex_array::<48>(&ctx.receipt.statement_hash_hex)?,
+                proof_digest: decode_hex_array::<48>(&ctx.receipt.proof_digest_hex)?,
+                public_inputs_digest: decode_hex_array::<48>(
+                    &ctx.receipt.public_inputs_digest_hex,
+                )?,
+                verifier_profile: decode_hex_array::<48>(&ctx.receipt.verifier_profile_hex)?,
+            };
+            verify_native_tx_leaf_artifact_bytes_with_params(
+                &params,
+                &tx,
+                &receipt,
+                &artifact_bytes,
+            )
+            .map(|_| ())
+        }
+        "receipt_root" => {
+            let ctx = case
+                .block_context
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("receipt_root case missing block_context"))?;
+            let params = current_native_backend_params();
+            let records = receipt_root_records_from_review(ctx)?;
+            verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
+                &params,
+                &records,
+                &artifact_bytes,
+            )
+            .map(|_| ())
+        }
+        other => Err(anyhow::anyhow!("unsupported review case kind {other}")),
+    }
+}
+
+fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N]> {
+    let bytes = hex::decode(value)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("hex string has {} bytes, expected {}", len, N))
+}
+
+fn tx_from_review(ctx: &ReviewTxContext) -> Result<superneo_hegemon::TxLeafPublicTx> {
+    Ok(superneo_hegemon::TxLeafPublicTx {
+        nullifiers: ctx
+            .tx
+            .nullifiers_hex
+            .iter()
+            .map(|value| decode_hex_array::<48>(value))
+            .collect::<Result<Vec<_>>>()?,
+        commitments: ctx
+            .tx
+            .commitments_hex
+            .iter()
+            .map(|value| decode_hex_array::<48>(value))
+            .collect::<Result<Vec<_>>>()?,
+        ciphertext_hashes: ctx
+            .tx
+            .ciphertext_hashes_hex
+            .iter()
+            .map(|value| decode_hex_array::<48>(value))
+            .collect::<Result<Vec<_>>>()?,
+        balance_tag: decode_hex_array::<48>(&ctx.tx.balance_tag_hex)?,
+        version: protocol_versioning::VersionBinding::new(
+            ctx.tx.version_circuit,
+            ctx.tx.version_crypto,
+        ),
+    })
+}
+
+fn receipt_root_records_from_review(
+    ctx: &ReviewBlockContext,
+) -> Result<Vec<superneo_hegemon::NativeTxLeafRecord>> {
+    Ok(ctx
+        .leaves
+        .iter()
+        .map(|leaf| superneo_hegemon::NativeTxLeafRecord {
+            params_fingerprint: decode_hex_array::<48>(&ctx.params_fingerprint_hex)
+                .expect("params fingerprint"),
+            spec_digest: decode_hex_array::<32>(&ctx.spec_digest_hex).expect("spec digest"),
+            relation_id: decode_hex_array::<32>(&ctx.relation_id_hex).expect("relation id"),
+            shape_digest: decode_hex_array::<32>(&ctx.shape_digest_hex).expect("shape digest"),
+            statement_digest: decode_hex_array::<48>(&leaf.statement_digest_hex)
+                .expect("statement digest"),
+            commitment: LatticeCommitment::from_rows(
+                leaf.commitment_rows
+                    .iter()
+                    .cloned()
+                    .map(RingElem::from_coeffs)
+                    .collect(),
+            ),
+            proof_digest: decode_hex_array::<48>(&leaf.proof_digest_hex).expect("proof digest"),
+        })
+        .collect())
 }
 
 fn review_state_label(state: ReviewState) -> &'static str {
@@ -1739,6 +2377,39 @@ mod tests {
         assert!(note_prefix(RelationChoice::NativeTxLeafReceiptRoot)
             .starts_with("canonical experimental lane:"),);
         assert!(note_prefix(RelationChoice::ToyBalance).starts_with("diagnostic lane:"),);
+    }
+
+    #[test]
+    fn native_review_manifest_reports_verified_aggregation_surface() {
+        let manifest = current_native_review_manifest().expect("review manifest");
+        assert_eq!(
+            manifest.guarantee_summary.security_object,
+            "verified_leaf_aggregation"
+        );
+        assert!(manifest.guarantee_summary.verified_tx_leaf_replay);
+        assert!(manifest.guarantee_summary.fold_parent_rows_recomputed);
+        assert!(
+            !manifest
+                .guarantee_summary
+                .ccs_soundness_from_fold_layer_alone
+        );
+        assert_eq!(manifest.exact_live_tx_leaf_commitment.witness_bits, 4_935);
+        assert_eq!(
+            manifest
+                .exact_live_tx_leaf_commitment
+                .live_message_ring_elems,
+            12
+        );
+        assert_eq!(
+            manifest.exact_live_tx_leaf_commitment.live_problem_l2_bound,
+            6_492
+        );
+        assert!(manifest
+            .theorem_documents
+            .contains(&"docs/crypto/native_backend_formal_theorems.md".to_owned()));
+        assert!(manifest
+            .theorem_documents
+            .contains(&"docs/crypto/native_backend_verified_aggregation.md".to_owned()));
     }
 
     #[test]

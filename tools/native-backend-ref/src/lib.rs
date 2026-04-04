@@ -4,7 +4,7 @@ use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use p3_uni_stark::verify as verify_uni_stark;
 use protocol_versioning::VersionBinding;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fs, path::Path};
 use superneo_ccs::{
     digest_shape, digest_statement, Assignment, CcsShape, Relation, RelationId, ShapeDigest,
@@ -886,6 +886,179 @@ pub struct ReviewCaseResult {
     pub expected_valid: bool,
     pub passed: bool,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackagedNativeBackendParams {
+    pub family_label: String,
+    pub spec_label: String,
+    pub spec_digest: String,
+    pub commitment_scheme_label: String,
+    pub challenge_schedule_label: String,
+    pub maturity_label: String,
+    pub security_bits: u32,
+    pub ring_profile: String,
+    pub matrix_rows: usize,
+    pub matrix_cols: usize,
+    pub challenge_bits: u32,
+    pub fold_challenge_count: u32,
+    pub max_fold_arity: u32,
+    pub transcript_domain_label: String,
+    pub decomposition_bits: u32,
+    pub opening_randomness_bits: u32,
+    pub commitment_security_model: String,
+    pub commitment_estimator_model: String,
+    pub max_commitment_message_ring_elems: u32,
+    pub max_claimed_receipt_root_leaves: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackagedNativeSecurityClaim {
+    pub claimed_security_bits: u32,
+    pub soundness_scope_label: String,
+    pub transcript_soundness_bits: u32,
+    pub opening_hiding_bits: u32,
+    #[serde(default)]
+    pub commitment_codomain_bits: u32,
+    #[serde(default)]
+    pub commitment_same_seed_search_bits: u32,
+    #[serde(default)]
+    pub commitment_random_matrix_bits: u32,
+    #[serde(default)]
+    pub commitment_problem_equations: u32,
+    #[serde(default)]
+    pub commitment_problem_dimension: u32,
+    #[serde(default)]
+    pub commitment_problem_coeff_bound: u32,
+    #[serde(default)]
+    pub commitment_problem_l2_bound: u32,
+    #[serde(default)]
+    pub commitment_estimator_dimension: u32,
+    #[serde(default)]
+    pub commitment_estimator_block_size: u32,
+    #[serde(default)]
+    pub commitment_estimator_classical_bits: u32,
+    #[serde(default)]
+    pub commitment_estimator_quantum_bits: u32,
+    #[serde(default)]
+    pub commitment_estimator_paranoid_bits: u32,
+    #[serde(default)]
+    pub commitment_reduction_loss_bits: u32,
+    pub commitment_binding_bits: u32,
+    pub composition_loss_bits: u32,
+    pub soundness_floor_bits: u32,
+    pub assumption_ids: Vec<String>,
+    pub review_state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackagedNativeClaimReport {
+    pub parameter_fingerprint: String,
+    pub native_backend_params: PackagedNativeBackendParams,
+    pub native_security_claim: PackagedNativeSecurityClaim,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeTxLeafCommitmentStats {
+    pub witness_bits: usize,
+    pub digit_bits: u16,
+    pub packed_digits: usize,
+    pub ring_degree: usize,
+    pub live_message_ring_elems: usize,
+    pub live_coefficient_dimension: usize,
+    pub live_problem_coeff_bound: u32,
+    pub live_problem_l2_bound: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeClaimTranscriptModel {
+    pub challenge_bits: u32,
+    pub fold_challenge_count: u32,
+    pub support_size: u64,
+    pub raw_space_bits: u32,
+    pub max_preimage_count: u64,
+    pub transcript_soundness_bits: u32,
+    pub tuple_min_entropy_bits: f64,
+    pub composition_loss_bits: u32,
+    pub transcript_floor_bits: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeClaimEstimatorTrace {
+    pub equation_dimension: u32,
+    pub witness_dimension: u32,
+    pub modulus: u64,
+    pub l2_bound: u32,
+    pub log2_q: f64,
+    pub log2_bound: f64,
+    pub log_delta: f64,
+    pub reduced_dimension: u32,
+    pub target_delta: f64,
+    pub block_size: u32,
+    pub classical_bits: u32,
+    pub quantum_bits: u32,
+    pub paranoid_bits: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeClaimAttackModel {
+    pub parameter_fingerprint: String,
+    pub native_backend_params: PackagedNativeBackendParams,
+    pub native_security_claim: PackagedNativeSecurityClaim,
+    pub exact_live_tx_leaf_commitment: NativeTxLeafCommitmentStats,
+    pub transcript_model: NativeClaimTranscriptModel,
+    pub estimator_trace: NativeClaimEstimatorTrace,
+    pub theorem_documents: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NativeClaimDerivedValues {
+    pub live_tx_leaf_public_relation_digits: usize,
+    pub live_tx_leaf_public_relation_ring_elems: usize,
+    pub live_tx_leaf_public_relation_coeff_dimension: usize,
+    pub live_tx_leaf_public_relation_l2_bound: u32,
+    pub transcript_max_preimage_count: u128,
+    pub transcript_entropy_bits: f64,
+    pub transcript_soundness_bits: u32,
+    pub composition_loss_bits: u32,
+    pub commitment_codomain_bits: u32,
+    pub commitment_same_seed_search_bits: u32,
+    pub commitment_random_matrix_bits: u32,
+    pub commitment_problem_equations: u32,
+    pub commitment_problem_dimension: u32,
+    pub commitment_problem_coeff_bound: u32,
+    pub commitment_problem_l2_bound: u32,
+    pub commitment_estimator_dimension: u32,
+    pub commitment_estimator_block_size: u32,
+    pub commitment_estimator_classical_bits: u32,
+    pub commitment_estimator_quantum_bits: u32,
+    pub commitment_estimator_paranoid_bits: u32,
+    pub commitment_binding_bits: u32,
+    pub soundness_floor_bits: u32,
+    pub estimate_log2_q: f64,
+    pub estimate_log2_bound: f64,
+    pub estimate_log_delta: f64,
+    pub estimate_delta: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClaimMismatch {
+    pub field: String,
+    pub expected: String,
+    pub actual: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NativeClaimVerificationReport {
+    pub package_dir: Option<String>,
+    pub attack_model_path: String,
+    pub current_claim_path: String,
+    pub passed: bool,
+    pub mismatches: Vec<ClaimMismatch>,
+    pub attack_model: NativeClaimAttackModel,
+    pub packaged_current_claim: PackagedNativeClaimReport,
+    pub recomputed_native_security_claim: PackagedNativeSecurityClaim,
+    pub recomputed_derived_values: NativeClaimDerivedValues,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3098,6 +3271,13 @@ fn commitment_estimator_model_label(model: CommitmentEstimatorModel) -> &'static
     }
 }
 
+fn commitment_security_model_label(model: CommitmentSecurityModel) -> &'static str {
+    match model {
+        CommitmentSecurityModel::GeometryProxy => "geometry_proxy",
+        CommitmentSecurityModel::BoundedKernelModuleSis => "bounded_kernel_module_sis",
+    }
+}
+
 fn parse_commitment_estimator_model(value: &str) -> Result<CommitmentEstimatorModel> {
     match value {
         "sis_lattice_euclidean_adps16" => Ok(CommitmentEstimatorModel::SisLatticeEuclideanAdps16),
@@ -3140,6 +3320,701 @@ fn validate_review_params(params: &NativeBackendParams) -> Result<()> {
         "max_claimed_receipt_root_leaves must be strictly positive"
     );
     Ok(())
+}
+
+fn packaged_backend_params_to_review(params: &PackagedNativeBackendParams) -> ReviewBackendParams {
+    ReviewBackendParams {
+        family_label: params.family_label.clone(),
+        spec_label: params.spec_label.clone(),
+        commitment_scheme_label: params.commitment_scheme_label.clone(),
+        challenge_schedule_label: params.challenge_schedule_label.clone(),
+        maturity_label: params.maturity_label.clone(),
+        security_bits: params.security_bits,
+        ring_profile: params.ring_profile.clone(),
+        matrix_rows: params.matrix_rows,
+        matrix_cols: params.matrix_cols,
+        challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
+        max_fold_arity: params.max_fold_arity,
+        transcript_domain_label: params.transcript_domain_label.clone(),
+        decomposition_bits: params.decomposition_bits,
+        opening_randomness_bits: params.opening_randomness_bits,
+        commitment_security_model: params.commitment_security_model.clone(),
+        commitment_estimator_model: params.commitment_estimator_model.clone(),
+        max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
+        max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
+    }
+}
+
+fn packaged_backend_params_to_native(
+    params: &PackagedNativeBackendParams,
+) -> Result<NativeBackendParams> {
+    review_params_to_native(&packaged_backend_params_to_review(params))
+}
+
+pub fn verify_packaged_claim_dir(package_dir: &Path) -> Result<NativeClaimVerificationReport> {
+    let attack_model_path = package_dir.join("attack_model.json");
+    let current_claim_path = package_dir.join("current_claim.json");
+    let mut report = verify_packaged_claim_files(&attack_model_path, &current_claim_path)?;
+    report.package_dir = Some(package_dir.display().to_string());
+    Ok(report)
+}
+
+pub fn verify_packaged_claim_files(
+    attack_model_path: &Path,
+    current_claim_path: &Path,
+) -> Result<NativeClaimVerificationReport> {
+    let attack_model: NativeClaimAttackModel = load_json(attack_model_path)
+        .with_context(|| format!("failed to load {}", attack_model_path.display()))?;
+    let packaged_current_claim: PackagedNativeClaimReport = load_json(current_claim_path)
+        .with_context(|| format!("failed to load {}", current_claim_path.display()))?;
+    verify_packaged_claim_documents(
+        attack_model_path,
+        current_claim_path,
+        attack_model,
+        packaged_current_claim,
+    )
+}
+
+fn verify_packaged_claim_documents(
+    attack_model_path: &Path,
+    current_claim_path: &Path,
+    attack_model: NativeClaimAttackModel,
+    packaged_current_claim: PackagedNativeClaimReport,
+) -> Result<NativeClaimVerificationReport> {
+    let native_backend_params =
+        packaged_backend_params_to_native(&attack_model.native_backend_params)
+            .context("failed to convert packaged backend params to native params")?;
+    let recomputed_parameter_fingerprint =
+        hex::encode(native_backend_params.parameter_fingerprint());
+    let recomputed_spec_digest = hex::encode(review_spec_digest(&native_backend_params));
+    let recomputed_live_tx_leaf_commitment = recompute_native_tx_leaf_commitment_stats(
+        &native_backend_params,
+        attack_model.exact_live_tx_leaf_commitment.witness_bits,
+    );
+    let recomputed_transcript_model =
+        recompute_native_claim_transcript_model(&native_backend_params)?;
+    let recomputed_estimator_trace =
+        recompute_native_claim_estimator_trace(&native_backend_params)?;
+    let recomputed_native_security_claim = recompute_native_security_claim(
+        &native_backend_params,
+        &recomputed_transcript_model,
+        &recomputed_estimator_trace,
+    )?;
+    let recomputed_derived_values = recompute_native_claim_derived_values(
+        &native_backend_params,
+        &recomputed_live_tx_leaf_commitment,
+        &recomputed_transcript_model,
+        &recomputed_estimator_trace,
+    );
+
+    let mut mismatches = Vec::new();
+    compare_string(
+        "attack_model.parameter_fingerprint",
+        &attack_model.parameter_fingerprint,
+        &recomputed_parameter_fingerprint,
+        &mut mismatches,
+    );
+    compare_string(
+        "current_claim.parameter_fingerprint",
+        &packaged_current_claim.parameter_fingerprint,
+        &recomputed_parameter_fingerprint,
+        &mut mismatches,
+    );
+    compare_string(
+        "attack_model.native_backend_params.spec_digest",
+        &attack_model.native_backend_params.spec_digest,
+        &recomputed_spec_digest,
+        &mut mismatches,
+    );
+    compare_string(
+        "current_claim.native_backend_params.spec_digest",
+        &packaged_current_claim.native_backend_params.spec_digest,
+        &recomputed_spec_digest,
+        &mut mismatches,
+    );
+    compare_struct(
+        "attack_model.native_backend_params",
+        &attack_model.native_backend_params,
+        &packaged_backend_params_from_native(&native_backend_params),
+        &mut mismatches,
+    );
+    compare_struct(
+        "current_claim.native_backend_params",
+        &packaged_current_claim.native_backend_params,
+        &packaged_backend_params_from_native(&native_backend_params),
+        &mut mismatches,
+    );
+    compare_struct(
+        "attack_model.native_security_claim",
+        &attack_model.native_security_claim,
+        &recomputed_native_security_claim,
+        &mut mismatches,
+    );
+    compare_struct(
+        "current_claim.native_security_claim",
+        &packaged_current_claim.native_security_claim,
+        &recomputed_native_security_claim,
+        &mut mismatches,
+    );
+    compare_struct(
+        "attack_model.exact_live_tx_leaf_commitment",
+        &attack_model.exact_live_tx_leaf_commitment,
+        &recomputed_live_tx_leaf_commitment,
+        &mut mismatches,
+    );
+    compare_transcript_model(
+        "attack_model.transcript_model",
+        &attack_model.transcript_model,
+        &recomputed_transcript_model,
+        &mut mismatches,
+    );
+    compare_estimator_trace(
+        "attack_model.estimator_trace",
+        &attack_model.estimator_trace,
+        &recomputed_estimator_trace,
+        &mut mismatches,
+    );
+
+    let passed = mismatches.is_empty();
+    Ok(NativeClaimVerificationReport {
+        package_dir: None,
+        attack_model_path: attack_model_path.display().to_string(),
+        current_claim_path: current_claim_path.display().to_string(),
+        passed,
+        mismatches,
+        attack_model,
+        packaged_current_claim,
+        recomputed_native_security_claim,
+        recomputed_derived_values,
+    })
+}
+
+fn recompute_native_tx_leaf_commitment_stats(
+    params: &NativeBackendParams,
+    witness_bits: usize,
+) -> NativeTxLeafCommitmentStats {
+    let digit_bits = params.digit_bits();
+    let packed_digits = witness_bits.div_ceil(usize::from(digit_bits));
+    let ring_degree = params.ring_degree();
+    let live_message_ring_elems = packed_digits.div_ceil(ring_degree);
+    let live_coefficient_dimension = live_message_ring_elems * ring_degree;
+    let live_problem_coeff_bound = ((1u32 << digit_bits) - 1).max(1);
+    let live_problem_l2_bound = ceil_sqrt_u128(
+        (live_coefficient_dimension as u128)
+            .saturating_mul(u128::from(live_problem_coeff_bound))
+            .saturating_mul(u128::from(live_problem_coeff_bound)),
+    ) as u32;
+    NativeTxLeafCommitmentStats {
+        witness_bits,
+        digit_bits,
+        packed_digits,
+        ring_degree,
+        live_message_ring_elems,
+        live_coefficient_dimension,
+        live_problem_coeff_bound,
+        live_problem_l2_bound,
+    }
+}
+
+fn recompute_native_claim_transcript_model(
+    params: &NativeBackendParams,
+) -> Result<NativeClaimTranscriptModel> {
+    let challenge_bits = params.challenge_bits;
+    let fold_challenge_count = params.fold_challenge_count;
+    let raw_space_bits = 64u32;
+    let support_size = if challenge_bits.min(63) <= 1 {
+        1
+    } else {
+        (1u64 << challenge_bits.min(63)) - 1
+    };
+    let raw_space_size = 1u128
+        .checked_shl(raw_space_bits)
+        .ok_or_else(|| anyhow!("raw space bits {} overflowed", raw_space_bits))?;
+    let max_preimage_count = raw_space_size.div_ceil(u128::from(support_size));
+    let tuple_min_entropy_bits = f64::from(raw_space_bits) * f64::from(fold_challenge_count)
+        - f64::from(fold_challenge_count) * (max_preimage_count as f64).log2();
+    let transcript_soundness_bits = tuple_min_entropy_bits.floor().max(0.0) as u32;
+    let composition_loss_bits = ceil_log2_u32(params.max_claimed_receipt_root_leaves);
+    let transcript_floor_bits = transcript_soundness_bits.saturating_sub(composition_loss_bits);
+    Ok(NativeClaimTranscriptModel {
+        challenge_bits,
+        fold_challenge_count,
+        support_size,
+        raw_space_bits,
+        max_preimage_count: max_preimage_count as u64,
+        transcript_soundness_bits,
+        tuple_min_entropy_bits,
+        composition_loss_bits,
+        transcript_floor_bits,
+    })
+}
+
+fn recompute_native_claim_estimator_trace(
+    params: &NativeBackendParams,
+) -> Result<NativeClaimEstimatorTrace> {
+    let commitment_problem_equations = params
+        .matrix_rows
+        .checked_mul(params.ring_degree())
+        .ok_or_else(|| anyhow!("commitment problem equations overflowed"))?
+        as u32;
+    let commitment_problem_dimension = params
+        .max_commitment_message_ring_elems
+        .checked_mul(params.ring_degree() as u32)
+        .ok_or_else(|| anyhow!("commitment problem dimension overflowed"))?;
+    let commitment_problem_coeff_bound = ((1u32 << params.digit_bits()) - 1).max(1);
+    let commitment_problem_l2_bound = ceil_sqrt_u128(
+        u128::from(commitment_problem_dimension)
+            .saturating_mul(u128::from(commitment_problem_coeff_bound))
+            .saturating_mul(u128::from(commitment_problem_coeff_bound)),
+    ) as u32;
+    let modulus = GOLDILOCKS_MODULUS_I128 as u64;
+    let n = commitment_problem_equations as f64;
+    let m = commitment_problem_dimension as f64;
+    let q = modulus as f64;
+    let bound = commitment_problem_l2_bound as f64;
+    ensure!(
+        bound < (q - 1.0) / 2.0,
+        "BK-MSIS Euclidean bound {} must be below (q-1)/2 {}",
+        commitment_problem_l2_bound,
+        ((GOLDILOCKS_MODULUS_I128 as u64 - 1) / 2)
+    );
+    let log2_q = q.log2();
+    let log2_bound = bound.log2();
+    let log_delta = (log2_bound * log2_bound) / (4.0 * n * log2_q);
+    let reduced_dimension = (n * log2_q / log_delta).sqrt().floor().min(m).max(2.0) as u32;
+    let reduced_dimension_f = f64::from(reduced_dimension);
+    let target_delta = 2f64
+        .powf((log2_bound - ((n / reduced_dimension_f) * log2_q)) / (reduced_dimension_f - 1.0));
+    let block_size = beta_from_root_hermite_factor(target_delta);
+    ensure!(
+        block_size <= reduced_dimension,
+        "BK-MSIS Euclidean estimator failed: required block size {} exceeds lattice dimension {}",
+        block_size,
+        reduced_dimension
+    );
+    Ok(NativeClaimEstimatorTrace {
+        equation_dimension: commitment_problem_equations,
+        witness_dimension: commitment_problem_dimension,
+        modulus,
+        l2_bound: commitment_problem_l2_bound,
+        log2_q,
+        log2_bound,
+        log_delta,
+        reduced_dimension,
+        target_delta,
+        block_size,
+        classical_bits: (0.2920 * f64::from(block_size)).floor() as u32,
+        quantum_bits: (0.2650 * f64::from(block_size)).floor() as u32,
+        paranoid_bits: (0.2075 * f64::from(block_size)).floor() as u32,
+    })
+}
+
+fn recompute_native_security_claim(
+    params: &NativeBackendParams,
+    transcript_model: &NativeClaimTranscriptModel,
+    estimator_trace: &NativeClaimEstimatorTrace,
+) -> Result<PackagedNativeSecurityClaim> {
+    let opening_hiding_bits = if security_claim_uses_opening_hiding(params) {
+        (params.opening_randomness_bits / 2).min(128)
+    } else {
+        0
+    };
+    let commitment_codomain_bits = goldilocks_field_capacity_bits(params.ring_profile)
+        .saturating_mul(params.matrix_rows as u32)
+        .saturating_mul(params.ring_degree() as u32);
+    let commitment_same_seed_search_bits = params
+        .max_commitment_message_ring_elems
+        .saturating_mul(params.ring_degree() as u32)
+        .saturating_mul(params.decomposition_bits.saturating_add(1));
+    let commitment_random_matrix_bits =
+        commitment_codomain_bits.saturating_sub(commitment_same_seed_search_bits);
+    let commitment_problem_equations =
+        params.matrix_rows.saturating_mul(params.ring_degree()) as u32;
+    let commitment_problem_dimension = params
+        .max_commitment_message_ring_elems
+        .saturating_mul(params.ring_degree() as u32);
+    let commitment_problem_coeff_bound = ((1u32 << params.digit_bits()) - 1).max(1);
+    let commitment_problem_l2_bound = ceil_sqrt_u128(
+        u128::from(commitment_problem_dimension)
+            .saturating_mul(u128::from(commitment_problem_coeff_bound))
+            .saturating_mul(u128::from(commitment_problem_coeff_bound)),
+    ) as u32;
+    let commitment_reduction_loss_bits = 0;
+    let commitment_binding_bits = match params.commitment_security_model {
+        CommitmentSecurityModel::GeometryProxy => commitment_random_matrix_bits,
+        CommitmentSecurityModel::BoundedKernelModuleSis => estimator_trace
+            .quantum_bits
+            .saturating_sub(commitment_reduction_loss_bits),
+    };
+    let transcript_floor_bits = transcript_model.transcript_floor_bits;
+    let mut soundness_floor_bits = transcript_floor_bits.min(commitment_binding_bits);
+    if opening_hiding_bits > 0 {
+        soundness_floor_bits = soundness_floor_bits.min(opening_hiding_bits);
+    }
+    let (soundness_scope_label, assumption_ids, review_state) =
+        claim_scope_label(params, opening_hiding_bits > 0);
+    Ok(PackagedNativeSecurityClaim {
+        claimed_security_bits: params.security_bits,
+        soundness_scope_label,
+        transcript_soundness_bits: transcript_model.transcript_soundness_bits,
+        opening_hiding_bits,
+        commitment_codomain_bits,
+        commitment_same_seed_search_bits,
+        commitment_random_matrix_bits,
+        commitment_problem_equations,
+        commitment_problem_dimension,
+        commitment_problem_coeff_bound,
+        commitment_problem_l2_bound,
+        commitment_estimator_dimension: estimator_trace.reduced_dimension,
+        commitment_estimator_block_size: estimator_trace.block_size,
+        commitment_estimator_classical_bits: estimator_trace.classical_bits,
+        commitment_estimator_quantum_bits: estimator_trace.quantum_bits,
+        commitment_estimator_paranoid_bits: estimator_trace.paranoid_bits,
+        commitment_reduction_loss_bits,
+        commitment_binding_bits,
+        composition_loss_bits: transcript_model.composition_loss_bits,
+        soundness_floor_bits,
+        assumption_ids,
+        review_state,
+    })
+}
+
+fn recompute_native_claim_derived_values(
+    params: &NativeBackendParams,
+    live: &NativeTxLeafCommitmentStats,
+    transcript_model: &NativeClaimTranscriptModel,
+    estimator_trace: &NativeClaimEstimatorTrace,
+) -> NativeClaimDerivedValues {
+    let commitment_codomain_bits = goldilocks_field_capacity_bits(params.ring_profile)
+        .saturating_mul(params.matrix_rows as u32)
+        .saturating_mul(params.ring_degree() as u32);
+    let commitment_same_seed_search_bits = params
+        .max_commitment_message_ring_elems
+        .saturating_mul(params.ring_degree() as u32)
+        .saturating_mul(params.decomposition_bits.saturating_add(1));
+    let commitment_random_matrix_bits =
+        commitment_codomain_bits.saturating_sub(commitment_same_seed_search_bits);
+    let commitment_binding_bits = match params.commitment_security_model {
+        CommitmentSecurityModel::GeometryProxy => commitment_random_matrix_bits,
+        CommitmentSecurityModel::BoundedKernelModuleSis => estimator_trace.quantum_bits,
+    };
+    let mut soundness_floor_bits = transcript_model
+        .transcript_floor_bits
+        .min(commitment_binding_bits);
+    if security_claim_uses_opening_hiding(params) {
+        soundness_floor_bits =
+            soundness_floor_bits.min((params.opening_randomness_bits / 2).min(128));
+    }
+    NativeClaimDerivedValues {
+        live_tx_leaf_public_relation_digits: live.packed_digits,
+        live_tx_leaf_public_relation_ring_elems: live.live_message_ring_elems,
+        live_tx_leaf_public_relation_coeff_dimension: live.live_coefficient_dimension,
+        live_tx_leaf_public_relation_l2_bound: live.live_problem_l2_bound,
+        transcript_max_preimage_count: transcript_model.max_preimage_count as u128,
+        transcript_entropy_bits: transcript_model.tuple_min_entropy_bits,
+        transcript_soundness_bits: transcript_model.transcript_soundness_bits,
+        composition_loss_bits: transcript_model.composition_loss_bits,
+        commitment_codomain_bits,
+        commitment_same_seed_search_bits,
+        commitment_random_matrix_bits,
+        commitment_problem_equations: estimator_trace.equation_dimension,
+        commitment_problem_dimension: estimator_trace.witness_dimension,
+        commitment_problem_coeff_bound: live.live_problem_coeff_bound,
+        commitment_problem_l2_bound: estimator_trace.l2_bound,
+        commitment_estimator_dimension: estimator_trace.reduced_dimension,
+        commitment_estimator_block_size: estimator_trace.block_size,
+        commitment_estimator_classical_bits: estimator_trace.classical_bits,
+        commitment_estimator_quantum_bits: estimator_trace.quantum_bits,
+        commitment_estimator_paranoid_bits: estimator_trace.paranoid_bits,
+        commitment_binding_bits,
+        soundness_floor_bits,
+        estimate_log2_q: estimator_trace.log2_q,
+        estimate_log2_bound: estimator_trace.log2_bound,
+        estimate_log_delta: estimator_trace.log_delta,
+        estimate_delta: estimator_trace.target_delta,
+    }
+}
+
+fn claim_scope_label(
+    params: &NativeBackendParams,
+    uses_opening_hiding: bool,
+) -> (String, Vec<String>, String) {
+    match (
+        params.manifest.family_label,
+        params.manifest.challenge_schedule_label,
+        params.fold_challenge_count,
+        uses_opening_hiding,
+    ) {
+        (
+            "goldilocks_128b_structural_commitment",
+            "quint_goldilocks_fs_challenge_profile_mix",
+            5,
+            false,
+        ) => (
+            "verified_leaf_aggregation".to_owned(),
+            vec![
+                "random_oracle.blake3_fiat_shamir".to_owned(),
+                "serialization.canonical_native_artifact_bytes".to_owned(),
+                "fs.quint_goldilocks_profile_fold_challenges".to_owned(),
+                "aggregation.native_receipt_root_replays_verified_tx_leaves".to_owned(),
+                "commitment.deterministic_public_witness_reconstruction".to_owned(),
+                "commitment.bounded_kernel_module_sis_exact_reduction".to_owned(),
+                "commitment.sis_lattice_euclidean_adps16_quantum_estimator".to_owned(),
+            ],
+            "candidate_under_review".to_owned(),
+        ),
+        (_, _, _, true) => (
+            "structural_canonicality_only".to_owned(),
+            vec![
+                "random_oracle.family_owned_fiat_shamir".to_owned(),
+                "serialization.canonical_native_artifact_bytes".to_owned(),
+                "fs.custom_multichallenge_fold_schedule".to_owned(),
+                "opening.explicit_mask_seed_entropy".to_owned(),
+                "commitment.family_owned_linear_binding".to_owned(),
+            ],
+            "experimental".to_owned(),
+        ),
+        _ => (
+            "structural_canonicality_only".to_owned(),
+            vec![
+                "random_oracle.family_owned_fiat_shamir".to_owned(),
+                "serialization.canonical_native_artifact_bytes".to_owned(),
+                "fs.custom_multichallenge_fold_schedule".to_owned(),
+                "commitment.deterministic_public_witness_reconstruction".to_owned(),
+                match params.commitment_security_model {
+                    CommitmentSecurityModel::GeometryProxy => {
+                        "commitment.family_owned_linear_binding".to_owned()
+                    }
+                    CommitmentSecurityModel::BoundedKernelModuleSis => {
+                        "commitment.bounded_kernel_module_sis_exact_reduction".to_owned()
+                    }
+                },
+                if matches!(
+                    params.commitment_security_model,
+                    CommitmentSecurityModel::BoundedKernelModuleSis
+                ) {
+                    "commitment.sis_lattice_euclidean_adps16_quantum_estimator".to_owned()
+                } else {
+                    "commitment.family_owned_structural_bound".to_owned()
+                },
+            ],
+            "experimental".to_owned(),
+        ),
+    }
+}
+
+fn compare_string(field: &str, expected: &str, actual: &str, mismatches: &mut Vec<ClaimMismatch>) {
+    if expected != actual {
+        mismatches.push(ClaimMismatch {
+            field: field.to_owned(),
+            expected: expected.to_owned(),
+            actual: actual.to_owned(),
+        });
+    }
+}
+
+fn compare_struct<T>(field: &str, expected: &T, actual: &T, mismatches: &mut Vec<ClaimMismatch>)
+where
+    T: Serialize + PartialEq,
+{
+    if expected != actual {
+        mismatches.push(ClaimMismatch {
+            field: field.to_owned(),
+            expected: serialize_json(expected),
+            actual: serialize_json(actual),
+        });
+    }
+}
+
+fn compare_transcript_model(
+    field: &str,
+    expected: &NativeClaimTranscriptModel,
+    actual: &NativeClaimTranscriptModel,
+    mismatches: &mut Vec<ClaimMismatch>,
+) {
+    if expected == actual {
+        return;
+    }
+    let floats_match = approx_eq(
+        expected.tuple_min_entropy_bits,
+        actual.tuple_min_entropy_bits,
+        1e-9,
+    ) && expected.challenge_bits == actual.challenge_bits
+        && expected.fold_challenge_count == actual.fold_challenge_count
+        && expected.support_size == actual.support_size
+        && expected.raw_space_bits == actual.raw_space_bits
+        && expected.max_preimage_count == actual.max_preimage_count
+        && expected.transcript_soundness_bits == actual.transcript_soundness_bits
+        && expected.composition_loss_bits == actual.composition_loss_bits
+        && expected.transcript_floor_bits == actual.transcript_floor_bits;
+    if !floats_match {
+        mismatches.push(ClaimMismatch {
+            field: field.to_owned(),
+            expected: serialize_json(expected),
+            actual: serialize_json(actual),
+        });
+    }
+}
+
+fn compare_estimator_trace(
+    field: &str,
+    expected: &NativeClaimEstimatorTrace,
+    actual: &NativeClaimEstimatorTrace,
+    mismatches: &mut Vec<ClaimMismatch>,
+) {
+    let floats_match = expected.equation_dimension == actual.equation_dimension
+        && expected.witness_dimension == actual.witness_dimension
+        && expected.modulus == actual.modulus
+        && expected.l2_bound == actual.l2_bound
+        && approx_eq(expected.log2_q, actual.log2_q, 1e-9)
+        && approx_eq(expected.log2_bound, actual.log2_bound, 1e-9)
+        && approx_eq(expected.log_delta, actual.log_delta, 1e-9)
+        && expected.reduced_dimension == actual.reduced_dimension
+        && approx_eq(expected.target_delta, actual.target_delta, 1e-9)
+        && expected.block_size == actual.block_size
+        && expected.classical_bits == actual.classical_bits
+        && expected.quantum_bits == actual.quantum_bits
+        && expected.paranoid_bits == actual.paranoid_bits;
+    if !floats_match {
+        mismatches.push(ClaimMismatch {
+            field: field.to_owned(),
+            expected: serialize_json(expected),
+            actual: serialize_json(actual),
+        });
+    }
+}
+
+fn serialize_json<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|err| format!("<<serialization failed: {err}>>"))
+}
+
+fn approx_eq(left: f64, right: f64, tolerance: f64) -> bool {
+    (left - right).abs() <= tolerance
+}
+
+fn ceil_log2_u32(value: u32) -> u32 {
+    if value <= 1 {
+        0
+    } else {
+        u32::BITS - (value - 1).leading_zeros()
+    }
+}
+
+fn ceil_sqrt_u128(value: u128) -> u128 {
+    if value <= 1 {
+        return value;
+    }
+    let mut x = (value as f64).sqrt().floor() as u128;
+    while x.saturating_mul(x) < value {
+        x += 1;
+    }
+    while x > 0 && (x - 1).saturating_mul(x - 1) >= value {
+        x -= 1;
+    }
+    x
+}
+
+fn goldilocks_field_capacity_bits(_profile: RingProfile) -> u32 {
+    63
+}
+
+fn security_claim_uses_opening_hiding(params: &NativeBackendParams) -> bool {
+    !matches!(
+        (
+            params.manifest.family_label,
+            params.manifest.commitment_scheme_label,
+        ),
+        (
+            "goldilocks_128b_structural_commitment",
+            "bounded_message_random_matrix_commitment",
+        )
+    )
+}
+
+fn beta_from_root_hermite_factor(delta: f64) -> u32 {
+    let mut beta = 40u32;
+    while reduction_delta((beta.saturating_mul(2)) as f64) > delta {
+        beta = beta.saturating_mul(2);
+    }
+    while reduction_delta((beta.saturating_add(10)) as f64) > delta {
+        beta = beta.saturating_add(10);
+    }
+    while reduction_delta(beta as f64) >= delta {
+        beta = beta.saturating_add(1);
+    }
+    beta
+}
+
+fn reduction_delta(beta: f64) -> f64 {
+    const SMALL: &[(u32, f64)] = &[
+        (2, 1.02190),
+        (5, 1.01862),
+        (10, 1.01616),
+        (15, 1.01485),
+        (20, 1.01420),
+        (25, 1.01342),
+        (28, 1.01331),
+        (40, 1.01295),
+    ];
+
+    if beta <= 2.0 {
+        return 1.02190;
+    }
+    if beta < 40.0 {
+        for window in SMALL.windows(2) {
+            if f64::from(window[1].0) > beta {
+                return window[0].1;
+            }
+        }
+        return SMALL[SMALL.len() - 2].1;
+    }
+    if (beta - 40.0).abs() < f64::EPSILON {
+        return SMALL[SMALL.len() - 1].1;
+    }
+    (beta / (2.0 * std::f64::consts::PI * std::f64::consts::E)
+        * (std::f64::consts::PI * beta).powf(1.0 / beta))
+    .powf(1.0 / (2.0 * (beta - 1.0)))
+}
+
+fn packaged_backend_params_from_native(
+    params: &NativeBackendParams,
+) -> PackagedNativeBackendParams {
+    PackagedNativeBackendParams {
+        family_label: params.manifest.family_label.to_owned(),
+        spec_label: params.manifest.spec_label.to_owned(),
+        spec_digest: hex::encode(review_spec_digest(params)),
+        commitment_scheme_label: params.manifest.commitment_scheme_label.to_owned(),
+        challenge_schedule_label: params.manifest.challenge_schedule_label.to_owned(),
+        maturity_label: params.manifest.maturity_label.to_owned(),
+        security_bits: params.security_bits,
+        ring_profile: format!("{:?}", params.ring_profile),
+        matrix_rows: params.matrix_rows,
+        matrix_cols: params.matrix_cols,
+        challenge_bits: params.challenge_bits,
+        fold_challenge_count: params.fold_challenge_count,
+        max_fold_arity: params.max_fold_arity,
+        transcript_domain_label: params.transcript_domain_label.to_owned(),
+        decomposition_bits: params.decomposition_bits,
+        opening_randomness_bits: params.opening_randomness_bits,
+        commitment_security_model: commitment_security_model_label(
+            params.commitment_security_model,
+        )
+        .to_owned(),
+        commitment_estimator_model: commitment_estimator_model_label(
+            params.commitment_estimator_model,
+        )
+        .to_owned(),
+        max_commitment_message_ring_elems: params.max_commitment_message_ring_elems,
+        max_claimed_receipt_root_leaves: params.max_claimed_receipt_root_leaves,
+    }
+}
+
+fn load_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse JSON from {}", path.display()))
 }
 
 fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N]> {
@@ -3269,7 +4144,7 @@ fn read_array<const N: usize>(bytes: &[u8], cursor: &mut usize) -> Result<[u8; N
 mod tests {
     use super::*;
     use hex::encode as hex_encode;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parses_and_verifies_bundle_from_testdata() {
@@ -3354,6 +4229,125 @@ mod tests {
             params.commitment_estimator_model,
             params.max_commitment_message_ring_elems,
             params.max_claimed_receipt_root_leaves,
+        );
+    }
+
+    #[test]
+    fn recomputes_active_family_claim_arithmetic() {
+        let params = NativeBackendParams::goldilocks_128b_structural_commitment();
+        let packaged = packaged_backend_params_from_native(&params);
+        let native = packaged_backend_params_to_native(&packaged).expect("native params");
+        assert_eq!(
+            packaged.spec_digest,
+            hex_encode(review_spec_digest(&native))
+        );
+
+        let live = recompute_native_tx_leaf_commitment_stats(&native, 4935);
+        assert_eq!(live.witness_bits, 4935);
+        assert_eq!(live.digit_bits, 8);
+        assert_eq!(live.packed_digits, 617);
+        assert_eq!(live.ring_degree, 54);
+        assert_eq!(live.live_message_ring_elems, 12);
+        assert_eq!(live.live_coefficient_dimension, 648);
+        assert_eq!(live.live_problem_coeff_bound, 255);
+        assert_eq!(live.live_problem_l2_bound, 6492);
+
+        let transcript = recompute_native_claim_transcript_model(&native).expect("transcript");
+        assert_eq!(transcript.challenge_bits, 63);
+        assert_eq!(transcript.fold_challenge_count, 5);
+        assert_eq!(transcript.support_size, (1u64 << 63) - 1);
+        assert_eq!(transcript.raw_space_bits, 64);
+        assert_eq!(transcript.max_preimage_count, 3);
+        assert_eq!(transcript.transcript_soundness_bits, 312);
+        assert_eq!(transcript.composition_loss_bits, 7);
+        assert_eq!(transcript.transcript_floor_bits, 305);
+
+        let estimator = recompute_native_claim_estimator_trace(&native).expect("estimator");
+        assert_eq!(estimator.equation_dimension, 594);
+        assert_eq!(estimator.witness_dimension, 4104);
+        assert_eq!(estimator.modulus, GOLDILOCKS_MODULUS_I128 as u64);
+        assert_eq!(estimator.l2_bound, 16_336);
+        assert_eq!(estimator.reduced_dimension, 4_104);
+        assert_eq!(estimator.block_size, 3_294);
+        assert_eq!(estimator.quantum_bits, 872);
+        assert_eq!(estimator.classical_bits, 961);
+        assert_eq!(estimator.paranoid_bits, 683);
+
+        let claim =
+            recompute_native_security_claim(&native, &transcript, &estimator).expect("claim");
+        assert_eq!(claim.claimed_security_bits, 128);
+        assert_eq!(claim.soundness_scope_label, "verified_leaf_aggregation");
+        assert_eq!(claim.transcript_soundness_bits, 312);
+        assert_eq!(claim.opening_hiding_bits, 0);
+        assert_eq!(claim.commitment_binding_bits, 872);
+        assert_eq!(claim.composition_loss_bits, 7);
+        assert_eq!(claim.soundness_floor_bits, 305);
+        assert_eq!(claim.review_state, "candidate_under_review");
+    }
+
+    #[test]
+    fn packaged_claim_verifier_accepts_and_rejects_expected_documents() {
+        let params = NativeBackendParams::goldilocks_128b_structural_commitment();
+        let packaged_params = packaged_backend_params_from_native(&params);
+        let live = recompute_native_tx_leaf_commitment_stats(&params, 4935);
+        let transcript = recompute_native_claim_transcript_model(&params).expect("transcript");
+        let estimator = recompute_native_claim_estimator_trace(&params).expect("estimator");
+        let claim =
+            recompute_native_security_claim(&params, &transcript, &estimator).expect("claim");
+        let attack_model = NativeClaimAttackModel {
+            parameter_fingerprint: hex_encode(params.parameter_fingerprint()),
+            native_backend_params: packaged_params.clone(),
+            native_security_claim: claim.clone(),
+            exact_live_tx_leaf_commitment: live,
+            transcript_model: transcript,
+            estimator_trace: estimator,
+            theorem_documents: vec![
+                "docs/crypto/native_backend_formal_theorems.md".to_owned(),
+                "docs/crypto/native_backend_verified_aggregation.md".to_owned(),
+            ],
+        };
+        let current_claim = PackagedNativeClaimReport {
+            parameter_fingerprint: hex_encode(params.parameter_fingerprint()),
+            native_backend_params: packaged_params,
+            native_security_claim: claim,
+        };
+
+        let report = verify_packaged_claim_documents(
+            Path::new("attack_model.json"),
+            Path::new("current_claim.json"),
+            attack_model.clone(),
+            current_claim.clone(),
+        )
+        .expect("matching packaged claim");
+        assert!(
+            report.passed,
+            "unexpected mismatches: {:?}",
+            report.mismatches
+        );
+        assert!(report.mismatches.is_empty());
+
+        let mut tampered_attack_model = attack_model;
+        tampered_attack_model
+            .native_security_claim
+            .soundness_floor_bits = tampered_attack_model
+            .native_security_claim
+            .soundness_floor_bits
+            .saturating_add(1);
+        let report = verify_packaged_claim_documents(
+            Path::new("attack_model.json"),
+            Path::new("current_claim.json"),
+            tampered_attack_model,
+            current_claim,
+        )
+        .expect("tampered packaged claim report");
+        assert!(!report.passed, "tampered claim should fail");
+        assert!(
+            report
+                .mismatches
+                .iter()
+                .any(|mismatch| mismatch.field == "attack_model.native_security_claim"),
+            "expected native security claim mismatch, got {:?}",
+            report.mismatches
         );
     }
 }
