@@ -18,6 +18,7 @@ The exact wire and transcript surface for that family is frozen in [native_backe
 
 The theorem-grade derivations for the active line are in [native_backend_formal_theorems.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_formal_theorems.md).
 The exact shipped `tx_leaf -> receipt_root` aggregation object is defined in [native_backend_verified_aggregation.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_verified_aggregation.md).
+The repo-local cryptanalysis of the exact flattened SIS instance and the `GoldilocksFrog` quotient is in [native_backend_cryptanalysis_note.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_cryptanalysis_note.md).
 
 ## Claim Model
 
@@ -141,6 +142,7 @@ The current claim is narrower and more honest:
 
 - the repository now states one exact live bounded-message collision problem for the commitment path,
 - the repository now proves the active GoldilocksFrog fold schedule's exact challenge-tuple law and canonicality properties,
+- the repository now has a direct cryptanalysis note for the split `GoldilocksFrog` quotient showing why the simplest one-component zero-divisor shortcut is outside the claimed bounded coefficient class,
 - the repository now packages the actual shipped `receipt_root` guarantee as verified-leaf aggregation instead of leaving that property implicit in code,
 - the repository now states one exact in-repo reduction from that collision problem to a bounded-kernel Module-SIS style target,
 - the code now propagates only the explicit reduction loss and receipt-root composition loss into the final floor,
