@@ -1656,11 +1656,11 @@ fn sparse_low_norm_search(
     let mut searched_candidates = 0u128;
     let mut first_kernel_vector = None;
 
-    for position in 0..cols {
+    for (position, column) in columns.iter().enumerate().take(cols) {
         for coeff in coeff_values {
             searched_candidates += 1;
             let mut residual = vec![0i128; rows];
-            add_scaled_column(&mut residual, &columns[position], i128::from(*coeff));
+            add_scaled_column(&mut residual, column, i128::from(*coeff));
             if residual
                 .iter()
                 .all(|value| reduce_goldilocks_i128(*value) == 0)
@@ -1860,7 +1860,7 @@ where
         if hi == u32::MAX {
             return Ok(None);
         }
-        let next = hi.saturating_mul(2).min(u32::MAX);
+        let next = hi.saturating_mul(2);
         let row = claim_sweep_row(&build(next))?;
         if !row.claim_supported {
             hi = next;
@@ -2955,7 +2955,7 @@ fn random_malformed_artifact_mutation(
         }
         4 => {
             let start = rng.pick(artifact_bytes.len());
-            let width = 1 + rng.pick((artifact_bytes.len() - start).min(8).max(1));
+            let width = 1 + rng.pick((artifact_bytes.len() - start).clamp(1, 8));
             let mut mutated = artifact_bytes.to_vec();
             for byte in mutated.iter_mut().skip(start).take(width) {
                 *byte = rng.next_u8();
@@ -2964,7 +2964,7 @@ fn random_malformed_artifact_mutation(
         }
         _ => {
             let start = rng.pick(artifact_bytes.len());
-            let width = 1 + rng.pick((artifact_bytes.len() - start).min(8).max(1));
+            let width = 1 + rng.pick((artifact_bytes.len() - start).clamp(1, 8));
             let pos = rng.pick(artifact_bytes.len() + 1);
             let mut mutated = artifact_bytes.to_vec();
             let window = artifact_bytes[start..start + width].to_vec();
