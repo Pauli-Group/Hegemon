@@ -182,6 +182,9 @@ The current in-tree review package includes:
 - packaged attack-model artifact: `attack_model.json`
 - packaged live message-class artifact: `message_class.json`
 - packaged claim-sensitivity sweep: `claim_sweep.json`
+- packaged structured-lattice model artifact: `structured_lattice_model.json`
+- packaged reduced cryptanalysis spike report: `reduced_cryptanalysis_spikes.json`
+- packaged exact ring / flattened matrix export: `structured_lattice/`
 - generated review manifest: `review_manifest.json`
 - packaged independent claim-verifier report: `reference_claim_verifier_report.json`
 - packaged production verifier parity report: `production_verifier_report.json`

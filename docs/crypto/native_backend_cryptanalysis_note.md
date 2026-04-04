@@ -40,6 +40,7 @@ That is exactly the kind of algebraic structure that makes it wrong to claim “
 But the shipped claim does not rely on ring hardness. It relies on a direct bounded-kernel reduction and then on the flattened coefficient-space SIS instance above. For that exact claimed bounded class, I do **not** see a concrete split-ring exploit today:
 
 - the obvious one-component / zero-divisor shortcut is blocked by the tiny live bound `255`,
+- balanced CRT pairs can stay small, but any nonzero component difference explodes immediately,
 - the explicit CRT idempotents are enormous in the coefficient basis, roughly `q/3`,
 - the known subfield and weak-ring attack literature is a reason for caution, but it does not directly instantiate on this exact deterministic bounded-kernel commitment path.
 
@@ -93,6 +94,8 @@ a = (ω r_2 - ω^2 r_1) / (ω - ω^2).
 ```
 
 This identity is the real cryptanalytic bridge. A split-ring attack is only useful if it can produce CRT components `(r_1, r_2)` whose inverse-CRT coefficients `a, b` stay inside the claimed small coefficient box.
+
+It also immediately shows why a blanket “inverse CRT always blows up” claim would be wrong: if `r_1 = r_2 = t`, then `b = 0` and `a = t`, so perfectly balanced CRT pairs can remain small. The real obstruction is not equality itself; it is nonzero component difference.
 
 ## 2. Explicit CRT Idempotents
 
@@ -148,9 +151,31 @@ Now use the actual numbers:
 - `|ω^2| = 2^32`
 - the claimed centered coefficient bound is only `255`
 
-For every nonzero centered integer `t ∈ [-255,255]`, the centered products `ω t (mod q)` and `ω^2 t (mod q)` still have absolute value far above `255`; there is no wraparound anywhere near the bound. So if `b_i` is nonzero and `|b_i| <= 255`, then `|ω b_i|` and `|ω^2 b_i|` are automatically far outside the box `[-255,255]`.
+For every nonzero centered component difference
 
-Therefore a nonzero ring element with all centered coefficients in `[-255,255]` cannot annihilate one component of the quotient. The most obvious split-ring exploit is blocked by the actual live witness bound, not by wishful thinking.
+```text
+δ = r_1 - r_2 ∈ [-255,255] \ {0},
+```
+
+the lifted `X^27` coefficient is
+
+```text
+b = δ / (ω - ω^2).
+```
+
+The exact finite search over the live box gives:
+
+- `min_{δ != 0} |b| = 8589934591 = 2^33 - 1`
+
+and the exact finite search over all bounded pairs `(r_1, r_2) ∈ [-255,255]^2` with `r_1 != r_2` gives:
+
+- `min max(|a|, |b|) = 8589934591`
+
+with one minimizing example `(-255, -252) -> (a, b) = (4294967042, 8589934591)` in centered form.
+
+So balanced pairs such as `(-1, -1) -> (-1, 0)` can stay tiny, but the moment the two CRT components differ inside the live box, the inverse lift leaves the claimed witness class by an enormous margin. That is exactly the property a one-component or component-imbalanced split-ring exploit would need and exactly the property the live coefficient bound blocks.
+
+Therefore a nonzero ring element with all centered coefficients in `[-255,255]` cannot annihilate one component of the quotient, and more generally cannot realize any small bounded CRT imbalance. The most obvious split-ring exploit is blocked by the actual live witness bound, not by wishful thinking.
 
 This argument is much stronger than “the coefficients looked random in tests.” It is a direct incompatibility between the claimed bounded class and the quotient’s projector geometry.
 

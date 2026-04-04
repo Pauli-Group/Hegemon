@@ -16,8 +16,10 @@ use native_backend_ref::{
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
-    clear_prepared_matrix_cache, reset_kernel_runtime_state, take_kernel_cost_report,
-    CommitmentEstimatorModel, CommitmentSecurityModel, FoldDigestProof, KernelCostReport,
+    centered_goldilocks_value, clear_prepared_matrix_cache, derive_commitment_ring_matrix,
+    goldilocks_frog_quotient_model, left_multiplication_operator_matrix,
+    reset_kernel_runtime_state, take_kernel_cost_report, BackendKey, CommitmentEstimatorModel,
+    CommitmentSecurityModel, FoldDigestProof, GoldilocksFrogQuotientModel, KernelCostReport,
     LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams, NativeSecurityClaim,
     ReviewState, RingElem,
 };
@@ -116,6 +118,21 @@ struct Cli {
         help = "Print the current native backend claim-sensitivity sweep as JSON and exit"
     )]
     print_native_claim_sweep: bool,
+    #[arg(
+        long,
+        help = "Print the current native backend structured-lattice review model as JSON and exit"
+    )]
+    print_native_structured_lattice_model: bool,
+    #[arg(
+        long,
+        help = "Export the exact active conservative ring and flattened SIS matrices into this directory"
+    )]
+    export_native_flattened_sis_instance: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Run reduced-instance CRT/subfield/low-norm kernel search spikes and print JSON"
+    )]
+    run_native_reduced_cryptanalysis_spikes: bool,
     #[arg(
         long,
         help = "Emit deterministic native backend review vectors into this directory"
@@ -254,6 +271,151 @@ struct NativeAttackModelReport {
     transcript_model: TranscriptAttackModel,
     estimator_trace: EstimatorTraceReport,
     theorem_documents: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NativeStructuredLatticeReport {
+    parameter_fingerprint: String,
+    native_backend_params: BenchNativeBackendParams,
+    native_security_claim: BenchNativeSecurityClaim,
+    exact_live_tx_leaf_commitment: NativeTxLeafCommitmentStats,
+    conservative_instance: FlattenedSisInstanceReport,
+    quotient_model: GoldilocksFrogQuotientReport,
+    inverse_crt_report: InverseCrtReport,
+    threshold_table: Vec<SecurityThresholdRow>,
+    reviewer_artifacts: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FlattenedSisInstanceReport {
+    modulus: u64,
+    ring_profile: String,
+    ring_rows: usize,
+    message_ring_elems: usize,
+    ring_degree: usize,
+    equation_dimension: usize,
+    witness_dimension: usize,
+    coeff_bound: u32,
+    l2_bound: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GoldilocksFrogQuotientReport {
+    modulus: u64,
+    omega: u64,
+    omega_squared: u64,
+    omega_squared_centered: i128,
+    denominator: u64,
+    denominator_centered: i128,
+    denominator_inverse: u64,
+    denominator_inverse_centered: i128,
+    e1_x27_coeff: u64,
+    e1_x27_coeff_centered: i128,
+    e1_const_coeff: u64,
+    e1_const_coeff_centered: i128,
+    e2_x27_coeff: u64,
+    e2_x27_coeff_centered: i128,
+    e2_const_coeff: u64,
+    e2_const_coeff_centered: i128,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct InverseCrtReport {
+    component_box_bound: i32,
+    balanced_pair_example: PairLiftExample,
+    min_one_component_max_coeff_abs: i128,
+    min_one_component_example: PairLiftExample,
+    min_nonzero_component_difference_max_coeff_abs: i128,
+    min_nonzero_component_difference_example: PairLiftExample,
+    min_abs_x27_coeff_for_nonzero_component_difference: i128,
+    min_abs_x27_coeff_delta_example: PairDeltaExample,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PairLiftExample {
+    left_component: i32,
+    right_component: i32,
+    const_coeff_centered: i128,
+    x27_coeff_centered: i128,
+    max_coeff_abs: i128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PairDeltaExample {
+    component_difference: i32,
+    x27_coeff_centered: i128,
+    abs_x27_coeff: i128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SecurityThresholdRow {
+    target_bits: u32,
+    minimum_block_size: u32,
+    block_size_haircut: u32,
+    fraction_of_active_block_size: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FlattenedSisExportReport {
+    output_dir: String,
+    parameter_fingerprint: String,
+    matrix_metadata_path: String,
+    ring_matrix_path: String,
+    flat_matrix_path: String,
+    ring_matrix_bytes: usize,
+    flat_matrix_bytes: usize,
+    metadata: FlattenedSisMatrixMetadata,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FlattenedSisMatrixMetadata {
+    parameter_fingerprint: String,
+    relation_id_hex: String,
+    shape_digest_hex: String,
+    modulus: u64,
+    byte_order: String,
+    ring_matrix_layout: String,
+    flat_matrix_layout: String,
+    ring_rows: usize,
+    ring_cols: usize,
+    ring_degree: usize,
+    flat_rows: usize,
+    flat_cols: usize,
+    ring_matrix_file: String,
+    flat_matrix_file: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReducedCryptanalysisSpikesReport {
+    parameter_fingerprint: String,
+    native_backend_params: BenchNativeBackendParams,
+    reduced_matrix: ReducedMatrixDescriptor,
+    cases: Vec<ReducedCryptanalysisCase>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReducedMatrixDescriptor {
+    ring_rows: usize,
+    ring_cols: usize,
+    ring_degree: usize,
+    flat_rows: usize,
+    flat_cols: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReducedCryptanalysisCase {
+    name: String,
+    description: String,
+    variable_count: usize,
+    searched_candidates: u128,
+    found_nonzero_kernel: bool,
+    first_kernel_vector: Option<Vec<SearchCoordinate>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SearchCoordinate {
+    index: usize,
+    coeff: i16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -589,6 +751,21 @@ fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
+    if cli.print_native_structured_lattice_model {
+        let report = current_native_structured_lattice_model()?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if let Some(dir) = &cli.export_native_flattened_sis_instance {
+        let report = export_native_flattened_sis_instance(dir)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if cli.run_native_reduced_cryptanalysis_spikes {
+        let report = run_native_reduced_cryptanalysis_spikes()?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if let Some(dir) = &cli.emit_review_vectors {
         emit_review_vectors(dir)?;
         return Ok(());
@@ -914,6 +1091,243 @@ fn current_native_attack_model() -> Result<NativeAttackModelReport> {
     })
 }
 
+fn current_native_structured_lattice_model() -> Result<NativeStructuredLatticeReport> {
+    let params = current_native_backend_params();
+    let claim = current_bench_native_security_claim()?;
+    let exact_live_tx_leaf_commitment = native_tx_leaf_commitment_stats_with_params(&params);
+    let quotient_model = goldilocks_frog_quotient_model();
+    Ok(NativeStructuredLatticeReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        native_backend_params: current_bench_native_backend_params(),
+        native_security_claim: claim.clone(),
+        exact_live_tx_leaf_commitment,
+        conservative_instance: FlattenedSisInstanceReport {
+            modulus: GOLDILOCKS_MODULUS_U64,
+            ring_profile: "GoldilocksFrog".to_owned(),
+            ring_rows: params.matrix_rows,
+            message_ring_elems: params.max_commitment_message_ring_elems as usize,
+            ring_degree: params.ring_degree(),
+            equation_dimension: claim.commitment_problem_equations as usize,
+            witness_dimension: claim.commitment_problem_dimension as usize,
+            coeff_bound: claim.commitment_problem_coeff_bound,
+            l2_bound: claim.commitment_problem_l2_bound,
+        },
+        quotient_model: quotient_report(&quotient_model),
+        inverse_crt_report: inverse_crt_report(
+            claim.commitment_problem_coeff_bound as i32,
+            &quotient_model,
+        ),
+        threshold_table: security_threshold_table(claim.commitment_estimator_block_size),
+        reviewer_artifacts: vec![
+            "attack_model.json".to_owned(),
+            "message_class.json".to_owned(),
+            "claim_sweep.json".to_owned(),
+            "structured_lattice_model.json".to_owned(),
+            "structured_lattice/matrix_metadata.json".to_owned(),
+            "structured_lattice/ring_commitment_matrix_u64_le.bin".to_owned(),
+            "structured_lattice/flat_commitment_matrix_u64_le.bin".to_owned(),
+            "reduced_cryptanalysis_spikes.json".to_owned(),
+        ],
+    })
+}
+
+fn quotient_report(model: &GoldilocksFrogQuotientModel) -> GoldilocksFrogQuotientReport {
+    GoldilocksFrogQuotientReport {
+        modulus: model.modulus,
+        omega: model.omega,
+        omega_squared: model.omega_squared,
+        omega_squared_centered: centered_goldilocks_value(model.omega_squared),
+        denominator: model.denominator,
+        denominator_centered: centered_goldilocks_value(model.denominator),
+        denominator_inverse: model.denominator_inverse,
+        denominator_inverse_centered: model.denominator_inverse_centered,
+        e1_x27_coeff: model.e1_x27_coeff,
+        e1_x27_coeff_centered: model.e1_x27_coeff_centered,
+        e1_const_coeff: model.e1_const_coeff,
+        e1_const_coeff_centered: model.e1_const_coeff_centered,
+        e2_x27_coeff: model.e2_x27_coeff,
+        e2_x27_coeff_centered: model.e2_x27_coeff_centered,
+        e2_const_coeff: model.e2_const_coeff,
+        e2_const_coeff_centered: model.e2_const_coeff_centered,
+    }
+}
+
+fn security_threshold_table(active_block_size: u32) -> Vec<SecurityThresholdRow> {
+    [305u32, 256, 192, 128]
+        .into_iter()
+        .map(|target_bits| {
+            let minimum_block_size = ((f64::from(target_bits) / 0.265).ceil()) as u32;
+            SecurityThresholdRow {
+                target_bits,
+                minimum_block_size,
+                block_size_haircut: active_block_size.saturating_sub(minimum_block_size),
+                fraction_of_active_block_size: f64::from(minimum_block_size)
+                    / f64::from(active_block_size.max(1)),
+            }
+        })
+        .collect()
+}
+
+fn inverse_crt_report(
+    component_box_bound: i32,
+    model: &GoldilocksFrogQuotientModel,
+) -> InverseCrtReport {
+    let balanced_pair_example = pair_lift_example(-1, -1, model);
+
+    let mut min_one_component_example = None;
+    let mut min_nonzero_component_difference_example = None;
+    let mut min_abs_x27_coeff_delta_example = None;
+
+    for left in -component_box_bound..=component_box_bound {
+        for right in -component_box_bound..=component_box_bound {
+            if left == 0 && right == 0 {
+                continue;
+            }
+            let example = pair_lift_example(left, right, model);
+            if (left == 0) != (right == 0) {
+                let replace = min_one_component_example
+                    .as_ref()
+                    .map(|current: &PairLiftExample| example.max_coeff_abs < current.max_coeff_abs)
+                    .unwrap_or(true);
+                if replace {
+                    min_one_component_example = Some(example.clone());
+                }
+            }
+            if left != right {
+                let replace = min_nonzero_component_difference_example
+                    .as_ref()
+                    .map(|current: &PairLiftExample| example.max_coeff_abs < current.max_coeff_abs)
+                    .unwrap_or(true);
+                if replace {
+                    min_nonzero_component_difference_example = Some(example);
+                }
+            }
+        }
+    }
+
+    for delta in -component_box_bound..=component_box_bound {
+        if delta == 0 {
+            continue;
+        }
+        let (_, x27_coeff) = lift_component_pair_mod_q(delta, 0, model);
+        let x27_centered = centered_goldilocks_value(x27_coeff);
+        let candidate = PairDeltaExample {
+            component_difference: delta,
+            x27_coeff_centered: x27_centered,
+            abs_x27_coeff: x27_centered.abs(),
+        };
+        let replace = min_abs_x27_coeff_delta_example
+            .as_ref()
+            .map(|current: &PairDeltaExample| candidate.abs_x27_coeff < current.abs_x27_coeff)
+            .unwrap_or(true);
+        if replace {
+            min_abs_x27_coeff_delta_example = Some(candidate);
+        }
+    }
+
+    let min_one_component_example =
+        min_one_component_example.expect("one-component example must exist");
+    let min_nonzero_component_difference_example = min_nonzero_component_difference_example
+        .expect("nonzero component-difference example must exist");
+    let min_abs_x27_coeff_delta_example = min_abs_x27_coeff_delta_example
+        .expect("nonzero component-difference delta example must exist");
+
+    InverseCrtReport {
+        component_box_bound,
+        balanced_pair_example,
+        min_one_component_max_coeff_abs: min_one_component_example.max_coeff_abs,
+        min_one_component_example,
+        min_nonzero_component_difference_max_coeff_abs: min_nonzero_component_difference_example
+            .max_coeff_abs,
+        min_nonzero_component_difference_example,
+        min_abs_x27_coeff_for_nonzero_component_difference: min_abs_x27_coeff_delta_example
+            .abs_x27_coeff,
+        min_abs_x27_coeff_delta_example,
+    }
+}
+
+fn pair_lift_example(
+    left_component: i32,
+    right_component: i32,
+    model: &GoldilocksFrogQuotientModel,
+) -> PairLiftExample {
+    let (const_coeff, x27_coeff) =
+        lift_component_pair_mod_q(left_component, right_component, model);
+    let const_coeff_centered = centered_goldilocks_value(const_coeff);
+    let x27_coeff_centered = centered_goldilocks_value(x27_coeff);
+    PairLiftExample {
+        left_component,
+        right_component,
+        const_coeff_centered,
+        x27_coeff_centered,
+        max_coeff_abs: const_coeff_centered.abs().max(x27_coeff_centered.abs()),
+    }
+}
+
+fn lift_component_pair_mod_q(
+    left_component: i32,
+    right_component: i32,
+    model: &GoldilocksFrogQuotientModel,
+) -> (u64, u64) {
+    let left = encode_small_centered_to_goldilocks(left_component);
+    let right = encode_small_centered_to_goldilocks(right_component);
+    let x27_coeff = mod_mul_u64(model.denominator_inverse, mod_sub_u64(left, right));
+    let const_coeff = mod_mul_u64(
+        model.denominator_inverse,
+        mod_sub_u64(
+            mod_mul_u64(model.omega, right),
+            mod_mul_u64(model.omega_squared, left),
+        ),
+    );
+    (const_coeff, x27_coeff)
+}
+
+fn export_native_flattened_sis_instance(out_dir: &Path) -> Result<FlattenedSisExportReport> {
+    fs::create_dir_all(out_dir)
+        .with_context(|| format!("failed to create export directory {}", out_dir.display()))?;
+    let params = current_native_backend_params();
+    let message_len = params.max_commitment_message_ring_elems as usize;
+    let (pk, ring_matrix, flat_matrix) = build_active_commitment_matrices(message_len)?;
+    let relation = TxLeafPublicRelation::default();
+    let metadata = FlattenedSisMatrixMetadata {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        relation_id_hex: hex32(relation.relation_id().0),
+        shape_digest_hex: shape_hex(pk.shape_digest),
+        modulus: GOLDILOCKS_MODULUS_U64,
+        byte_order: "little_endian_u64".to_owned(),
+        ring_matrix_layout: "row-major ring rows, then row-major message ring elements, then coefficient index 0..ring_degree-1".to_owned(),
+        flat_matrix_layout: "row-major flattened rows, with row index = ring_row * ring_degree + coeff and column index = message_ring_elem * ring_degree + coeff".to_owned(),
+        ring_rows: ring_matrix.len(),
+        ring_cols: ring_matrix.first().map(Vec::len).unwrap_or(0),
+        ring_degree: pk.ring_degree,
+        flat_rows: ring_matrix.len() * pk.ring_degree,
+        flat_cols: ring_matrix.first().map(Vec::len).unwrap_or(0) * pk.ring_degree,
+        ring_matrix_file: "ring_commitment_matrix_u64_le.bin".to_owned(),
+        flat_matrix_file: "flat_commitment_matrix_u64_le.bin".to_owned(),
+    };
+    let ring_matrix_path = out_dir.join(&metadata.ring_matrix_file);
+    let flat_matrix_path = out_dir.join(&metadata.flat_matrix_file);
+    let matrix_metadata_path = out_dir.join("matrix_metadata.json");
+    let ring_matrix_bytes = serialize_ring_matrix_u64_le(&ring_matrix);
+    let flat_matrix_bytes = serialize_u64_le(&flat_matrix);
+    fs::write(&ring_matrix_path, &ring_matrix_bytes)
+        .with_context(|| format!("failed to write {}", ring_matrix_path.display()))?;
+    fs::write(&flat_matrix_path, &flat_matrix_bytes)
+        .with_context(|| format!("failed to write {}", flat_matrix_path.display()))?;
+    fs::write(&matrix_metadata_path, serde_json::to_vec_pretty(&metadata)?)
+        .with_context(|| format!("failed to write {}", matrix_metadata_path.display()))?;
+    Ok(FlattenedSisExportReport {
+        output_dir: out_dir.display().to_string(),
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        matrix_metadata_path: matrix_metadata_path.display().to_string(),
+        ring_matrix_path: ring_matrix_path.display().to_string(),
+        flat_matrix_path: flat_matrix_path.display().to_string(),
+        ring_matrix_bytes: ring_matrix_bytes.len(),
+        flat_matrix_bytes: flat_matrix_bytes.len(),
+        metadata,
+    })
+}
+
 fn current_transcript_attack_model(params: &NativeBackendParams) -> Result<TranscriptAttackModel> {
     Ok(transcript_attack_model(params))
 }
@@ -981,6 +1395,378 @@ fn estimator_trace(
         quantum_bits: (0.2650 * f64::from(block_size)).floor() as u32,
         paranoid_bits: (0.2075 * f64::from(block_size)).floor() as u32,
     }
+}
+
+fn build_active_commitment_matrices(
+    message_len: usize,
+) -> Result<(BackendKey, Vec<Vec<RingElem>>, Vec<u64>)> {
+    let params = current_native_backend_params();
+    let relation = TxLeafPublicRelation::default();
+    let backend = LatticeBackend::new(params.clone());
+    let (pk, _) = backend.setup(&params.security_params(), relation.shape())?;
+    let ring_matrix = derive_commitment_ring_matrix(&pk, message_len);
+    let flat_matrix = flatten_ring_commitment_matrix(pk.ring_profile, &ring_matrix)?;
+    Ok((pk, ring_matrix, flat_matrix))
+}
+
+fn flatten_ring_commitment_matrix(
+    ring_profile: superneo_backend_lattice::RingProfile,
+    ring_matrix: &[Vec<RingElem>],
+) -> Result<Vec<u64>> {
+    let ring_rows = ring_matrix.len();
+    let ring_cols = ring_matrix.first().map(Vec::len).unwrap_or(0);
+    let ring_degree = ring_profile.degree();
+    let flat_cols = ring_cols * ring_degree;
+    let mut flat = vec![0u64; ring_rows * ring_degree * flat_cols];
+    for (ring_row_index, ring_row) in ring_matrix.iter().enumerate() {
+        ensure!(
+            ring_row.len() == ring_cols,
+            "ring commitment matrix row {} has {} columns but expected {}",
+            ring_row_index,
+            ring_row.len(),
+            ring_cols
+        );
+        for (ring_col_index, ring_elem) in ring_row.iter().enumerate() {
+            let block = left_multiplication_operator_matrix(ring_profile, ring_elem)?;
+            for block_row in 0..ring_degree {
+                let flat_row_index = ring_row_index * ring_degree + block_row;
+                let dest_offset = flat_row_index * flat_cols + ring_col_index * ring_degree;
+                let block_offset = block_row * ring_degree;
+                flat[dest_offset..dest_offset + ring_degree]
+                    .copy_from_slice(&block[block_offset..block_offset + ring_degree]);
+            }
+        }
+    }
+    Ok(flat)
+}
+
+fn serialize_ring_matrix_u64_le(ring_matrix: &[Vec<RingElem>]) -> Vec<u8> {
+    let total_coeffs = ring_matrix
+        .iter()
+        .flat_map(|row| row.iter())
+        .map(|elem| elem.coeffs.len())
+        .sum::<usize>();
+    let mut out = Vec::with_capacity(total_coeffs * 8);
+    for row in ring_matrix {
+        for elem in row {
+            out.extend(serialize_u64_le(&elem.coeffs));
+        }
+    }
+    out
+}
+
+fn serialize_u64_le(values: &[u64]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() * 8);
+    for value in values {
+        out.extend(value.to_le_bytes());
+    }
+    out
+}
+
+fn run_native_reduced_cryptanalysis_spikes() -> Result<ReducedCryptanalysisSpikesReport> {
+    let ring_rows = 2usize;
+    let ring_cols = 2usize;
+    let ring_degree = current_native_backend_params().ring_degree();
+    let (_, _, full_flat_matrix) = build_active_commitment_matrices(ring_cols)?;
+    let total_rows = current_native_backend_params().matrix_rows * ring_degree;
+    let total_cols = ring_cols * ring_degree;
+    let flat_rows = ring_rows * ring_degree;
+    let flat_cols = ring_cols * ring_degree;
+    let reduced_flat_matrix = prefix_flat_matrix(
+        &full_flat_matrix,
+        total_rows,
+        total_cols,
+        flat_rows,
+        flat_cols,
+    )?;
+
+    let split_pair_positions = vec![0usize, 27, 54, 81];
+    let fq3_like_positions = vec![0usize, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99];
+    let split_pair_case = exhaustive_box_subspace_search(
+        "crt_component_pair_box2",
+        "Search the exact first 2x2 ring-row/column slice on the {0,27}-coefficient subspace with coefficient box [-2,2].",
+        &reduced_flat_matrix,
+        flat_rows,
+        flat_cols,
+        &split_pair_positions,
+        &[-2, -1, 0, 1, 2],
+    );
+    let fq3_like_case = exhaustive_box_subspace_search(
+        "fq3_like_subspace_box1",
+        "Search the exact first 2x2 ring-row/column slice on the coefficient positions {0,9,18,27,36,45} per column with coefficient box [-1,1].",
+        &reduced_flat_matrix,
+        flat_rows,
+        flat_cols,
+        &fq3_like_positions,
+        &[-1, 0, 1],
+    );
+    let sparse_case = sparse_low_norm_search(
+        "sparse_two_term_box2",
+        "Search the exact first 2x2 ring-row/column slice for vectors with at most two nonzero coefficients across the 108 flattened columns and coefficients in {±1, ±2}.",
+        &reduced_flat_matrix,
+        flat_rows,
+        flat_cols,
+        2,
+        &[-2, -1, 1, 2],
+    );
+    Ok(ReducedCryptanalysisSpikesReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        native_backend_params: current_bench_native_backend_params(),
+        reduced_matrix: ReducedMatrixDescriptor {
+            ring_rows,
+            ring_cols,
+            ring_degree,
+            flat_rows,
+            flat_cols,
+        },
+        cases: vec![split_pair_case, fq3_like_case, sparse_case],
+    })
+}
+
+fn prefix_flat_matrix(
+    flat_matrix: &[u64],
+    total_rows: usize,
+    total_cols: usize,
+    row_limit: usize,
+    col_limit: usize,
+) -> Result<Vec<u64>> {
+    ensure!(
+        flat_matrix.len() == total_rows * total_cols,
+        "flat matrix length {} does not match {} x {}",
+        flat_matrix.len(),
+        total_rows,
+        total_cols
+    );
+    ensure!(
+        row_limit <= total_rows && col_limit <= total_cols,
+        "requested prefix {} x {} exceeds matrix {} x {}",
+        row_limit,
+        col_limit,
+        total_rows,
+        total_cols
+    );
+    let mut out = Vec::with_capacity(row_limit * col_limit);
+    for row in 0..row_limit {
+        let start = row * total_cols;
+        out.extend_from_slice(&flat_matrix[start..start + col_limit]);
+    }
+    Ok(out)
+}
+
+fn exhaustive_box_subspace_search(
+    name: &str,
+    description: &str,
+    flat_matrix: &[u64],
+    rows: usize,
+    cols: usize,
+    variable_positions: &[usize],
+    coeff_values: &[i16],
+) -> ReducedCryptanalysisCase {
+    let columns = variable_positions
+        .iter()
+        .map(|position| flat_matrix_column(flat_matrix, rows, cols, *position))
+        .collect::<Vec<_>>();
+    let mut residual = vec![0i128; rows];
+    let mut assignment = vec![0i16; variable_positions.len()];
+    let mut searched_candidates = 0u128;
+    let mut first_kernel_vector = None;
+    search_box_subspace_recursive(
+        0,
+        variable_positions,
+        coeff_values,
+        &columns,
+        &mut residual,
+        &mut assignment,
+        &mut searched_candidates,
+        &mut first_kernel_vector,
+    );
+    ReducedCryptanalysisCase {
+        name: name.to_owned(),
+        description: description.to_owned(),
+        variable_count: variable_positions.len(),
+        searched_candidates,
+        found_nonzero_kernel: first_kernel_vector.is_some(),
+        first_kernel_vector,
+    }
+}
+
+fn search_box_subspace_recursive(
+    index: usize,
+    variable_positions: &[usize],
+    coeff_values: &[i16],
+    columns: &[Vec<i128>],
+    residual: &mut [i128],
+    assignment: &mut [i16],
+    searched_candidates: &mut u128,
+    first_kernel_vector: &mut Option<Vec<SearchCoordinate>>,
+) {
+    if first_kernel_vector.is_some() {
+        return;
+    }
+    if index == variable_positions.len() {
+        if assignment.iter().all(|coeff| *coeff == 0) {
+            return;
+        }
+        *searched_candidates += 1;
+        if residual
+            .iter()
+            .all(|value| reduce_goldilocks_i128(*value) == 0)
+        {
+            *first_kernel_vector = Some(nonzero_assignment(variable_positions, assignment));
+        }
+        return;
+    }
+
+    for coeff in coeff_values {
+        assignment[index] = *coeff;
+        if *coeff != 0 {
+            add_scaled_column(residual, &columns[index], i128::from(*coeff));
+        }
+        search_box_subspace_recursive(
+            index + 1,
+            variable_positions,
+            coeff_values,
+            columns,
+            residual,
+            assignment,
+            searched_candidates,
+            first_kernel_vector,
+        );
+        if *coeff != 0 {
+            add_scaled_column(residual, &columns[index], -i128::from(*coeff));
+        }
+        if first_kernel_vector.is_some() {
+            return;
+        }
+    }
+}
+
+fn sparse_low_norm_search(
+    name: &str,
+    description: &str,
+    flat_matrix: &[u64],
+    rows: usize,
+    cols: usize,
+    max_nonzero_terms: usize,
+    coeff_values: &[i16],
+) -> ReducedCryptanalysisCase {
+    let columns = (0..cols)
+        .map(|position| flat_matrix_column(flat_matrix, rows, cols, position))
+        .collect::<Vec<_>>();
+    let mut searched_candidates = 0u128;
+    let mut first_kernel_vector = None;
+
+    for position in 0..cols {
+        for coeff in coeff_values {
+            searched_candidates += 1;
+            let mut residual = vec![0i128; rows];
+            add_scaled_column(&mut residual, &columns[position], i128::from(*coeff));
+            if residual
+                .iter()
+                .all(|value| reduce_goldilocks_i128(*value) == 0)
+            {
+                first_kernel_vector = Some(vec![SearchCoordinate {
+                    index: position,
+                    coeff: *coeff,
+                }]);
+                break;
+            }
+        }
+        if first_kernel_vector.is_some() {
+            break;
+        }
+    }
+
+    if first_kernel_vector.is_none() && max_nonzero_terms >= 2 {
+        'outer: for left in 0..cols {
+            for right in left + 1..cols {
+                for left_coeff in coeff_values {
+                    for right_coeff in coeff_values {
+                        searched_candidates += 1;
+                        let mut residual = vec![0i128; rows];
+                        add_scaled_column(&mut residual, &columns[left], i128::from(*left_coeff));
+                        add_scaled_column(&mut residual, &columns[right], i128::from(*right_coeff));
+                        if residual
+                            .iter()
+                            .all(|value| reduce_goldilocks_i128(*value) == 0)
+                        {
+                            first_kernel_vector = Some(vec![
+                                SearchCoordinate {
+                                    index: left,
+                                    coeff: *left_coeff,
+                                },
+                                SearchCoordinate {
+                                    index: right,
+                                    coeff: *right_coeff,
+                                },
+                            ]);
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    ReducedCryptanalysisCase {
+        name: name.to_owned(),
+        description: description.to_owned(),
+        variable_count: cols,
+        searched_candidates,
+        found_nonzero_kernel: first_kernel_vector.is_some(),
+        first_kernel_vector,
+    }
+}
+
+fn flat_matrix_column(
+    flat_matrix: &[u64],
+    rows: usize,
+    cols: usize,
+    col_index: usize,
+) -> Vec<i128> {
+    (0..rows)
+        .map(|row| i128::from(flat_matrix[row * cols + col_index]))
+        .collect()
+}
+
+fn add_scaled_column(accumulator: &mut [i128], column: &[i128], scale: i128) {
+    for (slot, value) in accumulator.iter_mut().zip(column) {
+        *slot += scale * value;
+    }
+}
+
+fn nonzero_assignment(variable_positions: &[usize], assignment: &[i16]) -> Vec<SearchCoordinate> {
+    variable_positions
+        .iter()
+        .copied()
+        .zip(assignment.iter().copied())
+        .filter(|(_, coeff)| *coeff != 0)
+        .map(|(index, coeff)| SearchCoordinate { index, coeff })
+        .collect()
+}
+
+fn encode_small_centered_to_goldilocks(value: i32) -> u64 {
+    reduce_goldilocks_i128(i128::from(value))
+}
+
+fn mod_mul_u64(left: u64, right: u64) -> u64 {
+    ((u128::from(left) * u128::from(right)) % u128::from(GOLDILOCKS_MODULUS_U64)) as u64
+}
+
+fn mod_sub_u64(left: u64, right: u64) -> u64 {
+    if left >= right {
+        left - right
+    } else {
+        GOLDILOCKS_MODULUS_U64 - (right - left)
+    }
+}
+
+fn reduce_goldilocks_i128(value: i128) -> u64 {
+    let mut reduced = value % i128::from(GOLDILOCKS_MODULUS_U64);
+    if reduced < 0 {
+        reduced += i128::from(GOLDILOCKS_MODULUS_U64);
+    }
+    reduced as u64
 }
 
 fn current_native_claim_sweep() -> Result<NativeClaimSweepReport> {

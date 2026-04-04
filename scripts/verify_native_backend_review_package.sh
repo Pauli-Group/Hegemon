@@ -27,12 +27,19 @@ PY
 tar -xzf "$PACKAGE_TAR" -C "$WORKDIR"
 test -f "$WORKDIR/native-backend-128b-review-package/docs/crypto/native_backend_commitment_reduction.md"
 test -f "$WORKDIR/native-backend-128b-review-package/docs/crypto/native_backend_formal_theorems.md"
+test -f "$WORKDIR/native-backend-128b-review-package/docs/crypto/native_backend_cryptanalysis_note.md"
 test -f "$WORKDIR/native-backend-128b-review-package/docs/crypto/native_backend_verified_aggregation.md"
 test -f "$WORKDIR/native-backend-128b-review-package/docs/SECURITY_REVIEWS.md"
 test -f "$WORKDIR/native-backend-128b-review-package/current_claim.json"
 test -f "$WORKDIR/native-backend-128b-review-package/attack_model.json"
 test -f "$WORKDIR/native-backend-128b-review-package/message_class.json"
 test -f "$WORKDIR/native-backend-128b-review-package/claim_sweep.json"
+test -f "$WORKDIR/native-backend-128b-review-package/structured_lattice_model.json"
+test -f "$WORKDIR/native-backend-128b-review-package/reduced_cryptanalysis_spikes.json"
+test -f "$WORKDIR/native-backend-128b-review-package/structured_lattice_export_report.json"
+test -f "$WORKDIR/native-backend-128b-review-package/structured_lattice/matrix_metadata.json"
+test -f "$WORKDIR/native-backend-128b-review-package/structured_lattice/ring_commitment_matrix_u64_le.bin"
+test -f "$WORKDIR/native-backend-128b-review-package/structured_lattice/flat_commitment_matrix_u64_le.bin"
 test -f "$WORKDIR/native-backend-128b-review-package/review_manifest.json"
 test -f "$WORKDIR/native-backend-128b-review-package/reference_verifier_report.json"
 test -f "$WORKDIR/native-backend-128b-review-package/reference_claim_verifier_report.json"
@@ -47,6 +54,10 @@ python3 - <<'PY' \
   "$WORKDIR/native-backend-128b-review-package/attack_model.json" \
   "$WORKDIR/native-backend-128b-review-package/message_class.json" \
   "$WORKDIR/native-backend-128b-review-package/claim_sweep.json" \
+  "$WORKDIR/native-backend-128b-review-package/structured_lattice_model.json" \
+  "$WORKDIR/native-backend-128b-review-package/reduced_cryptanalysis_spikes.json" \
+  "$WORKDIR/native-backend-128b-review-package/structured_lattice_export_report.json" \
+  "$WORKDIR/native-backend-128b-review-package/structured_lattice/matrix_metadata.json" \
   "$WORKDIR/native-backend-128b-review-package/reference_verifier_report.json" \
   "$WORKDIR/native-backend-128b-review-package/reference_claim_verifier_report.json" \
   "$WORKDIR/native-backend-128b-review-package/production_verifier_report.json"
@@ -59,9 +70,13 @@ claim = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 attack = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 message = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
 sweep = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
-reference = json.loads(Path(sys.argv[6]).read_text(encoding="utf-8"))
-reference_claim = json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
-production = json.loads(Path(sys.argv[8]).read_text(encoding="utf-8"))
+structured = json.loads(Path(sys.argv[6]).read_text(encoding="utf-8"))
+reduced = json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
+export_report = json.loads(Path(sys.argv[8]).read_text(encoding="utf-8"))
+matrix_metadata = json.loads(Path(sys.argv[9]).read_text(encoding="utf-8"))
+reference = json.loads(Path(sys.argv[10]).read_text(encoding="utf-8"))
+reference_claim = json.loads(Path(sys.argv[11]).read_text(encoding="utf-8"))
+production = json.loads(Path(sys.argv[12]).read_text(encoding="utf-8"))
 stats = manifest["exact_live_tx_leaf_commitment"]
 guarantees = manifest["guarantee_summary"]
 claim_body = claim["native_security_claim"]
@@ -99,6 +114,19 @@ assert attack["estimator_trace"]["block_size"] == 3294, attack["estimator_trace"
 assert attack["estimator_trace"]["quantum_bits"] == 872, attack["estimator_trace"]
 assert sweep["active_message_cap"] == 76, sweep
 assert sweep["active_receipt_root_leaf_cap"] == 128, sweep
+assert structured["conservative_instance"]["equation_dimension"] == 594, structured["conservative_instance"]
+assert structured["conservative_instance"]["witness_dimension"] == 4104, structured["conservative_instance"]
+assert structured["inverse_crt_report"]["min_one_component_max_coeff_abs"] == 8589934591, structured["inverse_crt_report"]
+assert structured["inverse_crt_report"]["min_nonzero_component_difference_max_coeff_abs"] == 8589934591, structured["inverse_crt_report"]
+assert structured["threshold_table"][0]["target_bits"] == 305, structured["threshold_table"]
+assert structured["threshold_table"][0]["block_size_haircut"] == 2143, structured["threshold_table"]
+assert reduced["reduced_matrix"]["flat_rows"] == 108, reduced["reduced_matrix"]
+assert reduced["reduced_matrix"]["flat_cols"] == 108, reduced["reduced_matrix"]
+assert all(case["found_nonzero_kernel"] is False for case in reduced["cases"]), reduced["cases"]
+assert matrix_metadata["flat_rows"] == 594, matrix_metadata
+assert matrix_metadata["flat_cols"] == 4104, matrix_metadata
+assert export_report["flat_matrix_bytes"] == 19502208, export_report
+assert export_report["ring_matrix_bytes"] == 361152, export_report
 assert reference["summary"]["failed_cases"] == 0, reference["summary"]
 assert reference_claim["passed"] is True, reference_claim
 assert reference_claim["mismatches"] == [], reference_claim["mismatches"]

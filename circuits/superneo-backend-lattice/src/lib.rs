@@ -30,7 +30,7 @@ impl RingProfile {
         }
     }
 
-    fn degree(self) -> usize {
+    pub fn degree(self) -> usize {
         match self {
             Self::GoldilocksCyclotomic24 => 8,
             Self::GoldilocksFrog => 54,
@@ -577,7 +577,9 @@ fn theorem_backed_transcript_soundness_bits(challenge_bits: u32, challenge_count
     entropy_bits.floor().max(0.0) as u32
 }
 
-const GOLDILOCKS_MODULUS_U64: u64 = 18_446_744_069_414_584_321;
+pub const GOLDILOCKS_MODULUS_U64: u64 = 18_446_744_069_414_584_321;
+pub const GOLDILOCKS_FROG_OMEGA: u64 = 4_294_967_295;
+pub const GOLDILOCKS_FROG_OMEGA_SQUARED: u64 = 18_446_744_065_119_617_025;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BoundedKernelModuleSisEstimate {
@@ -928,6 +930,24 @@ pub struct FoldDigestProof {
     pub proof_digest: [u8; 48],
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GoldilocksFrogQuotientModel {
+    pub modulus: u64,
+    pub omega: u64,
+    pub omega_squared: u64,
+    pub denominator: u64,
+    pub denominator_inverse: u64,
+    pub denominator_inverse_centered: i128,
+    pub e1_x27_coeff: u64,
+    pub e1_x27_coeff_centered: i128,
+    pub e1_const_coeff: u64,
+    pub e1_const_coeff_centered: i128,
+    pub e2_x27_coeff: u64,
+    pub e2_x27_coeff_centered: i128,
+    pub e2_const_coeff: u64,
+    pub e2_const_coeff_centered: i128,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitmentOpening {
     #[serde(
@@ -1261,6 +1281,57 @@ pub fn take_kernel_cost_report() -> KernelCostReport {
 
 pub fn clear_prepared_matrix_cache() {
     PREPARED_MATRIX_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+pub fn centered_goldilocks_value(value: u64) -> i128 {
+    if value <= GOLDILOCKS_MODULUS_U64 / 2 {
+        i128::from(value)
+    } else {
+        i128::from(value) - i128::from(GOLDILOCKS_MODULUS_U64)
+    }
+}
+
+pub fn goldilocks_frog_quotient_model() -> GoldilocksFrogQuotientModel {
+    let denominator = reduce_mod_u128(
+        u128::from(GOLDILOCKS_FROG_OMEGA)
+            + u128::from(GOLDILOCKS_MODULUS_U64 - GOLDILOCKS_FROG_OMEGA_SQUARED),
+        GOLDILOCKS_MODULUS_U64,
+    );
+    let denominator_inverse = mod_inverse_u64(denominator, GOLDILOCKS_MODULUS_U64);
+    let e1_x27_coeff = denominator_inverse;
+    let e1_const_coeff = reduce_mod_u128(
+        u128::from(GOLDILOCKS_MODULUS_U64 - GOLDILOCKS_FROG_OMEGA_SQUARED)
+            .saturating_mul(u128::from(denominator_inverse)),
+        GOLDILOCKS_MODULUS_U64,
+    );
+    let denominator_two = reduce_mod_u128(
+        u128::from(GOLDILOCKS_FROG_OMEGA_SQUARED)
+            + u128::from(GOLDILOCKS_MODULUS_U64 - GOLDILOCKS_FROG_OMEGA),
+        GOLDILOCKS_MODULUS_U64,
+    );
+    let denominator_two_inverse = mod_inverse_u64(denominator_two, GOLDILOCKS_MODULUS_U64);
+    let e2_x27_coeff = denominator_two_inverse;
+    let e2_const_coeff = reduce_mod_u128(
+        u128::from(GOLDILOCKS_MODULUS_U64 - GOLDILOCKS_FROG_OMEGA)
+            .saturating_mul(u128::from(denominator_two_inverse)),
+        GOLDILOCKS_MODULUS_U64,
+    );
+    GoldilocksFrogQuotientModel {
+        modulus: GOLDILOCKS_MODULUS_U64,
+        omega: GOLDILOCKS_FROG_OMEGA,
+        omega_squared: GOLDILOCKS_FROG_OMEGA_SQUARED,
+        denominator,
+        denominator_inverse,
+        denominator_inverse_centered: centered_goldilocks_value(denominator_inverse),
+        e1_x27_coeff,
+        e1_x27_coeff_centered: centered_goldilocks_value(e1_x27_coeff),
+        e1_const_coeff,
+        e1_const_coeff_centered: centered_goldilocks_value(e1_const_coeff),
+        e2_x27_coeff,
+        e2_x27_coeff_centered: centered_goldilocks_value(e2_x27_coeff),
+        e2_const_coeff,
+        e2_const_coeff_centered: centered_goldilocks_value(e2_const_coeff),
+    }
 }
 
 fn update_kernel_cost_report(f: impl FnOnce(&mut KernelCostReport)) {
@@ -1962,6 +2033,36 @@ fn matrix_entry(pk: &BackendKey, row_index: usize, col_index: usize) -> RingElem
     RingElem::from_coeffs(coeffs)
 }
 
+pub fn derive_commitment_ring_matrix(pk: &BackendKey, message_len: usize) -> Vec<Vec<RingElem>> {
+    prepare_commitment_matrix(pk, message_len).rows.clone()
+}
+
+pub fn left_multiplication_operator_matrix(
+    ring_profile: RingProfile,
+    left: &RingElem,
+) -> Result<Vec<u64>> {
+    let degree = ring_profile.degree();
+    ensure!(
+        left.coeffs.len() == degree,
+        "ring element degree {} does not match profile degree {}",
+        left.coeffs.len(),
+        degree
+    );
+    let mut matrix = vec![0u64; degree * degree];
+    for basis_index in 0..degree {
+        let mut basis = vec![0u64; degree];
+        basis[basis_index] = 1;
+        let basis_elem = RingElem::from_coeffs(basis);
+        let mut stats = KernelLocalStats::default();
+        let product =
+            multiply_ring_elems_with_mode(ring_profile, left, &basis_elem, &mut stats, false)?;
+        for (row_index, value) in product.into_iter().enumerate() {
+            matrix[row_index * degree + basis_index] = reduce_goldilocks_signed(value);
+        }
+    }
+    Ok(matrix)
+}
+
 fn prepare_commitment_matrix(pk: &BackendKey, message_len: usize) -> Arc<PreparedCommitmentMatrix> {
     let cache_key = prepared_matrix_cache_key(pk, message_len);
     if let Some(hit) = PREPARED_MATRIX_CACHE.with(|cache| cache.borrow_mut().get(&cache_key)) {
@@ -2389,6 +2490,28 @@ fn reduce_goldilocks_signed(value: i128) -> u64 {
 
 fn reduce_goldilocks_u128(value: u128) -> u64 {
     (value % (GOLDILOCKS_MODULUS_I128 as u128)) as u64
+}
+
+fn reduce_mod_u128(value: u128, modulus: u64) -> u64 {
+    (value % u128::from(modulus)) as u64
+}
+
+fn mod_inverse_u64(value: u64, modulus: u64) -> u64 {
+    mod_pow_u64(value, modulus.saturating_sub(2), modulus)
+}
+
+fn mod_pow_u64(mut base: u64, mut exponent: u64, modulus: u64) -> u64 {
+    let mut acc = 1u64;
+    while exponent > 0 {
+        if exponent & 1 == 1 {
+            acc = reduce_mod_u128(u128::from(acc) * u128::from(base), modulus);
+        }
+        exponent >>= 1;
+        if exponent > 0 {
+            base = reduce_mod_u128(u128::from(base) * u128::from(base), modulus);
+        }
+    }
+    acc
 }
 
 fn hash48(hasher: Hasher) -> [u8; 48] {

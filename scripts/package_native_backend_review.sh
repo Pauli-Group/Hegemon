@@ -18,12 +18,14 @@ mkdir -p \
   "$STAGE/testdata/native_backend_vectors" \
   "$STAGE/audits/native-backend-128b" \
   "$STAGE/benchmarks" \
+  "$STAGE/structured_lattice" \
   "$STAGE/source"
 
 cp "$ROOT/docs/crypto/native_backend_spec.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_formal_theorems.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_commitment_reduction.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_security_analysis.md" "$STAGE/docs/crypto/"
+cp "$ROOT/docs/crypto/native_backend_cryptanalysis_note.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_verified_aggregation.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_attack_worksheet.md" "$STAGE/docs/crypto/"
 cp "$ROOT/docs/crypto/native_backend_constant_time.md" "$STAGE/docs/crypto/"
@@ -151,6 +153,10 @@ cargo run -p superneo-bench -- --print-native-review-manifest > "$STAGE/review_m
 cargo run -p superneo-bench -- --print-native-attack-model > "$STAGE/attack_model.json"
 cargo run -p superneo-bench -- --print-native-message-class > "$STAGE/message_class.json"
 cargo run -p superneo-bench -- --print-native-claim-sweep > "$STAGE/claim_sweep.json"
+cargo run -p superneo-bench -- --print-native-structured-lattice-model > "$STAGE/structured_lattice_model.json"
+cargo run -p superneo-bench -- --run-native-reduced-cryptanalysis-spikes > "$STAGE/reduced_cryptanalysis_spikes.json"
+cargo run -p superneo-bench -- --export-native-flattened-sis-instance "$STAGE/structured_lattice" \
+  > "$STAGE/structured_lattice_export_report.json"
 cargo run -p native-backend-ref -- verify-vectors "$STAGE/testdata/native_backend_vectors" \
   > "$STAGE/reference_verifier_report.json"
 cargo run -p native-backend-ref -- verify-claim --package-dir "$STAGE" \
