@@ -15,6 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
 hex = "0.4"
+native-backend-ref = { path = "../../tools/native-backend-ref" }
 p3-goldilocks = { workspace = true }
 protocol-versioning = { path = "../../protocol/versioning" }
 superneo-backend-lattice = { path = "../superneo-backend-lattice" }
@@ -25,7 +26,5 @@ superneo-ring = { path = "../superneo-ring" }
 transaction-circuit = { path = "../transaction" }
 
 [dev-dependencies]
-native-backend-ref = { path = "../../tools/native-backend-ref" }
-
 [lints]
 workspace = true

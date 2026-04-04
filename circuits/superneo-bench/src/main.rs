@@ -10,6 +10,9 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
 use consensus::clear_verified_native_tx_leaf_store;
+use native_backend_ref::{
+    verify_case as reference_verify_case, ReviewVectorCase as RefReviewVectorCase,
+};
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
@@ -22,15 +25,17 @@ use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
 use superneo_hegemon::{
     build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_artifact_bytes_with_params,
-    build_native_tx_leaf_receipt_root_artifact_bytes, build_receipt_root_artifact_bytes,
-    build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
+    build_native_tx_leaf_receipt_root_artifact_bytes,
+    build_native_tx_leaf_receipt_root_artifact_bytes_with_params,
+    build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
     build_verified_tx_proof_receipt_root_artifact_bytes,
     canonical_tx_validity_receipt_from_transaction_proof, decode_native_tx_leaf_artifact_bytes,
     decode_receipt_root_artifact_bytes, encode_native_tx_leaf_artifact_bytes,
     encode_receipt_root_artifact_bytes, native_backend_params,
-    native_tx_leaf_commitment_stats_with_params, native_tx_validity_statement_from_witness,
-    tx_leaf_public_tx_from_transaction_proof, tx_leaf_public_tx_from_witness,
-    verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes_with_params,
+    native_tx_leaf_commitment_stats_with_params, native_tx_leaf_record_from_artifact,
+    native_tx_validity_statement_from_witness, tx_leaf_public_tx_from_transaction_proof,
+    tx_leaf_public_tx_from_witness, verify_native_tx_leaf_artifact_bytes,
+    verify_native_tx_leaf_artifact_bytes_with_params,
     verify_native_tx_leaf_receipt_root_artifact_bytes,
     verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
     verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
@@ -121,6 +126,45 @@ struct Cli {
         help = "Replay a review bundle through the production verifier and print a JSON report"
     )]
     verify_review_bundle_production: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Run a malformed-artifact differential fuzz pass against this review bundle directory"
+    )]
+    differential_fuzz_native_review_bundle: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Run the targeted native review-bundle mutation campaign against this directory"
+    )]
+    attack_native_review_bundle: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Build a native receipt-root instance once and measure verify-only cost"
+    )]
+    measure_native_receipt_root_verify_only: bool,
+    #[arg(
+        long,
+        default_value_t = 128usize,
+        help = "Leaf count for the verify-only native receipt-root measurement harness"
+    )]
+    leaf_count: usize,
+    #[arg(
+        long,
+        default_value_t = 3usize,
+        help = "Number of verify-only timing runs for the measurement harness"
+    )]
+    verify_runs: usize,
+    #[arg(
+        long,
+        default_value_t = 128usize,
+        help = "Number of malformed mutations to generate in the differential fuzz pass"
+    )]
+    mutation_count: usize,
+    #[arg(
+        long,
+        default_value_t = 20_260_404u64,
+        help = "Deterministic seed for malformed-artifact mutation passes"
+    )]
+    mutation_seed: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,6 +330,65 @@ struct ProductionReviewCaseResult {
     detail: String,
 }
 
+#[derive(Debug, Serialize)]
+struct VerifierParityReport {
+    campaign: String,
+    bundle_path: String,
+    seed: Option<u64>,
+    summary: VerifierParitySummary,
+    results: Vec<VerifierParityCaseResult>,
+}
+
+#[derive(Debug, Serialize)]
+struct VerifierParitySummary {
+    case_count: usize,
+    agreement_rejections: usize,
+    agreement_acceptances: usize,
+    disagreements: usize,
+    unexpected_acceptances: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct VerifierParityCaseResult {
+    name: String,
+    kind: String,
+    mutation: String,
+    production: VerificationOutcome,
+    reference: VerificationOutcome,
+    agreed: bool,
+    unexpected_acceptance: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VerificationOutcome {
+    accepted: bool,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NativeVerifyOnlyReport {
+    parameter_fingerprint: String,
+    leaf_count: usize,
+    verify_runs: usize,
+    tx_leaf_artifacts_bytes_total: usize,
+    receipt_root_artifact_bytes: usize,
+    prepare_artifacts_ns: u128,
+    extract_records_ns: u128,
+    cold_cache_between_runs: bool,
+    leaf_verify: TimingStats,
+    receipt_root_replay_verify: TimingStats,
+    receipt_root_records_verify: TimingStats,
+    full_block_verify: TimingStats,
+}
+
+#[derive(Debug, Serialize)]
+struct TimingStats {
+    runs_ns: Vec<u128>,
+    min_ns: u128,
+    max_ns: u128,
+    avg_ns: f64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct NativeSecurityClaimReport {
     parameter_fingerprint: String,
@@ -320,7 +423,7 @@ struct NativeReviewManifestReport {
     review_workflow_documents: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ReviewVectorBundle {
     parameter_fingerprint: String,
     native_backend_params: BenchNativeBackendParams,
@@ -328,7 +431,7 @@ struct ReviewVectorBundle {
     cases: Vec<ReviewVectorCase>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ReviewVectorCase {
     name: String,
     kind: String,
@@ -448,6 +551,15 @@ struct ImportComparison {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    ensure!(cli.leaf_count > 0, "--leaf-count must be strictly positive");
+    ensure!(
+        cli.verify_runs > 0,
+        "--verify-runs must be strictly positive"
+    );
+    ensure!(
+        cli.mutation_count > 0,
+        "--mutation-count must be strictly positive"
+    );
     if cli.print_native_security_claim {
         let report = NativeSecurityClaimReport {
             parameter_fingerprint: current_parameter_fingerprint_hex(),
@@ -488,6 +600,34 @@ fn main() -> Result<()> {
             report.summary.failed_cases == 0,
             "one or more production review cases failed"
         );
+        return Ok(());
+    }
+    if let Some(dir) = &cli.differential_fuzz_native_review_bundle {
+        let report =
+            differential_fuzz_native_review_bundle(dir, cli.mutation_seed, cli.mutation_count)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        ensure!(
+            report.summary.disagreements == 0 && report.summary.unexpected_acceptances == 0,
+            "differential malformed-artifact fuzzing found {} disagreements and {} unexpected acceptances",
+            report.summary.disagreements,
+            report.summary.unexpected_acceptances
+        );
+        return Ok(());
+    }
+    if let Some(dir) = &cli.attack_native_review_bundle {
+        let report = attack_native_review_bundle(dir)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        ensure!(
+            report.summary.disagreements == 0 && report.summary.unexpected_acceptances == 0,
+            "targeted native attack campaign found {} disagreements and {} unexpected acceptances",
+            report.summary.disagreements,
+            report.summary.unexpected_acceptances
+        );
+        return Ok(());
+    }
+    if cli.measure_native_receipt_root_verify_only {
+        let report = measure_native_receipt_root_verify_only(cli.leaf_count, cli.verify_runs)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
     ensure!(!cli.k.is_empty(), "at least one k value is required");
@@ -1536,6 +1676,564 @@ fn receipt_root_records_from_review(
             proof_digest: decode_hex_array::<48>(&leaf.proof_digest_hex).expect("proof digest"),
         })
         .collect())
+}
+
+fn load_review_vector_bundle(dir: &Path) -> Result<ReviewVectorBundle> {
+    let bundle_path = dir.join("bundle.json");
+    serde_json::from_slice(&fs::read(&bundle_path)?).with_context(|| {
+        format!(
+            "failed to parse native review bundle {}",
+            bundle_path.display()
+        )
+    })
+}
+
+fn valid_review_case(bundle: &ReviewVectorBundle, kind: &str) -> Result<ReviewVectorCase> {
+    bundle
+        .cases
+        .iter()
+        .find(|case| case.kind == kind && case.expected_valid)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("review bundle is missing a valid {kind} case"))
+}
+
+fn reference_review_case(case: &ReviewVectorCase) -> Result<RefReviewVectorCase> {
+    serde_json::from_value(serde_json::to_value(case)?)
+        .context("failed to convert local review case into reference verifier case")
+}
+
+fn verification_outcome(result: Result<()>) -> VerificationOutcome {
+    match result {
+        Ok(()) => VerificationOutcome {
+            accepted: true,
+            detail: "accepted".to_owned(),
+        },
+        Err(err) => VerificationOutcome {
+            accepted: false,
+            detail: err.to_string(),
+        },
+    }
+}
+
+fn run_verifier_parity_case(
+    case: &ReviewVectorCase,
+) -> Result<(VerificationOutcome, VerificationOutcome)> {
+    let production = verification_outcome(verify_production_review_case(case));
+    let reference = verification_outcome(reference_verify_case(&reference_review_case(case)?));
+    Ok((production, reference))
+}
+
+fn differential_fuzz_native_review_bundle(
+    dir: &Path,
+    seed: u64,
+    mutation_count: usize,
+) -> Result<VerifierParityReport> {
+    let bundle = load_review_vector_bundle(dir)?;
+    let valid_leaf = valid_review_case(&bundle, "native_tx_leaf")?;
+    let valid_root = valid_review_case(&bundle, "receipt_root")?;
+    let mut rng = MutationRng::new(seed);
+    let mut cases = Vec::with_capacity(mutation_count);
+    for index in 0..mutation_count {
+        let base = if index % 2 == 0 {
+            &valid_leaf
+        } else {
+            &valid_root
+        };
+        let (mutation, artifact_bytes) = random_malformed_artifact_mutation(
+            base.kind.as_str(),
+            &hex::decode(&base.artifact_hex)?,
+            &mut rng,
+        )?;
+        let mut case = base.clone();
+        case.name = format!(
+            "fuzz_{index:03}_{}_{}",
+            base.kind,
+            mutation.replace(':', "_")
+        );
+        case.expected_valid = false;
+        case.expected_error_substring = None;
+        case.artifact_hex = hex::encode(artifact_bytes);
+        cases.push((mutation, case));
+    }
+    verifier_parity_report(
+        "differential_malformed_artifact_fuzz",
+        &dir.join("bundle.json"),
+        Some(seed),
+        cases,
+    )
+}
+
+fn attack_native_review_bundle(dir: &Path) -> Result<VerifierParityReport> {
+    let bundle = load_review_vector_bundle(dir)?;
+    let valid_leaf = valid_review_case(&bundle, "native_tx_leaf")?;
+    let valid_root = valid_review_case(&bundle, "receipt_root")?;
+
+    let valid_leaf_bytes = hex::decode(&valid_leaf.artifact_hex)?;
+    let valid_root_bytes = hex::decode(&valid_root.artifact_hex)?;
+    let decoded_leaf = decode_native_tx_leaf_artifact_bytes(&valid_leaf_bytes)?;
+    let decoded_root = decode_receipt_root_artifact_bytes(&valid_root_bytes)?;
+
+    let mut cases = Vec::new();
+
+    cases.push((
+        "truncate_to_zero".to_owned(),
+        mutated_review_case(&valid_leaf, "target_leaf_truncate_to_zero", Vec::new()),
+    ));
+    cases.push((
+        "truncate_to_half".to_owned(),
+        mutated_review_case(
+            &valid_leaf,
+            "target_leaf_truncate_to_half",
+            valid_leaf_bytes[..valid_leaf_bytes.len() / 2].to_vec(),
+        ),
+    ));
+    cases.push((
+        "delete_middle_byte".to_owned(),
+        mutated_review_case(
+            &valid_leaf,
+            "target_leaf_delete_middle_byte",
+            remove_byte(&valid_leaf_bytes, valid_leaf_bytes.len() / 2),
+        ),
+    ));
+    let mut short_leaf_row = decoded_leaf.clone();
+    short_leaf_row.commitment.rows[0].coeffs.pop();
+    cases.push((
+        "shorten_commitment_row_coeffs".to_owned(),
+        mutated_review_case(
+            &valid_leaf,
+            "target_leaf_shorten_commitment_row",
+            encode_native_tx_leaf_artifact_bytes(&short_leaf_row)?,
+        ),
+    ));
+    let mut long_leaf_row = decoded_leaf.clone();
+    long_leaf_row.commitment.rows[0].coeffs.push(0);
+    cases.push((
+        "extend_commitment_row_coeffs".to_owned(),
+        mutated_review_case(
+            &valid_leaf,
+            "target_leaf_extend_commitment_row",
+            encode_native_tx_leaf_artifact_bytes(&long_leaf_row)?,
+        ),
+    ));
+
+    cases.push((
+        "truncate_to_zero".to_owned(),
+        mutated_review_case(&valid_root, "target_root_truncate_to_zero", Vec::new()),
+    ));
+    cases.push((
+        "truncate_to_half".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_truncate_to_half",
+            valid_root_bytes[..valid_root_bytes.len() / 2].to_vec(),
+        ),
+    ));
+    cases.push((
+        "delete_middle_byte".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_delete_middle_byte",
+            remove_byte(&valid_root_bytes, valid_root_bytes.len() / 2),
+        ),
+    ));
+
+    let mut fewer_folds = decoded_root.clone();
+    fewer_folds.folds.pop();
+    cases.push((
+        "drop_last_fold".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_drop_last_fold",
+            encode_receipt_root_artifact_bytes(&fewer_folds),
+        ),
+    ));
+
+    let mut extra_fold = decoded_root.clone();
+    extra_fold.folds.push(extra_fold.folds[0].clone());
+    cases.push((
+        "append_duplicate_fold".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_append_duplicate_fold",
+            encode_receipt_root_artifact_bytes(&extra_fold),
+        ),
+    ));
+
+    let mut flip_challenge = decoded_root.clone();
+    flip_challenge.folds[0].challenges[0] ^= 1;
+    cases.push((
+        "flip_first_challenge".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_flip_first_challenge",
+            encode_receipt_root_artifact_bytes(&flip_challenge),
+        ),
+    ));
+
+    let mut shorten_challenges = decoded_root.clone();
+    shorten_challenges.folds[0].challenges.pop();
+    cases.push((
+        "truncate_challenge_vector".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_truncate_challenge_vector",
+            encode_receipt_root_artifact_bytes(&shorten_challenges),
+        ),
+    ));
+
+    let mut extend_challenges = decoded_root.clone();
+    extend_challenges.folds[0].challenges.push(1);
+    cases.push((
+        "extend_challenge_vector".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_extend_challenge_vector",
+            encode_receipt_root_artifact_bytes(&extend_challenges),
+        ),
+    ));
+
+    let mut shorten_row = decoded_root.clone();
+    shorten_row.folds[0].parent_rows[0].coeffs.pop();
+    cases.push((
+        "shorten_parent_row_coeffs".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_shorten_parent_row",
+            encode_receipt_root_artifact_bytes(&shorten_row),
+        ),
+    ));
+
+    let mut extend_row = decoded_root.clone();
+    extend_row.folds[0].parent_rows[0].coeffs.push(0);
+    cases.push((
+        "extend_parent_row_coeffs".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_extend_parent_row",
+            encode_receipt_root_artifact_bytes(&extend_row),
+        ),
+    ));
+
+    let mut fewer_leaves = decoded_root.clone();
+    fewer_leaves.leaves.pop();
+    cases.push((
+        "drop_last_leaf".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_drop_last_leaf",
+            encode_receipt_root_artifact_bytes(&fewer_leaves),
+        ),
+    ));
+
+    let mut extra_leaf = decoded_root.clone();
+    extra_leaf.leaves.push(extra_leaf.leaves[0].clone());
+    cases.push((
+        "append_duplicate_leaf".to_owned(),
+        mutated_review_case(
+            &valid_root,
+            "target_root_append_duplicate_leaf",
+            encode_receipt_root_artifact_bytes(&extra_leaf),
+        ),
+    ));
+
+    verifier_parity_report(
+        "targeted_native_attack_campaign",
+        &dir.join("bundle.json"),
+        None,
+        cases,
+    )
+}
+
+fn verifier_parity_report(
+    campaign: &str,
+    bundle_path: &Path,
+    seed: Option<u64>,
+    cases: Vec<(String, ReviewVectorCase)>,
+) -> Result<VerifierParityReport> {
+    let mut results = Vec::with_capacity(cases.len());
+    let mut agreement_rejections = 0usize;
+    let mut agreement_acceptances = 0usize;
+    let mut disagreements = 0usize;
+    let mut unexpected_acceptances = 0usize;
+
+    for (mutation, case) in cases {
+        let (production, reference) = run_verifier_parity_case(&case)?;
+        let agreed = production.accepted == reference.accepted;
+        let accepted_by_any = production.accepted || reference.accepted;
+        if agreed {
+            if accepted_by_any {
+                agreement_acceptances += 1;
+                unexpected_acceptances += 1;
+            } else {
+                agreement_rejections += 1;
+            }
+        } else {
+            disagreements += 1;
+            if accepted_by_any {
+                unexpected_acceptances += 1;
+            }
+        }
+        results.push(VerifierParityCaseResult {
+            name: case.name,
+            kind: case.kind,
+            mutation,
+            production,
+            reference,
+            agreed,
+            unexpected_acceptance: accepted_by_any,
+        });
+    }
+
+    Ok(VerifierParityReport {
+        campaign: campaign.to_owned(),
+        bundle_path: bundle_path.display().to_string(),
+        seed,
+        summary: VerifierParitySummary {
+            case_count: results.len(),
+            agreement_rejections,
+            agreement_acceptances,
+            disagreements,
+            unexpected_acceptances,
+        },
+        results,
+    })
+}
+
+fn measure_native_receipt_root_verify_only(
+    leaf_count: usize,
+    verify_runs: usize,
+) -> Result<NativeVerifyOnlyReport> {
+    let params = current_native_backend_params();
+    let witnesses = (0..leaf_count)
+        .map(|seed| sample_witness(seed as u64 + 1))
+        .collect::<Vec<_>>();
+
+    let prepare_start = Instant::now();
+    let built_leaves = witnesses
+        .iter()
+        .map(|witness| {
+            let tx = tx_leaf_public_tx_from_witness(witness)?;
+            let built = build_native_tx_leaf_artifact_bytes_with_params(&params, witness)?;
+            let receipt = built.receipt.clone();
+            Ok((tx, receipt, built))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let native_artifacts = built_leaves
+        .iter()
+        .map(|(_, _, built)| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+        .collect::<Result<Vec<_>>>()?;
+    let built_root =
+        build_native_tx_leaf_receipt_root_artifact_bytes_with_params(&params, &native_artifacts)?;
+    let prepare_artifacts_ns = prepare_start.elapsed().as_nanos();
+
+    let tx_leaf_artifacts_bytes_total = built_leaves
+        .iter()
+        .map(|(_, _, built)| built.artifact_bytes.len())
+        .sum::<usize>();
+    let receipt_root_artifact_bytes = built_root.artifact_bytes.len();
+
+    let extract_start = Instant::now();
+    let records = native_artifacts
+        .iter()
+        .map(native_tx_leaf_record_from_artifact)
+        .collect::<Vec<_>>();
+    let extract_records_ns = extract_start.elapsed().as_nanos();
+
+    let mut leaf_runs = Vec::with_capacity(verify_runs);
+    let mut root_replay_runs = Vec::with_capacity(verify_runs);
+    let mut root_records_runs = Vec::with_capacity(verify_runs);
+    let mut full_block_runs = Vec::with_capacity(verify_runs);
+
+    for _ in 0..verify_runs {
+        clear_prepared_matrix_cache();
+        clear_verified_native_tx_leaf_store();
+        let start = Instant::now();
+        for (tx, receipt, built) in &built_leaves {
+            verify_native_tx_leaf_artifact_bytes(tx, receipt, &built.artifact_bytes)?;
+        }
+        leaf_runs.push(start.elapsed().as_nanos());
+
+        clear_prepared_matrix_cache();
+        clear_verified_native_tx_leaf_store();
+        let start = Instant::now();
+        verify_native_tx_leaf_receipt_root_artifact_bytes(
+            &native_artifacts,
+            &built_root.artifact_bytes,
+        )?;
+        root_replay_runs.push(start.elapsed().as_nanos());
+
+        clear_prepared_matrix_cache();
+        clear_verified_native_tx_leaf_store();
+        let start = Instant::now();
+        verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
+            &params,
+            &records,
+            &built_root.artifact_bytes,
+        )?;
+        root_records_runs.push(start.elapsed().as_nanos());
+
+        clear_prepared_matrix_cache();
+        clear_verified_native_tx_leaf_store();
+        let start = Instant::now();
+        for (tx, receipt, built) in &built_leaves {
+            verify_native_tx_leaf_artifact_bytes(tx, receipt, &built.artifact_bytes)?;
+        }
+        verify_native_tx_leaf_receipt_root_artifact_bytes(
+            &native_artifacts,
+            &built_root.artifact_bytes,
+        )?;
+        full_block_runs.push(start.elapsed().as_nanos());
+    }
+
+    Ok(NativeVerifyOnlyReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        leaf_count,
+        verify_runs,
+        tx_leaf_artifacts_bytes_total,
+        receipt_root_artifact_bytes,
+        prepare_artifacts_ns,
+        extract_records_ns,
+        cold_cache_between_runs: true,
+        leaf_verify: timing_stats(leaf_runs),
+        receipt_root_replay_verify: timing_stats(root_replay_runs),
+        receipt_root_records_verify: timing_stats(root_records_runs),
+        full_block_verify: timing_stats(full_block_runs),
+    })
+}
+
+fn timing_stats(runs_ns: Vec<u128>) -> TimingStats {
+    let min_ns = *runs_ns.iter().min().expect("non-empty timing runs");
+    let max_ns = *runs_ns.iter().max().expect("non-empty timing runs");
+    let avg_ns = runs_ns.iter().sum::<u128>() as f64 / runs_ns.len() as f64;
+    TimingStats {
+        runs_ns,
+        min_ns,
+        max_ns,
+        avg_ns,
+    }
+}
+
+fn mutated_review_case(
+    base: &ReviewVectorCase,
+    name: &str,
+    artifact_bytes: Vec<u8>,
+) -> ReviewVectorCase {
+    let mut case = base.clone();
+    case.name = name.to_owned();
+    case.expected_valid = false;
+    case.expected_error_substring = None;
+    case.artifact_hex = hex::encode(artifact_bytes);
+    case
+}
+
+fn random_malformed_artifact_mutation(
+    kind: &str,
+    artifact_bytes: &[u8],
+    rng: &mut MutationRng,
+) -> Result<(String, Vec<u8>)> {
+    ensure!(
+        !artifact_bytes.is_empty(),
+        "cannot mutate an empty {kind} artifact"
+    );
+    Ok(match rng.pick(6) {
+        0 => {
+            let pos = rng.pick(artifact_bytes.len());
+            let mut mutated = artifact_bytes.to_vec();
+            mutated[pos] ^= rng.nonzero_byte();
+            (format!("byte_flip:{kind}:{pos}"), mutated)
+        }
+        1 => {
+            let new_len = rng.pick(artifact_bytes.len());
+            (
+                format!("truncate:{kind}:{new_len}"),
+                artifact_bytes[..new_len].to_vec(),
+            )
+        }
+        2 => {
+            let pos = rng.pick(artifact_bytes.len());
+            (
+                format!("delete_byte:{kind}:{pos}"),
+                remove_byte(artifact_bytes, pos),
+            )
+        }
+        3 => {
+            let pos = rng.pick(artifact_bytes.len() + 1);
+            let count = 1 + rng.pick(8);
+            let mut mutated = artifact_bytes.to_vec();
+            let mut noise = Vec::with_capacity(count);
+            for _ in 0..count {
+                noise.push(rng.next_u8());
+            }
+            mutated.splice(pos..pos, noise);
+            (format!("insert_noise:{kind}:{pos}:{count}"), mutated)
+        }
+        4 => {
+            let start = rng.pick(artifact_bytes.len());
+            let width = 1 + rng.pick((artifact_bytes.len() - start).min(8).max(1));
+            let mut mutated = artifact_bytes.to_vec();
+            for byte in mutated.iter_mut().skip(start).take(width) {
+                *byte = rng.next_u8();
+            }
+            (format!("overwrite_span:{kind}:{start}:{width}"), mutated)
+        }
+        _ => {
+            let start = rng.pick(artifact_bytes.len());
+            let width = 1 + rng.pick((artifact_bytes.len() - start).min(8).max(1));
+            let pos = rng.pick(artifact_bytes.len() + 1);
+            let mut mutated = artifact_bytes.to_vec();
+            let window = artifact_bytes[start..start + width].to_vec();
+            mutated.splice(pos..pos, window);
+            (
+                format!("duplicate_window:{kind}:{start}:{width}:{pos}"),
+                mutated,
+            )
+        }
+    })
+}
+
+fn remove_byte(bytes: &[u8], index: usize) -> Vec<u8> {
+    let mut mutated = bytes.to_vec();
+    mutated.remove(index);
+    mutated
+}
+
+struct MutationRng {
+    state: u64,
+}
+
+impl MutationRng {
+    fn new(seed: u64) -> Self {
+        Self {
+            state: seed ^ 0x9e37_79b9_7f4a_7c15,
+        }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.state ^= self.state << 7;
+        self.state ^= self.state >> 9;
+        self.state = self.state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        self.state
+    }
+
+    fn next_u8(&mut self) -> u8 {
+        self.next_u64() as u8
+    }
+
+    fn nonzero_byte(&mut self) -> u8 {
+        let mut byte = self.next_u8();
+        if byte == 0 {
+            byte = 0x5a;
+        }
+        byte
+    }
+
+    fn pick(&mut self, upper: usize) -> usize {
+        if upper <= 1 {
+            0
+        } else {
+            (self.next_u64() % upper as u64) as usize
+        }
+    }
 }
 
 fn review_state_label(state: ReviewState) -> &'static str {
