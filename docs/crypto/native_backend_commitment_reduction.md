@@ -1,6 +1,6 @@
 # Native Backend Commitment Reduction
 
-This note defines the exact commitment-binding problem used by Hegemon's active native backend family and the exact reduction the repository claims for it. It is not a concrete hardness proof. It states the implemented collision game, the intended bounded-kernel Module-SIS target, the reduction from the former to the latter, and the loss terms that enter the current code-derived claim.
+This note defines the exact commitment-binding problem used by Hegemon's active native backend family and the exact reduction the repository claims for it. It is not an external cryptanalytic conclusion. It states the implemented collision game, the exact bounded-kernel Module-SIS target the repo exports, the direct reduction from the former to the latter, the exact coefficient bounds of the live deterministic commitment class, and the theorem note that proves the in-repo flattening step.
 
 ## Scope
 
@@ -16,6 +16,8 @@ This note is specific to the exact implemented commitment path in:
 - [superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs)
 - [superneo-hegemon/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-hegemon/src/lib.rs)
 - [superneo-ring/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-ring/src/lib.rs)
+
+The theorem-grade derivations for the active line are collected in [native_backend_formal_theorems.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_formal_theorems.md).
 
 ## Implemented Algebra
 
@@ -48,6 +50,13 @@ The live commitment path does not commit to arbitrary ring elements. It commits 
 4. embed those digits coefficientwise into ring elements.
 
 Let `M_live(ell)` denote the set of all valid message vectors of length `ell` that can arise from that exact reconstruction for the active relation and parameter set.
+
+For the currently shipped `TxLeafPublicRelation`, the exact witness schema contains `4935` bits. With the implemented `8`-bit digit expansion and `54`-coefficient ring embedding, that means:
+
+- `digits_live = ceil(4935 / 8) = 617`
+- `ell_live = ceil(617 / 54) = 12`
+
+So the live product path currently occupies only `12` ring elements. The exported claim keeps the conservative manifest-owned cap `M = 76` because the parameter set is allowed to zero-pad up to that length, and that is the safe public surface to cryptanalyze.
 
 For every `m ∈ M_live(ell)`:
 
@@ -97,7 +106,6 @@ Call this exact problem:
 BK-MSIS(q, n, k, ell, B_inf, B_2)
 ```
 
-with the active concrete bounds above and `ell <= M = 513`.
 with the active concrete bounds above and `ell <= M = 76`.
 
 ## Concrete Estimator Instance
@@ -118,6 +126,8 @@ The estimator model implemented in [superneo-backend-lattice/src/lib.rs](/Users/
 3. derive the target root-Hermite factor `δ` for the primal lattice attack from `(n_eq, m, q, B_2)`,
 4. derive the required BKZ block size `β` from that `δ`,
 5. translate `β` into concrete classical, quantum, and paranoid bit estimates with the standard linear cost models.
+
+The exact flattening statement and the zero-loss norm-preservation argument are proved in [native_backend_formal_theorems.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_formal_theorems.md).
 
 For the active instance the code computes:
 
@@ -165,6 +175,13 @@ This is why the repo now treats the commitment claim as:
 - to a bounded-kernel Module-SIS style problem
 - with no extra reduction slack inside the repository model.
 
+For the exact live `TxLeafPublicRelation`, the same reduction lands in the strictly smaller subclass with:
+
+- `m_live = 12 * 54 = 648`
+- `B_2,live = ceil(255 * sqrt(648)) = 6492`
+
+The repo does not export that tighter number because the manifest-owned claim surface is intentionally the conservative padded cap `M = 76`.
+
 ## Loss Terms
 
 The current repo model sets:
@@ -182,16 +199,16 @@ commitment_binding_bits
   = 872
 ```
 
-The final active floor is then:
+The theorem-backed active floor is then:
 
 ```text
 transcript_floor_bits = transcript_soundness_bits - composition_loss_bits
-                      = 157 - 7
-                      = 150
+                      = 312 - 7
+                      = 305
 
 soundness_floor_bits = min(transcript_floor_bits, commitment_binding_bits)
-                     = min(150, 872)
-                     = 150
+                     = min(305, 872)
+                     = 305
 ```
 
 ## What This Note Does Not Establish

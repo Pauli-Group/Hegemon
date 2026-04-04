@@ -288,10 +288,10 @@ impl NativeBackendParams {
             "max_claimed_receipt_root_leaves must be strictly positive"
         );
 
-        let transcript_soundness_bits = self
-            .challenge_bits
-            .saturating_mul(self.fold_challenge_count)
-            / 2;
+        let transcript_soundness_bits = theorem_backed_transcript_soundness_bits(
+            self.challenge_bits,
+            self.fold_challenge_count,
+        );
         let opening_hiding_bits = if self.security_claim_uses_opening_hiding() {
             (self.opening_randomness_bits / 2).min(128)
         } else {
@@ -553,6 +553,22 @@ fn ceil_sqrt_u64(value: u64) -> u64 {
 
 fn goldilocks_field_capacity_bits(_profile: RingProfile) -> u32 {
     63
+}
+
+fn theorem_backed_transcript_soundness_bits(challenge_bits: u32, challenge_count: u32) -> u32 {
+    if challenge_count == 0 {
+        return 0;
+    }
+    let mask_bits = challenge_bits.min(63);
+    if mask_bits <= 1 {
+        return 0;
+    }
+    let support_size = (1u128 << mask_bits) - 1;
+    let raw_space = 1u128 << 64;
+    let max_preimage_count = raw_space.div_ceil(support_size);
+    let entropy_bits = 64.0 * f64::from(challenge_count)
+        - f64::from(challenge_count) * (max_preimage_count as f64).log2();
+    entropy_bits.floor().max(0.0) as u32
 }
 
 const GOLDILOCKS_MODULUS_U64: u64 = 18_446_744_069_414_584_321;
@@ -2409,10 +2425,10 @@ mod tests {
 
     use super::{
         clear_prepared_matrix_cache, reset_kernel_cost_report, review_fold_challenges,
-        review_leaf_proof_digest, take_kernel_cost_report, BackendManifest,
-        CommitmentSecurityModel, LatticeBackend, LatticeCommitment, NativeBackendParams,
-        NativeCommitmentScheme, PreparedCommitmentMatrix, PreparedMatrixCache, ReviewState,
-        RingElem, RingProfile,
+        review_leaf_proof_digest, take_kernel_cost_report,
+        theorem_backed_transcript_soundness_bits, BackendManifest, CommitmentSecurityModel,
+        LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
+        PreparedCommitmentMatrix, PreparedMatrixCache, ReviewState, RingElem, RingProfile,
     };
     use std::sync::Arc;
 
@@ -3009,7 +3025,7 @@ mod tests {
             .security_claim()
             .unwrap();
         assert_eq!(claim.claimed_security_bits, 128);
-        assert_eq!(claim.transcript_soundness_bits, 157);
+        assert_eq!(claim.transcript_soundness_bits, 312);
         assert_eq!(claim.opening_hiding_bits, 0);
         assert_eq!(claim.commitment_codomain_bits, 37_422);
         assert_eq!(claim.commitment_same_seed_search_bits, 36_936);
@@ -3026,7 +3042,7 @@ mod tests {
         assert_eq!(claim.commitment_reduction_loss_bits, 0);
         assert_eq!(claim.commitment_binding_bits, 872);
         assert_eq!(claim.composition_loss_bits, 7);
-        assert_eq!(claim.soundness_floor_bits, 150);
+        assert_eq!(claim.soundness_floor_bits, 305);
         assert_eq!(claim.review_state, ReviewState::CandidateUnderReview);
         assert!(claim
             .assumption_ids
@@ -3040,6 +3056,11 @@ mod tests {
         assert!(claim
             .assumption_ids
             .contains(&"commitment.sis_lattice_euclidean_adps16_quantum_estimator"));
+    }
+
+    #[test]
+    fn theorem_backed_transcript_soundness_matches_active_schedule() {
+        assert_eq!(theorem_backed_transcript_soundness_bits(63, 5), 312);
     }
 
     #[test]

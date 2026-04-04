@@ -16,6 +16,8 @@ The exact wire and transcript surface for that family is frozen in [native_backe
 
 - `spec_digest = c441d06521bf6e604fda75378aea05e341ad3f4a8769d74a9cca4e3ff582eb23`
 
+The theorem-grade derivations for the active line are in [native_backend_formal_theorems.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_formal_theorems.md).
+
 ## Claim Model
 
 The backend exports one `NativeSecurityClaim` from [superneo-backend-lattice/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/superneo-backend-lattice/src/lib.rs). The claim is computed mechanically from the active `NativeBackendParams`, including:
@@ -30,12 +32,11 @@ Historical families may still count opening entropy when their live artifact pat
 For the active family the code currently computes:
 
 - `claimed_security_bits = 128`
-- `transcript_soundness_bits = floor(challenge_bits * fold_challenge_count / 2) = floor(63 * 5 / 2) = 157`
+- `transcript_soundness_bits = floor(320 - 5 log2(3)) = 312`
 
-  **Rationale for the `/2` divisor:** the repository currently uses `floor(k * b / 2)` as a conservative engineering cap for transcript soundness pending theorem-backed analysis of the exact composed Fiat-Shamir fold schedule. This is not derived from a specific theorem for this construction; it is a blanket halving applied as a safety margin. Tightening or replacing this term with a proven bound for the exact profile-owned multi-challenge fold schedule is an open review item.
+  **Rationale for the active value:** each fold challenge is derived from an indexed uniform 64-bit BLAKE3 XOF word reduced by `raw mod (2^63 - 1) + 1`. Because `2^64 = 2(2^63 - 1) + 2`, every challenge value has at most `3` preimages, so the exact indexed five-tuple has point probability at most `3^5 / 2^320`. The theorem note proves this exact bound and the corresponding `312`-bit tuple min-entropy. This is the correct theorem-backed replacement for the old blanket halving rule. It is a bound on the exact challenge-tuple law of the implemented schedule, not a claim that the folding layer implements Neo/SuperNeo CCS soundness.
 - `opening_hiding_bits = 0` because the shipped tx-leaf / receipt-root lane reconstructs its commitment deterministically from public witness data instead of using a live public opening / seed path
 - `commitment_codomain_bits = 63 * matrix_rows * ring_degree = 63 * 11 * 54 = 37,422`
-- `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 513 * 8 * 9 = 36,936`
 - `commitment_same_seed_search_bits = max_commitment_message_ring_elems * ring_degree * (decomposition_bits + 1) = 76 * 54 * 9 = 36,936`
 - `commitment_random_matrix_bits = max(commitment_codomain_bits - commitment_same_seed_search_bits, 0) = 486`
 - `commitment_problem_equations = matrix_rows * ring_degree = 11 * 54 = 594`
@@ -50,7 +51,7 @@ For the active family the code currently computes:
 - `commitment_reduction_loss_bits = 0`
 - `commitment_binding_bits = commitment_estimator_quantum_bits - commitment_reduction_loss_bits = 872 - 0 = 872`
 - `composition_loss_bits = ceil(log2(max_claimed_receipt_root_leaves)) = ceil(log2(128)) = 7`
-- `soundness_floor_bits = min(157 - 7, 872) = 150`
+- `soundness_floor_bits = min(312 - 7, 872) = 305`
 - `review_state = candidate_under_review`
 
 The code rejects setup whenever `claimed_security_bits > soundness_floor_bits`.
@@ -63,13 +64,15 @@ The exact reduction note is [native_backend_commitment_reduction.md](/Users/pldd
 
 1. the verifier reconstructs the exact live message class canonically from public tx data and serialized STARK public inputs,
 2. any accepted collision in that implemented message class yields a nonzero bounded kernel vector for the same commitment matrix,
-3. the repository flattens that exact BK-MSIS instance into coefficient-space Euclidean SIS with `n_eq = 592`, `m = 4104`, `q = 18446744069414584321`, and `B_2 = 16336`,
+3. the repository flattens that exact BK-MSIS instance into coefficient-space Euclidean SIS with `n_eq = 594`, `m = 4104`, `q = 18446744069414584321`, and `B_2 = 16336`,
 4. the repository models that reduction with `commitment_reduction_loss_bits = 0`,
 5. and the concrete binding floor comes from the in-repo `sis_lattice_euclidean_adps16` estimate of that exact instance.
 
+For the exact currently shipped `TxLeafPublicRelation`, the live witness schema occupies only `4935` bits, which means `617` digits and `12` ring elements before zero padding. The exported claim deliberately keeps the conservative manifest-owned ambient cap `76` rather than publishing the tighter live subclass.
+
 That makes the claim materially different from the earlier geometry-proxy story:
 
-- the live tx-leaf / receipt-root lane still reports `commitment_random_matrix_bits = 360` as a structural statistic,
+- the live tx-leaf / receipt-root lane still reports `commitment_random_matrix_bits = 486` as a structural statistic,
 - but the live `commitment_binding_bits` no longer equals that statistic,
 - and the active floor is now bounded by the explicit coefficient-space SIS estimate plus transcript-composition accounting, not by the old random-matrix union-bound proxy.
 
@@ -104,13 +107,13 @@ These mean:
    The security claim assumes the byte encodings described in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md) are canonical, injective over accepted inputs, and rejected on malformed or noncanonical encodings.
 
 3. `fs.quint_goldilocks_profile_fold_challenges`
-   Soundness for the fold schedule assumes five independently derived transcript challenges over Goldilocks, mixed through the implemented profile-owned ring fold schedule. For the active family that schedule is the low-degree challenge polynomial applied in `Z_q[X] / (X^54 + X^27 + 1)`.
+   The active schedule derives five indexed transcript challenges over Goldilocks, interprets them as the coefficients of a low-degree challenge polynomial in `Z_q[X] / (X^54 + X^27 + 1)`, and relies on the theorem note's exact tuple-min-entropy bound for that derivation. Accepted folds themselves are deterministic canonicalization checks, not a separate CCS soundness protocol.
 
 4. `commitment.deterministic_public_witness_reconstruction`
    The live tx-leaf verifier must reconstruct the exact packed witness and deterministic commitment from the public tx view, serialized STARK public inputs, and fixed relation layout. The active security floor assumes that this reconstruction is canonical and that the verifier rejects mismatches.
 
 5. `commitment.bounded_kernel_module_sis_exact_reduction`
-   Binding for the current commitment path is claimed through the exact reduction stated in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md): a collision in the implemented bounded live message class yields a bounded nonzero kernel vector for the same commitment matrix. That reduction feeds the exact coefficient-space SIS instance the repository estimates for the active parameter set.
+   Binding for the current commitment path is claimed through the exact reduction stated in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md): a collision in the implemented bounded live message class yields a bounded nonzero kernel vector for the same commitment matrix. The theorem note proves that exact reduction and the zero-loss flattening from the active ring/module kernel to the coefficient-space SIS instance the repository estimates.
 
 6. `commitment.sis_lattice_euclidean_adps16_quantum_estimator`
    The concrete binding floor is taken from the coefficient-space Euclidean SIS estimate the repository computes for the exact active instance. For the current parameters this yields `β = 3294`, `classical = 961`, `quantum = 872`, and `paranoid = 683`, and the live claim uses the quantum line.
@@ -131,6 +134,7 @@ This claim does not say:
 The current claim is narrower and more honest:
 
 - the repository now states one exact live bounded-message collision problem for the commitment path,
+- the repository now proves the active GoldilocksFrog fold schedule's exact challenge-tuple law and canonicality properties,
 - the repository now states one exact in-repo reduction from that collision problem to a bounded-kernel Module-SIS style target,
 - the code now propagates only the explicit reduction loss and receipt-root composition loss into the final floor,
 - the code now computes the binding cap from one explicit coefficient-space Euclidean SIS estimate for the exact active instance,

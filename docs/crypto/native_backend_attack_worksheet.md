@@ -58,13 +58,13 @@ This worksheet is the concrete attack ledger for the active native backend famil
 ### 5. Fold-row forgery
 
 - Targeted claims:
-  - `fs.quint_goldilocks_negacyclic_fold_challenges`
+  - `fs.quint_goldilocks_profile_fold_challenges`
   - `commitment.bounded_kernel_module_sis_exact_reduction`
 - What to exercise:
   - mutated parent rows
   - swapped left or right child commitments
   - mutated fold challenge vector
-  - invalid negacyclic mix rows
+  - invalid profile-mix rows
 - Break condition:
   - verifier accepts a fold proof whose parent rows are not the challenge-mixed children
 
