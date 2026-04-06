@@ -24,7 +24,7 @@ STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven ba
 STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-}"
 MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
-PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}" # aggregation|single
+PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}" # aggregation=current receipt_root lane, single=historical inline comparison
 
 case "$PROOF_MODE" in
   aggregation|single)
@@ -40,7 +40,9 @@ if [ -n "${HEGEMON_TP_SEND_PROOF_SIDECAR:-}" ]; then
 elif [ "$PROOF_MODE" = "single" ]; then
   SEND_PROOF_SIDECAR=0
 else
-  SEND_PROOF_SIDECAR=1
+  # The shipped receipt_root lane requires embedded proof bytes in every
+  # shielded transfer. DA sidecars remain fine, proof sidecars do not.
+  SEND_PROOF_SIDECAR=0
 fi
 if ! [[ "$SEND_PROOF_SIDECAR" =~ ^[01]$ ]]; then
   echo "HEGEMON_TP_SEND_PROOF_SIDECAR must be 0 or 1 (got '$SEND_PROOF_SIDECAR')." >&2
@@ -48,6 +50,10 @@ if ! [[ "$SEND_PROOF_SIDECAR" =~ ^[01]$ ]]; then
 fi
 if [ "$PROOF_MODE" = "single" ] && [ "$SEND_PROOF_SIDECAR" != "0" ]; then
   echo "HEGEMON_TP_PROOF_MODE=single requires HEGEMON_TP_SEND_PROOF_SIDECAR=0." >&2
+  exit 1
+fi
+if [ "$PROOF_MODE" = "aggregation" ] && [ "$SEND_PROOF_SIDECAR" != "0" ]; then
+  echo "HEGEMON_TP_PROOF_MODE=aggregation measures the shipped receipt_root lane and requires HEGEMON_TP_SEND_PROOF_SIDECAR=0." >&2
   exit 1
 fi
 

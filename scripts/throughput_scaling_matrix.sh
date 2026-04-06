@@ -112,6 +112,7 @@ for tx_count in $TX_COUNTS; do
       HEGEMON_TP_TX_COUNT="$tx_count" \
       HEGEMON_TP_WORKERS=1 \
       HEGEMON_TP_PROVER_WORKERS=1 \
+      HEGEMON_TP_SEND_PROOF_SIDECAR=0 \
       HEGEMON_TP_SEND_DA_SIDECAR="$([ "$MATRIX_PROOF_MODE" = "single" ] && echo 0 || echo 1)" \
       HEGEMON_TP_NODE_RAYON_THREADS="$snapshot_node_rayon_threads" \
       HEGEMON_TP_AGG_PREPARE_THREADS="$snapshot_agg_prepare_threads" \
@@ -220,6 +221,7 @@ for tx_count in $TX_COUNTS; do
       HEGEMON_TP_TX_COUNT="$tx_count" \
       HEGEMON_TP_WORKERS="$run_wallet_workers" \
       HEGEMON_TP_PROVER_WORKERS="$run_node_prover_workers" \
+      HEGEMON_TP_SEND_PROOF_SIDECAR=0 \
       HEGEMON_TP_SEND_DA_SIDECAR="$([ "$MATRIX_PROOF_MODE" = "single" ] && echo 0 || echo 1)" \
       HEGEMON_TP_NODE_RAYON_THREADS="$run_node_rayon_threads" \
       HEGEMON_TP_AGG_PREPARE_THREADS="$run_agg_prepare_threads" \
