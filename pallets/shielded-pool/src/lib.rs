@@ -1274,6 +1274,7 @@ pub mod pallet {
                 binding_hash,
                 stablecoin,
                 fee,
+                protocol_versioning::DEFAULT_VERSION_BINDING,
             )
         }
 
@@ -1646,6 +1647,7 @@ pub mod pallet {
             binding_hash: &BindingHash,
             stablecoin: &Option<StablecoinPolicyBinding>,
             fee: u64,
+            version: VersionBinding,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if Self::ensure_stablecoin_binding(stablecoin).is_err() {
                 return Err(InvalidTransaction::Custom(7));
@@ -1699,11 +1701,6 @@ pub mod pallet {
                 }
             }
 
-            let vk = VerifyingKeyStorage::<T>::get();
-            if !vk.enabled {
-                return Err(InvalidTransaction::Custom(6));
-            }
-
             let inputs = ShieldedTransferInputs {
                 anchor: *anchor,
                 nullifiers: nullifiers.clone().into_inner(),
@@ -1726,6 +1723,25 @@ pub mod pallet {
             }
 
             if !aggregation_mode && !proof.data.is_empty() {
+                if let Some(meta) = Self::try_validate_native_tx_leaf_sidecar_unsigned_action(
+                    &proof.data,
+                    nullifiers,
+                    commitments,
+                    ciphertext_hashes,
+                    anchor,
+                    balance_slot_asset_ids,
+                    binding_hash,
+                    stablecoin,
+                    fee,
+                    version,
+                )? {
+                    return Ok(meta);
+                }
+
+                let vk = VerifyingKeyStorage::<T>::get();
+                if !vk.enabled {
+                    return Err(InvalidTransaction::Custom(6));
+                }
                 match verifier.verify_stark(proof, &inputs, &vk) {
                     VerificationResult::Valid => {}
                     _ => return Err(InvalidTransaction::BadProof),
@@ -1743,6 +1759,94 @@ pub mod pallet {
                 propagate: true,
                 source_class: ActionSourceClass::External,
             })
+        }
+
+        fn try_validate_native_tx_leaf_sidecar_unsigned_action(
+            proof_bytes: &[u8],
+            nullifiers: &BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: &BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            ciphertext_hashes: &BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
+            anchor: &[u8; 48],
+            balance_slot_asset_ids: &[u64; transaction_core::constants::BALANCE_SLOTS],
+            binding_hash: &BindingHash,
+            stablecoin: &Option<StablecoinPolicyBinding>,
+            fee: u64,
+            version: VersionBinding,
+        ) -> Result<Option<ValidActionMeta>, InvalidTransaction> {
+            let Some(decoded) = decode_native_tx_leaf_lite(proof_bytes).unwrap_or_default() else {
+                return Ok(None);
+            };
+
+            let inputs = ShieldedTransferInputs {
+                anchor: *anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
+                balance_slot_asset_ids: *balance_slot_asset_ids,
+                fee,
+                value_balance: 0,
+                stablecoin: stablecoin.clone(),
+            };
+            let verifier = T::ProofVerifier::default();
+            if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                return Err(InvalidTransaction::BadSigner);
+            }
+
+            verify_native_stark_inputs_match_public_args(
+                &decoded.stark_inputs,
+                nullifiers.len(),
+                commitments.len(),
+                anchor,
+                balance_slot_asset_ids,
+                stablecoin,
+                fee,
+            )?;
+
+            let balance_slots = canonical_balance_slots_from_public_args(
+                *balance_slot_asset_ids,
+                fee,
+                0,
+                stablecoin,
+            )?;
+            let balance_tag = balance_commitment_bytes(i128::from(fee), &balance_slots)
+                .map_err(|_| InvalidTransaction::BadProof)?;
+            if decoded.tx.nullifiers.as_slice() != nullifiers.as_slice()
+                || decoded.tx.commitments.as_slice() != commitments.as_slice()
+                || decoded.tx.ciphertext_hashes.as_slice() != ciphertext_hashes.as_slice()
+                || decoded.tx.balance_tag != balance_tag
+                || decoded.tx.version != version
+            {
+                return Err(InvalidTransaction::BadProof);
+            }
+            let expected_statement_hash = native_statement_hash_from_public_args(
+                nullifiers.as_slice(),
+                commitments.as_slice(),
+                ciphertext_hashes.as_slice(),
+                &balance_tag,
+                version,
+                &decoded.stark_inputs,
+            )?;
+            if decoded.receipt.statement_hash != expected_statement_hash {
+                return Err(InvalidTransaction::BadProof);
+            }
+            let expected_public_inputs_digest = native_public_inputs_digest(&decoded.stark_inputs)?;
+            if decoded.receipt.public_inputs_digest != expected_public_inputs_digest {
+                return Err(InvalidTransaction::BadProof);
+            }
+            if decoded.receipt.proof_digest == [0u8; 48]
+                || decoded.receipt.verifier_profile == [0u8; 48]
+            {
+                return Err(InvalidTransaction::BadProof);
+            }
+
+            Ok(Some(ValidActionMeta {
+                priority: 100,
+                longevity: 64,
+                provides: Self::nullifier_tags(nullifiers.as_slice(), false),
+                requires: Vec::new(),
+                propagate: true,
+                source_class: ActionSourceClass::External,
+            }))
         }
 
         pub(crate) fn validate_batch_shielded_transfer_action(
@@ -2106,6 +2210,7 @@ pub mod pallet {
             binding_hash: BindingHash,
             stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
+            version: VersionBinding,
         ) -> DispatchResult {
             ensure!(
                 !CoinbaseProcessed::<T>::get(),
@@ -2186,23 +2291,49 @@ pub mod pallet {
             };
             let verifier = T::ProofVerifier::default();
             if !aggregation_mode {
-                let vk = VerifyingKeyStorage::<T>::get();
-                ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
-                match verifier.verify_stark(&proof, &inputs, &vk) {
-                    VerificationResult::Valid => {}
-                    VerificationResult::InvalidProofFormat => {
-                        return Err(Error::<T>::InvalidProofFormat.into())
+                match Self::try_validate_native_tx_leaf_sidecar_unsigned_action(
+                    &proof.data,
+                    &nullifiers,
+                    &commitments,
+                    &ciphertext_hashes,
+                    &anchor,
+                    &balance_slot_asset_ids,
+                    &binding_hash,
+                    &stablecoin,
+                    fee,
+                    version,
+                ) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        let vk = VerifyingKeyStorage::<T>::get();
+                        ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
+                        match verifier.verify_stark(&proof, &inputs, &vk) {
+                            VerificationResult::Valid => {}
+                            VerificationResult::InvalidProofFormat => {
+                                return Err(Error::<T>::InvalidProofFormat.into())
+                            }
+                            VerificationResult::InvalidPublicInputs => {
+                                return Err(Error::<T>::InvalidProofFormat.into())
+                            }
+                            VerificationResult::VerificationFailed => {
+                                return Err(Error::<T>::ProofVerificationFailed.into())
+                            }
+                            VerificationResult::KeyNotFound => {
+                                return Err(Error::<T>::VerifyingKeyNotFound.into())
+                            }
+                            _ => return Err(Error::<T>::ProofVerificationFailed.into()),
+                        }
                     }
-                    VerificationResult::InvalidPublicInputs => {
-                        return Err(Error::<T>::InvalidProofFormat.into())
+                    Err(InvalidTransaction::BadSigner) => {
+                        return Err(Error::<T>::InvalidBindingHash.into())
                     }
-                    VerificationResult::VerificationFailed => {
+                    Err(InvalidTransaction::ExhaustsResources) => {
+                        return Err(Error::<T>::ProofTooLarge.into())
+                    }
+                    Err(InvalidTransaction::BadProof) => {
                         return Err(Error::<T>::ProofVerificationFailed.into())
                     }
-                    VerificationResult::KeyNotFound => {
-                        return Err(Error::<T>::VerifyingKeyNotFound.into())
-                    }
-                    _ => return Err(Error::<T>::ProofVerificationFailed.into()),
+                    Err(_) => return Err(Error::<T>::InvalidProofFormat.into()),
                 }
             }
             ensure!(
@@ -2795,6 +2926,7 @@ pub mod pallet {
                         binding_hash,
                         stablecoin,
                         *fee,
+                        protocol_versioning::DEFAULT_VERSION_BINDING,
                     ) {
                         Ok(meta) => {
                             Self::action_meta_to_validity(_source, "ShieldedPoolUnsigned", meta)
@@ -2887,6 +3019,11 @@ mod tests {
         InvalidTransaction, TransactionSource, TransactionValidityError,
     };
     use std::collections::BTreeMap;
+    use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
+    use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
+    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::witness::TransactionWitness;
 
     struct DummyKernelState;
 
@@ -2947,6 +3084,165 @@ mod tests {
                 }],
             }),
         }
+    }
+
+    fn test_native_sidecar_fixture(
+        seed: u8,
+    ) -> (
+        types::StarkProof,
+        BoundedVec<[u8; 48], mock::MaxNullifiersPerTx>,
+        BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx>,
+        BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx>,
+        BoundedVec<u32, mock::MaxCommitmentsPerTx>,
+        [u8; 48],
+        [u64; transaction_core::constants::BALANCE_SLOTS],
+        BindingHash,
+    ) {
+        let witness = test_native_sample_witness(seed);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let public_inputs = witness.public_inputs().expect("public inputs");
+        let balance_slot_asset_ids = witness
+            .balance_slots()
+            .expect("balance slots")
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("four balance slots");
+        let nullifiers: BoundedVec<[u8; 48], mock::MaxNullifiersPerTx> = public_inputs.nullifiers
+            [..witness.inputs.len()]
+            .to_vec()
+            .try_into()
+            .expect("bounded nullifiers");
+        let commitments: BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx> = public_inputs
+            .commitments[..witness.outputs.len()]
+            .to_vec()
+            .try_into()
+            .expect("bounded commitments");
+        let ciphertext_hashes: BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx> = witness
+            .ciphertext_hashes
+            .clone()
+            .try_into()
+            .expect("bounded ciphertext hashes");
+        let ciphertext_sizes: BoundedVec<u32, mock::MaxCommitmentsPerTx> =
+            vec![1u32; witness.outputs.len()]
+                .try_into()
+                .expect("bounded ciphertext sizes");
+        let inputs = verifier::ShieldedTransferInputs {
+            anchor: public_inputs.merkle_root,
+            nullifiers: nullifiers.clone().into_inner(),
+            commitments: commitments.clone().into_inner(),
+            ciphertext_hashes: ciphertext_hashes.clone().into_inner(),
+            balance_slot_asset_ids,
+            fee: witness.fee,
+            value_balance: 0,
+            stablecoin: None,
+        };
+        let binding_hash = verifier::StarkVerifier::compute_binding_hash(&inputs);
+        (
+            types::StarkProof::from_bytes(built.artifact_bytes),
+            nullifiers,
+            commitments,
+            ciphertext_hashes,
+            ciphertext_sizes,
+            public_inputs.merkle_root,
+            balance_slot_asset_ids,
+            binding_hash,
+        )
+    }
+
+    fn test_native_sample_witness(seed: u8) -> TransactionWitness {
+        let sk_spend = [seed.wrapping_add(42); 32];
+        let pk_auth = transaction_circuit::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [seed.wrapping_add(2); 32],
+            pk_auth,
+            rho: [seed.wrapping_add(3); 32],
+            r: [seed.wrapping_add(4); 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: u64::from(seed) + 100,
+            pk_recipient: [seed.wrapping_add(5); 32],
+            pk_auth,
+            rho: [seed.wrapping_add(6); 32],
+            r: [seed.wrapping_add(7); 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+
+        let output_native = OutputNoteWitness {
+            note: NoteData {
+                value: 3,
+                asset_id: NATIVE_ASSET_ID,
+                pk_recipient: [seed.wrapping_add(11); 32],
+                pk_auth: [seed.wrapping_add(12); 32],
+                rho: [seed.wrapping_add(13); 32],
+                r: [seed.wrapping_add(14); 32],
+            },
+        };
+        let output_asset = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: u64::from(seed) + 100,
+                pk_recipient: [seed.wrapping_add(21); 32],
+                pk_auth: [seed.wrapping_add(22); 32],
+                rho: [seed.wrapping_add(23); 32],
+                r: [seed.wrapping_add(24); 32],
+            },
+        };
+
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [seed.wrapping_add(9); 32],
+                    merkle_path: merkle_path0,
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [seed.wrapping_add(10); 32],
+                    merkle_path: merkle_path1,
+                },
+            ],
+            outputs: vec![output_native, output_asset],
+            ciphertext_hashes: vec![[seed.wrapping_add(30); 48], [seed.wrapping_add(31); 48]],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&merkle_root),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: transaction_circuit::StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn build_two_leaf_merkle_tree(
+        leaf0: HashFelt,
+        leaf1: HashFelt,
+    ) -> (MerklePath, MerklePath, HashFelt) {
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..CIRCUIT_MERKLE_DEPTH {
+            let zero = [transaction_core::hashing::Felt::new(0); 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        (
+            MerklePath {
+                siblings: siblings0,
+            },
+            MerklePath {
+                siblings: siblings1,
+            },
+            current,
+        )
     }
 
     #[test]
@@ -3134,6 +3430,82 @@ mod tests {
                 validity_after.is_ok(),
                 "kernel family coinbase validation should remain valid on in-block revalidation after apply"
             );
+        });
+    }
+
+    #[test]
+    fn validate_sidecar_native_tx_leaf_is_accepted() {
+        mock::new_test_ext().execute_with(|| {
+            let (
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+            ) = test_native_sidecar_fixture(33);
+            pallet::MerkleRoots::<mock::Test>::insert(anchor, 1u64);
+
+            let call = crate::Call::<mock::Test>::shielded_transfer_unsigned_sidecar {
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin: None,
+                fee: 5,
+            };
+
+            let validity =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(
+                validity.is_ok(),
+                "native tx-leaf sidecar payload should validate: {validity:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn apply_sidecar_native_tx_leaf_is_accepted() {
+        mock::new_test_ext().execute_with(|| {
+            let (
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+            ) = test_native_sidecar_fixture(34);
+            pallet::MerkleRoots::<mock::Test>::insert(anchor, 1u64);
+
+            assert_ok!(
+                pallet::Pallet::<mock::Test>::shielded_transfer_unsigned_sidecar(
+                    frame_system::RawOrigin::None.into(),
+                    proof,
+                    nullifiers,
+                    commitments.clone(),
+                    ciphertext_hashes,
+                    ciphertext_sizes,
+                    anchor,
+                    balance_slot_asset_ids,
+                    binding_hash,
+                    None,
+                    5,
+                )
+            );
+
+            assert_eq!(
+                pallet::CommitmentIndex::<mock::Test>::get(),
+                commitments.len() as u64
+            );
+            assert!(pallet::ShieldedTransfersProcessed::<mock::Test>::get());
         });
     }
 }

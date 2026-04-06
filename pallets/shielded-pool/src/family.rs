@@ -304,6 +304,7 @@ pub fn validate_action<T: Config>(
                 },
                 &args.stablecoin,
                 args.fee,
+                envelope.binding.into(),
             );
             if let Err(ref err) = result {
                 log::warn!(
@@ -449,6 +450,7 @@ pub fn apply_action<T: Config>(
                 },
                 args.stablecoin,
                 args.fee,
+                envelope.binding.into(),
             )?;
             Ok(outcome::<T>(statement_hash, nullifiers))
         }
