@@ -73,6 +73,8 @@ The expected gain is wall-clock time, not fold-count reduction:
 
 The important honest caveat is that full cold-path timings are still dominated by native `tx_leaf` generation unless the benchmark uses a frozen leaf corpus. The clean product import question is therefore “how expensive is verifying and aggregating already-built native artifacts?”, not “how long does it take to generate all transaction proofs from scratch?”
 
+`superneo-bench` now exposes that measurement path directly: `--emit-native-leaf-record-corpus <path>` writes a reusable native leaf-record corpus, and `--native-leaf-record-corpus <path>` reuses that corpus for `--measure-native-receipt-root-hierarchy`, `--measure-native-epoch-root-hierarchy`, and `--measure-native-receipt-root-build` so larger aggregation benchmarks do not accidentally charge fresh tx-proof generation.
+
 ## Near-term roadmap
 
 ### Phase 0: ship native same-block aggregation

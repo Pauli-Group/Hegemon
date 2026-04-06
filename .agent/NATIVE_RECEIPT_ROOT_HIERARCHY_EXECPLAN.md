@@ -17,6 +17,7 @@ After this change, Hegemon will be able to summarize shielded transactions in la
 - [x] (2026-04-05 23:10Z) Updated `DESIGN.md`, `METHODS.md`, and `docs/SCALABILITY_PATH.md` so the current hierarchy, cache, and verified-record import path are described accurately.
 - [x] (2026-04-05 23:25Z) Completed the `1024`-block epoch hierarchy benchmark and confirmed one changed block touches only `10` internal epoch nodes instead of `1023`.
 - [x] (2026-04-05 23:34Z) Completed the `16`-leaf block hierarchy benchmark and confirmed one changed leaf rebuilds only `1` of `2` mini-roots and touches `4` internal block nodes instead of `15`.
+- [x] (2026-04-06 06:53Z) Added frozen corpus support to `superneo-bench` and completed the `128`-leaf hierarchy measurement from a deterministic record corpus, confirming `15` of `16` mini-roots are reused and only `7` internal tree nodes change versus `127` in the flat internal-node count.
 - [ ] Keep extending the hierarchy measurements toward larger build-side shapes as proving time permits.
 
 ## Surprises & Discoveries
@@ -43,7 +44,7 @@ After this change, Hegemon will be able to summarize shielded transactions in la
 
 ## Outcomes & Retrospective
 
-The hierarchy surface is now real and measurable. The current local benchmark evidence is already enough to prove the qualitative goal of the plan: on a `16`-leaf block with mini-root size `8`, changing one leaf rebuilt only `1` of `2` mini-roots and touched `4` internal block nodes instead of `15`; on a `1024`-block epoch tree, changing one block touched only `10` internal epoch nodes instead of `1023`. The remaining work here is mostly to extend those measurements to larger authoring-time shapes, not to prove that the hierarchy exists.
+The hierarchy surface is real and measurable. The current local benchmark evidence now covers both small fresh runs and larger frozen-corpus runs: on a `16`-leaf block with mini-root size `8`, changing one leaf rebuilt only `1` of `2` mini-roots and touched `4` internal block nodes instead of `15`; on a `128`-leaf frozen-corpus block with the same mini-root size, changing one leaf reused `15` of `16` mini-roots and changed only `7` internal tree nodes instead of `127`; and on a `1024`-block epoch tree, changing one block touched only `10` internal epoch nodes instead of `1023`. The remaining work here is mostly to extend those measurements to other shapes, not to prove that the hierarchy exists.
 
 ## Context and Orientation
 
@@ -128,7 +129,7 @@ This plan is accepted when all of the following are true:
 
 1. The repository can build and verify mini-roots deterministically from ordered `tx_leaf` artifacts.
 2. The repository can build and verify a hierarchical block root whose final root semantics match the current ordered leaf sequence.
-3. The benchmark for a `128`-leaf block with mini-root size `8` shows at most `11` internal fold-node recomputations after one changed leaf and reuse of at least `15` of `16` mini-roots.
+3. The benchmark for a `128`-leaf block with mini-root size `8` shows reuse of at least `15` of `16` mini-roots, at most `7` hierarchy nodes touched in the hierarchy report, and at most `11` total internal fold-node recomputations in the full builder report after one changed leaf.
 4. The epoch benchmark shows that changing one block root in a `1024`-block epoch touches at most `10` parent nodes.
 5. The node and consensus tests still accept valid native receipt-root blocks and still reject tampering.
 
@@ -140,7 +141,7 @@ The implementation should be additive and versioned. Keep the current flat artif
 
 ## Artifacts and Notes
 
-The most important evidence for this plan is the benchmark output. A successful `128`-leaf incremental rebuild report should look like this in shape:
+The most important evidence for this plan is the benchmark output. A successful `128`-leaf hierarchy report should look like this in shape:
 
     {
       "leaf_count": 128,
@@ -148,9 +149,11 @@ The most important evidence for this plan is the benchmark output. A successful 
       "mini_roots_total": 16,
       "mini_roots_reused": 15,
       "mini_roots_rebuilt": 1,
-      "block_internal_nodes_touched": 11,
+      "block_internal_nodes_touched": 7,
       "flat_internal_nodes_touched": 127
     }
+
+The corresponding full builder report should show the same cache reuse shape and at most `11` total `internal_fold_nodes_rebuilt`, because rebuilding one `8`-leaf mini-root costs `7` lower-tree folds and the path from that mini-root to the block root costs `4` more folds.
 
 A successful epoch report should look like this in shape:
 

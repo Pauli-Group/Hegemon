@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use blake3::Hasher;
 use clap::{Parser, ValueEnum};
 use consensus::{clear_verified_native_tx_leaf_store, native_receipt_root_verify_mode_label};
 use native_backend_ref::{
@@ -143,6 +144,22 @@ struct Cli {
         help = "Emit deterministic native backend review vectors into this directory"
     )]
     emit_review_vectors: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Emit a deterministic native tx-leaf record corpus JSON file and exit; uses --leaf-count as the record count"
+    )]
+    emit_native_leaf_record_corpus: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Load a deterministic native tx-leaf record corpus JSON file for hierarchy/build measurements"
+    )]
+    native_leaf_record_corpus: Option<PathBuf>,
+    #[arg(
+        long,
+        default_value_t = 16usize,
+        help = "When emitting a native tx-leaf record corpus, build at most this many real seed records before deterministic synthetic expansion"
+    )]
+    native_leaf_record_corpus_seed_count: usize,
     #[arg(
         long,
         help = "Replay a review bundle through the production verifier and print a JSON report"
@@ -603,6 +620,7 @@ struct NativeVerifyOnlyReport {
 #[derive(Debug, Serialize)]
 struct ReceiptRootHierarchyReport {
     parameter_fingerprint: String,
+    record_source: String,
     leaf_count: usize,
     mini_root_size: usize,
     changed_leaf_index: usize,
@@ -620,6 +638,7 @@ struct ReceiptRootHierarchyReport {
 #[derive(Debug, Serialize)]
 struct EpochRootHierarchyReport {
     parameter_fingerprint: String,
+    record_source: String,
     block_count: usize,
     changed_block_index: usize,
     layer_widths: Vec<usize>,
@@ -632,6 +651,7 @@ struct EpochRootHierarchyReport {
 #[derive(Debug, Serialize)]
 struct NativeReceiptRootBuildReport {
     parameter_fingerprint: String,
+    record_source: String,
     leaf_count: usize,
     mini_root_size: usize,
     workers: usize,
@@ -651,6 +671,54 @@ struct AggregationBuildRunReport {
     upper_tree_cache_misses: usize,
     internal_fold_nodes_rebuilt: usize,
     root_statement_digest: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NativeLeafRecordCorpus {
+    parameter_fingerprint: String,
+    record_count: usize,
+    seed_record_count: usize,
+    synthetic_expansion: bool,
+    records: Vec<BenchNativeLeafRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BenchNativeLeafRecord {
+    params_fingerprint_hex: String,
+    spec_digest_hex: String,
+    relation_id_hex: String,
+    shape_digest_hex: String,
+    statement_digest_hex: String,
+    commitment: LatticeCommitment,
+    proof_digest_hex: String,
+}
+
+impl From<&NativeTxLeafRecord> for BenchNativeLeafRecord {
+    fn from(record: &NativeTxLeafRecord) -> Self {
+        Self {
+            params_fingerprint_hex: hex48(record.params_fingerprint),
+            spec_digest_hex: hex::encode(record.spec_digest),
+            relation_id_hex: hex::encode(record.relation_id),
+            shape_digest_hex: hex::encode(record.shape_digest),
+            statement_digest_hex: hex48(record.statement_digest),
+            commitment: record.commitment.clone(),
+            proof_digest_hex: hex48(record.proof_digest),
+        }
+    }
+}
+
+impl BenchNativeLeafRecord {
+    fn decode(self) -> Result<NativeTxLeafRecord> {
+        Ok(NativeTxLeafRecord {
+            params_fingerprint: decode_hex_array::<48>(&self.params_fingerprint_hex)?,
+            spec_digest: decode_hex_array::<32>(&self.spec_digest_hex)?,
+            relation_id: decode_hex_array::<32>(&self.relation_id_hex)?,
+            shape_digest: decode_hex_array::<32>(&self.shape_digest_hex)?,
+            statement_digest: decode_hex_array::<48>(&self.statement_digest_hex)?,
+            commitment: self.commitment,
+            proof_digest: decode_hex_array::<48>(&self.proof_digest_hex)?,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -873,8 +941,16 @@ fn main() -> Result<()> {
     );
     ensure!(cli.workers > 0, "--workers must be strictly positive");
     ensure!(
+        cli.native_leaf_record_corpus_seed_count > 0,
+        "--native-leaf-record-corpus-seed-count must be strictly positive"
+    );
+    ensure!(
         cli.mutation_count > 0,
         "--mutation-count must be strictly positive"
+    );
+    ensure!(
+        !(cli.emit_native_leaf_record_corpus.is_some() && cli.native_leaf_record_corpus.is_some()),
+        "--emit-native-leaf-record-corpus and --native-leaf-record-corpus are mutually exclusive"
     );
     if cli.print_native_security_claim {
         let report = NativeSecurityClaimReport {
@@ -924,6 +1000,14 @@ fn main() -> Result<()> {
         emit_review_vectors(dir)?;
         return Ok(());
     }
+    if let Some(path) = &cli.emit_native_leaf_record_corpus {
+        emit_native_leaf_record_corpus(
+            path,
+            cli.leaf_count,
+            cli.native_leaf_record_corpus_seed_count,
+        )?;
+        return Ok(());
+    }
     if let Some(dir) = &cli.verify_review_bundle_production {
         let report = verify_review_bundle_production(dir)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -966,12 +1050,17 @@ fn main() -> Result<()> {
             cli.leaf_count,
             cli.mini_root_size,
             cli.mutate_leaf_index,
+            cli.native_leaf_record_corpus.as_deref(),
         )?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
     if cli.measure_native_epoch_root_hierarchy {
-        let report = measure_native_epoch_root_hierarchy(cli.block_count, cli.mutate_block_index)?;
+        let report = measure_native_epoch_root_hierarchy(
+            cli.block_count,
+            cli.mutate_block_index,
+            cli.native_leaf_record_corpus.as_deref(),
+        )?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
@@ -982,6 +1071,7 @@ fn main() -> Result<()> {
             cli.workers,
             cli.warm_repeat,
             cli.mutate_leaf_index,
+            cli.native_leaf_record_corpus.as_deref(),
         )?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -2998,7 +3088,127 @@ where
     }
 }
 
-fn build_native_leaf_records_for_measurement(leaf_count: usize) -> Result<Vec<NativeTxLeafRecord>> {
+fn derive_synthetic_native_leaf_record(
+    base: &NativeTxLeafRecord,
+    unique_index: usize,
+) -> NativeTxLeafRecord {
+    let mut material = Vec::with_capacity(64 + (48 * 3));
+    material.extend_from_slice(b"hegemon.native-leaf-record-corpus.synthetic.v1");
+    material.extend_from_slice(&(unique_index as u64).to_le_bytes());
+    material.extend_from_slice(&base.statement_digest);
+    material.extend_from_slice(&base.proof_digest);
+    material.extend_from_slice(&base.commitment.digest);
+    let digest = blake3_384(&material);
+
+    let mut proof_material = Vec::with_capacity(64 + (48 * 2));
+    proof_material.extend_from_slice(b"hegemon.native-leaf-record-corpus.synthetic-proof.v1");
+    proof_material.extend_from_slice(&(unique_index as u64).to_le_bytes());
+    proof_material.extend_from_slice(&base.proof_digest);
+    proof_material.extend_from_slice(&digest);
+    let proof_digest = blake3_384(&proof_material);
+
+    let mut record = base.clone();
+    record.statement_digest = digest;
+    record.proof_digest = proof_digest;
+    record
+}
+
+fn emit_native_leaf_record_corpus(
+    path: &Path,
+    record_count: usize,
+    seed_record_count: usize,
+) -> Result<()> {
+    ensure!(
+        record_count > 0,
+        "native leaf-record corpus must contain at least one record"
+    );
+    let seed_record_count = seed_record_count.min(record_count).max(1);
+    let mut records = build_native_leaf_records_for_measurement(seed_record_count, None)?;
+    while records.len() < record_count {
+        let base_index = records.len() % seed_record_count;
+        let unique_index = records.len();
+        let synthetic = derive_synthetic_native_leaf_record(&records[base_index], unique_index);
+        records.push(synthetic);
+    }
+    let corpus = NativeLeafRecordCorpus {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        record_count: records.len(),
+        seed_record_count,
+        synthetic_expansion: records.len() > seed_record_count,
+        records: records.iter().map(BenchNativeLeafRecord::from).collect(),
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create corpus directory {}", parent.display()))?;
+    }
+    fs::write(path, serde_json::to_vec_pretty(&corpus)?).with_context(|| {
+        format!(
+            "failed to write native leaf-record corpus {}",
+            path.display()
+        )
+    })
+}
+
+fn load_native_leaf_record_corpus(path: &Path) -> Result<NativeLeafRecordCorpus> {
+    let corpus: NativeLeafRecordCorpus =
+        serde_json::from_slice(&fs::read(path).with_context(|| {
+            format!(
+                "failed to read native leaf-record corpus {}",
+                path.display()
+            )
+        })?)
+        .with_context(|| {
+            format!(
+                "failed to decode native leaf-record corpus {}",
+                path.display()
+            )
+        })?;
+    ensure!(
+        corpus.parameter_fingerprint == current_parameter_fingerprint_hex(),
+        "native leaf-record corpus parameter fingerprint {} does not match current {}",
+        corpus.parameter_fingerprint,
+        current_parameter_fingerprint_hex()
+    );
+    ensure!(
+        corpus.record_count == corpus.records.len(),
+        "native leaf-record corpus count {} does not match payload {}",
+        corpus.record_count,
+        corpus.records.len()
+    );
+    ensure!(
+        corpus.seed_record_count > 0 && corpus.seed_record_count <= corpus.record_count,
+        "native leaf-record corpus seed count {} is invalid for record count {}",
+        corpus.seed_record_count,
+        corpus.record_count
+    );
+    Ok(corpus)
+}
+
+fn measurement_record_source_label(corpus_path: Option<&Path>) -> String {
+    corpus_path
+        .map(|path| format!("corpus:{}", path.display()))
+        .unwrap_or_else(|| "generated".to_string())
+}
+
+fn build_native_leaf_records_for_measurement(
+    leaf_count: usize,
+    corpus_path: Option<&Path>,
+) -> Result<Vec<NativeTxLeafRecord>> {
+    if let Some(path) = corpus_path {
+        let corpus = load_native_leaf_record_corpus(path)?;
+        ensure!(
+            corpus.records.len() >= leaf_count,
+            "native leaf-record corpus {} has {} records but measurement needs at least {}",
+            path.display(),
+            corpus.records.len(),
+            leaf_count
+        );
+        return corpus.records[..leaf_count]
+            .iter()
+            .cloned()
+            .map(BenchNativeLeafRecord::decode)
+            .collect();
+    }
     let params = current_native_backend_params();
     (0..leaf_count)
         .map(|seed| {
@@ -3015,6 +3225,7 @@ fn build_native_leaf_records_for_measurement(leaf_count: usize) -> Result<Vec<Na
 fn mutate_native_leaf_records_for_measurement(
     records: &[NativeTxLeafRecord],
     changed_leaf_index: usize,
+    corpus_path: Option<&Path>,
 ) -> Result<Vec<NativeTxLeafRecord>> {
     ensure!(
         changed_leaf_index < records.len(),
@@ -3022,6 +3233,21 @@ fn mutate_native_leaf_records_for_measurement(
         changed_leaf_index,
         records.len()
     );
+    if let Some(path) = corpus_path {
+        let corpus = load_native_leaf_record_corpus(path)?;
+        let replacement_index = records.len() + changed_leaf_index;
+        ensure!(
+            corpus.records.len() > replacement_index,
+            "native leaf-record corpus {} has {} records but mutated measurement needs index {} (emit at least {})",
+            path.display(),
+            corpus.records.len(),
+            replacement_index,
+            replacement_index + 1
+        );
+        let mut mutated = records.to_vec();
+        mutated[changed_leaf_index] = corpus.records[replacement_index].clone().decode()?;
+        return Ok(mutated);
+    }
     let params = current_native_backend_params();
     let mut mutated = records.to_vec();
     let seed = 50_000u64 + changed_leaf_index as u64 + records.len() as u64;
@@ -3318,10 +3544,12 @@ fn measure_native_receipt_root_hierarchy(
     leaf_count: usize,
     mini_root_size: usize,
     changed_leaf_index: usize,
+    corpus_path: Option<&Path>,
 ) -> Result<ReceiptRootHierarchyReport> {
     let params = current_native_backend_params();
-    let records = build_native_leaf_records_for_measurement(leaf_count)?;
-    let mutated_records = mutate_native_leaf_records_for_measurement(&records, changed_leaf_index)?;
+    let records = build_native_leaf_records_for_measurement(leaf_count, corpus_path)?;
+    let mutated_records =
+        mutate_native_leaf_records_for_measurement(&records, changed_leaf_index, corpus_path)?;
     let baseline = build_native_receipt_root_hierarchy_from_records_with_params(
         &params,
         &records,
@@ -3336,6 +3564,7 @@ fn measure_native_receipt_root_hierarchy(
         changed_mini_root_counts(&baseline.hierarchy, &mutated.hierarchy)?;
     Ok(ReceiptRootHierarchyReport {
         parameter_fingerprint: current_parameter_fingerprint_hex(),
+        record_source: measurement_record_source_label(corpus_path),
         leaf_count,
         mini_root_size,
         changed_leaf_index,
@@ -3357,6 +3586,7 @@ fn measure_native_receipt_root_hierarchy(
 fn measure_native_epoch_root_hierarchy(
     block_count: usize,
     changed_block_index: usize,
+    corpus_path: Option<&Path>,
 ) -> Result<EpochRootHierarchyReport> {
     ensure!(
         changed_block_index < block_count,
@@ -3366,9 +3596,13 @@ fn measure_native_epoch_root_hierarchy(
     );
     let params = current_native_backend_params();
     let block_leaf_count = native_receipt_root_mini_root_size();
-    let base_block_records = build_native_leaf_records_for_measurement(block_leaf_count)?;
-    let changed_block_records =
-        mutate_native_leaf_records_for_measurement(&base_block_records, block_leaf_count / 2)?;
+    let base_block_records =
+        build_native_leaf_records_for_measurement(block_leaf_count, corpus_path)?;
+    let changed_block_records = mutate_native_leaf_records_for_measurement(
+        &base_block_records,
+        block_leaf_count / 2,
+        corpus_path,
+    )?;
     let base_block = build_native_receipt_root_hierarchy_from_records_with_params(
         &params,
         &base_block_records,
@@ -3386,6 +3620,7 @@ fn measure_native_epoch_root_hierarchy(
     let mutated_layers = build_instance_hierarchy_layers(&params, &mutated_blocks)?;
     Ok(EpochRootHierarchyReport {
         parameter_fingerprint: current_parameter_fingerprint_hex(),
+        record_source: measurement_record_source_label(corpus_path),
         block_count,
         changed_block_index,
         layer_widths: instance_layer_widths(&baseline_layers),
@@ -3419,10 +3654,12 @@ fn measure_native_receipt_root_build(
     workers: usize,
     warm_repeat: usize,
     changed_leaf_index: usize,
+    corpus_path: Option<&Path>,
 ) -> Result<NativeReceiptRootBuildReport> {
     let params = current_native_backend_params();
-    let records = build_native_leaf_records_for_measurement(leaf_count)?;
-    let mutated_records = mutate_native_leaf_records_for_measurement(&records, changed_leaf_index)?;
+    let records = build_native_leaf_records_for_measurement(leaf_count, corpus_path)?;
+    let mutated_records =
+        mutate_native_leaf_records_for_measurement(&records, changed_leaf_index, corpus_path)?;
     let mut caches = NativeReceiptRootBuildCaches::default();
     let cold = build_native_receipt_root_aggregation_run(
         "cold",
@@ -3454,6 +3691,7 @@ fn measure_native_receipt_root_build(
     )?);
     Ok(NativeReceiptRootBuildReport {
         parameter_fingerprint: current_parameter_fingerprint_hex(),
+        record_source: measurement_record_source_label(corpus_path),
         leaf_count,
         mini_root_size,
         workers,
@@ -4437,6 +4675,15 @@ fn shape_hex(shape: ShapeDigest) -> String {
 
 fn hex48(bytes: [u8; 48]) -> String {
     hex::encode(bytes)
+}
+
+fn blake3_384(bytes: &[u8]) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    let mut output = hasher.finalize_xof();
+    let mut out = [0u8; 48];
+    output.fill(&mut out);
+    out
 }
 
 fn hex32(bytes: [u8; 32]) -> String {
