@@ -1376,9 +1376,11 @@ mod tests {
         config.liveness_lane = true;
         let best = Arc::new(move || (parent_hash, 9u64));
         let pending = Arc::new(move |_max_txs: usize| vec![vec![0xAAu8]]);
-        let build = Arc::new(move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
-            Err("unused".to_string())
-        });
+        let build = Arc::new(
+            move |_parent: H256, _number: u64, _candidate_txs: Vec<Vec<u8>>| {
+                Err("unused".to_string())
+            },
+        );
 
         let coordinator = ProverCoordinator::new(config, best, pending, build);
         assert!(

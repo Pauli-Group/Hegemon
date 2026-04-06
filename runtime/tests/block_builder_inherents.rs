@@ -47,11 +47,10 @@ fn block_builder_inherent_extrinsics_include_timestamp_and_finalize() {
 #[test]
 fn block_builder_accepts_kernel_coinbase_extrinsic() {
     new_ext().execute_with(|| {
-        let timestamp = UncheckedExtrinsic::new_bare(RuntimeCall::Timestamp(
-            pallet_timestamp::Call::set {
+        let timestamp =
+            UncheckedExtrinsic::new_bare(RuntimeCall::Timestamp(pallet_timestamp::Call::set {
                 now: 1_700_000_000_000u64,
-            },
-        ));
+            }));
         let block_number = 1u64;
         let subsidy = pallet_coinbase::block_subsidy(block_number);
         let recipient = [7u8; pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE];

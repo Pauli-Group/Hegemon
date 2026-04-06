@@ -11752,7 +11752,10 @@ mod tests {
             MintCoinbaseArgs { reward_bundle }.encode(),
         )];
 
-        assert_eq!(coinbase_ciphertexts_from_extrinsics(&extrinsics), vec![expected]);
+        assert_eq!(
+            coinbase_ciphertexts_from_extrinsics(&extrinsics),
+            vec![expected]
+        );
     }
 
     #[test]
@@ -11794,7 +11797,10 @@ mod tests {
                 reward_bundle: reward_bundle.clone(),
             })
         );
-        assert_eq!(coinbase_ciphertexts_from_extrinsics(&[decoded]), vec![expected]);
+        assert_eq!(
+            coinbase_ciphertexts_from_extrinsics(&[decoded]),
+            vec![expected]
+        );
     }
 
     fn dummy_receipt_root_payload() -> pallet_shielded_pool::types::ReceiptRootProofPayload {

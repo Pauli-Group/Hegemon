@@ -205,7 +205,10 @@ impl MiningWorker {
         let mut current = self.current_work.write();
         *current = Some(work);
         if drained > 0 {
-            tracing::debug!(drained, "Dropped stale queued mining solutions on work update");
+            tracing::debug!(
+                drained,
+                "Dropped stale queued mining solutions on work update"
+            );
         }
     }
 
@@ -217,7 +220,10 @@ impl MiningWorker {
         }
         let drained = self.drain_solutions();
         if drained > 0 {
-            tracing::debug!(drained, "Dropped stale queued mining solutions on work clear");
+            tracing::debug!(
+                drained,
+                "Dropped stale queued mining solutions on work clear"
+            );
         }
     }
 
