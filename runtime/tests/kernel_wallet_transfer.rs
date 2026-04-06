@@ -91,6 +91,31 @@ fn seed_wallet_note(store: &WalletStore, value: u64) {
     );
 }
 
+fn wallet_sidecar_args(
+    bundle: &wallet::rpc::TransactionBundle,
+) -> pallet_shielded_pool::family::ShieldedTransferSidecarArgs {
+    let decoded_notes = bundle.decode_notes().expect("decode built notes");
+    let mut ciphertext_hashes = Vec::with_capacity(decoded_notes.len());
+    let mut ciphertext_sizes = Vec::with_capacity(decoded_notes.len());
+    for note in &decoded_notes {
+        let bytes = note.to_da_bytes().expect("note to da bytes");
+        ciphertext_hashes.push(ciphertext_hash_bytes(&bytes));
+        ciphertext_sizes.push(u32::try_from(bytes.len()).expect("ciphertext size fits in u32"));
+    }
+
+    pallet_shielded_pool::family::ShieldedTransferSidecarArgs {
+        proof: bundle.proof_bytes.clone(),
+        commitments: bundle.commitments.clone(),
+        ciphertext_hashes,
+        ciphertext_sizes,
+        anchor: bundle.anchor,
+        balance_slot_asset_ids: bundle.balance_slot_asset_ids,
+        binding_hash: bundle.binding_hash,
+        stablecoin: None,
+        fee: bundle.fee,
+    }
+}
+
 #[test]
 fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
     let mut ext = new_ext();
@@ -330,6 +355,75 @@ fn kernel_enable_aggregation_mode_revalidation_stays_valid_in_block() {
             validity_after.is_ok(),
             "aggregation-mode control action should remain valid on in-block revalidation: {validity_after:?}"
         );
+    });
+}
+
+#[test]
+fn kernel_wallet_unsigned_sidecar_transfer_survives_kernel_validate_and_apply() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+
+        let dir = tempdir().expect("tempdir");
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "sender-pass").expect("sender wallet");
+        let recipient =
+            WalletStore::create_full(&recipient_path, "recipient-pass").expect("recipient wallet");
+
+        seed_wallet_note(&sender, 250_000_000);
+
+        let built = build_transaction(
+            &sender,
+            &[Recipient {
+                address: recipient.primary_address().expect("recipient address"),
+                value: 100_000_000,
+                asset_id: NATIVE_ASSET_ID,
+                memo: MemoPlaintext::new(b"kernel sidecar envelope regression".to_vec()),
+            }],
+            0,
+        )
+        .expect("wallet build_transaction");
+
+        let args = wallet_sidecar_args(&built.bundle);
+        let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
+            .expect("decode tx leaf");
+        assert_eq!(decoded.tx.nullifiers, built.bundle.nullifiers);
+        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
+        assert_eq!(decoded.tx.ciphertext_hashes, args.ciphertext_hashes);
+
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+            built.bundle.nullifiers.clone(),
+            args.encode(),
+        );
+
+        let call = pallet_kernel::Call::<Runtime>::submit_action {
+            envelope: envelope.clone(),
+        };
+        let validity =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
+        assert!(
+            validity.is_ok(),
+            "wallet-built sidecar kernel action should validate: {validity:?}"
+        );
+
+        let prior_commitment_index = ShieldedPool::commitment_index();
+        assert_ok!(Kernel::submit_action(RuntimeOrigin::none(), envelope));
+
+        assert_eq!(
+            ShieldedPool::commitment_index(),
+            prior_commitment_index + built.bundle.commitments.len() as u64
+        );
+        for nullifier in &built.bundle.nullifiers {
+            assert!(
+                pallet_shielded_pool::pallet::Nullifiers::<Runtime>::contains_key(nullifier),
+                "nullifier should be consumed after sidecar apply"
+            );
+        }
     });
 }
 
