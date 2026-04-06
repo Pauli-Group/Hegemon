@@ -984,6 +984,37 @@ where
 
 #[cfg(test)]
 mod tests {
-    // Production service tests require a full client setup
-    // See integration tests for full coverage
+    use super::*;
+
+    fn test_reward_bundle(seed: u8) -> pallet_shielded_pool::types::BlockRewardBundle {
+        pallet_shielded_pool::types::BlockRewardBundle {
+            miner_note: pallet_shielded_pool::types::CoinbaseNoteData {
+                commitment: [seed; 48],
+                encrypted_note: EncryptedNote::default(),
+                recipient_address: [seed; DIVERSIFIED_ADDRESS_SIZE],
+                amount: u64::from(seed) + 1,
+                public_seed: [seed.wrapping_add(1); 32],
+            },
+        }
+    }
+
+    #[test]
+    fn try_decode_coinbase_recipient_keeps_kernel_coinbase_compatibility() {
+        let reward_bundle = test_reward_bundle(9);
+        let recipient = reward_bundle.miner_note.recipient_address;
+        let envelope = build_shielded_kernel_envelope(
+            runtime::manifest::default_version_binding(),
+            pallet_shielded_pool::family::ACTION_MINT_COINBASE,
+            Vec::new(),
+            MintCoinbaseArgs { reward_bundle }.encode(),
+        );
+        let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::Kernel(
+            pallet_kernel::Call::submit_action { envelope },
+        ));
+
+        assert_eq!(
+            try_decode_coinbase_recipient::<runtime::Block>(&extrinsic),
+            Some(recipient)
+        );
+    }
 }

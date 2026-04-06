@@ -10782,6 +10782,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             let mining_pause_active = Arc::new(ParkingMutex::new(false));
             let mining_pause_active_for_callback = Arc::clone(&mining_pause_active);
             chain_state.set_mining_pause_fn(move || {
+                coordinator_for_mining_pause.refresh_now();
                 let chain_info = client_for_mining_pause.chain_info();
                 let parent_hash = chain_info.best_hash;
                 let block_number = chain_info.best_number.saturating_add(1);
@@ -11513,6 +11514,8 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crypto::ml_kem::MlKemKeyPair;
+    use crypto::traits::KemKeyPair;
     use sp_database::Database as _;
     use sp_database::MemDb;
     use std::sync::MutexGuard as StdMutexGuard;
@@ -11696,6 +11699,102 @@ mod tests {
             }
             .encode(),
         )
+    }
+
+    fn test_reward_bundle(seed: u8) -> pallet_shielded_pool::types::BlockRewardBundle {
+        let mut encrypted_note = pallet_shielded_pool::types::EncryptedNote::default();
+        if let Some(byte) = encrypted_note.ciphertext.first_mut() {
+            *byte = seed;
+        }
+        pallet_shielded_pool::types::BlockRewardBundle {
+            miner_note: pallet_shielded_pool::types::CoinbaseNoteData {
+                commitment: [seed; 48],
+                encrypted_note,
+                recipient_address: [seed; DIVERSIFIED_ADDRESS_SIZE],
+                amount: u64::from(seed) + 1,
+                public_seed: [seed.wrapping_add(2); 32],
+            },
+        }
+    }
+
+    #[test]
+    fn direct_coinbase_extrinsic_decodes_as_shielded_action() {
+        let reward_bundle = test_reward_bundle(7);
+        let extrinsic = kernel_shielded_extrinsic(
+            ACTION_MINT_COINBASE,
+            Vec::new(),
+            MintCoinbaseArgs {
+                reward_bundle: reward_bundle.clone(),
+            }
+            .encode(),
+        );
+
+        let Some((binding, action)) = shielded_action_from_extrinsic(&extrinsic) else {
+            panic!("kernel coinbase should decode as a shielded action");
+        };
+        assert_eq!(
+            protocol_versioning::VersionBinding::from(binding),
+            runtime::manifest::default_version_binding()
+        );
+        assert_eq!(
+            action,
+            ShieldedFamilyAction::MintCoinbase(MintCoinbaseArgs { reward_bundle })
+        );
+    }
+
+    #[test]
+    fn coinbase_ciphertexts_include_kernel_coinbase_extrinsics() {
+        let reward_bundle = test_reward_bundle(11);
+        let expected = encrypted_note_bytes(&reward_bundle.miner_note.encrypted_note);
+        let extrinsics = vec![kernel_shielded_extrinsic(
+            ACTION_MINT_COINBASE,
+            Vec::new(),
+            MintCoinbaseArgs { reward_bundle }.encode(),
+        )];
+
+        assert_eq!(coinbase_ciphertexts_from_extrinsics(&extrinsics), vec![expected]);
+    }
+
+    #[test]
+    fn encrypted_coinbase_bundle_roundtrips_through_kernel_extrinsic() {
+        let address = wallet::address::ShieldedAddress {
+            version: pallet_shielded_pool::types::NOTE_ENCRYPTION_VERSION,
+            crypto_suite: pallet_shielded_pool::types::CRYPTO_SUITE_GAMMA,
+            diversifier_index: 0,
+            pk_recipient: [3u8; 32],
+            pk_auth: [4u8; 32],
+            pk_enc: MlKemKeyPair::generate_deterministic(b"coinbase-roundtrip-test").public_key(),
+        };
+        let reward_bundle = crate::shielded_coinbase::encrypt_block_reward_bundle(
+            &address,
+            50 * 100_000_000,
+            &[9u8; 32],
+            77,
+        )
+        .expect("coinbase bundle should encrypt");
+        let expected = encrypted_note_bytes(&reward_bundle.miner_note.encrypted_note);
+        let extrinsic = kernel_shielded_extrinsic(
+            ACTION_MINT_COINBASE,
+            Vec::new(),
+            MintCoinbaseArgs {
+                reward_bundle: reward_bundle.clone(),
+            }
+            .encode(),
+        );
+        let encoded = extrinsic.encode();
+        let decoded = runtime::UncheckedExtrinsic::decode(&mut encoded.as_slice())
+            .expect("coinbase extrinsic should decode");
+
+        let Some((_, action)) = shielded_action_from_extrinsic(&decoded) else {
+            panic!("encrypted kernel coinbase should decode as a shielded action");
+        };
+        assert_eq!(
+            action,
+            ShieldedFamilyAction::MintCoinbase(MintCoinbaseArgs {
+                reward_bundle: reward_bundle.clone(),
+            })
+        );
+        assert_eq!(coinbase_ciphertexts_from_extrinsics(&[decoded]), vec![expected]);
     }
 
     fn dummy_receipt_root_payload() -> pallet_shielded_pool::types::ReceiptRootProofPayload {

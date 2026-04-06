@@ -201,14 +201,24 @@ impl MiningWorker {
 
     /// Update the work being mined
     pub fn update_work(&self, work: MiningWork) {
+        let drained = self.drain_solutions();
         let mut current = self.current_work.write();
         *current = Some(work);
+        if drained > 0 {
+            tracing::debug!(drained, "Dropped stale queued mining solutions on work update");
+        }
     }
 
     /// Clear current work (e.g., when a block is found by network)
     pub fn clear_work(&self) {
-        let mut current = self.current_work.write();
-        *current = None;
+        {
+            let mut current = self.current_work.write();
+            *current = None;
+        }
+        let drained = self.drain_solutions();
+        if drained > 0 {
+            tracing::debug!(drained, "Dropped stale queued mining solutions on work clear");
+        }
     }
 
     /// Try to receive a solution (non-blocking)
@@ -241,6 +251,14 @@ impl MiningWorker {
     /// Check if mining is active
     pub fn is_mining(&self) -> bool {
         !self.threads.is_empty() && !self.stop_flag.load(Ordering::SeqCst)
+    }
+
+    fn drain_solutions(&self) -> usize {
+        let mut drained = 0usize;
+        while self.solution_rx.try_recv().is_ok() {
+            drained = drained.saturating_add(1);
+        }
+        drained
     }
 }
 
@@ -527,5 +545,65 @@ mod tests {
         );
         let solution = solution.unwrap();
         assert_eq!(solution.work.height, 1);
+    }
+
+    #[test]
+    fn test_clear_work_flushes_queued_solutions() {
+        let worker = MiningWorker::new(1);
+        let solution = MiningSolution {
+            seal: Sha256dSeal {
+                nonce: [7u8; 32],
+                difficulty: 0x1d00ffff,
+                work: H256::repeat_byte(0x11),
+            },
+            work: MiningWork {
+                pre_hash: H256::repeat_byte(0x22),
+                pow_bits: 0x1d00ffff,
+                height: 9,
+                parent_hash: H256::repeat_byte(0x33),
+                trace: None,
+            },
+        };
+
+        worker.submit_solution(solution).expect("solution queues");
+        worker.clear_work();
+
+        assert!(
+            worker.try_recv_solution().is_none(),
+            "clearing work must flush queued stale solutions"
+        );
+    }
+
+    #[test]
+    fn test_update_work_flushes_queued_solutions() {
+        let worker = MiningWorker::new(1);
+        let solution = MiningSolution {
+            seal: Sha256dSeal {
+                nonce: [9u8; 32],
+                difficulty: 0x1d00ffff,
+                work: H256::repeat_byte(0x44),
+            },
+            work: MiningWork {
+                pre_hash: H256::repeat_byte(0x55),
+                pow_bits: 0x1d00ffff,
+                height: 10,
+                parent_hash: H256::repeat_byte(0x66),
+                trace: None,
+            },
+        };
+
+        worker.submit_solution(solution).expect("solution queues");
+        worker.update_work(MiningWork {
+            pre_hash: H256::repeat_byte(0x77),
+            pow_bits: 0x1d00ffff,
+            height: 11,
+            parent_hash: H256::repeat_byte(0x88),
+            trace: None,
+        });
+
+        assert!(
+            worker.try_recv_solution().is_none(),
+            "updating work must flush queued stale solutions from the previous template"
+        );
     }
 }
