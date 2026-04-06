@@ -1,10 +1,13 @@
-use std::sync::OnceLock;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 use protocol_versioning::VersionBinding;
+use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use superneo_backend_lattice::{
     LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams, RingElem,
@@ -36,6 +39,14 @@ pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
 pub const TX_LEAF_ARTIFACT_VERSION: u16 = 1;
 pub const RECEIPT_ROOT_DIGEST_WIDTH: usize = 4;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeReceiptRootBuildCacheStats {
+    pub leaf_cache_hits: u64,
+    pub leaf_cache_misses: u64,
+    pub chunk_cache_hits: u64,
+    pub chunk_cache_misses: u64,
+}
 pub const RECEIPT_ROOT_LIMBS_PER_DIGEST: usize = 6;
 pub const RECEIPT_ROOT_WITNESS_LIMBS: usize =
     RECEIPT_ROOT_DIGEST_WIDTH * RECEIPT_ROOT_LIMBS_PER_DIGEST;
@@ -46,6 +57,8 @@ const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
 const TX_PUBLIC_WIRE_BYTES: usize =
     4 + (MAX_INPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 48 + 2 + 2;
 const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
+const NATIVE_RECEIPT_ROOT_MINI_ROOT_SIZE: usize = 8;
+const DEFAULT_RECEIPT_ROOT_BUILD_CACHE_CAPACITY: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeTxLeafCommitmentStats {
@@ -963,6 +976,50 @@ pub struct BuiltReceiptRootArtifact {
     pub metadata: ReceiptRootMetadata,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeReceiptRootHierarchyNode {
+    pub leaf_start: u32,
+    pub leaf_count: u32,
+    pub statement_digest: [u8; 48],
+    pub commitment_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeReceiptRootHierarchyLayer {
+    pub level_index: u32,
+    pub nodes: Vec<NativeReceiptRootHierarchyNode>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeReceiptRootHierarchy {
+    pub params_fingerprint: [u8; 48],
+    pub spec_digest: [u8; 32],
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    pub mini_root_size: u32,
+    pub leaf_count: u32,
+    pub mini_roots: Vec<NativeReceiptRootHierarchyNode>,
+    pub layers: Vec<NativeReceiptRootHierarchyLayer>,
+    pub fold_count: u32,
+    pub root_statement_digest: [u8; 48],
+    pub root_commitment: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeReceiptRootChunkRoot {
+    pub leaf_start: u32,
+    pub leaf_count: u32,
+    pub root: FoldedInstance<LatticeCommitment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeReceiptRootHierarchyBuild {
+    pub metadata: ReceiptRootMetadata,
+    pub hierarchy: NativeReceiptRootHierarchy,
+    pub mini_root_instances: Vec<NativeReceiptRootChunkRoot>,
+    pub root: FoldedInstance<LatticeCommitment>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxLeafArtifact {
     pub version: u16,
@@ -1038,6 +1095,129 @@ pub struct NativeTxLeafRecord {
     pub statement_digest: [u8; 48],
     pub commitment: LatticeCommitment,
     pub proof_digest: [u8; 48],
+}
+
+type NativeReceiptRootInstance = FoldedInstance<LatticeCommitment>;
+type NativeReceiptRootProverKey = <LatticeBackend as Backend<Goldilocks>>::ProverKey;
+
+#[derive(Clone, Debug)]
+struct VerifiedNativeReceiptRootLeaf {
+    leaf: ReceiptRootLeaf,
+    instance: NativeReceiptRootInstance,
+}
+
+#[derive(Clone, Debug)]
+struct CachedNativeReceiptRootLeaf {
+    artifact_hash: [u8; 48],
+    verified: VerifiedNativeReceiptRootLeaf,
+}
+
+#[derive(Clone, Debug)]
+struct ReceiptRootChunkBuild {
+    root: NativeReceiptRootInstance,
+    level_folds: Vec<Vec<ReceiptRootFoldStep>>,
+}
+
+struct ReceiptRootLeafBuildCache {
+    capacity: usize,
+    order: VecDeque<[u8; 48]>,
+    entries: HashMap<[u8; 48], VerifiedNativeReceiptRootLeaf>,
+}
+
+impl ReceiptRootLeafBuildCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get(&mut self, key: [u8; 48]) -> Option<VerifiedNativeReceiptRootLeaf> {
+        let entry = self.entries.get(&key).cloned();
+        if entry.is_some() {
+            self.order.retain(|existing| *existing != key);
+            self.order.push_back(key);
+        }
+        entry
+    }
+
+    fn insert(&mut self, key: [u8; 48], value: VerifiedNativeReceiptRootLeaf) {
+        if self.capacity == 0 {
+            return;
+        }
+        if let Some(existing) = self.entries.get_mut(&key) {
+            *existing = value;
+            self.order.retain(|entry| *entry != key);
+            self.order.push_back(key);
+            return;
+        }
+        while self.entries.len() >= self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            } else {
+                break;
+            }
+        }
+        self.entries.insert(key, value);
+        self.order.push_back(key);
+    }
+
+    fn clear(&mut self) {
+        self.order.clear();
+        self.entries.clear();
+    }
+}
+
+struct ReceiptRootChunkBuildCache {
+    capacity: usize,
+    order: VecDeque<[u8; 48]>,
+    entries: HashMap<[u8; 48], ReceiptRootChunkBuild>,
+}
+
+impl ReceiptRootChunkBuildCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get(&mut self, key: [u8; 48]) -> Option<ReceiptRootChunkBuild> {
+        let entry = self.entries.get(&key).cloned();
+        if entry.is_some() {
+            self.order.retain(|existing| *existing != key);
+            self.order.push_back(key);
+        }
+        entry
+    }
+
+    fn insert(&mut self, key: [u8; 48], value: ReceiptRootChunkBuild) {
+        if self.capacity == 0 {
+            return;
+        }
+        if let Some(existing) = self.entries.get_mut(&key) {
+            *existing = value;
+            self.order.retain(|entry| *entry != key);
+            self.order.push_back(key);
+            return;
+        }
+        while self.entries.len() >= self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            } else {
+                break;
+            }
+        }
+        self.entries.insert(key, value);
+        self.order.push_back(key);
+    }
+
+    fn clear(&mut self) {
+        self.order.clear();
+        self.entries.clear();
+    }
 }
 
 impl Relation<Goldilocks> for TxProofReceiptRelation {
@@ -2304,6 +2484,61 @@ pub fn max_native_receipt_root_artifact_bytes(tx_count: usize) -> usize {
     max_native_receipt_root_artifact_bytes_with_params(tx_count, &native_backend_params())
 }
 
+pub fn native_receipt_root_mini_root_size() -> usize {
+    NATIVE_RECEIPT_ROOT_MINI_ROOT_SIZE
+}
+
+fn load_receipt_root_build_cache_capacity() -> usize {
+    std::env::var("HEGEMON_RECEIPT_ROOT_CACHE_CAPACITY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_RECEIPT_ROOT_BUILD_CACHE_CAPACITY)
+}
+
+static NATIVE_RECEIPT_ROOT_LEAF_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static NATIVE_RECEIPT_ROOT_LEAF_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+static NATIVE_RECEIPT_ROOT_CHUNK_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static NATIVE_RECEIPT_ROOT_CHUNK_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+static NATIVE_RECEIPT_ROOT_LEAF_BUILD_CACHE: LazyLock<Mutex<ReceiptRootLeafBuildCache>> =
+    LazyLock::new(|| {
+        Mutex::new(ReceiptRootLeafBuildCache::new(
+            load_receipt_root_build_cache_capacity(),
+        ))
+    });
+
+static NATIVE_RECEIPT_ROOT_CHUNK_BUILD_CACHE: LazyLock<Mutex<ReceiptRootChunkBuildCache>> =
+    LazyLock::new(|| {
+        Mutex::new(ReceiptRootChunkBuildCache::new(
+            load_receipt_root_build_cache_capacity(),
+        ))
+    });
+
+pub fn native_receipt_root_build_cache_stats() -> NativeReceiptRootBuildCacheStats {
+    NativeReceiptRootBuildCacheStats {
+        leaf_cache_hits: NATIVE_RECEIPT_ROOT_LEAF_CACHE_HITS.load(Ordering::Relaxed),
+        leaf_cache_misses: NATIVE_RECEIPT_ROOT_LEAF_CACHE_MISSES.load(Ordering::Relaxed),
+        chunk_cache_hits: NATIVE_RECEIPT_ROOT_CHUNK_CACHE_HITS.load(Ordering::Relaxed),
+        chunk_cache_misses: NATIVE_RECEIPT_ROOT_CHUNK_CACHE_MISSES.load(Ordering::Relaxed),
+    }
+}
+
+pub fn clear_native_receipt_root_build_cache_stats() {
+    NATIVE_RECEIPT_ROOT_LEAF_CACHE_HITS.store(0, Ordering::Relaxed);
+    NATIVE_RECEIPT_ROOT_LEAF_CACHE_MISSES.store(0, Ordering::Relaxed);
+    NATIVE_RECEIPT_ROOT_CHUNK_CACHE_HITS.store(0, Ordering::Relaxed);
+    NATIVE_RECEIPT_ROOT_CHUNK_CACHE_MISSES.store(0, Ordering::Relaxed);
+}
+
+pub fn clear_native_receipt_root_build_caches() {
+    if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_LEAF_BUILD_CACHE.lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_CHUNK_BUILD_CACHE.lock() {
+        guard.clear();
+    }
+}
+
 pub fn max_native_receipt_root_artifact_bytes_with_params(
     tx_count: usize,
     params: &NativeBackendParams,
@@ -2509,6 +2744,311 @@ pub fn native_tx_leaf_record_from_artifact(artifact: &NativeTxLeafArtifact) -> N
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReceiptRootWorkNode {
+    leaf_start: usize,
+    leaf_count: usize,
+    instance: FoldedInstance<LatticeCommitment>,
+}
+
+impl ReceiptRootWorkNode {
+    fn to_hierarchy_node(&self) -> NativeReceiptRootHierarchyNode {
+        NativeReceiptRootHierarchyNode {
+            leaf_start: self.leaf_start as u32,
+            leaf_count: self.leaf_count as u32,
+            statement_digest: self.instance.statement_digest.0,
+            commitment_digest: self.instance.witness_commitment.digest,
+        }
+    }
+}
+
+fn native_receipt_root_leaf_nodes_from_records_with_params(
+    params: &NativeBackendParams,
+    records: &[NativeTxLeafRecord],
+) -> Result<(
+    [u8; 32],
+    [u8; 32],
+    Vec<ReceiptRootLeaf>,
+    Vec<ReceiptRootWorkNode>,
+)> {
+    ensure!(
+        !records.is_empty(),
+        "native receipt-root hierarchy requires at least one tx-leaf record"
+    );
+    ensure!(
+        records.len() <= params.max_claimed_receipt_root_leaves as usize,
+        "native receipt-root hierarchy leaf count {} exceeds claimed maximum {}",
+        records.len(),
+        params.max_claimed_receipt_root_leaves
+    );
+
+    let relation = TxLeafPublicRelation::default();
+    let security = params.security_params();
+    let backend = LatticeBackend::new(params.clone());
+    let (pk, _) = backend.setup(&security, relation.shape())?;
+
+    let mut leaves = Vec::with_capacity(records.len());
+    let mut nodes = Vec::with_capacity(records.len());
+    for (leaf_index, record) in records.iter().enumerate() {
+        ensure!(
+            record.params_fingerprint == params.parameter_fingerprint(),
+            "native tx-leaf record parameter fingerprint mismatch"
+        );
+        ensure!(
+            record.spec_digest == params.spec_digest(),
+            "native tx-leaf record spec digest mismatch"
+        );
+        ensure!(
+            record.relation_id == relation.relation_id().0,
+            "native tx-leaf record relation id mismatch"
+        );
+        ensure!(
+            record.shape_digest == pk.shape_digest.0,
+            "native tx-leaf record shape digest mismatch"
+        );
+
+        leaves.push(ReceiptRootLeaf {
+            statement_digest: record.statement_digest,
+            witness_commitment: record.commitment.digest,
+            proof_digest: record.proof_digest,
+        });
+        nodes.push(ReceiptRootWorkNode {
+            leaf_start: leaf_index,
+            leaf_count: 1,
+            instance: FoldedInstance {
+                relation_id: relation.relation_id(),
+                shape_digest: pk.shape_digest,
+                statement_digest: superneo_ccs::StatementDigest(record.statement_digest),
+                witness_commitment: record.commitment.clone(),
+            },
+        });
+    }
+
+    Ok((relation.relation_id().0, pk.shape_digest.0, leaves, nodes))
+}
+
+fn build_receipt_root_layers_from_nodes_with_params(
+    params: &NativeBackendParams,
+    mut current: Vec<ReceiptRootWorkNode>,
+) -> Result<(
+    Vec<ReceiptRootFoldStep>,
+    Vec<Vec<ReceiptRootWorkNode>>,
+    FoldedInstance<LatticeCommitment>,
+)> {
+    ensure!(
+        !current.is_empty(),
+        "native receipt-root hierarchy requires at least one work node"
+    );
+
+    let relation = TxLeafPublicRelation::default();
+    let security = params.security_params();
+    let backend = LatticeBackend::new(params.clone());
+    let (pk, _) = backend.setup(&security, relation.shape())?;
+
+    let mut folds = Vec::new();
+    let mut layers = vec![current.clone()];
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let (parent, proof) = backend.fold_pair(&pk, &left.instance, &right.instance)?;
+                folds.push(ReceiptRootFoldStep {
+                    challenges: proof.challenges.clone(),
+                    parent_statement_digest: parent.statement_digest.0,
+                    parent_commitment: parent.witness_commitment.digest,
+                    parent_rows: proof.parent_rows.clone(),
+                    proof_digest: proof.proof_digest,
+                });
+                next.push(ReceiptRootWorkNode {
+                    leaf_start: left.leaf_start,
+                    leaf_count: left.leaf_count + right.leaf_count,
+                    instance: parent,
+                });
+            } else {
+                next.push(left);
+            }
+        }
+        layers.push(next.clone());
+        current = next;
+    }
+
+    let root = current
+        .pop()
+        .expect("non-empty native receipt-root hierarchy must retain one root");
+    Ok((folds, layers, root.instance))
+}
+
+fn build_receipt_root_subtree_from_nodes_with_params(
+    params: &NativeBackendParams,
+    nodes: &[ReceiptRootWorkNode],
+) -> Result<ReceiptRootWorkNode> {
+    let (_, _, root) = build_receipt_root_layers_from_nodes_with_params(params, nodes.to_vec())?;
+    Ok(ReceiptRootWorkNode {
+        leaf_start: nodes
+            .first()
+            .expect("receipt-root subtree requires at least one node")
+            .leaf_start,
+        leaf_count: nodes.iter().map(|node| node.leaf_count).sum(),
+        instance: root,
+    })
+}
+
+pub fn native_receipt_root_leaf_instance_from_record(
+    record: &NativeTxLeafRecord,
+) -> Result<FoldedInstance<LatticeCommitment>> {
+    native_receipt_root_leaf_instance_from_record_with_params(&native_backend_params(), record)
+}
+
+pub fn native_receipt_root_leaf_instance_from_record_with_params(
+    params: &NativeBackendParams,
+    record: &NativeTxLeafRecord,
+) -> Result<FoldedInstance<LatticeCommitment>> {
+    let (_, _, _, nodes) = native_receipt_root_leaf_nodes_from_records_with_params(
+        params,
+        std::slice::from_ref(record),
+    )?;
+    Ok(nodes
+        .into_iter()
+        .next()
+        .expect("one record should yield one work node")
+        .instance)
+}
+
+pub fn fold_native_receipt_root_instances(
+    instances: &[FoldedInstance<LatticeCommitment>],
+) -> Result<FoldedInstance<LatticeCommitment>> {
+    fold_native_receipt_root_instances_with_params(&native_backend_params(), instances)
+}
+
+pub fn fold_native_receipt_root_instances_with_params(
+    params: &NativeBackendParams,
+    instances: &[FoldedInstance<LatticeCommitment>],
+) -> Result<FoldedInstance<LatticeCommitment>> {
+    ensure!(
+        !instances.is_empty(),
+        "native receipt-root folding requires at least one instance"
+    );
+    let mut nodes = instances
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(leaf_start, instance)| ReceiptRootWorkNode {
+            leaf_start,
+            leaf_count: 1,
+            instance,
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(first) = nodes.first() {
+        for node in &nodes[1..] {
+            ensure!(
+                node.instance.relation_id == first.instance.relation_id,
+                "native receipt-root instance relation id mismatch"
+            );
+            ensure!(
+                node.instance.shape_digest == first.instance.shape_digest,
+                "native receipt-root instance shape digest mismatch"
+            );
+        }
+    }
+
+    let (_, _, root) =
+        build_receipt_root_layers_from_nodes_with_params(params, std::mem::take(&mut nodes))?;
+    Ok(root)
+}
+
+pub fn build_native_receipt_root_hierarchy_from_records(
+    records: &[NativeTxLeafRecord],
+    mini_root_size: usize,
+) -> Result<NativeReceiptRootHierarchyBuild> {
+    build_native_receipt_root_hierarchy_from_records_with_params(
+        &native_backend_params(),
+        records,
+        mini_root_size,
+    )
+}
+
+pub fn build_native_receipt_root_hierarchy_from_records_with_params(
+    params: &NativeBackendParams,
+    records: &[NativeTxLeafRecord],
+    mini_root_size: usize,
+) -> Result<NativeReceiptRootHierarchyBuild> {
+    ensure!(
+        mini_root_size > 0,
+        "native receipt-root hierarchy mini-root size must be strictly positive"
+    );
+    ensure!(
+        mini_root_size.is_power_of_two(),
+        "native receipt-root hierarchy mini-root size {} must be a power of two",
+        mini_root_size
+    );
+
+    let (relation_id, shape_digest, _leaves, leaf_nodes) =
+        native_receipt_root_leaf_nodes_from_records_with_params(params, records)?;
+    let (folds, layers, root) =
+        build_receipt_root_layers_from_nodes_with_params(params, leaf_nodes.clone())?;
+    let mini_root_instances = leaf_nodes
+        .chunks(mini_root_size)
+        .map(|chunk| build_receipt_root_subtree_from_nodes_with_params(params, chunk))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .map(|node| NativeReceiptRootChunkRoot {
+            leaf_start: node.leaf_start as u32,
+            leaf_count: node.leaf_count as u32,
+            root: node.instance,
+        })
+        .collect::<Vec<_>>();
+
+    let hierarchy = NativeReceiptRootHierarchy {
+        params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
+        relation_id,
+        shape_digest,
+        mini_root_size: mini_root_size as u32,
+        leaf_count: records.len() as u32,
+        mini_roots: mini_root_instances
+            .iter()
+            .map(|mini_root| NativeReceiptRootHierarchyNode {
+                leaf_start: mini_root.leaf_start,
+                leaf_count: mini_root.leaf_count,
+                statement_digest: mini_root.root.statement_digest.0,
+                commitment_digest: mini_root.root.witness_commitment.digest,
+            })
+            .collect(),
+        layers: layers
+            .iter()
+            .enumerate()
+            .map(
+                |(level_index, level_nodes)| NativeReceiptRootHierarchyLayer {
+                    level_index: level_index as u32,
+                    nodes: level_nodes
+                        .iter()
+                        .map(ReceiptRootWorkNode::to_hierarchy_node)
+                        .collect(),
+                },
+            )
+            .collect(),
+        fold_count: folds.len() as u32,
+        root_statement_digest: root.statement_digest.0,
+        root_commitment: root.witness_commitment.digest,
+    };
+    let metadata = ReceiptRootMetadata {
+        params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
+        relation_id,
+        shape_digest,
+        leaf_count: records.len() as u32,
+        fold_count: folds.len() as u32,
+    };
+    Ok(NativeReceiptRootHierarchyBuild {
+        metadata,
+        hierarchy,
+        mini_root_instances,
+        root,
+    })
+}
+
 pub fn verify_tx_leaf_artifact_bytes(
     tx: &TxLeafPublicTx,
     receipt: &CanonicalTxValidityReceipt,
@@ -2701,6 +3241,276 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     })
 }
 
+fn verified_native_receipt_root_leaf_from_artifact_bytes_with_params(
+    params: &NativeBackendParams,
+    artifact: &NativeTxLeafArtifact,
+    artifact_bytes: &[u8],
+) -> Result<VerifiedNativeReceiptRootLeaf> {
+    let relation = TxLeafPublicRelation::default();
+    let security = params.security_params();
+    let backend = LatticeBackend::new(params.clone());
+    let (pk, _) = backend.setup(&security, relation.shape())?;
+    let tx = artifact.tx.clone();
+    let receipt = artifact.receipt.clone();
+    let metadata =
+        verify_native_tx_leaf_artifact_bytes_with_params(params, &tx, &receipt, artifact_bytes)
+            .map_err(|err| anyhow::anyhow!("native tx-leaf artifact verification failed: {err}"))?;
+    ensure!(
+        artifact.version == native_tx_leaf_artifact_version(params),
+        "native tx-leaf artifact version mismatch"
+    );
+    ensure!(
+        artifact.params_fingerprint == params.parameter_fingerprint(),
+        "native tx-leaf parameter fingerprint mismatch"
+    );
+    ensure!(
+        artifact.spec_digest == params.spec_digest(),
+        "native tx-leaf spec digest mismatch"
+    );
+    ensure!(
+        artifact.relation_id == relation.relation_id().0,
+        "native tx-leaf relation id mismatch"
+    );
+    ensure!(
+        artifact.shape_digest == pk.shape_digest.0,
+        "native tx-leaf shape digest mismatch"
+    );
+    ensure!(
+        artifact.leaf.relation_id == relation.relation_id(),
+        "native tx-leaf inner relation id mismatch"
+    );
+    ensure!(
+        artifact.leaf.shape_digest == pk.shape_digest,
+        "native tx-leaf inner shape digest mismatch"
+    );
+    Ok(VerifiedNativeReceiptRootLeaf {
+        leaf: ReceiptRootLeaf {
+            statement_digest: artifact.statement_digest,
+            witness_commitment: metadata.commitment.digest,
+            proof_digest: artifact.leaf.proof.proof_digest,
+        },
+        instance: FoldedInstance {
+            relation_id: relation.relation_id(),
+            shape_digest: pk.shape_digest,
+            statement_digest: artifact.leaf.statement_digest,
+            witness_commitment: metadata.commitment,
+        },
+    })
+}
+
+#[cfg(test)]
+fn verified_native_receipt_root_leaf_from_artifact_with_params(
+    params: &NativeBackendParams,
+    artifact: &NativeTxLeafArtifact,
+) -> Result<VerifiedNativeReceiptRootLeaf> {
+    let artifact_bytes = encode_native_tx_leaf_artifact(artifact)?;
+    verified_native_receipt_root_leaf_from_artifact_bytes_with_params(
+        params,
+        artifact,
+        &artifact_bytes,
+    )
+}
+
+fn cached_native_receipt_root_leaf_from_artifact_with_params(
+    params: &NativeBackendParams,
+    artifact: &NativeTxLeafArtifact,
+) -> Result<CachedNativeReceiptRootLeaf> {
+    let artifact_bytes = encode_native_tx_leaf_artifact(artifact)?;
+    let artifact_hash = blake3_384_bytes(&artifact_bytes);
+    if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_LEAF_BUILD_CACHE.lock() {
+        if let Some(verified) = guard.get(artifact_hash) {
+            NATIVE_RECEIPT_ROOT_LEAF_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+            return Ok(CachedNativeReceiptRootLeaf {
+                artifact_hash,
+                verified,
+            });
+        }
+    }
+    NATIVE_RECEIPT_ROOT_LEAF_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+    let verified = verified_native_receipt_root_leaf_from_artifact_bytes_with_params(
+        params,
+        artifact,
+        &artifact_bytes,
+    )?;
+    if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_LEAF_BUILD_CACHE.lock() {
+        guard.insert(artifact_hash, verified.clone());
+    }
+    Ok(CachedNativeReceiptRootLeaf {
+        artifact_hash,
+        verified,
+    })
+}
+
+fn native_receipt_root_chunk_cache_key(
+    params: &NativeBackendParams,
+    child_hashes: &[[u8; 48]],
+) -> [u8; 48] {
+    let mut material = Vec::with_capacity(64 + (child_hashes.len() * 48));
+    material.extend_from_slice(b"hegemon.native-receipt-root.chunk.v1");
+    material.extend_from_slice(&params.parameter_fingerprint());
+    material.extend_from_slice(&(child_hashes.len() as u32).to_le_bytes());
+    for child_hash in child_hashes {
+        material.extend_from_slice(child_hash);
+    }
+    blake3_384_bytes(&material)
+}
+
+fn build_receipt_root_chunk_levels(
+    backend: &LatticeBackend,
+    pk: &NativeReceiptRootProverKey,
+    leaves: &[NativeReceiptRootInstance],
+) -> Result<ReceiptRootChunkBuild> {
+    ensure!(
+        !leaves.is_empty(),
+        "native receipt-root mini-root requires at least one leaf"
+    );
+    let mut current = leaves.to_vec();
+    let mut level_folds = Vec::new();
+
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut level = Vec::with_capacity(current.len() / 2);
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let (parent, proof) = backend.fold_pair(pk, &left, &right)?;
+                level.push(ReceiptRootFoldStep {
+                    challenges: proof.challenges.clone(),
+                    parent_statement_digest: parent.statement_digest.0,
+                    parent_commitment: parent.witness_commitment.digest,
+                    parent_rows: proof.parent_rows.clone(),
+                    proof_digest: proof.proof_digest,
+                });
+                next.push(parent);
+            } else {
+                next.push(left);
+            }
+        }
+        level_folds.push(level);
+        current = next;
+    }
+
+    Ok(ReceiptRootChunkBuild {
+        root: current
+            .pop()
+            .expect("chunk builder retains one root for non-empty leaves"),
+        level_folds,
+    })
+}
+
+fn build_native_receipt_root_artifact_from_verified_leaves_with_params(
+    params: &NativeBackendParams,
+    pk: &NativeReceiptRootProverKey,
+    relation: &TxLeafPublicRelation,
+    backend: &LatticeBackend,
+    verified_leaves: &[CachedNativeReceiptRootLeaf],
+) -> Result<BuiltReceiptRootArtifact> {
+    let leaves = verified_leaves
+        .iter()
+        .map(|verified| verified.verified.leaf.clone())
+        .collect::<Vec<_>>();
+    let jobs = verified_leaves
+        .chunks(native_receipt_root_mini_root_size())
+        .map(|chunk| {
+            let child_hashes = chunk
+                .iter()
+                .map(|verified| verified.artifact_hash)
+                .collect::<Vec<_>>();
+            let leaves = chunk
+                .iter()
+                .map(|verified| verified.verified.instance.clone())
+                .collect::<Vec<_>>();
+            (child_hashes, leaves)
+        })
+        .collect::<Vec<_>>();
+
+    let chunk_builds = jobs
+        .par_iter()
+        .map(|(child_hashes, leaves)| {
+            let cache_key = native_receipt_root_chunk_cache_key(params, child_hashes);
+            if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_CHUNK_BUILD_CACHE.lock() {
+                if let Some(cached) = guard.get(cache_key) {
+                    NATIVE_RECEIPT_ROOT_CHUNK_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+                    return Ok(cached);
+                }
+            }
+            NATIVE_RECEIPT_ROOT_CHUNK_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+            let built = build_receipt_root_chunk_levels(backend, pk, leaves)?;
+            if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_CHUNK_BUILD_CACHE.lock() {
+                guard.insert(cache_key, built.clone());
+            }
+            Ok(built)
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut folds = Vec::with_capacity(verified_leaves.len().saturating_sub(1));
+    let max_internal_levels = chunk_builds
+        .iter()
+        .map(|chunk| chunk.level_folds.len())
+        .max()
+        .unwrap_or(0);
+    for level_index in 0..max_internal_levels {
+        for chunk in &chunk_builds {
+            if let Some(level) = chunk.level_folds.get(level_index) {
+                folds.extend(level.iter().cloned());
+            }
+        }
+    }
+
+    let mut current = chunk_builds
+        .iter()
+        .map(|chunk| chunk.root.clone())
+        .collect::<Vec<_>>();
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let (parent, proof) = backend.fold_pair(pk, &left, &right)?;
+                folds.push(ReceiptRootFoldStep {
+                    challenges: proof.challenges.clone(),
+                    parent_statement_digest: parent.statement_digest.0,
+                    parent_commitment: parent.witness_commitment.digest,
+                    parent_rows: proof.parent_rows.clone(),
+                    proof_digest: proof.proof_digest,
+                });
+                next.push(parent);
+            } else {
+                next.push(left);
+            }
+        }
+        current = next;
+    }
+
+    let root = current
+        .pop()
+        .expect("non-empty native receipt-root leaf set retains one root");
+    let artifact = ReceiptRootArtifact {
+        version: receipt_root_artifact_version(params),
+        params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
+        relation_id: relation.relation_id().0,
+        shape_digest: pk.shape_digest.0,
+        leaves,
+        folds: folds.clone(),
+        root_statement_digest: root.statement_digest.0,
+        root_commitment: root.witness_commitment.digest,
+    };
+    Ok(BuiltReceiptRootArtifact {
+        artifact_bytes: encode_receipt_root_artifact(&artifact),
+        metadata: ReceiptRootMetadata {
+            params_fingerprint: artifact.params_fingerprint,
+            spec_digest: artifact.spec_digest,
+            relation_id: artifact.relation_id,
+            shape_digest: artifact.shape_digest,
+            leaf_count: artifact.leaves.len() as u32,
+            fold_count: folds.len() as u32,
+        },
+    })
+}
+
 pub fn build_native_tx_leaf_receipt_root_artifact_bytes(
     artifacts: &[NativeTxLeafArtifact],
 ) -> Result<BuiltReceiptRootArtifact> {
@@ -2729,107 +3539,19 @@ pub fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
     let security = params.security_params();
     let backend = LatticeBackend::new(params.clone());
     let (pk, _) = backend.setup(&security, relation.shape())?;
-
-    let mut leaves = Vec::with_capacity(artifacts.len());
-    let mut current = Vec::with_capacity(artifacts.len());
-    for artifact in artifacts {
-        let tx = artifact.tx.clone();
-        let receipt = artifact.receipt.clone();
-        let metadata = verify_native_tx_leaf_artifact_bytes_with_params(
-            params,
-            &tx,
-            &receipt,
-            &encode_native_tx_leaf_artifact(artifact)?,
-        )
-        .map_err(|err| anyhow::anyhow!("native tx-leaf artifact verification failed: {err}"))?;
-        ensure!(
-            artifact.version == native_tx_leaf_artifact_version(params),
-            "native tx-leaf artifact version mismatch"
-        );
-        ensure!(
-            artifact.params_fingerprint == params.parameter_fingerprint(),
-            "native tx-leaf parameter fingerprint mismatch"
-        );
-        ensure!(
-            artifact.spec_digest == params.spec_digest(),
-            "native tx-leaf spec digest mismatch"
-        );
-        ensure!(
-            artifact.relation_id == relation.relation_id().0,
-            "native tx-leaf relation id mismatch"
-        );
-        ensure!(
-            artifact.shape_digest == pk.shape_digest.0,
-            "native tx-leaf shape digest mismatch"
-        );
-        ensure!(
-            artifact.leaf.relation_id == relation.relation_id(),
-            "native tx-leaf inner relation id mismatch"
-        );
-        ensure!(
-            artifact.leaf.shape_digest == pk.shape_digest,
-            "native tx-leaf inner shape digest mismatch"
-        );
-        leaves.push(ReceiptRootLeaf {
-            statement_digest: artifact.statement_digest,
-            witness_commitment: metadata.commitment.digest,
-            proof_digest: artifact.leaf.proof.proof_digest,
-        });
-        current.push(FoldedInstance {
-            relation_id: relation.relation_id(),
-            shape_digest: pk.shape_digest,
-            statement_digest: artifact.leaf.statement_digest,
-            witness_commitment: metadata.commitment,
-        });
-    }
-
-    let mut folds = Vec::new();
-    while current.len() > 1 {
-        let mut next = Vec::with_capacity(current.len().div_ceil(2));
-        let mut iter = current.into_iter();
-        while let Some(left) = iter.next() {
-            if let Some(right) = iter.next() {
-                let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
-                folds.push(ReceiptRootFoldStep {
-                    challenges: proof.challenges.clone(),
-                    parent_statement_digest: parent.statement_digest.0,
-                    parent_commitment: parent.witness_commitment.digest,
-                    parent_rows: proof.parent_rows.clone(),
-                    proof_digest: proof.proof_digest,
-                });
-                next.push(parent);
-            } else {
-                next.push(left);
-            }
-        }
-        current = next;
-    }
-
-    let root = current
-        .pop()
-        .expect("non-empty native receipt-root leaf set");
-    let artifact = ReceiptRootArtifact {
-        version: receipt_root_artifact_version(params),
-        params_fingerprint: params.parameter_fingerprint(),
-        spec_digest: params.spec_digest(),
-        relation_id: relation.relation_id().0,
-        shape_digest: pk.shape_digest.0,
-        leaves,
-        folds: folds.clone(),
-        root_statement_digest: root.statement_digest.0,
-        root_commitment: root.witness_commitment.digest,
-    };
-    Ok(BuiltReceiptRootArtifact {
-        artifact_bytes: encode_receipt_root_artifact(&artifact),
-        metadata: ReceiptRootMetadata {
-            params_fingerprint: artifact.params_fingerprint,
-            spec_digest: artifact.spec_digest,
-            relation_id: artifact.relation_id,
-            shape_digest: artifact.shape_digest,
-            leaf_count: artifact.leaves.len() as u32,
-            fold_count: folds.len() as u32,
-        },
-    })
+    let verified_leaves = artifacts
+        .par_iter()
+        .map(|artifact| cached_native_receipt_root_leaf_from_artifact_with_params(params, artifact))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    build_native_receipt_root_artifact_from_verified_leaves_with_params(
+        params,
+        &pk,
+        &relation,
+        &backend,
+        &verified_leaves,
+    )
 }
 
 pub fn verify_native_tx_leaf_receipt_root_artifact_bytes(
@@ -4157,6 +4879,89 @@ fn canonical_tx_validity_receipt_bytes(receipt: &CanonicalTxValidityReceipt) -> 
     bytes
 }
 
+#[cfg(test)]
+fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params_serial(
+    params: &NativeBackendParams,
+    artifacts: &[NativeTxLeafArtifact],
+) -> Result<BuiltReceiptRootArtifact> {
+    ensure!(
+        !artifacts.is_empty(),
+        "native receipt-root artifact requires at least one tx-leaf artifact"
+    );
+    ensure!(
+        artifacts.len() <= params.max_claimed_receipt_root_leaves as usize,
+        "native receipt-root leaf count {} exceeds claimed maximum {}",
+        artifacts.len(),
+        params.max_claimed_receipt_root_leaves
+    );
+
+    let relation = TxLeafPublicRelation::default();
+    let security = params.security_params();
+    let backend = LatticeBackend::new(params.clone());
+    let (pk, _) = backend.setup(&security, relation.shape())?;
+    let verified_leaves = artifacts
+        .iter()
+        .map(|artifact| {
+            verified_native_receipt_root_leaf_from_artifact_with_params(params, artifact)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let leaves = verified_leaves
+        .iter()
+        .map(|verified| verified.leaf.clone())
+        .collect::<Vec<_>>();
+    let mut current = verified_leaves
+        .into_iter()
+        .map(|verified| verified.instance)
+        .collect::<Vec<_>>();
+    let mut folds = Vec::with_capacity(current.len().saturating_sub(1));
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let (parent, proof) = backend.fold_pair(&pk, &left, &right)?;
+                folds.push(ReceiptRootFoldStep {
+                    challenges: proof.challenges.clone(),
+                    parent_statement_digest: parent.statement_digest.0,
+                    parent_commitment: parent.witness_commitment.digest,
+                    parent_rows: proof.parent_rows.clone(),
+                    proof_digest: proof.proof_digest,
+                });
+                next.push(parent);
+            } else {
+                next.push(left);
+            }
+        }
+        current = next;
+    }
+
+    let root = current
+        .pop()
+        .expect("non-empty native receipt-root leaf set retains one root");
+    let artifact = ReceiptRootArtifact {
+        version: receipt_root_artifact_version(params),
+        params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
+        relation_id: relation.relation_id().0,
+        shape_digest: pk.shape_digest.0,
+        leaves,
+        folds: folds.clone(),
+        root_statement_digest: root.statement_digest.0,
+        root_commitment: root.witness_commitment.digest,
+    };
+    Ok(BuiltReceiptRootArtifact {
+        artifact_bytes: encode_receipt_root_artifact(&artifact),
+        metadata: ReceiptRootMetadata {
+            params_fingerprint: artifact.params_fingerprint,
+            spec_digest: artifact.spec_digest,
+            relation_id: artifact.relation_id,
+            shape_digest: artifact.shape_digest,
+            leaf_count: artifact.leaves.len() as u32,
+            fold_count: folds.len() as u32,
+        },
+    })
+}
+
 fn bytes48_to_goldilocks(bytes: &[u8; 48]) -> Vec<Goldilocks> {
     bytes
         .chunks_exact(8)
@@ -4469,6 +5274,85 @@ mod tests {
     }
 
     #[test]
+    fn native_receipt_root_hierarchy_matches_flat_root() {
+        let artifacts = (0..16)
+            .map(|seed| {
+                build_native_tx_leaf_artifact_bytes(&sample_witness(seed + 60))
+                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let records = artifacts
+            .iter()
+            .map(native_tx_leaf_record_from_artifact)
+            .collect::<Vec<_>>();
+
+        let hierarchy = build_native_receipt_root_hierarchy_from_records(
+            &records,
+            native_receipt_root_mini_root_size(),
+        )
+        .unwrap();
+        let built_flat = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
+        let decoded = decode_receipt_root_artifact(&built_flat.artifact_bytes).unwrap();
+
+        assert_eq!(hierarchy.metadata.leaf_count, 16);
+        assert_eq!(hierarchy.metadata.fold_count, decoded.folds.len() as u32);
+        assert_eq!(
+            hierarchy.hierarchy.root_statement_digest,
+            decoded.root_statement_digest
+        );
+        assert_eq!(hierarchy.hierarchy.root_commitment, decoded.root_commitment);
+    }
+
+    #[test]
+    fn native_receipt_root_hierarchy_reports_expected_layers() {
+        let artifacts = (0..16)
+            .map(|seed| {
+                build_native_tx_leaf_artifact_bytes(&sample_witness(seed + 90))
+                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let records = artifacts
+            .iter()
+            .map(native_tx_leaf_record_from_artifact)
+            .collect::<Vec<_>>();
+
+        let hierarchy = build_native_receipt_root_hierarchy_from_records(
+            &records,
+            native_receipt_root_mini_root_size(),
+        )
+        .unwrap();
+        let layer_widths = hierarchy
+            .hierarchy
+            .layers
+            .iter()
+            .map(|layer| layer.nodes.len())
+            .collect::<Vec<_>>();
+
+        assert_eq!(layer_widths, vec![16, 8, 4, 2, 1]);
+        assert_eq!(hierarchy.hierarchy.mini_roots.len(), 2);
+        assert!(hierarchy
+            .hierarchy
+            .mini_roots
+            .iter()
+            .all(|node| node.leaf_count == 8));
+    }
+
+    #[test]
+    fn native_receipt_root_hierarchy_rejects_zero_mini_root_size() {
+        let artifact = build_native_tx_leaf_artifact_bytes(&sample_witness(120))
+            .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
+            .unwrap();
+        let record = native_tx_leaf_record_from_artifact(&artifact);
+        let err = build_native_receipt_root_hierarchy_from_records(&[record], 0).unwrap_err();
+        assert!(
+            err.to_string().contains("mini-root size"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn native_receipt_root_rejects_tampered_fold_rows() {
         let witnesses = [sample_witness(30), sample_witness(31)];
         let artifacts = witnesses
@@ -4598,6 +5482,36 @@ mod tests {
             err.to_string().contains("leaf count"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn native_receipt_root_chunked_builder_matches_serial_builder() {
+        let params = native_backend_params();
+        for leaf_count in [1usize, 2, 8, 9] {
+            let artifacts = (0..leaf_count)
+                .map(|seed| {
+                    build_native_tx_leaf_artifact_bytes(&sample_witness(seed as u64 + 60)).and_then(
+                        |built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes),
+                    )
+                })
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            let chunked =
+                build_native_tx_leaf_receipt_root_artifact_bytes_with_params(&params, &artifacts)
+                    .unwrap();
+            let serial = build_native_tx_leaf_receipt_root_artifact_bytes_with_params_serial(
+                &params, &artifacts,
+            )
+            .unwrap();
+            assert_eq!(
+                chunked.metadata, serial.metadata,
+                "metadata mismatch for leaf_count={leaf_count}"
+            );
+            assert_eq!(
+                chunked.artifact_bytes, serial.artifact_bytes,
+                "artifact bytes mismatch for leaf_count={leaf_count}"
+            );
+        }
     }
 
     fn sample_transaction_proof(seed: u64) -> TransactionProof {

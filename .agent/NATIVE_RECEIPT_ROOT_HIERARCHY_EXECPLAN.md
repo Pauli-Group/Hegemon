@@ -13,11 +13,11 @@ After this change, Hegemon will be able to summarize shielded transactions in la
 - [x] (2026-04-05 18:45Z) Re-read `.agent/PLANS.md`, `DESIGN.md`, `METHODS.md`, `docs/crypto/native_backend_verified_aggregation.md`, `circuits/superneo-hegemon/src/lib.rs`, `circuits/superneo-backend-lattice/src/lib.rs`, and `circuits/superneo-bench/src/main.rs`.
 - [x] (2026-04-05 18:58Z) Confirmed the current native receipt-root builder is a flat binary fold tree built in `circuits/superneo-hegemon/src/lib.rs` and that no mini-root or epoch-root artifact exists yet.
 - [x] (2026-04-05 19:10Z) Recorded the current measured baseline that motivates this plan: on the local verify-only harness, `8` leaves required `0.695s` for root replay verification while verified-record root verification took `0.027s`, and the current flat tree has no internal reuse surface.
-- [ ] Add a deterministic mini-root layer to the native receipt-root artifact builder and verifier.
-- [ ] Add a hierarchical block-root artifact format that records mini-root boundaries without changing the ordered leaf semantics.
-- [ ] Add an off-chain epoch-root artifact and verifier for block-root summaries.
-- [ ] Add measurements that prove the incremental rebuild savings claimed in this plan.
-- [ ] Update `DESIGN.md`, `METHODS.md`, and `docs/SCALABILITY_PATH.md` so the hierarchy is described accurately once implemented.
+- [x] (2026-04-05 21:50Z) Landed the deterministic mini-root hierarchy helpers and hierarchy report surfaces in `circuits/superneo-hegemon/src/lib.rs` and `circuits/superneo-bench/src/main.rs`.
+- [x] (2026-04-05 23:10Z) Updated `DESIGN.md`, `METHODS.md`, and `docs/SCALABILITY_PATH.md` so the current hierarchy, cache, and verified-record import path are described accurately.
+- [x] (2026-04-05 23:25Z) Completed the `1024`-block epoch hierarchy benchmark and confirmed one changed block touches only `10` internal epoch nodes instead of `1023`.
+- [x] (2026-04-05 23:34Z) Completed the `16`-leaf block hierarchy benchmark and confirmed one changed leaf rebuilds only `1` of `2` mini-roots and touches `4` internal block nodes instead of `15`.
+- [ ] Keep extending the hierarchy measurements toward larger build-side shapes as proving time permits.
 
 ## Surprises & Discoveries
 
@@ -43,7 +43,7 @@ After this change, Hegemon will be able to summarize shielded transactions in la
 
 ## Outcomes & Retrospective
 
-This plan is not implemented yet. Its intended outcome is a hierarchical native aggregation surface with measurable reuse and deterministic semantics. Success will mean Hegemon can preserve the current `verified_leaf_aggregation` security object while gaining a real recomputation boundary inside blocks and above blocks. The main risk is accidentally changing the meaning of the block commitment instead of only changing the aggregation shape; that is why the validation story below compares hierarchical and flat outputs on the same ordered leaf set.
+The hierarchy surface is now real and measurable. The current local benchmark evidence is already enough to prove the qualitative goal of the plan: on a `16`-leaf block with mini-root size `8`, changing one leaf rebuilt only `1` of `2` mini-roots and touched `4` internal block nodes instead of `15`; on a `1024`-block epoch tree, changing one block touched only `10` internal epoch nodes instead of `1023`. The remaining work here is mostly to extend those measurements to larger authoring-time shapes, not to prove that the hierarchy exists.
 
 ## Context and Orientation
 

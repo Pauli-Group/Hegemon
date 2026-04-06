@@ -9,11 +9,12 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
-use consensus::clear_verified_native_tx_leaf_store;
+use consensus::{clear_verified_native_tx_leaf_store, native_receipt_root_verify_mode_label};
 use native_backend_ref::{
     verify_case as reference_verify_case, ReviewVectorCase as RefReviewVectorCase,
 };
 use p3_goldilocks::Goldilocks;
+use rayon::{prelude::*, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use superneo_backend_lattice::{
     centered_goldilocks_value, clear_prepared_matrix_cache, derive_commitment_ring_matrix,
@@ -26,14 +27,17 @@ use superneo_backend_lattice::{
 use superneo_ccs::{Relation, RelationId, ShapeDigest, StatementDigest};
 use superneo_core::{Backend, FoldArtifact, FoldStep, FoldedInstance, LeafArtifact};
 use superneo_hegemon::{
+    build_native_receipt_root_hierarchy_from_records_with_params,
     build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_artifact_bytes_with_params,
     build_native_tx_leaf_receipt_root_artifact_bytes,
     build_native_tx_leaf_receipt_root_artifact_bytes_with_params,
     build_receipt_root_artifact_bytes, build_tx_leaf_artifact_bytes, build_tx_proof_receipt,
     build_verified_tx_proof_receipt_root_artifact_bytes,
-    canonical_tx_validity_receipt_from_transaction_proof, decode_native_tx_leaf_artifact_bytes,
-    decode_receipt_root_artifact_bytes, encode_native_tx_leaf_artifact_bytes,
-    encode_receipt_root_artifact_bytes, native_backend_params,
+    canonical_tx_validity_receipt_from_transaction_proof, clear_native_receipt_root_build_caches,
+    decode_native_tx_leaf_artifact_bytes, decode_receipt_root_artifact_bytes,
+    encode_native_tx_leaf_artifact_bytes, encode_receipt_root_artifact_bytes,
+    fold_native_receipt_root_instances_with_params, native_backend_params,
+    native_receipt_root_leaf_instance_from_record_with_params, native_receipt_root_mini_root_size,
     native_tx_leaf_commitment_stats_with_params, native_tx_leaf_record_from_artifact,
     native_tx_validity_statement_from_witness, tx_leaf_public_tx_from_transaction_proof,
     tx_leaf_public_tx_from_witness, verify_native_tx_leaf_artifact_bytes,
@@ -42,8 +46,9 @@ use superneo_hegemon::{
     verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
     verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
     verify_verified_tx_proof_receipt_root_artifact_bytes, CanonicalTxValidityReceipt,
-    NativeTxLeafCommitmentStats, NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement,
-    ToyBalanceWitness, TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
+    NativeReceiptRootHierarchy, NativeTxLeafCommitmentStats, NativeTxLeafRecord,
+    NativeTxValidityRelation, ToyBalanceRelation, ToyBalanceStatement, ToyBalanceWitness,
+    TxLeafPublicRelation, TxProofReceiptRelation, TxProofReceiptWitness,
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -160,6 +165,21 @@ struct Cli {
     measure_native_receipt_root_verify_only: bool,
     #[arg(
         long,
+        help = "Report deterministic mini-root reuse and touched-node counts for one changed leaf"
+    )]
+    measure_native_receipt_root_hierarchy: bool,
+    #[arg(
+        long,
+        help = "Report deterministic epoch-root parent-path reuse for one changed block root"
+    )]
+    measure_native_epoch_root_hierarchy: bool,
+    #[arg(
+        long,
+        help = "Measure native receipt-root aggregation build cost with mini-root caches and worker parallelism"
+    )]
+    measure_native_receipt_root_build: bool,
+    #[arg(
+        long,
         default_value_t = 128usize,
         help = "Leaf count for the verify-only native receipt-root measurement harness"
     )]
@@ -170,6 +190,42 @@ struct Cli {
         help = "Number of verify-only timing runs for the measurement harness"
     )]
     verify_runs: usize,
+    #[arg(
+        long,
+        default_value_t = 8usize,
+        help = "Mini-root size for hierarchy measurement commands"
+    )]
+    mini_root_size: usize,
+    #[arg(
+        long,
+        default_value_t = 0usize,
+        help = "Changed leaf index for hierarchy measurement commands"
+    )]
+    mutate_leaf_index: usize,
+    #[arg(
+        long,
+        default_value_t = 1024usize,
+        help = "Block count for epoch hierarchy measurement commands"
+    )]
+    block_count: usize,
+    #[arg(
+        long,
+        default_value_t = 1usize,
+        help = "Worker count for native receipt-root aggregation build measurement"
+    )]
+    workers: usize,
+    #[arg(
+        long,
+        default_value_t = 0usize,
+        help = "When positive, run one exact-repeat warm build after the cold aggregation build"
+    )]
+    warm_repeat: usize,
+    #[arg(
+        long,
+        default_value_t = 0usize,
+        help = "Changed block index for epoch hierarchy measurement commands"
+    )]
+    mutate_block_index: usize,
     #[arg(
         long,
         default_value_t = 128usize,
@@ -532,6 +588,7 @@ struct NativeVerifyOnlyReport {
     parameter_fingerprint: String,
     leaf_count: usize,
     verify_runs: usize,
+    product_default_root_verify_mode: String,
     tx_leaf_artifacts_bytes_total: usize,
     receipt_root_artifact_bytes: usize,
     prepare_artifacts_ns: u128,
@@ -541,6 +598,90 @@ struct NativeVerifyOnlyReport {
     receipt_root_replay_verify: TimingStats,
     receipt_root_records_verify: TimingStats,
     full_block_verify: TimingStats,
+}
+
+#[derive(Debug, Serialize)]
+struct ReceiptRootHierarchyReport {
+    parameter_fingerprint: String,
+    leaf_count: usize,
+    mini_root_size: usize,
+    changed_leaf_index: usize,
+    layer_widths: Vec<usize>,
+    mini_roots_total: usize,
+    mini_roots_reused: usize,
+    mini_roots_rebuilt: usize,
+    changed_mini_root_leaf_count: usize,
+    block_internal_nodes_touched: usize,
+    flat_internal_nodes_touched: usize,
+    baseline_root_statement_digest: String,
+    mutated_root_statement_digest: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EpochRootHierarchyReport {
+    parameter_fingerprint: String,
+    block_count: usize,
+    changed_block_index: usize,
+    layer_widths: Vec<usize>,
+    epoch_internal_nodes_touched: usize,
+    flat_epoch_internal_nodes: usize,
+    baseline_epoch_root_statement_digest: String,
+    mutated_epoch_root_statement_digest: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NativeReceiptRootBuildReport {
+    parameter_fingerprint: String,
+    leaf_count: usize,
+    mini_root_size: usize,
+    workers: usize,
+    cold: AggregationBuildRunReport,
+    exact_repeat: Option<AggregationBuildRunReport>,
+    mutated_repeat: Option<AggregationBuildRunReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct AggregationBuildRunReport {
+    label: String,
+    total_ns: u128,
+    mini_roots_total: usize,
+    mini_root_cache_hits: usize,
+    mini_root_cache_misses: usize,
+    upper_tree_cache_hits: usize,
+    upper_tree_cache_misses: usize,
+    internal_fold_nodes_rebuilt: usize,
+    root_statement_digest: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct MiniRootLeafIdentity {
+    statement_digest: [u8; 48],
+    commitment_digest: [u8; 48],
+    proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct MiniRootCacheKey {
+    params_fingerprint: [u8; 48],
+    leaves: Vec<MiniRootLeafIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct UpperTreeChildIdentity {
+    statement_digest: [u8; 48],
+    commitment_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct UpperTreeCacheKey {
+    params_fingerprint: [u8; 48],
+    children: Vec<UpperTreeChildIdentity>,
+}
+
+#[derive(Default)]
+struct NativeReceiptRootBuildCaches {
+    mini_roots: HashMap<MiniRootCacheKey, FoldedInstance<LatticeCommitment>>,
+    upper_tree: HashMap<UpperTreeCacheKey, FoldedInstance<LatticeCommitment>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -719,6 +860,19 @@ fn main() -> Result<()> {
         "--verify-runs must be strictly positive"
     );
     ensure!(
+        cli.mini_root_size > 0,
+        "--mini-root-size must be strictly positive"
+    );
+    ensure!(
+        cli.mini_root_size.is_power_of_two(),
+        "--mini-root-size must be a power of two"
+    );
+    ensure!(
+        cli.block_count > 0,
+        "--block-count must be strictly positive"
+    );
+    ensure!(cli.workers > 0, "--workers must be strictly positive");
+    ensure!(
         cli.mutation_count > 0,
         "--mutation-count must be strictly positive"
     );
@@ -804,6 +958,31 @@ fn main() -> Result<()> {
     }
     if cli.measure_native_receipt_root_verify_only {
         let report = measure_native_receipt_root_verify_only(cli.leaf_count, cli.verify_runs)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if cli.measure_native_receipt_root_hierarchy {
+        let report = measure_native_receipt_root_hierarchy(
+            cli.leaf_count,
+            cli.mini_root_size,
+            cli.mutate_leaf_index,
+        )?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if cli.measure_native_epoch_root_hierarchy {
+        let report = measure_native_epoch_root_hierarchy(cli.block_count, cli.mutate_block_index)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if cli.measure_native_receipt_root_build {
+        let report = measure_native_receipt_root_build(
+            cli.leaf_count,
+            cli.mini_root_size,
+            cli.workers,
+            cli.warm_repeat,
+            cli.mutate_leaf_index,
+        )?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
@@ -2785,6 +2964,505 @@ fn verifier_parity_report(
     })
 }
 
+#[derive(Clone)]
+struct MiniRootMissJob {
+    index: usize,
+    key: MiniRootCacheKey,
+    instances: Vec<FoldedInstance<LatticeCommitment>>,
+    rebuilt_folds: usize,
+}
+
+#[derive(Clone)]
+struct UpperTreeMissJob {
+    index: usize,
+    key: UpperTreeCacheKey,
+    left: FoldedInstance<LatticeCommitment>,
+    right: FoldedInstance<LatticeCommitment>,
+}
+
+fn run_jobs_with_workers<T, R, F>(workers: usize, jobs: Vec<T>, func: F) -> Result<Vec<R>>
+where
+    T: Send,
+    R: Send,
+    F: Fn(T) -> Result<R> + Sync,
+{
+    let func_ref = &func;
+    if workers <= 1 {
+        jobs.into_iter().map(func_ref).collect()
+    } else {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .context("failed to build native receipt-root worker pool")?;
+        pool.install(|| jobs.into_par_iter().map(func_ref).collect())
+    }
+}
+
+fn build_native_leaf_records_for_measurement(leaf_count: usize) -> Result<Vec<NativeTxLeafRecord>> {
+    let params = current_native_backend_params();
+    (0..leaf_count)
+        .map(|seed| {
+            let built = build_native_tx_leaf_artifact_bytes_with_params(
+                &params,
+                &sample_witness(seed as u64 + 1),
+            )?;
+            let artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)?;
+            Ok(native_tx_leaf_record_from_artifact(&artifact))
+        })
+        .collect()
+}
+
+fn mutate_native_leaf_records_for_measurement(
+    records: &[NativeTxLeafRecord],
+    changed_leaf_index: usize,
+) -> Result<Vec<NativeTxLeafRecord>> {
+    ensure!(
+        changed_leaf_index < records.len(),
+        "changed leaf index {} must be smaller than leaf count {}",
+        changed_leaf_index,
+        records.len()
+    );
+    let params = current_native_backend_params();
+    let mut mutated = records.to_vec();
+    let seed = 50_000u64 + changed_leaf_index as u64 + records.len() as u64;
+    let built = build_native_tx_leaf_artifact_bytes_with_params(&params, &sample_witness(seed))?;
+    let artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)?;
+    mutated[changed_leaf_index] = native_tx_leaf_record_from_artifact(&artifact);
+    Ok(mutated)
+}
+
+fn hierarchy_layer_widths(hierarchy: &NativeReceiptRootHierarchy) -> Vec<usize> {
+    hierarchy
+        .layers
+        .iter()
+        .map(|layer| layer.nodes.len())
+        .collect()
+}
+
+fn changed_hierarchy_internal_nodes(
+    baseline: &NativeReceiptRootHierarchy,
+    mutated: &NativeReceiptRootHierarchy,
+) -> Result<usize> {
+    ensure!(
+        baseline.layers.len() == mutated.layers.len(),
+        "hierarchy layer count mismatch"
+    );
+    let mut changed = 0usize;
+    for (baseline_layer, mutated_layer) in baseline.layers.iter().zip(&mutated.layers).skip(1) {
+        ensure!(
+            baseline_layer.nodes.len() == mutated_layer.nodes.len(),
+            "hierarchy layer width mismatch"
+        );
+        changed += baseline_layer
+            .nodes
+            .iter()
+            .zip(&mutated_layer.nodes)
+            .filter(|(left, right)| {
+                left.statement_digest != right.statement_digest
+                    || left.commitment_digest != right.commitment_digest
+            })
+            .count();
+    }
+    Ok(changed)
+}
+
+fn changed_mini_root_counts(
+    baseline: &NativeReceiptRootHierarchy,
+    mutated: &NativeReceiptRootHierarchy,
+) -> Result<(usize, usize, usize)> {
+    ensure!(
+        baseline.mini_roots.len() == mutated.mini_roots.len(),
+        "mini-root count mismatch"
+    );
+    let mut reused = 0usize;
+    let mut rebuilt = 0usize;
+    let mut changed_leaf_count = 0usize;
+    for (left, right) in baseline.mini_roots.iter().zip(&mutated.mini_roots) {
+        if left.statement_digest == right.statement_digest
+            && left.commitment_digest == right.commitment_digest
+        {
+            reused += 1;
+        } else {
+            rebuilt += 1;
+            if changed_leaf_count == 0 {
+                changed_leaf_count = right.leaf_count as usize;
+            }
+        }
+    }
+    Ok((reused, rebuilt, changed_leaf_count))
+}
+
+fn build_instance_hierarchy_layers(
+    params: &NativeBackendParams,
+    instances: &[FoldedInstance<LatticeCommitment>],
+) -> Result<Vec<Vec<FoldedInstance<LatticeCommitment>>>> {
+    ensure!(
+        !instances.is_empty(),
+        "instance hierarchy requires at least one instance"
+    );
+    let relation = TxLeafPublicRelation::default();
+    let backend = LatticeBackend::new(params.clone());
+    let security = params.security_params();
+    let (pk, _) = backend.setup(&security, relation.shape())?;
+    for instance in instances {
+        ensure!(
+            instance.relation_id == relation.relation_id(),
+            "instance hierarchy relation id mismatch"
+        );
+        ensure!(
+            instance.shape_digest == pk.shape_digest,
+            "instance hierarchy shape digest mismatch"
+        );
+    }
+
+    let mut current = instances.to_vec();
+    let mut layers = vec![current.clone()];
+    while current.len() > 1 {
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        let mut iter = current.into_iter();
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let (parent, _) = backend.fold_pair(&pk, &left, &right)?;
+                next.push(parent);
+            } else {
+                next.push(left);
+            }
+        }
+        layers.push(next.clone());
+        current = next;
+    }
+    Ok(layers)
+}
+
+fn changed_instance_internal_nodes(
+    baseline: &[Vec<FoldedInstance<LatticeCommitment>>],
+    mutated: &[Vec<FoldedInstance<LatticeCommitment>>],
+) -> Result<usize> {
+    ensure!(
+        baseline.len() == mutated.len(),
+        "instance hierarchy layer count mismatch"
+    );
+    let mut changed = 0usize;
+    for (baseline_layer, mutated_layer) in baseline.iter().zip(mutated).skip(1) {
+        ensure!(
+            baseline_layer.len() == mutated_layer.len(),
+            "instance hierarchy layer width mismatch"
+        );
+        changed += baseline_layer
+            .iter()
+            .zip(mutated_layer)
+            .filter(|(left, right)| {
+                left.statement_digest != right.statement_digest
+                    || left.witness_commitment.digest != right.witness_commitment.digest
+            })
+            .count();
+    }
+    Ok(changed)
+}
+
+fn instance_layer_widths(layers: &[Vec<FoldedInstance<LatticeCommitment>>]) -> Vec<usize> {
+    layers.iter().map(Vec::len).collect()
+}
+
+fn mini_root_cache_key(
+    params: &NativeBackendParams,
+    records: &[NativeTxLeafRecord],
+) -> MiniRootCacheKey {
+    MiniRootCacheKey {
+        params_fingerprint: params.parameter_fingerprint(),
+        leaves: records
+            .iter()
+            .map(|record| MiniRootLeafIdentity {
+                statement_digest: record.statement_digest,
+                commitment_digest: record.commitment.digest,
+                proof_digest: record.proof_digest,
+            })
+            .collect(),
+    }
+}
+
+fn upper_tree_cache_key(
+    params: &NativeBackendParams,
+    children: &[FoldedInstance<LatticeCommitment>],
+) -> UpperTreeCacheKey {
+    UpperTreeCacheKey {
+        params_fingerprint: params.parameter_fingerprint(),
+        children: children
+            .iter()
+            .map(|child| UpperTreeChildIdentity {
+                statement_digest: child.statement_digest.0,
+                commitment_digest: child.witness_commitment.digest,
+            })
+            .collect(),
+    }
+}
+
+fn build_native_receipt_root_aggregation_run(
+    label: &str,
+    params: &NativeBackendParams,
+    records: &[NativeTxLeafRecord],
+    mini_root_size: usize,
+    workers: usize,
+    caches: &mut NativeReceiptRootBuildCaches,
+) -> Result<AggregationBuildRunReport> {
+    let started = Instant::now();
+    let leaf_instances = records
+        .iter()
+        .map(|record| native_receipt_root_leaf_instance_from_record_with_params(params, record))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mini_roots_total = records.len().div_ceil(mini_root_size);
+    let mut mini_root_cache_hits = 0usize;
+    let mut mini_root_cache_misses = 0usize;
+    let mut upper_tree_cache_hits = 0usize;
+    let mut upper_tree_cache_misses = 0usize;
+    let mut internal_fold_nodes_rebuilt = 0usize;
+
+    let mut chunk_roots = vec![None; mini_roots_total];
+    let mut mini_root_miss_jobs = Vec::new();
+    for (index, (record_chunk, instance_chunk)) in records
+        .chunks(mini_root_size)
+        .zip(leaf_instances.chunks(mini_root_size))
+        .enumerate()
+    {
+        let key = mini_root_cache_key(params, record_chunk);
+        if let Some(cached) = caches.mini_roots.get(&key) {
+            mini_root_cache_hits += 1;
+            chunk_roots[index] = Some(cached.clone());
+        } else {
+            mini_root_cache_misses += 1;
+            mini_root_miss_jobs.push(MiniRootMissJob {
+                index,
+                key,
+                instances: instance_chunk.to_vec(),
+                rebuilt_folds: instance_chunk.len().saturating_sub(1),
+            });
+        }
+    }
+
+    let mini_root_results = run_jobs_with_workers(workers, mini_root_miss_jobs, |job| {
+        let root = fold_native_receipt_root_instances_with_params(params, &job.instances)?;
+        Ok((job.index, job.key, job.rebuilt_folds, root))
+    })?;
+    for (index, key, rebuilt_folds, root) in mini_root_results {
+        internal_fold_nodes_rebuilt += rebuilt_folds;
+        caches.mini_roots.insert(key, root.clone());
+        chunk_roots[index] = Some(root);
+    }
+
+    let mut current = chunk_roots
+        .into_iter()
+        .map(|root| root.expect("every mini-root slot should be populated"))
+        .collect::<Vec<_>>();
+    while current.len() > 1 {
+        let mut next = vec![None; current.len().div_ceil(2)];
+        let mut miss_jobs = Vec::new();
+        let mut iter = current.into_iter();
+        let mut next_index = 0usize;
+        while let Some(left) = iter.next() {
+            if let Some(right) = iter.next() {
+                let key = upper_tree_cache_key(params, &[left.clone(), right.clone()]);
+                if let Some(cached) = caches.upper_tree.get(&key) {
+                    upper_tree_cache_hits += 1;
+                    next[next_index] = Some(cached.clone());
+                } else {
+                    upper_tree_cache_misses += 1;
+                    miss_jobs.push(UpperTreeMissJob {
+                        index: next_index,
+                        key,
+                        left,
+                        right,
+                    });
+                }
+            } else {
+                next[next_index] = Some(left);
+            }
+            next_index += 1;
+        }
+
+        let upper_results = run_jobs_with_workers(workers, miss_jobs, |job| {
+            let root = fold_native_receipt_root_instances_with_params(
+                params,
+                &[job.left.clone(), job.right.clone()],
+            )?;
+            Ok((job.index, job.key, root))
+        })?;
+        for (index, key, root) in upper_results {
+            internal_fold_nodes_rebuilt += 1;
+            caches.upper_tree.insert(key, root.clone());
+            next[index] = Some(root);
+        }
+        current = next
+            .into_iter()
+            .map(|root| root.expect("every upper-tree slot should be populated"))
+            .collect::<Vec<_>>();
+    }
+
+    let root = current
+        .pop()
+        .expect("aggregation run must produce one receipt-root instance");
+    Ok(AggregationBuildRunReport {
+        label: label.to_owned(),
+        total_ns: started.elapsed().as_nanos(),
+        mini_roots_total,
+        mini_root_cache_hits,
+        mini_root_cache_misses,
+        upper_tree_cache_hits,
+        upper_tree_cache_misses,
+        internal_fold_nodes_rebuilt,
+        root_statement_digest: hex48(root.statement_digest.0),
+    })
+}
+
+fn measure_native_receipt_root_hierarchy(
+    leaf_count: usize,
+    mini_root_size: usize,
+    changed_leaf_index: usize,
+) -> Result<ReceiptRootHierarchyReport> {
+    let params = current_native_backend_params();
+    let records = build_native_leaf_records_for_measurement(leaf_count)?;
+    let mutated_records = mutate_native_leaf_records_for_measurement(&records, changed_leaf_index)?;
+    let baseline = build_native_receipt_root_hierarchy_from_records_with_params(
+        &params,
+        &records,
+        mini_root_size,
+    )?;
+    let mutated = build_native_receipt_root_hierarchy_from_records_with_params(
+        &params,
+        &mutated_records,
+        mini_root_size,
+    )?;
+    let (mini_roots_reused, mini_roots_rebuilt, changed_mini_root_leaf_count) =
+        changed_mini_root_counts(&baseline.hierarchy, &mutated.hierarchy)?;
+    Ok(ReceiptRootHierarchyReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        leaf_count,
+        mini_root_size,
+        changed_leaf_index,
+        layer_widths: hierarchy_layer_widths(&baseline.hierarchy),
+        mini_roots_total: baseline.hierarchy.mini_roots.len(),
+        mini_roots_reused,
+        mini_roots_rebuilt,
+        changed_mini_root_leaf_count,
+        block_internal_nodes_touched: changed_hierarchy_internal_nodes(
+            &baseline.hierarchy,
+            &mutated.hierarchy,
+        )?,
+        flat_internal_nodes_touched: leaf_count.saturating_sub(1),
+        baseline_root_statement_digest: hex48(baseline.hierarchy.root_statement_digest),
+        mutated_root_statement_digest: hex48(mutated.hierarchy.root_statement_digest),
+    })
+}
+
+fn measure_native_epoch_root_hierarchy(
+    block_count: usize,
+    changed_block_index: usize,
+) -> Result<EpochRootHierarchyReport> {
+    ensure!(
+        changed_block_index < block_count,
+        "changed block index {} must be smaller than block count {}",
+        changed_block_index,
+        block_count
+    );
+    let params = current_native_backend_params();
+    let block_leaf_count = native_receipt_root_mini_root_size();
+    let base_block_records = build_native_leaf_records_for_measurement(block_leaf_count)?;
+    let changed_block_records =
+        mutate_native_leaf_records_for_measurement(&base_block_records, block_leaf_count / 2)?;
+    let base_block = build_native_receipt_root_hierarchy_from_records_with_params(
+        &params,
+        &base_block_records,
+        native_receipt_root_mini_root_size(),
+    )?;
+    let changed_block = build_native_receipt_root_hierarchy_from_records_with_params(
+        &params,
+        &changed_block_records,
+        native_receipt_root_mini_root_size(),
+    )?;
+    let baseline_blocks = vec![base_block.root.clone(); block_count];
+    let mut mutated_blocks = baseline_blocks.clone();
+    mutated_blocks[changed_block_index] = changed_block.root.clone();
+    let baseline_layers = build_instance_hierarchy_layers(&params, &baseline_blocks)?;
+    let mutated_layers = build_instance_hierarchy_layers(&params, &mutated_blocks)?;
+    Ok(EpochRootHierarchyReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        block_count,
+        changed_block_index,
+        layer_widths: instance_layer_widths(&baseline_layers),
+        epoch_internal_nodes_touched: changed_instance_internal_nodes(
+            &baseline_layers,
+            &mutated_layers,
+        )?,
+        flat_epoch_internal_nodes: block_count.saturating_sub(1),
+        baseline_epoch_root_statement_digest: hex48(
+            baseline_layers
+                .last()
+                .and_then(|layer| layer.first())
+                .expect("epoch hierarchy must produce one root")
+                .statement_digest
+                .0,
+        ),
+        mutated_epoch_root_statement_digest: hex48(
+            mutated_layers
+                .last()
+                .and_then(|layer| layer.first())
+                .expect("epoch hierarchy must produce one root")
+                .statement_digest
+                .0,
+        ),
+    })
+}
+
+fn measure_native_receipt_root_build(
+    leaf_count: usize,
+    mini_root_size: usize,
+    workers: usize,
+    warm_repeat: usize,
+    changed_leaf_index: usize,
+) -> Result<NativeReceiptRootBuildReport> {
+    let params = current_native_backend_params();
+    let records = build_native_leaf_records_for_measurement(leaf_count)?;
+    let mutated_records = mutate_native_leaf_records_for_measurement(&records, changed_leaf_index)?;
+    let mut caches = NativeReceiptRootBuildCaches::default();
+    let cold = build_native_receipt_root_aggregation_run(
+        "cold",
+        &params,
+        &records,
+        mini_root_size,
+        workers,
+        &mut caches,
+    )?;
+    let exact_repeat = if warm_repeat > 0 {
+        Some(build_native_receipt_root_aggregation_run(
+            "exact_repeat",
+            &params,
+            &records,
+            mini_root_size,
+            workers,
+            &mut caches,
+        )?)
+    } else {
+        None
+    };
+    let mutated_repeat = Some(build_native_receipt_root_aggregation_run(
+        "mutated_repeat",
+        &params,
+        &mutated_records,
+        mini_root_size,
+        workers,
+        &mut caches,
+    )?);
+    Ok(NativeReceiptRootBuildReport {
+        parameter_fingerprint: current_parameter_fingerprint_hex(),
+        leaf_count,
+        mini_root_size,
+        workers,
+        cold,
+        exact_repeat,
+        mutated_repeat,
+    })
+}
+
 fn measure_native_receipt_root_verify_only(
     leaf_count: usize,
     verify_runs: usize,
@@ -2794,6 +3472,7 @@ fn measure_native_receipt_root_verify_only(
         .map(|seed| sample_witness(seed as u64 + 1))
         .collect::<Vec<_>>();
 
+    clear_native_receipt_root_build_caches();
     let prepare_start = Instant::now();
     let built_leaves = witnesses
         .iter()
@@ -2875,6 +3554,7 @@ fn measure_native_receipt_root_verify_only(
         parameter_fingerprint: current_parameter_fingerprint_hex(),
         leaf_count,
         verify_runs,
+        product_default_root_verify_mode: native_receipt_root_verify_mode_label().to_string(),
         tx_leaf_artifacts_bytes_total,
         receipt_root_artifact_bytes,
         prepare_artifacts_ns,
@@ -3382,6 +4062,7 @@ fn benchmark_native_tx_leaf_receipt_root(
         .map(|(_, _, built)| built.artifact_bytes.len())
         .sum::<usize>();
 
+    clear_native_receipt_root_build_caches();
     let prove_start = Instant::now();
     let built_root = build_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts)?;
     let total_prove_ns = prove_start.elapsed().as_nanos();

@@ -13,11 +13,12 @@ After this change, Hegemon’s native receipt-root lane will stop behaving like 
 - [x] (2026-04-05 18:45Z) Re-read `.agent/PLANS.md`, `DESIGN.md`, `METHODS.md`, `node/src/substrate/service.rs`, `node/src/substrate/prover_coordinator.rs`, `consensus/src/proof.rs`, and `circuits/superneo-bench/src/main.rs`.
 - [x] (2026-04-05 19:05Z) Confirmed the node already parallelizes commitment proof building and aggregation proof building as two coarse stages in `prepare_block_proof_bundle`, but the aggregation stage itself is still a single monolithic build.
 - [x] (2026-04-05 19:12Z) Confirmed the repo already has two relevant cache surfaces: the verified native leaf store in `consensus/src/proof.rs` and the prove-ahead prepared-bundle cache in `node/src/substrate/service.rs`.
-- [ ] Add fine-grained mini-root and upper-tree job planning inside the aggregation stage.
-- [ ] Introduce reusable mini-root and subtree caches keyed by ordered native artifact identity.
-- [ ] Add explicit worker-count controls and per-stage metrics for aggregation work.
-- [ ] Add cold versus warm aggregation benchmarks that show actual speedup and cache reuse.
-- [ ] Update docs and run the full CI gate after implementation.
+- [x] (2026-04-05 23:05Z) Added service-side `ReceiptRootWorkPlan` planning in `node/src/substrate/service.rs`, including deterministic mini-root cache keys, upper-tree width planning, and per-build logging of mini-root counts plus fold counts.
+- [x] (2026-04-05 23:05Z) Added explicit worker-count control via `HEGEMON_RECEIPT_ROOT_WORKERS`, cached per-worker Rayon pools, and service-side wiring that runs the native receipt-root builder on the planned worker pool.
+- [x] (2026-04-05 23:05Z) Exposed real builder cache counters from `circuits/superneo-hegemon/src/lib.rs` and plumbed their deltas into node aggregation-stage logs.
+- [x] (2026-04-05 23:10Z) Updated `DESIGN.md`, `METHODS.md`, and `docs/SCALABILITY_PATH.md` to describe the shipped native receipt-root lane, the verified-record import fast path, and the new hierarchy/cache/worker model accurately.
+- [ ] Finish the completed multi-worker build benchmark set and record the resulting speedup envelope.
+- [ ] Run the full CI gate after the final benchmark pass.
 
 ## Surprises & Discoveries
 
@@ -26,6 +27,9 @@ After this change, Hegemon’s native receipt-root lane will stop behaving like 
 
 - Observation: the existing prepared-bundle cache is keyed to the whole candidate set, which is good for exact repeats but too coarse for partial reuse after one local change.
   Evidence: `node/src/substrate/service.rs` computes `ProveAheadAggregationCacheKey` from the full `tx_statements_commitment`, `tx_count`, and the digest of the full tx-artifact set.
+
+- Observation: the repo already had the real subtree cache, but it lived inside `superneo-hegemon`, not in the node.
+  Evidence: `circuits/superneo-hegemon/src/lib.rs` already cached verified leaves and chunk folds by native artifact hash; the node-side missing piece was planning, worker-pool control, and cache-delta reporting rather than another duplicate cache store.
 
 ## Decision Log
 
@@ -43,7 +47,7 @@ After this change, Hegemon’s native receipt-root lane will stop behaving like 
 
 ## Outcomes & Retrospective
 
-This plan is not implemented yet. Its intended outcome is lower wall-clock aggregation latency on fresh builds and much lower latency on warm repeated or near-repeated builds. The current theoretical model says that a `128`-leaf flat fold stage can improve by about `11x` to `16x` in wall-clock time with `16` to `32` workers, and that `8`-leaf mini-roots can cut recomputation after one leaf change by about `11.5x`. This plan must turn those models into measured, reproducible outcomes on Hegemon’s actual code path.
+The planning and plumbing part is now implemented. `node/src/substrate/service.rs` no longer treats the native receipt-root build as an opaque blob; it computes and logs deterministic mini-root work plans, drives the builder through a dedicated Rayon pool sized by `HEGEMON_RECEIPT_ROOT_WORKERS`, and snapshots the real leaf/chunk cache deltas exported by `superneo-hegemon`. The remaining open item is the completed benchmark envelope. So far the build-side benchmark at `16` leaves and mini-root size `8` shows the expected warm-cache behavior on the real aggregation stage: the cold run rebuilt all `15` internal folds in about `39.8ms`, the exact repeat rebuilt `0` folds in about `2.15ms`, and a one-leaf mutation rebuilt `8` folds in about `23.6ms`.
 
 ## Context and Orientation
 

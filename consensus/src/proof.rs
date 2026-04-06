@@ -25,8 +25,10 @@ use superneo_hegemon::{
     experimental_native_tx_leaf_verifier_profile as native_tx_leaf_profile,
     max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
     native_tx_leaf_record_from_artifact, verify_native_tx_leaf_artifact_bytes,
-    verify_native_tx_leaf_receipt_root_artifact_bytes, verify_receipt_root_artifact_bytes,
-    verify_tx_leaf_artifact_bytes, verify_verified_tx_proof_receipt_root_artifact_bytes,
+    verify_native_tx_leaf_receipt_root_artifact_bytes,
+    verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
+    verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
+    verify_verified_tx_proof_receipt_root_artifact_bytes,
 };
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
@@ -132,6 +134,48 @@ pub struct BlockArtifactVerifyReport {
     pub verify_batch_ms: u128,
     pub cache_hit: Option<bool>,
     pub cache_build_ms: Option<u128>,
+    pub root_verify_mode: Option<&'static str>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeReceiptRootVerifyMode {
+    Replay,
+    VerifiedRecords,
+    CrossCheck,
+}
+
+impl NativeReceiptRootVerifyMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Replay => "replay",
+            Self::VerifiedRecords => "verified_records",
+            Self::CrossCheck => "cross_check",
+        }
+    }
+}
+
+fn load_native_receipt_root_verify_mode() -> NativeReceiptRootVerifyMode {
+    let Some(raw) = std::env::var("HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE").ok() else {
+        return NativeReceiptRootVerifyMode::VerifiedRecords;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "verified_records" | "verified-records" | "records" => {
+            NativeReceiptRootVerifyMode::VerifiedRecords
+        }
+        "replay" => NativeReceiptRootVerifyMode::Replay,
+        "cross_check" | "cross-check" | "crosscheck" => NativeReceiptRootVerifyMode::CrossCheck,
+        other => {
+            tracing::warn!(
+                value = other,
+                "unrecognized HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE; defaulting to verified_records"
+            );
+            NativeReceiptRootVerifyMode::VerifiedRecords
+        }
+    }
+}
+
+pub fn native_receipt_root_verify_mode_label() -> &'static str {
+    load_native_receipt_root_verify_mode().label()
 }
 
 pub trait ArtifactVerifier: Send + Sync {
@@ -402,6 +446,28 @@ fn verify_native_tx_leaf_artifact_record(
     Ok(record)
 }
 
+fn verify_native_tx_leaf_artifact_records(
+    transactions: &[crate::types::Transaction],
+    artifacts: &[TxValidityArtifact],
+) -> Result<Vec<VerifiedNativeTxLeaf>, ProofError> {
+    if artifacts.len() != transactions.len() {
+        return Err(ProofError::TransactionProofCountMismatch {
+            expected: transactions.len(),
+            observed: artifacts.len(),
+        });
+    }
+
+    transactions
+        .par_iter()
+        .zip(artifacts)
+        .enumerate()
+        .map(|(index, (tx, artifact))| {
+            verify_native_tx_leaf_artifact_record(tx, artifact, None)
+                .map_err(|err| reindex_tx_artifact_error(index, err))
+        })
+        .collect()
+}
+
 impl ArtifactVerifier for NativeTxLeafVerifier {
     fn kind(&self) -> ProofArtifactKind {
         ProofArtifactKind::TxLeaf
@@ -465,9 +531,11 @@ impl ArtifactVerifier for ReceiptRootVerifier {
                 observed: artifacts.len(),
             });
         }
-        let tx_artifact_registry = VerifierRegistry::default();
-        let verified_bindings =
-            verify_tx_validity_artifacts(&tx_artifact_registry, txs, artifacts)?;
+        let verified_records = verify_native_tx_leaf_artifact_records(txs, artifacts)?;
+        let verified_bindings = verified_records
+            .iter()
+            .map(|record| record.binding.clone())
+            .collect::<Vec<_>>();
         let derived_statement_commitment = commitment_from_statement_bindings(&verified_bindings)?;
         if derived_statement_commitment != *expected_commitment {
             return Err(ProofError::AggregationProofInputsMismatch(
@@ -475,13 +543,48 @@ impl ArtifactVerifier for ReceiptRootVerifier {
             ));
         }
         let start_verify = Instant::now();
-        let root_metadata =
-            verify_experimental_native_receipt_root_artifact(artifacts, &envelope.artifact_bytes)
-                .map_err(|err| {
-                ProofError::AggregationProofVerification(format!(
-                    "native receipt-root verification failed: {err}"
-                ))
-            })?;
+        let leaf_records = verified_records
+            .iter()
+            .map(|record| record.leaf.clone())
+            .collect::<Vec<_>>();
+        let verify_mode = load_native_receipt_root_verify_mode();
+        let root_metadata = match verify_mode {
+            NativeReceiptRootVerifyMode::Replay => {
+                verify_experimental_native_receipt_root_artifact(
+                    artifacts,
+                    &envelope.artifact_bytes,
+                )
+            }
+            NativeReceiptRootVerifyMode::VerifiedRecords => {
+                verify_experimental_native_receipt_root_artifact_from_records(
+                    &leaf_records,
+                    &envelope.artifact_bytes,
+                )
+            }
+            NativeReceiptRootVerifyMode::CrossCheck => {
+                let records_metadata =
+                    verify_experimental_native_receipt_root_artifact_from_records(
+                        &leaf_records,
+                        &envelope.artifact_bytes,
+                    )?;
+                let replay_metadata = verify_experimental_native_receipt_root_artifact(
+                    artifacts,
+                    &envelope.artifact_bytes,
+                )?;
+                if records_metadata != replay_metadata {
+                    return Err(ProofError::AggregationProofVerification(
+                        "native receipt-root replay and verified-record verification disagreed"
+                            .to_string(),
+                    ));
+                }
+                Ok(records_metadata)
+            }
+        }
+        .map_err(|err| {
+            ProofError::AggregationProofVerification(format!(
+                "native receipt-root verification failed: {err}"
+            ))
+        })?;
         if root_metadata.leaf_count as usize != artifacts.len() {
             return Err(ProofError::AggregationProofInputsMismatch(
                 "receipt-root verified leaf count mismatch".to_string(),
@@ -494,6 +597,7 @@ impl ArtifactVerifier for ReceiptRootVerifier {
             verify_batch_ms: 0,
             cache_hit: None,
             cache_build_ms: None,
+            root_verify_mode: Some(verify_mode.label()),
         })
     }
 }
@@ -921,6 +1025,25 @@ pub fn verify_experimental_native_receipt_root_artifact(
     let metadata =
         verify_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts, artifact_bytes)
             .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
+    Ok(ReceiptRootMetadata {
+        params_fingerprint: metadata.params_fingerprint,
+        relation_id: metadata.relation_id,
+        shape_digest: metadata.shape_digest,
+        leaf_count: metadata.leaf_count,
+        fold_count: metadata.fold_count,
+    })
+}
+
+pub fn verify_experimental_native_receipt_root_artifact_from_records(
+    records: &[NativeTxLeafRecord],
+    artifact_bytes: &[u8],
+) -> Result<ReceiptRootMetadata, ProofError> {
+    let metadata = verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
+        &superneo_hegemon::native_backend_params(),
+        records,
+        artifact_bytes,
+    )
+    .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
     Ok(ReceiptRootMetadata {
         params_fingerprint: metadata.params_fingerprint,
         relation_id: metadata.relation_id,
@@ -1396,60 +1519,69 @@ impl ProofVerifier for ParallelProofVerifier {
                 ProvenBatchMode::InlineTx => None,
             });
 
-        let (aggregation_verified, aggregation_verify_ms, aggregation_verify_batch_ms) =
-            match proven_batch.mode {
-                ProvenBatchMode::InlineTx => {
-                    return Err(ProofError::UnsupportedProofArtifact(
-                        "legacy InlineTx proven batches are no longer supported on the product path"
+        let (
+            aggregation_verified,
+            aggregation_verify_ms,
+            aggregation_verify_batch_ms,
+            aggregation_verify_mode,
+        ) = match proven_batch.mode {
+            ProvenBatchMode::InlineTx => {
+                return Err(ProofError::UnsupportedProofArtifact(
+                    "legacy InlineTx proven batches are no longer supported on the product path"
+                        .to_string(),
+                ));
+            }
+            ProvenBatchMode::ReceiptRoot => {
+                let receipt_root = proven_batch.receipt_root.as_ref().ok_or_else(|| {
+                    ProofError::ProvenBatchBindingMismatch(
+                        "missing receipt_root payload for ReceiptRoot mode".to_string(),
+                    )
+                })?;
+                if receipt_root.metadata.leaf_count != tx_count as u32 {
+                    return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                        "receipt-root leaf_count mismatch (payload {}, expected {})",
+                        receipt_root.metadata.leaf_count, tx_count
+                    )));
+                }
+                if receipt_root.receipts.len() != tx_count {
+                    return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                        "receipt-root receipt count mismatch (payload {}, expected {})",
+                        receipt_root.receipts.len(),
+                        tx_count
+                    )));
+                }
+                let artifacts = tx_validity_artifacts
+                    .ok_or(ProofError::MissingTransactionProofs)?
+                    .as_slice();
+                let artifact_receipts = artifacts
+                    .iter()
+                    .map(|artifact| artifact.receipt.clone())
+                    .collect::<Vec<_>>();
+                if receipt_root.receipts != artifact_receipts {
+                    return Err(ProofError::ProvenBatchBindingMismatch(
+                        "receipt-root payload receipts do not match tx validity artifacts"
                             .to_string(),
                     ));
                 }
-                ProvenBatchMode::ReceiptRoot => {
-                    let receipt_root = proven_batch.receipt_root.as_ref().ok_or_else(|| {
-                        ProofError::ProvenBatchBindingMismatch(
-                            "missing receipt_root payload for ReceiptRoot mode".to_string(),
-                        )
-                    })?;
-                    if receipt_root.metadata.leaf_count != tx_count as u32 {
-                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                            "receipt-root leaf_count mismatch (payload {}, expected {})",
-                            receipt_root.metadata.leaf_count, tx_count
-                        )));
-                    }
-                    if receipt_root.receipts.len() != tx_count {
-                        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                            "receipt-root receipt count mismatch (payload {}, expected {})",
-                            receipt_root.receipts.len(),
-                            tx_count
-                        )));
-                    }
-                    let artifacts = tx_validity_artifacts
-                        .ok_or(ProofError::MissingTransactionProofs)?
-                        .as_slice();
-                    let artifact_receipts = artifacts
-                        .iter()
-                        .map(|artifact| artifact.receipt.clone())
-                        .collect::<Vec<_>>();
-                    if receipt_root.receipts != artifact_receipts {
-                        return Err(ProofError::ProvenBatchBindingMismatch(
-                            "receipt-root payload receipts do not match tx validity artifacts"
-                                .to_string(),
-                        ));
-                    }
-                    let receipt_root_verifier = self
-                        .verifier_registry
-                        .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
-                    let verify_report = receipt_root_verifier.verify_block_artifact(
-                        &block.transactions,
-                        Some(artifacts),
-                        &expected_commitment,
-                        block_artifact
-                            .as_ref()
-                            .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?,
-                    )?;
-                    (true, verify_report.verify_ms, verify_report.verify_batch_ms)
-                }
-            };
+                let receipt_root_verifier = self
+                    .verifier_registry
+                    .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
+                let verify_report = receipt_root_verifier.verify_block_artifact(
+                    &block.transactions,
+                    Some(artifacts),
+                    &expected_commitment,
+                    block_artifact
+                        .as_ref()
+                        .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?,
+                )?;
+                (
+                    true,
+                    verify_report.verify_ms,
+                    verify_report.verify_batch_ms,
+                    verify_report.root_verify_mode.unwrap_or("unknown"),
+                )
+            }
+        };
 
         let proof_starting_root =
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
@@ -1472,6 +1604,7 @@ impl ProofVerifier for ParallelProofVerifier {
             commitment_verify_ms,
             aggregation_verify_ms,
             aggregation_verify_batch_ms,
+            aggregation_verify_mode,
             aggregation_cache_hit,
             aggregation_cache_build_ms,
             aggregation_cache_prewarm_hit,
@@ -1719,6 +1852,41 @@ fn verify_and_apply_tree_transition_without_anchors(
 mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
+    use std::sync::Mutex as StdMutex;
+
+    static TEST_ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    struct EnvGuard {
+        previous_verify_mode: Option<String>,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous_verify_mode.take() {
+                Some(value) => unsafe {
+                    std::env::set_var("HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE", value);
+                },
+                None => unsafe {
+                    std::env::remove_var("HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE");
+                },
+            }
+        }
+    }
+
+    fn set_native_receipt_root_verify_mode(value: &str) -> EnvGuard {
+        let guard = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous_verify_mode = std::env::var("HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE", value);
+        }
+        EnvGuard {
+            previous_verify_mode,
+            _guard: guard,
+        }
+    }
 
     fn tx_with_commitments(commitments: Vec<[u8; 48]>) -> crate::types::Transaction {
         crate::types::Transaction::new(
@@ -1806,6 +1974,34 @@ mod tests {
         .expect_err("panic should be captured");
         assert!(
             matches!(err, ProofError::VerifierPanicked(message) if message.contains("test verifier") && message.contains("boom"))
+        );
+    }
+
+    #[test]
+    fn native_receipt_root_verify_mode_defaults_to_verified_records() {
+        let _guard = set_native_receipt_root_verify_mode("");
+        assert_eq!(
+            load_native_receipt_root_verify_mode(),
+            NativeReceiptRootVerifyMode::VerifiedRecords
+        );
+        assert_eq!(native_receipt_root_verify_mode_label(), "verified_records");
+    }
+
+    #[test]
+    fn native_receipt_root_verify_mode_accepts_replay() {
+        let _guard = set_native_receipt_root_verify_mode("replay");
+        assert_eq!(
+            load_native_receipt_root_verify_mode(),
+            NativeReceiptRootVerifyMode::Replay
+        );
+    }
+
+    #[test]
+    fn native_receipt_root_verify_mode_accepts_cross_check_aliases() {
+        let _guard = set_native_receipt_root_verify_mode("cross-check");
+        assert_eq!(
+            load_native_receipt_root_verify_mode(),
+            NativeReceiptRootVerifyMode::CrossCheck
         );
     }
 }

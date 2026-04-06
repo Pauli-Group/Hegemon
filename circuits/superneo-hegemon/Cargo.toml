@@ -13,6 +13,7 @@ bincode = "1.3"
 p3-field = { workspace = true }
 p3-goldilocks = { workspace = true }
 protocol-versioning = { path = "../../protocol/versioning" }
+rayon = "1"
 serde = { version = "1", features = ["derive"] }
 superneo-backend-lattice = { path = "../superneo-backend-lattice" }
 superneo-ccs = { path = "../superneo-ccs" }

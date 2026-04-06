@@ -159,6 +159,7 @@ use pallet_shielded_pool::family::{
 use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
 use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
+use rayon::ThreadPoolBuilder;
 use sc_client_api::{Backend as ClientBackend, BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
@@ -177,6 +178,10 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use superneo_hegemon::{
+    native_receipt_root_build_cache_stats, native_receipt_root_mini_root_size,
+    NativeReceiptRootBuildCacheStats,
+};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
@@ -2671,6 +2676,214 @@ fn selector_requests_native_receipt_lane(selector: PreparedArtifactSelector) -> 
     selector.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct MiniRootCacheKey([u8; 48]);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReceiptRootMiniRootPlan {
+    leaf_start: u32,
+    leaf_count: u32,
+    cache_key: MiniRootCacheKey,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReceiptRootWorkPlan {
+    leaf_count: usize,
+    mini_root_size: usize,
+    mini_root_count: usize,
+    chunk_internal_fold_nodes: usize,
+    upper_tree_fold_nodes: usize,
+    upper_tree_level_widths: Vec<usize>,
+    mini_roots: Vec<ReceiptRootMiniRootPlan>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct NativeReceiptRootBuildCacheDelta {
+    leaf_cache_hits: u64,
+    leaf_cache_misses: u64,
+    chunk_cache_hits: u64,
+    chunk_cache_misses: u64,
+}
+
+impl NativeReceiptRootBuildCacheDelta {
+    fn between(
+        before: NativeReceiptRootBuildCacheStats,
+        after: NativeReceiptRootBuildCacheStats,
+    ) -> Self {
+        Self {
+            leaf_cache_hits: after.leaf_cache_hits.saturating_sub(before.leaf_cache_hits),
+            leaf_cache_misses: after
+                .leaf_cache_misses
+                .saturating_sub(before.leaf_cache_misses),
+            chunk_cache_hits: after
+                .chunk_cache_hits
+                .saturating_sub(before.chunk_cache_hits),
+            chunk_cache_misses: after
+                .chunk_cache_misses
+                .saturating_sub(before.chunk_cache_misses),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NativeReceiptRootBuildReport {
+    workers: usize,
+    leaf_count: usize,
+    mini_root_size: usize,
+    mini_root_count: usize,
+    chunk_internal_fold_nodes: usize,
+    upper_tree_fold_nodes: usize,
+    upper_tree_level_widths: Vec<usize>,
+    cache_delta: NativeReceiptRootBuildCacheDelta,
+}
+
+struct PreparedNativeReceiptRootBuild {
+    outcome: PreparedAggregationOutcome,
+    work_plan: ReceiptRootWorkPlan,
+    build_report: NativeReceiptRootBuildReport,
+}
+
+static RECEIPT_ROOT_THREAD_POOLS: once_cell::sync::Lazy<
+    ParkingMutex<HashMap<usize, Arc<rayon::ThreadPool>>>,
+> = once_cell::sync::Lazy::new(|| ParkingMutex::new(HashMap::new()));
+
+fn load_receipt_root_workers(default_workers: usize) -> usize {
+    std::env::var("HEGEMON_RECEIPT_ROOT_WORKERS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .or_else(|| {
+            std::env::var("HEGEMON_AGG_STAGE_LOCAL_PARALLELISM")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+        })
+        .or_else(|| {
+            std::env::var("HEGEMON_PROVER_WORKERS")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+        })
+        .unwrap_or(default_workers.max(1))
+        .clamp(1, 256)
+}
+
+fn receipt_root_thread_pool(workers: usize) -> Result<Arc<rayon::ThreadPool>, String> {
+    let workers = workers.max(1);
+    let mut guard = RECEIPT_ROOT_THREAD_POOLS.lock();
+    if let Some(pool) = guard.get(&workers) {
+        return Ok(Arc::clone(pool));
+    }
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .thread_name(move |index| format!("hegemon-receipt-root-{workers}-{index}"))
+        .build()
+        .map_err(|error| {
+            format!("failed to build receipt-root worker pool ({workers} threads): {error}")
+        })?;
+    let pool = Arc::new(pool);
+    guard.insert(workers, Arc::clone(&pool));
+    Ok(pool)
+}
+
+fn receipt_root_upper_tree_level_widths(mini_root_count: usize) -> Vec<usize> {
+    let mut widths = Vec::new();
+    let mut current = mini_root_count.max(1);
+    loop {
+        widths.push(current);
+        if current == 1 {
+            break;
+        }
+        current = current.div_ceil(2);
+    }
+    widths
+}
+
+fn make_receipt_root_mini_root_cache_key(child_hashes: &[[u8; 48]]) -> MiniRootCacheKey {
+    let mut material = Vec::with_capacity(64 + (child_hashes.len() * 48));
+    material.extend_from_slice(b"hegemon.native-receipt-root.chunk.v1");
+    material.extend_from_slice(&consensus::experimental_native_receipt_root_params_fingerprint());
+    material.extend_from_slice(&(child_hashes.len() as u32).to_le_bytes());
+    for child_hash in child_hashes {
+        material.extend_from_slice(child_hash);
+    }
+    MiniRootCacheKey(blake3_384(&material))
+}
+
+fn build_receipt_root_work_plan(
+    tx_artifacts: &[consensus::TxValidityArtifact],
+) -> Result<ReceiptRootWorkPlan, String> {
+    if tx_artifacts.is_empty() {
+        return Err("candidate tx set has no receipt-root proof material".to_string());
+    }
+
+    let mini_root_size = native_receipt_root_mini_root_size();
+    let artifact_hashes = tx_artifacts
+        .iter()
+        .map(|artifact| {
+            artifact
+                .proof
+                .as_ref()
+                .map(|proof| blake3_384(&proof.artifact_bytes))
+                .ok_or_else(|| {
+                    "native receipt_root requires proof envelopes for all txs".to_string()
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mini_roots = artifact_hashes
+        .chunks(mini_root_size)
+        .enumerate()
+        .map(|(index, chunk)| ReceiptRootMiniRootPlan {
+            leaf_start: (index * mini_root_size) as u32,
+            leaf_count: chunk.len() as u32,
+            cache_key: make_receipt_root_mini_root_cache_key(chunk),
+        })
+        .collect::<Vec<_>>();
+
+    let chunk_internal_fold_nodes = tx_artifacts
+        .chunks(mini_root_size)
+        .map(|chunk| chunk.len().saturating_sub(1))
+        .sum();
+    let mini_root_count = mini_roots.len().max(1);
+
+    Ok(ReceiptRootWorkPlan {
+        leaf_count: tx_artifacts.len(),
+        mini_root_size,
+        mini_root_count: mini_roots.len(),
+        chunk_internal_fold_nodes,
+        upper_tree_fold_nodes: mini_root_count.saturating_sub(1),
+        upper_tree_level_widths: receipt_root_upper_tree_level_widths(mini_root_count),
+        mini_roots,
+    })
+}
+
+fn experimental_receipt_root_payload_from_artifact(
+    tx_artifacts: &[consensus::TxValidityArtifact],
+    built: consensus::ExperimentalReceiptRootArtifact,
+) -> pallet_shielded_pool::types::ReceiptRootProofPayload {
+    let consensus_receipts = tx_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    pallet_shielded_pool::types::ReceiptRootProofPayload {
+        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
+        metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
+            relation_id: built.metadata.relation_id,
+            shape_digest: built.metadata.shape_digest,
+            leaf_count: built.metadata.leaf_count,
+            fold_count: built.metadata.fold_count,
+        },
+        receipts: consensus_receipts
+            .into_iter()
+            .map(|receipt| pallet_shielded_pool::types::TxValidityReceipt {
+                statement_hash: receipt.statement_hash,
+                proof_digest: receipt.proof_digest,
+                public_inputs_digest: receipt.public_inputs_digest,
+                verifier_profile: receipt.verifier_profile,
+            })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
 fn build_receipt_root_proof_from_materials(
     tx_artifacts: &[consensus::TxValidityArtifact],
 ) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String> {
@@ -2690,30 +2903,49 @@ fn build_receipt_root_proof_from_materials(
     }) {
         return Err("receipt-root requires native tx-leaf artifacts for every tx".to_string());
     }
-    let consensus_receipts = tx_artifacts
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
     let built = consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
         .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
-    Ok(pallet_shielded_pool::types::ReceiptRootProofPayload {
-        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
-        metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
-            relation_id: built.metadata.relation_id,
-            shape_digest: built.metadata.shape_digest,
-            leaf_count: built.metadata.leaf_count,
-            fold_count: built.metadata.fold_count,
+    Ok(experimental_receipt_root_payload_from_artifact(
+        tx_artifacts,
+        built,
+    ))
+}
+
+fn build_receipt_root_proof_from_materials_with_plan(
+    tx_artifacts: &[consensus::TxValidityArtifact],
+    work_plan: &ReceiptRootWorkPlan,
+    default_workers: usize,
+) -> Result<
+    (
+        pallet_shielded_pool::types::ReceiptRootProofPayload,
+        NativeReceiptRootBuildReport,
+    ),
+    String,
+> {
+    let workers = load_receipt_root_workers(default_workers);
+    let before = native_receipt_root_build_cache_stats();
+    let built = if workers <= 1 {
+        consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
+    } else {
+        receipt_root_thread_pool(workers)?
+            .install(|| consensus::build_experimental_native_receipt_root_artifact(tx_artifacts))
+    }
+    .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
+    let after = native_receipt_root_build_cache_stats();
+
+    Ok((
+        experimental_receipt_root_payload_from_artifact(tx_artifacts, built),
+        NativeReceiptRootBuildReport {
+            workers,
+            leaf_count: work_plan.leaf_count,
+            mini_root_size: work_plan.mini_root_size,
+            mini_root_count: work_plan.mini_root_count,
+            chunk_internal_fold_nodes: work_plan.chunk_internal_fold_nodes,
+            upper_tree_fold_nodes: work_plan.upper_tree_fold_nodes,
+            upper_tree_level_widths: work_plan.upper_tree_level_widths.clone(),
+            cache_delta: NativeReceiptRootBuildCacheDelta::between(before, after),
         },
-        receipts: consensus_receipts
-            .into_iter()
-            .map(|receipt| pallet_shielded_pool::types::TxValidityReceipt {
-                statement_hash: receipt.statement_hash,
-                proof_digest: receipt.proof_digest,
-                public_inputs_digest: receipt.public_inputs_digest,
-                verifier_profile: receipt.verifier_profile,
-            })
-            .collect(),
-    })
+    ))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2843,6 +3075,7 @@ impl PreparedAggregationOutcome {
     }
 }
 
+#[cfg(test)]
 fn prepare_native_receipt_root_artifacts(
     tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
 ) -> Result<PreparedAggregationOutcome, String> {
@@ -2852,6 +3085,35 @@ fn prepare_native_receipt_root_artifacts(
     )
 }
 
+fn prepare_native_receipt_root_artifacts_with_work_plan(
+    tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
+    default_workers: usize,
+) -> Result<PreparedNativeReceiptRootBuild, String> {
+    let tx_artifacts = require_native_tx_leaf_artifacts(tx_artifacts).map_err(|report| {
+        format!(
+            "native receipt_root requires canonical native tx_leaf artifacts: {} ({})",
+            report.fallback_reason_label(),
+            report.fallback_detail(),
+        )
+    })?;
+    let work_plan = build_receipt_root_work_plan(tx_artifacts)?;
+    let (payload, build_report) = build_receipt_root_proof_from_materials_with_plan(
+        tx_artifacts,
+        &work_plan,
+        default_workers,
+    )
+    .map_err(|error| format!("native receipt_root artifact build failed: {error}"))?;
+    Ok(PreparedNativeReceiptRootBuild {
+        outcome: PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(payload),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        ),
+        work_plan,
+        build_report,
+    })
+}
+
+#[cfg(test)]
 fn prepare_native_receipt_root_artifacts_with_builder<F>(
     tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
     build_receipt_root: F,
@@ -3111,6 +3373,7 @@ fn prepare_block_proof_bundle(
     pending_ciphertexts: &PendingCiphertextStore,
     pending_proofs: &PendingProofStore,
     commitment_block_fast: bool,
+    receipt_root_worker_default: usize,
 ) -> Result<PreparedBundle, String> {
     let started = Instant::now();
     tracing::info!(
@@ -3203,13 +3466,36 @@ fn prepare_block_proof_bundle(
             );
             let stage_started = Instant::now();
             let mut cache_hit = false;
-            let build_stage = || {
+            let mut receipt_root_work_plan = if selected_artifact.legacy_mode
+                == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+            {
+                require_native_tx_leaf_artifacts(aggregation_tx_artifacts.as_deref())
+                    .ok()
+                    .and_then(|artifacts| build_receipt_root_work_plan(artifacts).ok())
+            } else {
+                None
+            };
+            let mut native_build_report = None;
+            let stage_result = if let Some(cached) =
+                lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
+            {
+                cache_hit = true;
+                Ok(cached)
+            } else {
                 let built = match selected_artifact.legacy_mode {
                     pallet_shielded_pool::types::BlockProofMode::InlineTx => Ok(
                         PreparedAggregationOutcome::new(PreparedAggregationArtifacts::InlineTx),
                     ),
                     pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-                        prepare_native_receipt_root_artifacts(aggregation_tx_artifacts.as_deref())
+                        prepare_native_receipt_root_artifacts_with_work_plan(
+                            aggregation_tx_artifacts.as_deref(),
+                            receipt_root_worker_default,
+                        )
+                        .map(|prepared| {
+                            receipt_root_work_plan = Some(prepared.work_plan.clone());
+                            native_build_report = Some(prepared.build_report);
+                            prepared.outcome
+                        })
                     }
                 };
                 if let Ok(ref artifacts) = built {
@@ -3222,15 +3508,13 @@ fn prepare_block_proof_bundle(
                 }
                 built
             };
-            let stage_result = if let Some(cached) =
-                lookup_prove_ahead_aggregation_artifacts(aggregation_cache_key)
-            {
-                cache_hit = true;
-                Ok(cached)
-            } else {
-                build_stage()
-            };
-            (stage_result, stage_started.elapsed().as_millis(), cache_hit)
+            (
+                stage_result,
+                stage_started.elapsed().as_millis(),
+                cache_hit,
+                receipt_root_work_plan,
+                native_build_report,
+            )
         });
 
         (commitment_handle.join(), aggregation_handle.join())
@@ -3242,7 +3526,13 @@ fn prepare_block_proof_bundle(
             return Err("prepare_block_proof_bundle: commitment stage panicked".to_string());
         }
     };
-    let (aggregation_result, aggregation_stage_ms, aggregation_cache_hit) = match aggregation_join {
+    let (
+        aggregation_result,
+        aggregation_stage_ms,
+        aggregation_cache_hit,
+        receipt_root_work_plan,
+        receipt_root_build_report,
+    ) = match aggregation_join {
         Ok(result) => result,
         Err(_) => {
             return Err("prepare_block_proof_bundle: aggregation stage panicked".to_string());
@@ -3273,17 +3563,52 @@ fn prepare_block_proof_bundle(
         Ok(outcome) => {
             if let Some(report) = outcome.native_selection_report.as_ref() {
                 if report.used_native_lane {
-                    tracing::info!(
-                        block_number,
-                        tx_count,
-                        aggregation_stage_ms,
-                        aggregation_cache_hit,
-                        used_native_lane = true,
-                        requested_native_lane =
-                            selector_requests_native_receipt_lane(selected_artifact),
-                        fallback_reason = report.fallback_reason_label(),
-                        "prepare_block_proof_bundle: native receipt-backed aggregation lane selected"
-                    );
+                    if let Some(work_plan) = receipt_root_work_plan.as_ref() {
+                        let build_report = receipt_root_build_report.as_ref();
+                        tracing::info!(
+                            block_number,
+                            tx_count,
+                            aggregation_stage_ms,
+                            aggregation_cache_hit,
+                            used_native_lane = true,
+                            requested_native_lane =
+                                selector_requests_native_receipt_lane(selected_artifact),
+                            fallback_reason = report.fallback_reason_label(),
+                            receipt_root_workers = build_report
+                                .map(|report| report.workers)
+                                .unwrap_or(load_receipt_root_workers(receipt_root_worker_default)),
+                            mini_root_size = work_plan.mini_root_size,
+                            mini_root_count = work_plan.mini_root_count,
+                            chunk_internal_fold_nodes = work_plan.chunk_internal_fold_nodes,
+                            upper_tree_fold_nodes = work_plan.upper_tree_fold_nodes,
+                            upper_tree_level_widths = ?work_plan.upper_tree_level_widths,
+                            leaf_cache_hits = build_report
+                                .map(|report| report.cache_delta.leaf_cache_hits)
+                                .unwrap_or(0),
+                            leaf_cache_misses = build_report
+                                .map(|report| report.cache_delta.leaf_cache_misses)
+                                .unwrap_or(0),
+                            chunk_cache_hits = build_report
+                                .map(|report| report.cache_delta.chunk_cache_hits)
+                                .unwrap_or(0),
+                            chunk_cache_misses = build_report
+                                .map(|report| report.cache_delta.chunk_cache_misses)
+                                .unwrap_or(0),
+                            "prepare_block_proof_bundle: native receipt-backed aggregation lane selected"
+                        );
+                    } else {
+                        tracing::info!(
+                            block_number,
+                            tx_count,
+                            aggregation_stage_ms,
+                            aggregation_cache_hit,
+                            used_native_lane = true,
+                            requested_native_lane =
+                                selector_requests_native_receipt_lane(selected_artifact),
+                            fallback_reason = report.fallback_reason_label(),
+                            "prepare_block_proof_bundle: native receipt-backed aggregation lane selected"
+                        );
+                    }
                 } else {
                     tracing::warn!(
                         block_number,
@@ -10361,6 +10686,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         &pending_ciphertexts_snapshot,
                         &pending_proofs_snapshot,
                         commitment_block_fast,
+                        coordinator_cfg.workers.max(1),
                     )
                 },
             )
@@ -11622,6 +11948,33 @@ mod tests {
         cache.insert(first_key, outcome);
         assert!(cache.get(first_key).is_some());
         assert!(cache.get(second_key).is_none());
+    }
+
+    #[test]
+    fn receipt_root_work_plan_splits_into_mini_roots() {
+        let artifacts = (0..9u8)
+            .map(|tag| dummy_native_tx_validity_artifact_variant(tag.wrapping_add(1)))
+            .collect::<Vec<_>>();
+        let plan = build_receipt_root_work_plan(&artifacts).expect("work plan");
+        assert_eq!(plan.leaf_count, 9);
+        assert_eq!(plan.mini_root_size, native_receipt_root_mini_root_size());
+        assert_eq!(plan.mini_root_count, 2);
+        assert_eq!(plan.chunk_internal_fold_nodes, 7);
+        assert_eq!(plan.upper_tree_fold_nodes, 1);
+        assert_eq!(plan.upper_tree_level_widths, vec![2, 1]);
+        assert_eq!(plan.mini_roots.len(), 2);
+        assert_eq!(plan.mini_roots[0].leaf_start, 0);
+        assert_eq!(plan.mini_roots[0].leaf_count, 8);
+        assert_eq!(plan.mini_roots[1].leaf_start, 8);
+        assert_eq!(plan.mini_roots[1].leaf_count, 1);
+        assert_ne!(plan.mini_roots[0].cache_key, plan.mini_roots[1].cache_key);
+    }
+
+    #[test]
+    fn receipt_root_work_plan_rejects_empty_artifact_set() {
+        let err = build_receipt_root_work_plan(&[])
+            .expect_err("empty candidate set must not produce a receipt-root work plan");
+        assert!(err.contains("no receipt-root proof material"));
     }
 
     #[test]

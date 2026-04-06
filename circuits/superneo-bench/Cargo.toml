@@ -18,6 +18,7 @@ hex = "0.4"
 native-backend-ref = { path = "../../tools/native-backend-ref" }
 p3-goldilocks = { workspace = true }
 protocol-versioning = { path = "../../protocol/versioning" }
+rayon = "1"
 superneo-backend-lattice = { path = "../superneo-backend-lattice" }
 superneo-ccs = { path = "../superneo-ccs" }
 superneo-core = { path = "../superneo-core" }
