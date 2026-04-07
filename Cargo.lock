@@ -11954,6 +11954,10 @@ dependencies = [
 name = "transaction-circuit"
 version = "0.1.0"
 dependencies = [
+ "bincode",
+ "blake3",
+ "cc",
+ "getrandom 0.3.4",
  "hex",
  "p3-air",
  "p3-challenger",

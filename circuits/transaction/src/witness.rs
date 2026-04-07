@@ -235,13 +235,17 @@ impl TransactionWitness {
 
 pub(crate) mod serde_vec_inputs {
     use super::*;
-    use serde::{Deserializer, Serializer};
+    use serde::{ser::SerializeSeq, Deserializer, Serializer};
 
     pub fn serialize<S>(values: &[InputNoteWitness], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        values.serialize(serializer)
+        let mut seq = serializer.serialize_seq(Some(values.len()))?;
+        for value in values {
+            seq.serialize_element(value)?;
+        }
+        seq.end()
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<InputNoteWitness>, D::Error>
@@ -254,13 +258,17 @@ pub(crate) mod serde_vec_inputs {
 
 pub(crate) mod serde_vec_outputs {
     use super::*;
-    use serde::{Deserializer, Serializer};
+    use serde::{ser::SerializeSeq, Deserializer, Serializer};
 
     pub fn serialize<S>(values: &[OutputNoteWitness], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        values.serialize(serializer)
+        let mut seq = serializer.serialize_seq(Some(values.len()))?;
+        for value in values {
+            seq.serialize_element(value)?;
+        }
+        seq.end()
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<OutputNoteWitness>, D::Error>

@@ -175,6 +175,10 @@ pub const DEFAULT_VERSION_BINDING: VersionBinding = VersionBinding {
     circuit: CIRCUIT_V2,
     crypto: CRYPTO_SUITE_GAMMA,
 };
+pub const SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
+    circuit: CIRCUIT_V2,
+    crypto: CRYPTO_SUITE_BETA,
+};
 
 pub const DEFAULT_TX_PROOF_BACKEND: TxProofBackend = TxProofBackend::Plonky3Fri;
 pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
@@ -182,6 +186,7 @@ pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
 pub const fn tx_proof_backend_for_version(version: VersionBinding) -> Option<TxProofBackend> {
     match (version.circuit, version.crypto) {
         (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(DEFAULT_TX_PROOF_BACKEND),
+        (CIRCUIT_V2, CRYPTO_SUITE_BETA) => Some(TxProofBackend::SmallwoodCandidate),
         _ => None,
     }
 }

@@ -5021,6 +5021,7 @@ fn blake3_384_bytes(bytes: &[u8]) -> [u8; 48] {
 
 #[cfg(test)]
 mod tests {
+    use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
     use superneo_backend_lattice::BackendManifest;
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -5028,7 +5029,9 @@ mod tests {
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use transaction_circuit::proof::prove;
-    use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
+    use transaction_circuit::{
+        prove_smallwood_candidate, StablecoinPolicyBinding, TransactionWitness,
+    };
 
     use super::*;
 
@@ -5206,20 +5209,65 @@ mod tests {
     }
 
     #[test]
-    fn native_tx_leaf_artifact_rejects_unimplemented_backend() {
-        let witness = sample_witness(20);
+    fn native_tx_leaf_artifact_accepts_smallwood_candidate_backend() {
+        let mut witness = sample_witness(20);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
-        let mut decoded = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
-        decoded.proof_backend = TxProofBackend::SmallwoodCandidate;
-        let tampered = encode_native_tx_leaf_artifact_bytes(&decoded).unwrap();
+        let proof = prove_smallwood_candidate(&witness).unwrap();
+        let built = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
+            &native_backend_params(),
+            &proof,
+        )
+        .unwrap();
+        let metadata =
+            verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &built.artifact_bytes)
+                .unwrap();
+        assert_eq!(metadata.proof_backend, TxProofBackend::SmallwoodCandidate);
+    }
+
+    #[test]
+    fn native_tx_leaf_artifact_rejects_tampered_smallwood_candidate_backend() {
+        let mut witness = sample_witness(44);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
+        let proof = prove_smallwood_candidate(&witness).unwrap();
+        let built = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
+            &native_backend_params(),
+            &proof,
+        )
+        .unwrap();
+        let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
+        artifact.stark_proof[0] ^= 0x5a;
+        let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
         let err = verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &tampered)
-            .expect_err("unimplemented backend must fail");
+            .expect_err("tampered smallwood candidate must fail");
         assert!(
-            err.to_string().contains("proof backend mismatch")
-                || err.to_string().contains("smallwood_candidate"),
+            err.to_string().contains("smallwood") || err.to_string().contains("mismatch"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn native_receipt_root_accepts_smallwood_candidate_leaf_record() {
+        let mut smallwood_witness = sample_witness(45);
+        smallwood_witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let plonky3_witness = sample_witness(46);
+        let smallwood_proof = prove_smallwood_candidate(&smallwood_witness).unwrap();
+        let smallwood_leaf = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
+            &native_backend_params(),
+            &smallwood_proof,
+        )
+        .unwrap();
+        let plonky3_leaf = build_native_tx_leaf_artifact_bytes(&plonky3_witness).unwrap();
+        let artifacts = vec![
+            decode_native_tx_leaf_artifact_bytes(&smallwood_leaf.artifact_bytes).unwrap(),
+            decode_native_tx_leaf_artifact_bytes(&plonky3_leaf.artifact_bytes).unwrap(),
+        ];
+        let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
+        let metadata =
+            verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &built.artifact_bytes)
+                .unwrap();
+        assert_eq!(metadata.leaf_count, 2);
     }
 
     #[test]

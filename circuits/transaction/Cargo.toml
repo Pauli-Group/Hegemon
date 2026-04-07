@@ -2,6 +2,7 @@
 name = "transaction-circuit"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 thiserror = "1"
@@ -9,6 +10,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 synthetic-crypto = { path = "../../crypto" }
 hex = "0.4"
+bincode = "1.3"
+blake3 = "1.8"
+getrandom = "0.3"
 protocol-versioning = { path = "../../protocol/versioning" }
 transaction-core = { path = "../transaction-core", features = ["serde"] }
 p3-air = { workspace = true }
@@ -27,6 +31,9 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 proptest = "1"
+
+[build-dependencies]
+cc = "1.2"
 
 [features]
 default = ["plonky3"]

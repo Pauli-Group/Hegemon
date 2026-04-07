@@ -1,5 +1,5 @@
 use p3_field::PrimeCharacteristicRing;
-use protocol_versioning::{TxProofBackend, DEFAULT_TX_PROOF_BACKEND};
+use protocol_versioning::{DEFAULT_TX_PROOF_BACKEND, SMALLWOOD_CANDIDATE_VERSION_BINDING};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
@@ -10,8 +10,8 @@ use transaction_circuit::p3_verifier::{
 };
 use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p3, verify};
 use transaction_circuit::{
-    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionCircuitError,
-    TransactionWitness,
+    prove_smallwood_candidate, InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding,
+    TransactionCircuitError, TransactionWitness,
 };
 
 /// Compute the Merkle root from a leaf and path using CIRCUIT_MERKLE_DEPTH levels.
@@ -258,18 +258,25 @@ fn verification_fails_for_nullifier_mutation() {
 }
 
 #[test]
-#[cfg_attr(
-    not(feature = "plonky3-e2e"),
-    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
-)]
-fn verification_fails_for_unimplemented_backend() {
-    let witness = sample_witness();
-    let (proving_key, verifying_key) = generate_keys();
-    let mut proof = prove(&witness, &proving_key).expect("proof generation");
-    proof.backend = TxProofBackend::SmallwoodCandidate;
-    let err = verify(&proof, &verifying_key).expect_err("unsupported backend must fail");
+fn smallwood_candidate_roundtrip_verifies() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let (_proving_key, verifying_key) = generate_keys();
+    let proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    let report = verify(&proof, &verifying_key).expect("smallwood verification");
+    assert!(report.verified);
+}
+
+#[test]
+fn smallwood_candidate_rejects_semantic_mutation() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let (_proving_key, verifying_key) = generate_keys();
+    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    proof.public_inputs.balance_tag[0] ^= 0x5a;
+    let err = verify(&proof, &verifying_key).expect_err("tampered candidate must fail");
     assert!(
-        err.to_string().contains("smallwood_candidate"),
+        err.to_string().contains("smallwood candidate") || err.to_string().contains("mismatch"),
         "unexpected error: {err}"
     );
 }

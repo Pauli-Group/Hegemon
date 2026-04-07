@@ -25,8 +25,9 @@ The observable result is not merely “support SmallWood someday.” The observa
 - [x] (2026-04-07T18:25Z) Added a trailing tx-proof-backend selector byte to native `tx_leaf` artifacts with backward-compatible decoding that defaults missing bytes to the current Plonky3 backend.
 - [x] (2026-04-07T18:25Z) Added regression coverage for unsupported-backend rejection and backward-compatible native artifact decode.
 - [x] (2026-04-07T19:12Z) Fixed the native `tx_leaf` builder to use the release tx-proof profile even in debug builds; the old path was silently generating fast-profile proofs that the native verifier rejected.
-- [ ] Implement the semantic SmallWood frontend for `NativeTxValidityRelation`, starting with witness export and public-statement encoding.
-- [ ] Add a real SmallWood verifier/prover adapter behind the new backend seam and keep it non-release until the no-grinding `128-bit` note exists.
+- [x] (2026-04-08T03:32Z) Implemented a semantic SmallWood frontend in `transaction-circuit` that rebuilds the exact `NativeTxValidityRelation` witness surface, expands it with the fixed-width Poseidon2 subtrace, and commits to LPPC packing metadata/digests without touching the folding layer.
+- [x] (2026-04-08T03:32Z) Added a real `SmallwoodCandidate` prover/verifier adapter behind the backend seam. The candidate proof bytes now contain a real vendored SmallWood PCS/ARK transcript over the packed expanded native witness, not an “unimplemented backend” placeholder.
+- [x] (2026-04-08T03:32Z) Added an explicit non-default `SMALLWOOD_CANDIDATE_VERSION_BINDING` so candidate tx proofs remain version-owned instead of bypassing the manifest-owned backend seam.
 - [ ] Version the `tx_leaf` / native receipt profile cleanly once a real SmallWood tx proof exists, then benchmark proof bytes and proving time against the current shipped Plonky3 lane.
 
 ## Surprises & Discoveries
@@ -42,6 +43,12 @@ The observable result is not merely “support SmallWood someday.” The observa
 
 - Observation: the old native `tx_leaf` builder was not actually release-honest in debug builds.
   Evidence: the first backward-compatibility test failed with `proof FRI profile mismatch: expected log_blowup=4 num_queries=32, got log_blowup=3 num_queries=8`, which came from `build_native_tx_leaf_artifact_bytes_with_params` using `TransactionProofParams::production_for_version` instead of a release-bound profile.
+
+- Observation: the backend seam was correct, but the candidate statement is still transitional.
+  Evidence: the candidate backend now runs a real SmallWood PCS/ARK prover/verifier over the packed expanded native witness and flows through `tx_leaf -> receipt_root` unchanged, but it still binds that witness to the semantic frontend material with transcript-derived random linear checks instead of the final witness-free public statement.
+
+- Observation: the version-owned backend seam was correct; the test failure was the point.
+  Evidence: a candidate `tx_leaf` built under the default version was rejected with `native tx-leaf proof backend mismatch`, which forced the correct fix: add an explicit candidate version binding instead of weakening backend dispatch.
 
 ## Decision Log
 
@@ -65,9 +72,17 @@ The observable result is not merely “support SmallWood someday.” The observa
   Rationale: native product artifacts must reflect the release verifier surface. A debug-fast tx proof is useful for local proving experiments, but it is the wrong thing to embed in a native artifact that claims to be product-valid.
   Date/Author: 2026-04-07 / Codex
 
+- Decision: make the first SmallWood backend artifact a semantic witness/frontend envelope rather than waiting for the final PCS implementation.
+  Rationale: this lands the real backend seam now, proves that `NativeTxValidityRelation` is the right proving object, and keeps the later SmallWood cryptography swap local to one backend-specific byte format.
+  Date/Author: 2026-04-08 / Codex
+
+- Decision: bind `SmallwoodCandidate` to an explicit non-default protocol version instead of accepting it under the current shipped version.
+  Rationale: backend selection is consensus-relevant. The candidate path should use the same version-owned contract as the shipped Plonky3 path.
+  Date/Author: 2026-04-08 / Codex
+
 ## Outcomes & Retrospective
 
-The first milestone is complete. The repo no longer assumes that transaction proofs are eternally “Plonky3 bytes by convention.” The active backend is now protocol-owned, the transaction proof object carries explicit backend identity, the native `tx_leaf` artifact carries an explicit backend selector with backward-compatible decode, and the shipped lane still defaults to the current Plonky3 family. The acceptance checks now pass at all three layers: runtime manifest commitment, top-level transaction verification, and native `tx_leaf` verification.
+The second milestone is now complete too. The repo no longer just “has a seam.” It has a working candidate backend that proves and verifies a semantic SmallWood frontend over the compact native tx-validity witness, dispatches through the version-owned backend selector, builds native `tx_leaf` artifacts, and participates in `receipt_root` aggregation without changing the folding layer. The shipped lane still defaults to the current Plonky3 family, and the candidate lane is isolated under its own non-default version binding.
 
 This does not yet make SmallWood live. It does remove the main architectural excuse for not pursuing it: there is now a clean place to plug in a second tx proof backend without rewriting wallet submission, runtime receipt-root policy, or lattice folding.
 
@@ -125,7 +140,7 @@ Changing a proof or native artifact to `SmallwoodCandidate` fails cleanly with a
 
 Removing the trailing backend byte from a freshly built native `tx_leaf` artifact still verifies, proving backward-compatible decode.
 
-The next milestone will be complete only when a real SmallWood semantic frontend exists and produces measured Hegemon transaction proof bytes, not just structural estimates.
+The next milestone will be complete only when the current linear-check-bound candidate statement is replaced by the final witness-free public SmallWood statement and exact no-grinding `128-bit` note without losing the measured size headroom.
 
 ## Idempotence and Recovery
 

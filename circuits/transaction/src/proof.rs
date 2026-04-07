@@ -9,6 +9,10 @@ use protocol_versioning::{
 use serde::{Deserialize, Serialize};
 use synthetic_crypto::hashes::blake3_384;
 
+use crate::smallwood_frontend::{
+    prove_smallwood_candidate, smallwood_candidate_verifier_profile_material,
+    verify_smallwood_candidate_proof_bytes, verify_smallwood_candidate_transaction_proof,
+};
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
@@ -142,112 +146,14 @@ pub fn stark_public_inputs_p3(
                 "missing STARK public inputs",
             ))?;
 
-    let input_flags = stark_inputs
-        .input_flags
-        .iter()
-        .map(|flag| Goldilocks::from_u64(*flag as u64))
-        .collect();
-    let output_flags = stark_inputs
-        .output_flags
-        .iter()
-        .map(|flag| Goldilocks::from_u64(*flag as u64))
-        .collect();
-
-    let nullifiers = proof
-        .nullifiers
-        .iter()
-        .map(|nf| {
-            bytes48_to_felts(nf).ok_or(TransactionCircuitError::ConstraintViolation(
-                "invalid PQ nullifier encoding",
-            ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let commitments = proof
-        .commitments
-        .iter()
-        .map(|cm| {
-            bytes48_to_felts(cm).ok_or(TransactionCircuitError::ConstraintViolation(
-                "invalid PQ commitment encoding",
-            ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let ciphertext_hashes = proof
-        .public_inputs
-        .ciphertext_hashes
-        .iter()
-        .map(|ct| {
-            bytes48_to_felts(ct).ok_or(TransactionCircuitError::ConstraintViolation(
-                "invalid ciphertext hash encoding",
-            ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root).ok_or(
-        TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
-    )?;
-    let stablecoin_policy_hash = bytes48_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or(
-        TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
-    )?;
-    let stablecoin_oracle_commitment = bytes48_to_felts(&stark_inputs.stablecoin_oracle_commitment)
-        .ok_or(TransactionCircuitError::ConstraintViolation(
-            "invalid stablecoin oracle commitment encoding",
-        ))?;
-    let stablecoin_attestation_commitment = bytes48_to_felts(
-        &stark_inputs.stablecoin_attestation_commitment,
-    )
-    .ok_or(TransactionCircuitError::ConstraintViolation(
-        "invalid stablecoin attestation commitment encoding",
-    ))?;
-    let balance_slot_asset_ids = if stark_inputs.balance_slot_asset_ids.is_empty() {
-        proof
-            .balance_slots
-            .iter()
-            .map(|slot| slot.asset_id)
-            .collect()
-    } else {
-        stark_inputs.balance_slot_asset_ids.clone()
-    };
-    if balance_slot_asset_ids.len() != BALANCE_SLOTS {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid balance slot asset count",
-        ));
-    }
-    let balance_slot_assets = [
-        Goldilocks::from_u64(balance_slot_asset_ids[0]),
-        Goldilocks::from_u64(balance_slot_asset_ids[1]),
-        Goldilocks::from_u64(balance_slot_asset_ids[2]),
-        Goldilocks::from_u64(balance_slot_asset_ids[3]),
-    ];
-
-    Ok(TransactionPublicInputsP3 {
-        input_flags,
-        output_flags,
-        nullifiers,
-        commitments,
-        ciphertext_hashes,
-        fee: Goldilocks::from_u64(stark_inputs.fee),
-        value_balance_sign: Goldilocks::from_u64(stark_inputs.value_balance_sign as u64),
-        value_balance_magnitude: Goldilocks::from_u64(stark_inputs.value_balance_magnitude),
-        merkle_root,
-        balance_slot_assets,
-        stablecoin_enabled: Goldilocks::from_u64(stark_inputs.stablecoin_enabled as u64),
-        stablecoin_asset: Goldilocks::from_u64(stark_inputs.stablecoin_asset_id),
-        stablecoin_policy_version: Goldilocks::from_u64(
-            stark_inputs.stablecoin_policy_version as u64,
-        ),
-        stablecoin_issuance_sign: Goldilocks::from_u64(
-            stark_inputs.stablecoin_issuance_sign as u64,
-        ),
-        stablecoin_issuance_magnitude: Goldilocks::from_u64(
-            stark_inputs.stablecoin_issuance_magnitude,
-        ),
-        stablecoin_policy_hash,
-        stablecoin_oracle_commitment,
-        stablecoin_attestation_commitment,
-    })
+    transaction_public_inputs_p3_from_parts(&proof.public_inputs, stark_inputs)
 }
 
 pub fn transaction_statement_hash(proof: &TransactionProof) -> [u8; 48] {
-    let public = &proof.public_inputs;
+    transaction_statement_hash_from_public_inputs(&proof.public_inputs)
+}
+
+pub fn transaction_statement_hash_from_public_inputs(public: &TransactionPublicInputs) -> [u8; 48] {
     let mut message = Vec::new();
     message.extend_from_slice(TX_STATEMENT_HASH_DOMAIN);
     message.extend_from_slice(&public.merkle_root);
@@ -331,6 +237,8 @@ pub fn transaction_verifier_profile_digest_for_version_and_backend(
         message.extend_from_slice(&(profile.log_blowup as u64).to_le_bytes());
         message.extend_from_slice(&(profile.num_queries as u64).to_le_bytes());
         message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
+    } else if matches!(backend, TxProofBackend::SmallwoodCandidate) {
+        message.extend_from_slice(&smallwood_candidate_verifier_profile_material(version));
     }
     blake3_384(&message)
 }
@@ -366,9 +274,7 @@ pub fn verify_transaction_proof_bytes_for_backend(
             )
         }
         TxProofBackend::SmallwoodCandidate => {
-            Err(TransactionCircuitError::ConstraintViolationOwned(
-                "tx proof backend smallwood_candidate verification is not implemented".into(),
-            ))
+            verify_smallwood_candidate_proof_bytes(proof_bytes, pub_inputs, version)
         }
     }
 }
@@ -391,11 +297,8 @@ pub fn prove_with_params(
     params: TransactionProofParams,
 ) -> Result<TransactionProof, TransactionCircuitError> {
     let backend = tx_proof_backend_for_version(witness.version).unwrap_or(DEFAULT_TX_PROOF_BACKEND);
-    if !matches!(backend, TxProofBackend::Plonky3Fri) {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "tx proof backend {} proving is not implemented",
-            backend.label()
-        )));
+    if matches!(backend, TxProofBackend::SmallwoodCandidate) {
+        return prove_smallwood_candidate(witness);
     }
     witness.validate()?;
 
@@ -433,11 +336,7 @@ pub fn verify(
 ) -> Result<VerificationReport, TransactionCircuitError> {
     match proof.backend {
         TxProofBackend::Plonky3Fri => verify_with_p3(proof),
-        TxProofBackend::SmallwoodCandidate => {
-            Err(TransactionCircuitError::ConstraintViolationOwned(
-                "tx proof backend smallwood_candidate verification is not implemented".into(),
-            ))
-        }
+        TxProofBackend::SmallwoodCandidate => verify_smallwood_candidate_transaction_proof(proof),
     }
 }
 
@@ -497,6 +396,113 @@ fn ensure_plonky3_backend(proof: &TransactionProof) -> Result<(), TransactionCir
             proof.backend.label()
         )))
     }
+}
+
+pub(crate) fn transaction_public_inputs_p3_from_parts(
+    public_inputs: &TransactionPublicInputs,
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<TransactionPublicInputsP3, TransactionCircuitError> {
+    let input_flags = stark_inputs
+        .input_flags
+        .iter()
+        .map(|flag| Goldilocks::from_u64(*flag as u64))
+        .collect();
+    let output_flags = stark_inputs
+        .output_flags
+        .iter()
+        .map(|flag| Goldilocks::from_u64(*flag as u64))
+        .collect();
+
+    let nullifiers = public_inputs
+        .nullifiers
+        .iter()
+        .map(|nf| {
+            bytes48_to_felts(nf).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid PQ nullifier encoding",
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let commitments = public_inputs
+        .commitments
+        .iter()
+        .map(|cm| {
+            bytes48_to_felts(cm).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid PQ commitment encoding",
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let ciphertext_hashes = public_inputs
+        .ciphertext_hashes
+        .iter()
+        .map(|ct| {
+            bytes48_to_felts(ct).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid ciphertext hash encoding",
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
+    )?;
+    let stablecoin_policy_hash = bytes48_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
+    )?;
+    let stablecoin_oracle_commitment = bytes48_to_felts(&stark_inputs.stablecoin_oracle_commitment)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "invalid stablecoin oracle commitment encoding",
+        ))?;
+    let stablecoin_attestation_commitment = bytes48_to_felts(
+        &stark_inputs.stablecoin_attestation_commitment,
+    )
+    .ok_or(TransactionCircuitError::ConstraintViolation(
+        "invalid stablecoin attestation commitment encoding",
+    ))?;
+    let balance_slot_asset_ids = if stark_inputs.balance_slot_asset_ids.is_empty() {
+        public_inputs
+            .balance_slots
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect()
+    } else {
+        stark_inputs.balance_slot_asset_ids.clone()
+    };
+    if balance_slot_asset_ids.len() != BALANCE_SLOTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid balance slot asset count",
+        ));
+    }
+    let balance_slot_assets = [
+        Goldilocks::from_u64(balance_slot_asset_ids[0]),
+        Goldilocks::from_u64(balance_slot_asset_ids[1]),
+        Goldilocks::from_u64(balance_slot_asset_ids[2]),
+        Goldilocks::from_u64(balance_slot_asset_ids[3]),
+    ];
+
+    Ok(TransactionPublicInputsP3 {
+        input_flags,
+        output_flags,
+        nullifiers,
+        commitments,
+        ciphertext_hashes,
+        fee: Goldilocks::from_u64(stark_inputs.fee),
+        value_balance_sign: Goldilocks::from_u64(stark_inputs.value_balance_sign as u64),
+        value_balance_magnitude: Goldilocks::from_u64(stark_inputs.value_balance_magnitude),
+        merkle_root,
+        balance_slot_assets,
+        stablecoin_enabled: Goldilocks::from_u64(stark_inputs.stablecoin_enabled as u64),
+        stablecoin_asset: Goldilocks::from_u64(stark_inputs.stablecoin_asset_id),
+        stablecoin_policy_version: Goldilocks::from_u64(
+            stark_inputs.stablecoin_policy_version as u64,
+        ),
+        stablecoin_issuance_sign: Goldilocks::from_u64(
+            stark_inputs.stablecoin_issuance_sign as u64,
+        ),
+        stablecoin_issuance_magnitude: Goldilocks::from_u64(
+            stark_inputs.stablecoin_issuance_magnitude,
+        ),
+        stablecoin_policy_hash,
+        stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment,
+    })
 }
 
 fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStarkInputs {

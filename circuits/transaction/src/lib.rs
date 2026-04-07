@@ -28,6 +28,8 @@ pub mod keys;
 pub mod note;
 pub mod proof;
 pub mod public_inputs;
+pub mod smallwood_frontend;
+mod smallwood_native;
 pub mod trace;
 pub mod witness;
 pub use transaction_core::poseidon_constants;
@@ -43,6 +45,11 @@ pub use note::{InputNoteWitness, OutputNoteWitness};
 pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+pub use smallwood_frontend::{
+    build_smallwood_semantic_frontend, prove_smallwood_candidate,
+    verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof, SmallwoodSemanticFrontend,
+    SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE, SMALLWOOD_LPPC_PACKING_FACTOR,
+};
 pub use witness::TransactionWitness;
 
 // Plonky3 exports (default)
