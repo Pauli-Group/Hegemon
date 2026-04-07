@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
     hashing_pq::{bytes48_to_felts, Commitment},
-    p3_verifier::verify_transaction_proof_bytes_p3,
+    p3_verifier::verify_transaction_proof_bytes_p3_for_version,
     proof::{stark_public_inputs_p3, TransactionProof},
     public_inputs::TransactionPublicInputs,
 };
@@ -256,8 +256,12 @@ fn summarize_entries(
                 "failed to decode tx proof public inputs: {err}"
             ))
         })?;
-        verify_transaction_proof_bytes_p3(&proof.stark_proof, &stark_public_inputs)
-            .map_err(|err| TxProofManifestError::TransactionProofVerification(err.to_string()))?;
+        verify_transaction_proof_bytes_p3_for_version(
+            &proof.stark_proof,
+            &stark_public_inputs,
+            proof.version_binding(),
+        )
+        .map_err(|err| TxProofManifestError::TransactionProofVerification(err.to_string()))?;
 
         let version = u32::from(proof.public_inputs.circuit_version);
         match circuit_version {

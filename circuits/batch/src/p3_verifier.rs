@@ -8,7 +8,7 @@ use p3_uni_stark::{
     PreprocessedVerifierKey,
 };
 use transaction_circuit::p3_config::{
-    config_with_fri, Config as BatchStarkConfig, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+    config_with_fri, default_build_tx_fri_profile, Config as BatchStarkConfig, Val,
 };
 #[cfg(feature = "std")]
 use transaction_core::dimensions::{batch_trace_rows, validate_batch_size};
@@ -41,7 +41,10 @@ fn build_preprocessed_vk(
 ) -> Result<BatchPreprocessedVk, BatchCircuitError> {
     let trace_len = 1usize << degree_bits;
     let air = BatchTransactionAirP3::new(trace_len);
-    let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+    let config = config_with_fri(
+        log_blowup,
+        default_build_tx_fri_profile().num_queries_usize(),
+    );
     setup_preprocessed(&config.config, &air, degree_bits)
         .map(|(_, vk)| vk)
         .ok_or_else(|| {
@@ -89,7 +92,9 @@ pub fn prewarm_batch_verifier_cache_p3(batch_sizes: &[usize]) -> Result<usize, B
         let air = BatchTransactionAirP3::new(trace_len);
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&air, PREPROCESSED_WIDTH, pub_inputs_len, 0);
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+        let log_blowup = default_build_tx_fri_profile()
+            .log_blowup_usize()
+            .max(log_chunks);
 
         let key = BatchVerifierCacheKey {
             degree_bits,
@@ -126,8 +131,9 @@ pub fn verify_batch_proof_p3(
     let air = BatchTransactionAirP3::new(trace_len);
     let log_chunks =
         get_log_num_quotient_chunks::<Val, _>(&air, PREPROCESSED_WIDTH, pub_inputs_vec.len(), 0);
-    let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-    let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+    let profile = default_build_tx_fri_profile();
+    let log_blowup = profile.log_blowup_usize().max(log_chunks);
+    let config = config_with_fri(log_blowup, profile.num_queries_usize());
     #[cfg(feature = "std")]
     let prep_vk = get_or_build_cached_preprocessed_vk(degree_bits, log_blowup)?;
     #[cfg(not(feature = "std"))]

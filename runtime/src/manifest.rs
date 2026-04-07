@@ -5,7 +5,7 @@ use pallet_shielded_pool::types::{
 };
 use protocol_kernel::manifest::{FamilySpec, KernelManifest};
 use protocol_kernel::types::{compute_kernel_global_root, FamilyId, FamilyRoot};
-use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use protocol_versioning::{tx_fri_profile_for_version, VersionBinding, DEFAULT_VERSION_BINDING};
 use sp_std::collections::btree_map::BTreeMap;
 use sp_std::vec::Vec;
 
@@ -17,7 +17,7 @@ pub const FAMILY_ORACLE: FamilyId = 3;
 pub const FAMILY_ATTESTATION: FamilyId = 4;
 pub const FAMILY_ZKVM: FamilyId = 100;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode)]
 pub struct StablecoinPolicyManifestEntry {
     pub asset_id: u32,
     pub oracle_feed: u32,
@@ -54,7 +54,7 @@ impl StablecoinPolicyManifestEntry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode)]
 pub struct AssetManifestEntry {
     pub asset_id: u32,
     pub metadata: Vec<u8>,
@@ -62,9 +62,19 @@ pub struct AssetManifestEntry {
     pub provenance: Vec<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Encode)]
+pub struct TxStarkProfileManifestEntry {
+    pub version: VersionBinding,
+    pub log_blowup: u8,
+    pub num_queries: u8,
+    pub query_pow_bits: u8,
+    pub claimed_security_bits: u16,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolManifest {
     pub version_bindings: Vec<VersionBinding>,
+    pub tx_stark_profiles: Vec<TxStarkProfileManifestEntry>,
     pub da_policy: DaAvailabilityPolicy,
     pub ciphertext_policy: CiphertextPolicy,
     pub proof_availability_policy: ProofAvailabilityPolicy,
@@ -73,8 +83,24 @@ pub struct ProtocolManifest {
 }
 
 pub fn protocol_manifest() -> ProtocolManifest {
+    let version_bindings = vec![DEFAULT_VERSION_BINDING];
+    let tx_stark_profiles = version_bindings
+        .iter()
+        .copied()
+        .filter_map(|version| {
+            tx_fri_profile_for_version(version).map(|profile| TxStarkProfileManifestEntry {
+                version,
+                log_blowup: profile.log_blowup,
+                num_queries: profile.num_queries,
+                query_pow_bits: profile.query_pow_bits,
+                claimed_security_bits: 128,
+            })
+        })
+        .collect();
+
     ProtocolManifest {
-        version_bindings: vec![DEFAULT_VERSION_BINDING],
+        version_bindings,
+        tx_stark_profiles,
         da_policy: DaAvailabilityPolicy::default(),
         ciphertext_policy: CiphertextPolicy::default(),
         // Fresh 0.10.x chains treat native receipt-root aggregation as the
@@ -127,6 +153,7 @@ pub fn kernel_manifest() -> KernelManifest {
             protocol.da_policy,
             protocol.ciphertext_policy,
             protocol.proof_availability_policy,
+            protocol.tx_stark_profiles.clone(),
         )
             .encode(),
     );
@@ -193,4 +220,45 @@ fn hash48(bytes: &[u8]) -> [u8; 48] {
 #[cfg(feature = "std")]
 pub fn shielded_verifying_key() -> pallet_shielded_pool::verifier::VerifyingKey {
     pallet_shielded_pool::verifier::StarkVerifier::create_verifying_key(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol_versioning::DEFAULT_TX_FRI_PROFILE;
+
+    #[test]
+    fn manifest_includes_default_tx_stark_profile() {
+        let manifest = protocol_manifest();
+        assert_eq!(manifest.tx_stark_profiles.len(), 1);
+        let profile = &manifest.tx_stark_profiles[0];
+        assert_eq!(profile.version, DEFAULT_VERSION_BINDING);
+        assert_eq!(profile.log_blowup, DEFAULT_TX_FRI_PROFILE.log_blowup);
+        assert_eq!(profile.num_queries, DEFAULT_TX_FRI_PROFILE.num_queries);
+        assert_eq!(
+            profile.query_pow_bits,
+            DEFAULT_TX_FRI_PROFILE.query_pow_bits
+        );
+        assert_eq!(profile.claimed_security_bits, 128);
+    }
+
+    #[test]
+    fn kernel_manifest_commits_tx_stark_profiles() {
+        let protocol = protocol_manifest();
+        let expected = hash48(
+            &(
+                protocol.da_policy,
+                protocol.ciphertext_policy,
+                protocol.proof_availability_policy,
+                protocol.tx_stark_profiles.clone(),
+            )
+                .encode(),
+        );
+        let manifest = kernel_manifest();
+        let shielded = manifest
+            .families
+            .get(&FAMILY_SHIELDED_POOL)
+            .expect("shielded family present");
+        assert_eq!(shielded.params_commitment, expected);
+    }
 }

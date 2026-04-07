@@ -11,6 +11,10 @@ use p3_merkle_tree::MerkleTreeMmcs;
 use p3_poseidon2::ExternalLayerConstants;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{Proof, StarkConfig};
+use protocol_versioning::{
+    tx_fri_profile_for_version, TxFriProfile, VersionBinding, DEFAULT_TX_FRI_PROFILE,
+    DEFAULT_VERSION_BINDING,
+};
 
 use crate::poseidon2_constants::{EXTERNAL_ROUND_CONSTANTS, INTERNAL_ROUND_CONSTANTS};
 
@@ -20,8 +24,12 @@ pub const POSEIDON2_RATE: usize = crate::constants::POSEIDON2_RATE;
 
 pub const FRI_LOG_BLOWUP_FAST: usize = 3;
 pub const FRI_NUM_QUERIES_FAST: usize = 8;
-pub const FRI_LOG_BLOWUP_PROD: usize = 4;
-pub const FRI_NUM_QUERIES_PROD: usize = 32;
+pub const FRI_POW_BITS: usize = 0;
+pub const FAST_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(
+    FRI_LOG_BLOWUP_FAST as u8,
+    FRI_NUM_QUERIES_FAST as u8,
+    FRI_POW_BITS as u8,
+);
 
 // Debug builds use lower FRI parameters unless the e2e feature is enabled.
 // Release builds can also opt into the fast profile via the explicit `stark-fast` feature.
@@ -32,25 +40,12 @@ pub const FRI_NUM_QUERIES_PROD: usize = 32;
     feature = "stark-fast",
     all(debug_assertions, not(feature = "plonky3-e2e"))
 ))]
-pub const FRI_LOG_BLOWUP: usize = FRI_LOG_BLOWUP_FAST;
+pub const BUILD_TX_FRI_PROFILE: TxFriProfile = FAST_TX_FRI_PROFILE;
 #[cfg(all(
     not(feature = "stark-fast"),
     any(not(debug_assertions), feature = "plonky3-e2e")
 ))]
-pub const FRI_LOG_BLOWUP: usize = FRI_LOG_BLOWUP_PROD;
-
-#[cfg(any(
-    feature = "stark-fast",
-    all(debug_assertions, not(feature = "plonky3-e2e"))
-))]
-pub const FRI_NUM_QUERIES: usize = FRI_NUM_QUERIES_FAST;
-#[cfg(all(
-    not(feature = "stark-fast"),
-    any(not(debug_assertions), feature = "plonky3-e2e")
-))]
-pub const FRI_NUM_QUERIES: usize = FRI_NUM_QUERIES_PROD;
-
-pub const FRI_POW_BITS: usize = 0;
+pub const BUILD_TX_FRI_PROFILE: TxFriProfile = DEFAULT_TX_FRI_PROFILE;
 
 pub type Val = Goldilocks;
 pub type Challenge = BinomialExtensionField<Val, 2>;
@@ -81,17 +76,64 @@ fn poseidon2_perm() -> Perm {
 }
 
 pub fn default_config() -> TransactionStarkConfig {
-    config_with_fri(FRI_LOG_BLOWUP, FRI_NUM_QUERIES)
+    config_with_profile(default_build_tx_fri_profile())
+}
+
+pub fn default_release_tx_fri_profile() -> TxFriProfile {
+    DEFAULT_TX_FRI_PROFILE
+}
+
+pub fn release_tx_fri_profile_for_version(version: VersionBinding) -> TxFriProfile {
+    tx_fri_profile_for_version(version).unwrap_or(DEFAULT_TX_FRI_PROFILE)
+}
+
+pub fn default_build_tx_fri_profile() -> TxFriProfile {
+    build_tx_fri_profile_for_version(DEFAULT_VERSION_BINDING)
+}
+
+pub fn build_tx_fri_profile_for_version(version: VersionBinding) -> TxFriProfile {
+    #[cfg(any(
+        feature = "stark-fast",
+        all(debug_assertions, not(feature = "plonky3-e2e"))
+    ))]
+    {
+        let _ = version;
+        BUILD_TX_FRI_PROFILE
+    }
+
+    #[cfg(all(
+        not(feature = "stark-fast"),
+        any(not(debug_assertions), feature = "plonky3-e2e")
+    ))]
+    {
+        release_tx_fri_profile_for_version(version)
+    }
+}
+
+pub fn config_with_profile(profile: TxFriProfile) -> TransactionStarkConfig {
+    config_with_full_fri(
+        profile.log_blowup_usize(),
+        profile.num_queries_usize(),
+        profile.query_pow_bits_usize(),
+    )
 }
 
 pub fn config_with_fri(log_blowup: usize, num_queries: usize) -> TransactionStarkConfig {
+    config_with_full_fri(log_blowup, num_queries, FRI_POW_BITS)
+}
+
+pub fn config_with_full_fri(
+    log_blowup: usize,
+    num_queries: usize,
+    query_pow_bits: usize,
+) -> TransactionStarkConfig {
     let perm = poseidon2_perm();
     let hash = Hash::new(perm.clone());
     let compress = Compress::new(perm.clone());
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
-    let fri_config = default_fri_config(challenge_mmcs, log_blowup, num_queries);
+    let fri_config = default_fri_config(challenge_mmcs, log_blowup, num_queries, query_pow_bits);
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
     let challenger = new_challenger(&perm);
     let config = Config::new(pcs, challenger);
@@ -103,13 +145,14 @@ pub fn default_fri_config(
     mmcs: ChallengeMmcs,
     log_blowup: usize,
     num_queries: usize,
+    query_pow_bits: usize,
 ) -> FriParameters<ChallengeMmcs> {
     FriParameters {
         log_blowup,
         log_final_poly_len: 0,
         num_queries,
         commit_proof_of_work_bits: 0,
-        query_proof_of_work_bits: FRI_POW_BITS,
+        query_proof_of_work_bits: query_pow_bits,
         mmcs,
     }
 }

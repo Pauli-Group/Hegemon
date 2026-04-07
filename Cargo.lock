@@ -7962,6 +7962,7 @@ dependencies = [
 name = "protocol-versioning"
 version = "0.1.0"
 dependencies = [
+ "parity-scale-codec",
  "serde",
  "sha2 0.10.9",
 ]
@@ -11981,6 +11982,7 @@ dependencies = [
  "p3-symmetric",
  "p3-uni-stark",
  "postcard",
+ "protocol-versioning",
  "serde",
 ]
 

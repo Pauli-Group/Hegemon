@@ -2648,7 +2648,7 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
     let proof = prove_transaction_with_params(
         witness,
         transaction_proving_key(),
-        TransactionProofParams::production(),
+        TransactionProofParams::production_for_version(witness.version),
     )
     .map_err(|err| anyhow::anyhow!("native tx proof generation failed: {err}"))?;
     build_native_tx_leaf_artifact_from_transaction_proof_with_params(params, &proof)

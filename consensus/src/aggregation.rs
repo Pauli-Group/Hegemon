@@ -22,8 +22,8 @@ use transaction_circuit::{
     TransactionAirP3, TransactionProof, TransactionPublicInputsP3,
     hashing_pq::felts_to_bytes48,
     p3_config::{
-        Challenge, Compress, Config, DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_POW_BITS, Hash,
-        POSEIDON2_RATE, TransactionProofP3, Val, config_with_fri,
+        Challenge, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash, POSEIDON2_RATE,
+        TransactionProofP3, Val, config_with_fri, default_build_tx_fri_profile,
     },
     p3_verifier::verify_transaction_proof_p3,
 };
@@ -270,7 +270,9 @@ fn build_aggregation_verifier_cache_entry(
 
 fn transaction_log_blowup_for_public_inputs(pub_inputs_len: usize) -> usize {
     let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
-    FRI_LOG_BLOWUP.max(log_chunks)
+    default_build_tx_fri_profile()
+        .log_blowup_usize()
+        .max(log_chunks)
 }
 
 fn resolve_log_blowup(
@@ -297,7 +299,7 @@ fn resolve_log_blowup(
             push_unique(log_blowup.saturating_add(delta));
         }
     }
-    push_unique(FRI_LOG_BLOWUP);
+    push_unique(default_build_tx_fri_profile().log_blowup_usize());
     for fallback in 0..=8 {
         push_unique(fallback);
     }

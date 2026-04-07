@@ -31,7 +31,7 @@ use crate::p3_commitment_air::{
     CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, CYCLE_BITS, PREPROCESSED_WIDTH,
     TRACE_WIDTH,
 };
-use transaction_circuit::p3_config::{config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
+use transaction_circuit::p3_config::{config_with_fri, default_build_tx_fri_profile};
 
 type Val = Goldilocks;
 
@@ -322,8 +322,9 @@ impl CommitmentBlockProverP3 {
         let num_public_values = pub_inputs_vec.len();
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&air, PREPROCESSED_WIDTH, num_public_values, 0);
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let profile = default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let config = config_with_fri(log_blowup, profile.num_queries_usize());
         let degree_bits = trace.height().ilog2() as usize;
         let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
             .expect("CommitmentBlockAirP3 preprocessed trace missing");

@@ -17,7 +17,7 @@ use crate::constants::{
 use crate::{DisclosureCircuitError, PaymentDisclosureClaim, PaymentDisclosureWitness};
 use transaction_core::hashing_pq::bytes48_to_felts;
 use transaction_core::p3_config::{
-    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+    config_with_fri, default_build_tx_fri_profile, TransactionProofP3,
 };
 use transaction_core::poseidon2::poseidon2_step;
 
@@ -170,8 +170,9 @@ impl DisclosureProverP3 {
             pub_inputs_vec.len(),
             0,
         );
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let profile = default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let config = config_with_fri(log_blowup, profile.num_queries_usize());
         let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
             .expect("DisclosureAirP3 preprocessed trace missing");
         prove_with_preprocessed(

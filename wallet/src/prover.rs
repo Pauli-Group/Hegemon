@@ -232,7 +232,7 @@ impl StarkProver {
         let params = if self.config.recursion_profile {
             TransactionProofParams::recursion()
         } else {
-            TransactionProofParams::production()
+            TransactionProofParams::production_for_version(witness.version)
         };
         let proof = proof::prove_with_params(witness, &self.proving_key, params).map_err(|e| {
             WalletError::Serialization(format!("STARK proof generation failed: {e}"))

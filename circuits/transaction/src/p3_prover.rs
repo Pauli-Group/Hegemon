@@ -5,6 +5,7 @@ use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove};
+use protocol_versioning::{TxFriProfile, VersionBinding};
 
 use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, MERKLE_DOMAIN_TAG,
@@ -14,7 +15,10 @@ use crate::hashing_pq::{
     bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use crate::p3_config::{config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
+use crate::p3_config::{
+    build_tx_fri_profile_for_version, config_with_profile, default_build_tx_fri_profile,
+    TransactionProofP3,
+};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
@@ -62,9 +66,18 @@ pub struct TransactionProofParams {
 
 impl TransactionProofParams {
     pub fn production() -> Self {
+        let profile = default_build_tx_fri_profile();
         Self {
-            log_blowup: FRI_LOG_BLOWUP,
-            num_queries: FRI_NUM_QUERIES,
+            log_blowup: profile.log_blowup_usize(),
+            num_queries: profile.num_queries_usize(),
+        }
+    }
+
+    pub fn production_for_version(version: VersionBinding) -> Self {
+        let profile = build_tx_fri_profile_for_version(version);
+        Self {
+            log_blowup: profile.log_blowup_usize(),
+            num_queries: profile.num_queries_usize(),
         }
     }
 
@@ -693,7 +706,11 @@ impl TransactionProverP3 {
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
         let log_blowup = params.log_blowup.max(log_chunks);
-        let config = config_with_fri(log_blowup, params.num_queries);
+        let config = config_with_profile(TxFriProfile::new(
+            log_blowup as u8,
+            params.num_queries as u8,
+            0,
+        ));
         prove(&config.config, &TransactionAirP3, trace, &pub_inputs_vec)
     }
 
@@ -1229,8 +1246,9 @@ mod tests {
         let pub_inputs_vec = pub_inputs.to_vec();
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
-        let log_blowup = transaction_core::p3_config::FRI_LOG_BLOWUP.max(log_chunks);
-        let num_queries = transaction_core::p3_config::FRI_NUM_QUERIES;
+        let profile = transaction_core::p3_config::default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let num_queries = profile.num_queries_usize();
         let proof = prover.prove(trace, &pub_inputs);
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize proof");
         println!(

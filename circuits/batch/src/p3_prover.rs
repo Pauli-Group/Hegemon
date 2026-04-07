@@ -11,7 +11,7 @@ use crate::error::BatchCircuitError;
 use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, PREPROCESSED_WIDTH, TRACE_WIDTH};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, note_commitment, nullifier, prf_key};
 use transaction_circuit::p3_config::{
-    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+    config_with_fri, default_build_tx_fri_profile, TransactionProofP3,
 };
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::TransactionWitness;
@@ -182,8 +182,9 @@ impl BatchTransactionProverP3 {
             pub_inputs_vec.len(),
             0,
         );
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let profile = default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let config = config_with_fri(log_blowup, profile.num_queries_usize());
         let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
             .expect("BatchTransactionAirP3 preprocessed trace missing");
         prove_with_preprocessed(

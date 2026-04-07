@@ -15,7 +15,7 @@
 //! - Real verification is always enabled (Plonky3 backend).
 
 use p3_field::PrimeCharacteristicRing;
-use transaction_core::p3_config::FRI_NUM_QUERIES;
+use transaction_core::p3_config::default_build_tx_fri_profile;
 
 use crate::types::{BindingHash, StablecoinPolicyBinding, StarkProof};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
@@ -389,7 +389,10 @@ impl StarkVerifier {
         }
 
         // Check proof has enough data for structure
-        let min_size = proof_structure::min_proof_size(FRI_NUM_QUERIES, num_fri_layers);
+        let min_size = proof_structure::min_proof_size(
+            default_build_tx_fri_profile().num_queries_usize(),
+            num_fri_layers,
+        );
         if data.len() < min_size {
             return false;
         }

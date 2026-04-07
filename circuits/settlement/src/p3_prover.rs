@@ -18,7 +18,7 @@ use crate::p3_air::{
 use transaction_core::constants::{POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH};
 use transaction_core::p3_air::CYCLE_LENGTH;
 use transaction_core::p3_config::{
-    config_with_fri, TransactionProofP3, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+    config_with_fri, default_build_tx_fri_profile, TransactionProofP3, Val,
 };
 use transaction_core::poseidon2::poseidon2_step;
 
@@ -147,8 +147,9 @@ impl SettlementProverP3 {
             pub_inputs_vec.len(),
             0,
         );
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let profile = default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let config = config_with_fri(log_blowup, profile.num_queries_usize());
         let degree_bits = trace.height().ilog2() as usize;
         let (prep_prover, _) = setup_preprocessed(&config.config, &SettlementAirP3, degree_bits)
             .expect("SettlementAirP3 preprocessed trace missing");

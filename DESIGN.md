@@ -136,7 +136,7 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
-STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) should be treated as protocol-release parameters, not live governance knobs. The live Plonky3 transaction/settlement verifier currently runs with production compile-time parameters from `circuits/transaction-core/src/p3_config.rs` (`log_blowup = 4`, `num_queries = 32`), while any runtime defaults are derived from the active protocol manifest. With 384-bit digests, PQ collision resistance reaches ~128 bits for application-level commitments, and 48-byte encodings are used end-to-end.
+STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) should be treated as protocol-release parameters, not live governance knobs. The live Plonky3 transaction/settlement verifier now takes its release tx FRI profile from the version-owned manifest surface in `protocol/versioning` and `runtime/src/manifest.rs`; the active default binding still resolves to `(log_blowup = 4, num_queries = 32, query_pow_bits = 0)`, while debug/explicit fast builds can still use a local development profile. The exact current tx-proof sweep and soundness note live in `docs/crypto/tx_proof_profile_sweep.json` and `docs/crypto/tx_proof_soundness_analysis.md`. With 384-bit digests, PQ collision resistance reaches ~128 bits for application-level commitments, and 48-byte encodings are used end-to-end.
 
 ### 1.4 Reference module layout
 
@@ -174,7 +174,7 @@ Concretely:
   * Highly parallelizable (good for GPU/prover markets).
 * Verifier:
 
-  * Proof sizes are materially larger than SNARKs; with 48-byte digests and a 128-bit PQ target, single-transaction Plonky3 proofs are currently hundreds of kB (≈357KB for the release `TransactionAirP3` e2e test).
+  * Proof sizes are materially larger than SNARKs; with 48-byte digests and a 128-bit PQ target, single-transaction Plonky3 proofs are currently hundreds of kB (≈354KB for the active release `TransactionAirP3` e2e profile, with about 349KB of that in the opening layer alone).
 
 **Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
 

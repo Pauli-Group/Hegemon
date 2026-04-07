@@ -3,7 +3,11 @@ use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
-use transaction_circuit::proof::{prove, verify};
+use transaction_circuit::p3_prover::TransactionProofParams;
+use transaction_circuit::p3_verifier::{
+    verify_transaction_proof_bytes_p3, verify_transaction_proof_bytes_p3_for_version,
+};
+use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p3, verify};
 use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionCircuitError,
     TransactionWitness,
@@ -275,5 +279,37 @@ fn verification_fails_for_stablecoin_policy_hash_mutation() {
         ),
         "Expected STARK verification failure, got: {:?}",
         err
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
+fn low_query_proof_is_rejected_by_release_profile() {
+    let witness = sample_witness();
+    let (proving_key, _verifying_key) = generate_keys();
+    let proof = prove_with_params(
+        &witness,
+        &proving_key,
+        TransactionProofParams {
+            log_blowup: 4,
+            num_queries: 16,
+        },
+    )
+    .expect("proof generation");
+    let stark_public_inputs = stark_public_inputs_p3(&proof).expect("decode public inputs");
+    verify_transaction_proof_bytes_p3(&proof.stark_proof, &stark_public_inputs)
+        .expect("shape-specific verifier should accept the proof");
+    let err = verify_transaction_proof_bytes_p3_for_version(
+        &proof.stark_proof,
+        &stark_public_inputs,
+        witness.version,
+    )
+    .expect_err("release verifier should reject low-query proof");
+    assert!(
+        err.to_string().contains("proof FRI profile mismatch"),
+        "unexpected verifier error: {err}"
     );
 }

@@ -39,8 +39,8 @@ use transaction_circuit::proof;
 use transaction_circuit::proof::stark_public_inputs_p3;
 use transaction_circuit::{
     p3_config::{
-        config_with_fri, Challenge, Compress, Config, Hash, TransactionProofP3, Val, DIGEST_ELEMS,
-        FRI_LOG_BLOWUP_FAST, FRI_LOG_BLOWUP_PROD, FRI_POW_BITS, POSEIDON2_RATE,
+        config_with_fri, default_release_tx_fri_profile, Challenge, Compress, Config, Hash,
+        TransactionProofP3, Val, DIGEST_ELEMS, FRI_LOG_BLOWUP_FAST, FRI_POW_BITS, POSEIDON2_RATE,
     },
     p3_prover::TransactionProofParams,
     InputNoteWitness, StablecoinPolicyBinding, TransactionAirP3, TransactionProof,
@@ -412,7 +412,7 @@ fn resolve_log_blowup(
             push_unique(log_blowup.saturating_add(delta));
         }
     }
-    push_unique(FRI_LOG_BLOWUP_PROD);
+    push_unique(default_release_tx_fri_profile().log_blowup_usize());
     push_unique(FRI_LOG_BLOWUP_FAST);
     for fallback in 0..=8 {
         push_unique(fallback);

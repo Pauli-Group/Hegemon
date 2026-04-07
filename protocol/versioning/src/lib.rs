@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
+use codec::Encode;
 use core::iter::IntoIterator;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
@@ -10,7 +11,38 @@ use sha2::{Digest, Sha384};
 pub type CircuitVersion = u16;
 pub type CryptoSuiteId = u16;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Encode)]
+pub struct TxFriProfile {
+    pub log_blowup: u8,
+    pub num_queries: u8,
+    pub query_pow_bits: u8,
+}
+
+impl TxFriProfile {
+    pub const fn new(log_blowup: u8, num_queries: u8, query_pow_bits: u8) -> Self {
+        Self {
+            log_blowup,
+            num_queries,
+            query_pow_bits,
+        }
+    }
+
+    pub const fn log_blowup_usize(self) -> usize {
+        self.log_blowup as usize
+    }
+
+    pub const fn num_queries_usize(self) -> usize {
+        self.num_queries as usize
+    }
+
+    pub const fn query_pow_bits_usize(self) -> usize {
+        self.query_pow_bits as usize
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Encode,
+)]
 pub struct VersionBinding {
     pub circuit: CircuitVersion,
     pub crypto: CryptoSuiteId,
@@ -103,3 +135,12 @@ pub const DEFAULT_VERSION_BINDING: VersionBinding = VersionBinding {
     circuit: CIRCUIT_V2,
     crypto: CRYPTO_SUITE_GAMMA,
 };
+
+pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
+
+pub const fn tx_fri_profile_for_version(version: VersionBinding) -> Option<TxFriProfile> {
+    match (version.circuit, version.crypto) {
+        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(DEFAULT_TX_FRI_PROFILE),
+        _ => None,
+    }
+}

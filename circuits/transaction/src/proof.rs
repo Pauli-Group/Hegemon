@@ -19,12 +19,12 @@ use crate::{
 
 use crate::p3_prover::TransactionProofParams;
 use crate::p3_prover::TransactionProverP3;
-use crate::p3_verifier::verify_transaction_proof_bytes_p3;
+use crate::p3_verifier::verify_transaction_proof_bytes_p3_for_version;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use postcard::to_allocvec;
 use transaction_core::p3_air::TransactionPublicInputsP3;
-use transaction_core::p3_config::{FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS};
+use transaction_core::p3_config::release_tx_fri_profile_for_version;
 
 /// A transaction proof containing public inputs and the STARK proof bytes.
 ///
@@ -293,14 +293,15 @@ pub fn transaction_public_inputs_digest(
 }
 
 pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) -> [u8; 48] {
+    let profile = release_tx_fri_profile_for_version(version);
     let mut message = Vec::new();
     message.extend_from_slice(TX_VERIFIER_PROFILE_DOMAIN);
     message.extend_from_slice(b"plonky3-transaction-proof");
     message.extend_from_slice(&version.circuit.to_le_bytes());
     message.extend_from_slice(&version.crypto.to_le_bytes());
-    message.extend_from_slice(&(FRI_LOG_BLOWUP as u64).to_le_bytes());
-    message.extend_from_slice(&(FRI_NUM_QUERIES as u64).to_le_bytes());
-    message.extend_from_slice(&(FRI_POW_BITS as u64).to_le_bytes());
+    message.extend_from_slice(&(profile.log_blowup as u64).to_le_bytes());
+    message.extend_from_slice(&(profile.num_queries as u64).to_le_bytes());
+    message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
     blake3_384(&message)
 }
 
@@ -313,7 +314,11 @@ pub fn prove(
     witness: &TransactionWitness,
     _proving_key: &ProvingKey,
 ) -> Result<TransactionProof, TransactionCircuitError> {
-    prove_with_params(witness, _proving_key, TransactionProofParams::production())
+    prove_with_params(
+        witness,
+        _proving_key,
+        TransactionProofParams::production_for_version(witness.version),
+    )
 }
 
 pub fn prove_with_params(
@@ -391,7 +396,11 @@ fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, Transa
 
     let stark_pub_inputs = stark_public_inputs_p3(proof)?;
 
-    match verify_transaction_proof_bytes_p3(&proof.stark_proof, &stark_pub_inputs) {
+    match verify_transaction_proof_bytes_p3_for_version(
+        &proof.stark_proof,
+        &stark_pub_inputs,
+        proof.version_binding(),
+    ) {
         Ok(()) => Ok(VerificationReport { verified: true }),
         Err(e) => Err(TransactionCircuitError::ConstraintViolationOwned(format!(
             "STARK verification failed: {}",
