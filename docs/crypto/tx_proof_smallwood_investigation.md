@@ -15,6 +15,7 @@ The repo now also carries a code-derived shape report for this question:
 
 - [tx_proof_smallwood_shape_spike.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_shape_spike.json)
 - [tx_proof_smallwood_size_probe.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_size_probe.md)
+- [tx_proof_smallwood_no_grinding_soundness.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_no_grinding_soundness.md)
 
 ## Primary sources
 
@@ -83,7 +84,9 @@ That is an immediate Hegemon caution point. In the STIR spike, the release gate 
 So for Hegemon the right reading is:
 
 - SmallWood may still be compatible with the `128-bit` baseline,
-- but the paper's concrete sizes cannot be promoted directly to Hegemon release claims without a Hegemon-specific no-compromise parameter note.
+- but the paper's concrete sizes could not be promoted directly to Hegemon release claims without a Hegemon-specific no-compromise parameter note.
+
+That note now exists for the implemented witness-free candidate statement. The current no-grinding candidate profile is `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_opened_evals = 37`, `decs_eta = 10`, zero grinding bits, and it clears the term-wise `128-bit` bar for that exact implemented statement. What remains open is the final semantic arithmetization, not the statement’s no-grinding parameter floor.
 
 ## Official implementation status
 
@@ -225,7 +228,7 @@ It would need:
    The shape spike now shows that `NativeTxValidityRelation` already lands at padded witness size `4096`, inside the paper's intended regime. So the right job is no longer “invent a smaller witness somehow.” The right job is “encode the existing compact tx-validity semantics as an LPPC / PACS statement.”
 
 3. A Hegemon-specific `128-bit` no-compromise security note and no-grinding parameter search.
-   The SmallWood paper's concrete sizes include grinding parameters, and the official Goldilocks profiles all rely on nonzero grinding. Hegemon cannot treat those profiles as release candidates without replacing them.
+   That prerequisite is now satisfied for the implemented witness-free candidate statement, but not yet for the future full-semantic tx-validity arithmetization.
 
 4. A benchmark path against the exact current tx statement.
    Apples-to-apples comparison must use the same public tx relation, not a toy circuit or CAPSS signature benchmark.
@@ -293,7 +296,7 @@ If Hegemon chooses to pursue SmallWood, the next step should be a narrow spike:
 1. Define a minimal Hegemon tx-validity relation in LPPC/PACS form that matches `NativeTxValidityRelation` semantics.
 2. Keep the padded witness at the current code-derived `4096`-element surface using the `512 x 8` frontend instead of falling back to the AIR trace.
 3. Use the official prototype as the benchmark engine.
-4. Search for a no-grinding parameter set before treating any measured size as a serious Hegemon release candidate.
-5. Measure proof size and proving time under a Hegemon-specific no-compromise `128-bit` gate.
+4. Preserve the current witness-free no-grinding profile discipline instead of quietly falling back to grinding-assisted settings.
+5. Measure proof size and proving time under the same Hegemon-specific no-compromise `128-bit` gate already written down for the current witness-free candidate statement.
 
 If that spike cannot get the tx witness into the paper's intended regime, SmallWood should be dropped as a tx-proof candidate regardless of how good the paper's generic numbers look.

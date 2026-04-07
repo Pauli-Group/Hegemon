@@ -1,7 +1,6 @@
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionBinding};
 use serde::{Deserialize, Serialize};
-use synthetic_crypto::hashes::blake3_384;
 use transaction_core::{
     constants::{
         BALANCE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
@@ -16,253 +15,56 @@ use crate::{
     hashing_pq::{bytes48_to_felts, felts_to_bytes48, Felt, HashFelt},
     note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
     proof::{
-        transaction_public_inputs_digest_from_serialized, transaction_public_inputs_p3_from_parts,
-        transaction_statement_hash_from_public_inputs,
-        transaction_verifier_profile_digest_for_version_and_backend, SerializedStarkInputs,
-        TransactionProof, VerificationReport,
+        transaction_public_inputs_p3_from_parts, SerializedStarkInputs, TransactionProof,
+        VerificationReport,
     },
     public_inputs::{BalanceSlot, TransactionPublicInputs},
-    smallwood_native::{prove_candidate as prove_smallwood_backend, verify_candidate as verify_smallwood_backend},
+    smallwood_native::{
+        prove_candidate as prove_smallwood_backend, verify_candidate as verify_smallwood_backend,
+    },
     witness::TransactionWitness,
 };
 
-const SMALLWOOD_SEMANTIC_FRONTEND_DOMAIN: &[u8] = b"hegemon.tx.smallwood-semantic-frontend.v1";
-const SMALLWOOD_RAW_WITNESS_DOMAIN: &[u8] = b"hegemon.tx.smallwood-raw-witness.v1";
-const SMALLWOOD_EXPANDED_WITNESS_DOMAIN: &[u8] = b"hegemon.tx.smallwood-expanded-witness.v1";
-const SMALLWOOD_LPPC_ROWS_DOMAIN: &[u8] = b"hegemon.tx.smallwood-lppc-rows.v1";
-const SMALLWOOD_BINDING_LINEAR_CHECKS_DOMAIN: &[u8] =
-    b"hegemon.tx.smallwood-binding-linear-checks.v1";
-const SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN: &[u8] =
-    b"hegemon.tx.smallwood-binding-transcript.v1";
-const GOLDILOCKS_MODULUS: u128 = 0xffff_ffff_0000_0001;
+const SMALLWOOD_PUBLIC_STATEMENT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-public-statement.v1";
+const SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-binding-transcript.v1";
 
 pub const SMALLWOOD_LPPC_PACKING_FACTOR: usize = 64;
 pub const SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE: u16 = 8;
 pub const SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION: usize = POSEIDON2_STEPS + 1;
-pub const SMALLWOOD_BINDING_CHECK_COUNT: usize = 32;
 pub const SMALLWOOD_RHO: u32 = 2;
-pub const SMALLWOOD_NB_OPENED_EVALS: u32 = 2;
+pub const SMALLWOOD_NB_OPENED_EVALS: u32 = 3;
 pub const SMALLWOOD_BETA: u32 = 3;
 pub const SMALLWOOD_OPENING_POW_BITS: u32 = 0;
 pub const SMALLWOOD_DECS_NB_EVALS: u32 = 4096;
-pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 21;
+pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 37;
 pub const SMALLWOOD_DECS_ETA: u32 = 10;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SmallwoodNoteWire {
-    pub value: u64,
-    pub asset_id: u64,
-    pub pk_recipient: [u8; 32],
-    pub pk_auth: [u8; 32],
-    pub rho: [u8; 32],
-    pub r: [u8; 32],
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SmallwoodInputNoteWire {
-    pub note: SmallwoodNoteWire,
-    pub position: u64,
-    pub rho_seed: [u8; 32],
-    #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
-    pub merkle_path_siblings: Vec<[u8; 48]>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SmallwoodOutputNoteWire {
-    pub note: SmallwoodNoteWire,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SmallwoodStablecoinBindingWire {
-    pub enabled: bool,
-    pub asset_id: u64,
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub policy_hash: [u8; 48],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub oracle_commitment: [u8; 48],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub attestation_commitment: [u8; 48],
-    pub issuance_delta: i128,
-    pub policy_version: u32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SmallwoodWitnessEnvelope {
-    pub inputs: Vec<SmallwoodInputNoteWire>,
-    pub outputs: Vec<SmallwoodOutputNoteWire>,
-    #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
-    pub ciphertext_hashes: Vec<[u8; 48]>,
-    pub sk_spend: [u8; 32],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub merkle_root: [u8; 48],
-    pub fee: u64,
-    pub value_balance: i128,
-    pub stablecoin: SmallwoodStablecoinBindingWire,
-    pub version: VersionBinding,
-}
-
-impl SmallwoodWitnessEnvelope {
-    fn from_witness(witness: &TransactionWitness) -> Self {
-        Self {
-            inputs: witness
-                .inputs
-                .iter()
-                .map(|input| SmallwoodInputNoteWire {
-                    note: SmallwoodNoteWire {
-                        value: input.note.value,
-                        asset_id: input.note.asset_id,
-                        pk_recipient: input.note.pk_recipient,
-                        pk_auth: input.note.pk_auth,
-                        rho: input.note.rho,
-                        r: input.note.r,
-                    },
-                    position: input.position,
-                    rho_seed: input.rho_seed,
-                    merkle_path_siblings: input
-                        .merkle_path
-                        .siblings
-                        .iter()
-                        .map(felts_to_bytes48)
-                        .collect(),
-                })
-                .collect(),
-            outputs: witness
-                .outputs
-                .iter()
-                .map(|output| SmallwoodOutputNoteWire {
-                    note: SmallwoodNoteWire {
-                        value: output.note.value,
-                        asset_id: output.note.asset_id,
-                        pk_recipient: output.note.pk_recipient,
-                        pk_auth: output.note.pk_auth,
-                        rho: output.note.rho,
-                        r: output.note.r,
-                    },
-                })
-                .collect(),
-            ciphertext_hashes: witness.ciphertext_hashes.clone(),
-            sk_spend: witness.sk_spend,
-            merkle_root: witness.merkle_root,
-            fee: witness.fee,
-            value_balance: witness.value_balance,
-            stablecoin: SmallwoodStablecoinBindingWire {
-                enabled: witness.stablecoin.enabled,
-                asset_id: witness.stablecoin.asset_id,
-                policy_hash: witness.stablecoin.policy_hash,
-                oracle_commitment: witness.stablecoin.oracle_commitment,
-                attestation_commitment: witness.stablecoin.attestation_commitment,
-                issuance_delta: witness.stablecoin.issuance_delta,
-                policy_version: witness.stablecoin.policy_version,
-            },
-            version: witness.version,
-        }
-    }
-
-    fn into_witness(self) -> Result<TransactionWitness, TransactionCircuitError> {
-        let inputs = self
-            .inputs
-            .into_iter()
-            .map(|input| {
-                let siblings = input
-                    .merkle_path_siblings
-                    .into_iter()
-                    .map(|bytes| {
-                        bytes48_to_felts(&bytes).ok_or(
-                            TransactionCircuitError::ConstraintViolation(
-                                "smallwood candidate merkle sibling is non-canonical",
-                            ),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(InputNoteWitness {
-                    note: crate::note::NoteData {
-                        value: input.note.value,
-                        asset_id: input.note.asset_id,
-                        pk_recipient: input.note.pk_recipient,
-                        pk_auth: input.note.pk_auth,
-                        rho: input.note.rho,
-                        r: input.note.r,
-                    },
-                    position: input.position,
-                    rho_seed: input.rho_seed,
-                    merkle_path: MerklePath { siblings },
-                })
-            })
-            .collect::<Result<Vec<_>, TransactionCircuitError>>()?;
-        let outputs = self
-            .outputs
-            .into_iter()
-            .map(|output| OutputNoteWitness {
-                note: crate::note::NoteData {
-                    value: output.note.value,
-                    asset_id: output.note.asset_id,
-                    pk_recipient: output.note.pk_recipient,
-                    pk_auth: output.note.pk_auth,
-                    rho: output.note.rho,
-                    r: output.note.r,
-                },
-            })
-            .collect();
-        Ok(TransactionWitness {
-            inputs,
-            outputs,
-            ciphertext_hashes: self.ciphertext_hashes,
-            sk_spend: self.sk_spend,
-            merkle_root: self.merkle_root,
-            fee: self.fee,
-            value_balance: self.value_balance,
-            stablecoin: crate::public_inputs::StablecoinPolicyBinding {
-                enabled: self.stablecoin.enabled,
-                asset_id: self.stablecoin.asset_id,
-                policy_hash: self.stablecoin.policy_hash,
-                oracle_commitment: self.stablecoin.oracle_commitment,
-                attestation_commitment: self.stablecoin.attestation_commitment,
-                issuance_delta: self.stablecoin.issuance_delta,
-                policy_version: self.stablecoin.policy_version,
-            },
-            version: self.version,
-        })
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SmallwoodSemanticFrontend {
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub statement_hash: [u8; 48],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub public_inputs_digest: [u8; 48],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub verifier_profile: [u8; 48],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub raw_witness_digest: [u8; 48],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub expanded_witness_digest: [u8; 48],
-    #[serde(with = "crate::public_inputs::serde_bytes48")]
-    pub lppc_rows_digest: [u8; 48],
+pub struct SmallwoodPublicStatement {
+    pub public_values: Vec<u64>,
+    pub public_value_count: u32,
     pub raw_witness_len: u32,
-    pub expanded_witness_len: u32,
     pub lppc_row_count: u32,
     pub poseidon_permutation_count: u32,
     pub poseidon_state_row_count: u32,
+    pub expanded_witness_len: u32,
     pub lppc_packing_factor: u16,
     pub effective_constraint_degree: u16,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SmallwoodCandidateProof {
-    pub witness: SmallwoodWitnessEnvelope,
-    pub frontend: SmallwoodSemanticFrontend,
     pub ark_proof: Vec<u8>,
 }
 
 struct SmallwoodFrontendMaterial {
     public_inputs: TransactionPublicInputs,
     serialized_public_inputs: SerializedStarkInputs,
-    frontend: SmallwoodSemanticFrontend,
+    public_statement: SmallwoodPublicStatement,
     padded_expanded_witness: Vec<u64>,
-    linear_check_coefficients: Vec<u64>,
-    linear_check_targets: Vec<u64>,
+    public_selector_indices: Vec<u32>,
+    public_selector_targets: Vec<u64>,
     transcript_binding: Vec<u8>,
 }
 
@@ -278,23 +80,19 @@ pub fn prove_smallwood_candidate(
     let material = build_smallwood_frontend_material(witness)?;
     let ark_proof = prove_smallwood_backend(
         &material.padded_expanded_witness,
-        material.frontend.lppc_row_count as usize,
+        material.public_statement.lppc_row_count as usize,
         SMALLWOOD_LPPC_PACKING_FACTOR,
         SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-        &material.linear_check_coefficients,
-        &material.linear_check_targets,
+        &material.public_selector_indices,
+        &material.public_selector_targets,
         &material.transcript_binding,
     )?;
-    let proof_bytes = bincode::serialize(&SmallwoodCandidateProof {
-        witness: SmallwoodWitnessEnvelope::from_witness(witness),
-        frontend: material.frontend.clone(),
-        ark_proof,
-    })
-    .map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to serialize smallwood candidate proof: {err}"
-        ))
-    })?;
+    let proof_bytes =
+        bincode::serialize(&SmallwoodCandidateProof { ark_proof }).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to serialize smallwood candidate proof: {err}"
+            ))
+        })?;
     Ok(TransactionProof {
         nullifiers: material.public_inputs.nullifiers.clone(),
         commitments: material.public_inputs.commitments.clone(),
@@ -317,31 +115,17 @@ pub fn verify_smallwood_candidate_proof_bytes(
             "smallwood candidate PCS/ARK proof bytes must not be empty",
         ));
     }
-    let witness = candidate.witness.into_witness()?;
-    ensure_smallwood_version(version, witness.version)?;
-    let material = build_smallwood_frontend_material(&witness)?;
-    if candidate.frontend != material.frontend {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate semantic frontend mismatch",
-        ));
-    }
-    let expected_p3 = transaction_public_inputs_p3_from_parts(
-        &material.public_inputs,
-        &material.serialized_public_inputs,
-    )?;
-    if !same_public_inputs_p3(&expected_p3, pub_inputs) {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate public inputs mismatch",
-        ));
-    }
+    ensure_smallwood_version(version, version)?;
+    let public_statement = build_smallwood_public_statement(pub_inputs, version)?;
+    let public_selector_indices =
+        build_smallwood_public_selector_indices(public_statement.public_value_count as usize);
     verify_smallwood_backend(
-        &material.padded_expanded_witness,
-        material.frontend.lppc_row_count as usize,
+        public_statement.lppc_row_count as usize,
         SMALLWOOD_LPPC_PACKING_FACTOR,
         SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-        &material.linear_check_coefficients,
-        &material.linear_check_targets,
-        &material.transcript_binding,
+        &public_selector_indices,
+        &public_statement.public_values,
+        &smallwood_transcript_binding(&public_statement, version)?,
         &candidate.ark_proof,
     )?;
     Ok(())
@@ -360,63 +144,53 @@ pub fn verify_smallwood_candidate_transaction_proof(
             "smallwood candidate proof bytes must not be empty",
         ));
     }
-    let candidate = decode_smallwood_candidate_proof(&proof.stark_proof)?;
-    let witness = candidate.witness.into_witness()?;
-    ensure_smallwood_version(proof.version_binding(), witness.version)?;
-    let material = build_smallwood_frontend_material(&witness)?;
-    if candidate.frontend != material.frontend {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate semantic frontend mismatch",
-        ));
-    }
-    if proof.public_inputs != material.public_inputs {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate public inputs mismatch",
-        ));
-    }
-    if proof.nullifiers != material.public_inputs.nullifiers {
+    ensure_smallwood_version(proof.version_binding(), proof.version_binding())?;
+    if proof.nullifiers != proof.public_inputs.nullifiers {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood candidate nullifier vector mismatch",
         ));
     }
-    if proof.commitments != material.public_inputs.commitments {
+    if proof.commitments != proof.public_inputs.commitments {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood candidate commitment vector mismatch",
         ));
     }
-    if proof.balance_slots != material.public_inputs.balance_slots {
+    if proof.balance_slots != proof.public_inputs.balance_slots {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood candidate balance slots mismatch",
         ));
     }
-    if proof.stark_public_inputs.as_ref() != Some(&material.serialized_public_inputs) {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate serialized public inputs mismatch",
-        ));
-    }
-    if candidate.ark_proof.is_empty() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate PCS/ARK proof bytes must not be empty",
-        ));
-    }
-    let p3_inputs = transaction_public_inputs_p3_from_parts(
-        &material.public_inputs,
-        &material.serialized_public_inputs,
+    crate::proof::verify_balance_slots(proof).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood candidate public input validation failed: {err}"
+        ))
+    })?;
+    let serialized_public_inputs =
+        proof
+            .stark_public_inputs
+            .as_ref()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood candidate serialized public inputs missing",
+            ))?;
+    let p3_inputs =
+        transaction_public_inputs_p3_from_parts(&proof.public_inputs, serialized_public_inputs)?;
+    verify_smallwood_candidate_proof_bytes(
+        &proof.stark_proof,
+        &p3_inputs,
+        proof.version_binding(),
     )?;
-    verify_smallwood_candidate_proof_bytes(&proof.stark_proof, &p3_inputs, witness.version)?;
     Ok(VerificationReport { verified: true })
 }
 
 pub fn smallwood_candidate_verifier_profile_material(version: VersionBinding) -> Vec<u8> {
     let mut material = Vec::new();
-    material.extend_from_slice(SMALLWOOD_SEMANTIC_FRONTEND_DOMAIN);
+    material.extend_from_slice(SMALLWOOD_PUBLIC_STATEMENT_DOMAIN);
     material.extend_from_slice(b"candidate-smallwood-pcs-ark");
     material.extend_from_slice(b"hegemon.blake3-field-xof.v1");
     material.extend_from_slice(&version.circuit.to_le_bytes());
     material.extend_from_slice(&version.crypto.to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_LPPC_PACKING_FACTOR as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as u64).to_le_bytes());
-    material.extend_from_slice(&(SMALLWOOD_BINDING_CHECK_COUNT as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_RHO as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_NB_OPENED_EVALS as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_BETA as u64).to_le_bytes());
@@ -433,10 +207,10 @@ pub fn smallwood_candidate_verifier_profile_material(version: VersionBinding) ->
     material
 }
 
-pub fn build_smallwood_semantic_frontend(
+pub fn build_smallwood_public_statement_from_witness(
     witness: &TransactionWitness,
-) -> Result<SmallwoodSemanticFrontend, TransactionCircuitError> {
-    Ok(build_smallwood_frontend_material(witness)?.frontend)
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    Ok(build_smallwood_frontend_material(witness)?.public_statement)
 }
 
 fn decode_smallwood_candidate_proof(
@@ -456,48 +230,69 @@ fn build_smallwood_frontend_material(
     validate_native_merkle_membership(witness)?;
     let public_inputs = witness.public_inputs()?;
     let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
+    let public_inputs_p3 =
+        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
     let raw_witness = raw_native_tx_validity_witness_words(witness)?;
     let poseidon_rows = poseidon_subtrace_rows(witness)?;
-    let expanded_witness = expanded_witness_words(&raw_witness, &poseidon_rows);
+    let public_statement = build_smallwood_public_statement(&public_inputs_p3, witness.version)?;
+    let expanded_witness = expanded_witness_words(
+        &public_statement.public_values,
+        &raw_witness,
+        &poseidon_rows,
+    );
     let lppc_rows = pack_lppc_rows(&expanded_witness);
     let padded_expanded_witness = flatten_lppc_rows(&lppc_rows);
-    let frontend = SmallwoodSemanticFrontend {
-        statement_hash: transaction_statement_hash_from_public_inputs(&public_inputs),
-        public_inputs_digest: transaction_public_inputs_digest_from_serialized(
-            &serialized_public_inputs,
-        )?,
-        verifier_profile: transaction_verifier_profile_digest_for_version_and_backend(
-            witness.version,
-            TxProofBackend::SmallwoodCandidate,
-        ),
-        raw_witness_digest: digest_u64_words(SMALLWOOD_RAW_WITNESS_DOMAIN, &raw_witness),
-        expanded_witness_digest: digest_u64_words(
-            SMALLWOOD_EXPANDED_WITNESS_DOMAIN,
-            &expanded_witness,
-        ),
-        lppc_rows_digest: digest_rows(&lppc_rows),
-        raw_witness_len: raw_witness.len() as u32,
-        expanded_witness_len: expanded_witness.len() as u32,
-        lppc_row_count: lppc_rows.len() as u32,
-        poseidon_permutation_count: poseidon_rows.len() as u32,
-        poseidon_state_row_count: (poseidon_rows.len()
-            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
-            as u32,
-        lppc_packing_factor: SMALLWOOD_LPPC_PACKING_FACTOR as u16,
-        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-    };
-    let (linear_check_coefficients, linear_check_targets) =
-        derive_binding_linear_checks(&frontend, &padded_expanded_witness)?;
-    let transcript_binding = smallwood_transcript_binding(&frontend)?;
+    let public_selector_indices =
+        build_smallwood_public_selector_indices(public_statement.public_values.len());
+    let transcript_binding = smallwood_transcript_binding(&public_statement, witness.version)?;
     Ok(SmallwoodFrontendMaterial {
         public_inputs,
         serialized_public_inputs,
-        frontend,
+        public_selector_targets: public_statement.public_values.clone(),
         padded_expanded_witness,
-        linear_check_coefficients,
-        linear_check_targets,
+        public_selector_indices,
+        public_statement,
         transcript_binding,
     })
+}
+
+fn build_smallwood_public_statement(
+    public_inputs: &transaction_core::p3_air::TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    let mut public_values = Vec::with_capacity(public_inputs.to_vec().len() + 2);
+    public_values.extend(
+        public_inputs
+            .to_vec()
+            .into_iter()
+            .map(|felt| felt.as_canonical_u64()),
+    );
+    public_values.push(u64::from(version.circuit));
+    public_values.push(u64::from(version.crypto));
+
+    let raw_witness_len = raw_native_tx_validity_witness_word_count();
+    let poseidon_permutation_count = smallwood_poseidon_permutation_count();
+    let poseidon_state_row_count =
+        poseidon_permutation_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION;
+    let expanded_witness_len =
+        public_values.len() + raw_witness_len + (poseidon_state_row_count * POSEIDON2_WIDTH);
+    let lppc_row_count = expanded_witness_len.div_ceil(SMALLWOOD_LPPC_PACKING_FACTOR);
+
+    Ok(SmallwoodPublicStatement {
+        public_value_count: public_values.len() as u32,
+        public_values,
+        raw_witness_len: raw_witness_len as u32,
+        lppc_row_count: lppc_row_count as u32,
+        poseidon_permutation_count: poseidon_permutation_count as u32,
+        poseidon_state_row_count: poseidon_state_row_count as u32,
+        expanded_witness_len: expanded_witness_len as u32,
+        lppc_packing_factor: SMALLWOOD_LPPC_PACKING_FACTOR as u16,
+        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+    })
+}
+
+fn build_smallwood_public_selector_indices(public_value_count: usize) -> Vec<u32> {
+    (0..public_value_count as u32).collect()
 }
 
 fn ensure_smallwood_version(
@@ -631,6 +426,16 @@ fn raw_native_tx_validity_witness_words(
     Ok(values)
 }
 
+fn raw_native_tx_validity_witness_word_count() -> usize {
+    237 + (MAX_INPUTS * (1 + 1 + 32 + 32 + 32 + 32 + 1 + 32 + (MERKLE_TREE_DEPTH * 48)))
+        + (MAX_OUTPUTS * (1 + 1 + 32 + 32 + 32 + 32))
+        + (MAX_OUTPUTS * 48)
+}
+
+fn smallwood_poseidon_permutation_count() -> usize {
+    1 + (MAX_INPUTS * 3) + (MAX_INPUTS * MERKLE_TREE_DEPTH * 2) + MAX_INPUTS + (MAX_OUTPUTS * 3) + 2
+}
+
 fn poseidon_subtrace_rows(
     witness: &TransactionWitness,
 ) -> Result<
@@ -697,13 +502,16 @@ fn poseidon_subtrace_rows(
 }
 
 fn expanded_witness_words(
+    public_values: &[u64],
     raw_witness: &[u64],
     poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
 ) -> Vec<u64> {
     let mut expanded = Vec::with_capacity(
-        raw_witness.len()
+        public_values.len()
+            + raw_witness.len()
             + poseidon_rows.len() * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION * POSEIDON2_WIDTH,
     );
+    expanded.extend_from_slice(public_values);
     expanded.extend_from_slice(raw_witness);
     for permutation in poseidon_rows {
         for row in permutation {
@@ -713,6 +521,31 @@ fn expanded_witness_words(
     expanded
 }
 
+fn smallwood_transcript_binding(
+    statement: &SmallwoodPublicStatement,
+    version: VersionBinding,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    let mut bytes = Vec::from(SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN);
+    bytes.extend_from_slice(&smallwood_candidate_verifier_profile_material(version));
+    let encoded = bincode::serialize(statement).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize smallwood public statement transcript binding: {err}"
+        ))
+    })?;
+    bytes.extend_from_slice(&encoded);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+    Ok(bytes)
+}
+
+fn push_bytes32_words(out: &mut Vec<u64>, bytes: &[u8; 32]) {
+    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
+}
+
+fn push_bytes48_words(out: &mut Vec<u64>, bytes: &[u8; 48]) {
+    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
+}
 fn pack_lppc_rows(words: &[u64]) -> Vec<[u64; SMALLWOOD_LPPC_PACKING_FACTOR]> {
     let mut rows = Vec::with_capacity(words.len().div_ceil(SMALLWOOD_LPPC_PACKING_FACTOR));
     for chunk in words.chunks(SMALLWOOD_LPPC_PACKING_FACTOR) {
@@ -729,98 +562,6 @@ fn flatten_lppc_rows(rows: &[[u64; SMALLWOOD_LPPC_PACKING_FACTOR]]) -> Vec<u64> 
         values.extend_from_slice(row);
     }
     values
-}
-
-fn digest_u64_words(domain: &[u8], words: &[u64]) -> [u8; 48] {
-    let mut bytes = Vec::with_capacity(domain.len() + words.len() * 8);
-    bytes.extend_from_slice(domain);
-    for word in words {
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    blake3_384(&bytes)
-}
-
-fn digest_rows(rows: &[[u64; SMALLWOOD_LPPC_PACKING_FACTOR]]) -> [u8; 48] {
-    let mut bytes = Vec::with_capacity(
-        SMALLWOOD_LPPC_ROWS_DOMAIN.len() + rows.len() * SMALLWOOD_LPPC_PACKING_FACTOR * 8,
-    );
-    bytes.extend_from_slice(SMALLWOOD_LPPC_ROWS_DOMAIN);
-    for row in rows {
-        for word in row {
-            bytes.extend_from_slice(&word.to_le_bytes());
-        }
-    }
-    blake3_384(&bytes)
-}
-
-fn smallwood_transcript_binding(
-    frontend: &SmallwoodSemanticFrontend,
-) -> Result<Vec<u8>, TransactionCircuitError> {
-    let mut bytes = Vec::from(SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN);
-    let encoded = bincode::serialize(frontend).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to serialize smallwood frontend transcript binding: {err}"
-        ))
-    })?;
-    bytes.extend_from_slice(&encoded);
-    while bytes.len() % 8 != 0 {
-        bytes.push(0);
-    }
-    Ok(bytes)
-}
-
-fn derive_binding_linear_checks(
-    frontend: &SmallwoodSemanticFrontend,
-    padded_expanded_witness: &[u64],
-) -> Result<(Vec<u64>, Vec<u64>), TransactionCircuitError> {
-    let encoded_frontend = bincode::serialize(frontend).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to serialize smallwood frontend for binding checks: {err}"
-        ))
-    })?;
-    let coefficient_count = SMALLWOOD_BINDING_CHECK_COUNT * padded_expanded_witness.len();
-    let mut coefficients = vec![0u64; coefficient_count];
-    fill_field_words_from_bytes(
-        SMALLWOOD_BINDING_LINEAR_CHECKS_DOMAIN,
-        &encoded_frontend,
-        &mut coefficients,
-    );
-    let mut targets = vec![0u64; SMALLWOOD_BINDING_CHECK_COUNT];
-    for (check_idx, target) in targets.iter_mut().enumerate() {
-        let row = &coefficients
-            [check_idx * padded_expanded_witness.len()..(check_idx + 1) * padded_expanded_witness.len()];
-        *target = dot_product_goldilocks(row, padded_expanded_witness);
-    }
-    Ok((coefficients, targets))
-}
-
-fn fill_field_words_from_bytes(domain: &[u8], input: &[u8], output: &mut [u64]) {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    hasher.update(&(input.len() as u64).to_le_bytes());
-    hasher.update(input);
-    let mut reader = hasher.finalize_xof();
-    for value in output {
-        let mut bytes = [0u8; 16];
-        reader.fill(&mut bytes);
-        *value = (u128::from_le_bytes(bytes) % GOLDILOCKS_MODULUS) as u64;
-    }
-}
-
-fn dot_product_goldilocks(coefficients: &[u64], witness: &[u64]) -> u64 {
-    let mut acc = 0u128;
-    for (coefficient, witness_value) in coefficients.iter().zip(witness.iter()) {
-        acc = (acc + (u128::from(*coefficient) * u128::from(*witness_value))) % GOLDILOCKS_MODULUS;
-    }
-    acc as u64
-}
-
-fn push_bytes32_words(out: &mut Vec<u64>, bytes: &[u8; 32]) {
-    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
-}
-
-fn push_bytes48_words(out: &mut Vec<u64>, bytes: &[u8; 48]) {
-    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
 }
 
 fn push_padded_input_note_fields(
@@ -1070,30 +811,6 @@ fn trace_sponge_hash(
     (output, permutations)
 }
 
-fn same_public_inputs_p3(
-    left: &transaction_core::p3_air::TransactionPublicInputsP3,
-    right: &transaction_core::p3_air::TransactionPublicInputsP3,
-) -> bool {
-    left.input_flags == right.input_flags
-        && left.output_flags == right.output_flags
-        && left.nullifiers == right.nullifiers
-        && left.commitments == right.commitments
-        && left.ciphertext_hashes == right.ciphertext_hashes
-        && left.fee == right.fee
-        && left.value_balance_sign == right.value_balance_sign
-        && left.value_balance_magnitude == right.value_balance_magnitude
-        && left.merkle_root == right.merkle_root
-        && left.balance_slot_assets == right.balance_slot_assets
-        && left.stablecoin_enabled == right.stablecoin_enabled
-        && left.stablecoin_asset == right.stablecoin_asset
-        && left.stablecoin_policy_version == right.stablecoin_policy_version
-        && left.stablecoin_issuance_sign == right.stablecoin_issuance_sign
-        && left.stablecoin_issuance_magnitude == right.stablecoin_issuance_magnitude
-        && left.stablecoin_policy_hash == right.stablecoin_policy_hash
-        && left.stablecoin_oracle_commitment == right.stablecoin_oracle_commitment
-        && left.stablecoin_attestation_commitment == right.stablecoin_attestation_commitment
-}
-
 fn snapshot_state(state: &[Felt; POSEIDON2_WIDTH]) -> [u64; POSEIDON2_WIDTH] {
     let mut row = [0u64; POSEIDON2_WIDTH];
     for (idx, value) in state.iter().enumerate() {
@@ -1254,14 +971,15 @@ mod tests {
     fn smallwood_frontend_matches_expected_shape() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let frontend = build_smallwood_semantic_frontend(&witness).unwrap();
-        assert_eq!(frontend.raw_witness_len, 3_991);
-        assert_eq!(frontend.poseidon_permutation_count, 145);
-        assert_eq!(frontend.poseidon_state_row_count, 4_640);
-        assert_eq!(frontend.expanded_witness_len, 59_671);
-        assert_eq!(frontend.lppc_row_count, 933);
-        assert_eq!(frontend.lppc_packing_factor, 64);
-        assert_eq!(frontend.effective_constraint_degree, 8);
+        let statement = build_smallwood_public_statement_from_witness(&witness).unwrap();
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 3_991);
+        assert_eq!(statement.poseidon_permutation_count, 145);
+        assert_eq!(statement.poseidon_state_row_count, 4_640);
+        assert_eq!(statement.expanded_witness_len, 59_749);
+        assert_eq!(statement.lppc_row_count, 934);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.effective_constraint_degree, 8);
     }
 
     #[test]

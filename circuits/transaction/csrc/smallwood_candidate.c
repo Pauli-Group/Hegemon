@@ -7,11 +7,11 @@
 #include <string.h>
 
 #define HEGEMON_SMALLWOOD_RHO 2
-#define HEGEMON_SMALLWOOD_NB_OPENED_EVALS 2
+#define HEGEMON_SMALLWOOD_NB_OPENED_EVALS 3
 #define HEGEMON_SMALLWOOD_BETA 3
 #define HEGEMON_SMALLWOOD_OPENING_POW_BITS 0
 #define HEGEMON_SMALLWOOD_DECS_NB_EVALS 4096
-#define HEGEMON_SMALLWOOD_DECS_NB_OPENED_EVALS 21
+#define HEGEMON_SMALLWOOD_DECS_NB_OPENED_EVALS 37
 #define HEGEMON_SMALLWOOD_DECS_ETA 10
 #define HEGEMON_SMALLWOOD_DECS_POW_BITS 0
 #define HEGEMON_SMALLWOOD_TREE_HEIGHT 12
@@ -20,9 +20,9 @@
 typedef struct {
     lppc_cfg_t main;
     uint32_t witness_size;
-    uint32_t binding_check_count;
-    const felt_t* linear_coefficients;
-    const felt_t* linear_targets;
+    uint32_t public_target_count;
+    const uint32_t* selector_indices;
+    const felt_t* public_targets;
 } hegemon_smallwood_lppc_t;
 
 static const hegemon_smallwood_lppc_t* as_hegemon_smallwood_lppc(const lppc_t* lppc) {
@@ -124,34 +124,26 @@ static void hegemon_smallwood_get_constraint_lin_polynomials(
     uint32_t out_degree = wit_poly_degree + (packing_factor - 1);
     poly_t* lag = hegemon_smallwood_build_lagrange_basis(packing_factor, packing_points);
     poly_t tmp = malloc_poly(out_degree);
-    poly_t scaled = malloc_poly(out_degree);
-    if(lag == NULL || tmp == NULL || scaled == NULL) {
+    if(lag == NULL || tmp == NULL) {
         free(lag);
         free(tmp);
-        free(scaled);
         return;
     }
 
-    for(uint32_t check = 0; check < statement->binding_check_count; check++) {
-        poly_set_zero(in_plin[check], out_degree);
-        for(uint32_t row = 0; row < nb_rows; row++) {
-            for(uint32_t col = 0; col < packing_factor; col++) {
-                uint32_t idx = row * packing_factor + col;
-                const felt_t* coeff =
-                    &statement->linear_coefficients[check * statement->witness_size + idx];
-                if(felt_is_zero(coeff)) {
-                    continue;
-                }
-                poly_mul(tmp, wit_polys[row], lag[col], wit_poly_degree, packing_factor - 1);
-                poly_mul_scalar(scaled, tmp, coeff, out_degree);
-                poly_add(in_plin[check], in_plin[check], scaled, out_degree);
-            }
+    for(uint32_t check = 0; check < statement->public_target_count; check++) {
+        uint32_t idx = statement->selector_indices[check];
+        uint32_t row = idx / packing_factor;
+        uint32_t col = idx % packing_factor;
+        if(idx >= statement->witness_size || row >= nb_rows) {
+            poly_set_zero(in_plin[check], out_degree);
+            continue;
         }
+        poly_mul(tmp, wit_polys[row], lag[col], wit_poly_degree, packing_factor - 1);
+        poly_set(in_plin[check], tmp, out_degree);
     }
 
     free(lag);
     free(tmp);
-    free(scaled);
 }
 
 static void hegemon_smallwood_get_constraint_lin_polynomials_batched(
@@ -170,49 +162,32 @@ static void hegemon_smallwood_get_constraint_lin_polynomials_batched(
     uint32_t nb_rows = lppc_cfg->nb_wit_rows;
     uint32_t out_degree = wit_poly_degree + (packing_factor - 1);
     poly_t* lag = hegemon_smallwood_build_lagrange_basis(packing_factor, packing_points);
-    vec_t* combined = malloc_vec_array(rho, statement->witness_size);
     poly_t tmp = malloc_poly(out_degree);
     poly_t scaled = malloc_poly(out_degree);
-    felt_t term;
-    if(lag == NULL || combined == NULL || tmp == NULL || scaled == NULL) {
+    if(lag == NULL || tmp == NULL || scaled == NULL) {
         free(lag);
-        free(combined);
         free(tmp);
         free(scaled);
         return;
     }
 
     for(uint32_t rep = 0; rep < rho; rep++) {
-        vec_set_zero(combined[rep], statement->witness_size);
-        for(uint32_t check = 0; check < statement->binding_check_count; check++) {
+        poly_set_zero(in_plin[rep], out_degree);
+        for(uint32_t check = 0; check < statement->public_target_count; check++) {
             const felt_t* gamma = &gammas[rep][check];
-            if(felt_is_zero(gamma)) {
+            uint32_t idx = statement->selector_indices[check];
+            uint32_t row = idx / packing_factor;
+            uint32_t col = idx % packing_factor;
+            if(felt_is_zero(gamma) || idx >= statement->witness_size || row >= nb_rows) {
                 continue;
             }
-            for(uint32_t idx = 0; idx < statement->witness_size; idx++) {
-                felt_mul(&term, gamma, &statement->linear_coefficients[check * statement->witness_size + idx]);
-                felt_add(&combined[rep][idx], &combined[rep][idx], &term);
-            }
-        }
-    }
-
-    for(uint32_t rep = 0; rep < rho; rep++) {
-        poly_set_zero(in_plin[rep], out_degree);
-        for(uint32_t row = 0; row < nb_rows; row++) {
-            for(uint32_t col = 0; col < packing_factor; col++) {
-                uint32_t idx = row * packing_factor + col;
-                if(felt_is_zero(&combined[rep][idx])) {
-                    continue;
-                }
-                poly_mul(tmp, wit_polys[row], lag[col], wit_poly_degree, packing_factor - 1);
-                poly_mul_scalar(scaled, tmp, &combined[rep][idx], out_degree);
-                poly_add(in_plin[rep], in_plin[rep], scaled, out_degree);
-            }
+            poly_mul(tmp, wit_polys[row], lag[col], wit_poly_degree, packing_factor - 1);
+            poly_mul_scalar(scaled, tmp, gamma, out_degree);
+            poly_add(in_plin[rep], in_plin[rep], scaled, out_degree);
         }
     }
 
     free(lag);
-    free(combined);
     free(tmp);
     free(scaled);
 }
@@ -243,21 +218,16 @@ static void hegemon_smallwood_get_constraint_lin_evals(
         for(uint32_t col = 0; col < packing_factor; col++) {
             poly_eval(&lag_evals[col], lag[col], &eval_points[num], packing_factor - 1);
         }
-        for(uint32_t check = 0; check < statement->binding_check_count; check++) {
+        for(uint32_t check = 0; check < statement->public_target_count; check++) {
+            uint32_t idx = statement->selector_indices[check];
+            uint32_t row = idx / packing_factor;
+            uint32_t col = idx % packing_factor;
             felt_set_zero(&in_elin[num][check]);
-            for(uint32_t row = 0; row < nb_rows; row++) {
-                for(uint32_t col = 0; col < packing_factor; col++) {
-                    uint32_t idx = row * packing_factor + col;
-                    const felt_t* coeff =
-                        &statement->linear_coefficients[check * statement->witness_size + idx];
-                    if(felt_is_zero(coeff)) {
-                        continue;
-                    }
-                    felt_mul(&term, &evals[num][row], &lag_evals[col]);
-                    felt_mul(&term, &term, coeff);
-                    felt_add(&in_elin[num][check], &in_elin[num][check], &term);
-                }
+            if(idx >= statement->witness_size || row >= nb_rows) {
+                continue;
             }
+            felt_mul(&term, &evals[num][row], &lag_evals[col]);
+            felt_set(&in_elin[num][check], &term);
         }
     }
 
@@ -267,7 +237,7 @@ static void hegemon_smallwood_get_constraint_lin_evals(
 
 static void hegemon_smallwood_get_linear_result(const lppc_t* lppc, vec_t vt) {
     const hegemon_smallwood_lppc_t* statement = as_hegemon_smallwood_lppc(lppc);
-    vec_set(vt, (vec_t) statement->linear_targets, statement->binding_check_count);
+    vec_set(vt, (vec_t) statement->public_targets, statement->public_target_count);
 }
 
 static void hegemon_smallwood_init_statement(
@@ -275,16 +245,16 @@ static void hegemon_smallwood_init_statement(
     uint32_t nb_rows,
     uint32_t packing_factor,
     uint32_t constraint_degree,
-    uint32_t binding_check_count,
-    const felt_t* linear_coefficients,
-    const felt_t* linear_targets
+    uint32_t public_target_count,
+    const uint32_t* selector_indices,
+    const felt_t* public_targets
 ) {
     memset(statement, 0, sizeof(*statement));
     statement->main.nb_wit_rows = nb_rows;
     statement->main.packing_factor = packing_factor;
     statement->main.constraint_degree = constraint_degree;
     statement->main.nb_poly_constraints = 1;
-    statement->main.nb_linear_constraints = binding_check_count;
+    statement->main.nb_linear_constraints = public_target_count;
     statement->main.get_preprocessing_material_bytesize = hegemon_smallwood_get_preprocessing_material_bytesize;
     statement->main.preprocess_packing_points = hegemon_smallwood_preprocess_packing_points;
     statement->main.get_constraint_pol_polynomials = hegemon_smallwood_get_constraint_pol_polynomials;
@@ -294,9 +264,9 @@ static void hegemon_smallwood_init_statement(
     statement->main.get_constraint_pol_evals = hegemon_smallwood_get_constraint_pol_evals;
     statement->main.get_constraint_lin_evals = hegemon_smallwood_get_constraint_lin_evals;
     statement->witness_size = nb_rows * packing_factor;
-    statement->binding_check_count = binding_check_count;
-    statement->linear_coefficients = linear_coefficients;
-    statement->linear_targets = linear_targets;
+    statement->public_target_count = public_target_count;
+    statement->selector_indices = selector_indices;
+    statement->public_targets = public_targets;
 }
 
 static int hegemon_smallwood_make_instance(
@@ -336,9 +306,9 @@ int hegemon_smallwood_candidate_prove(
     uint32_t nb_rows,
     uint32_t packing_factor,
     uint32_t constraint_degree,
-    const uint64_t* linear_coefficients,
-    const uint64_t* linear_targets,
-    uint32_t binding_check_count,
+    const uint32_t* selector_indices,
+    const uint64_t* public_targets,
+    uint32_t public_target_count,
     const uint8_t* binded_data,
     uint32_t binded_data_bytesize,
     uint8_t** proof_out,
@@ -346,11 +316,11 @@ int hegemon_smallwood_candidate_prove(
 ) {
     if(
         witness_values == NULL ||
-        linear_coefficients == NULL ||
-        linear_targets == NULL ||
+        selector_indices == NULL ||
+        public_targets == NULL ||
         proof_out == NULL ||
         proof_size_out == NULL ||
-        binding_check_count == 0 ||
+        public_target_count == 0 ||
         packing_factor == 0 ||
         nb_rows == 0
     ) {
@@ -366,9 +336,9 @@ int hegemon_smallwood_candidate_prove(
         nb_rows,
         packing_factor,
         constraint_degree,
-        binding_check_count,
-        (const felt_t*) linear_coefficients,
-        (const felt_t*) linear_targets
+        public_target_count,
+        selector_indices,
+        (const felt_t*) public_targets
     );
 
     smallwood_t* sw = NULL;
@@ -395,32 +365,26 @@ int hegemon_smallwood_candidate_prove(
 }
 
 int hegemon_smallwood_candidate_verify(
-    const uint64_t* witness_values,
-    uint32_t witness_len,
     uint32_t nb_rows,
     uint32_t packing_factor,
     uint32_t constraint_degree,
-    const uint64_t* linear_coefficients,
-    const uint64_t* linear_targets,
-    uint32_t binding_check_count,
+    const uint32_t* selector_indices,
+    const uint64_t* public_targets,
+    uint32_t public_target_count,
     const uint8_t* binded_data,
     uint32_t binded_data_bytesize,
     const uint8_t* proof,
     uint32_t proof_size
 ) {
     if(
-        witness_values == NULL ||
-        linear_coefficients == NULL ||
-        linear_targets == NULL ||
+        selector_indices == NULL ||
+        public_targets == NULL ||
         proof == NULL ||
-        binding_check_count == 0 ||
+        public_target_count == 0 ||
         packing_factor == 0 ||
         nb_rows == 0
     ) {
         return -1;
-    }
-    if(witness_len != nb_rows * packing_factor) {
-        return -2;
     }
 
     hegemon_smallwood_lppc_t statement;
@@ -429,14 +393,14 @@ int hegemon_smallwood_candidate_verify(
         nb_rows,
         packing_factor,
         constraint_degree,
-        binding_check_count,
-        (const felt_t*) linear_coefficients,
-        (const felt_t*) linear_targets
+        public_target_count,
+        selector_indices,
+        (const felt_t*) public_targets
     );
 
     smallwood_t* sw = NULL;
     if(hegemon_smallwood_make_instance((const lppc_t*) &statement, &sw) != 0) {
-        return -3;
+        return -2;
     }
     int ret = smallwood_verify_with_data(
         sw,

@@ -16,7 +16,7 @@ use crate::smallwood_frontend::{
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{bytes48_to_felts, Commitment},
+    hashing_pq::{balance_commitment_bytes, bytes48_to_felts, Commitment},
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
     trace::TransactionTrace,
@@ -556,7 +556,9 @@ fn default_bytes48() -> Commitment {
 }
 
 /// Verify that balance_slots match public_inputs.balance_slots
-fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircuitError> {
+pub(crate) fn verify_balance_slots(
+    proof: &TransactionProof,
+) -> Result<(), TransactionCircuitError> {
     use crate::constants::NATIVE_ASSET_ID;
     use crate::public_inputs::BalanceSlot;
 
@@ -604,6 +606,23 @@ fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircu
     if proof.public_inputs.stablecoin.enabled && !stablecoin_slot_seen {
         return Err(TransactionCircuitError::BalanceMismatch(
             proof.public_inputs.stablecoin.asset_id,
+        ));
+    }
+
+    let native_delta = proof
+        .public_inputs
+        .balance_slots
+        .iter()
+        .find(|slot| slot.asset_id == NATIVE_ASSET_ID)
+        .map(|slot| slot.delta)
+        .unwrap_or(0);
+    let expected_balance_tag =
+        balance_commitment_bytes(native_delta, &proof.public_inputs.balance_slots).map_err(
+            |err| TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude),
+        )?;
+    if proof.public_inputs.balance_tag != expected_balance_tag {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "balance tag does not match balance slots",
         ));
     }
 

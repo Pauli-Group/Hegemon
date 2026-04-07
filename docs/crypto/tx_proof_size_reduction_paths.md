@@ -105,6 +105,7 @@ The current repo investigation is now more concrete than the earlier optimistic 
 - note: [tx_proof_smallwood_investigation.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_investigation.md)
 - shape spike: [tx_proof_smallwood_shape_spike.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_shape_spike.json)
 - size probe: [tx_proof_smallwood_size_probe.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_size_probe.md)
+- no-grinding witness-free statement note: [tx_proof_smallwood_no_grinding_soundness.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_no_grinding_soundness.md)
 
 The paper and official prototype are real, but the caveat is now split cleanly into two parts:
 
@@ -137,11 +138,18 @@ So SmallWood is not a drop-in PCS replacement for the current tx AIR path.
 
 It only makes sense if Hegemon is willing to build a new PACS / LPPC style tx frontend around `NativeTxValidityRelation`-style witness semantics instead of the AIR trace.
 
-There is also a hard release-discipline caveat now backed by the prototype code:
+There was also a hard release-discipline caveat:
 
 - every official Goldilocks-oriented SmallWood profile currently uses nonzero grinding bits
-- under Hegemon’s current no-compromise `128-bit` rule, that means none of those profiles is directly shippable
-- so a Hegemon-specific no-grinding parameter search is mandatory before SmallWood can become more than a research branch
+- under Hegemon’s current no-compromise `128-bit` rule, none of those profiles was directly shippable
+- so a Hegemon-specific no-grinding parameter search was mandatory
+
+That work is now done for the exact witness-free candidate statement:
+
+- current no-grinding candidate profile: `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_opened_evals = 37`, `decs_eta = 10`, zero grinding bits
+- exact term-wise floor for the implemented witness-free statement: `128` bits
+
+What is still not done is the final semantic arithmetization. The note above is exact for the implemented witness-free candidate statement, not yet for a full native tx-validity SmallWood backend.
 
 The key new result from the size probe is that SmallWood is no longer merely a shape-fit story.
 

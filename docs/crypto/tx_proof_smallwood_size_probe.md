@@ -205,8 +205,8 @@ Three things are still unresolved before this becomes a release path:
 2. The public statement should stay direct and hash-friendly.
    If Hegemon insists on proving the current native digest wrappers inside this frontend, it inherits extra Blake3-style work that this probe intentionally did not include.
 
-3. The `128-bit` no-compromise release note is still required.
-   The size win survives stronger DECS settings, but Hegemon still needs a precise no-grinding parameter note before calling any one point a release profile.
+3. The final semantic arithmetization is still required.
+   The repo now has a precise no-grinding note for the implemented witness-free candidate statement, but the current probe still does not implement the full Hegemon tx-validity callbacks inside SmallWood.
 
 ## Product decision
 

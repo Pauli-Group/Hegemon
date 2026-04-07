@@ -268,6 +268,18 @@ fn smallwood_candidate_roundtrip_verifies() {
 }
 
 #[test]
+fn smallwood_candidate_proof_stays_below_shipped_plonky3_baseline() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    assert!(
+        proof.stark_proof.len() < 354_081,
+        "expected smallwood candidate proof to stay below the shipped plonky3 baseline, got {} bytes",
+        proof.stark_proof.len()
+    );
+}
+
+#[test]
 fn smallwood_candidate_rejects_semantic_mutation() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;

@@ -46,8 +46,8 @@ pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use smallwood_frontend::{
-    build_smallwood_semantic_frontend, prove_smallwood_candidate,
-    verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof, SmallwoodSemanticFrontend,
+    build_smallwood_public_statement_from_witness, prove_smallwood_candidate,
+    verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof, SmallwoodPublicStatement,
     SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE, SMALLWOOD_LPPC_PACKING_FACTOR,
 };
 pub use witness::TransactionWitness;
