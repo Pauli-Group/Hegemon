@@ -1,4 +1,5 @@
 use p3_field::PrimeCharacteristicRing;
+use protocol_versioning::{TxProofBackend, DEFAULT_TX_PROOF_BACKEND};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
@@ -223,6 +224,7 @@ fn verification_fails_for_bad_balance() {
         commitments: public_inputs.commitments.clone(),
         balance_slots: trace.padded_balance_slots(),
         public_inputs,
+        backend: DEFAULT_TX_PROOF_BACKEND,
         stark_proof: Vec::new(),
         stark_public_inputs: None,
     };
@@ -252,6 +254,23 @@ fn verification_fails_for_nullifier_mutation() {
         ),
         "Expected STARK verification failure, got: {:?}",
         err
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
+fn verification_fails_for_unimplemented_backend() {
+    let witness = sample_witness();
+    let (proving_key, verifying_key) = generate_keys();
+    let mut proof = prove(&witness, &proving_key).expect("proof generation");
+    proof.backend = TxProofBackend::SmallwoodCandidate;
+    let err = verify(&proof, &verifying_key).expect_err("unsupported backend must fail");
+    assert!(
+        err.to_string().contains("smallwood_candidate"),
+        "unexpected error: {err}"
     );
 }
 

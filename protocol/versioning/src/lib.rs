@@ -11,6 +11,46 @@ use sha2::{Digest, Sha384};
 pub type CircuitVersion = u16;
 pub type CryptoSuiteId = u16;
 
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Encode,
+)]
+#[repr(u8)]
+pub enum TxProofBackend {
+    Plonky3Fri = 1,
+    SmallwoodCandidate = 2,
+}
+
+impl TxProofBackend {
+    pub const fn wire_id(self) -> u8 {
+        self as u8
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Plonky3Fri => "plonky3_fri",
+            Self::SmallwoodCandidate => "smallwood_candidate",
+        }
+    }
+}
+
+impl Default for TxProofBackend {
+    fn default() -> Self {
+        DEFAULT_TX_PROOF_BACKEND
+    }
+}
+
+impl TryFrom<u8> for TxProofBackend {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Plonky3Fri),
+            2 => Ok(Self::SmallwoodCandidate),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Encode)]
 pub struct TxFriProfile {
     pub log_blowup: u8,
@@ -136,7 +176,15 @@ pub const DEFAULT_VERSION_BINDING: VersionBinding = VersionBinding {
     crypto: CRYPTO_SUITE_GAMMA,
 };
 
+pub const DEFAULT_TX_PROOF_BACKEND: TxProofBackend = TxProofBackend::Plonky3Fri;
 pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
+
+pub const fn tx_proof_backend_for_version(version: VersionBinding) -> Option<TxProofBackend> {
+    match (version.circuit, version.crypto) {
+        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(DEFAULT_TX_PROOF_BACKEND),
+        _ => None,
+    }
+}
 
 pub const fn tx_fri_profile_for_version(version: VersionBinding) -> Option<TxFriProfile> {
     match (version.circuit, version.crypto) {

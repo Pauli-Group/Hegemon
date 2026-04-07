@@ -189,7 +189,7 @@ use wallet::address::ShieldedAddress;
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
-use protocol_versioning::DEFAULT_VERSION_BINDING;
+use protocol_versioning::{DEFAULT_TX_PROOF_BACKEND, DEFAULT_VERSION_BINDING};
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
@@ -1386,6 +1386,7 @@ fn build_transaction_proof(
         nullifiers: materialized.padded_nullifiers,
         commitments: materialized.padded_commitments,
         balance_slots: materialized.balance_slots,
+        backend: DEFAULT_TX_PROOF_BACKEND,
         stark_proof: proof_bytes,
         stark_public_inputs: Some(materialized.stark_public_inputs),
     })
@@ -1421,6 +1422,7 @@ fn build_transaction_proof_with_hashes(
         nullifiers: materialized.padded_nullifiers,
         commitments: materialized.padded_commitments,
         balance_slots: materialized.balance_slots,
+        backend: DEFAULT_TX_PROOF_BACKEND,
         stark_proof: proof_bytes,
         stark_public_inputs: Some(materialized.stark_public_inputs),
     })

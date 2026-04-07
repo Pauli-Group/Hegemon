@@ -54,30 +54,38 @@ These are the real targets. Any candidate that does not plausibly hit them on th
 
 ## STIR spike
 
-The first serious spike to run is a STIR-class transparent PCS.
+The first serious spike was a STIR-class transparent PCS.
 
-Reason:
+That spike is now checked in, measured, and conservative:
 
-- It attacks the exact dominant cost center: opening proofs.
-- It preserves the transparent hash-based story instead of adding a second major lattice review surface.
-- It is the strongest near-term candidate for a real `2x` win without changing the transaction statement itself.
+- report artifact: [tx_proof_stir_spike.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_stir_spike.json)
+- release-gate note: [tx_proof_stir_soundness.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_stir_soundness.md)
 
-The current tx-circuit spike uses the range reported by the STIR paper for argument-size improvements over optimized FRI arguments and applies it only to the opening-proof component.
-
-Primary source:
+Primary source for the protocol family:
 
 - “STIR: Reed-Solomon Proximity Testing with Fewer Queries,” ePrint 2024/390, https://eprint.iacr.org/2024/390
 
-Applied to the exact current Hegemon tx proof:
+The measured release-safe result is weaker than the earlier optimistic paper-based projection.
 
-- If only the opening proof shrinks by `1.25x`, projected total bytes are `284246`
-- If only the opening proof shrinks by `2.46x`, projected total bytes are `146846`
+Best conservative candidate:
 
-Interpretation:
+- `provable_nogrind_k16_stop64_p128`
+- STIR bytes in the academic prototype: `43426`
+- FRI control bytes in the same prototype: `56529`
+- measured STIR/FRI ratio: `0.7682`
 
-- The low end does not reach `2x` total reduction.
-- The strong end does cross `2x` total reduction.
-- STIR is therefore the best current product-path candidate for a real `2x` tx-proof win.
+Projected onto the exact current Hegemon tx proof:
+
+- projected opening bytes: `268241`
+- projected total bytes: `273145`
+- projected total shrink: `1.2963x`
+
+The important negative result is explicit:
+
+- no release-supported candidate hits `2x` total reduction
+- even the unsupported conjectural/grinding-assisted comparison points stay around `1.32x`, not `2x`
+
+So the STIR spike was the right first research branch, but it did not justify a tx-proof-system migration for the current `2x` goal.
 
 ## SmallWood spike
 
@@ -85,15 +93,72 @@ If the target is not merely `2x`, but a real `3x` or better, the next spike to r
 
 Reason:
 
-- Hegemon’s current tx AIR has only `8192` rows.
-- That is exactly the regime where a small-instance proof system is plausible.
-- The target for `3x` total shrink is clear: opening proof at or below about `113123` bytes.
+- after the measured STIR shortfall, SmallWood is the strongest remaining transparent/hash-based candidate with real literature and real code
+- the target for `3x` total shrink is still clear: opening proof at or below about `113123` bytes
 
 Primary source:
 
 - “SmallWood: Practical Transparent Arguments for Small Circuits,” ePrint 2025/1085, https://eprint.iacr.org/2025/1085
 
-The current repo spike is deliberately labeled as a spike, not a claim. It asks a single optimistic question:
+The current repo investigation is now more concrete than the earlier optimistic placeholder:
+
+- note: [tx_proof_smallwood_investigation.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_investigation.md)
+- shape spike: [tx_proof_smallwood_shape_spike.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_shape_spike.json)
+- size probe: [tx_proof_smallwood_size_probe.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_size_probe.md)
+
+The paper and official prototype are real, but the caveat is now split cleanly into two parts:
+
+- SmallWood’s advertised sweet spot is an extended witness around `2^6` to `2^16` field elements
+- Hegemon’s current tx AIR is much larger than that if translated directly:
+  - base witness cells: about `851968`
+  - full main trace cells: about `1196032`
+- Hegemon’s compact native tx-validity relation is inside that window:
+  - raw witness elements: `3991`
+  - raw witness bits: `32787`
+  - padded witness size: `4096 = 2^12`
+
+The shape spike now also fixes the first concrete frontend target:
+
+- recommended LPPC witness layout: `512` rows x `8` packed elements
+- padded capacity: `4096`
+- zero padding: `105` elements
+- witness polynomial degree: `9`
+- opened-evaluation payload floor: `8324` bytes
+
+The companion `TxLeafPublicRelation` is even smaller:
+
+- raw witness elements: `90`
+- raw witness bits: `4935`
+- padded witness size: `128 = 2^7`
+
+But `TxLeafPublicRelation` is not the right tx-proof replacement target because it still wraps an external STARK receipt. The real SmallWood candidate is `NativeTxValidityRelation`.
+
+So SmallWood is not a drop-in PCS replacement for the current tx AIR path.
+
+It only makes sense if Hegemon is willing to build a new PACS / LPPC style tx frontend around `NativeTxValidityRelation`-style witness semantics instead of the AIR trace.
+
+There is also a hard release-discipline caveat now backed by the prototype code:
+
+- every official Goldilocks-oriented SmallWood profile currently uses nonzero grinding bits
+- under Hegemon’s current no-compromise `128-bit` rule, that means none of those profiles is directly shippable
+- so a Hegemon-specific no-grinding parameter search is mandatory before SmallWood can become more than a research branch
+
+The key new result from the size probe is that SmallWood is no longer merely a shape-fit story.
+
+Using the official prototype with a conservative expanded Hegemon-native witness model:
+
+- current tx proof: `354081` bytes
+- best official-profile structural probe: `75128` bytes
+- best default-profile structural probe: `82776` bytes
+- stronger no-grinding DECS-style points still stay in about the `83 KB .. 121 KB` range
+
+So the likely SmallWood win is no longer “maybe `2x` if everything goes right.”
+
+It is:
+
+- roughly `3x .. 4.7x`, if the semantic prototype preserves the structural result
+
+The older optimistic question is still useful as an upper bound:
 
 - what would total proof size be if the opening proof were only `25 KiB`?
 
@@ -119,10 +184,11 @@ So the ordering should stay:
 
 ## Practical recommendation
 
-The repo’s own numbers now justify one blunt recommendation:
+The repo’s own numbers now justify a sharper recommendation than before:
 
 - For a release-safe proof-size win now, keep the release FRI profile unchanged.
-- For the next serious engineering project, prototype STIR on the tx circuit.
-- For the next aggressive research spike beyond that, prototype SmallWood before lattice PCS.
+- Do not claim STIR is a `2x` answer for the current tx circuit. The measured conservative spike says otherwise.
+- If the target remains a real `2x` or `3x`, move next to a SmallWood-class semantic tx frontend before entertaining lattice PCS.
+- SmallWood is now the first branch in the repo with a measured path to `3x+` transaction-proof shrink under a conservative Hegemon witness expansion model.
 
-That ordering follows directly from the measured proof composition, not from theory fashion.
+That ordering now follows from measured negative evidence on STIR and a more realistic SmallWood fit analysis, not from theory fashion.

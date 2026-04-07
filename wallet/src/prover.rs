@@ -33,6 +33,7 @@
 
 use std::time::{Duration, Instant};
 
+use protocol_versioning::DEFAULT_TX_PROOF_BACKEND;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     keys::{generate_keys, ProvingKey, VerifyingKey},
@@ -307,6 +308,7 @@ impl StarkProver {
             commitments: public_inputs.commitments.clone(),
             balance_slots,
             public_inputs,
+            backend: DEFAULT_TX_PROOF_BACKEND,
             stark_proof: proof_bytes.to_vec(),
             stark_public_inputs: None,
         };

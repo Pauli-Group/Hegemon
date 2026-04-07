@@ -5,7 +5,10 @@ use pallet_shielded_pool::types::{
 };
 use protocol_kernel::manifest::{FamilySpec, KernelManifest};
 use protocol_kernel::types::{compute_kernel_global_root, FamilyId, FamilyRoot};
-use protocol_versioning::{tx_fri_profile_for_version, VersionBinding, DEFAULT_VERSION_BINDING};
+use protocol_versioning::{
+    tx_fri_profile_for_version, tx_proof_backend_for_version, TxProofBackend, VersionBinding,
+    DEFAULT_VERSION_BINDING,
+};
 use sp_std::collections::btree_map::BTreeMap;
 use sp_std::vec::Vec;
 
@@ -71,9 +74,17 @@ pub struct TxStarkProfileManifestEntry {
     pub claimed_security_bits: u16,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Encode)]
+pub struct TxProofBackendManifestEntry {
+    pub version: VersionBinding,
+    pub backend: TxProofBackend,
+    pub claimed_security_bits: u16,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolManifest {
     pub version_bindings: Vec<VersionBinding>,
+    pub tx_proof_backends: Vec<TxProofBackendManifestEntry>,
     pub tx_stark_profiles: Vec<TxStarkProfileManifestEntry>,
     pub da_policy: DaAvailabilityPolicy,
     pub ciphertext_policy: CiphertextPolicy,
@@ -84,6 +95,17 @@ pub struct ProtocolManifest {
 
 pub fn protocol_manifest() -> ProtocolManifest {
     let version_bindings = vec![DEFAULT_VERSION_BINDING];
+    let tx_proof_backends = version_bindings
+        .iter()
+        .copied()
+        .filter_map(|version| {
+            tx_proof_backend_for_version(version).map(|backend| TxProofBackendManifestEntry {
+                version,
+                backend,
+                claimed_security_bits: 128,
+            })
+        })
+        .collect();
     let tx_stark_profiles = version_bindings
         .iter()
         .copied()
@@ -100,6 +122,7 @@ pub fn protocol_manifest() -> ProtocolManifest {
 
     ProtocolManifest {
         version_bindings,
+        tx_proof_backends,
         tx_stark_profiles,
         da_policy: DaAvailabilityPolicy::default(),
         ciphertext_policy: CiphertextPolicy::default(),
@@ -153,6 +176,7 @@ pub fn kernel_manifest() -> KernelManifest {
             protocol.da_policy,
             protocol.ciphertext_policy,
             protocol.proof_availability_policy,
+            protocol.tx_proof_backends.clone(),
             protocol.tx_stark_profiles.clone(),
         )
             .encode(),
@@ -225,11 +249,16 @@ pub fn shielded_verifying_key() -> pallet_shielded_pool::verifier::VerifyingKey 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol_versioning::DEFAULT_TX_FRI_PROFILE;
+    use protocol_versioning::{DEFAULT_TX_FRI_PROFILE, DEFAULT_TX_PROOF_BACKEND};
 
     #[test]
     fn manifest_includes_default_tx_stark_profile() {
         let manifest = protocol_manifest();
+        assert_eq!(manifest.tx_proof_backends.len(), 1);
+        let backend = &manifest.tx_proof_backends[0];
+        assert_eq!(backend.version, DEFAULT_VERSION_BINDING);
+        assert_eq!(backend.backend, DEFAULT_TX_PROOF_BACKEND);
+        assert_eq!(backend.claimed_security_bits, 128);
         assert_eq!(manifest.tx_stark_profiles.len(), 1);
         let profile = &manifest.tx_stark_profiles[0];
         assert_eq!(profile.version, DEFAULT_VERSION_BINDING);
@@ -250,6 +279,7 @@ mod tests {
                 protocol.da_policy,
                 protocol.ciphertext_policy,
                 protocol.proof_availability_policy,
+                protocol.tx_proof_backends.clone(),
                 protocol.tx_stark_profiles.clone(),
             )
                 .encode(),

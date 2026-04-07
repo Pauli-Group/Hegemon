@@ -46,6 +46,7 @@ members = [
     "circuits/superneo-bench",
     "tools/native-backend-ref",
     "tools/native-backend-timing",
+    "spikes/smallwood-tx-shape",
     "fuzz",
 ]
 exclude = ["spikes/recursion"]

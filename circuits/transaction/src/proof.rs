@@ -3,7 +3,9 @@
 //! This module provides the main interface for creating and verifying
 //! transaction proofs. It uses real STARK proofs via Plonky3.
 
-use protocol_versioning::VersionBinding;
+use protocol_versioning::{
+    tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
+};
 use serde::{Deserialize, Serialize};
 use synthetic_crypto::hashes::blake3_384;
 
@@ -42,6 +44,8 @@ pub struct TransactionProof {
     #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
     pub commitments: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
+    #[serde(default = "default_tx_proof_backend")]
+    pub backend: TxProofBackend,
     /// The actual STARK proof bytes (backend-specific format).
     /// This is the cryptographic proof that the transaction is valid.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -100,6 +104,14 @@ impl TransactionProof {
         self.public_inputs.version_binding()
     }
 
+    pub fn proof_backend(&self) -> TxProofBackend {
+        self.backend
+    }
+
+    pub fn proof_bytes(&self) -> &[u8] {
+        &self.stark_proof
+    }
+
     /// Check if this proof has a real STARK proof attached.
     pub fn has_stark_proof(&self) -> bool {
         !self.stark_proof.is_empty()
@@ -111,12 +123,17 @@ pub const TX_PROOF_DIGEST_DOMAIN: &[u8] = b"tx-proof-digest-v1";
 pub const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
 pub const TX_VERIFIER_PROFILE_DOMAIN: &[u8] = b"hegemon.inline-tx-p3-profile.v1";
 
+fn default_tx_proof_backend() -> TxProofBackend {
+    DEFAULT_TX_PROOF_BACKEND
+}
+
 /// Reconstruct the Plonky3 public inputs from a transaction proof.
 ///
 /// This is useful when callers need the STARK public inputs without re-verifying the proof.
 pub fn stark_public_inputs_p3(
     proof: &TransactionProof,
 ) -> Result<TransactionPublicInputsP3, TransactionCircuitError> {
+    ensure_plonky3_backend(proof)?;
     let stark_inputs =
         proof
             .stark_public_inputs
@@ -259,9 +276,17 @@ pub fn transaction_statement_hash(proof: &TransactionProof) -> [u8; 48] {
 }
 
 pub fn transaction_proof_digest(proof: &TransactionProof) -> [u8; 48] {
-    let mut message = Vec::with_capacity(TX_PROOF_DIGEST_DOMAIN.len() + proof.stark_proof.len());
+    transaction_proof_digest_from_parts(proof.backend, &proof.stark_proof)
+}
+
+pub fn transaction_proof_digest_from_parts(
+    backend: TxProofBackend,
+    proof_bytes: &[u8],
+) -> [u8; 48] {
+    let mut message = Vec::with_capacity(TX_PROOF_DIGEST_DOMAIN.len() + proof_bytes.len() + 1);
     message.extend_from_slice(TX_PROOF_DIGEST_DOMAIN);
-    message.extend_from_slice(&proof.stark_proof);
+    message.push(backend.wire_id());
+    message.extend_from_slice(proof_bytes);
     blake3_384(&message)
 }
 
@@ -292,21 +317,60 @@ pub fn transaction_public_inputs_digest(
     transaction_public_inputs_digest_from_serialized(stark_inputs)
 }
 
-pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) -> [u8; 48] {
-    let profile = release_tx_fri_profile_for_version(version);
+pub fn transaction_verifier_profile_digest_for_version_and_backend(
+    version: VersionBinding,
+    backend: TxProofBackend,
+) -> [u8; 48] {
     let mut message = Vec::new();
     message.extend_from_slice(TX_VERIFIER_PROFILE_DOMAIN);
-    message.extend_from_slice(b"plonky3-transaction-proof");
+    message.extend_from_slice(backend.label().as_bytes());
     message.extend_from_slice(&version.circuit.to_le_bytes());
     message.extend_from_slice(&version.crypto.to_le_bytes());
-    message.extend_from_slice(&(profile.log_blowup as u64).to_le_bytes());
-    message.extend_from_slice(&(profile.num_queries as u64).to_le_bytes());
-    message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
+    if matches!(backend, TxProofBackend::Plonky3Fri) {
+        let profile = release_tx_fri_profile_for_version(version);
+        message.extend_from_slice(&(profile.log_blowup as u64).to_le_bytes());
+        message.extend_from_slice(&(profile.num_queries as u64).to_le_bytes());
+        message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
+    }
     blake3_384(&message)
 }
 
+pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) -> [u8; 48] {
+    transaction_verifier_profile_digest_for_version_and_backend(
+        version,
+        tx_proof_backend_for_version(version).unwrap_or(DEFAULT_TX_PROOF_BACKEND),
+    )
+}
+
 pub fn transaction_verifier_profile_digest(proof: &TransactionProof) -> [u8; 48] {
-    transaction_verifier_profile_digest_for_version(proof.version_binding())
+    transaction_verifier_profile_digest_for_version_and_backend(
+        proof.version_binding(),
+        proof.backend,
+    )
+}
+
+pub fn verify_transaction_proof_bytes_for_backend(
+    backend: TxProofBackend,
+    proof_bytes: &[u8],
+    pub_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<(), TransactionCircuitError> {
+    match backend {
+        TxProofBackend::Plonky3Fri => {
+            verify_transaction_proof_bytes_p3_for_version(proof_bytes, pub_inputs, version).map_err(
+                |err| {
+                    TransactionCircuitError::ConstraintViolationOwned(format!(
+                        "STARK verification failed: {err}"
+                    ))
+                },
+            )
+        }
+        TxProofBackend::SmallwoodCandidate => {
+            Err(TransactionCircuitError::ConstraintViolationOwned(
+                "tx proof backend smallwood_candidate verification is not implemented".into(),
+            ))
+        }
+    }
 }
 
 /// Generate a real STARK proof for a transaction (Plonky3 backend).
@@ -326,6 +390,13 @@ pub fn prove_with_params(
     _proving_key: &ProvingKey,
     params: TransactionProofParams,
 ) -> Result<TransactionProof, TransactionCircuitError> {
+    let backend = tx_proof_backend_for_version(witness.version).unwrap_or(DEFAULT_TX_PROOF_BACKEND);
+    if !matches!(backend, TxProofBackend::Plonky3Fri) {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "tx proof backend {} proving is not implemented",
+            backend.label()
+        )));
+    }
     witness.validate()?;
 
     let trace = TransactionTrace::from_witness(witness)?;
@@ -347,6 +418,7 @@ pub fn prove_with_params(
         commitments,
         balance_slots: trace.padded_balance_slots(),
         public_inputs,
+        backend,
         stark_proof,
         stark_public_inputs: Some(serialized_inputs),
     })
@@ -359,9 +431,18 @@ pub fn verify(
     proof: &TransactionProof,
     _verifying_key: &VerifyingKey,
 ) -> Result<VerificationReport, TransactionCircuitError> {
-    verify_with_p3(proof)
+    match proof.backend {
+        TxProofBackend::Plonky3Fri => verify_with_p3(proof),
+        TxProofBackend::SmallwoodCandidate => {
+            Err(TransactionCircuitError::ConstraintViolationOwned(
+                "tx proof backend smallwood_candidate verification is not implemented".into(),
+            ))
+        }
+    }
 }
+
 fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, TransactionCircuitError> {
+    ensure_plonky3_backend(proof)?;
     // Validate public input structure
     if proof.nullifiers.len() != MAX_INPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -396,16 +477,25 @@ fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, Transa
 
     let stark_pub_inputs = stark_public_inputs_p3(proof)?;
 
-    match verify_transaction_proof_bytes_p3_for_version(
+    match verify_transaction_proof_bytes_for_backend(
+        proof.backend,
         &proof.stark_proof,
         &stark_pub_inputs,
         proof.version_binding(),
     ) {
         Ok(()) => Ok(VerificationReport { verified: true }),
-        Err(e) => Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "STARK verification failed: {}",
-            e
-        ))),
+        Err(e) => Err(e),
+    }
+}
+
+fn ensure_plonky3_backend(proof: &TransactionProof) -> Result<(), TransactionCircuitError> {
+    if matches!(proof.backend, TxProofBackend::Plonky3Fri) {
+        Ok(())
+    } else {
+        Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "transaction proof backend {} does not expose Plonky3 public inputs",
+            proof.backend.label()
+        )))
     }
 }
 
@@ -546,6 +636,7 @@ mod tests {
             commitments: public_inputs.commitments.clone(),
             balance_slots: public_inputs.balance_slots.clone(),
             public_inputs,
+            backend: DEFAULT_TX_PROOF_BACKEND,
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: Some(dummy_serialized_inputs()),
         }
@@ -568,6 +659,17 @@ mod tests {
         assert_ne!(
             transaction_statement_hash(&proof),
             transaction_statement_hash(&changed)
+        );
+    }
+
+    #[test]
+    fn proof_digest_binds_backend() {
+        let proof = dummy_proof();
+        let mut changed = proof.clone();
+        changed.backend = TxProofBackend::SmallwoodCandidate;
+        assert_ne!(
+            transaction_proof_digest(&proof),
+            transaction_proof_digest(&changed)
         );
     }
 

@@ -15,7 +15,9 @@
 //!
 //! ## Implementation
 //!
-//! Plonky3 is the sole backend.
+//! Plonky3 is the active backend today, but the proof object now carries an
+//! explicit backend identifier so a future SmallWood-class prover can replace
+//! it without rewriting the tx-leaf / receipt-root aggregation interfaces.
 
 pub mod constants;
 pub mod dimensions;
@@ -39,6 +41,7 @@ pub use error::TransactionCircuitError;
 pub use keys::{generate_keys, ProvingKey, VerifyingKey};
 pub use note::{InputNoteWitness, OutputNoteWitness};
 pub use proof::{TransactionProof, VerificationReport};
+pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use witness::TransactionWitness;
 

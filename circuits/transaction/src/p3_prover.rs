@@ -17,7 +17,7 @@ use crate::hashing_pq::{
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use crate::p3_config::{
     build_tx_fri_profile_for_version, config_with_profile, default_build_tx_fri_profile,
-    TransactionProofP3,
+    release_tx_fri_profile_for_version, TransactionProofP3,
 };
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
@@ -75,6 +75,14 @@ impl TransactionProofParams {
 
     pub fn production_for_version(version: VersionBinding) -> Self {
         let profile = build_tx_fri_profile_for_version(version);
+        Self {
+            log_blowup: profile.log_blowup_usize(),
+            num_queries: profile.num_queries_usize(),
+        }
+    }
+
+    pub fn release_for_version(version: VersionBinding) -> Self {
+        let profile = release_tx_fri_profile_for_version(version);
         Self {
             log_blowup: profile.log_blowup_usize(),
             num_queries: profile.num_queries_usize(),

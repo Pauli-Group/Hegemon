@@ -34,9 +34,10 @@ pub const STARK_PROOF_MAX_SIZE: usize = 512 * 1024;
 /// shielded transfer path.
 ///
 /// This is the full artifact envelope, not just the embedded STARK proof bytes.
-/// The value is derived from the active `v8` native backend envelope geometry and
+/// The value is derived from the active `v8` native backend envelope geometry, including the
+/// trailing tx-proof-backend selector byte, and
 /// must stay aligned with `superneo_hegemon::max_native_tx_leaf_artifact_bytes()`.
-pub const NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE: usize = 530_367;
+pub const NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE: usize = 530_368;
 
 /// Size of a binding hash.
 pub const BINDING_HASH_SIZE: usize = 64;

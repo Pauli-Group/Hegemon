@@ -6,7 +6,9 @@ use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
-use protocol_versioning::VersionBinding;
+use protocol_versioning::{
+    tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use superneo_backend_lattice::{
@@ -25,13 +27,13 @@ use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE
 use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::proof::{
     prove_with_params as prove_transaction_with_params, transaction_proof_digest,
-    transaction_public_inputs_digest, transaction_public_inputs_digest_from_serialized,
-    transaction_statement_hash, transaction_verifier_profile_digest,
-    transaction_verifier_profile_digest_for_version, verify as verify_transaction_proof,
+    transaction_proof_digest_from_parts, transaction_public_inputs_digest,
+    transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
+    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
+    verify as verify_transaction_proof, verify_transaction_proof_bytes_for_backend,
     SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
-use transaction_circuit::verify_transaction_proof_bytes_p3;
 use transaction_circuit::TransactionPublicInputsP3;
 use transaction_circuit::TransactionWitness;
 
@@ -57,6 +59,7 @@ const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
 const TX_PUBLIC_WIRE_BYTES: usize =
     4 + (MAX_INPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 48 + 2 + 2;
 const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
+const NATIVE_TX_LEAF_PROOF_BACKEND_WIRE_BYTES: usize = 1;
 const NATIVE_RECEIPT_ROOT_MINI_ROOT_SIZE: usize = 8;
 const DEFAULT_RECEIPT_ROOT_BUILD_CACHE_CAPACITY: usize = 256;
 
@@ -1045,6 +1048,7 @@ pub struct NativeTxLeafArtifact {
     pub receipt: CanonicalTxValidityReceipt,
     pub stark_public_inputs: SerializedStarkInputs,
     pub tx: TxLeafPublicTx,
+    pub proof_backend: TxProofBackend,
     pub stark_proof: Vec<u8>,
     pub commitment: LatticeCommitment,
     pub leaf: LeafArtifact<LeafDigestProof>,
@@ -1082,6 +1086,7 @@ pub struct NativeTxLeafMetadata {
     pub relation_id: [u8; 32],
     pub shape_digest: [u8; 32],
     pub statement_digest: [u8; 48],
+    pub proof_backend: TxProofBackend,
     pub stark_public_inputs: SerializedStarkInputs,
     pub commitment: LatticeCommitment,
 }
@@ -1497,6 +1502,7 @@ fn native_tx_leaf_receipt_from_parts(
     tx: &TxLeafPublicTx,
     stark_public_inputs: &SerializedStarkInputs,
     stark_proof: &[u8],
+    proof_backend: TxProofBackend,
     params: &NativeBackendParams,
 ) -> Result<CanonicalTxValidityReceipt> {
     ensure!(
@@ -1505,10 +1511,7 @@ fn native_tx_leaf_receipt_from_parts(
     );
     Ok(CanonicalTxValidityReceipt {
         statement_hash: tx_statement_hash_from_tx_leaf_public(tx, stark_public_inputs)?,
-        proof_digest: digest48(
-            transaction_circuit::proof::TX_PROOF_DIGEST_DOMAIN,
-            stark_proof,
-        ),
+        proof_digest: transaction_proof_digest_from_parts(proof_backend, stark_proof),
         public_inputs_digest: transaction_public_inputs_digest_from_serialized(stark_public_inputs)
             .map_err(|err| anyhow::anyhow!("failed to hash native tx public inputs: {err}"))?,
         verifier_profile: experimental_native_tx_leaf_verifier_profile_for_params(params),
@@ -2476,6 +2479,7 @@ pub fn max_native_tx_leaf_artifact_bytes_with_params(params: &NativeBackendParam
         + TX_PUBLIC_WIRE_BYTES
         + 4
         + MAX_NATIVE_TX_STARK_PROOF_BYTES
+        + NATIVE_TX_LEAF_PROOF_BACKEND_WIRE_BYTES
         + lattice_commitment_bytes
         + LEAF_ARTIFACT_WIRE_BYTES
 }
@@ -2648,7 +2652,7 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
     let proof = prove_transaction_with_params(
         witness,
         transaction_proving_key(),
-        TransactionProofParams::production_for_version(witness.version),
+        TransactionProofParams::release_for_version(witness.version),
     )
     .map_err(|err| anyhow::anyhow!("native tx proof generation failed: {err}"))?;
     build_native_tx_leaf_artifact_from_transaction_proof_with_params(params, &proof)
@@ -2691,6 +2695,7 @@ fn build_native_tx_leaf_artifact_from_transaction_proof_with_params(
         receipt: receipt.clone(),
         stark_public_inputs: witness.stark_public_inputs,
         tx,
+        proof_backend: proof.proof_backend(),
         stark_proof: proof.stark_proof.clone(),
         commitment: commitment.clone(),
         leaf: LeafArtifact {
@@ -3181,6 +3186,12 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         receipt.verifier_profile == experimental_native_tx_leaf_verifier_profile_for_params(params),
         "native tx-leaf receipt verifier profile mismatch"
     );
+    let expected_backend =
+        tx_proof_backend_for_version(tx.version).unwrap_or(DEFAULT_TX_PROOF_BACKEND);
+    ensure!(
+        artifact.proof_backend == expected_backend,
+        "native tx-leaf proof backend mismatch"
+    );
     ensure!(
         !artifact.stark_proof.is_empty(),
         "native tx-leaf proof bytes must not be empty"
@@ -3190,6 +3201,7 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         tx,
         &artifact.stark_public_inputs,
         &artifact.stark_proof,
+        artifact.proof_backend,
         params,
     )?;
     ensure!(
@@ -3198,8 +3210,13 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     );
     let p3_public_inputs =
         transaction_public_inputs_p3_from_tx_leaf_public(tx, &artifact.stark_public_inputs)?;
-    verify_transaction_proof_bytes_p3(&artifact.stark_proof, &p3_public_inputs)
-        .map_err(|err| anyhow::anyhow!("native tx-leaf STARK proof verification failed: {err}"))?;
+    verify_transaction_proof_bytes_for_backend(
+        artifact.proof_backend,
+        &artifact.stark_proof,
+        &p3_public_inputs,
+        tx.version,
+    )
+    .map_err(|err| anyhow::anyhow!("native tx-leaf proof verification failed: {err}"))?;
 
     let witness = tx_leaf_public_witness_from_parts(tx, &artifact.stark_public_inputs);
     validate_native_tx_leaf_public_witness_with_params(params, receipt, &witness)?;
@@ -3236,6 +3253,7 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         relation_id: artifact.relation_id,
         shape_digest: artifact.shape_digest,
         statement_digest: artifact.statement_digest,
+        proof_backend: artifact.proof_backend,
         stark_public_inputs: artifact.stark_public_inputs,
         commitment: expected_commitment,
     })
@@ -4422,6 +4440,7 @@ fn encode_native_tx_leaf_artifact(artifact: &NativeTxLeafArtifact) -> Result<Vec
     bytes.extend_from_slice(&artifact.stark_proof);
     encode_lattice_commitment(&mut bytes, &artifact.commitment)?;
     encode_leaf_artifact(&mut bytes, &artifact.leaf);
+    bytes.push(artifact.proof_backend.wire_id());
     Ok(bytes)
 }
 
@@ -4454,6 +4473,13 @@ fn decode_native_tx_leaf_artifact_with_params(
     let stark_proof = read_bytes(bytes, &mut cursor, proof_len)?;
     let commitment = decode_lattice_commitment_with_params(params, bytes, &mut cursor)?;
     let leaf = decode_leaf_artifact(bytes, &mut cursor)?;
+    let proof_backend = if cursor < bytes.len() {
+        let wire = read_u8(bytes, &mut cursor)?;
+        TxProofBackend::try_from(wire)
+            .map_err(|_| anyhow::anyhow!("unsupported native tx-leaf proof backend {wire}"))?
+    } else {
+        DEFAULT_TX_PROOF_BACKEND
+    };
     ensure!(
         cursor == bytes.len(),
         "native tx-leaf artifact has {} trailing bytes",
@@ -4469,6 +4495,7 @@ fn decode_native_tx_leaf_artifact_with_params(
         receipt,
         stark_public_inputs,
         tx,
+        proof_backend,
         stark_proof,
         commitment,
         leaf,
@@ -5163,6 +5190,36 @@ mod tests {
             native_backend_params().parameter_fingerprint()
         );
         assert_eq!(metadata.spec_digest, native_backend_params().spec_digest());
+        assert_eq!(metadata.proof_backend, DEFAULT_TX_PROOF_BACKEND);
+    }
+
+    #[test]
+    fn native_tx_leaf_artifact_defaults_missing_backend_byte_to_plonky3() {
+        let witness = sample_witness(19);
+        let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
+        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let mut legacy_bytes = built.artifact_bytes.clone();
+        legacy_bytes.pop().expect("proof backend byte");
+        let metadata =
+            verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &legacy_bytes).unwrap();
+        assert_eq!(metadata.proof_backend, DEFAULT_TX_PROOF_BACKEND);
+    }
+
+    #[test]
+    fn native_tx_leaf_artifact_rejects_unimplemented_backend() {
+        let witness = sample_witness(20);
+        let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
+        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let mut decoded = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
+        decoded.proof_backend = TxProofBackend::SmallwoodCandidate;
+        let tampered = encode_native_tx_leaf_artifact_bytes(&decoded).unwrap();
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &tampered)
+            .expect_err("unimplemented backend must fail");
+        assert!(
+            err.to_string().contains("proof backend mismatch")
+                || err.to_string().contains("smallwood_candidate"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
