@@ -26,9 +26,9 @@ const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
 
 const SMALLWOOD_RHO: usize = 2;
 const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
-const SMALLWOOD_BETA: usize = 3;
+const SMALLWOOD_BETA: usize = 2;
 const SMALLWOOD_DECS_NB_EVALS: usize = 16384;
-const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 26;
+const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 29;
 const SMALLWOOD_DECS_ETA: usize = 3;
 const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 

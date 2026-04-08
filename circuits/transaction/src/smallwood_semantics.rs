@@ -1,5 +1,5 @@
 use blake3::Hasher;
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use transaction_core::{
     constants::POSEIDON2_WIDTH,
     poseidon2::{poseidon2_step, Felt},
@@ -17,11 +17,11 @@ const MERKLE_DEPTH: usize = 32;
 const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const HASH_LIMBS: usize = 6;
-const INPUT_ROWS: usize = 133;
-const OUTPUT_ROWS: usize = 4;
+const INPUT_ROWS: usize = 130;
+const OUTPUT_ROWS: usize = 2;
 const PUBLIC_ROWS: usize = 2;
 const PUBLIC_VALUE_COUNT: usize = 78;
-const SECRET_ROWS: usize = 276;
+const SECRET_ROWS: usize = 264;
 const PACKING_FACTOR: usize = 64;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
@@ -49,6 +49,8 @@ const PUB_STABLE_ATTESTATION: usize = 70;
 pub(crate) struct PackedStatement<'a> {
     linear_constraint_targets: &'a [u64],
     output_ciphertext_challenges: [Felt; MAX_OUTPUTS],
+    slot_denominator_inverses: [Felt; BALANCE_SLOTS],
+    stable_selector_bits: [Felt; 2],
     stable_policy_hash_challenge: Felt,
     stable_oracle_challenge: Felt,
     stable_attestation_challenge: Felt,
@@ -145,6 +147,8 @@ impl<'a> PackedStatement<'a> {
         let mut statement = Self {
             linear_constraint_targets,
             output_ciphertext_challenges: [Felt::ZERO; MAX_OUTPUTS],
+            slot_denominator_inverses: derive_slot_denominator_inverses(linear_constraint_targets),
+            stable_selector_bits: derive_stable_selector_bits(linear_constraint_targets),
             stable_policy_hash_challenge: Felt::ZERO,
             stable_oracle_challenge: Felt::ZERO,
             stable_attestation_challenge: Felt::ZERO,
@@ -225,28 +229,20 @@ fn row_input_asset(input: usize) -> usize {
     row_input_base(input) + 1
 }
 #[inline]
-fn row_input_position(input: usize) -> usize {
-    row_input_base(input) + 2
-}
-#[inline]
-fn row_input_selector(input: usize, bit: usize) -> usize {
-    row_input_base(input) + 3 + bit
-}
-#[inline]
 fn row_input_direction(input: usize, bit: usize) -> usize {
-    row_input_base(input) + 5 + bit
+    row_input_base(input) + 2 + bit
 }
 #[inline]
 fn row_input_current_agg(input: usize, level: usize) -> usize {
-    row_input_base(input) + 37 + level
+    row_input_base(input) + 34 + level
 }
 #[inline]
 fn row_input_left_agg(input: usize, level: usize) -> usize {
-    row_input_base(input) + 69 + level
+    row_input_base(input) + 66 + level
 }
 #[inline]
 fn row_input_right_agg(input: usize, level: usize) -> usize {
-    row_input_base(input) + 101 + level
+    row_input_base(input) + 98 + level
 }
 
 #[inline]
@@ -257,15 +253,7 @@ fn row_output_value(output: usize) -> usize {
 fn row_output_asset(output: usize) -> usize {
     row_output_base(output) + 1
 }
-#[inline]
-fn row_output_selector(output: usize, bit: usize) -> usize {
-    row_output_base(output) + 2 + bit
-}
 
-#[inline]
-fn row_stable_selector(bit: usize) -> usize {
-    PUBLIC_ROWS + SECRET_ROWS - 2 + bit
-}
 #[inline]
 fn poseidon_rows_start() -> usize {
     PUBLIC_ROWS + SECRET_ROWS
@@ -307,6 +295,45 @@ fn selected_slot_asset(statement: &PackedStatement<'_>, bit0: Felt, bit1: Felt) 
     result
 }
 
+fn derive_slot_denominator_inverses(public_values: &[u64]) -> [Felt; BALANCE_SLOTS] {
+    let mut inverses = [Felt::ZERO; BALANCE_SLOTS];
+    for slot in 0..BALANCE_SLOTS {
+        let asset = Felt::from_u64(public_values[PUB_SLOT_ASSETS + slot]);
+        let mut denominator = Felt::ONE;
+        for other in 0..BALANCE_SLOTS {
+            if other == slot {
+                continue;
+            }
+            denominator *= asset - Felt::from_u64(public_values[PUB_SLOT_ASSETS + other]);
+        }
+        inverses[slot] = denominator.try_inverse().unwrap_or(Felt::ZERO);
+    }
+    inverses
+}
+
+fn slot_membership_weights(statement: &PackedStatement<'_>, asset: Felt) -> [Felt; BALANCE_SLOTS] {
+    let mut weights = [Felt::ZERO; BALANCE_SLOTS];
+    for slot in 0..BALANCE_SLOTS {
+        let mut numerator = Felt::ONE;
+        for other in 0..BALANCE_SLOTS {
+            if other == slot {
+                continue;
+            }
+            numerator *= asset - public_value(statement, PUB_SLOT_ASSETS + other);
+        }
+        weights[slot] = numerator * statement.slot_denominator_inverses[slot];
+    }
+    weights
+}
+
+fn slot_membership_zero(statement: &PackedStatement<'_>, asset: Felt) -> Felt {
+    let mut acc = Felt::ONE;
+    for slot in 0..BALANCE_SLOTS {
+        acc *= asset - public_value(statement, PUB_SLOT_ASSETS + slot);
+    }
+    acc
+}
+
 fn aggregate_weighted_differences(challenge: Felt, lhs: &[Felt], rhs: &[Felt]) -> Felt {
     let mut acc = Felt::ZERO;
     let mut power = Felt::ONE;
@@ -315,6 +342,20 @@ fn aggregate_weighted_differences(challenge: Felt, lhs: &[Felt], rhs: &[Felt]) -
         power *= challenge;
     }
     acc
+}
+
+fn derive_stable_selector_bits(public_values: &[u64]) -> [Felt; 2] {
+    if public_values[PUB_STABLE_ENABLED] == 0 {
+        return [Felt::ZERO, Felt::ZERO];
+    }
+    let stable_asset = public_values[PUB_STABLE_ASSET];
+    let slot = (0..BALANCE_SLOTS)
+        .find(|slot| public_values[PUB_SLOT_ASSETS + slot] == stable_asset)
+        .unwrap_or(0);
+    [
+        Felt::from_u64((slot & 1) as u64),
+        Felt::from_u64(((slot >> 1) & 1) as u64),
+    ]
 }
 
 fn signed_from_parts(sign: Felt, magnitude: Felt) -> Felt {
@@ -348,9 +389,9 @@ pub(crate) fn compute_constraints_u64(
 
 fn constraint_count() -> usize {
     let public_bools = MAX_INPUTS + MAX_OUTPUTS + 3;
-    let input_constraints = MAX_INPUTS * (2 + MERKLE_DEPTH + 1 + 1 + MERKLE_DEPTH);
-    let output_constraints = MAX_OUTPUTS * (2 + 1 + 1);
-    let stablecoin_constraints = 2 + 1 + 1 + 7;
+    let input_constraints = MAX_INPUTS * (MERKLE_DEPTH + 1 + MERKLE_DEPTH);
+    let output_constraints = MAX_OUTPUTS * (1 + 1);
+    let stablecoin_constraints = 1 + 1 + 7;
     let balance_constraints = BALANCE_SLOTS;
     let poseidon_transition = POSEIDON_GROUP_COUNT * POSEIDON_STEPS;
     public_bools
@@ -380,13 +421,8 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
     c += 1;
 
     for input in 0..MAX_INPUTS {
-        let selector0 = rows[row_input_selector(input, 0)];
-        let selector1 = rows[row_input_selector(input, 1)];
+        let asset = rows[row_input_asset(input)];
         let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
-        out[c] = felt_bool_v(selector0);
-        c += 1;
-        out[c] = felt_bool_v(selector1);
-        c += 1;
         for bit in 0..MERKLE_DEPTH {
             out[c] = felt_bool_v(rows[row_input_direction(input, bit)]);
             c += 1;
@@ -395,10 +431,8 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         for bit in 0..MERKLE_DEPTH {
             position_sum += rows[row_input_direction(input, bit)] * Felt::from_u64(1u64 << bit);
         }
-        out[c] = rows[row_input_position(input)] - position_sum;
-        c += 1;
-        out[c] =
-            selected_slot_asset(statement, selector0, selector1) - rows[row_input_asset(input)];
+        let _ = position_sum;
+        out[c] = flag * slot_membership_zero(statement, asset);
         c += 1;
 
         for level in 0..MERKLE_DEPTH {
@@ -412,16 +446,10 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
     }
 
     for output_idx in 0..MAX_OUTPUTS {
-        let selector0 = rows[row_output_selector(output_idx, 0)];
-        let selector1 = rows[row_output_selector(output_idx, 1)];
+        let asset = rows[row_output_asset(output_idx)];
         let flag = public_value(statement, PUB_OUTPUT_FLAG0 + output_idx);
         let inactive = Felt::ONE - flag;
-        out[c] = felt_bool_v(selector0);
-        c += 1;
-        out[c] = felt_bool_v(selector1);
-        c += 1;
-        out[c] = selected_slot_asset(statement, selector0, selector1)
-            - rows[row_output_asset(output_idx)];
+        out[c] = flag * slot_membership_zero(statement, asset);
         c += 1;
 
         let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
@@ -441,14 +469,10 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         c += 1;
     }
 
-    let stable_selector0 = rows[row_stable_selector(0)];
-    let stable_selector1 = rows[row_stable_selector(1)];
+    let stable_selector0 = statement.stable_selector_bits[0];
+    let stable_selector1 = statement.stable_selector_bits[1];
     let stable_enabled = public_value(statement, PUB_STABLE_ENABLED);
     let stable_disabled = Felt::ONE - stable_enabled;
-    out[c] = felt_bool_v(stable_selector0);
-    c += 1;
-    out[c] = felt_bool_v(stable_selector1);
-    c += 1;
     out[c] = selected_slot_asset(statement, stable_selector0, stable_selector1)
         - public_value(statement, PUB_STABLE_ASSET);
     c += 1;
@@ -504,20 +528,14 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         let mut delta = Felt::ZERO;
         for input in 0..MAX_INPUTS {
             let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
-            let weight = selected_slot_weight(
-                rows[row_input_selector(input, 0)],
-                rows[row_input_selector(input, 1)],
-                slot,
-            );
+            let asset = rows[row_input_asset(input)];
+            let weight = slot_membership_weights(statement, asset)[slot];
             delta += flag * rows[row_input_value(input)] * weight;
         }
         for output_idx in 0..MAX_OUTPUTS {
             let flag = public_value(statement, PUB_OUTPUT_FLAG0 + output_idx);
-            let weight = selected_slot_weight(
-                rows[row_output_selector(output_idx, 0)],
-                rows[row_output_selector(output_idx, 1)],
-                slot,
-            );
+            let asset = rows[row_output_asset(output_idx)];
+            let weight = slot_membership_weights(statement, asset)[slot];
             delta -= flag * rows[row_output_value(output_idx)] * weight;
         }
         out[c] = if slot == 0 {

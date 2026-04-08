@@ -40,10 +40,10 @@ pub const SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE: u16 = 8;
 pub const SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION: usize = POSEIDON2_STEPS + 1;
 pub const SMALLWOOD_RHO: u32 = 2;
 pub const SMALLWOOD_NB_OPENED_EVALS: u32 = 3;
-pub const SMALLWOOD_BETA: u32 = 3;
+pub const SMALLWOOD_BETA: u32 = 2;
 pub const SMALLWOOD_OPENING_POW_BITS: u32 = 0;
 pub const SMALLWOOD_DECS_NB_EVALS: u32 = 16384;
-pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 26;
+pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 29;
 pub const SMALLWOOD_DECS_ETA: u32 = 3;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 #[allow(dead_code)]
@@ -51,12 +51,11 @@ const SMALLWOOD_BASE_PUBLIC_VALUE_COUNT: usize = 78;
 const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 0;
 const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_PUBLIC_ROWS: usize = 2;
-const SMALLWOOD_INPUT_SECRET_ROWS: usize =
-    1 + 1 + 1 + 2 + MERKLE_TREE_DEPTH + (MERKLE_TREE_DEPTH * 3);
-const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1 + 2;
+const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH + (MERKLE_TREE_DEPTH * 3);
+const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1;
 const SMALLWOOD_SECRET_WITNESS_ROWS: usize =
-    (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS) + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS) + 2;
-const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 5;
+    (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS) + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS);
+const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 2;
 const SMALLWOOD_INPUT_CURRENT_AGG_OFFSET: usize =
     SMALLWOOD_INPUT_DIRECTION_OFFSET + MERKLE_TREE_DEPTH;
 const SMALLWOOD_INPUT_LEFT_AGG_OFFSET: usize =
@@ -91,8 +90,8 @@ fn bridge_row_input_asset(input: usize) -> usize {
 }
 
 #[inline]
-fn bridge_row_input_position(input: usize) -> usize {
-    bridge_input_base(input) + 2
+fn bridge_row_input_direction(input: usize, bit: usize) -> usize {
+    bridge_input_base(input) + SMALLWOOD_INPUT_DIRECTION_OFFSET + bit
 }
 
 #[inline]
@@ -685,21 +684,6 @@ fn push_bridge_constraint(
     push_linear_constraint(constraints, &mapped, target);
 }
 
-fn push_bridge_cell_equals(
-    constraints: &mut SmallwoodLinearConstraints,
-    lhs_row: usize,
-    lhs_lane: usize,
-    rhs_row: usize,
-    rhs_lane: usize,
-    neg_one: u64,
-) {
-    push_bridge_constraint(
-        constraints,
-        &[(lhs_row, lhs_lane, 1), (rhs_row, rhs_lane, neg_one)],
-        0,
-    );
-}
-
 fn build_packed_bridge_linear_constraints(
     statement: &SmallwoodPublicStatement,
 ) -> SmallwoodLinearConstraints {
@@ -863,13 +847,13 @@ fn build_packed_bridge_linear_constraints(
             ],
             NOTE_DOMAIN_TAG,
         );
-        push_bridge_cell_equals(
+        push_bridge_constraint(
             &mut constraints,
-            bridge_poseidon_row(commitment0, 0, 1),
-            lane0,
-            bridge_row_input_asset(input),
-            lane0,
-            neg_one,
+            &[
+                (bridge_poseidon_row(commitment0, 0, 1), lane0, 1),
+                (bridge_row_input_asset(input), lane0, neg_one),
+            ],
+            0,
         );
         push_poseidon_fresh_frame(&mut constraints, commitment0);
         push_poseidon_continuation(&mut constraints, commitment0, commitment1);
@@ -938,14 +922,16 @@ fn build_packed_bridge_linear_constraints(
             ],
             NULLIFIER_DOMAIN_TAG,
         );
-        push_bridge_cell_equals(
-            &mut constraints,
-            bridge_poseidon_row(nullifier, 0, 1),
-            nullifier_lane,
-            bridge_row_input_position(input),
-            nullifier_lane,
-            neg_one,
-        );
+        let mut position_terms = Vec::with_capacity(MERKLE_TREE_DEPTH + 1);
+        position_terms.push((bridge_poseidon_row(nullifier, 0, 1), nullifier_lane, 1));
+        for bit in 0..MERKLE_TREE_DEPTH {
+            position_terms.push((
+                bridge_row_input_direction(input, bit),
+                nullifier_lane,
+                neg_coeff(1u64 << bit),
+            ));
+        }
+        push_bridge_constraint(&mut constraints, &position_terms, 0);
         for limb in 6..(POSEIDON2_WIDTH - 1) {
             push_bridge_constant(
                 &mut constraints,
@@ -1006,13 +992,13 @@ fn build_packed_bridge_linear_constraints(
             ],
             NOTE_DOMAIN_TAG,
         );
-        push_bridge_cell_equals(
+        push_bridge_constraint(
             &mut constraints,
-            bridge_poseidon_row(commitment0, 0, 1),
-            lane0,
-            bridge_row_output_asset(output),
-            lane0,
-            neg_one,
+            &[
+                (bridge_poseidon_row(commitment0, 0, 1), lane0, 1),
+                (bridge_row_output_asset(output), lane0, neg_one),
+            ],
+            0,
         );
         push_poseidon_fresh_frame(&mut constraints, commitment0);
         push_poseidon_continuation(&mut constraints, commitment0, commitment1);
@@ -1195,13 +1181,8 @@ fn semantic_secret_witness_rows(
     witness: &TransactionWitness,
     public_inputs: &TransactionPublicInputsP3,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
-    let slot_assets = public_inputs
-        .balance_slot_assets
-        .iter()
-        .map(|felt| felt.as_canonical_u64())
-        .collect::<Vec<_>>();
-    let (inputs, input_flags) = padded_inputs(&witness.inputs);
-    let (outputs, output_flags) = padded_outputs(&witness.outputs);
+    let (inputs, _input_flags) = padded_inputs(&witness.inputs);
+    let (outputs, _output_flags) = padded_outputs(&witness.outputs);
     let public_values: Vec<u64> = public_inputs
         .to_vec()
         .into_iter()
@@ -1217,13 +1198,6 @@ fn semantic_secret_witness_rows(
     for (idx, input) in inputs.iter().enumerate() {
         values.push(input.note.value);
         values.push(input.note.asset_id);
-        values.push(input.position);
-        let selector_bits = if input_flags[idx] {
-            selector_bits_for_asset(input.note.asset_id, &slot_assets)?
-        } else {
-            [0u64, 0u64]
-        };
-        values.extend(selector_bits);
         values.extend((0..MERKLE_TREE_DEPTH).map(|bit| ((input.position >> bit) & 1) as u64));
         if input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
             return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
@@ -1254,23 +1228,10 @@ fn semantic_secret_witness_rows(
         values.extend(right_aggs);
     }
 
-    for (idx, output) in outputs.iter().enumerate() {
+    for output in &outputs {
         values.push(output.note.value);
         values.push(output.note.asset_id);
-        let selector_bits = if output_flags[idx] {
-            selector_bits_for_asset(output.note.asset_id, &slot_assets)?
-        } else {
-            [0u64, 0u64]
-        };
-        values.extend(selector_bits);
     }
-
-    let stablecoin_selector_bits = if witness.stablecoin.enabled {
-        selector_bits_for_asset(witness.stablecoin.asset_id, &slot_assets)?
-    } else {
-        [0u64, 0u64]
-    };
-    values.extend(stablecoin_selector_bits);
 
     debug_assert_eq!(values.len(), SMALLWOOD_SECRET_WITNESS_ROWS);
     Ok(values)
@@ -1532,20 +1493,6 @@ fn hash_felt_to_words(hash: &HashFelt) -> [u64; SMALLWOOD_WORDS_PER_48_BYTES] {
         words[idx] = felt.as_canonical_u64();
     }
     words
-}
-
-fn selector_bits_for_asset(
-    asset_id: u64,
-    slot_assets: &[u64],
-) -> Result<[u64; 2], TransactionCircuitError> {
-    let slot = slot_assets
-        .iter()
-        .position(|candidate| *candidate == asset_id)
-        .ok_or(TransactionCircuitError::BalanceMismatch(asset_id))?;
-    if slot >= BALANCE_SLOTS {
-        return Err(TransactionCircuitError::BalanceMismatch(asset_id));
-    }
-    Ok([(slot & 1) as u64, ((slot >> 1) & 1) as u64])
 }
 
 fn push_native_relation_inputs(
@@ -1968,11 +1915,11 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let statement = build_smallwood_public_statement_from_witness(&witness).unwrap();
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 276);
+        assert_eq!(statement.raw_witness_len, 264);
         assert_eq!(statement.poseidon_permutation_count, 143);
         assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 55_266);
-        assert_eq!(statement.lppc_row_count, 55_266);
+        assert_eq!(statement.expanded_witness_len, 55_254);
+        assert_eq!(statement.lppc_row_count, 55_254);
         assert_eq!(statement.lppc_packing_factor, 1);
         assert_eq!(statement.effective_constraint_degree, 8);
     }
@@ -2015,11 +1962,12 @@ mod tests {
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 276);
+        assert_eq!(statement.raw_witness_len, 264);
         assert_eq!(statement.poseidon_permutation_count, 143);
         assert_eq!(statement.poseidon_state_row_count, 4_576);
+        assert_eq!(statement.expanded_witness_len, 90_752);
         assert_eq!(statement.lppc_packing_factor, 64);
-        assert_eq!(statement.lppc_row_count, 1_430);
+        assert_eq!(statement.lppc_row_count, 1_418);
         assert_eq!(
             material.packed_witness_rows.len(),
             statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
