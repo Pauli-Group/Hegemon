@@ -1,5 +1,6 @@
 use crate::error::TransactionCircuitError;
 use crate::smallwood_engine::{
+    projected_candidate_proof_bytes as projected_candidate_proof_bytes_rust,
     prove_candidate as prove_candidate_rust, verify_candidate as verify_candidate_rust,
 };
 use crate::smallwood_semantics::test_candidate_witness_rust;
@@ -71,5 +72,19 @@ pub fn test_candidate_witness(
         linear_constraint_indices,
         linear_constraint_coefficients,
         linear_constraint_targets,
+    )
+}
+
+pub fn projected_candidate_proof_bytes(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: u16,
+    linear_constraint_count: usize,
+) -> Result<usize, TransactionCircuitError> {
+    projected_candidate_proof_bytes_rust(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        linear_constraint_count,
     )
 }

@@ -28,8 +28,8 @@ pub mod keys;
 pub mod note;
 pub mod proof;
 pub mod public_inputs;
-pub mod smallwood_frontend;
 mod smallwood_engine;
+pub mod smallwood_frontend;
 pub mod smallwood_native;
 mod smallwood_semantics;
 pub mod trace;
@@ -48,7 +48,8 @@ pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use smallwood_frontend::{
-    prove_smallwood_candidate, verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof,
+    projected_smallwood_candidate_proof_bytes, prove_smallwood_candidate,
+    verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof,
 };
 pub use witness::TransactionWitness;
 

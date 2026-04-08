@@ -18,14 +18,15 @@ const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const WORDS_PER_32_BYTES: usize = 4;
 const HASH_LIMBS: usize = 6;
-const INPUT_ROWS: usize = 245;
+const INPUT_ROWS: usize = 821;
 const OUTPUT_ROWS: usize = 20;
 const PUBLIC_ROWS: usize = 78;
-const SECRET_ROWS: usize = 536;
+const SECRET_ROWS: usize = 1688;
 const LANE_SELECTOR_ROWS: usize = 64;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
-const POSEIDON_PERMUTATION_COUNT: usize = 1 + MAX_INPUTS * INPUT_PERMUTATIONS + MAX_OUTPUTS * OUTPUT_PERMUTATIONS;
+const POSEIDON_PERMUTATION_COUNT: usize =
+    1 + MAX_INPUTS * INPUT_PERMUTATIONS + MAX_OUTPUTS * OUTPUT_PERMUTATIONS;
 const POSEIDON_GROUP_COUNT: usize =
     (POSEIDON_PERMUTATION_COUNT + LANE_SELECTOR_ROWS - 1) / LANE_SELECTOR_ROWS;
 const NOTE_DOMAIN_TAG: u64 = 1;
@@ -54,15 +55,12 @@ const PUB_STABLE_ATTESTATION: usize = 70;
 #[derive(Clone)]
 pub(crate) struct PackedStatement<'a> {
     linear_constraint_targets: &'a [u64],
-    input_pk_auth_challenges: [Felt; MAX_INPUTS],
-    input_nullifier_challenges: [Felt; MAX_INPUTS],
-    input_root_challenges: [Felt; MAX_INPUTS],
-    output_commitment_challenges: [Felt; MAX_OUTPUTS],
     output_ciphertext_challenges: [Felt; MAX_OUTPUTS],
     stable_policy_hash_challenge: Felt,
     stable_oracle_challenge: Felt,
     stable_attestation_challenge: Felt,
-    poseidon_init_challenges: Vec<Felt>,
+    input_merkle_left_challenges: Vec<Felt>,
+    input_merkle_right_challenges: Vec<Felt>,
     poseidon_transition_challenges: Vec<Felt>,
 }
 
@@ -155,41 +153,35 @@ impl<'a> PackedStatement<'a> {
     ) -> Self {
         let mut statement = Self {
             linear_constraint_targets,
-            input_pk_auth_challenges: [Felt::ZERO; MAX_INPUTS],
-            input_nullifier_challenges: [Felt::ZERO; MAX_INPUTS],
-            input_root_challenges: [Felt::ZERO; MAX_INPUTS],
-            output_commitment_challenges: [Felt::ZERO; MAX_OUTPUTS],
             output_ciphertext_challenges: [Felt::ZERO; MAX_OUTPUTS],
             stable_policy_hash_challenge: Felt::ZERO,
             stable_oracle_challenge: Felt::ZERO,
             stable_attestation_challenge: Felt::ZERO,
-            poseidon_init_challenges: vec![Felt::ZERO; POSEIDON_GROUP_COUNT],
+            input_merkle_left_challenges: vec![Felt::ZERO; MAX_INPUTS * MERKLE_DEPTH],
+            input_merkle_right_challenges: vec![Felt::ZERO; MAX_INPUTS * MERKLE_DEPTH],
             poseidon_transition_challenges: vec![Felt::ZERO; POSEIDON_GROUP_COUNT * POSEIDON_STEPS],
         };
-        for input in 0..MAX_INPUTS {
-            statement.input_pk_auth_challenges[input] =
-                nontrivial_challenge(&statement, 1, input as u64, 0);
-            statement.input_nullifier_challenges[input] =
-                nontrivial_challenge(&statement, 2, input as u64, 0);
-            statement.input_root_challenges[input] =
-                nontrivial_challenge(&statement, 3, input as u64, 0);
-        }
         for output in 0..MAX_OUTPUTS {
-            statement.output_commitment_challenges[output] =
-                nontrivial_challenge(&statement, 4, output as u64, 0);
             statement.output_ciphertext_challenges[output] =
                 nontrivial_challenge(&statement, 5, output as u64, 0);
         }
         statement.stable_policy_hash_challenge = nontrivial_challenge(&statement, 6, 0, 0);
         statement.stable_oracle_challenge = nontrivial_challenge(&statement, 7, 0, 0);
         statement.stable_attestation_challenge = nontrivial_challenge(&statement, 8, 0, 0);
+        for input in 0..MAX_INPUTS {
+            for level in 0..MERKLE_DEPTH {
+                let idx = input * MERKLE_DEPTH + level;
+                statement.input_merkle_left_challenges[idx] =
+                    nontrivial_challenge(&statement, 9, input as u64, level as u64);
+                statement.input_merkle_right_challenges[idx] =
+                    nontrivial_challenge(&statement, 10, input as u64, level as u64);
+            }
+        }
         for group in 0..POSEIDON_GROUP_COUNT {
-            statement.poseidon_init_challenges[group] =
-                nontrivial_challenge(&statement, 9, group as u64, 0);
             for step in 0..POSEIDON_STEPS {
                 let idx = poseidon_transition_challenge_index(group, step);
                 statement.poseidon_transition_challenges[idx] =
-                    nontrivial_challenge(&statement, 10, group as u64, step as u64);
+                    nontrivial_challenge(&statement, 11, group as u64, step as u64);
             }
         }
         statement
@@ -288,6 +280,28 @@ fn row_input_direction(input: usize, bit: usize) -> usize {
 #[inline]
 fn row_input_sibling(input: usize, level: usize, limb: usize) -> usize {
     row_input_base(input) + 53 + level * HASH_LIMBS + limb
+}
+#[inline]
+fn row_input_current_hash(input: usize, level: usize, limb: usize) -> usize {
+    row_input_base(input) + 53 + (MERKLE_DEPTH * HASH_LIMBS) + level * (HASH_LIMBS * 3) + limb
+}
+#[inline]
+fn row_input_merkle_left(input: usize, level: usize, limb: usize) -> usize {
+    row_input_base(input)
+        + 53
+        + (MERKLE_DEPTH * HASH_LIMBS)
+        + level * (HASH_LIMBS * 3)
+        + HASH_LIMBS
+        + limb
+}
+#[inline]
+fn row_input_merkle_right(input: usize, level: usize, limb: usize) -> usize {
+    row_input_base(input)
+        + 53
+        + (MERKLE_DEPTH * HASH_LIMBS)
+        + level * (HASH_LIMBS * 3)
+        + (HASH_LIMBS * 2)
+        + limb
 }
 
 #[inline]
@@ -492,140 +506,6 @@ fn output_commitment_chunk(rows: &[Felt], output: usize, chunk: usize, absorb: &
     }
 }
 
-fn input_hash_output(rows: &[Felt], input: usize, level: usize, limb: usize) -> Felt {
-    if level == 0 {
-        rows[poseidon_row(input_commitment_permutation(input, 2), POSEIDON_STEPS, limb)]
-    } else {
-        rows[poseidon_row(input_merkle_permutation(input, level - 1, 1), POSEIDON_STEPS, limb)]
-    }
-}
-
-fn merkle_absorb_chunk(
-    rows: &[Felt],
-    input: usize,
-    level: usize,
-    chunk: usize,
-    absorb: &mut [Felt; 6],
-) {
-    let dir = rows[row_input_direction(input, level)];
-    for (limb, slot) in absorb.iter_mut().enumerate().take(HASH_LIMBS) {
-        let current = input_hash_output(rows, input, level, limb);
-        let sibling = rows[row_input_sibling(input, level, limb)];
-        let left = current + dir * (sibling - current);
-        let right = sibling + dir * (current - sibling);
-        *slot = if chunk == 0 { left } else { right };
-    }
-}
-
-fn nullifier_absorb_chunk(rows: &[Felt], input: usize, absorb: &mut [Felt; 6]) {
-    absorb[0] = rows[poseidon_row(prf_permutation(), POSEIDON_STEPS, 0)];
-    absorb[1] = rows[row_input_position(input)];
-    for limb in 0..4 {
-        absorb[2 + limb] = rows[row_input_rho(input, limb)];
-    }
-}
-
-fn dummy_initial_state(expected: &mut [Felt; POSEIDON2_WIDTH]) {
-    initial_fresh_state(expected, 0, &[]);
-}
-
-fn expected_initial_state_for_permutation(
-    rows: &[Felt],
-    permutation: usize,
-    expected: &mut [Felt; POSEIDON2_WIDTH],
-) {
-    let mut absorb = [Felt::ZERO; 6];
-    if permutation == prf_permutation() {
-        for limb in 0..WORDS_PER_32_BYTES {
-            absorb[limb] = rows[row_sk_chunk(limb)];
-        }
-        initial_fresh_state(expected, NULLIFIER_DOMAIN_TAG, &absorb[..WORDS_PER_32_BYTES]);
-        return;
-    }
-
-    for input in 0..MAX_INPUTS {
-        let input_base = 1 + input * INPUT_PERMUTATIONS;
-        if permutation < input_base + 3 {
-            let chunk = permutation - input_base;
-            input_commitment_chunk(rows, input, chunk, &mut absorb);
-            if chunk == 0 {
-                initial_fresh_state(expected, NOTE_DOMAIN_TAG, &absorb);
-            } else {
-                let mut previous = [Felt::ZERO; POSEIDON2_WIDTH];
-                for limb in 0..POSEIDON2_WIDTH {
-                    previous[limb] =
-                        rows[poseidon_row(input_commitment_permutation(input, chunk - 1), POSEIDON_STEPS, limb)];
-                }
-                continued_state(expected, &previous, &absorb);
-            }
-            return;
-        }
-
-        let merkle_base = input_base + 3;
-        if permutation < merkle_base + MERKLE_DEPTH * 2 {
-            let merkle_local = permutation - merkle_base;
-            let level = merkle_local / 2;
-            let chunk = merkle_local % 2;
-            merkle_absorb_chunk(rows, input, level, chunk, &mut absorb);
-            if chunk == 0 {
-                initial_fresh_state(expected, MERKLE_DOMAIN_TAG, &absorb);
-            } else {
-                let mut previous = [Felt::ZERO; POSEIDON2_WIDTH];
-                for limb in 0..POSEIDON2_WIDTH {
-                    previous[limb] =
-                        rows[poseidon_row(input_merkle_permutation(input, level, chunk - 1), POSEIDON_STEPS, limb)];
-                }
-                continued_state(expected, &previous, &absorb);
-            }
-            return;
-        }
-
-        if permutation == input_nullifier_permutation(input) {
-            nullifier_absorb_chunk(rows, input, &mut absorb);
-            initial_fresh_state(expected, NULLIFIER_DOMAIN_TAG, &absorb);
-            return;
-        }
-    }
-
-    let output_base = 1 + MAX_INPUTS * INPUT_PERMUTATIONS;
-    if permutation < output_base + MAX_OUTPUTS * OUTPUT_PERMUTATIONS {
-        let local = permutation - output_base;
-        let output = local / OUTPUT_PERMUTATIONS;
-        let chunk = local % OUTPUT_PERMUTATIONS;
-        output_commitment_chunk(rows, output, chunk, &mut absorb);
-        if chunk == 0 {
-            initial_fresh_state(expected, NOTE_DOMAIN_TAG, &absorb);
-        } else {
-            let mut previous = [Felt::ZERO; POSEIDON2_WIDTH];
-            for limb in 0..POSEIDON2_WIDTH {
-                previous[limb] =
-                    rows[poseidon_row(output_commitment_permutation(output, chunk - 1), POSEIDON_STEPS, limb)];
-            }
-            continued_state(expected, &previous, &absorb);
-        }
-        return;
-    }
-
-    dummy_initial_state(expected);
-}
-
-fn expected_initial_state(rows: &[Felt], group: usize, expected: &mut [Felt; POSEIDON2_WIDTH]) {
-    let mut lane_expected = vec![[Felt::ZERO; POSEIDON2_WIDTH]; LANE_SELECTOR_ROWS];
-    for lane in 0..LANE_SELECTOR_ROWS {
-        expected_initial_state_for_permutation(
-            rows,
-            permutation_for_group_lane(group, lane),
-            &mut lane_expected[lane],
-        );
-    }
-    for limb in 0..POSEIDON2_WIDTH {
-        expected[limb] = Felt::ZERO;
-        for lane in 0..LANE_SELECTOR_ROWS {
-            expected[limb] += lane_weight(rows, lane) * lane_expected[lane][limb];
-        }
-    }
-}
-
 pub(crate) fn packed_constraint_count() -> usize {
     constraint_count()
 }
@@ -653,18 +533,16 @@ pub(crate) fn compute_constraints_u64(
 
 fn constraint_count() -> usize {
     let public_bools = MAX_INPUTS + MAX_OUTPUTS + 3;
-    let input_constraints = MAX_INPUTS * (2 + MERKLE_DEPTH + 1 + 1 + 1 + 1 + 1);
-    let output_constraints = MAX_OUTPUTS * (2 + 1 + 1 + 1);
+    let input_constraints = MAX_INPUTS * (2 + MERKLE_DEPTH + 1 + 1 + (MERKLE_DEPTH * 2));
+    let output_constraints = MAX_OUTPUTS * (2 + 1 + 1);
     let stablecoin_constraints = 2 + 1 + 1 + 7;
     let balance_constraints = BALANCE_SLOTS;
-    let poseidon_init = POSEIDON_GROUP_COUNT;
     let poseidon_transition = POSEIDON_GROUP_COUNT * POSEIDON_STEPS;
     public_bools
         + input_constraints
         + output_constraints
         + stablecoin_constraints
         + balance_constraints
-        + poseidon_init
         + poseidon_transition
 }
 
@@ -708,41 +586,37 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
             selected_slot_asset(statement, selector0, selector1) - rows[row_input_asset(input)];
         c += 1;
 
-        let mut lhs = [Felt::ZERO; WORDS_PER_32_BYTES];
-        let mut rhs = [Felt::ZERO; WORDS_PER_32_BYTES];
-        for limb in 0..WORDS_PER_32_BYTES {
-            lhs[limb] = rows[row_input_pk_auth(input, limb)];
-            rhs[limb] = rows[poseidon_row(prf_permutation(), POSEIDON_STEPS, limb + 1)];
-        }
-        out[c] = lane_weight(rows, permutation_lane(prf_permutation()))
-            * flag
-            * aggregate_weighted_differences(statement.input_pk_auth_challenges[input], &lhs, &rhs);
-        c += 1;
-
         let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
         let mut rhs_hash = [Felt::ZERO; HASH_LIMBS];
-        for limb in 0..HASH_LIMBS {
-            lhs_hash[limb] = public_value(statement, PUB_NULLIFIERS + input * HASH_LIMBS + limb);
-            rhs_hash[limb] =
-                flag * rows[poseidon_row(input_nullifier_permutation(input), POSEIDON_STEPS, limb)];
+        for level in 0..MERKLE_DEPTH {
+            let dir = rows[row_input_direction(input, level)];
+            for limb in 0..HASH_LIMBS {
+                let current = rows[row_input_current_hash(input, level, limb)];
+                let sibling = rows[row_input_sibling(input, level, limb)];
+                lhs_hash[limb] = rows[row_input_merkle_left(input, level, limb)];
+                rhs_hash[limb] = current + dir * (sibling - current);
+            }
+            out[c] = flag
+                * aggregate_weighted_differences(
+                    statement.input_merkle_left_challenges[input * MERKLE_DEPTH + level],
+                    &lhs_hash,
+                    &rhs_hash,
+                );
+            c += 1;
+            for limb in 0..HASH_LIMBS {
+                let current = rows[row_input_current_hash(input, level, limb)];
+                let sibling = rows[row_input_sibling(input, level, limb)];
+                lhs_hash[limb] = rows[row_input_merkle_right(input, level, limb)];
+                rhs_hash[limb] = sibling + dir * (current - sibling);
+            }
+            out[c] = flag
+                * aggregate_weighted_differences(
+                    statement.input_merkle_right_challenges[input * MERKLE_DEPTH + level],
+                    &lhs_hash,
+                    &rhs_hash,
+                );
+            c += 1;
         }
-        out[c] = lane_weight(rows, permutation_lane(input_nullifier_permutation(input)))
-            * aggregate_weighted_differences(
-                statement.input_nullifier_challenges[input],
-                &lhs_hash,
-                &rhs_hash,
-            );
-        c += 1;
-
-        for limb in 0..HASH_LIMBS {
-            lhs_hash[limb] =
-                rows[poseidon_row(input_merkle_permutation(input, MERKLE_DEPTH - 1, 1), POSEIDON_STEPS, limb)];
-            rhs_hash[limb] = public_value(statement, PUB_MERKLE_ROOT + limb);
-        }
-        out[c] = lane_weight(rows, permutation_lane(input_merkle_permutation(input, MERKLE_DEPTH - 1, 1)))
-            * flag
-            * aggregate_weighted_differences(statement.input_root_challenges[input], &lhs_hash, &rhs_hash);
-        c += 1;
     }
 
     for output_idx in 0..MAX_OUTPUTS {
@@ -754,30 +628,18 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         c += 1;
         out[c] = felt_bool_v(selector1);
         c += 1;
-        out[c] =
-            selected_slot_asset(statement, selector0, selector1) - rows[row_output_asset(output_idx)];
+        out[c] = selected_slot_asset(statement, selector0, selector1)
+            - rows[row_output_asset(output_idx)];
         c += 1;
 
         let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
-        let mut rhs_hash = [Felt::ZERO; HASH_LIMBS];
-        for limb in 0..HASH_LIMBS {
-            lhs_hash[limb] =
-                public_value(statement, PUB_COMMITMENTS + output_idx * HASH_LIMBS + limb);
-            rhs_hash[limb] = flag
-                * rows[poseidon_row(output_commitment_permutation(output_idx, 2), POSEIDON_STEPS, limb)];
-        }
-        out[c] = lane_weight(rows, permutation_lane(output_commitment_permutation(output_idx, 2)))
-            * aggregate_weighted_differences(
-                statement.output_commitment_challenges[output_idx],
-                &lhs_hash,
-                &rhs_hash,
-            );
-        c += 1;
-
+        let rhs_hash = [Felt::ZERO; HASH_LIMBS];
         for limb in 0..HASH_LIMBS {
             lhs_hash[limb] = inactive
-                * public_value(statement, PUB_CIPHERTEXT_HASHES + output_idx * HASH_LIMBS + limb);
-            rhs_hash[limb] = Felt::ZERO;
+                * public_value(
+                    statement,
+                    PUB_CIPHERTEXT_HASHES + output_idx * HASH_LIMBS + limb,
+                );
         }
         out[c] = aggregate_weighted_differences(
             statement.output_ciphertext_challenges[output_idx],
@@ -795,9 +657,8 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
     c += 1;
     out[c] = felt_bool_v(stable_selector1);
     c += 1;
-    out[c] =
-        selected_slot_asset(statement, stable_selector0, stable_selector1)
-            - public_value(statement, PUB_STABLE_ASSET);
+    out[c] = selected_slot_asset(statement, stable_selector0, stable_selector1)
+        - public_value(statement, PUB_STABLE_ASSET);
     c += 1;
     out[c] = stable_enabled * selected_slot_weight(stable_selector0, stable_selector1, 0);
     c += 1;
@@ -815,12 +676,17 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
     for limb in 0..HASH_LIMBS {
         lhs_hash[limb] = stable_disabled * public_value(statement, PUB_STABLE_POLICY_HASH + limb);
     }
-    out[c] = aggregate_weighted_differences(statement.stable_policy_hash_challenge, &lhs_hash, &rhs_hash);
+    out[c] = aggregate_weighted_differences(
+        statement.stable_policy_hash_challenge,
+        &lhs_hash,
+        &rhs_hash,
+    );
     c += 1;
     for limb in 0..HASH_LIMBS {
         lhs_hash[limb] = stable_disabled * public_value(statement, PUB_STABLE_ORACLE + limb);
     }
-    out[c] = aggregate_weighted_differences(statement.stable_oracle_challenge, &lhs_hash, &rhs_hash);
+    out[c] =
+        aggregate_weighted_differences(statement.stable_oracle_challenge, &lhs_hash, &rhs_hash);
     c += 1;
     for limb in 0..HASH_LIMBS {
         lhs_hash[limb] = stable_disabled * public_value(statement, PUB_STABLE_ATTESTATION + limb);
@@ -873,19 +739,6 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
     }
 
     for group in 0..POSEIDON_GROUP_COUNT {
-        let mut expected = [Felt::ZERO; POSEIDON2_WIDTH];
-        expected_initial_state(rows, group, &mut expected);
-        let mut current = [Felt::ZERO; POSEIDON2_WIDTH];
-        for limb in 0..POSEIDON2_WIDTH {
-            current[limb] = rows[poseidon_group_row(group, 0, limb)];
-        }
-        out[c] = aggregate_weighted_differences(
-            statement.poseidon_init_challenges[group],
-            &current,
-            &expected,
-        );
-        c += 1;
-
         for step in 0..POSEIDON_STEPS {
             let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
             let mut next_actual = [Felt::ZERO; POSEIDON2_WIDTH];

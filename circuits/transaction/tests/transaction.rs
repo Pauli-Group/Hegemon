@@ -10,8 +10,8 @@ use transaction_circuit::p3_verifier::{
 };
 use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p3, verify};
 use transaction_circuit::{
-    prove_smallwood_candidate, InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding,
-    TransactionCircuitError, TransactionWitness,
+    projected_smallwood_candidate_proof_bytes, prove_smallwood_candidate, InputNoteWitness,
+    OutputNoteWitness, StablecoinPolicyBinding, TransactionCircuitError, TransactionWitness,
 };
 
 /// Compute the Merkle root from a leaf and path using CIRCUIT_MERKLE_DEPTH levels.
@@ -258,31 +258,50 @@ fn verification_fails_for_nullifier_mutation() {
 }
 
 #[test]
-#[ignore = "experimental SmallWood packed candidate is too heavy for the default test profile"]
+#[ignore = "experimental SmallWood packed candidate release proving is still too slow for the default test profile"]
 fn smallwood_candidate_roundtrip_verifies() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let (_proving_key, verifying_key) = generate_keys();
     let proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    eprintln!(
+        "smallwood candidate proof bytes: {}",
+        proof.stark_proof.len()
+    );
     let report = verify(&proof, &verifying_key).expect("smallwood verification");
     assert!(report.verified);
 }
 
 #[test]
-#[ignore = "experimental SmallWood packed candidate is still above the shipped proof-size baseline"]
 fn smallwood_candidate_proof_stays_below_shipped_plonky3_baseline() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    let proof_bytes = projected_smallwood_candidate_proof_bytes(&witness)
+        .expect("projected smallwood candidate proof bytes");
+    eprintln!("smallwood candidate projected proof bytes: {proof_bytes}");
     assert!(
-        proof.stark_proof.len() < 354_081,
+        proof_bytes < 354_081,
         "expected smallwood candidate proof to stay below the shipped plonky3 baseline, got {} bytes",
-        proof.stark_proof.len()
+        proof_bytes
     );
 }
 
 #[test]
-#[ignore = "experimental SmallWood packed candidate is too heavy for the default test profile"]
+fn smallwood_candidate_proof_stays_below_native_tx_leaf_cap() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof_bytes = projected_smallwood_candidate_proof_bytes(&witness)
+        .expect("projected smallwood candidate proof bytes");
+    eprintln!("smallwood candidate projected proof bytes: {proof_bytes}");
+    assert!(
+        proof_bytes < 524_288,
+        "expected smallwood candidate proof to stay below the native tx-leaf cap, got {} bytes",
+        proof_bytes
+    );
+}
+
+#[test]
+#[ignore = "experimental SmallWood packed candidate release proving is still too slow for the default test profile"]
 fn smallwood_candidate_rejects_semantic_mutation() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;

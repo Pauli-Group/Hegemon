@@ -4,10 +4,10 @@ This note freezes the witness-free public SmallWood statement shape and no-grind
 
 Important status note:
 
-- the currently integrated prover/verifier backend in the repo is still the scalar fallback shape (`packing_factor = 1`),
-- the Rust-side packed frontend material now exists and lands exactly on the frozen `64`-lane target statement shape,
-- that the current integrated packed candidate proves the native relation, produces roughly `1.35 MB` proofs, and now passes the fast LPPC witness checks after fixing randomized-constraint interpolation and the packed bridge ordering bug,
-- so this note should be read as the exact packed-target security note, not as a claim that the current integrated scalar candidate already has the packed statement shape below.
+- the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
+- the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
+- the exact serialized proof envelope for that current candidate now projects to `239460` bytes and fits below both the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- but release proving is still too slow, so this note should be read as the exact no-grinding security note for the candidate statement, not as a claim that the backend is product-ready today.
 
 It is intentionally narrow. This is not a release claim for a full SmallWood transaction-validity proof. It is the exact engineering note for the packed statement Hegemon wants behind `TxProofBackend::SmallwoodCandidate`.
 
@@ -16,7 +16,7 @@ The answer for that packed target is:
 - the old random-linear-check envelope is gone,
 - the packed candidate statement is witness-free and public,
 - and the exact no-grinding candidate profile clears a conservative `128-bit` floor for that packed statement,
-- but the integrated backend is still not release-ready because the current packed relation geometry is still too large even though the backend is now Rust-native.
+- but the integrated backend is still not release-ready because proving cost is still too high even though the backend is now Rust-native and the proof bytes are below the shipped baseline.
 
 ## What statement is actually proved
 
