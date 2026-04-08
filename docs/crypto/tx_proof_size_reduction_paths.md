@@ -146,7 +146,7 @@ There was also a hard release-discipline caveat:
 
 That work is now done for the exact active witness-free candidate statement:
 
-- current no-grinding candidate profile: `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_evals = 4096`, `decs_nb_opened_evals = 65`, `decs_eta = 10`, zero grinding bits
+- current no-grinding candidate profile: `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_evals = 16384`, `decs_nb_opened_evals = 26`, `decs_eta = 3`, zero grinding bits
 - exact term-wise floor for the implemented witness-free statement: `128` bits
 
 What is still not done is the geometry reduction from the active integrated bridge to the smaller frozen target. The live backend already proves the real native tx-validity semantics on the active bridge statement; the remaining problem is making that statement materially smaller and faster without losing the no-grinding `128-bit` bar.

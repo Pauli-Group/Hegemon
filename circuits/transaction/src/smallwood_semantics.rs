@@ -16,7 +16,6 @@ const BALANCE_SLOTS: usize = 4;
 const MERKLE_DEPTH: usize = 32;
 const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
-const WORDS_PER_32_BYTES: usize = 4;
 const HASH_LIMBS: usize = 6;
 const INPUT_ROWS: usize = 133;
 const OUTPUT_ROWS: usize = 4;
@@ -30,19 +29,12 @@ const POSEIDON_PERMUTATION_COUNT: usize =
     1 + MAX_INPUTS * INPUT_PERMUTATIONS + MAX_OUTPUTS * OUTPUT_PERMUTATIONS;
 const POSEIDON_GROUP_COUNT: usize =
     (POSEIDON_PERMUTATION_COUNT + PACKING_FACTOR - 1) / PACKING_FACTOR;
-const NOTE_DOMAIN_TAG: u64 = 1;
-const NULLIFIER_DOMAIN_TAG: u64 = 2;
-const MERKLE_DOMAIN_TAG: u64 = 4;
-
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
-const PUB_NULLIFIERS: usize = 4;
-const PUB_COMMITMENTS: usize = 16;
 const PUB_CIPHERTEXT_HASHES: usize = 28;
 const PUB_FEE: usize = 40;
 const PUB_VALUE_BALANCE_SIGN: usize = 41;
 const PUB_VALUE_BALANCE_MAG: usize = 42;
-const PUB_MERKLE_ROOT: usize = 43;
 const PUB_SLOT_ASSETS: usize = 49;
 const PUB_STABLE_ENABLED: usize = 53;
 const PUB_STABLE_ASSET: usize = 54;
@@ -285,41 +277,8 @@ fn poseidon_group_row(group: usize, step_row: usize, limb: usize) -> usize {
         + limb
 }
 #[inline]
-fn poseidon_row(permutation: usize, step_row: usize, limb: usize) -> usize {
-    poseidon_group_row(permutation / PACKING_FACTOR, step_row, limb)
-}
-#[inline]
 fn poseidon_transition_challenge_index(group: usize, step: usize) -> usize {
     group * POSEIDON_STEPS + step
-}
-
-#[inline]
-fn prf_permutation() -> usize {
-    0
-}
-#[inline]
-fn input_commitment_permutation(input: usize, chunk: usize) -> usize {
-    1 + input * INPUT_PERMUTATIONS + chunk
-}
-#[inline]
-fn input_merkle_permutation(input: usize, level: usize, chunk: usize) -> usize {
-    1 + input * INPUT_PERMUTATIONS + 3 + level * 2 + chunk
-}
-#[inline]
-fn input_nullifier_permutation(input: usize) -> usize {
-    1 + input * INPUT_PERMUTATIONS + INPUT_PERMUTATIONS - 1
-}
-#[inline]
-fn output_commitment_permutation(output: usize, chunk: usize) -> usize {
-    1 + MAX_INPUTS * INPUT_PERMUTATIONS + output * OUTPUT_PERMUTATIONS + chunk
-}
-#[inline]
-fn permutation_lane(permutation: usize) -> usize {
-    permutation % PACKING_FACTOR
-}
-#[inline]
-fn permutation_for_group_lane(group: usize, lane: usize) -> usize {
-    group * PACKING_FACTOR + lane
 }
 
 #[inline]
@@ -360,30 +319,6 @@ fn aggregate_weighted_differences(challenge: Felt, lhs: &[Felt], rhs: &[Felt]) -
 
 fn signed_from_parts(sign: Felt, magnitude: Felt) -> Felt {
     magnitude - (sign + sign) * magnitude
-}
-
-fn fill_zero_state(state: &mut [Felt; POSEIDON2_WIDTH]) {
-    *state = [Felt::ZERO; POSEIDON2_WIDTH];
-}
-
-fn initial_fresh_state(state: &mut [Felt; POSEIDON2_WIDTH], domain_tag: u64, absorb: &[Felt]) {
-    fill_zero_state(state);
-    state[0] = Felt::from_u64(domain_tag);
-    state[POSEIDON2_WIDTH - 1] = Felt::ONE;
-    for (idx, value) in absorb.iter().enumerate() {
-        state[idx] += *value;
-    }
-}
-
-fn continued_state(
-    state: &mut [Felt; POSEIDON2_WIDTH],
-    previous: &[Felt; POSEIDON2_WIDTH],
-    absorb: &[Felt],
-) {
-    *state = *previous;
-    for (idx, value) in absorb.iter().enumerate() {
-        state[idx] += *value;
-    }
 }
 
 pub(crate) fn packed_constraint_count() -> usize {

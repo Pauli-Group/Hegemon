@@ -42,14 +42,13 @@ pub const SMALLWOOD_RHO: u32 = 2;
 pub const SMALLWOOD_NB_OPENED_EVALS: u32 = 3;
 pub const SMALLWOOD_BETA: u32 = 3;
 pub const SMALLWOOD_OPENING_POW_BITS: u32 = 0;
-pub const SMALLWOOD_DECS_NB_EVALS: u32 = 32768;
-pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 22;
-pub const SMALLWOOD_DECS_ETA: u32 = 4;
+pub const SMALLWOOD_DECS_NB_EVALS: u32 = 16384;
+pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 26;
+pub const SMALLWOOD_DECS_ETA: u32 = 3;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 #[allow(dead_code)]
 const SMALLWOOD_BASE_PUBLIC_VALUE_COUNT: usize = 78;
 const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 0;
-const SMALLWOOD_WORDS_PER_32_BYTES: usize = 4;
 const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_PUBLIC_ROWS: usize = 2;
 const SMALLWOOD_INPUT_SECRET_ROWS: usize =
@@ -67,20 +66,7 @@ const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
 const PUB_NULLIFIERS: usize = 4;
 const PUB_COMMITMENTS: usize = 16;
-const PUB_CIPHERTEXT_HASHES: usize = 28;
-const PUB_FEE: usize = 40;
-const PUB_VALUE_BALANCE_SIGN: usize = 41;
-const PUB_VALUE_BALANCE_MAG: usize = 42;
 const PUB_MERKLE_ROOT: usize = 43;
-const PUB_SLOT_ASSETS: usize = 49;
-const PUB_STABLE_ENABLED: usize = 53;
-const PUB_STABLE_ASSET: usize = 54;
-const PUB_STABLE_POLICY_VERSION: usize = 55;
-const PUB_STABLE_ISSUANCE_SIGN: usize = 56;
-const PUB_STABLE_ISSUANCE_MAG: usize = 57;
-const PUB_STABLE_POLICY_HASH: usize = 58;
-const PUB_STABLE_ORACLE: usize = 64;
-const PUB_STABLE_ATTESTATION: usize = 70;
 
 #[inline]
 fn bridge_input_base(input: usize) -> usize {
@@ -110,16 +96,6 @@ fn bridge_row_input_position(input: usize) -> usize {
 }
 
 #[inline]
-fn bridge_row_input_selector(input: usize, bit: usize) -> usize {
-    bridge_input_base(input) + 3 + bit
-}
-
-#[inline]
-fn bridge_row_input_direction(input: usize, bit: usize) -> usize {
-    bridge_input_base(input) + SMALLWOOD_INPUT_DIRECTION_OFFSET + bit
-}
-
-#[inline]
 fn bridge_row_input_current_agg(input: usize, level: usize) -> usize {
     bridge_input_base(input) + SMALLWOOD_INPUT_CURRENT_AGG_OFFSET + level
 }
@@ -142,21 +118,6 @@ fn bridge_row_output_value(output: usize) -> usize {
 #[inline]
 fn bridge_row_output_asset(output: usize) -> usize {
     bridge_output_base(output) + 1
-}
-
-#[inline]
-fn bridge_row_output_selector(output: usize, bit: usize) -> usize {
-    bridge_output_base(output) + 2 + bit
-}
-
-#[inline]
-fn bridge_row_stable_selector(bit: usize) -> usize {
-    SMALLWOOD_PUBLIC_ROWS + SMALLWOOD_SECRET_WITNESS_ROWS - 2 + bit
-}
-
-#[inline]
-fn bridge_selector_row(selector: usize) -> usize {
-    SMALLWOOD_PUBLIC_ROWS + SMALLWOOD_SECRET_WITNESS_ROWS + selector
 }
 
 #[inline]
@@ -1557,16 +1518,6 @@ fn smallwood_transcript_binding(
     Ok(bytes)
 }
 
-fn bytes32_chunks_to_words(bytes: &[u8; 32]) -> [u64; SMALLWOOD_WORDS_PER_32_BYTES] {
-    let mut words = [0u64; SMALLWOOD_WORDS_PER_32_BYTES];
-    for (idx, chunk) in bytes.chunks_exact(8).enumerate() {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(chunk);
-        words[idx] = u64::from_be_bytes(buf) % transaction_core::constants::FIELD_MODULUS as u64;
-    }
-    words
-}
-
 fn push_bytes32_values(out: &mut Vec<u64>, bytes: &[u8; 32]) {
     out.extend(bytes.iter().map(|byte| u64::from(*byte)));
 }
@@ -1581,15 +1532,6 @@ fn hash_felt_to_words(hash: &HashFelt) -> [u64; SMALLWOOD_WORDS_PER_48_BYTES] {
         words[idx] = felt.as_canonical_u64();
     }
     words
-}
-
-fn push_note_fields(out: &mut Vec<u64>, note: &crate::note::NoteData) {
-    out.push(note.value);
-    out.push(note.asset_id);
-    out.extend(bytes32_chunks_to_words(&note.pk_recipient));
-    out.extend(bytes32_chunks_to_words(&note.pk_auth));
-    out.extend(bytes32_chunks_to_words(&note.rho));
-    out.extend(bytes32_chunks_to_words(&note.r));
 }
 
 fn selector_bits_for_asset(
