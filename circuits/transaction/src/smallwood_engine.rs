@@ -27,8 +27,8 @@ const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
 const SMALLWOOD_RHO: usize = 2;
 const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
 const SMALLWOOD_BETA: usize = 3;
-const SMALLWOOD_DECS_NB_EVALS: usize = 16384;
-const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 26;
+const SMALLWOOD_DECS_NB_EVALS: usize = 8192;
+const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 32;
 const SMALLWOOD_DECS_ETA: usize = 3;
 const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 
@@ -1137,21 +1137,14 @@ fn lvcs_commit(
         extended_rows[row][cfg.nb_lvcs_cols..].copy_from_slice(&rnd);
     }
     log_stage("extend_rows", &mut last);
-    let interpolation_points = lvcs_interpolation_points(cfg);
-    let initial_domain_evals = extended_rows
+    let rotated_rows = extended_rows
         .par_iter()
-        .map(|row| {
-            let poly = poly_interpolate_generic(row, &interpolation_points);
-            evaluate_poly_on_consecutive_domain(
-                &poly,
-                cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS,
-            )
-        })
+        .map(|row| rotate_left_words(row, cfg.nb_lvcs_cols))
         .collect::<Vec<_>>();
     let decs_key = decs_commit(
         cfg.nb_lvcs_rows,
         cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS - 1,
-        &initial_domain_evals,
+        &rotated_rows,
         salt,
     )?;
     log_stage("decs_commit", &mut last);
@@ -1241,10 +1234,10 @@ fn lvcs_recompute_rows(
         extended_combis[k][..cfg.nb_lvcs_cols].copy_from_slice(&combi_heads[k]);
         extended_combis[k][cfg.nb_lvcs_cols..].copy_from_slice(&rcombi_tails[k]);
     }
-    let interpolation_points = lvcs_interpolation_points(cfg);
     let mut combi_polys = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
     for combi in &extended_combis {
-        combi_polys.push(poly_interpolate_generic(combi, &interpolation_points));
+        let rotated = rotate_left_words(combi, cfg.nb_lvcs_cols);
+        combi_polys.push(interpolate_consecutive(&rotated)?);
     }
     let mut coeffs_part1 = vec![vec![0u64; cfg.nb_lvcs_opened_combi]; cfg.nb_lvcs_opened_combi];
     let mut coeffs_part2 =
@@ -1285,18 +1278,6 @@ fn lvcs_recompute_rows(
         }
     }
     Ok(evals)
-}
-
-fn lvcs_interpolation_points(cfg: &SmallwoodConfig) -> Vec<u64> {
-    let total = cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS;
-    let mut points = Vec::with_capacity(total);
-    for point in SMALLWOOD_DECS_NB_OPENED_EVALS..total {
-        points.push(point as u64);
-    }
-    for point in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
-        points.push(point as u64);
-    }
-    points
 }
 
 fn decs_commit(
@@ -2191,10 +2172,9 @@ mod tests {
             extended_combis[k][..cfg.nb_lvcs_cols].copy_from_slice(&combi_heads[k]);
             extended_combis[k][cfg.nb_lvcs_cols..].copy_from_slice(&pcs_proof.rcombi_tails[k]);
         }
-        let interpolation_points = lvcs_interpolation_points(&cfg);
         let combi_polys = extended_combis
             .iter()
-            .map(|combi| poly_interpolate_generic(combi, &interpolation_points))
+            .map(|combi| interpolate_consecutive(&rotate_left_words(combi, cfg.nb_lvcs_cols)).unwrap())
             .collect::<Vec<_>>();
         for (j, &point) in decs_eval_points.iter().enumerate() {
             for (k, poly) in combi_polys.iter().enumerate() {
@@ -2256,6 +2236,16 @@ fn merkle_compute_root(
     current
 }
 
+fn rotate_left_words(values: &[u64], by: usize) -> Vec<u64> {
+    let n = values.len();
+    let by = by % n;
+    values[by..]
+        .iter()
+        .chain(values[..by].iter())
+        .copied()
+        .collect()
+}
+
 fn poly_interpolate_random(
     evals: &[u64],
     eval_points: &[u64],
@@ -2306,11 +2296,24 @@ fn extend_consecutive_evals(initial: &[u64], total_len: usize) -> Vec<u64> {
     if total_len <= initial.len() {
         return initial[..keep].to_vec();
     }
-    let poly = interpolate_consecutive(initial)
-        .expect("consecutive interpolation must succeed on distinct points");
-    (0..total_len)
-        .map(|point| poly_eval(&poly, point as u64))
-        .collect()
+    let n = initial.len();
+    let mut work = initial.to_vec();
+    let mut diffs = Vec::with_capacity(n);
+    diffs.push(work[n - 1]);
+    for order in 1..n {
+        for idx in 0..(n - order) {
+            work[idx] = sub_mod(work[idx + 1], work[idx]);
+        }
+        diffs.push(work[n - order - 1]);
+    }
+    let mut out = initial.to_vec();
+    for _ in n..total_len {
+        for idx in (0..diffs.len() - 1).rev() {
+            diffs[idx] = add_mod(diffs[idx], diffs[idx + 1]);
+        }
+        out.push(diffs[0]);
+    }
+    out
 }
 
 fn poly_interpolate_generic(evals: &[u64], eval_points: &[u64]) -> Vec<u64> {
@@ -2338,8 +2341,22 @@ fn interpolate_consecutive(evals: &[u64]) -> Result<Vec<u64>, TransactionCircuit
     if n == 0 {
         return Ok(Vec::new());
     }
-    let points = (0..n).map(|idx| idx as u64).collect::<Vec<_>>();
-    Ok(poly_interpolate_generic(evals, &points))
+    let mut dd = evals.to_vec();
+    for order in 1..n {
+        let inv = inv_mod(order as u64)?;
+        for i in (order..n).rev() {
+            dd[i] = mul_mod(sub_mod(dd[i], dd[i - 1]), inv);
+        }
+    }
+    let mut poly = vec![0u64; n];
+    let mut basis = vec![1u64];
+    for (k, coeff) in dd.iter().enumerate() {
+        poly_add_assign_scaled(&mut poly, &basis, *coeff);
+        if k + 1 < n {
+            basis = poly_mul_linear_normalized(&basis, k as u64);
+        }
+    }
+    Ok(poly)
 }
 
 fn poly_set_vanishing(roots: &[u64]) -> Vec<u64> {
