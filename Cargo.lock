@@ -11973,6 +11973,7 @@ dependencies = [
  "postcard",
  "proptest",
  "protocol-versioning",
+ "rayon",
  "serde",
  "serde_json",
  "synthetic-crypto",

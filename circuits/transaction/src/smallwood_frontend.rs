@@ -2230,7 +2230,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "scalar SmallWood frontend is diagnostic only; the live candidate uses the packed 4-lane bridge"]
+    #[ignore = "scalar SmallWood frontend is diagnostic only; the live candidate uses the packed 64-lane bridge"]
     fn smallwood_candidate_witness_satisfies_constraints() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -2249,7 +2249,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "scalar SmallWood frontend is diagnostic only; the live candidate uses the packed 4-lane bridge"]
+    #[ignore = "scalar SmallWood frontend is diagnostic only; the live candidate uses the packed 64-lane bridge"]
     fn smallwood_candidate_witness_rejects_mutation() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;

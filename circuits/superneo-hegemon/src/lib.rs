@@ -5209,7 +5209,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "experimental SmallWood packed candidate is still above the native tx-leaf proof cap"]
+    #[ignore = "experimental SmallWood release proving is still too slow for the default test lane"]
     fn native_tx_leaf_artifact_accepts_smallwood_candidate_backend() {
         let mut witness = sample_witness(20);
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -5227,7 +5227,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "experimental SmallWood packed candidate is still above the native tx-leaf proof cap"]
+    #[ignore = "experimental SmallWood release proving is still too slow for the default test lane"]
     fn native_tx_leaf_artifact_rejects_tampered_smallwood_candidate_backend() {
         let mut witness = sample_witness(44);
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -5250,7 +5250,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "experimental SmallWood packed candidate is still above the native tx-leaf proof cap"]
+    #[ignore = "experimental SmallWood release proving is still too slow for the default test lane"]
     fn native_receipt_root_accepts_smallwood_candidate_leaf_record() {
         let mut smallwood_witness = sample_witness(45);
         smallwood_witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
