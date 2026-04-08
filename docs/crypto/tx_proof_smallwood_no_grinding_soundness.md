@@ -1,17 +1,17 @@
 # Transaction Proof SmallWood Candidate No-Grinding Soundness
 
-This note freezes the witness-free public SmallWood statement shape and no-grinding parameter profile that the packed SmallWood frontend is supposed to realize.
+This note freezes the exact active witness-free public SmallWood statement shape and no-grinding parameter profile used by the integrated Rust `SmallwoodCandidate` backend.
 
 Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `242124` bytes, the passing release roundtrip emits `242132` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- the exact serialized proof envelope for that current candidate now projects to `302828` bytes, the passing release roundtrip emits `302836` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
 - but release proving is still too slow, so this note should be read as the exact no-grinding security note for the candidate statement, not as a claim that the backend is product-ready today.
 
-It is intentionally narrow. This is not a release claim for a full SmallWood transaction-validity proof. It is the exact engineering note for the packed statement Hegemon wants behind `TxProofBackend::SmallwoodCandidate`.
+It is intentionally narrow. This is not a blanket release claim for every future SmallWood frontend Hegemon might build. It is the exact engineering note for the active integrated statement behind `TxProofBackend::SmallwoodCandidate`.
 
-The answer for that packed target is:
+The answer for the active integrated backend is:
 
 - the old random-linear-check envelope is gone,
 - the packed candidate statement is witness-free and public,
@@ -36,18 +36,18 @@ The proof no longer serializes any witness envelope. Instead, the public stateme
 
 and from fixed shape metadata for the packed expanded native witness.
 
-The exact public statement fields are:
+The exact active public statement fields are:
 
 - `public_value_count = 78`
-- `raw_witness_len = 3991`
-- `poseidon_permutation_count = 145`
-- `poseidon_state_row_count = 4640`
-- `expanded_witness_len = 59749`
-- `lppc_row_count = 934`
+- `raw_witness_len = 1688`
+- `poseidon_permutation_count = 143`
+- `poseidon_state_row_count = 4576`
+- `expanded_witness_len = 190848`
+- `lppc_row_count = 2982`
 - `lppc_packing_factor = 64`
 - `effective_constraint_degree = 8`
 
-Those values are locked by the current unit test in [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs).
+Those values are locked by the current integrated bridge shape test in [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs). The repo still also carries the separate frozen structural target (`raw_witness_len = 3991`, `poseidon_permutation_count = 145`, `expanded_witness_len = 59749`, `lppc_row_count = 934`), but that is not the statement the live backend is proving today.
 
 The linear constraints are now sparse public selectors over the packed witness rows, not transcript-derived dense random checks. The selector indices are the first `78` witness coordinates, and the public targets are the corresponding direct public field values. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
 
@@ -60,7 +60,7 @@ The current candidate profile is now:
 - `beta = 3`
 - `opening_pow_bits = 0`
 - `decs_nb_evals = 4096`
-- `decs_nb_opened_evals = 37`
+- `decs_nb_opened_evals = 65`
 - `decs_eta = 10`
 - `decs_pow_bits = 0`
 
@@ -93,31 +93,31 @@ As with Hegemon’s other tx-proof notes, this is a release-engineering note, no
 
 ## Mapping the implemented statement to SmallWood parameters
 
-Using the notation from the SmallWood paper’s Table 1:
+Using the notation from the SmallWood paper’s Table 1 for the active integrated bridge statement:
 
 - `|F| = 2^64 - 2^32 + 1` (Goldilocks)
 - `s = 64`
-- `n = 934`
+- `n = 2982`
 - `d = 8`
 - `m1 = 1`
 - `m2 = 78`
 - `ℓ' = 3`
 - `ρ = 2`
 - `β = 3`
-- `ℓ = 37`
+- `ℓ = 65`
 - `N = 4096`
 - `η = 10`
 
 The exact derived PCS/LVCS terms are:
 
-- `n_pcs = n + 2ρ = 938`
+- `n_pcs = n + 2ρ = 2986`
 - witness-polynomial degree convention gives `d_j = s + ℓ' - 1 = 66`
 - masked polynomial-constraint degree `d_Q = d * (s + ℓ' - 1) - s = 464`
-- LVCS row count `n_rows = β * (s + ℓ') = 198`
-- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 318`
-- DECS polynomial count `n_decs = n_rows = 198`
+- LVCS row count `n_rows = β * (s + ℓ') = 201`
+- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 1001`
+- DECS polynomial count `n_decs = n_rows = 201`
 
-The `n_cols = 318` value is the dangerous one. If you instantiate `ε4` against the wrong matrix dimension, you lie to yourself by dozens of bits. This note uses the exact LVCS row-vector size from the actual `pcs-alloc.c` construction, not a prettier surrogate.
+The `n_cols = 1001` value is the dangerous one. If you instantiate `ε4` against the prettier frozen target rather than the active bridge geometry, you lie to yourself by dozens of bits. This note uses the exact LVCS row-vector size from the current integrated Rust backend, not the smaller structural target.
 
 ## Exact term values
 
@@ -130,14 +130,14 @@ With the mappings above, the SmallWood terms become:
 
 For the exact current candidate profile:
 
-- `ε1 < 2^-616.76`
+- `ε1 < 2^-616.52`
 - `ε2 < 2^-128.00`
 - `ε3 < 2^-165.44`
-- `ε4 < 2^-133.28`
+- `ε4 < 2^-128.46`
 
 So the exact no-grinding floor for the implemented witness-free public statement is:
 
-- `min(616.76, 128.00, 165.44, 133.28) = 128.00 bits`
+- `min(616.52, 128.00, 165.44, 128.46) = 128.00 bits`
 
 The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
 
@@ -146,12 +146,12 @@ The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
 Two earlier candidate profiles fail if instantiated honestly:
 
 - the old `nb_opened_evals = 2` profile leaves `ε3` at only about `2^-110.34`
-- the old `decs_nb_opened_evals = 21` profile leaves `ε4` at only about `2^-76.42`
+- the old active-bridge `decs_nb_opened_evals = 37` profile leaves `ε4` at only about `2^-74.03`
 
 That is why the current no-grinding candidate moved to:
 
 - `nb_opened_evals = 3`
-- `decs_nb_opened_evals = 37`
+- `decs_nb_opened_evals = 65`
 
 Those are not cosmetic tweaks. They are the first exact no-grinding values that make the implemented witness-free statement clear the term-wise `128-bit` bar without invoking grinding.
 
@@ -167,19 +167,20 @@ What it proves:
 What it does not prove:
 
 - that `SmallwoodCandidate` is now release-ready,
-- that the current SmallWood polynomial constraints already encode full `NativeTxValidityRelation`,
-- that the final SmallWood tx backend has reached the smaller packed geometry needed for a proof-size win.
+- that the current bridge geometry is the final SmallWood tx frontend,
+- that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation, but the current `4`-lane bridge geometry is still too wide to beat the shipped Plonky3 proof. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane bridge geometry, and that active bridge already beats the shipped Plonky3 proof on bytes. The remaining gap is runtime and the distance between the current `2982`-row bridge and the smaller `934`-row structural target. So this note is exact, but still narrow.
 
 ## Product conclusion
 
 This milestone is complete in the narrow sense the user asked for:
 
 - the candidate statement is now witness-free and public,
-- and the repo now carries an exact no-grinding `128-bit` note for that exact statement.
+- the active integrated backend now carries an exact no-grinding `128-bit` note for that exact statement,
+- and the active proof bytes stay below both the shipped Plonky3 baseline and the native `tx_leaf` cap.
 
 The next milestone is different:
 
-- reduce the packed relation geometry from the current heavy bridge shape toward the frozen `64`-lane target,
+- reduce the packed relation geometry from the current `2982`-row bridge toward the frozen `64`-lane target,
 - while preserving the witness-free public statement shape and this no-grinding discipline.

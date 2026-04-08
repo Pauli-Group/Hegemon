@@ -25,7 +25,7 @@ const SMALLWOOD_RHO: usize = 2;
 const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
 const SMALLWOOD_BETA: usize = 3;
 const SMALLWOOD_DECS_NB_EVALS: usize = 4096;
-const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 37;
+const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 65;
 const SMALLWOOD_DECS_ETA: usize = 10;
 const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 
@@ -842,50 +842,53 @@ fn get_constraint_linear_polynomials_batched(
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let lag = build_lagrange_basis(cfg.packing_factor, packing_points)?;
     let out_degree = cfg.wit_poly_degree + (cfg.packing_factor - 1);
-    let mut out = vec![vec![0u64; out_degree + 1]; SMALLWOOD_RHO];
-    for rep in 0..SMALLWOOD_RHO {
-        let mut aggregated = vec![0u64; cfg.witness_size];
-        for check in 0..cfg.linear_constraint_count {
-            let gamma = gammas[rep][check];
-            if gamma == 0 {
-                continue;
-            }
-            let start = linear_constraint_offsets[check] as usize;
-            let end = linear_constraint_offsets[check + 1] as usize;
-            for term_idx in start..end {
-                let coeff = linear_constraint_coefficients[term_idx];
-                let idx = linear_constraint_indices[term_idx] as usize;
-                if coeff == 0 || idx >= cfg.witness_size {
+    (0..SMALLWOOD_RHO)
+        .into_par_iter()
+        .map(|rep| {
+            let mut aggregated = vec![0u64; cfg.witness_size];
+            for check in 0..cfg.linear_constraint_count {
+                let gamma = gammas[rep][check];
+                if gamma == 0 {
                     continue;
                 }
-                aggregated[idx] = add_mod(aggregated[idx], mul_mod(coeff, gamma));
-            }
-        }
-        let mut tmp = vec![0u64; out_degree + 1];
-        let mut lag_combo = vec![0u64; cfg.packing_factor];
-        for row in 0..cfg.row_count {
-            let weights = &aggregated[row * cfg.packing_factor..(row + 1) * cfg.packing_factor];
-            if weights.iter().all(|weight| *weight == 0) {
-                continue;
-            }
-            lag_combo.fill(0);
-            for col in 0..cfg.packing_factor {
-                let weight = weights[col];
-                if weight != 0 {
-                    poly_add_assign_scaled(&mut lag_combo, &lag[col], weight);
+                let start = linear_constraint_offsets[check] as usize;
+                let end = linear_constraint_offsets[check + 1] as usize;
+                for term_idx in start..end {
+                    let coeff = linear_constraint_coefficients[term_idx];
+                    let idx = linear_constraint_indices[term_idx] as usize;
+                    if coeff == 0 || idx >= cfg.witness_size {
+                        continue;
+                    }
+                    aggregated[idx] = add_mod(aggregated[idx], mul_mod(coeff, gamma));
                 }
             }
-            poly_mul_into(
-                &mut tmp,
-                &witness_polys[row],
-                &lag_combo,
-                cfg.wit_poly_degree,
-                cfg.packing_factor - 1,
-            );
-            poly_add_assign(&mut out[rep], &tmp);
-        }
-    }
-    Ok(out)
+            let mut tmp_out = vec![0u64; out_degree + 1];
+            let mut tmp = vec![0u64; out_degree + 1];
+            let mut lag_combo = vec![0u64; cfg.packing_factor];
+            for row in 0..cfg.row_count {
+                let weights = &aggregated[row * cfg.packing_factor..(row + 1) * cfg.packing_factor];
+                if weights.iter().all(|weight| *weight == 0) {
+                    continue;
+                }
+                lag_combo.fill(0);
+                for col in 0..cfg.packing_factor {
+                    let weight = weights[col];
+                    if weight != 0 {
+                        poly_add_assign_scaled(&mut lag_combo, &lag[col], weight);
+                    }
+                }
+                poly_mul_into(
+                    &mut tmp,
+                    &witness_polys[row],
+                    &lag_combo,
+                    cfg.wit_poly_degree,
+                    cfg.packing_factor - 1,
+                );
+                poly_add_assign(&mut tmp_out, &tmp);
+            }
+            Ok::<_, TransactionCircuitError>(tmp_out)
+        })
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn get_constraint_linear_evals(
@@ -984,15 +987,9 @@ fn lvcs_commit(
         .par_iter()
         .map(|row| rotate_left_words(row, cfg.nb_lvcs_cols))
         .collect::<Vec<_>>();
-    let polys = rotated_rows
-        .par_iter()
-        .map(|rotated| interpolate_consecutive(rotated))
-        .collect::<Result<Vec<_>, _>>()?;
-    log_stage("interpolate_rows", &mut last);
     let decs_key = decs_commit(
         cfg.nb_lvcs_rows,
         cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS - 1,
-        &polys,
         &rotated_rows,
         salt,
     )?;
@@ -1113,7 +1110,6 @@ fn lvcs_recompute_rows(
 fn decs_commit(
     nb_polys: usize,
     poly_degree: usize,
-    polys: &[Vec<u64>],
     initial_domain_evals: &[Vec<u64>],
     salt: &[u8; SALT_BYTES],
 ) -> Result<DecsKey, TransactionCircuitError> {
@@ -1163,18 +1159,25 @@ fn decs_commit(
     let hash_mt = hash_merkle_root(salt, &root);
     let gamma_all = derive_decs_challenge(nb_polys, &hash_mt);
     log_stage("challenge", &mut last);
-    let dec_polys = gamma_all
+    let initial_len = poly_degree + 1;
+    let mut combined_domain_evals = vec![vec![0u64; initial_len]; SMALLWOOD_DECS_ETA];
+    mat_mul(
+        &mut combined_domain_evals,
+        &gamma_all,
+        initial_domain_evals,
+        SMALLWOOD_DECS_ETA,
+        nb_polys,
+        initial_len,
+    );
+    let dec_polys = combined_domain_evals
         .par_iter()
         .enumerate()
-        .map(|(k, gamma_row)| {
-            let mut acc = vec![0u64; poly_degree + 1];
-            for (j, poly) in polys.iter().enumerate() {
-                poly_add_assign_scaled(&mut acc, poly, gamma_row[j]);
-            }
-            poly_add_assign(&mut acc, &masking_polys[k]);
-            acc
+        .map(|(k, evals)| {
+            let mut poly = interpolate_consecutive(evals)?;
+            poly_add_assign(&mut poly, &masking_polys[k]);
+            Ok::<_, TransactionCircuitError>(poly)
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     log_stage("dec_polys", &mut last);
     Ok(DecsKey {
         committed_domain_evals,

@@ -144,12 +144,12 @@ There was also a hard release-discipline caveat:
 - under Hegemon’s current no-compromise `128-bit` rule, none of those profiles was directly shippable
 - so a Hegemon-specific no-grinding parameter search was mandatory
 
-That work is now done for the exact witness-free candidate statement:
+That work is now done for the exact active witness-free candidate statement:
 
-- current no-grinding candidate profile: `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_opened_evals = 37`, `decs_eta = 10`, zero grinding bits
+- current no-grinding candidate profile: `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_evals = 4096`, `decs_nb_opened_evals = 65`, `decs_eta = 10`, zero grinding bits
 - exact term-wise floor for the implemented witness-free statement: `128` bits
 
-What is still not done is the final semantic arithmetization. The note above is exact for the implemented witness-free candidate statement, not yet for a full native tx-validity SmallWood backend.
+What is still not done is the geometry reduction from the active integrated bridge to the smaller frozen target. The live backend already proves the real native tx-validity semantics on the active bridge statement; the remaining problem is making that statement materially smaller and faster without losing the no-grinding `128-bit` bar.
 
 The key new result from the size probe is that SmallWood is no longer merely a shape-fit story.
 

@@ -41,7 +41,7 @@ pub const SMALLWOOD_NB_OPENED_EVALS: u32 = 3;
 pub const SMALLWOOD_BETA: u32 = 3;
 pub const SMALLWOOD_OPENING_POW_BITS: u32 = 0;
 pub const SMALLWOOD_DECS_NB_EVALS: u32 = 4096;
-pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 37;
+pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 = 65;
 pub const SMALLWOOD_DECS_ETA: u32 = 10;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 #[allow(dead_code)]
