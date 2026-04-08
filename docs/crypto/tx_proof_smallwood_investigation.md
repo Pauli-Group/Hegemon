@@ -86,7 +86,7 @@ So for Hegemon the right reading is:
 - SmallWood may still be compatible with the `128-bit` baseline,
 - but the paper's concrete sizes could not be promoted directly to Hegemon release claims without a Hegemon-specific no-compromise parameter note.
 
-That note now exists for the active integrated witness-free candidate statement. The current no-grinding candidate profile is `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_evals = 4096`, `decs_nb_opened_evals = 65`, `decs_eta = 10`, zero grinding bits, and it clears the term-wise `128-bit` bar for the live integrated bridge geometry. The integrated backend is now past the old scalar fallback: the packed semantic relation is real, the exact serialized proof envelope for the current Rust candidate now projects to `224220` bytes, and the passing release roundtrip emits `224228` proof bytes. That is below both the shipped `354081`-byte tx proof and the `524288`-byte native `tx_leaf` cap.
+That note now exists for the active integrated witness-free candidate statement. The current no-grinding candidate profile is `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_evals = 32768`, `decs_nb_opened_evals = 22`, `decs_eta = 4`, zero grinding bits, and it clears the term-wise `128-bit` bar for the live integrated bridge geometry. The integrated backend is now past the old scalar fallback: the packed semantic relation is real, the exact serialized proof envelope for the current Rust candidate now projects to `108772` bytes, and the passing release roundtrip emits `108780` proof bytes. That is about `3.25x` smaller than the shipped `354081`-byte tx proof while still staying below the `524288`-byte native `tx_leaf` cap.
 
 ## Official implementation status
 

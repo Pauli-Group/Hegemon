@@ -301,6 +301,23 @@ fn smallwood_candidate_proof_stays_below_native_tx_leaf_cap() {
 }
 
 #[test]
+fn smallwood_candidate_proof_reaches_three_x_reduction_against_shipped_plonky3() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof_bytes = projected_smallwood_candidate_proof_bytes(&witness)
+        .expect("projected smallwood candidate proof bytes");
+    const SHIPPED_PLONKY3_PROOF_BYTES: usize = 354_081;
+    const THREE_X_THRESHOLD: usize = SHIPPED_PLONKY3_PROOF_BYTES / 3;
+    eprintln!("smallwood candidate projected proof bytes: {proof_bytes}");
+    assert!(
+        proof_bytes < THREE_X_THRESHOLD,
+        "expected smallwood candidate proof to beat the 3x reduction threshold of {} bytes, got {} bytes",
+        THREE_X_THRESHOLD,
+        proof_bytes
+    );
+}
+
+#[test]
 #[ignore = "experimental SmallWood packed candidate release proving is still too slow for the default test profile"]
 fn smallwood_candidate_rejects_semantic_mutation() {
     let mut witness = sample_witness();

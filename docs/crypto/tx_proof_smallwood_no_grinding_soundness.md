@@ -6,7 +6,7 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `224220` bytes, the passing release roundtrip emits `224228` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- the exact serialized proof envelope for that current candidate now projects to `108772` bytes, the passing release roundtrip emits `108780` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
 - but release proving is still too slow, so this note should be read as the exact no-grinding security note for the candidate statement, not as a claim that the backend is product-ready today.
 
 It is intentionally narrow. This is not a blanket release claim for every future SmallWood frontend Hegemon might build. It is the exact engineering note for the active integrated statement behind `TxProofBackend::SmallwoodCandidate`.
@@ -59,9 +59,9 @@ The current candidate profile is now:
 - `nb_opened_evals = 3`
 - `beta = 3`
 - `opening_pow_bits = 0`
-- `decs_nb_evals = 4096`
-- `decs_nb_opened_evals = 65`
-- `decs_eta = 10`
+- `decs_nb_evals = 32768`
+- `decs_nb_opened_evals = 22`
+- `decs_eta = 4`
 - `decs_pow_bits = 0`
 
 These values are bound in both:
@@ -104,9 +104,9 @@ Using the notation from the SmallWood paper’s Table 1 for the active integrate
 - `ℓ' = 3`
 - `ρ = 2`
 - `β = 3`
-- `ℓ = 65`
-- `N = 4096`
-- `η = 10`
+- `ℓ = 22`
+- `N = 32768`
+- `η = 4`
 
 The exact derived PCS/LVCS terms are:
 
@@ -130,14 +130,14 @@ With the mappings above, the SmallWood terms become:
 
 For the exact current candidate profile:
 
-- `ε1 < 2^-616.52`
+- `ε1 < 2^-249.96`
 - `ε2 < 2^-128.00`
 - `ε3 < 2^-165.44`
-- `ε4 < 2^-193.59`
+- `ε4 < 2^-133.10`
 
 So the exact no-grinding floor for the implemented witness-free public statement is:
 
-- `min(616.52, 128.00, 165.44, 128.46) = 128.00 bits`
+- `min(249.96, 128.00, 165.44, 133.10) = 128.00 bits`
 
 The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
 
@@ -147,11 +147,14 @@ Two earlier candidate profiles fail if instantiated honestly:
 
 - the old `nb_opened_evals = 2` profile leaves `ε3` at only about `2^-110.34`
 - the old active-bridge `decs_nb_opened_evals = 37` profile leaves `ε4` at only about `2^-74.03`
+- the old `4096 / 65 / 10` rescue profile was conservative but bloated, landing at about `224 KB` instead of using the narrower live bridge geometry honestly
 
 That is why the current no-grinding candidate moved to:
 
 - `nb_opened_evals = 3`
-- `decs_nb_opened_evals = 65`
+- `decs_nb_evals = 32768`
+- `decs_nb_opened_evals = 22`
+- `decs_eta = 4`
 
 Those are not cosmetic tweaks. They are the first exact no-grinding values that make the implemented witness-free statement clear the term-wise `128-bit` bar without invoking grinding.
 
@@ -170,7 +173,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane bridge geometry, and that active bridge already beats the shipped Plonky3 proof on bytes. The remaining gap is the distance between the current `1430`-row bridge and the smaller `934`-row structural target, not the old `2982`-row live bridge. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane bridge geometry, and that active bridge now emits an actual `108780`-byte release proof, about `3.25x` smaller than the shipped Plonky3 proof. The remaining gap is the distance between the current `1430`-row bridge and the smaller `934`-row structural target, not the old `2982`-row live bridge. So this note is exact, but still narrow.
 
 ## Product conclusion
 
