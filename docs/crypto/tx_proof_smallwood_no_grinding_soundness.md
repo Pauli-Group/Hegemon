@@ -118,6 +118,8 @@ The exact derived PCS/LVCS terms are:
 - LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 484`
 - DECS polynomial count `n_decs = n_rows = 201`
 
+The implementation now also enforces that the DECS opened leaf indices are distinct, so the live verifier matches the `ℓ = 26` count used below instead of silently accepting duplicate openings.
+
 The old `n_cols = 1001` value was the dangerous one. The current integrated backend is materially narrower, but this note still uses the exact LVCS row-vector size from the active Rust backend rather than the smaller frozen structural target.
 
 ## Exact term values

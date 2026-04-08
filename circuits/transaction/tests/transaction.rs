@@ -1,5 +1,6 @@
 use p3_field::PrimeCharacteristicRing;
 use protocol_versioning::{DEFAULT_TX_PROOF_BACKEND, SMALLWOOD_CANDIDATE_VERSION_BINDING};
+use serde::{Deserialize, Serialize};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
@@ -13,6 +14,42 @@ use transaction_circuit::{
     projected_smallwood_candidate_proof_bytes, prove_smallwood_candidate, InputNoteWitness,
     OutputNoteWitness, StablecoinPolicyBinding, TransactionCircuitError, TransactionWitness,
 };
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MirrorSmallwoodCandidateProof {
+    ark_proof: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MirrorSmallwoodProof {
+    salt: [u8; 32],
+    nonce: [u8; 4],
+    h_piop: [u8; 32],
+    piop: MirrorPiopProof,
+    pcs: MirrorPcsProof,
+    all_evals: Vec<Vec<u64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MirrorPiopProof {
+    ppol_highs: Vec<Vec<u64>>,
+    plin_highs: Vec<Vec<u64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MirrorPcsProof {
+    rcombi_tails: Vec<Vec<u64>>,
+    subset_evals: Vec<Vec<u64>>,
+    partial_evals: Vec<Vec<u64>>,
+    decs: MirrorDecsProof,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MirrorDecsProof {
+    auth_paths: Vec<Vec<[u8; 32]>>,
+    masking_evals: Vec<Vec<u64>>,
+    high_coeffs: Vec<Vec<u64>>,
+}
 
 /// Compute the Merkle root from a leaf and path using CIRCUIT_MERKLE_DEPTH levels.
 /// This matches what the STARK circuit actually verifies.
@@ -328,6 +365,110 @@ fn smallwood_candidate_rejects_semantic_mutation() {
     let err = verify(&proof, &verifying_key).expect_err("tampered candidate must fail");
     assert!(
         err.to_string().contains("smallwood candidate") || err.to_string().contains("mismatch"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+#[ignore = "redteam regression for verifier hardening on the experimental SmallWood backend"]
+fn smallwood_candidate_rejects_partial_eval_tampering() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let (_proving_key, verifying_key) = generate_keys();
+    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+
+    let mut outer: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let mut inner: MirrorSmallwoodProof =
+        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
+    inner.pcs.partial_evals[0][0] ^= 0xdead_beef_u64;
+    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
+    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+
+    let err =
+        verify(&proof, &verifying_key).expect_err("tampered partial_evals unexpectedly verified");
+    assert!(
+        err.to_string().contains("shape mismatch") || err.to_string().contains("smallwood"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+#[ignore = "redteam probe for malformed-proof panic behavior on the experimental SmallWood backend"]
+fn smallwood_candidate_malformed_inner_shapes_do_not_panic() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let (_proving_key, verifying_key) = generate_keys();
+    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+
+    let mut outer: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let mut inner: MirrorSmallwoodProof =
+        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
+    inner.pcs.decs.masking_evals[0].clear();
+    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
+    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+
+    let result = std::panic::catch_unwind(|| verify(&proof, &verifying_key));
+    match result {
+        Ok(Err(_)) => {}
+        Ok(Ok(_)) => panic!("malformed proof unexpectedly verified"),
+        Err(_) => panic!("malformed proof triggered a verifier panic"),
+    }
+}
+
+#[test]
+#[ignore = "redteam probe for malformed all_evals panic behavior on the experimental SmallWood backend"]
+fn smallwood_candidate_malformed_all_evals_do_not_panic() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let (_proving_key, verifying_key) = generate_keys();
+    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+
+    let mut outer: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let mut inner: MirrorSmallwoodProof =
+        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
+    inner.all_evals[0].clear();
+    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
+    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+
+    let result = std::panic::catch_unwind(|| verify(&proof, &verifying_key));
+    match result {
+        Ok(Err(_)) => {}
+        Ok(Ok(_)) => panic!("malformed proof unexpectedly verified"),
+        Err(_) => panic!("malformed all_evals triggered a verifier panic"),
+    }
+}
+
+#[test]
+#[ignore = "redteam probe for PCS/semantic binding on the experimental SmallWood backend"]
+fn smallwood_candidate_rejects_spliced_pcs_layer() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let (_proving_key, verifying_key) = generate_keys();
+    let proof_a = prove_smallwood_candidate(&witness).expect("smallwood candidate proof a");
+    let proof_b = prove_smallwood_candidate(&witness).expect("smallwood candidate proof b");
+
+    let mut outer_a: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof_a.stark_proof).expect("decode wrapper a");
+    let outer_b: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof_b.stark_proof).expect("decode wrapper b");
+    let mut inner_a: MirrorSmallwoodProof =
+        bincode::deserialize(&outer_a.ark_proof).expect("decode inner a");
+    let inner_b: MirrorSmallwoodProof =
+        bincode::deserialize(&outer_b.ark_proof).expect("decode inner b");
+
+    inner_a.pcs = inner_b.pcs;
+    inner_a.salt = inner_b.salt;
+    outer_a.ark_proof = bincode::serialize(&inner_a).expect("reencode inner a");
+
+    let mut spliced = proof_a.clone();
+    spliced.stark_proof = bincode::serialize(&outer_a).expect("reencode wrapper a");
+
+    let err = verify(&spliced, &verifying_key).expect_err("spliced PCS unexpectedly verified");
+    assert!(
+        err.to_string().contains("smallwood") || err.to_string().contains("mismatch"),
         "unexpected error: {err}"
     );
 }

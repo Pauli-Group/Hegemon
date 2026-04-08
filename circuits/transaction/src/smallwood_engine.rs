@@ -265,17 +265,10 @@ pub(crate) fn verify_candidate(
         linear_constraint_coefficients,
         linear_constraint_targets,
     );
+    validate_proof_shape(&cfg, &proof)?;
     let binded_words = bytes_to_words(binded_data)?;
     let eval_points = xof_piop_opening_points(&proof.nonce, &proof.h_piop);
     ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
-    if proof.pcs.partial_evals.len() != SMALLWOOD_NB_OPENED_EVALS
-        || proof.pcs.subset_evals.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
-        || proof.pcs.decs.masking_evals.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
-    {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood PCS proof shape mismatch",
-        ));
-    }
     let _pcs_transcript = pcs_recompute_transcript(
         &cfg,
         &proof.salt,
@@ -301,6 +294,87 @@ pub(crate) fn verify_candidate(
     if recomputed != proof.h_piop {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood piop transcript hash mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_proof_shape(
+    cfg: &SmallwoodConfig,
+    proof: &SmallwoodProof,
+) -> Result<(), TransactionCircuitError> {
+    if proof.all_evals.len() != SMALLWOOD_NB_OPENED_EVALS
+        || proof.all_evals.iter().any(|row| row.len() != cfg.nb_polys)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof opened evaluation shape mismatch",
+        ));
+    }
+    if proof.piop.ppol_highs.len() != SMALLWOOD_RHO
+        || proof
+            .piop
+            .ppol_highs
+            .iter()
+            .any(|poly| poly.len() != cfg.mpol_poly_degree + 1 - SMALLWOOD_NB_OPENED_EVALS)
+        || proof.piop.plin_highs.len() != SMALLWOOD_RHO
+        || proof
+            .piop
+            .plin_highs
+            .iter()
+            .any(|poly| poly.len() != cfg.mlin_poly_degree + 1 - (SMALLWOOD_NB_OPENED_EVALS + 1))
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood piop proof shape mismatch",
+        ));
+    }
+    if proof.pcs.rcombi_tails.len() != cfg.nb_lvcs_opened_combi
+        || proof
+            .pcs
+            .rcombi_tails
+            .iter()
+            .any(|tail| tail.len() != SMALLWOOD_DECS_NB_OPENED_EVALS)
+        || proof.pcs.subset_evals.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+        || proof
+            .pcs
+            .subset_evals
+            .iter()
+            .any(|row| row.len() != cfg.nb_lvcs_rows)
+        || proof.pcs.partial_evals.len() != SMALLWOOD_NB_OPENED_EVALS
+        || proof
+            .pcs
+            .partial_evals
+            .iter()
+            .any(|row| row.len() != cfg.nb_unstacked_cols - cfg.nb_polys)
+        || proof
+            .pcs
+            .partial_evals
+            .iter()
+            .flat_map(|row| row.iter())
+            .any(|value| *value != 0)
+        || proof.pcs.decs.auth_paths.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+        || proof
+            .pcs
+            .decs
+            .auth_paths
+            .iter()
+            .any(|path| path.len() != SMALLWOOD_DECS_NB_EVALS.ilog2() as usize)
+        || proof.pcs.decs.masking_evals.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+        || proof
+            .pcs
+            .decs
+            .masking_evals
+            .iter()
+            .any(|row| row.len() != SMALLWOOD_DECS_ETA)
+        || proof.pcs.decs.high_coeffs.len() != SMALLWOOD_DECS_ETA
+        || proof
+            .pcs
+            .decs
+            .high_coeffs
+            .iter()
+            .any(|poly| poly.len() != cfg.nb_lvcs_cols)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood PCS proof shape mismatch",
         ));
     }
     Ok(())
@@ -708,9 +782,9 @@ fn pcs_open(
     let (rcombi_tails, subset_evals, decs_proof) = lvcs_open(cfg, &key.lvcs_key, &coeffs, h_piop)?;
     log_stage("lvcs_open", &mut last);
 
-    // The current verifier only checks the shape of `partial_evals`; it does not
-    // consume the contents when recomputing the PCS transcript. Keep the exact
-    // serialized envelope shape without paying for a broken reconstruction path.
+    // The current verifier does not consume `partial_evals` when recomputing the
+    // PCS transcript, so keep the serialized envelope shape but pin the contents
+    // to zero and reject any non-zero tampering during verification.
     let partial_evals =
         vec![vec![0u64; cfg.nb_unstacked_cols - cfg.nb_polys]; SMALLWOOD_NB_OPENED_EVALS];
     log_stage("partial_evals", &mut last);
@@ -1596,7 +1670,9 @@ fn xof_decs_opening(
                     }
                 }
                 leaves_indexes.sort_unstable();
-                return Ok((leaves_indexes, nonce));
+                if leaves_indexes.windows(2).all(|pair| pair[0] != pair[1]) {
+                    return Ok((leaves_indexes, nonce));
+                }
             }
             nonce_counter = nonce_counter.checked_add(1).ok_or(
                 TransactionCircuitError::ConstraintViolation(
