@@ -6,7 +6,7 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `302828` bytes, the passing release roundtrip emits `302836` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- the exact serialized proof envelope for that current candidate now projects to `224220` bytes, the passing release roundtrip emits `224228` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
 - but release proving is still too slow, so this note should be read as the exact no-grinding security note for the candidate statement, not as a claim that the backend is product-ready today.
 
 It is intentionally narrow. This is not a blanket release claim for every future SmallWood frontend Hegemon might build. It is the exact engineering note for the active integrated statement behind `TxProofBackend::SmallwoodCandidate`.
@@ -39,11 +39,11 @@ and from fixed shape metadata for the packed expanded native witness.
 The exact active public statement fields are:
 
 - `public_value_count = 78`
-- `raw_witness_len = 1688`
+- `raw_witness_len = 276`
 - `poseidon_permutation_count = 143`
 - `poseidon_state_row_count = 4576`
-- `expanded_witness_len = 190848`
-- `lppc_row_count = 2982`
+- `expanded_witness_len = 91520`
+- `lppc_row_count = 1430`
 - `lppc_packing_factor = 64`
 - `effective_constraint_degree = 8`
 
@@ -97,7 +97,7 @@ Using the notation from the SmallWood paper’s Table 1 for the active integrate
 
 - `|F| = 2^64 - 2^32 + 1` (Goldilocks)
 - `s = 64`
-- `n = 2982`
+- `n = 1430`
 - `d = 8`
 - `m1 = 1`
 - `m2 = 78`
@@ -110,14 +110,14 @@ Using the notation from the SmallWood paper’s Table 1 for the active integrate
 
 The exact derived PCS/LVCS terms are:
 
-- `n_pcs = n + 2ρ = 2986`
+- `n_pcs = n + 2ρ = 1434`
 - witness-polynomial degree convention gives `d_j = s + ℓ' - 1 = 66`
 - masked polynomial-constraint degree `d_Q = d * (s + ℓ' - 1) - s = 464`
 - LVCS row count `n_rows = β * (s + ℓ') = 201`
-- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 1001`
+- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 484`
 - DECS polynomial count `n_decs = n_rows = 201`
 
-The `n_cols = 1001` value is the dangerous one. If you instantiate `ε4` against the prettier frozen target rather than the active bridge geometry, you lie to yourself by dozens of bits. This note uses the exact LVCS row-vector size from the current integrated Rust backend, not the smaller structural target.
+The old `n_cols = 1001` value was the dangerous one. The current integrated backend is materially narrower, but this note still uses the exact LVCS row-vector size from the active Rust backend rather than the smaller frozen structural target.
 
 ## Exact term values
 
@@ -133,7 +133,7 @@ For the exact current candidate profile:
 - `ε1 < 2^-616.52`
 - `ε2 < 2^-128.00`
 - `ε3 < 2^-165.44`
-- `ε4 < 2^-128.46`
+- `ε4 < 2^-193.59`
 
 So the exact no-grinding floor for the implemented witness-free public statement is:
 
@@ -170,7 +170,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane bridge geometry, and that active bridge already beats the shipped Plonky3 proof on bytes. The remaining gap is runtime and the distance between the current `2982`-row bridge and the smaller `934`-row structural target. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane bridge geometry, and that active bridge already beats the shipped Plonky3 proof on bytes. The remaining gap is the distance between the current `1430`-row bridge and the smaller `934`-row structural target, not the old `2982`-row live bridge. So this note is exact, but still narrow.
 
 ## Product conclusion
 
@@ -182,5 +182,5 @@ This milestone is complete in the narrow sense the user asked for:
 
 The next milestone is different:
 
-- reduce the packed relation geometry from the current `2982`-row bridge toward the frozen `64`-lane target,
+- reduce the packed relation geometry from the current `1430`-row bridge toward the frozen `64`-lane target,
 - while preserving the witness-free public statement shape and this no-grinding discipline.

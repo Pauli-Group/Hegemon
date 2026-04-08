@@ -1,3 +1,4 @@
+use blake3::Hasher;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionBinding};
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,7 @@ use crate::{
 
 const SMALLWOOD_PUBLIC_STATEMENT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-public-statement.v1";
 const SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-binding-transcript.v1";
+const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 
 pub const SMALLWOOD_LPPC_PACKING_FACTOR: usize = 1;
 pub const SMALLWOOD_PACKED_LPPC_PACKING_FACTOR: usize = 64;
@@ -46,42 +48,50 @@ pub const SMALLWOOD_DECS_ETA: u32 = 10;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 #[allow(dead_code)]
 const SMALLWOOD_BASE_PUBLIC_VALUE_COUNT: usize = 78;
-const SMALLWOOD_LANE_SELECTOR_ROWS: usize = SMALLWOOD_BRIDGE_PACKING_FACTOR;
+const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 0;
 const SMALLWOOD_WORDS_PER_32_BYTES: usize = 4;
 const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
-const SMALLWOOD_PUBLIC_ROWS: usize = 78;
-const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1
-    + 1
-    + (SMALLWOOD_WORDS_PER_32_BYTES * 4)
-    + 1
-    + 2
-    + MERKLE_TREE_DEPTH
-    + (MERKLE_TREE_DEPTH * SMALLWOOD_WORDS_PER_48_BYTES * 4);
-const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1 + (SMALLWOOD_WORDS_PER_32_BYTES * 4) + 2;
-const SMALLWOOD_SECRET_WITNESS_ROWS: usize = SMALLWOOD_WORDS_PER_32_BYTES
-    + (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS)
-    + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS)
-    + 2;
-const SMALLWOOD_INPUT_SIBLING_OFFSET: usize = 53;
-const SMALLWOOD_INPUT_AUX_HASH_OFFSET: usize =
-    SMALLWOOD_INPUT_SIBLING_OFFSET + (MERKLE_TREE_DEPTH * SMALLWOOD_WORDS_PER_48_BYTES);
+const SMALLWOOD_PUBLIC_ROWS: usize = 2;
+const SMALLWOOD_INPUT_SECRET_ROWS: usize =
+    1 + 1 + 1 + 2 + MERKLE_TREE_DEPTH + (MERKLE_TREE_DEPTH * 3);
+const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1 + 2;
+const SMALLWOOD_SECRET_WITNESS_ROWS: usize =
+    (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS) + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS) + 2;
+const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 5;
+const SMALLWOOD_INPUT_CURRENT_AGG_OFFSET: usize =
+    SMALLWOOD_INPUT_DIRECTION_OFFSET + MERKLE_TREE_DEPTH;
+const SMALLWOOD_INPUT_LEFT_AGG_OFFSET: usize =
+    SMALLWOOD_INPUT_CURRENT_AGG_OFFSET + MERKLE_TREE_DEPTH;
+const SMALLWOOD_INPUT_RIGHT_AGG_OFFSET: usize = SMALLWOOD_INPUT_LEFT_AGG_OFFSET + MERKLE_TREE_DEPTH;
+const PUB_INPUT_FLAG0: usize = 0;
+const PUB_OUTPUT_FLAG0: usize = 2;
+const PUB_NULLIFIERS: usize = 4;
+const PUB_COMMITMENTS: usize = 16;
+const PUB_CIPHERTEXT_HASHES: usize = 28;
+const PUB_FEE: usize = 40;
+const PUB_VALUE_BALANCE_SIGN: usize = 41;
+const PUB_VALUE_BALANCE_MAG: usize = 42;
+const PUB_MERKLE_ROOT: usize = 43;
+const PUB_SLOT_ASSETS: usize = 49;
+const PUB_STABLE_ENABLED: usize = 53;
+const PUB_STABLE_ASSET: usize = 54;
+const PUB_STABLE_POLICY_VERSION: usize = 55;
+const PUB_STABLE_ISSUANCE_SIGN: usize = 56;
+const PUB_STABLE_ISSUANCE_MAG: usize = 57;
+const PUB_STABLE_POLICY_HASH: usize = 58;
+const PUB_STABLE_ORACLE: usize = 64;
+const PUB_STABLE_ATTESTATION: usize = 70;
 
 #[inline]
 fn bridge_input_base(input: usize) -> usize {
-    SMALLWOOD_PUBLIC_ROWS + SMALLWOOD_WORDS_PER_32_BYTES + input * SMALLWOOD_INPUT_SECRET_ROWS
+    SMALLWOOD_PUBLIC_ROWS + input * SMALLWOOD_INPUT_SECRET_ROWS
 }
 
 #[inline]
 fn bridge_output_base(output: usize) -> usize {
     SMALLWOOD_PUBLIC_ROWS
-        + SMALLWOOD_WORDS_PER_32_BYTES
         + MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS
         + output * SMALLWOOD_OUTPUT_SECRET_ROWS
-}
-
-#[inline]
-fn bridge_row_sk_chunk(chunk: usize) -> usize {
-    SMALLWOOD_PUBLIC_ROWS + chunk
 }
 
 #[inline]
@@ -95,72 +105,33 @@ fn bridge_row_input_asset(input: usize) -> usize {
 }
 
 #[inline]
-fn bridge_row_input_pk_auth(input: usize, limb: usize) -> usize {
-    bridge_input_base(input) + 6 + limb
-}
-
-#[inline]
-fn bridge_row_input_pk_recipient(input: usize, limb: usize) -> usize {
-    bridge_input_base(input) + 2 + limb
-}
-
-#[inline]
-fn bridge_row_input_rho(input: usize, limb: usize) -> usize {
-    bridge_input_base(input) + 10 + limb
-}
-
-#[inline]
-fn bridge_row_input_r(input: usize, limb: usize) -> usize {
-    bridge_input_base(input) + 14 + limb
-}
-
-#[inline]
 fn bridge_row_input_position(input: usize) -> usize {
-    bridge_input_base(input) + 18
+    bridge_input_base(input) + 2
 }
 
 #[inline]
 fn bridge_row_input_selector(input: usize, bit: usize) -> usize {
-    bridge_input_base(input) + 19 + bit
+    bridge_input_base(input) + 3 + bit
 }
 
 #[inline]
 fn bridge_row_input_direction(input: usize, bit: usize) -> usize {
-    bridge_input_base(input) + 21 + bit
+    bridge_input_base(input) + SMALLWOOD_INPUT_DIRECTION_OFFSET + bit
 }
 
 #[inline]
-fn bridge_row_input_sibling(input: usize, level: usize, limb: usize) -> usize {
-    bridge_input_base(input)
-        + SMALLWOOD_INPUT_SIBLING_OFFSET
-        + level * SMALLWOOD_WORDS_PER_48_BYTES
-        + limb
+fn bridge_row_input_current_agg(input: usize, level: usize) -> usize {
+    bridge_input_base(input) + SMALLWOOD_INPUT_CURRENT_AGG_OFFSET + level
 }
 
 #[inline]
-fn bridge_row_input_current_hash(input: usize, level: usize, limb: usize) -> usize {
-    bridge_input_base(input)
-        + SMALLWOOD_INPUT_AUX_HASH_OFFSET
-        + level * (SMALLWOOD_WORDS_PER_48_BYTES * 3)
-        + limb
+fn bridge_row_input_left_agg(input: usize, level: usize) -> usize {
+    bridge_input_base(input) + SMALLWOOD_INPUT_LEFT_AGG_OFFSET + level
 }
 
 #[inline]
-fn bridge_row_input_merkle_left(input: usize, level: usize, limb: usize) -> usize {
-    bridge_input_base(input)
-        + SMALLWOOD_INPUT_AUX_HASH_OFFSET
-        + level * (SMALLWOOD_WORDS_PER_48_BYTES * 3)
-        + SMALLWOOD_WORDS_PER_48_BYTES
-        + limb
-}
-
-#[inline]
-fn bridge_row_input_merkle_right(input: usize, level: usize, limb: usize) -> usize {
-    bridge_input_base(input)
-        + SMALLWOOD_INPUT_AUX_HASH_OFFSET
-        + level * (SMALLWOOD_WORDS_PER_48_BYTES * 3)
-        + (SMALLWOOD_WORDS_PER_48_BYTES * 2)
-        + limb
+fn bridge_row_input_right_agg(input: usize, level: usize) -> usize {
+    bridge_input_base(input) + SMALLWOOD_INPUT_RIGHT_AGG_OFFSET + level
 }
 
 #[inline]
@@ -175,27 +146,7 @@ fn bridge_row_output_asset(output: usize) -> usize {
 
 #[inline]
 fn bridge_row_output_selector(output: usize, bit: usize) -> usize {
-    bridge_output_base(output) + 18 + bit
-}
-
-#[inline]
-fn bridge_row_output_pk_recipient(output: usize, limb: usize) -> usize {
-    bridge_output_base(output) + 2 + limb
-}
-
-#[inline]
-fn bridge_row_output_pk_auth(output: usize, limb: usize) -> usize {
-    bridge_output_base(output) + 6 + limb
-}
-
-#[inline]
-fn bridge_row_output_rho(output: usize, limb: usize) -> usize {
-    bridge_output_base(output) + 10 + limb
-}
-
-#[inline]
-fn bridge_row_output_r(output: usize, limb: usize) -> usize {
-    bridge_output_base(output) + 14 + limb
+    bridge_output_base(output) + 2 + bit
 }
 
 #[inline]
@@ -636,7 +587,7 @@ fn build_packed_smallwood_bridge_public_statement(
         poseidon_permutation_count,
         SMALLWOOD_BRIDGE_PACKING_FACTOR,
     );
-    let lppc_row_count = SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
+    let lppc_row_count = SMALLWOOD_PUBLIC_ROWS
         + SMALLWOOD_SECRET_WITNESS_ROWS
         + SMALLWOOD_LANE_SELECTOR_ROWS
         + (poseidon_group_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION * POSEIDON2_WIDTH);
@@ -792,11 +743,16 @@ fn build_packed_bridge_linear_constraints(
     statement: &SmallwoodPublicStatement,
 ) -> SmallwoodLinearConstraints {
     let packing_factor = statement.lppc_packing_factor as usize;
-    let public_row_count = statement.public_value_count as usize;
-    let secret_row_start = public_row_count;
+    let secret_row_start = SMALLWOOD_PUBLIC_ROWS;
     let secret_row_count = statement.raw_witness_len as usize;
-    let selector_row_start = secret_row_start + secret_row_count;
     let neg_one = (transaction_core::constants::FIELD_MODULUS as u64).wrapping_sub(1);
+    let neg_coeff = |value: u64| {
+        if value == 0 {
+            0
+        } else {
+            (transaction_core::constants::FIELD_MODULUS as u64).wrapping_sub(value)
+        }
+    };
 
     let mut constraints = SmallwoodLinearConstraints {
         term_offsets: vec![0],
@@ -805,20 +761,11 @@ fn build_packed_bridge_linear_constraints(
         targets: Vec::new(),
     };
 
-    for (row, value) in statement.public_values.iter().enumerate() {
-        let base = (row * packing_factor) as u32;
-        push_linear_constraint(&mut constraints, &[(base, 1)], *value);
-    }
-
-    for row in 0..public_row_count {
-        let base = (row * packing_factor) as u32;
-        for lane in 1..packing_factor {
-            push_linear_constraint(
-                &mut constraints,
-                &[(base + lane as u32, 1), (base, neg_one)],
-                0,
-            );
-        }
+    for (index, value) in statement.public_values.iter().enumerate() {
+        let row = index / packing_factor;
+        let lane = index % packing_factor;
+        let packed_index = (row * packing_factor + lane) as u32;
+        push_linear_constraint(&mut constraints, &[(packed_index, 1)], *value);
     }
 
     for row in 0..secret_row_count {
@@ -832,312 +779,296 @@ fn build_packed_bridge_linear_constraints(
         }
     }
 
-    for selector in 0..SMALLWOOD_LANE_SELECTOR_ROWS {
-        let row_base = ((selector_row_start + selector) * packing_factor) as u32;
-        for lane in 0..packing_factor {
-            push_linear_constraint(
-                &mut constraints,
-                &[(row_base + lane as u32, 1)],
-                u64::from(lane == selector),
+    let push_bridge_constant =
+        |constraints: &mut SmallwoodLinearConstraints, row: usize, lane: usize, target: u64| {
+            push_bridge_constraint(constraints, &[(row, lane, 1)], target);
+        };
+    let push_poseidon_fresh_frame = |constraints: &mut SmallwoodLinearConstraints,
+                                     permutation: usize| {
+        let lane = packed_bridge_permutation_lane(permutation);
+        for limb in 6..(POSEIDON2_WIDTH - 1) {
+            push_bridge_constant(
+                constraints,
+                bridge_poseidon_row(permutation, 0, limb),
+                lane,
+                0,
             );
         }
-    }
-
-    let public_flag = |row: usize| statement.public_values[row] != 0;
-    let push_fresh_poseidon_init =
-        |constraints: &mut SmallwoodLinearConstraints,
-         permutation: usize,
-         domain_tag: u64,
-         absorb_rows: &[(usize, usize)]| {
-            let lane = packed_bridge_permutation_lane(permutation);
-            for limb in 0..POSEIDON2_WIDTH {
-                let row = bridge_poseidon_row(permutation, 0, limb);
-                let mut terms = vec![(row, lane, 1)];
-                let mut target = 0u64;
-                if limb == 0 {
-                    target = domain_tag;
-                }
-                if limb == POSEIDON2_WIDTH - 1 {
-                    target = target.wrapping_add(1);
-                }
-                if limb < absorb_rows.len() {
-                    terms.push((absorb_rows[limb].0, absorb_rows[limb].1, neg_one));
-                }
-                push_bridge_constraint(constraints, &terms, target);
+        push_bridge_constant(
+            constraints,
+            bridge_poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+            lane,
+            1,
+        );
+    };
+    let push_poseidon_continuation = |constraints: &mut SmallwoodLinearConstraints,
+                                      prev_permutation: usize,
+                                      permutation: usize| {
+        let prev_lane = packed_bridge_permutation_lane(prev_permutation);
+        let lane = packed_bridge_permutation_lane(permutation);
+        for limb in 6..POSEIDON2_WIDTH {
+            push_bridge_constraint(
+                constraints,
+                &[
+                    (bridge_poseidon_row(permutation, 0, limb), lane, 1),
+                    (
+                        bridge_poseidon_row(
+                            prev_permutation,
+                            SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
+                            limb,
+                        ),
+                        prev_lane,
+                        neg_one,
+                    ),
+                ],
+                0,
+            );
+        }
+    };
+    let merkle_challenge_terms = |challenge: u64,
+                                  permutation: usize,
+                                  subtract_prev: Option<usize>|
+     -> Vec<(usize, usize, u64)> {
+        let lane = packed_bridge_permutation_lane(permutation);
+        let mut power = 1u64;
+        let mut terms = Vec::with_capacity(SMALLWOOD_WORDS_PER_48_BYTES * 2);
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            terms.push((
+                bridge_poseidon_row(permutation, 0, limb),
+                lane,
+                neg_coeff(power),
+            ));
+            if let Some(prev) = subtract_prev {
+                let prev_lane = packed_bridge_permutation_lane(prev);
+                terms.push((
+                    bridge_poseidon_row(
+                        prev,
+                        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
+                        limb,
+                    ),
+                    prev_lane,
+                    power,
+                ));
             }
-        };
-    let push_continued_poseidon_init =
-        |constraints: &mut SmallwoodLinearConstraints,
-         permutation: usize,
-         previous_permutation: usize,
-         absorb_rows: &[usize]| {
-            let lane = packed_bridge_permutation_lane(permutation);
-            let previous_lane = packed_bridge_permutation_lane(previous_permutation);
-            for limb in 0..POSEIDON2_WIDTH {
-                let row = bridge_poseidon_row(permutation, 0, limb);
-                let previous = bridge_poseidon_row(
-                    previous_permutation,
-                    SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
-                    limb,
-                );
-                let mut terms = vec![(row, lane, 1), (previous, previous_lane, neg_one)];
-                if limb < absorb_rows.len() {
-                    terms.push((absorb_rows[limb], lane, neg_one));
-                }
-                push_bridge_constraint(constraints, &terms, 0);
-            }
-        };
+            power = mul_mod_u64(power, challenge);
+        }
+        terms
+    };
 
-    push_fresh_poseidon_init(
+    // PRF permutation: only the unused rate tail and capacity are fixed.
+    let prf_permutation = bridge_prf_permutation();
+    let prf_lane = packed_bridge_permutation_lane(prf_permutation);
+    push_bridge_constant(
         &mut constraints,
-        bridge_prf_permutation(),
-        NULLIFIER_DOMAIN_TAG,
-        &[
-            (bridge_row_sk_chunk(0), 0),
-            (bridge_row_sk_chunk(1), 0),
-            (bridge_row_sk_chunk(2), 0),
-            (bridge_row_sk_chunk(3), 0),
-        ],
+        bridge_poseidon_row(prf_permutation, 0, 4),
+        prf_lane,
+        0,
+    );
+    push_bridge_constant(
+        &mut constraints,
+        bridge_poseidon_row(prf_permutation, 0, 5),
+        prf_lane,
+        0,
+    );
+    for limb in 6..(POSEIDON2_WIDTH - 1) {
+        push_bridge_constant(
+            &mut constraints,
+            bridge_poseidon_row(prf_permutation, 0, limb),
+            prf_lane,
+            0,
+        );
+    }
+    push_bridge_constant(
+        &mut constraints,
+        bridge_poseidon_row(prf_permutation, 0, POSEIDON2_WIDTH - 1),
+        prf_lane,
+        1,
     );
 
     for input in 0..MAX_INPUTS {
-        push_fresh_poseidon_init(
-            &mut constraints,
-            bridge_input_commitment_permutation(input, 0),
-            NOTE_DOMAIN_TAG,
-            &[
-                (bridge_row_input_value(input), 0),
-                (bridge_row_input_asset(input), 0),
-                (bridge_row_input_pk_recipient(input, 0), 0),
-                (bridge_row_input_pk_recipient(input, 1), 0),
-                (bridge_row_input_pk_recipient(input, 2), 0),
-                (bridge_row_input_pk_recipient(input, 3), 0),
-            ],
-        );
-        push_continued_poseidon_init(
-            &mut constraints,
-            bridge_input_commitment_permutation(input, 1),
-            bridge_input_commitment_permutation(input, 0),
-            &[
-                bridge_row_input_rho(input, 0),
-                bridge_row_input_rho(input, 1),
-                bridge_row_input_rho(input, 2),
-                bridge_row_input_rho(input, 3),
-                bridge_row_input_r(input, 0),
-                bridge_row_input_r(input, 1),
-            ],
-        );
-        push_continued_poseidon_init(
-            &mut constraints,
-            bridge_input_commitment_permutation(input, 2),
-            bridge_input_commitment_permutation(input, 1),
-            &[
-                bridge_row_input_r(input, 2),
-                bridge_row_input_r(input, 3),
-                bridge_row_input_pk_auth(input, 0),
-                bridge_row_input_pk_auth(input, 1),
-                bridge_row_input_pk_auth(input, 2),
-                bridge_row_input_pk_auth(input, 3),
-            ],
-        );
-        for level in 0..MERKLE_TREE_DEPTH {
-            push_fresh_poseidon_init(
-                &mut constraints,
-                bridge_input_merkle_permutation(input, level, 0),
-                MERKLE_DOMAIN_TAG,
-                &[
-                    (bridge_row_input_merkle_left(input, level, 0), 0),
-                    (bridge_row_input_merkle_left(input, level, 1), 0),
-                    (bridge_row_input_merkle_left(input, level, 2), 0),
-                    (bridge_row_input_merkle_left(input, level, 3), 0),
-                    (bridge_row_input_merkle_left(input, level, 4), 0),
-                    (bridge_row_input_merkle_left(input, level, 5), 0),
-                ],
-            );
-            push_continued_poseidon_init(
-                &mut constraints,
-                bridge_input_merkle_permutation(input, level, 1),
-                bridge_input_merkle_permutation(input, level, 0),
-                &[
-                    bridge_row_input_merkle_right(input, level, 0),
-                    bridge_row_input_merkle_right(input, level, 1),
-                    bridge_row_input_merkle_right(input, level, 2),
-                    bridge_row_input_merkle_right(input, level, 3),
-                    bridge_row_input_merkle_right(input, level, 4),
-                    bridge_row_input_merkle_right(input, level, 5),
-                ],
-            );
+        if statement.public_values[PUB_INPUT_FLAG0 + input] == 0 {
+            continue;
         }
-        let prf_lane = packed_bridge_permutation_lane(bridge_prf_permutation());
-        let prf_final_row = |limb: usize| {
-            bridge_poseidon_row(
-                bridge_prf_permutation(),
-                SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
-                limb,
-            )
-        };
-        push_fresh_poseidon_init(
-            &mut constraints,
-            bridge_input_nullifier_permutation(input),
-            NULLIFIER_DOMAIN_TAG,
-            &[
-                (prf_final_row(0), prf_lane),
-                (bridge_row_input_position(input), 0),
-                (bridge_row_input_rho(input, 0), 0),
-                (bridge_row_input_rho(input, 1), 0),
-                (bridge_row_input_rho(input, 2), 0),
-                (bridge_row_input_rho(input, 3), 0),
-            ],
-        );
-    }
+        let commitment0 = bridge_input_commitment_permutation(input, 0);
+        let commitment1 = bridge_input_commitment_permutation(input, 1);
+        let commitment2 = bridge_input_commitment_permutation(input, 2);
+        let lane0 = packed_bridge_permutation_lane(commitment0);
 
-    for output in 0..MAX_OUTPUTS {
-        push_fresh_poseidon_init(
+        push_bridge_constraint(
             &mut constraints,
-            bridge_output_commitment_permutation(output, 0),
+            &[
+                (bridge_poseidon_row(commitment0, 0, 0), lane0, 1),
+                (bridge_row_input_value(input), lane0, neg_one),
+            ],
             NOTE_DOMAIN_TAG,
-            &[
-                (bridge_row_output_value(output), 0),
-                (bridge_row_output_asset(output), 0),
-                (bridge_row_output_pk_recipient(output, 0), 0),
-                (bridge_row_output_pk_recipient(output, 1), 0),
-                (bridge_row_output_pk_recipient(output, 2), 0),
-                (bridge_row_output_pk_recipient(output, 3), 0),
-            ],
         );
-        push_continued_poseidon_init(
+        push_bridge_cell_equals(
             &mut constraints,
-            bridge_output_commitment_permutation(output, 1),
-            bridge_output_commitment_permutation(output, 0),
-            &[
-                bridge_row_output_rho(output, 0),
-                bridge_row_output_rho(output, 1),
-                bridge_row_output_rho(output, 2),
-                bridge_row_output_rho(output, 3),
-                bridge_row_output_r(output, 0),
-                bridge_row_output_r(output, 1),
-            ],
+            bridge_poseidon_row(commitment0, 0, 1),
+            lane0,
+            bridge_row_input_asset(input),
+            lane0,
+            neg_one,
         );
-        push_continued_poseidon_init(
-            &mut constraints,
-            bridge_output_commitment_permutation(output, 2),
-            bridge_output_commitment_permutation(output, 1),
-            &[
-                bridge_row_output_r(output, 2),
-                bridge_row_output_r(output, 3),
-                bridge_row_output_pk_auth(output, 0),
-                bridge_row_output_pk_auth(output, 1),
-                bridge_row_output_pk_auth(output, 2),
-                bridge_row_output_pk_auth(output, 3),
-            ],
-        );
-    }
+        push_poseidon_fresh_frame(&mut constraints, commitment0);
+        push_poseidon_continuation(&mut constraints, commitment0, commitment1);
+        push_poseidon_continuation(&mut constraints, commitment1, commitment2);
 
-    for permutation in statement.poseidon_permutation_count as usize
-        ..smallwood_bridge_poseidon_group_count(
-            statement.poseidon_permutation_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-        ) * SMALLWOOD_BRIDGE_PACKING_FACTOR
-    {
-        push_fresh_poseidon_init(&mut constraints, permutation, 0, &[]);
-    }
-
-    for input in 0..MAX_INPUTS {
         for level in 0..MERKLE_TREE_DEPTH {
-            let source_permutation = if level == 0 {
-                bridge_input_commitment_permutation(input, 2)
+            let challenge =
+                smallwood_bridge_merkle_challenge(&statement.public_values, input, level);
+            let merkle0 = bridge_input_merkle_permutation(input, level, 0);
+            let merkle1 = bridge_input_merkle_permutation(input, level, 1);
+            let lane = packed_bridge_permutation_lane(merkle0);
+
+            let current_row = bridge_row_input_current_agg(input, level);
+            let left_row = bridge_row_input_left_agg(input, level);
+            let right_row = bridge_row_input_right_agg(input, level);
+
+            let current_source = if level == 0 {
+                commitment2
             } else {
                 bridge_input_merkle_permutation(input, level - 1, 1)
             };
-            let source_lane = packed_bridge_permutation_lane(source_permutation);
+            let current_lane = packed_bridge_permutation_lane(current_source);
+            let mut power = 1u64;
+            let mut current_terms = vec![(current_row, lane, 1)];
             for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
-                let source_row = bridge_poseidon_row(
-                    source_permutation,
-                    SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
-                    limb,
-                );
-                push_bridge_cell_equals(
-                    &mut constraints,
-                    bridge_row_input_current_hash(input, level, limb),
-                    0,
-                    source_row,
-                    source_lane,
-                    neg_one,
-                );
-            }
-        }
-    }
-
-    let prf_lane = packed_bridge_permutation_lane(bridge_prf_permutation());
-    for input in 0..MAX_INPUTS {
-        if public_flag(0 + input) {
-            for limb in 0..SMALLWOOD_WORDS_PER_32_BYTES {
-                push_bridge_cell_equals(
-                    &mut constraints,
-                    bridge_row_input_pk_auth(input, limb),
-                    0,
+                current_terms.push((
                     bridge_poseidon_row(
-                        bridge_prf_permutation(),
+                        current_source,
                         SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
-                        limb + 1,
+                        limb,
+                    ),
+                    current_lane,
+                    neg_coeff(power),
+                ));
+                power = mul_mod_u64(power, challenge);
+            }
+            push_bridge_constraint(&mut constraints, &current_terms, 0);
+
+            let mut left_terms = vec![(left_row, lane, 1)];
+            left_terms.extend(merkle_challenge_terms(challenge, merkle0, None));
+            push_bridge_constraint(&mut constraints, &left_terms, neg_coeff(MERKLE_DOMAIN_TAG));
+
+            let mut right_terms = vec![(right_row, lane, 1)];
+            right_terms.extend(merkle_challenge_terms(challenge, merkle1, Some(merkle0)));
+            push_bridge_constraint(&mut constraints, &right_terms, 0);
+
+            push_poseidon_fresh_frame(&mut constraints, merkle0);
+            push_poseidon_continuation(&mut constraints, merkle0, merkle1);
+        }
+
+        let nullifier = bridge_input_nullifier_permutation(input);
+        let nullifier_lane = packed_bridge_permutation_lane(nullifier);
+        push_bridge_constraint(
+            &mut constraints,
+            &[
+                (bridge_poseidon_row(nullifier, 0, 0), nullifier_lane, 1),
+                (
+                    bridge_poseidon_row(
+                        prf_permutation,
+                        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
+                        0,
                     ),
                     prf_lane,
                     neg_one,
-                );
-            }
-            let nullifier_lane =
-                packed_bridge_permutation_lane(bridge_input_nullifier_permutation(input));
-            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
-                push_bridge_cell_equals(
-                    &mut constraints,
-                    limb + 4 + input * SMALLWOOD_WORDS_PER_48_BYTES,
-                    nullifier_lane,
-                    bridge_poseidon_row(
-                        bridge_input_nullifier_permutation(input),
-                        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
-                        limb,
-                    ),
-                    nullifier_lane,
-                    neg_one,
-                );
-                push_bridge_cell_equals(
-                    &mut constraints,
-                    43 + limb,
-                    0,
-                    bridge_poseidon_row(
-                        bridge_input_merkle_permutation(input, MERKLE_TREE_DEPTH - 1, 1),
-                        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
-                        limb,
-                    ),
-                    packed_bridge_permutation_lane(bridge_input_merkle_permutation(
-                        input,
-                        MERKLE_TREE_DEPTH - 1,
-                        1,
-                    )),
-                    neg_one,
-                );
-            }
+                ),
+            ],
+            NULLIFIER_DOMAIN_TAG,
+        );
+        push_bridge_cell_equals(
+            &mut constraints,
+            bridge_poseidon_row(nullifier, 0, 1),
+            nullifier_lane,
+            bridge_row_input_position(input),
+            nullifier_lane,
+            neg_one,
+        );
+        for limb in 6..(POSEIDON2_WIDTH - 1) {
+            push_bridge_constant(
+                &mut constraints,
+                bridge_poseidon_row(nullifier, 0, limb),
+                nullifier_lane,
+                0,
+            );
+        }
+        push_bridge_constant(
+            &mut constraints,
+            bridge_poseidon_row(nullifier, 0, POSEIDON2_WIDTH - 1),
+            nullifier_lane,
+            1,
+        );
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                bridge_poseidon_row(
+                    nullifier,
+                    SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
+                    limb,
+                ),
+                nullifier_lane,
+                statement.public_values
+                    [PUB_NULLIFIERS + input * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+            );
+        }
+        let root_source = bridge_input_merkle_permutation(input, MERKLE_TREE_DEPTH - 1, 1);
+        let root_lane = packed_bridge_permutation_lane(root_source);
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                bridge_poseidon_row(
+                    root_source,
+                    SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
+                    limb,
+                ),
+                root_lane,
+                statement.public_values[PUB_MERKLE_ROOT + limb],
+            );
         }
     }
 
     for output in 0..MAX_OUTPUTS {
-        if public_flag(2 + output) {
-            let commitment_lane =
-                packed_bridge_permutation_lane(bridge_output_commitment_permutation(output, 2));
-            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
-                push_bridge_cell_equals(
-                    &mut constraints,
-                    16 + output * SMALLWOOD_WORDS_PER_48_BYTES + limb,
-                    commitment_lane,
-                    bridge_poseidon_row(
-                        bridge_output_commitment_permutation(output, 2),
-                        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
-                        limb,
-                    ),
-                    commitment_lane,
-                    neg_one,
-                );
-            }
+        if statement.public_values[PUB_OUTPUT_FLAG0 + output] == 0 {
+            continue;
+        }
+        let commitment0 = bridge_output_commitment_permutation(output, 0);
+        let commitment1 = bridge_output_commitment_permutation(output, 1);
+        let commitment2 = bridge_output_commitment_permutation(output, 2);
+        let lane0 = packed_bridge_permutation_lane(commitment0);
+
+        push_bridge_constraint(
+            &mut constraints,
+            &[
+                (bridge_poseidon_row(commitment0, 0, 0), lane0, 1),
+                (bridge_row_output_value(output), lane0, neg_one),
+            ],
+            NOTE_DOMAIN_TAG,
+        );
+        push_bridge_cell_equals(
+            &mut constraints,
+            bridge_poseidon_row(commitment0, 0, 1),
+            lane0,
+            bridge_row_output_asset(output),
+            lane0,
+            neg_one,
+        );
+        push_poseidon_fresh_frame(&mut constraints, commitment0);
+        push_poseidon_continuation(&mut constraints, commitment0, commitment1);
+        push_poseidon_continuation(&mut constraints, commitment1, commitment2);
+        let out_lane = packed_bridge_permutation_lane(commitment2);
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                bridge_poseidon_row(
+                    commitment2,
+                    SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
+                    limb,
+                ),
+                out_lane,
+                statement.public_values
+                    [PUB_COMMITMENTS + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+            );
         }
     }
 
@@ -1241,6 +1172,64 @@ fn signed_magnitude_u64(value: i128, label: &str) -> Result<(u8, u64), Transacti
     Ok((sign, magnitude as u64))
 }
 
+fn smallwood_xof_words(input_words: &[u64], output_words: &mut [u64]) {
+    let mut hasher = Hasher::new();
+    hasher.update(SMALLWOOD_XOF_DOMAIN);
+    hasher.update(&(input_words.len() as u64).to_le_bytes());
+    for word in input_words {
+        hasher.update(&word.to_le_bytes());
+    }
+    let mut reader = hasher.finalize_xof();
+    for output in output_words {
+        let mut buf = [0u8; 16];
+        reader.fill(&mut buf);
+        *output = (u128::from_le_bytes(buf) % transaction_core::constants::FIELD_MODULUS) as u64;
+    }
+}
+
+fn smallwood_bridge_merkle_challenge(public_values: &[u64], input: usize, level: usize) -> u64 {
+    let mut words = Vec::with_capacity(SMALLWOOD_BASE_PUBLIC_VALUE_COUNT + 4);
+    words.push(0x736d_616c_6c77_6f6f);
+    words.push(9);
+    words.push(input as u64);
+    words.push(level as u64);
+    words.extend_from_slice(public_values);
+    let mut out = [0u64; 1];
+    smallwood_xof_words(&words, &mut out);
+    if out[0] <= 1 {
+        out[0] += 2;
+    }
+    out[0]
+}
+
+fn add_mod_u64(a: u64, b: u64) -> u64 {
+    let modulus = transaction_core::constants::FIELD_MODULUS;
+    let sum = a as u128 + b as u128;
+    if sum >= modulus {
+        (sum - modulus) as u64
+    } else {
+        sum as u64
+    }
+}
+
+fn mul_mod_u64(a: u64, b: u64) -> u64 {
+    ((a as u128 * b as u128) % transaction_core::constants::FIELD_MODULUS) as u64
+}
+
+fn aggregate_hash_words(words: &[u64; SMALLWOOD_WORDS_PER_48_BYTES], challenge: u64) -> u64 {
+    let mut acc = 0u64;
+    let mut power = 1u64;
+    for &word in words {
+        acc = add_mod_u64(acc, mul_mod_u64(power, word));
+        power = mul_mod_u64(power, challenge);
+    }
+    acc
+}
+
+fn aggregate_hash(hash: &HashFelt, challenge: u64) -> u64 {
+    aggregate_hash_words(&hash_felt_to_words(hash), challenge)
+}
+
 fn semantic_secret_witness_rows(
     witness: &TransactionWitness,
     public_inputs: &TransactionPublicInputsP3,
@@ -1252,12 +1241,21 @@ fn semantic_secret_witness_rows(
         .collect::<Vec<_>>();
     let (inputs, input_flags) = padded_inputs(&witness.inputs);
     let (outputs, output_flags) = padded_outputs(&witness.outputs);
+    let public_values: Vec<u64> = public_inputs
+        .to_vec()
+        .into_iter()
+        .map(|felt| felt.as_canonical_u64())
+        .chain([
+            u64::from(witness.version.circuit),
+            u64::from(witness.version.crypto),
+        ])
+        .collect();
 
     let mut values = Vec::with_capacity(SMALLWOOD_SECRET_WITNESS_ROWS);
-    values.extend(bytes32_chunks_to_words(&witness.sk_spend));
 
     for (idx, input) in inputs.iter().enumerate() {
-        push_note_fields(&mut values, &input.note);
+        values.push(input.note.value);
+        values.push(input.note.asset_id);
         values.push(input.position);
         let selector_bits = if input_flags[idx] {
             selector_bits_for_asset(input.note.asset_id, &slot_assets)?
@@ -1274,25 +1272,30 @@ fn semantic_secret_witness_rows(
             )));
         }
         let mut current = input.note.commitment();
-        for sibling in &input.merkle_path.siblings {
-            values.extend(hash_felt_to_words(sibling));
-        }
+        let mut current_aggs = Vec::with_capacity(MERKLE_TREE_DEPTH);
+        let mut left_aggs = Vec::with_capacity(MERKLE_TREE_DEPTH);
+        let mut right_aggs = Vec::with_capacity(MERKLE_TREE_DEPTH);
         for level in 0..MERKLE_TREE_DEPTH {
             let sibling = input.merkle_path.siblings[level];
-            values.extend(hash_felt_to_words(&current));
+            let challenge = smallwood_bridge_merkle_challenge(&public_values, idx, level);
+            current_aggs.push(aggregate_hash(&current, challenge));
             let (left, right) = if ((input.position >> level) & 1) == 0 {
                 (current, sibling)
             } else {
                 (sibling, current)
             };
-            values.extend(hash_felt_to_words(&left));
-            values.extend(hash_felt_to_words(&right));
+            left_aggs.push(aggregate_hash(&left, challenge));
+            right_aggs.push(aggregate_hash(&right, challenge));
             current = merkle_node(left, right);
         }
+        values.extend(current_aggs);
+        values.extend(left_aggs);
+        values.extend(right_aggs);
     }
 
     for (idx, output) in outputs.iter().enumerate() {
-        push_note_fields(&mut values, &output.note);
+        values.push(output.note.value);
+        values.push(output.note.asset_id);
         let selector_bits = if output_flags[idx] {
             selector_bits_for_asset(output.note.asset_id, &slot_assets)?
         } else {
@@ -1492,23 +1495,15 @@ fn packed_bridge_witness_rows(
     let mut rows = Vec::with_capacity(
         (public_values.len()
             + secret_rows.len()
-            + SMALLWOOD_LANE_SELECTOR_ROWS
             + (poseidon_group_count
                 * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION
                 * POSEIDON2_WIDTH))
             * packing_factor,
     );
 
-    for value in public_values {
-        rows.extend(std::iter::repeat_n(*value, packing_factor));
-    }
+    rows.extend_from_slice(&pad_for_lppc_rows(public_values.to_vec(), packing_factor));
     for value in secret_rows {
         rows.extend(std::iter::repeat_n(*value, packing_factor));
-    }
-    for selector in 0..SMALLWOOD_LANE_SELECTOR_ROWS {
-        for col in 0..packing_factor {
-            rows.push(u64::from(col == selector));
-        }
     }
     for group in 0..poseidon_group_count {
         for step in 0..SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION {
@@ -2031,11 +2026,11 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let statement = build_smallwood_public_statement_from_witness(&witness).unwrap();
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 1_688);
+        assert_eq!(statement.raw_witness_len, 276);
         assert_eq!(statement.poseidon_permutation_count, 143);
         assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 56_678);
-        assert_eq!(statement.lppc_row_count, 56_678);
+        assert_eq!(statement.expanded_witness_len, 55_266);
+        assert_eq!(statement.lppc_row_count, 55_266);
         assert_eq!(statement.lppc_packing_factor, 1);
         assert_eq!(statement.effective_constraint_degree, 8);
     }
@@ -2078,28 +2073,21 @@ mod tests {
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 1_688);
+        assert_eq!(statement.raw_witness_len, 276);
         assert_eq!(statement.poseidon_permutation_count, 143);
         assert_eq!(statement.poseidon_state_row_count, 4_576);
         assert_eq!(statement.lppc_packing_factor, 64);
-        assert_eq!(statement.lppc_row_count, 2_982);
+        assert_eq!(statement.lppc_row_count, 1_430);
         assert_eq!(
             material.packed_witness_rows.len(),
             statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
         );
         assert_eq!(material.linear_constraints.term_indices[0], 0);
-        assert_eq!(material.linear_constraints.term_indices[1], 64);
+        assert_eq!(material.linear_constraints.term_indices[1], 1);
         assert_eq!(
             &material.linear_constraints.targets[..statement.public_value_count as usize],
             statement.public_values.as_slice()
         );
-        let selector_rows_start =
-            statement.public_value_count as usize + statement.raw_witness_len as usize;
-        let first_selector = &material.packed_witness_rows[selector_rows_start
-            * SMALLWOOD_BRIDGE_PACKING_FACTOR
-            ..(selector_rows_start + 1) * SMALLWOOD_BRIDGE_PACKING_FACTOR];
-        assert_eq!(first_selector[0], 1);
-        assert!(first_selector[1..].iter().all(|value| *value == 0));
     }
 
     #[test]
@@ -2126,9 +2114,8 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let poseidon_rows = poseidon_subtrace_rows(&witness).unwrap();
-        let group_rows_start = material.public_statement.public_value_count as usize
-            + material.public_statement.raw_witness_len as usize
-            + SMALLWOOD_LANE_SELECTOR_ROWS;
+        let group_rows_start =
+            SMALLWOOD_PUBLIC_ROWS + material.public_statement.raw_witness_len as usize;
         for permutation in 0..poseidon_rows.len() {
             let group = permutation / SMALLWOOD_BRIDGE_PACKING_FACTOR;
             let lane = permutation % SMALLWOOD_BRIDGE_PACKING_FACTOR;
@@ -2167,9 +2154,8 @@ mod tests {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let group_rows_start = material.public_statement.public_value_count as usize
-            + material.public_statement.raw_witness_len as usize
-            + SMALLWOOD_LANE_SELECTOR_ROWS;
+        let group_rows_start =
+            SMALLWOOD_PUBLIC_ROWS + material.public_statement.raw_witness_len as usize;
         let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
         for limb in 0..POSEIDON2_WIDTH {
             let row = group_rows_start + 29 * POSEIDON2_WIDTH + limb;
@@ -2187,32 +2173,29 @@ mod tests {
     }
 
     #[test]
-    fn packed_smallwood_bridge_first_merkle_left_rows_match_source() {
+    fn packed_smallwood_bridge_first_merkle_aggregates_match_source() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let sibling = witness.inputs[0].merkle_path.siblings[0];
+        let challenge =
+            smallwood_bridge_merkle_challenge(&material.public_statement.public_values, 0, 0);
         let current = witness.inputs[0].note.commitment();
-        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
-            let current_row =
-                bridge_row_input_current_hash(0, 0, limb) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-            let left_row =
-                bridge_row_input_merkle_left(0, 0, limb) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-            let right_row =
-                bridge_row_input_merkle_right(0, 0, limb) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-            assert_eq!(
-                material.packed_witness_rows[current_row],
-                current[limb].as_canonical_u64()
-            );
-            assert_eq!(
-                material.packed_witness_rows[left_row],
-                current[limb].as_canonical_u64()
-            );
-            assert_eq!(
-                material.packed_witness_rows[right_row],
-                sibling[limb].as_canonical_u64()
-            );
-        }
+        let sibling = witness.inputs[0].merkle_path.siblings[0];
+        let current_row = bridge_row_input_current_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
+        let left_row = bridge_row_input_left_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
+        let right_row = bridge_row_input_right_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
+        assert_eq!(
+            material.packed_witness_rows[current_row],
+            aggregate_hash(&current, challenge)
+        );
+        assert_eq!(
+            material.packed_witness_rows[left_row],
+            aggregate_hash(&current, challenge)
+        );
+        assert_eq!(
+            material.packed_witness_rows[right_row],
+            aggregate_hash(&sibling, challenge)
+        );
     }
 
     #[test]

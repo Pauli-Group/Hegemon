@@ -18,17 +18,18 @@ const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const WORDS_PER_32_BYTES: usize = 4;
 const HASH_LIMBS: usize = 6;
-const INPUT_ROWS: usize = 821;
-const OUTPUT_ROWS: usize = 20;
-const PUBLIC_ROWS: usize = 78;
-const SECRET_ROWS: usize = 1688;
-const LANE_SELECTOR_ROWS: usize = 64;
+const INPUT_ROWS: usize = 133;
+const OUTPUT_ROWS: usize = 4;
+const PUBLIC_ROWS: usize = 2;
+const PUBLIC_VALUE_COUNT: usize = 78;
+const SECRET_ROWS: usize = 276;
+const PACKING_FACTOR: usize = 64;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
 const POSEIDON_PERMUTATION_COUNT: usize =
     1 + MAX_INPUTS * INPUT_PERMUTATIONS + MAX_OUTPUTS * OUTPUT_PERMUTATIONS;
 const POSEIDON_GROUP_COUNT: usize =
-    (POSEIDON_PERMUTATION_COUNT + LANE_SELECTOR_ROWS - 1) / LANE_SELECTOR_ROWS;
+    (POSEIDON_PERMUTATION_COUNT + PACKING_FACTOR - 1) / PACKING_FACTOR;
 const NOTE_DOMAIN_TAG: u64 = 1;
 const NULLIFIER_DOMAIN_TAG: u64 = 2;
 const MERKLE_DOMAIN_TAG: u64 = 4;
@@ -59,8 +60,6 @@ pub(crate) struct PackedStatement<'a> {
     stable_policy_hash_challenge: Felt,
     stable_oracle_challenge: Felt,
     stable_attestation_challenge: Felt,
-    input_merkle_left_challenges: Vec<Felt>,
-    input_merkle_right_challenges: Vec<Felt>,
     poseidon_transition_challenges: Vec<Felt>,
 }
 
@@ -73,9 +72,9 @@ pub(crate) fn test_candidate_witness_rust(
     linear_constraint_coefficients: &[u64],
     linear_constraint_targets: &[u64],
 ) -> Result<(), TransactionCircuitError> {
-    if packing_factor != LANE_SELECTOR_ROWS || row_count == 0 {
+    if packing_factor != PACKING_FACTOR || row_count == 0 {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "unsupported smallwood packing_factor {packing_factor}, expected {LANE_SELECTOR_ROWS}"
+            "unsupported smallwood packing_factor {packing_factor}, expected {PACKING_FACTOR}"
         )));
     }
     if witness_values.len() != row_count * packing_factor {
@@ -157,8 +156,6 @@ impl<'a> PackedStatement<'a> {
             stable_policy_hash_challenge: Felt::ZERO,
             stable_oracle_challenge: Felt::ZERO,
             stable_attestation_challenge: Felt::ZERO,
-            input_merkle_left_challenges: vec![Felt::ZERO; MAX_INPUTS * MERKLE_DEPTH],
-            input_merkle_right_challenges: vec![Felt::ZERO; MAX_INPUTS * MERKLE_DEPTH],
             poseidon_transition_challenges: vec![Felt::ZERO; POSEIDON_GROUP_COUNT * POSEIDON_STEPS],
         };
         for output in 0..MAX_OUTPUTS {
@@ -168,15 +165,6 @@ impl<'a> PackedStatement<'a> {
         statement.stable_policy_hash_challenge = nontrivial_challenge(&statement, 6, 0, 0);
         statement.stable_oracle_challenge = nontrivial_challenge(&statement, 7, 0, 0);
         statement.stable_attestation_challenge = nontrivial_challenge(&statement, 8, 0, 0);
-        for input in 0..MAX_INPUTS {
-            for level in 0..MERKLE_DEPTH {
-                let idx = input * MERKLE_DEPTH + level;
-                statement.input_merkle_left_challenges[idx] =
-                    nontrivial_challenge(&statement, 9, input as u64, level as u64);
-                statement.input_merkle_right_challenges[idx] =
-                    nontrivial_challenge(&statement, 10, input as u64, level as u64);
-            }
-        }
         for group in 0..POSEIDON_GROUP_COUNT {
             for step in 0..POSEIDON_STEPS {
                 let idx = poseidon_transition_challenge_index(group, step);
@@ -208,12 +196,12 @@ fn xof_words(input_words: &[u64], output_words: &mut [u64]) {
 }
 
 fn nontrivial_challenge(statement: &PackedStatement<'_>, tag: u64, a: u64, b: u64) -> Felt {
-    let mut input = Vec::with_capacity(PUBLIC_ROWS + 4);
+    let mut input = Vec::with_capacity(PUBLIC_VALUE_COUNT + 4);
     input.push(0x736d_616c_6c77_6f6f);
     input.push(tag);
     input.push(a);
     input.push(b);
-    input.extend_from_slice(&statement.linear_constraint_targets[..PUBLIC_ROWS]);
+    input.extend_from_slice(&statement.linear_constraint_targets[..PUBLIC_VALUE_COUNT]);
     let mut output = [0u64; 1];
     xof_words(&input, &mut output);
     if output[0] <= 1 {
@@ -227,18 +215,13 @@ fn public_value(statement: &PackedStatement<'_>, row: usize) -> Felt {
 }
 
 #[inline]
-fn row_sk_chunk(chunk: usize) -> usize {
-    PUBLIC_ROWS + chunk
-}
-
-#[inline]
 fn row_input_base(input: usize) -> usize {
-    PUBLIC_ROWS + WORDS_PER_32_BYTES + input * INPUT_ROWS
+    PUBLIC_ROWS + input * INPUT_ROWS
 }
 
 #[inline]
 fn row_output_base(output: usize) -> usize {
-    PUBLIC_ROWS + WORDS_PER_32_BYTES + MAX_INPUTS * INPUT_ROWS + output * OUTPUT_ROWS
+    PUBLIC_ROWS + MAX_INPUTS * INPUT_ROWS + output * OUTPUT_ROWS
 }
 
 #[inline]
@@ -250,58 +233,28 @@ fn row_input_asset(input: usize) -> usize {
     row_input_base(input) + 1
 }
 #[inline]
-fn row_input_pk_recipient(input: usize, limb: usize) -> usize {
-    row_input_base(input) + 2 + limb
-}
-#[inline]
-fn row_input_pk_auth(input: usize, limb: usize) -> usize {
-    row_input_base(input) + 6 + limb
-}
-#[inline]
-fn row_input_rho(input: usize, limb: usize) -> usize {
-    row_input_base(input) + 10 + limb
-}
-#[inline]
-fn row_input_r(input: usize, limb: usize) -> usize {
-    row_input_base(input) + 14 + limb
-}
-#[inline]
 fn row_input_position(input: usize) -> usize {
-    row_input_base(input) + 18
+    row_input_base(input) + 2
 }
 #[inline]
 fn row_input_selector(input: usize, bit: usize) -> usize {
-    row_input_base(input) + 19 + bit
+    row_input_base(input) + 3 + bit
 }
 #[inline]
 fn row_input_direction(input: usize, bit: usize) -> usize {
-    row_input_base(input) + 21 + bit
+    row_input_base(input) + 5 + bit
 }
 #[inline]
-fn row_input_sibling(input: usize, level: usize, limb: usize) -> usize {
-    row_input_base(input) + 53 + level * HASH_LIMBS + limb
+fn row_input_current_agg(input: usize, level: usize) -> usize {
+    row_input_base(input) + 37 + level
 }
 #[inline]
-fn row_input_current_hash(input: usize, level: usize, limb: usize) -> usize {
-    row_input_base(input) + 53 + (MERKLE_DEPTH * HASH_LIMBS) + level * (HASH_LIMBS * 3) + limb
+fn row_input_left_agg(input: usize, level: usize) -> usize {
+    row_input_base(input) + 69 + level
 }
 #[inline]
-fn row_input_merkle_left(input: usize, level: usize, limb: usize) -> usize {
-    row_input_base(input)
-        + 53
-        + (MERKLE_DEPTH * HASH_LIMBS)
-        + level * (HASH_LIMBS * 3)
-        + HASH_LIMBS
-        + limb
-}
-#[inline]
-fn row_input_merkle_right(input: usize, level: usize, limb: usize) -> usize {
-    row_input_base(input)
-        + 53
-        + (MERKLE_DEPTH * HASH_LIMBS)
-        + level * (HASH_LIMBS * 3)
-        + (HASH_LIMBS * 2)
-        + limb
+fn row_input_right_agg(input: usize, level: usize) -> usize {
+    row_input_base(input) + 101 + level
 }
 
 #[inline]
@@ -313,24 +266,8 @@ fn row_output_asset(output: usize) -> usize {
     row_output_base(output) + 1
 }
 #[inline]
-fn row_output_pk_recipient(output: usize, limb: usize) -> usize {
-    row_output_base(output) + 2 + limb
-}
-#[inline]
-fn row_output_pk_auth(output: usize, limb: usize) -> usize {
-    row_output_base(output) + 6 + limb
-}
-#[inline]
-fn row_output_rho(output: usize, limb: usize) -> usize {
-    row_output_base(output) + 10 + limb
-}
-#[inline]
-fn row_output_r(output: usize, limb: usize) -> usize {
-    row_output_base(output) + 14 + limb
-}
-#[inline]
 fn row_output_selector(output: usize, bit: usize) -> usize {
-    row_output_base(output) + 18 + bit
+    row_output_base(output) + 2 + bit
 }
 
 #[inline]
@@ -338,12 +275,8 @@ fn row_stable_selector(bit: usize) -> usize {
     PUBLIC_ROWS + SECRET_ROWS - 2 + bit
 }
 #[inline]
-fn row_lane_selector(lane: usize) -> usize {
-    PUBLIC_ROWS + SECRET_ROWS + lane
-}
-#[inline]
 fn poseidon_rows_start() -> usize {
-    PUBLIC_ROWS + SECRET_ROWS + LANE_SELECTOR_ROWS
+    PUBLIC_ROWS + SECRET_ROWS
 }
 #[inline]
 fn poseidon_group_row(group: usize, step_row: usize, limb: usize) -> usize {
@@ -353,7 +286,7 @@ fn poseidon_group_row(group: usize, step_row: usize, limb: usize) -> usize {
 }
 #[inline]
 fn poseidon_row(permutation: usize, step_row: usize, limb: usize) -> usize {
-    poseidon_group_row(permutation / LANE_SELECTOR_ROWS, step_row, limb)
+    poseidon_group_row(permutation / PACKING_FACTOR, step_row, limb)
 }
 #[inline]
 fn poseidon_transition_challenge_index(group: usize, step: usize) -> usize {
@@ -382,11 +315,11 @@ fn output_commitment_permutation(output: usize, chunk: usize) -> usize {
 }
 #[inline]
 fn permutation_lane(permutation: usize) -> usize {
-    permutation % LANE_SELECTOR_ROWS
+    permutation % PACKING_FACTOR
 }
 #[inline]
 fn permutation_for_group_lane(group: usize, lane: usize) -> usize {
-    group * LANE_SELECTOR_ROWS + lane
+    group * PACKING_FACTOR + lane
 }
 
 #[inline]
@@ -425,11 +358,6 @@ fn aggregate_weighted_differences(challenge: Felt, lhs: &[Felt], rhs: &[Felt]) -
     acc
 }
 
-#[inline]
-fn lane_weight(rows: &[Felt], lane: usize) -> Felt {
-    rows[row_lane_selector(lane)]
-}
-
 fn signed_from_parts(sign: Felt, magnitude: Felt) -> Felt {
     magnitude - (sign + sign) * magnitude
 }
@@ -455,54 +383,6 @@ fn continued_state(
     *state = *previous;
     for (idx, value) in absorb.iter().enumerate() {
         state[idx] += *value;
-    }
-}
-
-fn input_commitment_chunk(rows: &[Felt], input: usize, chunk: usize, absorb: &mut [Felt; 6]) {
-    if chunk == 0 {
-        absorb[0] = rows[row_input_value(input)];
-        absorb[1] = rows[row_input_asset(input)];
-        for limb in 0..4 {
-            absorb[2 + limb] = rows[row_input_pk_recipient(input, limb)];
-        }
-        return;
-    }
-    if chunk == 1 {
-        for limb in 0..4 {
-            absorb[limb] = rows[row_input_rho(input, limb)];
-        }
-        absorb[4] = rows[row_input_r(input, 0)];
-        absorb[5] = rows[row_input_r(input, 1)];
-        return;
-    }
-    absorb[0] = rows[row_input_r(input, 2)];
-    absorb[1] = rows[row_input_r(input, 3)];
-    for limb in 0..4 {
-        absorb[2 + limb] = rows[row_input_pk_auth(input, limb)];
-    }
-}
-
-fn output_commitment_chunk(rows: &[Felt], output: usize, chunk: usize, absorb: &mut [Felt; 6]) {
-    if chunk == 0 {
-        absorb[0] = rows[row_output_value(output)];
-        absorb[1] = rows[row_output_asset(output)];
-        for limb in 0..4 {
-            absorb[2 + limb] = rows[row_output_pk_recipient(output, limb)];
-        }
-        return;
-    }
-    if chunk == 1 {
-        for limb in 0..4 {
-            absorb[limb] = rows[row_output_rho(output, limb)];
-        }
-        absorb[4] = rows[row_output_r(output, 0)];
-        absorb[5] = rows[row_output_r(output, 1)];
-        return;
-    }
-    absorb[0] = rows[row_output_r(output, 2)];
-    absorb[1] = rows[row_output_r(output, 3)];
-    for limb in 0..4 {
-        absorb[2 + limb] = rows[row_output_pk_auth(output, limb)];
     }
 }
 
@@ -533,7 +413,7 @@ pub(crate) fn compute_constraints_u64(
 
 fn constraint_count() -> usize {
     let public_bools = MAX_INPUTS + MAX_OUTPUTS + 3;
-    let input_constraints = MAX_INPUTS * (2 + MERKLE_DEPTH + 1 + 1 + (MERKLE_DEPTH * 2));
+    let input_constraints = MAX_INPUTS * (2 + MERKLE_DEPTH + 1 + 1 + MERKLE_DEPTH);
     let output_constraints = MAX_OUTPUTS * (2 + 1 + 1);
     let stablecoin_constraints = 2 + 1 + 1 + 7;
     let balance_constraints = BALANCE_SLOTS;
@@ -586,35 +466,12 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
             selected_slot_asset(statement, selector0, selector1) - rows[row_input_asset(input)];
         c += 1;
 
-        let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
-        let mut rhs_hash = [Felt::ZERO; HASH_LIMBS];
         for level in 0..MERKLE_DEPTH {
             let dir = rows[row_input_direction(input, level)];
-            for limb in 0..HASH_LIMBS {
-                let current = rows[row_input_current_hash(input, level, limb)];
-                let sibling = rows[row_input_sibling(input, level, limb)];
-                lhs_hash[limb] = rows[row_input_merkle_left(input, level, limb)];
-                rhs_hash[limb] = current + dir * (sibling - current);
-            }
-            out[c] = flag
-                * aggregate_weighted_differences(
-                    statement.input_merkle_left_challenges[input * MERKLE_DEPTH + level],
-                    &lhs_hash,
-                    &rhs_hash,
-                );
-            c += 1;
-            for limb in 0..HASH_LIMBS {
-                let current = rows[row_input_current_hash(input, level, limb)];
-                let sibling = rows[row_input_sibling(input, level, limb)];
-                lhs_hash[limb] = rows[row_input_merkle_right(input, level, limb)];
-                rhs_hash[limb] = sibling + dir * (current - sibling);
-            }
-            out[c] = flag
-                * aggregate_weighted_differences(
-                    statement.input_merkle_right_challenges[input * MERKLE_DEPTH + level],
-                    &lhs_hash,
-                    &rhs_hash,
-                );
+            let current = rows[row_input_current_agg(input, level)];
+            let left = rows[row_input_left_agg(input, level)];
+            let right = rows[row_input_right_agg(input, level)];
+            out[c] = flag * (current - (left + dir * (right - left)));
             c += 1;
         }
     }
