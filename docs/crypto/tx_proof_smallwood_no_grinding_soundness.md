@@ -6,8 +6,8 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `112716` bytes, the passing release roundtrip emits `112724` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
-- and the focused warmed release roundtrip is now down to about `2.1s` both directly and through the wrapped `tx_leaf` seam after retuning the DECS point to the smallest power-of-two evaluation domain that still clears the active no-grinding floor,
+- the exact serialized proof envelope for that current candidate now projects to `110844` bytes, the passing release roundtrip emits `110852` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- and the focused warmed release roundtrip is now down to about `2.2s` both directly and through the wrapped `tx_leaf` seam after retuning the DECS point to the smallest power-of-two evaluation domain that still clears the active no-grinding floor and then removing the remaining DECS hot-loop allocation churn with preallocated row buffers plus thread-local scratch,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
 It is intentionally narrow. This is not a blanket release claim for every future SmallWood frontend Hegemon might build. It is the exact engineering note for the active integrated statement behind `TxProofBackend::SmallwoodCandidate`.

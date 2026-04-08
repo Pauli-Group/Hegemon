@@ -27,8 +27,8 @@ const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
 const SMALLWOOD_RHO: usize = 2;
 const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
 const SMALLWOOD_BETA: usize = 3;
-const SMALLWOOD_DECS_NB_EVALS: usize = 8192;
-const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 32;
+const SMALLWOOD_DECS_NB_EVALS: usize = 16384;
+const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 26;
 const SMALLWOOD_DECS_ETA: usize = 3;
 const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 
@@ -1304,14 +1304,27 @@ fn decs_commit(
         .map(|_| random_poly(poly_degree))
         .collect::<Result<Vec<_>, _>>()?;
     log_stage("masking_polys", &mut last);
-    let committed_domain_evals = initial_domain_evals
-        .par_iter()
-        .map(|evals| extend_consecutive_evals(evals, SMALLWOOD_DECS_NB_EVALS))
-        .collect::<Vec<_>>();
-    let masking_domain_evals = masking_polys
-        .par_iter()
-        .map(|poly| evaluate_poly_on_consecutive_domain(poly, SMALLWOOD_DECS_NB_EVALS))
-        .collect::<Vec<_>>();
+    let mut committed_domain_evals =
+        vec![vec![0u64; SMALLWOOD_DECS_NB_EVALS]; initial_domain_evals.len()];
+    committed_domain_evals
+        .par_iter_mut()
+        .zip(initial_domain_evals.par_iter())
+        .for_each_init(
+            || (Vec::new(), Vec::new()),
+            |(work, diffs), (out, evals)| {
+                extend_consecutive_evals_into(evals, out, work, diffs);
+            },
+        );
+    let mut masking_domain_evals = vec![vec![0u64; SMALLWOOD_DECS_NB_EVALS]; masking_polys.len()];
+    masking_domain_evals
+        .par_iter_mut()
+        .zip(masking_polys.par_iter())
+        .for_each_init(
+            || (Vec::new(), Vec::new(), Vec::new()),
+            |(initial, work, diffs), (out, poly)| {
+                evaluate_poly_on_consecutive_domain_into(poly, out, initial, work, diffs);
+            },
+        );
     log_stage("domain_evals", &mut last);
     let salt_words = bytes_to_words_unchecked(salt);
     let mut tree_levels = vec![vec![[0u8; DIGEST_BYTES]; SMALLWOOD_DECS_NB_EVALS]];
@@ -2174,7 +2187,9 @@ mod tests {
         }
         let combi_polys = extended_combis
             .iter()
-            .map(|combi| interpolate_consecutive(&rotate_left_words(combi, cfg.nb_lvcs_cols)).unwrap())
+            .map(|combi| {
+                interpolate_consecutive(&rotate_left_words(combi, cfg.nb_lvcs_cols)).unwrap()
+            })
             .collect::<Vec<_>>();
         for (j, &point) in decs_eval_points.iter().enumerate() {
             for (k, poly) in combi_polys.iter().enumerate() {
@@ -2280,25 +2295,54 @@ fn poly_eval(poly: &[u64], point: u64) -> u64 {
     acc
 }
 
-fn evaluate_poly_on_consecutive_domain(poly: &[u64], total_len: usize) -> Vec<u64> {
+fn evaluate_poly_on_consecutive_domain_into(
+    poly: &[u64],
+    out: &mut [u64],
+    initial: &mut Vec<u64>,
+    work: &mut Vec<u64>,
+    diffs: &mut Vec<u64>,
+) {
     let initial_len = poly.len();
-    let initial = (0..initial_len)
-        .map(|point| poly_eval(poly, point as u64))
-        .collect::<Vec<_>>();
-    extend_consecutive_evals(&initial, total_len)
+    initial.clear();
+    initial.reserve(initial_len);
+    for point in 0..initial_len {
+        initial.push(poly_eval(poly, point as u64));
+    }
+    extend_consecutive_evals_into(initial, out, work, diffs);
 }
 
+#[cfg(test)]
 fn extend_consecutive_evals(initial: &[u64], total_len: usize) -> Vec<u64> {
-    if initial.is_empty() || total_len == 0 {
-        return Vec::new();
-    }
-    let keep = total_len.min(initial.len());
+    let mut work = Vec::new();
+    let mut diffs = Vec::new();
+    let mut out = vec![0u64; total_len];
+    extend_consecutive_evals_into(initial, &mut out, &mut work, &mut diffs);
     if total_len <= initial.len() {
-        return initial[..keep].to_vec();
+        out.truncate(total_len);
+    }
+    out
+}
+
+fn extend_consecutive_evals_into(
+    initial: &[u64],
+    out: &mut [u64],
+    work: &mut Vec<u64>,
+    diffs: &mut Vec<u64>,
+) {
+    if initial.is_empty() || out.is_empty() {
+        return;
     }
     let n = initial.len();
-    let mut work = initial.to_vec();
-    let mut diffs = Vec::with_capacity(n);
+    let keep = out.len().min(n);
+    out[..keep].copy_from_slice(&initial[..keep]);
+    if out.len() <= n {
+        return;
+    }
+
+    work.clear();
+    work.extend_from_slice(initial);
+    diffs.clear();
+    diffs.reserve(n);
     diffs.push(work[n - 1]);
     for order in 1..n {
         for idx in 0..(n - order) {
@@ -2306,14 +2350,12 @@ fn extend_consecutive_evals(initial: &[u64], total_len: usize) -> Vec<u64> {
         }
         diffs.push(work[n - order - 1]);
     }
-    let mut out = initial.to_vec();
-    for _ in n..total_len {
-        for idx in (0..diffs.len() - 1).rev() {
+    for slot in out.iter_mut().skip(n) {
+        for idx in (0..(diffs.len() - 1)).rev() {
             diffs[idx] = add_mod(diffs[idx], diffs[idx + 1]);
         }
-        out.push(diffs[0]);
+        *slot = diffs[0];
     }
-    out
 }
 
 fn poly_interpolate_generic(evals: &[u64], eval_points: &[u64]) -> Vec<u64> {
