@@ -32,7 +32,7 @@ const SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-bindin
 
 pub const SMALLWOOD_LPPC_PACKING_FACTOR: usize = 1;
 pub const SMALLWOOD_PACKED_LPPC_PACKING_FACTOR: usize = 64;
-pub const SMALLWOOD_BRIDGE_PACKING_FACTOR: usize = 4;
+pub const SMALLWOOD_BRIDGE_PACKING_FACTOR: usize = 64;
 pub const SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE: u16 = 8;
 pub const SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION: usize = POSEIDON2_STEPS + 1;
 pub const SMALLWOOD_RHO: u32 = 2;
@@ -45,8 +45,7 @@ pub const SMALLWOOD_DECS_ETA: u32 = 10;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 #[allow(dead_code)]
 const SMALLWOOD_BASE_PUBLIC_VALUE_COUNT: usize = 78;
-const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 4;
-const SMALLWOOD_BRIDGE_SLOT_COUNT: usize = 67;
+const SMALLWOOD_LANE_SELECTOR_ROWS: usize = SMALLWOOD_BRIDGE_PACKING_FACTOR;
 const SMALLWOOD_WORDS_PER_32_BYTES: usize = 4;
 const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1
@@ -413,9 +412,8 @@ fn build_packed_smallwood_bridge_material(
         raw_witness_len: secret_rows.len() as u32,
         lppc_row_count: row_count as u32,
         poseidon_permutation_count: poseidon_rows.len() as u32,
-        poseidon_state_row_count: (SMALLWOOD_BRIDGE_SLOT_COUNT
-            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
-            as u32,
+        poseidon_state_row_count: (poseidon_rows.len()
+            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION) as u32,
         expanded_witness_len: packed_witness_rows.len() as u32,
         lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR as u16,
         effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
@@ -450,10 +448,13 @@ fn build_packed_smallwood_bridge_public_statement(
             SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
         )));
     }
+    let poseidon_permutation_count = smallwood_poseidon_permutation_count();
+    let poseidon_group_count =
+        smallwood_bridge_poseidon_group_count(poseidon_permutation_count, SMALLWOOD_BRIDGE_PACKING_FACTOR);
     let lppc_row_count = SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
         + SMALLWOOD_SECRET_WITNESS_ROWS
         + SMALLWOOD_LANE_SELECTOR_ROWS
-        + (SMALLWOOD_BRIDGE_SLOT_COUNT
+        + (poseidon_group_count
             * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION
             * POSEIDON2_WIDTH);
     Ok(SmallwoodPublicStatement {
@@ -461,8 +462,8 @@ fn build_packed_smallwood_bridge_public_statement(
         public_value_count: SMALLWOOD_BASE_PUBLIC_VALUE_COUNT as u32,
         raw_witness_len: SMALLWOOD_SECRET_WITNESS_ROWS as u32,
         lppc_row_count: lppc_row_count as u32,
-        poseidon_permutation_count: smallwood_poseidon_permutation_count() as u32,
-        poseidon_state_row_count: (SMALLWOOD_BRIDGE_SLOT_COUNT
+        poseidon_permutation_count: poseidon_permutation_count as u32,
+        poseidon_state_row_count: (poseidon_permutation_count
             * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
             as u32,
         expanded_witness_len: (lppc_row_count * SMALLWOOD_BRIDGE_PACKING_FACTOR) as u32,
@@ -938,11 +939,13 @@ fn packed_bridge_witness_rows(
 ) -> Vec<u64> {
     debug_assert_eq!(packing_factor, SMALLWOOD_BRIDGE_PACKING_FACTOR);
     let dummy_rows = dummy_poseidon_rows();
+    let poseidon_group_count =
+        smallwood_bridge_poseidon_group_count(poseidon_rows.len(), packing_factor);
     let mut rows = Vec::with_capacity(
         (public_values.len()
             + secret_rows.len()
             + SMALLWOOD_LANE_SELECTOR_ROWS
-            + (SMALLWOOD_BRIDGE_SLOT_COUNT
+            + (poseidon_group_count
                 * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION
                 * POSEIDON2_WIDTH))
             * packing_factor,
@@ -959,18 +962,13 @@ fn packed_bridge_witness_rows(
             rows.push(u64::from(col == selector));
         }
     }
-    for slot in 0..SMALLWOOD_BRIDGE_SLOT_COUNT {
-        let lane_permutations = [
-            Some(1 + slot),
-            Some(69 + slot),
-            lane2_slot_permutation(slot),
-            None,
-        ];
+    for group in 0..poseidon_group_count {
         for step in 0..SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION {
             for limb in 0..POSEIDON2_WIDTH {
                 for lane in 0..packing_factor {
-                    let value = lane_permutations[lane]
-                        .map(|permutation| poseidon_rows[permutation][step][limb])
+                    let value = poseidon_rows
+                        .get(group * packing_factor + lane)
+                        .map(|permutation| permutation[step][limb])
                         .unwrap_or(dummy_rows[step][limb]);
                     rows.push(value);
                 }
@@ -981,19 +979,8 @@ fn packed_bridge_witness_rows(
     rows
 }
 
-fn lane2_slot_permutation(slot: usize) -> Option<usize> {
-    match slot {
-        0 => Some(0),
-        1 => Some(68),
-        2 => Some(136),
-        3 => Some(137),
-        4 => Some(138),
-        5 => Some(139),
-        6 => Some(140),
-        7 => Some(141),
-        8 => Some(142),
-        _ => None,
-    }
+fn smallwood_bridge_poseidon_group_count(permutation_count: usize, packing_factor: usize) -> usize {
+    permutation_count.div_ceil(packing_factor)
 }
 
 fn dummy_poseidon_rows() -> [[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]
@@ -1545,15 +1532,15 @@ mod tests {
         assert_eq!(statement.public_value_count, 78);
         assert_eq!(statement.raw_witness_len, 536);
         assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 2_144);
-        assert_eq!(statement.lppc_packing_factor, 4);
-        assert_eq!(statement.lppc_row_count, 26_346);
+        assert_eq!(statement.poseidon_state_row_count, 4_576);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.lppc_row_count, 1_830);
         assert_eq!(
             material.packed_witness_rows.len(),
             statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
         );
         assert_eq!(material.linear_constraints.term_indices[0], 0);
-        assert_eq!(material.linear_constraints.term_indices[1], 4);
+        assert_eq!(material.linear_constraints.term_indices[1], 64);
         assert_eq!(
             &material.linear_constraints.targets[..statement.public_value_count as usize],
             statement.public_values.as_slice()
@@ -1583,6 +1570,75 @@ mod tests {
             &material.linear_constraints.targets,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_groups_poseidon_rows_correctly() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let poseidon_rows = poseidon_subtrace_rows(&witness).unwrap();
+        let group_rows_start =
+            material.public_statement.public_value_count as usize
+                + material.public_statement.raw_witness_len as usize
+                + SMALLWOOD_LANE_SELECTOR_ROWS;
+        for permutation in 0..poseidon_rows.len() {
+            let group = permutation / SMALLWOOD_BRIDGE_PACKING_FACTOR;
+            let lane = permutation % SMALLWOOD_BRIDGE_PACKING_FACTOR;
+            for step in 0..SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION {
+                for limb in 0..POSEIDON2_WIDTH {
+                    let row =
+                        group_rows_start + (group * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION + step)
+                            * POSEIDON2_WIDTH
+                            + limb;
+                    assert_eq!(
+                        material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR + lane],
+                        poseidon_rows[permutation][step][limb]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_first_group_transition_matches_source_trace() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let poseidon_rows = poseidon_subtrace_rows(&witness).unwrap();
+        let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
+        for (limb, slot) in state.iter_mut().enumerate() {
+            *slot = Felt::from_u64(poseidon_rows[0][29][limb]);
+        }
+        poseidon2_step(&mut state, 29);
+        for limb in 0..POSEIDON2_WIDTH {
+            assert_eq!(state[limb].as_canonical_u64(), poseidon_rows[0][30][limb]);
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_first_group_transition_matches_packed_rows() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let group_rows_start =
+            material.public_statement.public_value_count as usize
+                + material.public_statement.raw_witness_len as usize
+                + SMALLWOOD_LANE_SELECTOR_ROWS;
+        let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
+        for limb in 0..POSEIDON2_WIDTH {
+            let row = group_rows_start + 29 * POSEIDON2_WIDTH + limb;
+            state[limb] = Felt::from_u64(
+                material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR],
+            );
+        }
+        poseidon2_step(&mut state, 29);
+        for limb in 0..POSEIDON2_WIDTH {
+            let row = group_rows_start + 30 * POSEIDON2_WIDTH + limb;
+            assert_eq!(
+                state[limb].as_canonical_u64(),
+                material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR]
+            );
+        }
     }
 
     #[test]
