@@ -52,6 +52,16 @@ Those values are locked by the current integrated bridge shape test in [smallwoo
 
 The linear constraints are now sparse public selectors over the packed witness rows, not transcript-derived dense random checks. The selector indices are the first `78` witness coordinates, and the public targets are the corresponding direct public field values. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
 
+The current no-grinding claim also assumes the hardened PCS/evaluation binding now implemented in the Rust engine:
+
+- the full PCS commitment transcript is hashed into the PIOP transcript input
+- `partial_evals` carry the real non-head opened coefficients rather than a zero placeholder
+- the DECS opening challenge hashes full opened combis (`combi_heads || rcombi_tails`)
+- commitment-time and verifier-time openings are both derived from the exact LVCS interpolation domain, not from the earlier broken consecutive-domain shortcut helpers
+- verifier shape checks fail-closed before deep recomputation, and DECS opening indices are required to be distinct
+
+The redteam regressions covering those seams now live in [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs) and [transaction.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/tests/transaction.rs).
+
 ## Exact no-grinding profile
 
 The current candidate profile is now:

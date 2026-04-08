@@ -179,8 +179,11 @@ pub(crate) fn prove_candidate(
     log_stage("witness_polys", &mut last_stage);
 
     let salt = random_bytes::<SALT_BYTES>()?;
-    let pcs_key = pcs_commit(&cfg, &witness_polys, &mpol_ppoly, &mpol_plin, &salt)?;
+    let (pcs_key, pcs_transcript_words) =
+        pcs_commit(&cfg, &witness_polys, &mpol_ppoly, &mpol_plin, &salt)?;
     log_stage("pcs_commit", &mut last_stage);
+    let mut piop_input = pcs_transcript_words;
+    piop_input.extend_from_slice(&binded_words);
     let piop = piop_run(
         &cfg,
         &statement,
@@ -190,7 +193,7 @@ pub(crate) fn prove_candidate(
         linear_constraint_offsets,
         linear_constraint_indices,
         linear_constraint_coefficients,
-        &binded_words,
+        &piop_input,
     )?;
     log_stage("piop_run", &mut last_stage);
     let h_piop = hash_piop_transcript(&piop.transcript_words);
@@ -269,7 +272,7 @@ pub(crate) fn verify_candidate(
     let binded_words = bytes_to_words(binded_data)?;
     let eval_points = xof_piop_opening_points(&proof.nonce, &proof.h_piop);
     ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
-    let _pcs_transcript = pcs_recompute_transcript(
+    let pcs_transcript = pcs_recompute_transcript(
         &cfg,
         &proof.salt,
         &eval_points,
@@ -277,7 +280,7 @@ pub(crate) fn verify_candidate(
         &proof.pcs,
         &proof.h_piop,
     )?;
-    let mut piop_input = pcs_commitment_profile_words();
+    let mut piop_input = pcs_transcript;
     piop_input.extend_from_slice(&binded_words);
     let piop_transcript = piop_recompute_transcript(
         &cfg,
@@ -338,19 +341,13 @@ fn validate_proof_shape(
             .pcs
             .subset_evals
             .iter()
-            .any(|row| row.len() != cfg.nb_lvcs_rows)
+            .any(|row| row.len() != cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi)
         || proof.pcs.partial_evals.len() != SMALLWOOD_NB_OPENED_EVALS
         || proof
             .pcs
             .partial_evals
             .iter()
             .any(|row| row.len() != cfg.nb_unstacked_cols - cfg.nb_polys)
-        || proof
-            .pcs
-            .partial_evals
-            .iter()
-            .flat_map(|row| row.iter())
-            .any(|value| *value != 0)
         || proof.pcs.decs.auth_paths.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
         || proof
             .pcs
@@ -497,9 +494,7 @@ fn piop_run(
             *last = now;
         }
     };
-    let mut in_transcript = pcs_commitment_profile_words();
-    in_transcript.extend_from_slice(binded_words);
-    let hash_fpp = hash_piop(&in_transcript);
+    let hash_fpp = hash_piop(binded_words);
     let gammas = derive_gamma_prime(cfg, &hash_fpp);
     log_stage("derive_gamma_prime", &mut last);
     let in_ppol = get_constraint_polynomials(cfg, statement, witness_polys)?;
@@ -661,7 +656,7 @@ fn pcs_commit(
     mpol_ppoly: &[Vec<u64>],
     mpol_plin: &[Vec<u64>],
     salt: &[u8; SALT_BYTES],
-) -> Result<PcsKey, TransactionCircuitError> {
+) -> Result<(PcsKey, Vec<u64>), TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let started = Instant::now();
     let mut last = started;
@@ -736,15 +731,18 @@ fn pcs_commit(
     log_stage("stack_rows", &mut last);
     let lvcs_key = lvcs_commit(cfg, &stacked_rows, salt)?;
     log_stage("lvcs_commit", &mut last);
-    Ok(PcsKey { lvcs_key })
+    let pcs_key = PcsKey { lvcs_key };
+    let transcript_words = pcs_commit_transcript_words(salt, &pcs_key.lvcs_key.decs_key);
+    log_stage("pcs_transcript", &mut last);
+    Ok((pcs_key, transcript_words))
 }
 
 fn pcs_open(
     cfg: &SmallwoodConfig,
     key: &PcsKey,
-    witness_polys: &[Vec<u64>],
-    mpol_ppoly: &[Vec<u64>],
-    mpol_plin: &[Vec<u64>],
+    _witness_polys: &[Vec<u64>],
+    _mpol_ppoly: &[Vec<u64>],
+    _mpol_plin: &[Vec<u64>],
     eval_points: &[u64],
     h_piop: &[u8; DIGEST_BYTES],
 ) -> Result<(PcsProof, Vec<Vec<u64>>), TransactionCircuitError> {
@@ -762,32 +760,14 @@ fn pcs_open(
             *last = now;
         }
     };
-    let mut polys = witness_polys.to_vec();
-    polys.extend_from_slice(mpol_ppoly);
-    polys.extend_from_slice(mpol_plin);
-    let all_evals = eval_points
-        .iter()
-        .map(|&point| {
-            polys
-                .iter()
-                .map(|poly| poly_eval(poly, point))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    log_stage("all_evals", &mut last);
-
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
     pcs_build_coefficients(cfg, eval_points, &mut coeffs);
     log_stage("build_coefficients", &mut last);
-    let (rcombi_tails, subset_evals, decs_proof) = lvcs_open(cfg, &key.lvcs_key, &coeffs, h_piop)?;
+    let (combi_heads, rcombi_tails, subset_evals, decs_proof) =
+        lvcs_open(cfg, &key.lvcs_key, &coeffs, h_piop)?;
     log_stage("lvcs_open", &mut last);
-
-    // The current verifier does not consume `partial_evals` when recomputing the
-    // PCS transcript, so keep the serialized envelope shape but pin the contents
-    // to zero and reject any non-zero tampering during verification.
-    let partial_evals =
-        vec![vec![0u64; cfg.nb_unstacked_cols - cfg.nb_polys]; SMALLWOOD_NB_OPENED_EVALS];
-    log_stage("partial_evals", &mut last);
+    let (all_evals, partial_evals) = pcs_build_opened_evaluations(cfg, eval_points, &combi_heads)?;
+    log_stage("opened_evals", &mut last);
 
     Ok((
         PcsProof {
@@ -810,7 +790,10 @@ fn pcs_recompute_transcript(
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
     pcs_build_coefficients(cfg, eval_points, &mut coeffs);
-    let decs_trans_hash = hash_challenge_opening_decs(cfg, &[], h_piop, &proof.rcombi_tails);
+    let combi_heads =
+        pcs_reconstruct_combi_heads(cfg, eval_points, all_evals, &proof.partial_evals)?;
+    let decs_trans_hash =
+        hash_challenge_opening_decs(cfg, &combi_heads, h_piop, &proof.rcombi_tails);
     let (decs_leaf_indexes, _decs_nonce) = xof_decs_opening(
         SMALLWOOD_DECS_NB_EVALS,
         SMALLWOOD_DECS_NB_OPENED_EVALS,
@@ -821,40 +804,134 @@ fn pcs_recompute_transcript(
         .iter()
         .map(|&idx| idx as u64)
         .collect::<Vec<_>>();
-    let rows = if proof
-        .subset_evals
-        .first()
-        .is_some_and(|row| row.len() == cfg.nb_lvcs_rows)
-    {
-        proof.subset_evals.clone()
-    } else {
-        lvcs_recompute_rows(
-            cfg,
-            &coeffs,
-            &proof.rcombi_tails,
-            &proof.subset_evals,
-            &decs_eval_points,
-        )?
-    };
+    let rows = lvcs_recompute_rows(
+        cfg,
+        &coeffs,
+        &combi_heads,
+        &proof.rcombi_tails,
+        &proof.subset_evals,
+        &decs_eval_points,
+    )?;
     let root_words = decs_recompute_root(cfg, salt, &rows, &decs_eval_points, &proof.decs)?;
-    let transcript = decs_commitment_transcript(
+    decs_commitment_transcript(
         cfg,
         salt,
         &rows,
         &root_words,
         &decs_eval_points,
         &proof.decs,
-    )?;
-    let lvcs_transcript = digest_to_words(&hash_challenge_opening_decs(
-        cfg,
-        &rows,
-        h_piop,
-        &proof.rcombi_tails,
-    ));
-    let mut pcs_transcript = transcript;
-    pcs_transcript.splice(0..0, lvcs_transcript);
-    let _ = all_evals;
-    Ok(pcs_transcript)
+    )
+}
+
+fn pcs_commit_transcript_words(salt: &[u8; SALT_BYTES], decs_key: &DecsKey) -> Vec<u64> {
+    let root = decs_key
+        .tree_levels
+        .last()
+        .and_then(|level| level.first())
+        .copied()
+        .unwrap_or([0u8; DIGEST_BYTES]);
+    let hash_mt = hash_merkle_root(salt, &root);
+    let mut transcript = digest_to_words(&hash_mt);
+    for poly in &decs_key.dec_polys {
+        transcript.extend_from_slice(poly);
+    }
+    transcript
+}
+
+fn pcs_build_opened_evaluations(
+    cfg: &SmallwoodConfig,
+    eval_points: &[u64],
+    combi_heads: &[Vec<u64>],
+) -> Result<(Vec<Vec<u64>>, Vec<Vec<u64>>), TransactionCircuitError> {
+    let mut all_evals = vec![vec![0u64; cfg.nb_polys]; eval_points.len()];
+    let mut partial_evals =
+        vec![vec![0u64; cfg.nb_unstacked_cols - cfg.nb_polys]; eval_points.len()];
+    for (j, &eval_point) in eval_points.iter().enumerate() {
+        let mut r_to_mu = eval_point;
+        for _ in 1..cfg.packing_factor {
+            r_to_mu = mul_mod(r_to_mu, eval_point);
+        }
+        let mut num_col = 0usize;
+        let mut num_combi = SMALLWOOD_BETA * j;
+        let mut ind = 0usize;
+        for k in 0..cfg.nb_polys {
+            let mut acc = 0u64;
+            let mut pow = 1u64;
+            for i in 0..cfg.width[k] {
+                let value = combi_heads[num_combi][num_col];
+                if i > 0 {
+                    partial_evals[j][ind] = value;
+                    ind += 1;
+                }
+                acc = add_mod(acc, mul_mod(value, pow));
+                if cfg.width[k] > 1 {
+                    if i < cfg.width[k] - 2 {
+                        pow = mul_mod(pow, r_to_mu);
+                    } else if i == cfg.width[k] - 2 {
+                        for _ in 0..(cfg.packing_factor - cfg.delta[k]) {
+                            pow = mul_mod(pow, eval_point);
+                        }
+                    }
+                }
+                num_col += 1;
+                if num_col >= cfg.nb_lvcs_cols {
+                    num_col = 0;
+                    num_combi += 1;
+                }
+            }
+            all_evals[j][k] = acc;
+        }
+    }
+    Ok((all_evals, partial_evals))
+}
+
+fn pcs_reconstruct_combi_heads(
+    cfg: &SmallwoodConfig,
+    eval_points: &[u64],
+    all_evals: &[Vec<u64>],
+    partial_evals: &[Vec<u64>],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let mut combi_heads = vec![vec![0u64; cfg.nb_lvcs_cols]; cfg.nb_lvcs_opened_combi];
+    for (j, &eval_point) in eval_points.iter().enumerate() {
+        let mut r_to_mu = eval_point;
+        for _ in 1..cfg.packing_factor {
+            r_to_mu = mul_mod(r_to_mu, eval_point);
+        }
+        let mut unstacked_vec = vec![0u64; cfg.nb_unstacked_cols];
+        let mut poly_ind = 0usize;
+        let mut partial_ind = 0usize;
+        for k in 0..cfg.nb_polys {
+            let mut sum = 0u64;
+            let mut pow = 1u64;
+            for i in 1..cfg.width[k] {
+                let value = partial_evals[j][partial_ind];
+                partial_ind += 1;
+                unstacked_vec[poly_ind + i] = value;
+                if i < cfg.width[k] - 1 {
+                    pow = mul_mod(pow, r_to_mu);
+                } else {
+                    for _ in 0..(cfg.packing_factor - cfg.delta[k]) {
+                        pow = mul_mod(pow, eval_point);
+                    }
+                }
+                sum = add_mod(sum, mul_mod(value, pow));
+            }
+            unstacked_vec[poly_ind] = sub_mod(all_evals[j][k], sum);
+            poly_ind += cfg.width[k];
+        }
+        debug_assert_eq!(partial_ind, cfg.nb_unstacked_cols - cfg.nb_polys);
+        for i in 0..SMALLWOOD_BETA {
+            let num_combi = j * SMALLWOOD_BETA + i;
+            let offset = i * cfg.nb_lvcs_cols;
+            combi_heads[num_combi].fill(0);
+            if offset < cfg.nb_unstacked_cols {
+                let copy = min(cfg.nb_lvcs_cols, cfg.nb_unstacked_cols - offset);
+                combi_heads[num_combi][..copy]
+                    .copy_from_slice(&unstacked_vec[offset..offset + copy]);
+            }
+        }
+    }
+    Ok(combi_heads)
 }
 
 fn get_constraint_polynomials(
@@ -1060,14 +1137,21 @@ fn lvcs_commit(
         extended_rows[row][cfg.nb_lvcs_cols..].copy_from_slice(&rnd);
     }
     log_stage("extend_rows", &mut last);
-    let rotated_rows = extended_rows
+    let interpolation_points = lvcs_interpolation_points(cfg);
+    let initial_domain_evals = extended_rows
         .par_iter()
-        .map(|row| rotate_left_words(row, cfg.nb_lvcs_cols))
+        .map(|row| {
+            let poly = poly_interpolate_generic(row, &interpolation_points);
+            evaluate_poly_on_consecutive_domain(
+                &poly,
+                cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS,
+            )
+        })
         .collect::<Vec<_>>();
     let decs_key = decs_commit(
         cfg.nb_lvcs_rows,
         cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS - 1,
-        &rotated_rows,
+        &initial_domain_evals,
         salt,
     )?;
     log_stage("decs_commit", &mut last);
@@ -1082,7 +1166,7 @@ fn lvcs_open(
     key: &LvcsKey,
     coeffs: &[Vec<u64>],
     h_piop: &[u8; DIGEST_BYTES],
-) -> Result<(Vec<Vec<u64>>, Vec<Vec<u64>>, DecsProof), TransactionCircuitError> {
+) -> Result<(Vec<Vec<u64>>, Vec<Vec<u64>>, Vec<Vec<u64>>, DecsProof), TransactionCircuitError> {
     let mut extended_combis = vec![
         vec![0u64; cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS];
         cfg.nb_lvcs_opened_combi
@@ -1095,11 +1179,13 @@ fn lvcs_open(
         cfg.nb_lvcs_rows,
         cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS,
     );
+    let mut combi_heads = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
     let mut rcombi_tails = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
     for combi in &extended_combis {
+        combi_heads.push(combi[..cfg.nb_lvcs_cols].to_vec());
         rcombi_tails.push(combi[cfg.nb_lvcs_cols..].to_vec());
     }
-    let trans_hash = hash_challenge_opening_decs(cfg, &[], h_piop, &rcombi_tails);
+    let trans_hash = hash_challenge_opening_decs(cfg, &combi_heads, h_piop, &rcombi_tails);
     let (leaves_indexes, nonce) = xof_decs_opening(
         SMALLWOOD_DECS_NB_EVALS,
         SMALLWOOD_DECS_NB_OPENED_EVALS,
@@ -1119,13 +1205,30 @@ fn lvcs_open(
         &mut evals,
         nonce,
     )?;
+    let mut subset_evals = vec![
+        vec![0u64; cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi];
+        SMALLWOOD_DECS_NB_OPENED_EVALS
+    ];
+    for j in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
+        let mut ind = 0usize;
+        let mut pos = 0usize;
+        for k in 0..cfg.nb_lvcs_rows {
+            if ind < cfg.nb_lvcs_opened_combi && cfg.fullrank_cols[ind] == k {
+                ind += 1;
+            } else {
+                subset_evals[j][pos] = evals[j][k];
+                pos += 1;
+            }
+        }
+    }
 
-    Ok((rcombi_tails, evals, decs_proof))
+    Ok((combi_heads, rcombi_tails, subset_evals, decs_proof))
 }
 
 fn lvcs_recompute_rows(
     cfg: &SmallwoodConfig,
     coeffs: &[Vec<u64>],
+    combi_heads: &[Vec<u64>],
     rcombi_tails: &[Vec<u64>],
     subset_evals: &[Vec<u64>],
     eval_points: &[u64],
@@ -1135,13 +1238,13 @@ fn lvcs_recompute_rows(
         cfg.nb_lvcs_opened_combi
     ];
     for k in 0..cfg.nb_lvcs_opened_combi {
-        extended_combis[k][..cfg.nb_lvcs_cols].fill(0);
+        extended_combis[k][..cfg.nb_lvcs_cols].copy_from_slice(&combi_heads[k]);
         extended_combis[k][cfg.nb_lvcs_cols..].copy_from_slice(&rcombi_tails[k]);
     }
+    let interpolation_points = lvcs_interpolation_points(cfg);
     let mut combi_polys = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
     for combi in &extended_combis {
-        let rotated = rotate_left_words(combi, cfg.nb_lvcs_cols);
-        combi_polys.push(interpolate_consecutive(&rotated)?);
+        combi_polys.push(poly_interpolate_generic(combi, &interpolation_points));
     }
     let mut coeffs_part1 = vec![vec![0u64; cfg.nb_lvcs_opened_combi]; cfg.nb_lvcs_opened_combi];
     let mut coeffs_part2 =
@@ -1182,6 +1285,18 @@ fn lvcs_recompute_rows(
         }
     }
     Ok(evals)
+}
+
+fn lvcs_interpolation_points(cfg: &SmallwoodConfig) -> Vec<u64> {
+    let total = cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS;
+    let mut points = Vec::with_capacity(total);
+    for point in SMALLWOOD_DECS_NB_OPENED_EVALS..total {
+        points.push(point as u64);
+    }
+    for point in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
+        points.push(point as u64);
+    }
+    points
 }
 
 fn decs_commit(
@@ -1373,21 +1488,15 @@ fn hash_piop_transcript(words: &[u64]) -> [u8; DIGEST_BYTES] {
 
 fn hash_challenge_opening_decs(
     cfg: &SmallwoodConfig,
-    rows: &[Vec<u64>],
+    combi_heads: &[Vec<u64>],
     h_piop: &[u8; DIGEST_BYTES],
     rcombi_tails: &[Vec<u64>],
 ) -> [u8; DIGEST_BYTES] {
     let mut input = Vec::new();
     input.extend_from_slice(&digest_to_words(h_piop));
-    if rcombi_tails.is_empty() {
-        for row in rows {
-            input.extend_from_slice(row);
-        }
-    } else {
-        for k in 0..cfg.nb_lvcs_opened_combi {
-            input.extend(std::iter::repeat_n(0u64, cfg.nb_lvcs_cols));
-            input.extend_from_slice(&rcombi_tails[k]);
-        }
+    for k in 0..cfg.nb_lvcs_opened_combi {
+        input.extend_from_slice(&combi_heads[k]);
+        input.extend_from_slice(&rcombi_tails[k]);
     }
     words_xof(&input, DIGEST_WORDS)
 }
@@ -1409,29 +1518,17 @@ fn hash_merkle_leave_from_tables(
     masking_domain_evals: &[Vec<u64>],
     leaf_idx: usize,
 ) -> [u8; DIGEST_BYTES] {
-    let word_len =
-        (salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len()) as u64;
-    let mut hasher = Hasher::new();
-    hasher.update(SMALLWOOD_XOF_DOMAIN);
-    hasher.update(&word_len.to_le_bytes());
-    for word in salt_words {
-        hasher.update(&word.to_le_bytes());
-    }
+    let mut input = Vec::with_capacity(
+        salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len(),
+    );
+    input.extend_from_slice(salt_words);
     for poly in committed_domain_evals {
-        hasher.update(&poly[leaf_idx].to_le_bytes());
+        input.push(poly[leaf_idx]);
     }
     for poly in masking_domain_evals {
-        hasher.update(&poly[leaf_idx].to_le_bytes());
+        input.push(poly[leaf_idx]);
     }
-    let mut reader = hasher.finalize_xof();
-    let mut out = [0u8; DIGEST_BYTES];
-    for chunk in out.chunks_exact_mut(8) {
-        let mut buf = [0u8; 16];
-        reader.fill(&mut buf);
-        let word = (u128::from_le_bytes(buf) % FIELD_ORDER as u128) as u64;
-        chunk.copy_from_slice(&word.to_le_bytes());
-    }
-    out
+    words_xof(&input, DIGEST_WORDS)
 }
 
 fn hash_merkle_root(salt: &[u8; SALT_BYTES], root: &[u8; DIGEST_BYTES]) -> [u8; DIGEST_BYTES] {
@@ -1524,7 +1621,10 @@ fn serialized_proof_size_hint(cfg: &SmallwoodConfig) -> usize {
                 vec![0u64; SMALLWOOD_DECS_NB_OPENED_EVALS];
                 cfg.nb_lvcs_opened_combi
             ],
-            subset_evals: vec![vec![0u64; cfg.nb_lvcs_rows]; SMALLWOOD_DECS_NB_OPENED_EVALS],
+            subset_evals: vec![
+                vec![0u64; cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi];
+                SMALLWOOD_DECS_NB_OPENED_EVALS
+            ],
             partial_evals: vec![
                 vec![0u64; cfg.nb_unstacked_cols - cfg.nb_polys];
                 SMALLWOOD_NB_OPENED_EVALS
@@ -1683,10 +1783,6 @@ fn xof_decs_opening(
     }
 }
 
-fn pcs_commitment_profile_words() -> Vec<u64> {
-    Vec::new()
-}
-
 fn bytes_to_words(bytes: &[u8]) -> Result<Vec<u64>, TransactionCircuitError> {
     if bytes.len() % 8 != 0 {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -1798,6 +1894,347 @@ fn merkle_auth_path(
     path
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_key_bytes, Felt};
+    use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use crate::public_inputs::StablecoinPolicyBinding;
+    use crate::smallwood_frontend::{
+        build_packed_smallwood_bridge_material_from_witness, prove_smallwood_candidate,
+        verify_smallwood_candidate_transaction_proof, SmallwoodCandidateProof,
+        SMALLWOOD_BRIDGE_PACKING_FACTOR, SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+    };
+    use crate::witness::TransactionWitness;
+    use p3_field::PrimeCharacteristicRing;
+    use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
+
+    fn sample_witness() -> TransactionWitness {
+        let sk_spend = [42u8; 32];
+        let pk_auth = spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: crate::constants::NATIVE_ASSET_ID,
+            pk_recipient: [2u8; 32],
+            pk_auth,
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: 1,
+            pk_recipient: [5u8; 32],
+            pk_auth,
+            rho: [6u8; 32],
+            r: [7u8; 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..crate::note::MERKLE_TREE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [9u8; 32],
+                    merkle_path: MerklePath {
+                        siblings: siblings0,
+                    },
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [8u8; 32],
+                    merkle_path: MerklePath {
+                        siblings: siblings1,
+                    },
+                },
+            ],
+            outputs: vec![
+                OutputNoteWitness {
+                    note: NoteData {
+                        value: 3,
+                        asset_id: crate::constants::NATIVE_ASSET_ID,
+                        pk_recipient: [11u8; 32],
+                        pk_auth: [111u8; 32],
+                        rho: [12u8; 32],
+                        r: [13u8; 32],
+                    },
+                },
+                OutputNoteWitness {
+                    note: NoteData {
+                        value: 5,
+                        asset_id: 1,
+                        pk_recipient: [21u8; 32],
+                        pk_auth: [121u8; 32],
+                        rho: [22u8; 32],
+                        r: [23u8; 32],
+                    },
+                },
+            ],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&current),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: SMALLWOOD_CANDIDATE_VERSION_BINDING,
+        }
+    }
+
+    #[test]
+    #[ignore = "redteam regression for PCS/evaluation binding on the experimental SmallWood backend"]
+    fn verifier_rejects_forged_self_consistent_pcs_layer() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let cfg = SmallwoodConfig::new(
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            material.linear_constraints.targets.len(),
+        )
+        .unwrap();
+        let mut proof = prove_smallwood_candidate(&witness).unwrap();
+        let mut outer: SmallwoodCandidateProof = bincode::deserialize(&proof.stark_proof).unwrap();
+        let mut inner: SmallwoodProof = bincode::deserialize(&outer.ark_proof).unwrap();
+
+        let forged_combi_heads = vec![vec![0u64; cfg.nb_lvcs_cols]; cfg.nb_lvcs_opened_combi];
+        let forged_rcombi_tails =
+            vec![vec![0u64; SMALLWOOD_DECS_NB_OPENED_EVALS]; cfg.nb_lvcs_opened_combi];
+        let trans_hash = hash_challenge_opening_decs(
+            &cfg,
+            &forged_combi_heads,
+            &inner.h_piop,
+            &forged_rcombi_tails,
+        );
+        let (leaves_indexes, _) = xof_decs_opening(
+            SMALLWOOD_DECS_NB_EVALS,
+            SMALLWOOD_DECS_NB_OPENED_EVALS,
+            SMALLWOOD_DECS_POW_BITS,
+            &trans_hash,
+        )
+        .unwrap();
+        let zero_rows = vec![
+            vec![0u64; cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi];
+            SMALLWOOD_DECS_NB_OPENED_EVALS
+        ];
+        let zero_masking = vec![vec![0u64; SMALLWOOD_DECS_ETA]; SMALLWOOD_DECS_NB_OPENED_EVALS];
+        let zero_leaf = hash_merkle_leave(
+            cfg.nb_lvcs_rows,
+            &vec![0u64; cfg.nb_lvcs_rows + SMALLWOOD_DECS_ETA],
+            &inner.salt,
+        );
+        let mut levels = vec![vec![zero_leaf; SMALLWOOD_DECS_NB_EVALS]];
+        merkle_build_levels(&mut levels);
+        let auth_paths = leaves_indexes
+            .iter()
+            .map(|leaf| merkle_auth_path(&levels, *leaf as usize))
+            .collect::<Vec<_>>();
+
+        inner.pcs = PcsProof {
+            rcombi_tails: forged_rcombi_tails,
+            subset_evals: zero_rows,
+            partial_evals: vec![
+                vec![0u64; cfg.nb_unstacked_cols - cfg.nb_polys];
+                SMALLWOOD_NB_OPENED_EVALS
+            ],
+            decs: DecsProof {
+                auth_paths,
+                masking_evals: zero_masking,
+                high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; SMALLWOOD_DECS_ETA],
+            },
+        };
+
+        outer.ark_proof = bincode::serialize(&inner).unwrap();
+        proof.stark_proof = bincode::serialize(&outer).unwrap();
+
+        let err = verify_smallwood_candidate_transaction_proof(&proof)
+            .expect_err("forged self-consistent PCS layer unexpectedly verified");
+        assert!(
+            err.to_string().contains("smallwood") || err.to_string().contains("mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[ignore = "debug probe for LVCS/DECS row reconstruction"]
+    fn lvcs_reconstructed_rows_match_opened_rows() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let cfg = SmallwoodConfig::new(
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            material.linear_constraints.targets.len(),
+        )
+        .unwrap();
+        let binded_words = bytes_to_words(&material.transcript_binding).unwrap();
+        let witness_polys = material
+            .packed_witness_rows
+            .chunks_exact(SMALLWOOD_BRIDGE_PACKING_FACTOR)
+            .map(|row_values| {
+                poly_interpolate_random(row_values, &cfg.packing_points, SMALLWOOD_NB_OPENED_EVALS)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mpol_ppoly = (0..SMALLWOOD_RHO)
+            .map(|_| random_poly(cfg.mpol_poly_degree).unwrap())
+            .collect::<Vec<_>>();
+        let mpol_plin = (0..SMALLWOOD_RHO)
+            .map(|_| poly_random_sum_zero(&cfg.packing_points, cfg.mlin_poly_degree).unwrap())
+            .collect::<Vec<_>>();
+        let salt = random_bytes::<SALT_BYTES>().unwrap();
+        let (pcs_key, pcs_transcript_words) =
+            pcs_commit(&cfg, &witness_polys, &mpol_ppoly, &mpol_plin, &salt).unwrap();
+        let mut piop_input = pcs_transcript_words;
+        piop_input.extend_from_slice(&binded_words);
+        let piop = piop_run(
+            &cfg,
+            &PackedStatement::new(
+                material.public_statement.lppc_row_count as usize,
+                SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            ),
+            &witness_polys,
+            &mpol_ppoly,
+            &mpol_plin,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &piop_input,
+        )
+        .unwrap();
+        let h_piop = hash_piop_transcript(&piop.transcript_words);
+        let nonce = choose_opening_nonce(&cfg.packing_points, &h_piop).unwrap();
+        let eval_points = xof_piop_opening_points(&nonce, &h_piop);
+        let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
+        pcs_build_coefficients(&cfg, &eval_points, &mut coeffs);
+        let (original_combi_heads, original_rcombi_tails, original_subset_evals, _original_decs) =
+            lvcs_open(&cfg, &pcs_key.lvcs_key, &coeffs, &h_piop).unwrap();
+        let (pcs_proof, all_evals) = pcs_open(
+            &cfg,
+            &pcs_key,
+            &witness_polys,
+            &mpol_ppoly,
+            &mpol_plin,
+            &eval_points,
+            &h_piop,
+        )
+        .unwrap();
+        assert_eq!(pcs_proof.rcombi_tails, original_rcombi_tails);
+        assert_eq!(pcs_proof.subset_evals, original_subset_evals);
+        let combi_heads =
+            pcs_reconstruct_combi_heads(&cfg, &eval_points, &all_evals, &pcs_proof.partial_evals)
+                .unwrap();
+        assert_eq!(combi_heads, original_combi_heads);
+        let trans_hash =
+            hash_challenge_opening_decs(&cfg, &combi_heads, &h_piop, &pcs_proof.rcombi_tails);
+        let (leaves_indexes, _) = xof_decs_opening(
+            SMALLWOOD_DECS_NB_EVALS,
+            SMALLWOOD_DECS_NB_OPENED_EVALS,
+            SMALLWOOD_DECS_POW_BITS,
+            &trans_hash,
+        )
+        .unwrap();
+        let decs_eval_points = leaves_indexes
+            .iter()
+            .map(|&idx| idx as u64)
+            .collect::<Vec<_>>();
+        let rows = lvcs_recompute_rows(
+            &cfg,
+            &coeffs,
+            &combi_heads,
+            &pcs_proof.rcombi_tails,
+            &pcs_proof.subset_evals,
+            &decs_eval_points,
+        )
+        .unwrap();
+        let opened_rows = decs_eval_points
+            .iter()
+            .map(|&idx| {
+                pcs_key
+                    .lvcs_key
+                    .decs_key
+                    .committed_domain_evals
+                    .iter()
+                    .map(|poly| poly[idx as usize])
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut direct_q = vec![vec![0u64; cfg.nb_lvcs_opened_combi]; decs_eval_points.len()];
+        for (j, opened_row) in opened_rows.iter().enumerate() {
+            for k in 0..cfg.nb_lvcs_opened_combi {
+                let mut acc = 0u64;
+                for (coeff, value) in coeffs[k].iter().zip(opened_row.iter()) {
+                    acc = add_mod(acc, mul_mod(*coeff, *value));
+                }
+                direct_q[j][k] = acc;
+            }
+        }
+        let mut poly_q = vec![vec![0u64; cfg.nb_lvcs_opened_combi]; decs_eval_points.len()];
+        let mut extended_combis = vec![
+            vec![0u64; cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS];
+            cfg.nb_lvcs_opened_combi
+        ];
+        for k in 0..cfg.nb_lvcs_opened_combi {
+            extended_combis[k][..cfg.nb_lvcs_cols].copy_from_slice(&combi_heads[k]);
+            extended_combis[k][cfg.nb_lvcs_cols..].copy_from_slice(&pcs_proof.rcombi_tails[k]);
+        }
+        let interpolation_points = lvcs_interpolation_points(&cfg);
+        let combi_polys = extended_combis
+            .iter()
+            .map(|combi| poly_interpolate_generic(combi, &interpolation_points))
+            .collect::<Vec<_>>();
+        for (j, &point) in decs_eval_points.iter().enumerate() {
+            for (k, poly) in combi_polys.iter().enumerate() {
+                poly_q[j][k] = poly_eval(poly, point);
+            }
+        }
+        assert_eq!(poly_q, direct_q);
+        assert_eq!(rows, opened_rows);
+    }
+
+    #[test]
+    fn interpolate_consecutive_roundtrips_small_examples() {
+        let samples = [
+            vec![5u64],
+            vec![3u64, 7],
+            vec![9u64, 2, 4],
+            vec![1u64, 8, 6, 5],
+            vec![11u64, 22, 33, 44, 55],
+        ];
+        for evals in samples {
+            let poly = interpolate_consecutive(&evals).unwrap();
+            let recovered = (0..evals.len())
+                .map(|point| poly_eval(&poly, point as u64))
+                .collect::<Vec<_>>();
+            assert_eq!(recovered, evals);
+        }
+    }
+
+    #[test]
+    fn extend_consecutive_matches_interpolated_polynomial() {
+        let initial = vec![9u64, 2, 4];
+        let poly = interpolate_consecutive(&initial).unwrap();
+        let extended = extend_consecutive_evals(&initial, 8);
+        let expected = (0..8)
+            .map(|point| poly_eval(&poly, point as u64))
+            .collect::<Vec<_>>();
+        assert_eq!(extended, expected);
+    }
+}
+
 fn merkle_compute_root(
     mut index: usize,
     leaf: &[u8; DIGEST_BYTES],
@@ -1817,16 +2254,6 @@ fn merkle_compute_root(
         index /= 2;
     }
     current
-}
-
-fn rotate_left_words(values: &[u64], by: usize) -> Vec<u64> {
-    let n = values.len();
-    let by = by % n;
-    values[by..]
-        .iter()
-        .chain(values[..by].iter())
-        .copied()
-        .collect()
 }
 
 fn poly_interpolate_random(
@@ -1879,24 +2306,11 @@ fn extend_consecutive_evals(initial: &[u64], total_len: usize) -> Vec<u64> {
     if total_len <= initial.len() {
         return initial[..keep].to_vec();
     }
-    let mut work = initial.to_vec();
-    let mut diffs = Vec::with_capacity(initial.len());
-    diffs.push(work[0]);
-    for order in 1..initial.len() {
-        for idx in 0..(initial.len() - order) {
-            work[idx] = sub_mod(work[idx + 1], work[idx]);
-        }
-        diffs.push(work[0]);
-    }
-    let mut out = Vec::with_capacity(total_len);
-    out.push(diffs[0]);
-    for _ in 1..total_len {
-        for idx in (0..diffs.len() - 1).rev() {
-            diffs[idx] = add_mod(diffs[idx], diffs[idx + 1]);
-        }
-        out.push(diffs[0]);
-    }
-    out
+    let poly = interpolate_consecutive(initial)
+        .expect("consecutive interpolation must succeed on distinct points");
+    (0..total_len)
+        .map(|point| poly_eval(&poly, point as u64))
+        .collect()
 }
 
 fn poly_interpolate_generic(evals: &[u64], eval_points: &[u64]) -> Vec<u64> {
@@ -1924,22 +2338,8 @@ fn interpolate_consecutive(evals: &[u64]) -> Result<Vec<u64>, TransactionCircuit
     if n == 0 {
         return Ok(Vec::new());
     }
-    let mut dd = evals.to_vec();
-    for order in 1..n {
-        let inv = inv_mod(order as u64)?;
-        for i in (order..n).rev() {
-            dd[i] = mul_mod(sub_mod(dd[i], dd[i - 1]), inv);
-        }
-    }
-    let mut poly = vec![0u64; n];
-    let mut basis = vec![1u64];
-    for (k, coeff) in dd.iter().enumerate() {
-        poly_add_assign_scaled(&mut poly, &basis, *coeff);
-        if k + 1 < n {
-            basis = poly_mul_linear_normalized(&basis, k as u64);
-        }
-    }
-    Ok(poly)
+    let points = (0..n).map(|idx| idx as u64).collect::<Vec<_>>();
+    Ok(poly_interpolate_generic(evals, &points))
 }
 
 fn poly_set_vanishing(roots: &[u64]) -> Vec<u64> {
@@ -2191,7 +2591,7 @@ fn add_mod(a: u64, b: u64) -> u64 {
     if over {
         sum = sum.wrapping_add(NEG_ORDER);
     }
-    sum
+    canon(sum)
 }
 
 #[inline(always)]
@@ -2201,7 +2601,7 @@ fn sub_mod(a: u64, b: u64) -> u64 {
     if under {
         diff = diff.wrapping_sub(NEG_ORDER);
     }
-    diff
+    canon(diff)
 }
 
 #[inline(always)]
