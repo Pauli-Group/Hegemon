@@ -3,6 +3,8 @@ use std::time::Instant;
 
 use blake3::Hasher;
 use getrandom::fill as getrandom_fill;
+use p3_field::{Field, PrimeField64};
+use p3_goldilocks::Goldilocks;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +14,7 @@ use crate::{
 };
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
+const NEG_ORDER: u64 = FIELD_ORDER.wrapping_neg();
 const DIGEST_BYTES: usize = 32;
 const DIGEST_WORDS: usize = DIGEST_BYTES / 8;
 const SALT_BYTES: usize = 32;
@@ -2098,60 +2101,97 @@ fn random_bytes<const N: usize>() -> Result<[u8; N], TransactionCircuitError> {
 
 #[inline]
 fn canon(x: u64) -> u64 {
-    ((x as u128) % FIELD_ORDER as u128) as u64
+    let mut c = x;
+    if c >= FIELD_ORDER {
+        c -= FIELD_ORDER;
+    }
+    c
 }
 
-#[inline]
+#[inline(always)]
 fn add_mod(a: u64, b: u64) -> u64 {
-    (((a as u128) + (b as u128)) % FIELD_ORDER as u128) as u64
+    let (sum, over) = a.overflowing_add(b);
+    let (mut sum, over) = sum.overflowing_add(u64::from(over) * NEG_ORDER);
+    if over {
+        sum = sum.wrapping_add(NEG_ORDER);
+    }
+    sum
 }
 
-#[inline]
+#[inline(always)]
 fn sub_mod(a: u64, b: u64) -> u64 {
-    (((a as u128) + FIELD_ORDER as u128 - (b as u128)) % FIELD_ORDER as u128) as u64
+    let (diff, under) = a.overflowing_sub(b);
+    let (mut diff, under) = diff.overflowing_sub(u64::from(under) * NEG_ORDER);
+    if under {
+        diff = diff.wrapping_sub(NEG_ORDER);
+    }
+    diff
 }
 
-#[inline]
+#[inline(always)]
 fn mul_mod(a: u64, b: u64) -> u64 {
-    (((a as u128) * (b as u128)) % FIELD_ORDER as u128) as u64
+    reduce128((a as u128) * (b as u128))
 }
 
 #[inline]
 fn neg_mod(a: u64) -> u64 {
-    if a == 0 {
+    let canonical = canon(a);
+    if canonical == 0 {
         0
     } else {
-        FIELD_ORDER - a
+        FIELD_ORDER - canonical
     }
 }
 
 fn inv_mod(a: u64) -> Result<u64, TransactionCircuitError> {
-    if a == 0 {
-        return Err(TransactionCircuitError::ConstraintViolation(
+    Goldilocks::new(a)
+        .try_inverse()
+        .map(|value| value.as_canonical_u64())
+        .ok_or(TransactionCircuitError::ConstraintViolation(
             "smallwood inversion of zero",
-        ));
-    }
-    let mut old_r = a;
-    let mut r = FIELD_ORDER;
-    let mut old_s = 1u64;
-    let mut s = 0u64;
-    while r != 0 {
-        let quotient = old_r / r;
-        let new_r = (((old_r as u128) + FIELD_ORDER as u128
-            - (((quotient as u128) * r as u128) % FIELD_ORDER as u128))
-            % FIELD_ORDER as u128) as u64;
-        old_r = r;
-        r = new_r;
-        let new_s = (((old_s as u128) + FIELD_ORDER as u128
-            - (((quotient as u128) * s as u128) % FIELD_ORDER as u128))
-            % FIELD_ORDER as u128) as u64;
-        old_s = s;
-        s = new_s;
-    }
-    Ok(old_s)
+        ))
 }
 
 #[inline]
 fn div_mod(a: u64, b: u64) -> u64 {
     mul_mod(a, inv_mod(b).expect("non-zero divisor"))
+}
+
+#[inline(always)]
+fn reduce128(x: u128) -> u64 {
+    let x_lo = x as u64;
+    let x_hi = (x >> 64) as u64;
+    let x_hi_hi = x_hi >> 32;
+    let x_hi_lo = x_hi & NEG_ORDER;
+
+    let (mut t0, borrow) = x_lo.overflowing_sub(x_hi_hi);
+    if borrow {
+        t0 = t0.wrapping_sub(NEG_ORDER);
+    }
+    let t1 = x_hi_lo.wrapping_mul(NEG_ORDER);
+    add_no_canonicalize_trashing_input(t0, t1)
+}
+
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
+fn add_no_canonicalize_trashing_input(x: u64, y: u64) -> u64 {
+    unsafe {
+        let res_wrapped: u64;
+        let adjustment: u64;
+        core::arch::asm!(
+            "add {0}, {1}",
+            "sbb {1:e}, {1:e}",
+            inlateout(reg) x => res_wrapped,
+            inlateout(reg) y => adjustment,
+            options(pure, nomem, nostack),
+        );
+        res_wrapped.wrapping_add(adjustment)
+    }
+}
+
+#[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+fn add_no_canonicalize_trashing_input(x: u64, y: u64) -> u64 {
+    let (res_wrapped, carry) = x.overflowing_add(y);
+    res_wrapped.wrapping_add(NEG_ORDER.wrapping_mul(u64::from(carry)))
 }
