@@ -505,7 +505,7 @@ pub(crate) fn transaction_public_inputs_p3_from_parts(
     })
 }
 
-fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStarkInputs {
+pub(crate) fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStarkInputs {
     let input_flags = pub_inputs
         .input_flags
         .iter()

@@ -2,7 +2,6 @@
 name = "transaction-circuit"
 version = "0.1.0"
 edition = "2021"
-build = "build.rs"
 
 [dependencies]
 thiserror = "1"
@@ -31,9 +30,6 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 proptest = "1"
-
-[build-dependencies]
-cc = "1.2"
 
 [features]
 default = ["plonky3"]

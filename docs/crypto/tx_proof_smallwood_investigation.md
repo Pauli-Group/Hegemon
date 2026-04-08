@@ -86,7 +86,7 @@ So for Hegemon the right reading is:
 - SmallWood may still be compatible with the `128-bit` baseline,
 - but the paper's concrete sizes could not be promoted directly to Hegemon release claims without a Hegemon-specific no-compromise parameter note.
 
-That note now exists for the implemented witness-free candidate statement. The current no-grinding candidate profile is `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_opened_evals = 37`, `decs_eta = 10`, zero grinding bits, and it clears the term-wise `128-bit` bar for that exact implemented statement. What remains open is the final semantic arithmetization, not the statement’s no-grinding parameter floor.
+That note now exists for the packed witness-free candidate statement the branch is aiming at. The current no-grinding candidate profile is `rho = 2`, `nb_opened_evals = 3`, `beta = 3`, `decs_nb_opened_evals = 37`, `decs_eta = 10`, zero grinding bits, and it clears the term-wise `128-bit` bar for that packed target. The integrated backend is now past the old scalar fallback: the four-lane packed semantic relation proves and verifies honestly. But it still does not realize the target size regime. After fixing randomized-constraint interpolation, the public-value ordering bug, and the packed witness relation, the current integrated candidate still produces roughly `1.35 MB` proofs, so what remains open is no longer semantics but a smaller packed relation geometry.
 
 ## Official implementation status
 

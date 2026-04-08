@@ -16,7 +16,7 @@
 //! ## Implementation
 //!
 //! Plonky3 is the active backend today, but the proof object now carries an
-//! explicit backend identifier so a future SmallWood-class prover can replace
+//! explicit backend identifier so a future replacement prover can replace
 //! it without rewriting the tx-leaf / receipt-root aggregation interfaces.
 
 pub mod constants;
@@ -29,7 +29,9 @@ pub mod note;
 pub mod proof;
 pub mod public_inputs;
 pub mod smallwood_frontend;
-mod smallwood_native;
+mod smallwood_engine;
+pub mod smallwood_native;
+mod smallwood_semantics;
 pub mod trace;
 pub mod witness;
 pub use transaction_core::poseidon_constants;
@@ -46,9 +48,7 @@ pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use smallwood_frontend::{
-    build_smallwood_public_statement_from_witness, prove_smallwood_candidate,
-    verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof, SmallwoodPublicStatement,
-    SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE, SMALLWOOD_LPPC_PACKING_FACTOR,
+    prove_smallwood_candidate, verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof,
 };
 pub use witness::TransactionWitness;
 

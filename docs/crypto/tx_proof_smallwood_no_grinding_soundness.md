@@ -1,24 +1,32 @@
 # Transaction Proof SmallWood Candidate No-Grinding Soundness
 
-This note freezes the exact witness-free public SmallWood statement now implemented in the repo, the exact no-grinding parameter profile bound to it, and the resulting term-wise security floor.
+This note freezes the witness-free public SmallWood statement shape and no-grinding parameter profile that the packed SmallWood frontend is supposed to realize.
 
-It is intentionally narrow. This is not a release claim for a full SmallWood transaction-validity proof. It is the exact engineering note for the statement Hegemon actually proves today behind `TxProofBackend::SmallwoodCandidate`.
+Important status note:
 
-The answer is:
+- the currently integrated prover/verifier backend in the repo is still the scalar fallback shape (`packing_factor = 1`),
+- the Rust-side packed frontend material now exists and lands exactly on the frozen `64`-lane target statement shape,
+- that the current integrated packed candidate proves the native relation, produces roughly `1.35 MB` proofs, and now passes the fast LPPC witness checks after fixing randomized-constraint interpolation and the packed bridge ordering bug,
+- so this note should be read as the exact packed-target security note, not as a claim that the current integrated scalar candidate already has the packed statement shape below.
+
+It is intentionally narrow. This is not a release claim for a full SmallWood transaction-validity proof. It is the exact engineering note for the packed statement Hegemon wants behind `TxProofBackend::SmallwoodCandidate`.
+
+The answer for that packed target is:
 
 - the old random-linear-check envelope is gone,
-- the current candidate statement is now witness-free and public,
-- and the exact no-grinding candidate profile clears a conservative `128-bit` floor for that implemented statement,
-- but the backend is still not release-ready because the current SmallWood polynomial constraints do not yet encode full native tx validity.
+- the packed candidate statement is witness-free and public,
+- and the exact no-grinding candidate profile clears a conservative `128-bit` floor for that packed statement,
+- but the integrated backend is still not release-ready because the current packed relation geometry is still too large even though the backend is now Rust-native.
 
 ## What statement is actually proved
 
-The current `SmallwoodCandidate` proof bytes are now just a vendored SmallWood PCS/ARK transcript:
+The current `SmallwoodCandidate` proof bytes are now just a Rust-native SmallWood PCS/ARK transcript:
 
 - proof object: [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs)
 - backend dispatch: [proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/proof.rs)
 - native backend bridge: [smallwood_native.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_native.rs)
-- C statement/prover/verifier shim: [smallwood_candidate.c](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/csrc/smallwood_candidate.c)
+- Rust prover/verifier engine: [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs)
+- Rust semantic constraint kernel: [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs)
 
 The proof no longer serializes any witness envelope. Instead, the public statement is derived directly from:
 
@@ -41,7 +49,7 @@ The exact public statement fields are:
 
 Those values are locked by the current unit test in [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs).
 
-The linear constraints are now sparse public selectors over the packed witness rows, not transcript-derived dense random checks. The selector indices are the first `78` witness coordinates, and the public targets are the corresponding direct public field values. That implementation lives in [smallwood_candidate.c](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/csrc/smallwood_candidate.c).
+The linear constraints are now sparse public selectors over the packed witness rows, not transcript-derived dense random checks. The selector indices are the first `78` witness coordinates, and the public targets are the corresponding direct public field values. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
 
 ## Exact no-grinding profile
 
@@ -59,7 +67,7 @@ The current candidate profile is now:
 These values are bound in both:
 
 - [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs)
-- [smallwood_candidate.c](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/csrc/smallwood_candidate.c)
+- [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs)
 
 So the repo is not claiming a paper-default or grinding-assisted profile. It is claiming an exact no-grinding profile.
 
@@ -160,9 +168,9 @@ What it does not prove:
 
 - that `SmallwoodCandidate` is now release-ready,
 - that the current SmallWood polynomial constraints already encode full `NativeTxValidityRelation`,
-- that the final SmallWood tx backend has been semantically completed.
+- that the final SmallWood tx backend has reached the smaller packed geometry needed for a proof-size win.
 
-Today the polynomial-constraint side in [smallwood_candidate.c](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/csrc/smallwood_candidate.c) still uses the zero-polynomial placeholder, while the public-selector side only binds the witness-free public statement. So this note is exact, but narrow.
+Today the Rust engine proves the real packed semantic relation, but the current `4`-lane bridge geometry is still too wide to beat the shipped Plonky3 proof. So this note is exact, but still narrow.
 
 ## Product conclusion
 
@@ -173,5 +181,5 @@ This milestone is complete in the narrow sense the user asked for:
 
 The next milestone is different:
 
-- replace the remaining placeholder polynomial-constraint side with a full SmallWood arithmetization of native tx validity,
+- reduce the packed relation geometry from the current heavy bridge shape toward the frozen `64`-lane target,
 - while preserving the witness-free public statement shape and this no-grinding discipline.
