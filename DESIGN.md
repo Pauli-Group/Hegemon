@@ -146,6 +146,8 @@ The SmallWood branch is now past the old scalar fallback. The Rust engine expose
 
 The current direct-packed mode is no longer “unsupported” at the engine/frontend seam. It now proves and verifies as an explicit alternate arithmetization with a serialized raw-witness payload, a transcript-bound sampled matrix-opening payload, and an explicit arithmetization tag in the proof envelope. That matrix-opening payload is no longer optional for direct proofs: the row schedule is derived from the direct payload digest, the verifier fail-closes if the opening bundle is missing, and tampered auth paths are rejected. It is still not the default product path because that direct alternate envelope is about `39009` bytes at the focused engine layer and still witness-carrying, versus `106885` projected / `106885` actual bytes for the compact bridge path.
 
+The direct semantics kernel also now has its first real locality cut. `compute_direct_packed_constraints_u64` no longer leaves the full public vector under one monolithic replay check: public nullifiers, output commitments, and the Merkle root are now bound locally from the named Poseidon span outputs of the canonical `934 x 64` program, while the remaining public prefix stays under the aggregate equality check.
+
 ### 1.4 Reference module layout
 
 The repository now includes a standalone Rust crate at `crypto/` that collects the post-quantum primitives into a single API suiting the plan above. The crate exposes:

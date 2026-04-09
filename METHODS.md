@@ -229,6 +229,8 @@ The witness method is now split in four. The legacy synthetic receipt relation s
 
 One new distinction is now real in code: `DirectPacked64V1` is no longer just a fail-closed marker. It proves and verifies through the normal proof envelope with an explicit arithmetization tag, a serialized raw-witness payload, and a transcript-bound sampled matrix-opening payload. The matrix-opening schedule is now derived from the direct payload digest itself, missing matrix-opening payloads fail closed, and tampered auth paths are rejected by focused regressions. That mode is still not the product default, because the measured direct alternate envelope is about `39009` bytes at the engine layer and still witness-carrying, versus `106885` projected / `106885` actual bytes for the compact bridge path.
 
+The direct witness-check kernel is also no longer purely “recompute everything and compare one big vector.” `compute_direct_packed_constraints_u64` now binds the public nullifiers, output commitments, and Merkle root locally from the named Poseidon span outputs inside the canonical `934 x 64` program, while the remaining public prefix stays under the aggregate equality check. That is the first direct-locality step toward replacing whole-matrix replay with local authenticated relations.
+
 * pack witness values with pay-per-bit widths in `superneo-ring`,
 * expand the packed witness to low-bit digits,
 * embed those digits into small ring elements over Goldilocks,

@@ -45,10 +45,13 @@ const POSEIDON_GROUP_COUNT: usize =
     (POSEIDON_PERMUTATION_COUNT + PACKING_FACTOR - 1) / PACKING_FACTOR;
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
+const PUB_NULLIFIERS: usize = 4;
+const PUB_COMMITMENTS: usize = 16;
 const PUB_CIPHERTEXT_HASHES: usize = 28;
 const PUB_FEE: usize = 40;
 const PUB_VALUE_BALANCE_SIGN: usize = 41;
 const PUB_VALUE_BALANCE_MAG: usize = 42;
+const PUB_MERKLE_ROOT: usize = 43;
 const PUB_SLOT_ASSETS: usize = 49;
 const PUB_STABLE_ENABLED: usize = 53;
 const PUB_STABLE_ASSET: usize = 54;
@@ -1293,8 +1296,12 @@ fn direct_packed_poseidon_constraint_count() -> usize {
     1 + MAX_INPUTS * (1 + MERKLE_DEPTH + 1) + MAX_OUTPUTS + 1
 }
 
+fn direct_packed_public_binding_constraint_count() -> usize {
+    (MAX_INPUTS * 2) + MAX_OUTPUTS
+}
+
 fn direct_packed_constraint_count() -> usize {
-    3 + direct_packed_poseidon_constraint_count()
+    4 + direct_packed_poseidon_constraint_count() + direct_packed_public_binding_constraint_count()
 }
 
 fn compute_direct_packed_constraints_u64(
@@ -1322,7 +1329,8 @@ fn compute_direct_packed_constraints_u64(
     let program = direct_packed_program();
     let poseidon_program = direct_packed_poseidon_program();
 
-    let public_values = program.public_values.slice(matrix.flat())?;
+    let matrix_public_values = program.public_values.slice(matrix.flat())?;
+    let statement_public_values = statement.public_values();
     let raw_witness = program.raw_witness.slice(matrix.flat())?;
     let poseidon_flat = program.poseidon_segment.slice(matrix.flat())?;
     let padding = program.padding.slice(matrix.flat())?;
@@ -1338,10 +1346,17 @@ fn compute_direct_packed_constraints_u64(
         packed_poseidon_subtrace_rows_from_witness(&witness, &public_inputs)?;
     let expected_poseidon_flat = flatten_poseidon_rows(&expected_poseidon_rows);
 
-    if expected_public_values.len() != public_values.len() {
+    if statement_public_values.len() != matrix_public_values.len() {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood direct packed statement public value count {}, expected {}",
+            statement_public_values.len(),
+            matrix_public_values.len()
+        )));
+    }
+    if expected_public_values.len() != statement_public_values.len() {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
             "smallwood direct packed public value count {}, expected {}",
-            public_values.len(),
+            statement_public_values.len(),
             expected_public_values.len()
         )));
     }
@@ -1362,8 +1377,15 @@ fn compute_direct_packed_constraints_u64(
 
     let mut constraint_idx = 0usize;
     out[constraint_idx] = aggregate_u64_differences(
-        nontrivial_challenge(statement, 20, 0, 0),
-        public_values,
+        nontrivial_challenge(statement, 19, 0, 0),
+        matrix_public_values,
+        statement_public_values,
+    )
+    .as_canonical_u64();
+    constraint_idx += 1;
+    out[constraint_idx] = aggregate_public_prefix_differences(
+        statement,
+        statement_public_values,
         &expected_public_values,
     )
     .as_canonical_u64();
@@ -1409,8 +1431,60 @@ fn compute_direct_packed_constraints_u64(
     }
     push_poseidon_span(28, 0, 0, poseidon_program.balance_tag)?;
 
+    for (input_idx, input_plan) in poseidon_program.inputs.iter().enumerate() {
+        out[constraint_idx] = aggregate_u64_differences(
+            nontrivial_challenge(statement, 29, input_idx as u64, 0),
+            &poseidon_span_output_hash(poseidon_flat, input_plan.nullifier)?,
+            &statement_public_values[PUB_NULLIFIERS + input_idx * HASH_LIMBS
+                ..PUB_NULLIFIERS + (input_idx + 1) * HASH_LIMBS],
+        )
+        .as_canonical_u64();
+        constraint_idx += 1;
+
+        out[constraint_idx] = aggregate_u64_differences(
+            nontrivial_challenge(statement, 30, input_idx as u64, 0),
+            &poseidon_span_output_hash(poseidon_flat, input_plan.merkle_nodes[MERKLE_DEPTH - 1])?,
+            &statement_public_values[PUB_MERKLE_ROOT..PUB_MERKLE_ROOT + HASH_LIMBS],
+        )
+        .as_canonical_u64();
+        constraint_idx += 1;
+    }
+
+    for (output_idx, output_plan) in poseidon_program.outputs.iter().enumerate() {
+        out[constraint_idx] = aggregate_u64_differences(
+            nontrivial_challenge(statement, 31, output_idx as u64, 0),
+            &poseidon_span_output_hash(poseidon_flat, output_plan.commitment)?,
+            &statement_public_values[PUB_COMMITMENTS + output_idx * HASH_LIMBS
+                ..PUB_COMMITMENTS + (output_idx + 1) * HASH_LIMBS],
+        )
+        .as_canonical_u64();
+        constraint_idx += 1;
+    }
+
     debug_assert_eq!(constraint_idx, expected);
     Ok(())
+}
+
+fn aggregate_public_prefix_differences(
+    statement: &PackedStatement<'_>,
+    lhs: &[u64],
+    rhs: &[u64],
+) -> Felt {
+    let ranges = [
+        (0usize, PUB_NULLIFIERS),
+        (PUB_CIPHERTEXT_HASHES, PUB_MERKLE_ROOT),
+        (PUB_SLOT_ASSETS, PUBLIC_VALUE_COUNT),
+    ];
+    let mut acc = Felt::ZERO;
+    let mut power = Felt::ONE;
+    let challenge = nontrivial_challenge(statement, 20, 0, 0);
+    for (start, end) in ranges {
+        for (&left, &right) in lhs[start..end].iter().zip(rhs[start..end].iter()) {
+            acc += power * (Felt::from_u64(left) - Felt::from_u64(right));
+            power *= challenge;
+        }
+    }
+    acc
 }
 
 fn poseidon_span_words<'a>(
@@ -1418,6 +1492,32 @@ fn poseidon_span_words<'a>(
     span: DirectPackedPermutationSpan,
 ) -> Result<&'a [u64], TransactionCircuitError> {
     span.word_range().slice(poseidon_flat)
+}
+
+fn poseidon_span_output_hash(
+    poseidon_flat: &[u64],
+    span: DirectPackedPermutationSpan,
+) -> Result<[u64; HASH_LIMBS], TransactionCircuitError> {
+    if span.len() == 0 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood direct packed poseidon span cannot be empty",
+        ));
+    }
+    let last_permutation = span.start() + span.len() - 1;
+    let row_start = (last_permutation * POSEIDON_ROWS_PER_PERMUTATION
+        + (POSEIDON_ROWS_PER_PERMUTATION - 1))
+        * POSEIDON2_WIDTH;
+    let row = poseidon_flat.get(row_start..row_start + POSEIDON2_WIDTH).ok_or_else(|| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood direct packed poseidon output row [{}..{}) exceeds poseidon witness length {}",
+            row_start,
+            row_start + POSEIDON2_WIDTH,
+            poseidon_flat.len()
+        ))
+    })?;
+    let mut out = [0u64; HASH_LIMBS];
+    out.copy_from_slice(&row[..HASH_LIMBS]);
+    Ok(out)
 }
 
 fn packed_poseidon_subtrace_rows_from_witness(
