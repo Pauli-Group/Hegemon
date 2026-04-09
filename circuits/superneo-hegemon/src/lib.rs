@@ -26,14 +26,15 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE_DEPTH};
 use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::proof::{
-    prove_with_params as prove_transaction_with_params, transaction_proof_digest,
+    prove_with_params as prove_transaction_with_params,
+    smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest,
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
-    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
-    verify as verify_transaction_proof, verify_transaction_proof_bytes_for_backend,
-    SerializedStarkInputs, TransactionProof,
+    transaction_verifier_profile_digest, verify as verify_transaction_proof,
+    verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
+use transaction_circuit::SmallwoodArithmetization;
 use transaction_circuit::TransactionPublicInputsP3;
 use transaction_circuit::TransactionWitness;
 
@@ -342,6 +343,8 @@ pub struct TxLeafPublicTx {
 pub struct TxLeafPublicWitness {
     pub tx: TxLeafPublicTx,
     pub stark_public_inputs: SerializedStarkInputs,
+    pub proof_backend: TxProofBackend,
+    pub smallwood_arithmetization: Option<SmallwoodArithmetization>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1390,7 +1393,8 @@ pub fn canonical_tx_validity_receipt_from_transaction_proof(
         proof_digest: transaction_proof_digest(proof),
         public_inputs_digest: transaction_public_inputs_digest(proof)
             .map_err(|err| anyhow::anyhow!("failed to derive tx public inputs digest: {err}"))?,
-        verifier_profile: transaction_verifier_profile_digest(proof),
+        verifier_profile: transaction_verifier_profile_digest(proof)
+            .map_err(|err| anyhow::anyhow!("failed to derive tx verifier profile digest: {err}"))?,
     })
 }
 
@@ -1471,16 +1475,26 @@ pub fn tx_leaf_public_witness_from_transaction_proof(
         stark_public_inputs: proof.stark_public_inputs.clone().ok_or_else(|| {
             anyhow::anyhow!("transaction proof is missing serialized STARK inputs")
         })?,
+        proof_backend: proof.proof_backend(),
+        smallwood_arithmetization: smallwood_arithmetization_from_backend_and_proof_bytes(
+            proof.proof_backend(),
+            proof.proof_bytes(),
+        )
+        .map_err(|err| anyhow::anyhow!("failed to decode tx proof arithmetization: {err}"))?,
     })
 }
 
 pub fn tx_leaf_public_witness_from_parts(
     tx: &TxLeafPublicTx,
     stark_public_inputs: &SerializedStarkInputs,
+    proof_backend: TxProofBackend,
+    smallwood_arithmetization: Option<SmallwoodArithmetization>,
 ) -> TxLeafPublicWitness {
     TxLeafPublicWitness {
         tx: tx.clone(),
         stark_public_inputs: stark_public_inputs.clone(),
+        proof_backend,
+        smallwood_arithmetization,
     }
 }
 
@@ -1782,10 +1796,14 @@ fn validate_tx_leaf_public_witness(
     statement: &CanonicalTxValidityReceipt,
     witness: &TxLeafPublicWitness,
 ) -> Result<()> {
+    ensure!(
+        statement.verifier_profile != [0u8; 48],
+        "tx-leaf verifier profile must not be empty"
+    );
     validate_tx_leaf_public_witness_with_expected_profile(
         statement,
         witness,
-        transaction_verifier_profile_digest_for_version(witness.tx.version),
+        statement.verifier_profile,
     )
 }
 
@@ -3091,7 +3109,12 @@ pub fn verify_tx_leaf_artifact_bytes(
         artifact.leaf.shape_digest == pk.shape_digest,
         "tx-leaf inner shape digest mismatch"
     );
-    let witness = tx_leaf_public_witness_from_parts(tx, &artifact.stark_public_inputs);
+    let witness = tx_leaf_public_witness_from_parts(
+        tx,
+        &artifact.stark_public_inputs,
+        DEFAULT_TX_PROOF_BACKEND,
+        None,
+    );
     let encoding = relation.encode_statement(receipt)?;
     let assignment = relation.build_assignment(receipt, &witness)?;
     let packed = packer.pack(relation.shape(), &assignment)?;
@@ -3218,7 +3241,18 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     )
     .map_err(|err| anyhow::anyhow!("native tx-leaf proof verification failed: {err}"))?;
 
-    let witness = tx_leaf_public_witness_from_parts(tx, &artifact.stark_public_inputs);
+    let witness = tx_leaf_public_witness_from_parts(
+        tx,
+        &artifact.stark_public_inputs,
+        artifact.proof_backend,
+        smallwood_arithmetization_from_backend_and_proof_bytes(
+            artifact.proof_backend,
+            &artifact.stark_proof,
+        )
+        .map_err(|err| {
+            anyhow::anyhow!("failed to decode native tx-leaf proof arithmetization: {err}")
+        })?,
+    );
     validate_native_tx_leaf_public_witness_with_params(params, receipt, &witness)?;
     let encoding = relation.encode_statement(receipt)?;
     let assignment = tx_leaf_public_witness_assignment(&witness)?;
@@ -5168,6 +5202,22 @@ mod tests {
             metadata.relation_id,
             TxLeafPublicRelation::default().relation_id().0
         );
+    }
+
+    #[test]
+    fn tx_leaf_public_witness_accepts_smallwood_direct_profile_digest() {
+        let mut proof = sample_transaction_proof(70);
+        proof.backend = TxProofBackend::SmallwoodCandidate;
+        proof.stark_proof = bincode::serialize(
+            &transaction_circuit::smallwood_frontend::SmallwoodCandidateProof {
+                arithmetization: SmallwoodArithmetization::DirectPacked64V1,
+                ark_proof: vec![1, 2, 3, 4],
+            },
+        )
+        .unwrap();
+        let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
+        let witness = tx_leaf_public_witness_from_transaction_proof(&proof).unwrap();
+        validate_tx_leaf_public_witness(&receipt, &witness).unwrap();
     }
 
     #[test]

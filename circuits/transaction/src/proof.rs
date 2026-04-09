@@ -259,19 +259,37 @@ pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) 
     )
 }
 
-pub fn transaction_verifier_profile_digest(proof: &TransactionProof) -> [u8; 48] {
-    let smallwood_arithmetization = if matches!(proof.backend, TxProofBackend::SmallwoodCandidate) {
-        bincode::deserialize::<SmallwoodCandidateProof>(&proof.stark_proof)
-            .ok()
-            .map(|candidate| candidate.arithmetization)
-    } else {
-        None
-    };
-    transaction_verifier_profile_digest_for_version_and_backend(
+pub fn smallwood_arithmetization_from_backend_and_proof_bytes(
+    backend: TxProofBackend,
+    proof_bytes: &[u8],
+) -> Result<Option<SmallwoodArithmetization>, TransactionCircuitError> {
+    if !matches!(backend, TxProofBackend::SmallwoodCandidate) {
+        return Ok(None);
+    }
+    let candidate =
+        bincode::deserialize::<SmallwoodCandidateProof>(proof_bytes).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to decode smallwood candidate proof wrapper for arithmetization binding: {err}"
+        ))
+        })?;
+    Ok(Some(candidate.arithmetization))
+}
+
+pub fn smallwood_arithmetization_from_proof(
+    proof: &TransactionProof,
+) -> Result<Option<SmallwoodArithmetization>, TransactionCircuitError> {
+    smallwood_arithmetization_from_backend_and_proof_bytes(proof.backend, &proof.stark_proof)
+}
+
+pub fn transaction_verifier_profile_digest(
+    proof: &TransactionProof,
+) -> Result<[u8; 48], TransactionCircuitError> {
+    let smallwood_arithmetization = smallwood_arithmetization_from_proof(proof)?;
+    Ok(transaction_verifier_profile_digest_for_version_and_backend(
         proof.version_binding(),
         proof.backend,
         smallwood_arithmetization,
-    )
+    ))
 }
 
 pub fn verify_transaction_proof_bytes_for_backend(
@@ -761,7 +779,7 @@ mod tests {
     fn verifier_profile_digest_matches_version_helper() {
         let proof = dummy_proof();
         assert_eq!(
-            transaction_verifier_profile_digest(&proof),
+            transaction_verifier_profile_digest(&proof).expect("profile digest"),
             transaction_verifier_profile_digest_for_version(proof.version_binding())
         );
     }
@@ -769,7 +787,7 @@ mod tests {
     #[test]
     fn smallwood_verifier_profile_digest_tracks_actual_arithmetization() {
         let proof = dummy_smallwood_proof(SmallwoodArithmetization::DirectPacked64V1);
-        let direct = transaction_verifier_profile_digest(&proof);
+        let direct = transaction_verifier_profile_digest(&proof).expect("profile digest");
         let bridge = transaction_verifier_profile_digest_for_version(proof.version_binding());
         assert_ne!(
             direct, bridge,
@@ -782,6 +800,18 @@ mod tests {
                 proof.backend,
                 Some(SmallwoodArithmetization::DirectPacked64V1),
             )
+        );
+    }
+
+    #[test]
+    fn malformed_smallwood_wrapper_fails_closed_for_profile_digest() {
+        let mut proof = dummy_smallwood_proof(SmallwoodArithmetization::Bridge64V1);
+        proof.stark_proof = vec![0xff, 0x00, 0xaa];
+        let err = transaction_verifier_profile_digest(&proof).expect_err("malformed wrapper fails");
+        assert!(
+            err.to_string()
+                .contains("failed to decode smallwood candidate proof wrapper"),
+            "unexpected error: {err:?}"
         );
     }
 
