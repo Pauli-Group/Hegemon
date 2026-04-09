@@ -14,6 +14,7 @@ use crate::{
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof::{transaction_public_inputs_p3_from_parts, SerializedStarkInputs},
     public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs},
+    smallwood_engine::SmallwoodArithmetization,
     witness::TransactionWitness,
 };
 
@@ -60,6 +61,7 @@ const DIRECT_ROW_COUNT: usize = 934;
 
 #[derive(Clone)]
 pub(crate) struct PackedStatement<'a> {
+    arithmetization: SmallwoodArithmetization,
     linear_constraint_targets: &'a [u64],
     output_ciphertext_challenges: [Felt; MAX_OUTPUTS],
     slot_denominator_inverses: [Felt; BALANCE_SLOTS],
@@ -71,6 +73,7 @@ pub(crate) struct PackedStatement<'a> {
 }
 
 pub(crate) fn test_candidate_witness_rust(
+    arithmetization: SmallwoodArithmetization,
     witness_values: &[u64],
     row_count: usize,
     packing_factor: usize,
@@ -97,16 +100,25 @@ pub(crate) fn test_candidate_witness_rust(
             "smallwood linear-constraint offset/target mismatch",
         ));
     }
-    if row_count == DIRECT_ROW_COUNT {
-        return test_direct_packed_frontend_witness(
-            witness_values,
-            linear_constraint_offsets,
-            linear_constraint_indices,
-            linear_constraint_coefficients,
-            linear_constraint_targets,
-        );
+    match arithmetization {
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            if row_count != DIRECT_ROW_COUNT {
+                return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "direct packed SmallWood witness row_count {row_count}, expected {DIRECT_ROW_COUNT}"
+                )));
+            }
+            return test_direct_packed_frontend_witness(
+                witness_values,
+                linear_constraint_offsets,
+                linear_constraint_indices,
+                linear_constraint_coefficients,
+                linear_constraint_targets,
+            );
+        }
+        SmallwoodArithmetization::Bridge64V1 => {}
     }
     let statement = PackedStatement::new(
+        SmallwoodArithmetization::Bridge64V1,
         row_count,
         packing_factor,
         linear_constraint_offsets,
@@ -244,6 +256,7 @@ fn test_direct_packed_frontend_witness(
 
 impl<'a> PackedStatement<'a> {
     pub(crate) fn new(
+        arithmetization: SmallwoodArithmetization,
         _row_count: usize,
         _packing_factor: usize,
         _linear_constraint_offsets: &'a [u32],
@@ -252,6 +265,7 @@ impl<'a> PackedStatement<'a> {
         linear_constraint_targets: &'a [u64],
     ) -> Self {
         let mut statement = Self {
+            arithmetization,
             linear_constraint_targets,
             output_ciphertext_challenges: [Felt::ZERO; MAX_OUTPUTS],
             slot_denominator_inverses: derive_slot_denominator_inverses(linear_constraint_targets),
@@ -280,6 +294,10 @@ impl<'a> PackedStatement<'a> {
 
     pub(crate) fn linear_targets(&self) -> &[u64] {
         self.linear_constraint_targets
+    }
+
+    pub(crate) fn arithmetization(&self) -> SmallwoodArithmetization {
+        self.arithmetization
     }
 }
 
@@ -1046,6 +1064,14 @@ pub(crate) fn compute_constraints_u64(
     rows: &[u64],
     out: &mut [u64],
 ) -> Result<(), TransactionCircuitError> {
+    if !matches!(
+        statement.arithmetization(),
+        SmallwoodArithmetization::Bridge64V1
+    ) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "direct packed SmallWood arithmetization is not implemented in the proof engine yet",
+        ));
+    }
     let expected = constraint_count();
     if out.len() != expected {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(

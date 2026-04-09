@@ -32,6 +32,12 @@ const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 29;
 const SMALLWOOD_DECS_ETA: usize = 3;
 const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SmallwoodArithmetization {
+    Bridge64V1,
+    DirectPacked64V1,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SmallwoodProof {
     salt: [u8; SALT_BYTES],
@@ -107,6 +113,7 @@ struct PcsKey {
 }
 
 pub(crate) fn prove_candidate(
+    arithmetization: SmallwoodArithmetization,
     witness_values: &[u64],
     row_count: usize,
     packing_factor: usize,
@@ -132,6 +139,7 @@ pub(crate) fn prove_candidate(
         }
     };
     let cfg = SmallwoodConfig::new(
+        arithmetization,
         row_count,
         packing_factor,
         constraint_degree as usize,
@@ -151,6 +159,7 @@ pub(crate) fn prove_candidate(
             );
     }
     let statement = PackedStatement::new(
+        arithmetization,
         row_count,
         packing_factor,
         linear_constraint_offsets,
@@ -234,6 +243,7 @@ pub(crate) fn prove_candidate(
 }
 
 pub(crate) fn verify_candidate(
+    arithmetization: SmallwoodArithmetization,
     row_count: usize,
     packing_factor: usize,
     constraint_degree: u16,
@@ -250,6 +260,7 @@ pub(crate) fn verify_candidate(
         ))
     })?;
     let cfg = SmallwoodConfig::new(
+        arithmetization,
         row_count,
         packing_factor,
         constraint_degree as usize,
@@ -261,6 +272,7 @@ pub(crate) fn verify_candidate(
         ));
     }
     let statement = PackedStatement::new(
+        arithmetization,
         row_count,
         packing_factor,
         linear_constraint_offsets,
@@ -378,12 +390,14 @@ fn validate_proof_shape(
 }
 
 pub(crate) fn projected_candidate_proof_bytes(
+    arithmetization: SmallwoodArithmetization,
     row_count: usize,
     packing_factor: usize,
     constraint_degree: u16,
     linear_constraint_count: usize,
 ) -> Result<usize, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new(
+        arithmetization,
         row_count,
         packing_factor,
         constraint_degree as usize,
@@ -399,11 +413,20 @@ struct PiopRunOutput {
 
 impl SmallwoodConfig {
     fn new(
+        arithmetization: SmallwoodArithmetization,
         row_count: usize,
         packing_factor: usize,
         constraint_degree: usize,
         linear_constraint_count: usize,
     ) -> Result<Self, TransactionCircuitError> {
+        match arithmetization {
+            SmallwoodArithmetization::Bridge64V1 => {}
+            SmallwoodArithmetization::DirectPacked64V1 => {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "direct packed SmallWood arithmetization is not implemented in the proof engine yet",
+                ));
+            }
+        }
         if row_count == 0 || packing_factor == 0 {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood row_count and packing_factor must be non-zero",
@@ -1985,11 +2008,27 @@ mod tests {
     }
 
     #[test]
+    fn direct_packed_arithmetization_is_rejected_explicitly() {
+        let err = projected_candidate_proof_bytes(
+            SmallwoodArithmetization::DirectPacked64V1,
+            934,
+            64,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            78,
+        )
+        .expect_err("direct packed arithmetization should not silently alias bridge mode");
+        assert!(err
+            .to_string()
+            .contains("direct packed SmallWood arithmetization"));
+    }
+
+    #[test]
     #[ignore = "redteam regression for PCS/evaluation binding on the experimental SmallWood backend"]
     fn verifier_rejects_forged_self_consistent_pcs_layer() {
         let witness = sample_witness();
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let cfg = SmallwoodConfig::new(
+            SmallwoodArithmetization::Bridge64V1,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
@@ -2064,6 +2103,7 @@ mod tests {
         let witness = sample_witness();
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let cfg = SmallwoodConfig::new(
+            SmallwoodArithmetization::Bridge64V1,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
@@ -2093,6 +2133,7 @@ mod tests {
         let piop = piop_run(
             &cfg,
             &PackedStatement::new(
+                SmallwoodArithmetization::Bridge64V1,
                 material.public_statement.lppc_row_count as usize,
                 SMALLWOOD_BRIDGE_PACKING_FACTOR,
                 &material.linear_constraints.term_offsets,

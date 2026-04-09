@@ -21,6 +21,7 @@ use crate::{
         VerificationReport,
     },
     public_inputs::TransactionPublicInputs,
+    smallwood_engine::SmallwoodArithmetization,
     smallwood_native::{
         projected_candidate_proof_bytes as projected_smallwood_backend_proof_bytes,
         prove_candidate as prove_smallwood_backend, test_candidate_witness,
@@ -221,6 +222,7 @@ pub fn prove_smallwood_candidate(
     let context = build_smallwood_witness_context(witness)?;
     let direct_material = build_packed_smallwood_frontend_material_from_context(&context, witness)?;
     test_candidate_witness(
+        SmallwoodArithmetization::DirectPacked64V1,
         &direct_material.packed_expanded_witness,
         direct_material.public_statement.lppc_row_count as usize,
         direct_material.public_statement.lppc_packing_factor as usize,
@@ -232,6 +234,7 @@ pub fn prove_smallwood_candidate(
     )?;
     let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
     test_candidate_witness(
+        SmallwoodArithmetization::Bridge64V1,
         &material.packed_witness_rows,
         material.public_statement.lppc_row_count as usize,
         SMALLWOOD_BRIDGE_PACKING_FACTOR,
@@ -242,6 +245,7 @@ pub fn prove_smallwood_candidate(
         &material.linear_constraints.targets,
     )?;
     let ark_proof = prove_smallwood_backend(
+        SmallwoodArithmetization::Bridge64V1,
         &material.packed_witness_rows,
         material.public_statement.lppc_row_count as usize,
         SMALLWOOD_BRIDGE_PACKING_FACTOR,
@@ -275,6 +279,7 @@ pub fn projected_smallwood_candidate_proof_bytes(
     let context = build_smallwood_witness_context(witness)?;
     let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
     projected_smallwood_backend_proof_bytes(
+        SmallwoodArithmetization::Bridge64V1,
         material.public_statement.lppc_row_count as usize,
         material.public_statement.lppc_packing_factor as usize,
         material.public_statement.effective_constraint_degree,
@@ -297,6 +302,7 @@ pub fn verify_smallwood_candidate_proof_bytes(
     let public_statement = build_packed_smallwood_bridge_public_statement(pub_inputs, version)?;
     let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
     verify_smallwood_backend(
+        SmallwoodArithmetization::Bridge64V1,
         public_statement.lppc_row_count as usize,
         SMALLWOOD_BRIDGE_PACKING_FACTOR,
         SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
@@ -2004,6 +2010,7 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
             &material.packed_expanded_witness,
             material.public_statement.lppc_row_count as usize,
             material.public_statement.lppc_packing_factor as usize,
@@ -2023,6 +2030,7 @@ mod tests {
         let mut material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         material.packed_expanded_witness[SMALLWOOD_BASE_PUBLIC_VALUE_COUNT + 17] ^= 1;
         let err = test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
             &material.packed_expanded_witness,
             material.public_statement.lppc_row_count as usize,
             material.public_statement.lppc_packing_factor as usize,
@@ -2057,6 +2065,7 @@ mod tests {
         );
 
         test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
             &direct.packed_expanded_witness,
             direct.public_statement.lppc_row_count as usize,
             direct.public_statement.lppc_packing_factor as usize,
@@ -2068,6 +2077,7 @@ mod tests {
         )
         .unwrap();
         test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
             &bridge.packed_witness_rows,
             bridge.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
@@ -2111,6 +2121,7 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
             &material.packed_witness_rows,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
@@ -2234,6 +2245,7 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_smallwood_frontend_material(&witness).unwrap();
         test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
             &material.padded_expanded_witness,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_LPPC_PACKING_FACTOR,
@@ -2254,6 +2266,7 @@ mod tests {
         let mut material = build_smallwood_frontend_material(&witness).unwrap();
         material.padded_expanded_witness[0] ^= 1;
         let err = test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
             &material.padded_expanded_witness,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_LPPC_PACKING_FACTOR,
