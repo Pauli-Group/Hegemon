@@ -12,12 +12,19 @@ use transaction_circuit::p3_verifier::{
 use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p3, verify};
 use transaction_circuit::{
     projected_smallwood_candidate_proof_bytes, prove_smallwood_candidate, InputNoteWitness,
-    OutputNoteWitness, StablecoinPolicyBinding, TransactionCircuitError, TransactionWitness,
+    OutputNoteWitness, SmallwoodArithmetization, StablecoinPolicyBinding, TransactionCircuitError,
+    TransactionWitness,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MirrorSmallwoodCandidateProof {
+    #[serde(default = "default_mirror_smallwood_arithmetization")]
+    arithmetization: SmallwoodArithmetization,
     ark_proof: Vec<u8>,
+}
+
+fn default_mirror_smallwood_arithmetization() -> SmallwoodArithmetization {
+    SmallwoodArithmetization::Bridge64V1
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,7 +34,19 @@ struct MirrorSmallwoodProof {
     h_piop: [u8; 32],
     piop: MirrorPiopProof,
     pcs: MirrorPcsProof,
-    all_evals: Vec<Vec<u64>>,
+    opened_witness: MirrorSmallwoodOpenedWitnessBundle,
+    direct_packed: Option<MirrorDirectPackedProofBundle>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MirrorSmallwoodOpenedWitnessBundle {
+    row_scalars: Vec<Vec<u64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MirrorDirectPackedProofBundle {
+    binded_data_digest: [u8; 32],
+    witness_values: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -429,7 +448,7 @@ fn smallwood_candidate_malformed_all_evals_do_not_panic() {
         bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
     let mut inner: MirrorSmallwoodProof =
         bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
-    inner.all_evals[0].clear();
+    inner.opened_witness.row_scalars[0].clear();
     outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
     proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
 

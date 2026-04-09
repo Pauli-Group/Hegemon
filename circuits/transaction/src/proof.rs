@@ -238,7 +238,10 @@ pub fn transaction_verifier_profile_digest_for_version_and_backend(
         message.extend_from_slice(&(profile.num_queries as u64).to_le_bytes());
         message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
     } else if matches!(backend, TxProofBackend::SmallwoodCandidate) {
-        message.extend_from_slice(&smallwood_candidate_verifier_profile_material(version));
+        message.extend_from_slice(&smallwood_candidate_verifier_profile_material(
+            version,
+            crate::smallwood_engine::SmallwoodArithmetization::Bridge64V1,
+        ));
     }
     blake3_384(&message)
 }

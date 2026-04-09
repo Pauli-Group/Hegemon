@@ -166,7 +166,13 @@ pub struct SmallwoodLinearConstraints {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SmallwoodCandidateProof {
+    #[serde(default = "default_smallwood_candidate_arithmetization")]
+    pub arithmetization: SmallwoodArithmetization,
     pub ark_proof: Vec<u8>,
+}
+
+fn default_smallwood_candidate_arithmetization() -> SmallwoodArithmetization {
+    SmallwoodArithmetization::Bridge64V1
 }
 
 #[allow(dead_code)]
@@ -213,6 +219,13 @@ struct SmallwoodWitnessContext {
 pub fn prove_smallwood_candidate(
     witness: &TransactionWitness,
 ) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_smallwood_candidate_with_arithmetization(witness, SmallwoodArithmetization::Bridge64V1)
+}
+
+pub fn prove_smallwood_candidate_with_arithmetization(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<TransactionProof, TransactionCircuitError> {
     if tx_proof_backend_for_version(witness.version) != Some(TxProofBackend::SmallwoodCandidate) {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
             "version {:?} is not bound to the smallwood_candidate backend",
@@ -232,59 +245,109 @@ pub fn prove_smallwood_candidate(
         &direct_material.linear_constraints.term_coefficients,
         &direct_material.linear_constraints.targets,
     )?;
-    let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
-    test_candidate_witness(
-        SmallwoodArithmetization::Bridge64V1,
-        &material.packed_witness_rows,
-        material.public_statement.lppc_row_count as usize,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR,
-        SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-        &material.linear_constraints.term_offsets,
-        &material.linear_constraints.term_indices,
-        &material.linear_constraints.term_coefficients,
-        &material.linear_constraints.targets,
-    )?;
-    let ark_proof = prove_smallwood_backend(
-        SmallwoodArithmetization::Bridge64V1,
-        &material.packed_witness_rows,
-        material.public_statement.lppc_row_count as usize,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR,
-        SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-        &material.linear_constraints.term_offsets,
-        &material.linear_constraints.term_indices,
-        &material.linear_constraints.term_coefficients,
-        &material.linear_constraints.targets,
-        &material.transcript_binding,
-    )?;
-    let proof_bytes =
-        bincode::serialize(&SmallwoodCandidateProof { ark_proof }).map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "failed to serialize smallwood candidate proof: {err}"
-            ))
-        })?;
-    Ok(TransactionProof {
-        nullifiers: material.public_inputs.nullifiers.clone(),
-        commitments: material.public_inputs.commitments.clone(),
-        balance_slots: material.public_inputs.balance_slots.clone(),
-        public_inputs: material.public_inputs,
-        backend: TxProofBackend::SmallwoodCandidate,
-        stark_proof: proof_bytes,
-        stark_public_inputs: Some(material.serialized_public_inputs),
-    })
+    match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
+            test_candidate_witness(
+                SmallwoodArithmetization::Bridge64V1,
+                &material.packed_witness_rows,
+                material.public_statement.lppc_row_count as usize,
+                SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            )?;
+            let ark_proof = prove_smallwood_backend(
+                SmallwoodArithmetization::Bridge64V1,
+                &material.packed_witness_rows,
+                material.public_statement.lppc_row_count as usize,
+                SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &material.transcript_binding,
+            )?;
+            let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof)?;
+            Ok(TransactionProof {
+                nullifiers: material.public_inputs.nullifiers.clone(),
+                commitments: material.public_inputs.commitments.clone(),
+                balance_slots: material.public_inputs.balance_slots.clone(),
+                public_inputs: material.public_inputs,
+                backend: TxProofBackend::SmallwoodCandidate,
+                stark_proof: proof_bytes,
+                stark_public_inputs: Some(material.serialized_public_inputs),
+            })
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let ark_proof = prove_smallwood_backend(
+                SmallwoodArithmetization::DirectPacked64V1,
+                &direct_material.packed_expanded_witness,
+                direct_material.public_statement.lppc_row_count as usize,
+                direct_material.public_statement.lppc_packing_factor as usize,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &direct_material.linear_constraints.term_offsets,
+                &direct_material.linear_constraints.term_indices,
+                &direct_material.linear_constraints.term_coefficients,
+                &direct_material.linear_constraints.targets,
+                &direct_material.transcript_binding,
+            )?;
+            let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof)?;
+            Ok(TransactionProof {
+                nullifiers: context.public_inputs.nullifiers.clone(),
+                commitments: context.public_inputs.commitments.clone(),
+                balance_slots: context.public_inputs.balance_slots.clone(),
+                public_inputs: context.public_inputs.clone(),
+                backend: TxProofBackend::SmallwoodCandidate,
+                stark_proof: proof_bytes,
+                stark_public_inputs: Some(context.serialized_public_inputs.clone()),
+            })
+        }
+    }
 }
 
 pub fn projected_smallwood_candidate_proof_bytes(
     witness: &TransactionWitness,
 ) -> Result<usize, TransactionCircuitError> {
-    let context = build_smallwood_witness_context(witness)?;
-    let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
-    projected_smallwood_backend_proof_bytes(
+    projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        witness,
         SmallwoodArithmetization::Bridge64V1,
-        material.public_statement.lppc_row_count as usize,
-        material.public_statement.lppc_packing_factor as usize,
-        material.public_statement.effective_constraint_degree,
-        material.linear_constraints.targets.len(),
     )
+}
+
+pub fn projected_smallwood_candidate_proof_bytes_for_arithmetization(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<usize, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
+            let ark_proof_bytes = projected_smallwood_backend_proof_bytes(
+                SmallwoodArithmetization::Bridge64V1,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree,
+                material.linear_constraints.targets.len(),
+            )?;
+            projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes)
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            let ark_proof_bytes = projected_smallwood_backend_proof_bytes(
+                SmallwoodArithmetization::DirectPacked64V1,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree,
+                material.linear_constraints.targets.len(),
+            )?;
+            projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes)
+        }
+    }
 }
 
 pub fn verify_smallwood_candidate_proof_bytes(
@@ -299,18 +362,31 @@ pub fn verify_smallwood_candidate_proof_bytes(
         ));
     }
     ensure_smallwood_version(version, version)?;
-    let public_statement = build_packed_smallwood_bridge_public_statement(pub_inputs, version)?;
-    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
+    let (public_statement, linear_constraints) = match candidate.arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let statement = build_packed_smallwood_bridge_public_statement(pub_inputs, version)?;
+            let constraints = build_packed_bridge_linear_constraints(&statement);
+            (statement, constraints)
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let statement = build_direct_packed_smallwood_public_statement(pub_inputs, version)?;
+            let constraints = build_coordinate_linear_constraints((
+                build_smallwood_public_selector_indices(statement.public_values.len()),
+                statement.public_values.clone(),
+            ));
+            (statement, constraints)
+        }
+    };
     verify_smallwood_backend(
-        SmallwoodArithmetization::Bridge64V1,
+        candidate.arithmetization,
         public_statement.lppc_row_count as usize,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        public_statement.lppc_packing_factor as usize,
         SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
         &linear_constraints.term_offsets,
         &linear_constraints.term_indices,
         &linear_constraints.term_coefficients,
         &linear_constraints.targets,
-        &smallwood_transcript_binding(&public_statement, version)?,
+        &smallwood_transcript_binding(&public_statement, version, candidate.arithmetization)?,
         &candidate.ark_proof,
     )?;
     Ok(())
@@ -367,14 +443,22 @@ pub fn verify_smallwood_candidate_transaction_proof(
     Ok(VerificationReport { verified: true })
 }
 
-pub fn smallwood_candidate_verifier_profile_material(version: VersionBinding) -> Vec<u8> {
+pub fn smallwood_candidate_verifier_profile_material(
+    version: VersionBinding,
+    arithmetization: SmallwoodArithmetization,
+) -> Vec<u8> {
     let mut material = Vec::new();
     material.extend_from_slice(SMALLWOOD_PUBLIC_STATEMENT_DOMAIN);
-    material.extend_from_slice(b"candidate-smallwood-pcs-ark");
+    material.extend_from_slice(match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => b"candidate-smallwood-bridge-pcs-ark".as_slice(),
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            b"candidate-smallwood-direct-packed-payload".as_slice()
+        }
+    });
     material.extend_from_slice(b"hegemon.blake3-field-xof.v1");
     material.extend_from_slice(&version.circuit.to_le_bytes());
     material.extend_from_slice(&version.crypto.to_le_bytes());
-    material.extend_from_slice(&(SMALLWOOD_BRIDGE_PACKING_FACTOR as u64).to_le_bytes());
+    material.extend_from_slice(&(arithmetization as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_RHO as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_NB_OPENED_EVALS as u64).to_le_bytes());
@@ -448,7 +532,11 @@ fn build_smallwood_frontend_material(
         build_smallwood_public_selector_indices(public_statement.public_values.len()),
         public_statement.public_values.clone(),
     ));
-    let transcript_binding = smallwood_transcript_binding(&public_statement, witness.version)?;
+    let transcript_binding = smallwood_transcript_binding(
+        &public_statement,
+        witness.version,
+        SmallwoodArithmetization::DirectPacked64V1,
+    )?;
     Ok(SmallwoodFrontendMaterial {
         public_inputs,
         serialized_public_inputs,
@@ -487,7 +575,11 @@ fn build_packed_smallwood_frontend_material_from_context(
         build_smallwood_public_selector_indices(public_statement.public_values.len()),
         context.public_values.clone(),
     ));
-    let transcript_binding = smallwood_transcript_binding(&public_statement, witness.version)?;
+    let transcript_binding = smallwood_transcript_binding(
+        &public_statement,
+        witness.version,
+        SmallwoodArithmetization::DirectPacked64V1,
+    )?;
     Ok(PackedSmallwoodFrontendMaterial {
         public_statement,
         packed_expanded_witness,
@@ -528,7 +620,11 @@ fn build_packed_smallwood_bridge_material_from_context(
         effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
     let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
-    let transcript_binding = smallwood_transcript_binding(&public_statement, witness.version)?;
+    let transcript_binding = smallwood_transcript_binding(
+        &public_statement,
+        witness.version,
+        SmallwoodArithmetization::Bridge64V1,
+    )?;
     Ok(PackedBridgeSmallwoodFrontendMaterial {
         public_inputs: context.public_inputs.clone(),
         serialized_public_inputs: context.serialized_public_inputs.clone(),
@@ -669,6 +765,41 @@ fn build_packed_smallwood_public_statement(
 
     let raw_witness_len = raw_witness.len();
     let poseidon_permutation_count = poseidon_rows.len();
+    let poseidon_state_row_count =
+        poseidon_permutation_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION;
+    let expanded_witness_len =
+        public_values.len() + raw_witness_len + (poseidon_state_row_count * POSEIDON2_WIDTH);
+    let lppc_row_count = expanded_witness_len.div_ceil(SMALLWOOD_PACKED_LPPC_PACKING_FACTOR);
+
+    Ok(SmallwoodPublicStatement {
+        public_value_count: public_values.len() as u32,
+        public_values,
+        raw_witness_len: raw_witness_len as u32,
+        lppc_row_count: lppc_row_count as u32,
+        poseidon_permutation_count: poseidon_permutation_count as u32,
+        poseidon_state_row_count: poseidon_state_row_count as u32,
+        expanded_witness_len: expanded_witness_len as u32,
+        lppc_packing_factor: SMALLWOOD_PACKED_LPPC_PACKING_FACTOR as u16,
+        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+    })
+}
+
+fn build_direct_packed_smallwood_public_statement(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    let mut public_values = Vec::with_capacity(public_inputs.to_vec().len() + 2);
+    public_values.extend(
+        public_inputs
+            .to_vec()
+            .into_iter()
+            .map(|felt| felt.as_canonical_u64()),
+    );
+    public_values.push(u64::from(version.circuit));
+    public_values.push(u64::from(version.crypto));
+
+    let raw_witness_len = 3_991usize;
+    let poseidon_permutation_count = smallwood_poseidon_permutation_count() + 2;
     let poseidon_state_row_count =
         poseidon_permutation_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION;
     let expanded_witness_len =
@@ -1511,9 +1642,13 @@ fn dummy_poseidon_rows() -> [[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_RO
 fn smallwood_transcript_binding(
     statement: &SmallwoodPublicStatement,
     version: VersionBinding,
+    arithmetization: SmallwoodArithmetization,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
     let mut bytes = Vec::from(SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN);
-    bytes.extend_from_slice(&smallwood_candidate_verifier_profile_material(version));
+    bytes.extend_from_slice(&smallwood_candidate_verifier_profile_material(
+        version,
+        arithmetization,
+    ));
     let encoded = bincode::serialize(statement).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
             "failed to serialize smallwood public statement transcript binding: {err}"
@@ -1524,6 +1659,28 @@ fn smallwood_transcript_binding(
         bytes.push(0);
     }
     Ok(bytes)
+}
+
+fn encode_smallwood_candidate_proof(
+    arithmetization: SmallwoodArithmetization,
+    ark_proof: Vec<u8>,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    bincode::serialize(&SmallwoodCandidateProof {
+        arithmetization,
+        ark_proof,
+    })
+    .map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize smallwood candidate proof: {err}"
+        ))
+    })
+}
+
+fn projected_wrapped_smallwood_candidate_proof_bytes(
+    arithmetization: SmallwoodArithmetization,
+    ark_proof_bytes: usize,
+) -> Result<usize, TransactionCircuitError> {
+    Ok(encode_smallwood_candidate_proof(arithmetization, vec![0u8; ark_proof_bytes])?.len())
 }
 
 fn push_bytes32_values(out: &mut Vec<u64>, bytes: &[u8; 32]) {
@@ -2249,6 +2406,24 @@ mod tests {
         );
         let report = verify_smallwood_candidate_transaction_proof(&proof).unwrap();
         assert!(report.verified);
+    }
+
+    #[test]
+    fn smallwood_candidate_direct_packed_roundtrip_verifies() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let proof = prove_smallwood_candidate_with_arithmetization(
+            &witness,
+            SmallwoodArithmetization::DirectPacked64V1,
+        )
+        .unwrap();
+        let report = verify_smallwood_candidate_transaction_proof(&proof).unwrap();
+        assert!(report.verified);
+        assert!(
+            proof.stark_proof.len() < 524_288,
+            "direct packed candidate proof bytes {} exceed native tx-leaf cap",
+            proof.stark_proof.len()
+        );
     }
 
     #[test]

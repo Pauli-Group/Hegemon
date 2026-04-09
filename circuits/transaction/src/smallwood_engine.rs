@@ -2124,6 +2124,51 @@ mod tests {
     }
 
     #[test]
+    fn direct_packed_payload_is_not_the_live_product_path() {
+        let witness = sample_witness();
+        let direct_material =
+            build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let bridge_material =
+            build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+
+        let direct_statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64V1,
+            direct_material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &direct_material.linear_constraints.term_offsets,
+            &direct_material.linear_constraints.term_indices,
+            &direct_material.linear_constraints.term_coefficients,
+            &direct_material.linear_constraints.targets,
+        );
+        let bridge_statement = PackedStatement::new(
+            SmallwoodArithmetization::Bridge64V1,
+            bridge_material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &bridge_material.linear_constraints.term_offsets,
+            &bridge_material.linear_constraints.term_indices,
+            &bridge_material.linear_constraints.term_coefficients,
+            &bridge_material.linear_constraints.targets,
+        );
+
+        let direct_bytes =
+            projected_candidate_proof_bytes(&direct_statement).expect("direct size hint");
+        let bridge_bytes =
+            projected_candidate_proof_bytes(&bridge_statement).expect("bridge size hint");
+        eprintln!("direct packed proof bytes: {direct_bytes}");
+        eprintln!("bridge proof bytes: {bridge_bytes}");
+        assert!(
+            direct_bytes > bridge_bytes,
+            "direct packed payload should remain larger than the bridge proof until a matrix-aware succinct PCS/opening path exists"
+        );
+        assert!(
+            direct_bytes < 524_288,
+            "direct packed payload should still fit under the native tx-leaf cap"
+        );
+    }
+
+    #[test]
     #[ignore = "redteam regression for PCS/evaluation binding on the experimental SmallWood backend"]
     fn verifier_rejects_forged_self_consistent_pcs_layer() {
         let witness = sample_witness();

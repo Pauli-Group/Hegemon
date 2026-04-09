@@ -47,9 +47,12 @@ pub use note::{InputNoteWitness, OutputNoteWitness};
 pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+pub use smallwood_engine::SmallwoodArithmetization;
 pub use smallwood_frontend::{
-    projected_smallwood_candidate_proof_bytes, prove_smallwood_candidate,
-    verify_smallwood_candidate_proof_bytes, SmallwoodCandidateProof,
+    projected_smallwood_candidate_proof_bytes,
+    projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
+    prove_smallwood_candidate_with_arithmetization, verify_smallwood_candidate_proof_bytes,
+    SmallwoodCandidateProof,
 };
 pub use witness::TransactionWitness;
 
