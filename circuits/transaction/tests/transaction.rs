@@ -47,8 +47,13 @@ struct MirrorSmallwoodOpenedWitnessBundle {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum MirrorSmallwoodOpenedWitnessMode {
     None,
-    RowScalars { row_scalars: Vec<Vec<u64>> },
-    MatrixRows { opened_rows: Vec<Vec<u64>> },
+    RowScalars {
+        row_scalars: Vec<Vec<u64>>,
+    },
+    MatrixRows {
+        binded_data_digest: [u8; 32],
+        opened_rows: Vec<Vec<u64>>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
