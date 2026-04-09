@@ -46,9 +46,7 @@ struct MirrorSmallwoodOpenedWitnessBundle {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum MirrorSmallwoodOpenedWitnessMode {
     None,
-    RowScalars {
-        row_scalars: Vec<Vec<u64>>,
-    },
+    RowScalars { row_scalars: Vec<Vec<u64>> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -428,9 +426,56 @@ fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
         bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
     match inner.opened_witness.mode {
         MirrorSmallwoodOpenedWitnessMode::RowScalars { row_scalars } => {
-            assert!(!row_scalars.is_empty(), "row-scalar openings must be present");
+            assert!(
+                !row_scalars.is_empty(),
+                "row-scalar openings must be present"
+            );
         }
         mode => panic!("unexpected direct opened witness mode: {mode:?}"),
+    }
+}
+
+#[test]
+fn smallwood_candidate_verification_fails_for_active_ciphertext_hash_mutation() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    proof.public_inputs.ciphertext_hashes[0][0] ^= 0x01;
+    let err =
+        verify(&proof, &generate_keys().1).expect_err("expected SmallWood verification failure");
+    assert!(
+        matches!(
+            err,
+            TransactionCircuitError::ConstraintViolation(_)
+                | TransactionCircuitError::ConstraintViolationOwned(_)
+        ),
+        "unexpected verifier error: {err:?}"
+    );
+}
+
+#[test]
+fn smallwood_candidate_verification_fails_for_enabled_stablecoin_binding_mutation() {
+    let mut witness = stablecoin_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let verifying_key = generate_keys().1;
+    for mutate in 0..4 {
+        let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+        match mutate {
+            0 => proof.public_inputs.stablecoin.policy_version ^= 1,
+            1 => proof.public_inputs.stablecoin.policy_hash[0] ^= 0x01,
+            2 => proof.public_inputs.stablecoin.oracle_commitment[0] ^= 0x01,
+            _ => proof.public_inputs.stablecoin.attestation_commitment[0] ^= 0x01,
+        }
+        let err =
+            verify(&proof, &verifying_key).expect_err("expected SmallWood verification failure");
+        assert!(
+            matches!(
+                err,
+                TransactionCircuitError::ConstraintViolation(_)
+                    | TransactionCircuitError::ConstraintViolationOwned(_)
+            ),
+            "unexpected verifier error: {err:?}"
+        );
     }
 }
 

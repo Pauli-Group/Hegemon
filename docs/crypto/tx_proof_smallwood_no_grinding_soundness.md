@@ -6,7 +6,7 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `106884` bytes, the passing release roundtrip emits `106884` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- the exact serialized proof envelope for that current candidate now projects to `108012` bytes, the passing release roundtrip emits `108012` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
 - and the latest focused local release runs are now about `2.23s` directly and about `2.69s` through the wrapped `tx_leaf` seam after retuning the DECS point to the smallest power-of-two evaluation domain that still clears the active no-grinding floor, removing the remaining DECS hot-loop allocation churn with preallocated row buffers plus thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
@@ -37,22 +37,22 @@ The compact bridge proof no longer serializes any witness envelope. Instead, the
 
 and from fixed shape metadata for the packed expanded native witness.
 
-`DirectPacked64V1` is no longer a witness-carrying alternate envelope. It now uses the same row-aligned `1416`-row public statement geometry and the same normal row-scalar PCS/opening line as `Bridge64V1`, with only the arithmetization tag distinguishing the two modes. The direct lane is regression-locked to stay at or below the compact bridge baseline, so this note covers the exact active statement geometry common to both succinct arithmetizations.
+`DirectPacked64V1` is no longer a witness-carrying alternate envelope. It now uses the same row-aligned `1447`-row public statement geometry and the same normal row-scalar PCS/opening line as `Bridge64V1`, with only the arithmetization tag distinguishing the two modes. The direct lane is regression-locked to stay at or below the compact bridge baseline, so this note covers the exact active statement geometry common to both succinct arithmetizations.
 
 The exact active public statement fields are:
 
 - `public_value_count = 78`
-- `raw_witness_len = 264`
+- `raw_witness_len = 295`
 - `poseidon_permutation_count = 143`
 - `poseidon_state_row_count = 4576`
-- `expanded_witness_len = 90624`
-- `lppc_row_count = 1416`
+- `expanded_witness_len = 92608`
+- `lppc_row_count = 1447`
 - `lppc_packing_factor = 64`
 - `effective_constraint_degree = 8`
 
 Those values are locked by the current integrated bridge shape test in [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs). The repo still also carries the separate frozen structural target (`raw_witness_len = 3991`, `poseidon_permutation_count = 145`, `expanded_witness_len = 59749`, `lppc_row_count = 934`), but that is not the statement the live backend is proving today.
 
-The linear constraints are now sparse bridge selectors over the packed witness rows, not transcript-derived dense random checks. Public values are no longer embedded as duplicated witness rows; they are carried directly in the public statement and transcript binding, while the linear system enforces duplicated secret-row equalities plus the bridge-side constant/copy relations that tie the compact witness rows to the grouped Poseidon program. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
+The linear constraints are now sparse bridge selectors over the packed witness rows, not transcript-derived dense random checks. Public values are no longer embedded as duplicated witness rows; they are carried directly in the public statement and transcript binding, while the linear system enforces duplicated secret-row equalities plus the bridge-side constant/copy relations that tie the compact witness rows to the grouped Poseidon program. The current row-aligned statement also binds the previously missing public tx fields explicitly: active output ciphertext hashes and stablecoin policy version / policy hash / oracle / attestation commitments now occupy dedicated local secret rows that are linearly tied to the public statement. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
 
 The current no-grinding claim also assumes the hardened PCS/evaluation binding now implemented in the Rust engine:
 
@@ -63,6 +63,8 @@ The current no-grinding claim also assumes the hardened PCS/evaluation binding n
 - verifier shape checks fail-closed before deep recomputation, and DECS opening indices are required to be distinct
 
 The redteam regressions covering those seams now live in [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs) and [transaction.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/tests/transaction.rs).
+
+Proof-specific verifier-profile digests now also bind the actual SmallWood arithmetization tag extracted from the proof wrapper instead of assuming bridge mode. The version-only helper remains pinned to canonical `Bridge64V1`, because that path has no proof bytes to inspect.
 
 ## Exact no-grinding profile
 
@@ -110,7 +112,7 @@ Using the notation from the SmallWood paper’s Table 1 for the active integrate
 
 - `|F| = 2^64 - 2^32 + 1` (Goldilocks)
 - `s = 64`
-- `n = 1416`
+- `n = 1447`
 - `d = 8`
 - `m1 = 1`
 - `m2 = 78`
@@ -123,11 +125,11 @@ Using the notation from the SmallWood paper’s Table 1 for the active integrate
 
 The exact derived PCS/LVCS terms are:
 
-- `n_pcs = n + 2ρ = 1420`
+- `n_pcs = n + 2ρ = 1451`
 - witness-polynomial degree convention gives `d_j = s + ℓ' - 1 = 66`
 - masked polynomial-constraint degree `d_Q = d * (s + ℓ' - 1) - s = 464`
 - LVCS row count `n_rows = β * (s + ℓ') = 134`
-- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 718`
+- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 734`
 - DECS polynomial count `n_decs = n_rows = 134`
 
 The implementation now also enforces that the DECS opened leaf indices are distinct, so the live verifier matches the `ℓ = 29` count used below instead of silently accepting duplicate openings.
@@ -148,11 +150,11 @@ For the exact current candidate profile:
 - `ε1 < 2^-183.99`
 - `ε2 < 2^-128.00`
 - `ε3 < 2^-165.44`
-- `ε4 < 2^-130.01`
+- `ε4 < 2^-129.11`
 
 So the exact no-grinding floor for the implemented witness-free public statement is:
 
-- `min(183.99, 128.00, 165.44, 130.01) = 128.00 bits`
+- `min(183.99, 128.00, 165.44, 129.11) = 128.00 bits`
 
 The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
 
@@ -189,7 +191,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and that active succinct path now emits an actual `106884`-byte release proof, about `3.31x` smaller than the shipped Plonky3 proof. The remaining structural research gap is still the distance between the current `1416`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and that active succinct path now emits an actual `108012`-byte release proof, about `3.28x` smaller than the shipped Plonky3 proof. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
 
 ## Product conclusion
 
@@ -201,5 +203,5 @@ This milestone is complete in the narrow sense the user asked for:
 
 The next milestone is different:
 
-- reduce the packed relation geometry from the current `1416`-row bridge toward the frozen `64`-lane target,
+- reduce the packed relation geometry from the current `1447`-row bridge toward the frozen `64`-lane target,
 - while preserving the witness-free public statement shape and this no-grinding discipline.

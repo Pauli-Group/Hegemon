@@ -5,10 +5,7 @@ use transaction_core::{
     poseidon2::{poseidon2_step, Felt},
 };
 
-use crate::{
-    error::TransactionCircuitError,
-    smallwood_engine::SmallwoodArithmetization,
-};
+use crate::{error::TransactionCircuitError, smallwood_engine::SmallwoodArithmetization};
 
 const GOLDILOCKS_MODULUS: u128 = 0xffff_ffff_0000_0001;
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
@@ -21,10 +18,12 @@ const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const HASH_LIMBS: usize = 6;
 const INPUT_ROWS: usize = 130;
-const OUTPUT_ROWS: usize = 2;
+const OUTPUT_ROWS: usize = 2 + HASH_LIMBS;
+const STABLE_BINDING_ROWS: usize = 1 + (HASH_LIMBS * 3);
 const PUBLIC_ROWS: usize = 0;
 const PUBLIC_VALUE_COUNT: usize = 78;
-const SECRET_ROWS: usize = 264;
+const SECRET_ROWS: usize =
+    (MAX_INPUTS * INPUT_ROWS) + (MAX_OUTPUTS * OUTPUT_ROWS) + STABLE_BINDING_ROWS;
 const PACKING_FACTOR: usize = 64;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;

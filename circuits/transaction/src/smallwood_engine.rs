@@ -8,10 +8,7 @@ use p3_goldilocks::Goldilocks;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::TransactionCircuitError,
-    smallwood_semantics::SmallwoodConstraintAdapter,
-};
+use crate::{error::TransactionCircuitError, smallwood_semantics::SmallwoodConstraintAdapter};
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const NEG_ORDER: u64 = FIELD_ORDER.wrapping_neg();
@@ -75,9 +72,7 @@ struct SmallwoodOpenedWitnessBundle {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum SmallwoodOpenedWitnessMode {
     None,
-    RowScalars {
-        row_scalars: Vec<Vec<u64>>,
-    },
+    RowScalars { row_scalars: Vec<Vec<u64>> },
 }
 
 impl SmallwoodOpenedWitnessBundle {

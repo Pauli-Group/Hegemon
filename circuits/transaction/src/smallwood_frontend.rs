@@ -4,8 +4,8 @@ use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionB
 use serde::{Deserialize, Serialize};
 use transaction_core::{
     constants::{
-        MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_RATE,
-        POSEIDON2_STEPS, POSEIDON2_WIDTH,
+        MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS,
+        POSEIDON2_WIDTH,
     },
     p3_air::TransactionPublicInputsP3,
     poseidon2::poseidon2_step,
@@ -53,17 +53,24 @@ const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 0;
 const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_PUBLIC_ROWS: usize = 0;
 const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH;
-const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1;
+const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1 + SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_STABLE_BINDING_ROWS: usize = 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3);
 const SMALLWOOD_TOTAL_INPUT_ROWS: usize = SMALLWOOD_INPUT_SECRET_ROWS + (MERKLE_TREE_DEPTH * 3);
 const SMALLWOOD_SECRET_WITNESS_ROWS: usize = (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS)
     + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS)
-    + (MAX_INPUTS * (MERKLE_TREE_DEPTH * 3));
+    + (MAX_INPUTS * (MERKLE_TREE_DEPTH * 3))
+    + SMALLWOOD_STABLE_BINDING_ROWS;
 const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 2;
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
 const PUB_NULLIFIERS: usize = 4;
 const PUB_COMMITMENTS: usize = 16;
+const PUB_CIPHERTEXT_HASHES: usize = 28;
 const PUB_MERKLE_ROOT: usize = 43;
+const PUB_STABLE_POLICY_VERSION: usize = 55;
+const PUB_STABLE_POLICY_HASH: usize = 58;
+const PUB_STABLE_ORACLE: usize = 64;
+const PUB_STABLE_ATTESTATION: usize = 70;
 
 #[inline]
 fn bridge_input_base(input: usize) -> usize {
@@ -124,6 +131,38 @@ fn bridge_row_output_value(output: usize) -> usize {
 #[inline]
 fn bridge_row_output_asset(output: usize) -> usize {
     bridge_output_base(output) + 1
+}
+
+#[inline]
+fn bridge_row_output_ciphertext_hash(output: usize, limb: usize) -> usize {
+    bridge_output_base(output) + 2 + limb
+}
+
+#[inline]
+fn bridge_stable_base() -> usize {
+    SMALLWOOD_PUBLIC_ROWS
+        + MAX_INPUTS * SMALLWOOD_TOTAL_INPUT_ROWS
+        + MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS
+}
+
+#[inline]
+fn bridge_row_stable_policy_version() -> usize {
+    bridge_stable_base()
+}
+
+#[inline]
+fn bridge_row_stable_policy_hash(limb: usize) -> usize {
+    bridge_stable_base() + 1 + limb
+}
+
+#[inline]
+fn bridge_row_stable_oracle(limb: usize) -> usize {
+    bridge_stable_base() + 1 + SMALLWOOD_WORDS_PER_48_BYTES + limb
+}
+
+#[inline]
+fn bridge_row_stable_attestation(limb: usize) -> usize {
+    bridge_stable_base() + 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 2) + limb
 }
 
 #[inline]
@@ -1087,6 +1126,15 @@ fn build_packed_bridge_linear_constraints(
 
     for output in 0..MAX_OUTPUTS {
         if statement.public_values[PUB_OUTPUT_FLAG0 + output] == 0 {
+            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                push_bridge_constant(
+                    &mut constraints,
+                    bridge_row_output_ciphertext_hash(output, limb),
+                    0,
+                    statement.public_values
+                        [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+                );
+            }
             continue;
         }
         let commitment0 = bridge_output_commitment_permutation(output, 0);
@@ -1127,6 +1175,42 @@ fn build_packed_bridge_linear_constraints(
                     [PUB_COMMITMENTS + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
             );
         }
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                bridge_row_output_ciphertext_hash(output, limb),
+                lane0,
+                statement.public_values
+                    [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+            );
+        }
+    }
+
+    push_bridge_constant(
+        &mut constraints,
+        bridge_row_stable_policy_version(),
+        0,
+        statement.public_values[PUB_STABLE_POLICY_VERSION],
+    );
+    for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+        push_bridge_constant(
+            &mut constraints,
+            bridge_row_stable_policy_hash(limb),
+            0,
+            statement.public_values[PUB_STABLE_POLICY_HASH + limb],
+        );
+        push_bridge_constant(
+            &mut constraints,
+            bridge_row_stable_oracle(limb),
+            0,
+            statement.public_values[PUB_STABLE_ORACLE + limb],
+        );
+        push_bridge_constant(
+            &mut constraints,
+            bridge_row_stable_attestation(limb),
+            0,
+            statement.public_values[PUB_STABLE_ATTESTATION + limb],
+        );
     }
 
     constraints
@@ -1345,9 +1429,31 @@ fn semantic_secret_witness_rows(
         values.extend(right_aggs);
     }
 
-    for output in &outputs {
+    for (idx, output) in outputs.iter().enumerate() {
         values.push(output.note.value);
         values.push(output.note.asset_id);
+        let ciphertext_hash = witness.ciphertext_hashes.get(idx).copied();
+        let ciphertext_hash = ciphertext_hash.unwrap_or([0u8; 48]);
+        let ciphertext_hash_words = bytes48_to_felts(&ciphertext_hash).ok_or(
+            TransactionCircuitError::ConstraintViolation("invalid ciphertext hash encoding"),
+        )?;
+        values.extend(
+            ciphertext_hash_words
+                .iter()
+                .map(|felt| felt.as_canonical_u64()),
+        );
+    }
+
+    values.push(u64::from(witness.stablecoin.policy_version));
+    for digest in [
+        witness.stablecoin.policy_hash,
+        witness.stablecoin.oracle_commitment,
+        witness.stablecoin.attestation_commitment,
+    ] {
+        let words = bytes48_to_felts(&digest).ok_or(
+            TransactionCircuitError::ConstraintViolation("invalid stablecoin binding encoding"),
+        )?;
+        values.extend(words.iter().map(|felt| felt.as_canonical_u64()));
     }
 
     debug_assert_eq!(values.len(), SMALLWOOD_SECRET_WITNESS_ROWS);
@@ -1785,17 +1891,75 @@ mod tests {
         }
     }
 
+    fn stablecoin_witness() -> TransactionWitness {
+        let sk_spend = [8u8; 32];
+        let pk_auth = spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 5,
+            asset_id: crate::constants::NATIVE_ASSET_ID,
+            pk_recipient: [1u8; 32],
+            pk_auth,
+            rho: [2u8; 32],
+            r: [3u8; 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = [Felt::ZERO; 6];
+        let mut siblings0 = vec![leaf1];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..MERKLE_TREE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            current = merkle_node(current, zero);
+        }
+        let output_stablecoin = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: 4242,
+                pk_recipient: [4u8; 32],
+                pk_auth: [104u8; 32],
+                rho: [5u8; 32],
+                r: [6u8; 32],
+            },
+        };
+        TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note_native,
+                position: 0,
+                rho_seed: [7u8; 32],
+                merkle_path: MerklePath {
+                    siblings: siblings0,
+                },
+            }],
+            outputs: vec![output_stablecoin],
+            ciphertext_hashes: vec![[9u8; 48]; 1],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&current),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding {
+                enabled: true,
+                asset_id: 4242,
+                policy_hash: [10u8; 48],
+                oracle_commitment: [11u8; 48],
+                attestation_commitment: [12u8; 48],
+                issuance_delta: -5,
+                policy_version: 1,
+            },
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
     #[test]
     fn smallwood_frontend_matches_expected_shape() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let statement = build_smallwood_public_statement_from_witness(&witness).unwrap();
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
+        assert_eq!(statement.raw_witness_len, 295);
         assert_eq!(statement.poseidon_permutation_count, 143);
         assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 55_254);
-        assert_eq!(statement.lppc_row_count, 55_254);
+        assert_eq!(statement.expanded_witness_len, 55_285);
+        assert_eq!(statement.lppc_row_count, 55_285);
         assert_eq!(statement.lppc_packing_factor, 1);
         assert_eq!(statement.effective_constraint_degree, 8);
     }
@@ -1808,25 +1972,19 @@ mod tests {
         let bridge = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
+        assert_eq!(statement.raw_witness_len, 295);
         assert_eq!(statement.poseidon_permutation_count, 143);
         assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 90_624);
-        assert_eq!(statement.lppc_row_count, 1_416);
+        assert_eq!(statement.expanded_witness_len, 92_608);
+        assert_eq!(statement.lppc_row_count, 1_447);
         assert_eq!(statement.lppc_packing_factor, 64);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
             material.packed_expanded_witness.len(),
             statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
         );
-        assert_eq!(
-            material.public_statement,
-            bridge.public_statement
-        );
-        assert_eq!(
-            material.packed_expanded_witness,
-            bridge.packed_witness_rows
-        );
+        assert_eq!(material.public_statement, bridge.public_statement);
+        assert_eq!(material.packed_expanded_witness, bridge.packed_witness_rows);
         assert_eq!(
             material.linear_constraints.targets,
             bridge.linear_constraints.targets
@@ -1881,10 +2039,11 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         for public_index in [
+            PUB_CIPHERTEXT_HASHES,
             PUB_NULLIFIERS,
             PUB_COMMITMENTS,
             PUB_MERKLE_ROOT,
-            58,
+            PUB_STABLE_POLICY_HASH,
         ] {
             let mut statement = material.public_statement.clone();
             statement.public_values[public_index] ^= 1;
@@ -1902,6 +2061,37 @@ mod tests {
                 &linear_constraints.targets,
             )
             .expect_err("mutated public binding must fail");
+            assert!(err.to_string().contains("smallwood"));
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_rejects_enabled_stablecoin_binding_mutation() {
+        let mut witness = stablecoin_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        for public_index in [
+            PUB_STABLE_POLICY_VERSION,
+            PUB_STABLE_POLICY_HASH,
+            PUB_STABLE_ORACLE,
+            PUB_STABLE_ATTESTATION,
+        ] {
+            let mut statement = material.public_statement.clone();
+            statement.public_values[public_index] ^= 1;
+            let linear_constraints = build_packed_bridge_linear_constraints(&statement);
+            let err = test_candidate_witness(
+                SmallwoodArithmetization::DirectPacked64V1,
+                &statement.public_values,
+                &material.packed_expanded_witness,
+                statement.lppc_row_count as usize,
+                statement.lppc_packing_factor as usize,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &linear_constraints.term_offsets,
+                &linear_constraints.term_indices,
+                &linear_constraints.term_coefficients,
+                &linear_constraints.targets,
+            )
+            .expect_err("mutated stablecoin-enabled public binding must fail");
             assert!(err.to_string().contains("smallwood"));
         }
     }
@@ -1967,12 +2157,12 @@ mod tests {
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
+        assert_eq!(statement.raw_witness_len, 295);
         assert_eq!(statement.poseidon_permutation_count, 143);
         assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 90_624);
+        assert_eq!(statement.expanded_witness_len, 92_608);
         assert_eq!(statement.lppc_packing_factor, 64);
-        assert_eq!(statement.lppc_row_count, 1_416);
+        assert_eq!(statement.lppc_row_count, 1_447);
         assert_eq!(
             material.packed_witness_rows.len(),
             statement.lppc_row_count as usize * statement.lppc_packing_factor as usize

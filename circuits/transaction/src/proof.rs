@@ -12,6 +12,7 @@ use synthetic_crypto::hashes::blake3_384;
 use crate::smallwood_frontend::{
     prove_smallwood_candidate, smallwood_candidate_verifier_profile_material,
     verify_smallwood_candidate_proof_bytes, verify_smallwood_candidate_transaction_proof,
+    SmallwoodCandidateProof,
 };
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
@@ -19,6 +20,7 @@ use crate::{
     hashing_pq::{balance_commitment_bytes, bytes48_to_felts, Commitment},
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
+    smallwood_engine::SmallwoodArithmetization,
     trace::TransactionTrace,
     witness::TransactionWitness,
 };
@@ -226,6 +228,7 @@ pub fn transaction_public_inputs_digest(
 pub fn transaction_verifier_profile_digest_for_version_and_backend(
     version: VersionBinding,
     backend: TxProofBackend,
+    smallwood_arithmetization: Option<SmallwoodArithmetization>,
 ) -> [u8; 48] {
     let mut message = Vec::new();
     message.extend_from_slice(TX_VERIFIER_PROFILE_DOMAIN);
@@ -238,9 +241,11 @@ pub fn transaction_verifier_profile_digest_for_version_and_backend(
         message.extend_from_slice(&(profile.num_queries as u64).to_le_bytes());
         message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
     } else if matches!(backend, TxProofBackend::SmallwoodCandidate) {
+        let arithmetization =
+            smallwood_arithmetization.unwrap_or(SmallwoodArithmetization::Bridge64V1);
         message.extend_from_slice(&smallwood_candidate_verifier_profile_material(
             version,
-            crate::smallwood_engine::SmallwoodArithmetization::Bridge64V1,
+            arithmetization,
         ));
     }
     blake3_384(&message)
@@ -250,13 +255,22 @@ pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) 
     transaction_verifier_profile_digest_for_version_and_backend(
         version,
         tx_proof_backend_for_version(version).unwrap_or(DEFAULT_TX_PROOF_BACKEND),
+        Some(SmallwoodArithmetization::Bridge64V1),
     )
 }
 
 pub fn transaction_verifier_profile_digest(proof: &TransactionProof) -> [u8; 48] {
+    let smallwood_arithmetization = if matches!(proof.backend, TxProofBackend::SmallwoodCandidate) {
+        bincode::deserialize::<SmallwoodCandidateProof>(&proof.stark_proof)
+            .ok()
+            .map(|candidate| candidate.arithmetization)
+    } else {
+        None
+    };
     transaction_verifier_profile_digest_for_version_and_backend(
         proof.version_binding(),
         proof.backend,
+        smallwood_arithmetization,
     )
 }
 
@@ -405,6 +419,61 @@ pub(crate) fn transaction_public_inputs_p3_from_parts(
     public_inputs: &TransactionPublicInputs,
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<TransactionPublicInputsP3, TransactionCircuitError> {
+    let signed_magnitude_matches = |value: i128, sign: u8, magnitude: u64| -> bool {
+        let expected_sign = u8::from(value < 0);
+        let expected_magnitude = value.unsigned_abs();
+        expected_sign == sign && expected_magnitude == u128::from(magnitude)
+    };
+
+    if public_inputs.merkle_root != stark_inputs.merkle_root {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "public merkle root does not match serialized public inputs",
+        ));
+    }
+    if public_inputs.native_fee != stark_inputs.fee {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "public fee does not match serialized public inputs",
+        ));
+    }
+    if !signed_magnitude_matches(
+        public_inputs.value_balance,
+        stark_inputs.value_balance_sign,
+        stark_inputs.value_balance_magnitude,
+    ) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "public value balance does not match serialized public inputs",
+        ));
+    }
+    if !stark_inputs.balance_slot_asset_ids.is_empty()
+        && public_inputs
+            .balance_slots
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>()
+            != stark_inputs.balance_slot_asset_ids
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "public balance slot assets do not match serialized public inputs",
+        ));
+    }
+    if u8::from(public_inputs.stablecoin.enabled) != stark_inputs.stablecoin_enabled
+        || public_inputs.stablecoin.asset_id != stark_inputs.stablecoin_asset_id
+        || public_inputs.stablecoin.policy_version != stark_inputs.stablecoin_policy_version
+        || !signed_magnitude_matches(
+            public_inputs.stablecoin.issuance_delta,
+            stark_inputs.stablecoin_issuance_sign,
+            stark_inputs.stablecoin_issuance_magnitude,
+        )
+        || public_inputs.stablecoin.policy_hash != stark_inputs.stablecoin_policy_hash
+        || public_inputs.stablecoin.oracle_commitment != stark_inputs.stablecoin_oracle_commitment
+        || public_inputs.stablecoin.attestation_commitment
+            != stark_inputs.stablecoin_attestation_commitment
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "public stablecoin binding does not match serialized public inputs",
+        ));
+    }
+
     let input_flags = stark_inputs
         .input_flags
         .iter()
@@ -670,12 +739,49 @@ mod tests {
         }
     }
 
+    fn dummy_smallwood_proof(arithmetization: SmallwoodArithmetization) -> TransactionProof {
+        let public_inputs = TransactionPublicInputs::default();
+        let stark_proof = bincode::serialize(&SmallwoodCandidateProof {
+            arithmetization,
+            ark_proof: vec![1, 2, 3, 4],
+        })
+        .expect("encode dummy smallwood proof");
+        TransactionProof {
+            nullifiers: public_inputs.nullifiers.clone(),
+            commitments: public_inputs.commitments.clone(),
+            balance_slots: public_inputs.balance_slots.clone(),
+            public_inputs,
+            backend: TxProofBackend::SmallwoodCandidate,
+            stark_proof,
+            stark_public_inputs: Some(dummy_serialized_inputs()),
+        }
+    }
+
     #[test]
     fn verifier_profile_digest_matches_version_helper() {
         let proof = dummy_proof();
         assert_eq!(
             transaction_verifier_profile_digest(&proof),
             transaction_verifier_profile_digest_for_version(proof.version_binding())
+        );
+    }
+
+    #[test]
+    fn smallwood_verifier_profile_digest_tracks_actual_arithmetization() {
+        let proof = dummy_smallwood_proof(SmallwoodArithmetization::DirectPacked64V1);
+        let direct = transaction_verifier_profile_digest(&proof);
+        let bridge = transaction_verifier_profile_digest_for_version(proof.version_binding());
+        assert_ne!(
+            direct, bridge,
+            "proof-specific verifier profile digest must bind the actual Smallwood arithmetization"
+        );
+        assert_eq!(
+            direct,
+            transaction_verifier_profile_digest_for_version_and_backend(
+                proof.version_binding(),
+                proof.backend,
+                Some(SmallwoodArithmetization::DirectPacked64V1),
+            )
         );
     }
 
