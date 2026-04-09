@@ -2181,6 +2181,35 @@ mod tests {
     }
 
     #[test]
+    fn reparsed_direct_raw_witness_rebuilds_identical_bridge_material() {
+        let witness = sample_witness();
+        let direct_material =
+            build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let original_bridge =
+            build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let raw_witness = direct_packed_program()
+            .raw_witness
+            .slice(&direct_material.packed_expanded_witness)
+            .unwrap()
+            .to_vec();
+        let reparsed = parse_direct_raw_witness(&raw_witness).unwrap();
+        let rebuilt_bridge =
+            build_packed_smallwood_bridge_material_from_witness(&reparsed).unwrap();
+        assert_eq!(
+            rebuilt_bridge.transcript_binding,
+            original_bridge.transcript_binding
+        );
+        assert_eq!(
+            rebuilt_bridge.packed_witness_rows,
+            original_bridge.packed_witness_rows
+        );
+        assert_eq!(
+            rebuilt_bridge.linear_constraints.targets,
+            original_bridge.linear_constraints.targets
+        );
+    }
+
+    #[test]
     #[ignore = "redteam regression for PCS/evaluation binding on the experimental SmallWood backend"]
     fn verifier_rejects_forged_self_consistent_pcs_layer() {
         let witness = sample_witness();

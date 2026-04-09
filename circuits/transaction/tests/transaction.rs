@@ -11,9 +11,10 @@ use transaction_circuit::p3_verifier::{
 };
 use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p3, verify};
 use transaction_circuit::{
-    projected_smallwood_candidate_proof_bytes, prove_smallwood_candidate, InputNoteWitness,
-    OutputNoteWitness, SmallwoodArithmetization, StablecoinPolicyBinding, TransactionCircuitError,
-    TransactionWitness,
+    projected_smallwood_candidate_proof_bytes,
+    projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
+    InputNoteWitness, OutputNoteWitness, SmallwoodArithmetization, StablecoinPolicyBinding,
+    TransactionCircuitError, TransactionWitness,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -353,6 +354,23 @@ fn smallwood_candidate_proof_stays_below_native_tx_leaf_cap() {
         proof_bytes < 524_288,
         "expected smallwood candidate proof to stay below the native tx-leaf cap, got {} bytes",
         proof_bytes
+    );
+}
+
+#[test]
+fn smallwood_candidate_default_projection_tracks_bridge_arithmetization() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let default_bytes = projected_smallwood_candidate_proof_bytes(&witness)
+        .expect("projected smallwood candidate proof bytes");
+    let bridge_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::Bridge64V1,
+    )
+    .expect("projected bridge smallwood candidate proof bytes");
+    assert_eq!(
+        default_bytes, bridge_bytes,
+        "default SmallWood candidate projection should stay pinned to the bridge arithmetization"
     );
 }
 

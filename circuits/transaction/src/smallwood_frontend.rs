@@ -54,8 +54,9 @@ const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_PUBLIC_ROWS: usize = 2;
 const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH;
 const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1;
-const SMALLWOOD_SECRET_WITNESS_ROWS: usize =
-    (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS) + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS);
+const SMALLWOOD_SECRET_WITNESS_ROWS: usize = (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS)
+    + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS)
+    + (MAX_INPUTS * (MERKLE_TREE_DEPTH * 3));
 const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 2;
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
@@ -88,6 +89,30 @@ fn bridge_row_input_asset(input: usize) -> usize {
 #[inline]
 fn bridge_row_input_direction(input: usize, bit: usize) -> usize {
     bridge_input_base(input) + SMALLWOOD_INPUT_DIRECTION_OFFSET + bit
+}
+
+#[inline]
+fn bridge_row_input_current_agg(input: usize, level: usize) -> usize {
+    bridge_input_base(input) + SMALLWOOD_INPUT_DIRECTION_OFFSET + MERKLE_TREE_DEPTH + level
+}
+
+#[inline]
+fn bridge_row_input_left_agg(input: usize, level: usize) -> usize {
+    bridge_input_base(input)
+        + SMALLWOOD_INPUT_DIRECTION_OFFSET
+        + MERKLE_TREE_DEPTH
+        + MERKLE_TREE_DEPTH
+        + level
+}
+
+#[inline]
+fn bridge_row_input_right_agg(input: usize, level: usize) -> usize {
+    bridge_input_base(input)
+        + SMALLWOOD_INPUT_DIRECTION_OFFSET
+        + MERKLE_TREE_DEPTH
+        + MERKLE_TREE_DEPTH
+        + MERKLE_TREE_DEPTH
+        + level
 }
 
 #[inline]
@@ -213,18 +238,6 @@ pub fn prove_smallwood_candidate_with_arithmetization(
         )));
     }
     let context = build_smallwood_witness_context(witness)?;
-    let direct_material = build_packed_smallwood_frontend_material_from_context(&context, witness)?;
-    test_candidate_witness(
-        SmallwoodArithmetization::DirectPacked64V1,
-        &direct_material.packed_expanded_witness,
-        direct_material.public_statement.lppc_row_count as usize,
-        direct_material.public_statement.lppc_packing_factor as usize,
-        SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-        &direct_material.linear_constraints.term_offsets,
-        &direct_material.linear_constraints.term_indices,
-        &direct_material.linear_constraints.term_coefficients,
-        &direct_material.linear_constraints.targets,
-    )?;
     match arithmetization {
         SmallwoodArithmetization::Bridge64V1 => {
             let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
@@ -263,6 +276,19 @@ pub fn prove_smallwood_candidate_with_arithmetization(
             })
         }
         SmallwoodArithmetization::DirectPacked64V1 => {
+            let direct_material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            test_candidate_witness(
+                SmallwoodArithmetization::DirectPacked64V1,
+                &direct_material.packed_expanded_witness,
+                direct_material.public_statement.lppc_row_count as usize,
+                direct_material.public_statement.lppc_packing_factor as usize,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &direct_material.linear_constraints.term_offsets,
+                &direct_material.linear_constraints.term_indices,
+                &direct_material.linear_constraints.term_coefficients,
+                &direct_material.linear_constraints.targets,
+            )?;
             let ark_proof = prove_smallwood_backend(
                 SmallwoodArithmetization::DirectPacked64V1,
                 &direct_material.packed_expanded_witness,
