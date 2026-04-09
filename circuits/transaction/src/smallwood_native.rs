@@ -4,7 +4,7 @@ use crate::smallwood_engine::{
     prove_candidate as prove_candidate_rust, verify_candidate as verify_candidate_rust,
     SmallwoodArithmetization,
 };
-use crate::smallwood_semantics::test_candidate_witness_rust;
+use crate::smallwood_semantics::{test_candidate_witness_rust, PackedStatement};
 
 pub fn prove_candidate(
     arithmetization: SmallwoodArithmetization,
@@ -18,18 +18,17 @@ pub fn prove_candidate(
     linear_constraint_targets: &[u64],
     binded_data: &[u8],
 ) -> Result<Vec<u8>, TransactionCircuitError> {
-    prove_candidate_rust(
+    let statement = PackedStatement::new(
         arithmetization,
-        witness_values,
         row_count,
         packing_factor,
-        constraint_degree,
+        constraint_degree as usize,
         linear_constraint_offsets,
         linear_constraint_indices,
         linear_constraint_coefficients,
         linear_constraint_targets,
-        binded_data,
-    )
+    );
+    prove_candidate_rust(&statement, witness_values, binded_data)
 }
 
 pub fn verify_candidate(
@@ -44,18 +43,17 @@ pub fn verify_candidate(
     binded_data: &[u8],
     proof: &[u8],
 ) -> Result<(), TransactionCircuitError> {
-    verify_candidate_rust(
+    let statement = PackedStatement::new(
         arithmetization,
         row_count,
         packing_factor,
-        constraint_degree,
+        constraint_degree as usize,
         linear_constraint_offsets,
         linear_constraint_indices,
         linear_constraint_coefficients,
         linear_constraint_targets,
-        binded_data,
-        proof,
-    )
+    );
+    verify_candidate_rust(&statement, binded_data, proof)
 }
 
 pub fn test_candidate_witness(
@@ -69,7 +67,16 @@ pub fn test_candidate_witness(
     linear_constraint_coefficients: &[u64],
     linear_constraint_targets: &[u64],
 ) -> Result<(), TransactionCircuitError> {
-    let _ = constraint_degree;
+    let statement = PackedStatement::new(
+        arithmetization,
+        row_count,
+        packing_factor,
+        constraint_degree as usize,
+        linear_constraint_offsets,
+        linear_constraint_indices,
+        linear_constraint_coefficients,
+        linear_constraint_targets,
+    );
     test_candidate_witness_rust(
         arithmetization,
         witness_values,
@@ -79,7 +86,10 @@ pub fn test_candidate_witness(
         linear_constraint_indices,
         linear_constraint_coefficients,
         linear_constraint_targets,
-    )
+    )?;
+    // Ensure the adapter itself is well-formed and can be consumed by the engine.
+    let _ = statement;
+    Ok(())
 }
 
 pub fn projected_candidate_proof_bytes(
@@ -89,11 +99,16 @@ pub fn projected_candidate_proof_bytes(
     constraint_degree: u16,
     linear_constraint_count: usize,
 ) -> Result<usize, TransactionCircuitError> {
-    projected_candidate_proof_bytes_rust(
+    let linear_constraint_targets = vec![0u64; linear_constraint_count];
+    let statement = PackedStatement::new(
         arithmetization,
         row_count,
         packing_factor,
-        constraint_degree,
-        linear_constraint_count,
-    )
+        constraint_degree as usize,
+        &[],
+        &[],
+        &[],
+        &linear_constraint_targets,
+    );
+    projected_candidate_proof_bytes_rust(&statement)
 }

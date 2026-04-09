@@ -58,10 +58,19 @@ const PUB_STABLE_ATTESTATION: usize = 70;
 const DIRECT_RAW_WITNESS_LEN: usize = 3_991;
 const DIRECT_EXPANDED_WITNESS_LEN: usize = 59_749;
 const DIRECT_ROW_COUNT: usize = 934;
+const EFFECTIVE_CONSTRAINT_DEGREE: usize = 8;
 
 #[derive(Clone)]
 pub(crate) struct PackedStatement<'a> {
     arithmetization: SmallwoodArithmetization,
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    linear_constraint_count: usize,
+    constraint_count: usize,
+    linear_constraint_offsets: &'a [u32],
+    linear_constraint_indices: &'a [u32],
+    linear_constraint_coefficients: &'a [u64],
     linear_constraint_targets: &'a [u64],
     output_ciphertext_challenges: [Felt; MAX_OUTPUTS],
     slot_denominator_inverses: [Felt; BALANCE_SLOTS],
@@ -121,6 +130,7 @@ pub(crate) fn test_candidate_witness_rust(
         SmallwoodArithmetization::Bridge64V1,
         row_count,
         packing_factor,
+        EFFECTIVE_CONSTRAINT_DEGREE,
         linear_constraint_offsets,
         linear_constraint_indices,
         linear_constraint_coefficients,
@@ -254,18 +264,31 @@ fn test_direct_packed_frontend_witness(
     Ok(())
 }
 
+#[allow(dead_code)]
 impl<'a> PackedStatement<'a> {
     pub(crate) fn new(
         arithmetization: SmallwoodArithmetization,
-        _row_count: usize,
-        _packing_factor: usize,
-        _linear_constraint_offsets: &'a [u32],
-        _linear_constraint_indices: &'a [u32],
-        _linear_constraint_coefficients: &'a [u64],
+        row_count: usize,
+        packing_factor: usize,
+        constraint_degree: usize,
+        linear_constraint_offsets: &'a [u32],
+        linear_constraint_indices: &'a [u32],
+        linear_constraint_coefficients: &'a [u64],
         linear_constraint_targets: &'a [u64],
     ) -> Self {
         let mut statement = Self {
             arithmetization,
+            row_count,
+            packing_factor,
+            constraint_degree,
+            linear_constraint_count: linear_constraint_targets.len(),
+            constraint_count: match arithmetization {
+                SmallwoodArithmetization::Bridge64V1 => constraint_count(),
+                SmallwoodArithmetization::DirectPacked64V1 => 0,
+            },
+            linear_constraint_offsets,
+            linear_constraint_indices,
+            linear_constraint_coefficients,
             linear_constraint_targets,
             output_ciphertext_challenges: [Felt::ZERO; MAX_OUTPUTS],
             slot_denominator_inverses: derive_slot_denominator_inverses(linear_constraint_targets),
@@ -292,12 +315,112 @@ impl<'a> PackedStatement<'a> {
         statement
     }
 
+    pub(crate) fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    pub(crate) fn packing_factor(&self) -> usize {
+        self.packing_factor
+    }
+
+    pub(crate) fn constraint_degree(&self) -> usize {
+        self.constraint_degree
+    }
+
+    pub(crate) fn linear_constraint_count(&self) -> usize {
+        self.linear_constraint_count
+    }
+
+    pub(crate) fn constraint_count(&self) -> usize {
+        self.constraint_count
+    }
+
     pub(crate) fn linear_targets(&self) -> &[u64] {
         self.linear_constraint_targets
     }
 
+    pub(crate) fn linear_constraint_offsets(&self) -> &[u32] {
+        self.linear_constraint_offsets
+    }
+
+    pub(crate) fn linear_constraint_indices(&self) -> &[u32] {
+        self.linear_constraint_indices
+    }
+
+    pub(crate) fn linear_constraint_coefficients(&self) -> &[u64] {
+        self.linear_constraint_coefficients
+    }
+
     pub(crate) fn arithmetization(&self) -> SmallwoodArithmetization {
         self.arithmetization
+    }
+}
+
+pub(crate) trait SmallwoodConstraintAdapter: Sync {
+    fn arithmetization(&self) -> SmallwoodArithmetization;
+    fn row_count(&self) -> usize;
+    fn packing_factor(&self) -> usize;
+    fn constraint_degree(&self) -> usize;
+    fn linear_constraint_count(&self) -> usize;
+    fn constraint_count(&self) -> usize;
+    fn linear_constraint_offsets(&self) -> &[u32];
+    fn linear_constraint_indices(&self) -> &[u32];
+    fn linear_constraint_coefficients(&self) -> &[u64];
+    fn linear_targets(&self) -> &[u64];
+    fn compute_constraints_u64(
+        &self,
+        rows: &[u64],
+        out: &mut [u64],
+    ) -> Result<(), TransactionCircuitError>;
+}
+
+impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
+    fn arithmetization(&self) -> SmallwoodArithmetization {
+        self.arithmetization
+    }
+
+    fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    fn packing_factor(&self) -> usize {
+        self.packing_factor
+    }
+
+    fn constraint_degree(&self) -> usize {
+        self.constraint_degree
+    }
+
+    fn linear_constraint_count(&self) -> usize {
+        self.linear_constraint_count
+    }
+
+    fn constraint_count(&self) -> usize {
+        self.constraint_count
+    }
+
+    fn linear_constraint_offsets(&self) -> &[u32] {
+        self.linear_constraint_offsets
+    }
+
+    fn linear_constraint_indices(&self) -> &[u32] {
+        self.linear_constraint_indices
+    }
+
+    fn linear_constraint_coefficients(&self) -> &[u64] {
+        self.linear_constraint_coefficients
+    }
+
+    fn linear_targets(&self) -> &[u64] {
+        self.linear_constraint_targets
+    }
+
+    fn compute_constraints_u64(
+        &self,
+        rows: &[u64],
+        out: &mut [u64],
+    ) -> Result<(), TransactionCircuitError> {
+        compute_bridge_constraints_u64(self, rows, out)
     }
 }
 
@@ -1055,11 +1178,12 @@ fn signed_from_parts(sign: Felt, magnitude: Felt) -> Felt {
     magnitude - (sign + sign) * magnitude
 }
 
+#[allow(dead_code)]
 pub(crate) fn packed_constraint_count() -> usize {
     constraint_count()
 }
 
-pub(crate) fn compute_constraints_u64(
+pub(crate) fn compute_bridge_constraints_u64(
     statement: &PackedStatement<'_>,
     rows: &[u64],
     out: &mut [u64],

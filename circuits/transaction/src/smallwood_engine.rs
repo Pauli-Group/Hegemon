@@ -8,10 +8,7 @@ use p3_goldilocks::Goldilocks;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::TransactionCircuitError,
-    smallwood_semantics::{compute_constraints_u64, packed_constraint_count, PackedStatement},
-};
+use crate::{error::TransactionCircuitError, smallwood_semantics::SmallwoodConstraintAdapter};
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const NEG_ORDER: u64 = FIELD_ORDER.wrapping_neg();
@@ -93,6 +90,19 @@ struct SmallwoodConfig {
     packing_points: Vec<u64>,
 }
 
+fn ensure_row_polynomial_arithmetization(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+) -> Result<(), TransactionCircuitError> {
+    match statement.arithmetization() {
+        SmallwoodArithmetization::Bridge64V1 => Ok(()),
+        SmallwoodArithmetization::DirectPacked64V1 => Err(
+            TransactionCircuitError::ConstraintViolation(
+                "direct packed SmallWood arithmetization is not implemented in the row-polynomial proof engine yet",
+            ),
+        ),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct DecsKey {
     committed_domain_evals: Vec<Vec<u64>>,
@@ -113,17 +123,11 @@ struct PcsKey {
 }
 
 pub(crate) fn prove_candidate(
-    arithmetization: SmallwoodArithmetization,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_values: &[u64],
-    row_count: usize,
-    packing_factor: usize,
-    constraint_degree: u16,
-    linear_constraint_offsets: &[u32],
-    linear_constraint_indices: &[u32],
-    linear_constraint_coefficients: &[u64],
-    linear_constraint_targets: &[u64],
     binded_data: &[u8],
 ) -> Result<Vec<u8>, TransactionCircuitError> {
+    ensure_row_polynomial_arithmetization(statement)?;
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let stage_started = Instant::now();
     let mut last_stage = stage_started;
@@ -138,13 +142,7 @@ pub(crate) fn prove_candidate(
             *last = now;
         }
     };
-    let cfg = SmallwoodConfig::new(
-        arithmetization,
-        row_count,
-        packing_factor,
-        constraint_degree as usize,
-        linear_constraint_targets.len(),
-    )?;
+    let cfg = SmallwoodConfig::new(statement)?;
     if trace_enabled {
         eprintln!(
                 "[smallwood] cfg rows={} packing={} constraints={} linear_constraints={} nb_polys={} nb_lvcs_rows={} nb_lvcs_cols={} projected_proof_bytes={}",
@@ -158,20 +156,11 @@ pub(crate) fn prove_candidate(
                 serialized_proof_size_hint(&cfg)
             );
     }
-    let statement = PackedStatement::new(
-        arithmetization,
-        row_count,
-        packing_factor,
-        linear_constraint_offsets,
-        linear_constraint_indices,
-        linear_constraint_coefficients,
-        linear_constraint_targets,
-    );
     log_stage("statement", &mut last_stage);
     let binded_words = bytes_to_words(binded_data)?;
     log_stage("binded_words", &mut last_stage);
     let witness_polys = witness_values
-        .par_chunks_exact(packing_factor)
+        .par_chunks_exact(cfg.packing_factor)
         .map(|row_values| {
             poly_interpolate_random(row_values, &cfg.packing_points, SMALLWOOD_NB_OPENED_EVALS)
         })
@@ -195,13 +184,10 @@ pub(crate) fn prove_candidate(
     piop_input.extend_from_slice(&binded_words);
     let piop = piop_run(
         &cfg,
-        &statement,
+        statement,
         &witness_polys,
         &mpol_ppoly,
         &mpol_plin,
-        linear_constraint_offsets,
-        linear_constraint_indices,
-        linear_constraint_coefficients,
         &piop_input,
     )?;
     log_stage("piop_run", &mut last_stage);
@@ -243,43 +229,22 @@ pub(crate) fn prove_candidate(
 }
 
 pub(crate) fn verify_candidate(
-    arithmetization: SmallwoodArithmetization,
-    row_count: usize,
-    packing_factor: usize,
-    constraint_degree: u16,
-    linear_constraint_offsets: &[u32],
-    linear_constraint_indices: &[u32],
-    linear_constraint_coefficients: &[u64],
-    linear_constraint_targets: &[u64],
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     binded_data: &[u8],
     proof_bytes: &[u8],
 ) -> Result<(), TransactionCircuitError> {
+    ensure_row_polynomial_arithmetization(statement)?;
     let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
             "failed to deserialize rust smallwood proof: {err}"
         ))
     })?;
-    let cfg = SmallwoodConfig::new(
-        arithmetization,
-        row_count,
-        packing_factor,
-        constraint_degree as usize,
-        linear_constraint_targets.len(),
-    )?;
+    let cfg = SmallwoodConfig::new(statement)?;
     if proof.all_evals.len() != SMALLWOOD_NB_OPENED_EVALS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
         ));
     }
-    let statement = PackedStatement::new(
-        arithmetization,
-        row_count,
-        packing_factor,
-        linear_constraint_offsets,
-        linear_constraint_indices,
-        linear_constraint_coefficients,
-        linear_constraint_targets,
-    );
     validate_proof_shape(&cfg, &proof)?;
     let binded_words = bytes_to_words(binded_data)?;
     let eval_points = xof_piop_opening_points(&proof.nonce, &proof.h_piop);
@@ -296,13 +261,10 @@ pub(crate) fn verify_candidate(
     piop_input.extend_from_slice(&binded_words);
     let piop_transcript = piop_recompute_transcript(
         &cfg,
-        &statement,
+        statement,
         &piop_input,
         &eval_points,
         &proof.all_evals,
-        linear_constraint_offsets,
-        linear_constraint_indices,
-        linear_constraint_coefficients,
         &proof.piop,
     )?;
     let recomputed = hash_piop_transcript(&piop_transcript);
@@ -390,19 +352,10 @@ fn validate_proof_shape(
 }
 
 pub(crate) fn projected_candidate_proof_bytes(
-    arithmetization: SmallwoodArithmetization,
-    row_count: usize,
-    packing_factor: usize,
-    constraint_degree: u16,
-    linear_constraint_count: usize,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<usize, TransactionCircuitError> {
-    let cfg = SmallwoodConfig::new(
-        arithmetization,
-        row_count,
-        packing_factor,
-        constraint_degree as usize,
-        linear_constraint_count,
-    )?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let cfg = SmallwoodConfig::new(statement)?;
     Ok(serialized_proof_size_hint(&cfg))
 }
 
@@ -413,20 +366,13 @@ struct PiopRunOutput {
 
 impl SmallwoodConfig {
     fn new(
-        arithmetization: SmallwoodArithmetization,
-        row_count: usize,
-        packing_factor: usize,
-        constraint_degree: usize,
-        linear_constraint_count: usize,
+        statement: &(dyn SmallwoodConstraintAdapter + Sync),
     ) -> Result<Self, TransactionCircuitError> {
-        match arithmetization {
-            SmallwoodArithmetization::Bridge64V1 => {}
-            SmallwoodArithmetization::DirectPacked64V1 => {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "direct packed SmallWood arithmetization is not implemented in the proof engine yet",
-                ));
-            }
-        }
+        let row_count = statement.row_count();
+        let packing_factor = statement.packing_factor();
+        let constraint_degree = statement.constraint_degree();
+        let linear_constraint_count = statement.linear_constraint_count();
+        let constraint_count = statement.constraint_count();
         if row_count == 0 || packing_factor == 0 {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood row_count and packing_factor must be non-zero",
@@ -473,7 +419,7 @@ impl SmallwoodConfig {
             constraint_degree,
             linear_constraint_count,
             witness_size: row_count * packing_factor,
-            constraint_count: packed_constraint_count(),
+            constraint_count,
             wit_poly_degree,
             mpol_poly_degree,
             mlin_poly_degree,
@@ -494,13 +440,10 @@ impl SmallwoodConfig {
 
 fn piop_run(
     cfg: &SmallwoodConfig,
-    statement: &PackedStatement<'_>,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_polys: &[Vec<u64>],
     mpol_ppoly: &[Vec<u64>],
     mpol_plin: &[Vec<u64>],
-    linear_constraint_offsets: &[u32],
-    linear_constraint_indices: &[u32],
-    linear_constraint_coefficients: &[u64],
     binded_words: &[u64],
 ) -> Result<PiopRunOutput, TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
@@ -524,12 +467,10 @@ fn piop_run(
     log_stage("constraint_polynomials", &mut last);
     let in_plin = get_constraint_linear_polynomials_batched(
         cfg,
+        statement,
         witness_polys,
         &cfg.packing_points,
         &gammas,
-        linear_constraint_offsets,
-        linear_constraint_indices,
-        linear_constraint_coefficients,
     )?;
     log_stage("constraint_linear_polynomials", &mut last);
     let vanishing = poly_set_vanishing(&cfg.packing_points);
@@ -569,13 +510,10 @@ fn piop_run(
 
 fn piop_recompute_transcript(
     cfg: &SmallwoodConfig,
-    statement: &PackedStatement<'_>,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     in_transcript: &[u64],
     eval_points: &[u64],
     all_evals: &[Vec<u64>],
-    linear_constraint_offsets: &[u32],
-    linear_constraint_indices: &[u32],
-    linear_constraint_coefficients: &[u64],
     proof: &PiopProof,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let hash_fpp = hash_piop(in_transcript);
@@ -593,15 +531,8 @@ fn piop_recompute_transcript(
         .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
         .collect::<Vec<_>>();
     let in_epol = get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals)?;
-    let in_elin = get_constraint_linear_evals(
-        cfg,
-        eval_points,
-        &wit_evals,
-        &cfg.packing_points,
-        linear_constraint_offsets,
-        linear_constraint_indices,
-        linear_constraint_coefficients,
-    )?;
+    let in_elin =
+        get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, &cfg.packing_points)?;
     let linear_targets = linear_targets_as_field(statement);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
@@ -959,7 +890,7 @@ fn pcs_reconstruct_combi_heads(
 
 fn get_constraint_polynomials(
     cfg: &SmallwoodConfig,
-    statement: &PackedStatement<'_>,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_polys: &[Vec<u64>],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let degree = cfg.constraint_degree * cfg.wit_poly_degree;
@@ -978,7 +909,7 @@ fn get_constraint_polynomials(
         .par_iter()
         .map(|row| {
             let mut row_constraints = vec![0u64; cfg.constraint_count];
-            compute_constraints_u64(statement, row, &mut row_constraints)?;
+            statement.compute_constraints_u64(row, &mut row_constraints)?;
             Ok::<_, TransactionCircuitError>(row_constraints)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -996,26 +927,24 @@ fn get_constraint_polynomials(
 
 fn get_constraint_polynomial_evals(
     cfg: &SmallwoodConfig,
-    statement: &PackedStatement<'_>,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     eval_points: &[u64],
     witness_evals: &[Vec<u64>],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let mut out = vec![vec![0u64; cfg.constraint_count]; eval_points.len()];
     let _ = eval_points;
     for (row_idx, rows) in witness_evals.iter().enumerate() {
-        compute_constraints_u64(statement, rows, &mut out[row_idx])?;
+        statement.compute_constraints_u64(rows, &mut out[row_idx])?;
     }
     Ok(out)
 }
 
 fn get_constraint_linear_polynomials_batched(
     cfg: &SmallwoodConfig,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_polys: &[Vec<u64>],
     packing_points: &[u64],
     gammas: &[Vec<u64>],
-    linear_constraint_offsets: &[u32],
-    linear_constraint_indices: &[u32],
-    linear_constraint_coefficients: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let lag = build_lagrange_basis(cfg.packing_factor, packing_points)?;
     let out_degree = cfg.wit_poly_degree + (cfg.packing_factor - 1);
@@ -1028,11 +957,11 @@ fn get_constraint_linear_polynomials_batched(
                 if gamma == 0 {
                     continue;
                 }
-                let start = linear_constraint_offsets[check] as usize;
-                let end = linear_constraint_offsets[check + 1] as usize;
+                let start = statement.linear_constraint_offsets()[check] as usize;
+                let end = statement.linear_constraint_offsets()[check + 1] as usize;
                 for term_idx in start..end {
-                    let coeff = linear_constraint_coefficients[term_idx];
-                    let idx = linear_constraint_indices[term_idx] as usize;
+                    let coeff = statement.linear_constraint_coefficients()[term_idx];
+                    let idx = statement.linear_constraint_indices()[term_idx] as usize;
                     if coeff == 0 || idx >= cfg.witness_size {
                         continue;
                     }
@@ -1070,12 +999,10 @@ fn get_constraint_linear_polynomials_batched(
 
 fn get_constraint_linear_evals(
     cfg: &SmallwoodConfig,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
     eval_points: &[u64],
     witness_evals: &[Vec<u64>],
     packing_points: &[u64],
-    linear_constraint_offsets: &[u32],
-    linear_constraint_indices: &[u32],
-    linear_constraint_coefficients: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let lag = build_lagrange_basis(cfg.packing_factor, packing_points)?;
     let mut lag_evals = vec![vec![0u64; cfg.packing_factor]; eval_points.len()];
@@ -1087,12 +1014,12 @@ fn get_constraint_linear_evals(
     let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
     for num in 0..eval_points.len() {
         for check in 0..cfg.linear_constraint_count {
-            let start = linear_constraint_offsets[check] as usize;
-            let end = linear_constraint_offsets[check + 1] as usize;
+            let start = statement.linear_constraint_offsets()[check] as usize;
+            let end = statement.linear_constraint_offsets()[check + 1] as usize;
             let mut acc = 0u64;
             for term_idx in start..end {
-                let coeff = linear_constraint_coefficients[term_idx];
-                let idx = linear_constraint_indices[term_idx] as usize;
+                let coeff = statement.linear_constraint_coefficients()[term_idx];
+                let idx = statement.linear_constraint_indices()[term_idx] as usize;
                 let row = idx / cfg.packing_factor;
                 let col = idx % cfg.packing_factor;
                 if coeff == 0 || idx >= cfg.witness_size || row >= cfg.row_count {
@@ -1107,7 +1034,7 @@ fn get_constraint_linear_evals(
     Ok(out)
 }
 
-fn linear_targets_as_field(statement: &PackedStatement<'_>) -> Vec<u64> {
+fn linear_targets_as_field(statement: &(dyn SmallwoodConstraintAdapter + Sync)) -> Vec<u64> {
     statement
         .linear_targets()
         .iter()
@@ -1922,6 +1849,7 @@ mod tests {
         verify_smallwood_candidate_transaction_proof, SmallwoodCandidateProof,
         SMALLWOOD_BRIDGE_PACKING_FACTOR, SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
+    use crate::smallwood_semantics::PackedStatement;
     use crate::witness::TransactionWitness;
     use p3_field::PrimeCharacteristicRing;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -2009,14 +1937,20 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_is_rejected_explicitly() {
-        let err = projected_candidate_proof_bytes(
+        let linear_targets = vec![0u64; 78];
+        let statement = PackedStatement::new(
             SmallwoodArithmetization::DirectPacked64V1,
             934,
             64,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-            78,
-        )
-        .expect_err("direct packed arithmetization should not silently alias bridge mode");
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &[],
+            &[],
+            &[],
+            &linear_targets,
+        );
+        let witness = vec![0u64; 934 * 64];
+        let err = prove_candidate(&statement, &witness, &[0u8; 8])
+            .expect_err("direct packed arithmetization should not silently alias bridge mode");
         assert!(err
             .to_string()
             .contains("direct packed SmallWood arithmetization"));
@@ -2027,14 +1961,17 @@ mod tests {
     fn verifier_rejects_forged_self_consistent_pcs_layer() {
         let witness = sample_witness();
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let cfg = SmallwoodConfig::new(
+        let statement = PackedStatement::new(
             SmallwoodArithmetization::Bridge64V1,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            material.linear_constraints.targets.len(),
-        )
-        .unwrap();
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let cfg = SmallwoodConfig::new(&statement).unwrap();
         let mut proof = prove_smallwood_candidate(&witness).unwrap();
         let mut outer: SmallwoodCandidateProof = bincode::deserialize(&proof.stark_proof).unwrap();
         let mut inner: SmallwoodProof = bincode::deserialize(&outer.ark_proof).unwrap();
@@ -2102,14 +2039,17 @@ mod tests {
     fn lvcs_reconstructed_rows_match_opened_rows() {
         let witness = sample_witness();
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let cfg = SmallwoodConfig::new(
+        let statement = PackedStatement::new(
             SmallwoodArithmetization::Bridge64V1,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            material.linear_constraints.targets.len(),
-        )
-        .unwrap();
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let cfg = SmallwoodConfig::new(&statement).unwrap();
         let binded_words = bytes_to_words(&material.transcript_binding).unwrap();
         let witness_polys = material
             .packed_witness_rows
@@ -2132,21 +2072,10 @@ mod tests {
         piop_input.extend_from_slice(&binded_words);
         let piop = piop_run(
             &cfg,
-            &PackedStatement::new(
-                SmallwoodArithmetization::Bridge64V1,
-                material.public_statement.lppc_row_count as usize,
-                SMALLWOOD_BRIDGE_PACKING_FACTOR,
-                &material.linear_constraints.term_offsets,
-                &material.linear_constraints.term_indices,
-                &material.linear_constraints.term_coefficients,
-                &material.linear_constraints.targets,
-            ),
+            &statement,
             &witness_polys,
             &mpol_ppoly,
             &mpol_plin,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
             &piop_input,
         )
         .unwrap();
