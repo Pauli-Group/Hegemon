@@ -507,25 +507,8 @@ pub(crate) fn test_candidate_witness_rust(
             "smallwood linear-constraint offset/target mismatch",
         ));
     }
-    match arithmetization {
-        SmallwoodArithmetization::DirectPacked64V1 => {
-            if row_count != DIRECT_ROW_COUNT {
-                return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "direct packed SmallWood witness row_count {row_count}, expected {DIRECT_ROW_COUNT}"
-                )));
-            }
-            return test_direct_packed_frontend_witness(
-                witness_values,
-                linear_constraint_offsets,
-                linear_constraint_indices,
-                linear_constraint_coefficients,
-                linear_constraint_targets,
-            );
-        }
-        SmallwoodArithmetization::Bridge64V1 => {}
-    }
     let statement = PackedStatement::new(
-        SmallwoodArithmetization::Bridge64V1,
+        arithmetization,
         row_count,
         packing_factor,
         EFFECTIVE_CONSTRAINT_DEGREE,
@@ -534,24 +517,48 @@ pub(crate) fn test_candidate_witness_rust(
         linear_constraint_coefficients,
         linear_constraint_targets,
     );
-    let constraint_count = constraint_count();
-    let mut lane_rows = vec![Felt::ZERO; row_count];
-    let mut constraint_row = vec![Felt::ZERO; constraint_count];
-
-    for lane in 0..packing_factor {
-        for row in 0..row_count {
-            lane_rows[row] = Felt::from_u64(witness_values[row * packing_factor + lane]);
+    if matches!(arithmetization, SmallwoodArithmetization::DirectPacked64V1) {
+        if row_count != DIRECT_ROW_COUNT {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "direct packed SmallWood witness row_count {row_count}, expected {DIRECT_ROW_COUNT}"
+            )));
         }
-        compute_constraints(&statement, &lane_rows, &mut constraint_row);
-        if let Some((idx, value)) = constraint_row
+        let mut direct_constraints = vec![0u64; statement.constraint_count()];
+        statement.compute_constraints_u64(
+            SmallwoodNonlinearEvalView::DirectPackedMatrix {
+                flat: witness_values,
+            },
+            &mut direct_constraints,
+        )?;
+        if let Some((idx, value)) = direct_constraints
             .iter()
             .enumerate()
-            .find(|(_, value)| **value != Felt::ZERO)
+            .find(|(_, value)| **value != 0)
         {
             return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                "smallwood packed witness poly constraint failed at lane {lane}, constraint {idx}, value {}",
-                value.as_canonical_u64()
+                "smallwood direct packed witness constraint failed at constraint {idx}, value {value}",
             )));
+        }
+    } else {
+        let constraint_count = constraint_count();
+        let mut lane_rows = vec![Felt::ZERO; row_count];
+        let mut constraint_row = vec![Felt::ZERO; constraint_count];
+
+        for lane in 0..packing_factor {
+            for row in 0..row_count {
+                lane_rows[row] = Felt::from_u64(witness_values[row * packing_factor + lane]);
+            }
+            compute_constraints(&statement, &lane_rows, &mut constraint_row);
+            if let Some((idx, value)) = constraint_row
+                .iter()
+                .enumerate()
+                .find(|(_, value)| **value != Felt::ZERO)
+            {
+                return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "smallwood packed witness poly constraint failed at lane {lane}, constraint {idx}, value {}",
+                    value.as_canonical_u64()
+                )));
+            }
         }
     }
 
@@ -562,7 +569,6 @@ pub(crate) fn test_candidate_witness_rust(
         linear_constraint_coefficients,
         linear_constraint_targets,
     )?;
-
     Ok(())
 }
 
@@ -594,84 +600,6 @@ fn verify_linear_constraints(
     Ok(())
 }
 
-fn test_direct_packed_frontend_witness(
-    witness_values: &[u64],
-    linear_constraint_offsets: &[u32],
-    linear_constraint_indices: &[u32],
-    linear_constraint_coefficients: &[u64],
-    linear_constraint_targets: &[u64],
-) -> Result<(), TransactionCircuitError> {
-    verify_linear_constraints(
-        witness_values,
-        linear_constraint_offsets,
-        linear_constraint_indices,
-        linear_constraint_coefficients,
-        linear_constraint_targets,
-    )?;
-    if linear_constraint_targets.len() != PUBLIC_VALUE_COUNT {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "smallwood packed frontend expected {PUBLIC_VALUE_COUNT} public values, got {}",
-            linear_constraint_targets.len()
-        )));
-    }
-
-    let matrix = PackedWitnessMatrix::direct(witness_values)?;
-    let program = direct_packed_program();
-    let expanded = matrix.flat();
-    let padding = program.padding.slice(expanded)?;
-    if padding.iter().any(|value| *value != 0) {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood packed frontend padding must be zero",
-        ));
-    }
-
-    let public_values = program.public_values.slice(expanded)?;
-    if public_values != linear_constraint_targets {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood packed frontend public prefix mismatch",
-        ));
-    }
-    let public_cell = direct_packed_public_value_cell(0);
-    if matrix.cell(public_cell.row(), public_cell.col())? != public_values[0] {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood packed frontend public matrix cell mismatch",
-        ));
-    }
-
-    let raw_witness = program.raw_witness.slice(expanded)?;
-    let poseidon_flat = program.poseidon_segment.slice(expanded)?;
-    let raw_cell = direct_packed_raw_witness_cell(0);
-    if matrix.cell(raw_cell.row(), raw_cell.col())? != raw_witness[0] {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood packed frontend raw matrix cell mismatch",
-        ));
-    }
-
-    let witness = parse_direct_raw_witness(raw_witness)?;
-    witness.validate()?;
-    let public_inputs = witness.public_inputs()?;
-    let serialized_inputs = serialize_smallwood_stark_inputs(&witness, &public_inputs)?;
-    let p3_inputs = transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_inputs)?;
-    let expected_public_values = packed_public_values_from_p3(&p3_inputs, witness.version);
-    if public_values != expected_public_values.as_slice() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood packed frontend public values do not match parsed witness",
-        ));
-    }
-
-    let expected_poseidon = packed_poseidon_subtrace_rows_from_witness(&witness, &public_inputs)?;
-    validate_direct_packed_poseidon_trace(poseidon_flat, &expected_poseidon)?;
-    let expected_poseidon = flatten_poseidon_rows(&expected_poseidon);
-    let poseidon_cell = direct_packed_poseidon_cell(0, 0, 0);
-    if matrix.cell(poseidon_cell.row(), poseidon_cell.col())? != expected_poseidon[0] {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood packed frontend poseidon matrix cell mismatch",
-        ));
-    }
-
-    Ok(())
-}
-
 #[allow(dead_code)]
 impl<'a> PackedStatement<'a> {
     pub(crate) fn new(
@@ -692,7 +620,7 @@ impl<'a> PackedStatement<'a> {
             linear_constraint_count: linear_constraint_targets.len(),
             constraint_count: match arithmetization {
                 SmallwoodArithmetization::Bridge64V1 => constraint_count(),
-                SmallwoodArithmetization::DirectPacked64V1 => 0,
+                SmallwoodArithmetization::DirectPacked64V1 => direct_packed_constraint_count(),
             },
             linear_constraint_offsets,
             linear_constraint_indices,
@@ -790,6 +718,7 @@ pub(crate) trait SmallwoodConstraintAdapter: Sync {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SmallwoodNonlinearEvalView<'a> {
     RowScalars { eval_point: u64, rows: &'a [u64] },
+    DirectPackedMatrix { flat: &'a [u64] },
 }
 
 impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
@@ -855,7 +784,12 @@ impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
         view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
-        compute_bridge_constraints_u64(self, view, out)
+        match self.arithmetization {
+            SmallwoodArithmetization::Bridge64V1 => compute_bridge_constraints_u64(self, view, out),
+            SmallwoodArithmetization::DirectPacked64V1 => {
+                compute_direct_packed_constraints_u64(self, view, out)
+            }
+        }
     }
 }
 
@@ -1189,6 +1123,113 @@ fn signed_magnitude_u64(value: i128, label: &str) -> Result<(u8, u64), Transacti
     Ok((sign, magnitude as u64))
 }
 
+fn push_bytes32_words(out: &mut Vec<u64>, bytes: &[u8; 32]) {
+    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
+}
+
+fn push_bytes48_words(out: &mut Vec<u64>, bytes: &[u8; 48]) {
+    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
+}
+
+fn serialize_direct_raw_witness(
+    witness: &TransactionWitness,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    witness.validate()?;
+    let mut values = Vec::with_capacity(DIRECT_RAW_WITNESS_LEN);
+    let (value_balance_sign, value_balance_magnitude) =
+        signed_magnitude_u64(witness.value_balance, "value_balance")?;
+    let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
+        signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
+
+    values.push(witness.inputs.len() as u64);
+    values.push(witness.outputs.len() as u64);
+    values.push(witness.ciphertext_hashes.len() as u64);
+    push_bytes32_words(&mut values, &witness.sk_spend);
+    push_bytes48_words(&mut values, &witness.merkle_root);
+    values.push(witness.fee);
+    values.push(u64::from(value_balance_sign));
+    values.push(value_balance_magnitude);
+    values.push(u64::from(witness.stablecoin.enabled));
+    values.push(witness.stablecoin.asset_id);
+    push_bytes48_words(&mut values, &witness.stablecoin.policy_hash);
+    push_bytes48_words(&mut values, &witness.stablecoin.oracle_commitment);
+    push_bytes48_words(&mut values, &witness.stablecoin.attestation_commitment);
+    values.push(u64::from(stablecoin_issuance_sign));
+    values.push(stablecoin_issuance_magnitude);
+    values.push(u64::from(witness.stablecoin.policy_version));
+    values.push(u64::from(witness.version.circuit));
+    values.push(u64::from(witness.version.crypto));
+
+    let inputs = padded_inputs(&witness.inputs);
+    for input in &inputs {
+        values.push(input.note.value);
+    }
+    for input in &inputs {
+        values.push(input.note.asset_id);
+    }
+    for input in &inputs {
+        push_bytes32_words(&mut values, &input.note.pk_recipient);
+    }
+    for input in &inputs {
+        push_bytes32_words(&mut values, &input.note.pk_auth);
+    }
+    for input in &inputs {
+        push_bytes32_words(&mut values, &input.note.rho);
+    }
+    for input in &inputs {
+        push_bytes32_words(&mut values, &input.note.r);
+    }
+    for input in &inputs {
+        values.push(input.position);
+    }
+    for input in &inputs {
+        push_bytes32_words(&mut values, &input.rho_seed);
+    }
+    for input in &inputs {
+        for sibling in &input.merkle_path.siblings {
+            let sibling_bytes = crate::hashing_pq::felts_to_bytes48(sibling);
+            push_bytes48_words(&mut values, &sibling_bytes);
+        }
+    }
+
+    let outputs = padded_outputs(&witness.outputs);
+    for output in &outputs {
+        values.push(output.note.value);
+    }
+    for output in &outputs {
+        values.push(output.note.asset_id);
+    }
+    for output in &outputs {
+        push_bytes32_words(&mut values, &output.note.pk_recipient);
+    }
+    for output in &outputs {
+        push_bytes32_words(&mut values, &output.note.pk_auth);
+    }
+    for output in &outputs {
+        push_bytes32_words(&mut values, &output.note.rho);
+    }
+    for output in &outputs {
+        push_bytes32_words(&mut values, &output.note.r);
+    }
+
+    let mut ciphertext_hashes = witness.ciphertext_hashes.clone();
+    while ciphertext_hashes.len() < MAX_OUTPUTS {
+        ciphertext_hashes.push([0u8; 48]);
+    }
+    for hash in ciphertext_hashes.iter().take(MAX_OUTPUTS) {
+        push_bytes48_words(&mut values, hash);
+    }
+
+    if values.len() != DIRECT_RAW_WITNESS_LEN {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood direct raw witness serialization length {}, expected {}",
+            values.len(),
+            DIRECT_RAW_WITNESS_LEN
+        )));
+    }
+    Ok(values)
+}
+
 fn packed_public_values_from_p3(
     public_inputs: &TransactionPublicInputsP3,
     version: VersionBinding,
@@ -1214,59 +1255,155 @@ fn flatten_poseidon_rows(
     flat
 }
 
+fn aggregate_u64_differences(challenge: Felt, lhs: &[u64], rhs: &[u64]) -> Felt {
+    let mut acc = Felt::ZERO;
+    let mut power = Felt::ONE;
+    for (&left, &right) in lhs.iter().zip(rhs.iter()) {
+        acc += power * (Felt::from_u64(left) - Felt::from_u64(right));
+        power *= challenge;
+    }
+    acc
+}
+
+fn aggregate_u64_zeros(challenge: Felt, values: &[u64]) -> Felt {
+    let mut acc = Felt::ZERO;
+    let mut power = Felt::ONE;
+    for &value in values {
+        acc += power * Felt::from_u64(value);
+        power *= challenge;
+    }
+    acc
+}
+
+fn direct_packed_poseidon_constraint_count() -> usize {
+    1 + MAX_INPUTS * (1 + MERKLE_DEPTH + 1) + MAX_OUTPUTS + 1
+}
+
+fn direct_packed_constraint_count() -> usize {
+    3 + direct_packed_poseidon_constraint_count()
+}
+
+fn compute_direct_packed_constraints_u64(
+    statement: &PackedStatement<'_>,
+    view: SmallwoodNonlinearEvalView<'_>,
+    out: &mut [u64],
+) -> Result<(), TransactionCircuitError> {
+    let flat = match view {
+        SmallwoodNonlinearEvalView::DirectPackedMatrix { flat } => flat,
+        SmallwoodNonlinearEvalView::RowScalars { .. } => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "direct packed SmallWood arithmetization requires matrix-aware witness access and is not implemented in the row-polynomial proof engine yet",
+            ))
+        }
+    };
+    let expected = direct_packed_constraint_count();
+    if out.len() != expected {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood direct packed constraint buffer has length {}, expected {expected}",
+            out.len()
+        )));
+    }
+
+    let matrix = PackedWitnessMatrix::direct(flat)?;
+    let program = direct_packed_program();
+    let poseidon_program = direct_packed_poseidon_program();
+
+    let public_values = program.public_values.slice(matrix.flat())?;
+    let raw_witness = program.raw_witness.slice(matrix.flat())?;
+    let poseidon_flat = program.poseidon_segment.slice(matrix.flat())?;
+    let padding = program.padding.slice(matrix.flat())?;
+
+    let witness = parse_direct_raw_witness(raw_witness)?;
+    witness.validate()?;
+    let public_inputs = witness.public_inputs()?;
+    let serialized_inputs = serialize_smallwood_stark_inputs(&witness, &public_inputs)?;
+    let p3_inputs = transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_inputs)?;
+    let expected_public_values = packed_public_values_from_p3(&p3_inputs, witness.version);
+    let expected_raw_witness = serialize_direct_raw_witness(&witness)?;
+    let expected_poseidon_rows =
+        packed_poseidon_subtrace_rows_from_witness(&witness, &public_inputs)?;
+    let expected_poseidon_flat = flatten_poseidon_rows(&expected_poseidon_rows);
+
+    if expected_public_values.len() != public_values.len() {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood direct packed public value count {}, expected {}",
+            public_values.len(),
+            expected_public_values.len()
+        )));
+    }
+    if expected_raw_witness.len() != raw_witness.len() {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood direct packed raw witness length {}, expected {}",
+            raw_witness.len(),
+            expected_raw_witness.len()
+        )));
+    }
+    if expected_poseidon_flat.len() != poseidon_flat.len() {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood direct packed poseidon word length {}, expected {}",
+            poseidon_flat.len(),
+            expected_poseidon_flat.len()
+        )));
+    }
+
+    let mut constraint_idx = 0usize;
+    out[constraint_idx] = aggregate_u64_differences(
+        nontrivial_challenge(statement, 20, 0, 0),
+        public_values,
+        &expected_public_values,
+    )
+    .as_canonical_u64();
+    constraint_idx += 1;
+    out[constraint_idx] = aggregate_u64_differences(
+        nontrivial_challenge(statement, 21, 0, 0),
+        raw_witness,
+        &expected_raw_witness,
+    )
+    .as_canonical_u64();
+    constraint_idx += 1;
+    out[constraint_idx] =
+        aggregate_u64_zeros(nontrivial_challenge(statement, 22, 0, 0), padding).as_canonical_u64();
+    constraint_idx += 1;
+
+    let mut push_poseidon_span = |label_tag: u64,
+                                  major: u64,
+                                  minor: u64,
+                                  span: DirectPackedPermutationSpan|
+     -> Result<(), TransactionCircuitError> {
+        let actual = poseidon_span_words(poseidon_flat, span)?;
+        let expected = poseidon_span_words(&expected_poseidon_flat, span)?;
+        out[constraint_idx] = aggregate_u64_differences(
+            nontrivial_challenge(statement, label_tag, major, minor),
+            actual,
+            expected,
+        )
+        .as_canonical_u64();
+        constraint_idx += 1;
+        Ok(())
+    };
+
+    push_poseidon_span(23, 0, 0, poseidon_program.prf)?;
+    for (input_idx, input_plan) in poseidon_program.inputs.iter().enumerate() {
+        push_poseidon_span(24, input_idx as u64, 0, input_plan.commitment)?;
+        for (level, span) in input_plan.merkle_nodes.iter().enumerate() {
+            push_poseidon_span(25, input_idx as u64, level as u64, *span)?;
+        }
+        push_poseidon_span(26, input_idx as u64, 0, input_plan.nullifier)?;
+    }
+    for (output_idx, output_plan) in poseidon_program.outputs.iter().enumerate() {
+        push_poseidon_span(27, output_idx as u64, 0, output_plan.commitment)?;
+    }
+    push_poseidon_span(28, 0, 0, poseidon_program.balance_tag)?;
+
+    debug_assert_eq!(constraint_idx, expected);
+    Ok(())
+}
+
 fn poseidon_span_words<'a>(
     poseidon_flat: &'a [u64],
     span: DirectPackedPermutationSpan,
 ) -> Result<&'a [u64], TransactionCircuitError> {
     span.word_range().slice(poseidon_flat)
-}
-
-fn validate_direct_packed_poseidon_trace(
-    poseidon_flat: &[u64],
-    expected_rows: &[[[u64; POSEIDON2_WIDTH]; POSEIDON_ROWS_PER_PERMUTATION]],
-) -> Result<(), TransactionCircuitError> {
-    if expected_rows.len() != DIRECT_POSEIDON_PERMUTATION_COUNT {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "smallwood packed frontend poseidon permutation count {}, expected {}",
-            expected_rows.len(),
-            DIRECT_POSEIDON_PERMUTATION_COUNT
-        )));
-    }
-    let program = direct_packed_poseidon_program();
-    let expected_flat = flatten_poseidon_rows(expected_rows);
-    let compare_span =
-        |label: &str, span: DirectPackedPermutationSpan| -> Result<(), TransactionCircuitError> {
-            let actual = poseidon_span_words(poseidon_flat, span)?;
-            let expected = poseidon_span_words(&expected_flat, span)?;
-            if actual != expected {
-                return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "smallwood packed frontend {label} poseidon trace mismatch"
-                )));
-            }
-            Ok(())
-        };
-    compare_span("prf", program.prf)?;
-    for (input_idx, input_plan) in program.inputs.iter().enumerate() {
-        compare_span(
-            &format!("input {input_idx} commitment"),
-            input_plan.commitment,
-        )?;
-        for (level, span) in input_plan.merkle_nodes.iter().enumerate() {
-            compare_span(&format!("input {input_idx} merkle level {level}"), *span)?;
-        }
-        compare_span(
-            &format!("input {input_idx} nullifier"),
-            input_plan.nullifier,
-        )?;
-    }
-    for (output_idx, output_plan) in program.outputs.iter().enumerate() {
-        compare_span(
-            &format!("output {output_idx} commitment"),
-            output_plan.commitment,
-        )?;
-    }
-    compare_span("balance tag", program.balance_tag)?;
-    Ok(())
 }
 
 fn packed_poseidon_subtrace_rows_from_witness(
@@ -1698,6 +1835,11 @@ pub(crate) fn compute_bridge_constraints_u64(
             eval_point: _eval_point,
             rows,
         } => rows,
+        SmallwoodNonlinearEvalView::DirectPackedMatrix { .. } => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "bridge SmallWood constraints require row-scalar evaluations, not direct packed matrix access",
+            ))
+        }
     };
     let felt_rows = rows.iter().copied().map(Felt::from_u64).collect::<Vec<_>>();
     let mut felt_out = vec![Felt::ZERO; expected];
