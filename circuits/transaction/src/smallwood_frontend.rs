@@ -848,7 +848,6 @@ fn build_packed_bridge_linear_constraints(
         }
         terms
     };
-
     // PRF permutation: only the unused rate tail and capacity are fixed.
     let prf_permutation = bridge_prf_permutation();
     let prf_lane = packed_bridge_permutation_lane(prf_permutation);
@@ -1241,7 +1240,6 @@ fn semantic_secret_witness_rows(
             u64::from(witness.version.crypto),
         ])
         .collect();
-
     let mut values = Vec::with_capacity(SMALLWOOD_SECRET_WITNESS_ROWS);
 
     for (idx, input) in inputs.iter().enumerate() {
@@ -2005,6 +2003,27 @@ mod tests {
     }
 
     #[test]
+    fn direct_packed_program_matches_expected_segments() {
+        let program = crate::smallwood_semantics::direct_packed_program();
+        assert_eq!(program.public_values.start(), 0);
+        assert_eq!(program.public_values.len(), 78);
+        assert_eq!(program.raw_witness.start(), 78);
+        assert_eq!(program.raw_witness.len(), 3_991);
+        assert_eq!(program.poseidon_segment.start(), 4_069);
+        assert_eq!(program.poseidon_segment.len(), 55_680);
+        assert_eq!(program.padding.start(), 59_749);
+        assert_eq!(program.padding.len(), 27);
+        assert_eq!(program.inputs[0].position.index(64), 575);
+        assert_eq!(program.inputs[0].merkle_siblings.start(), 641);
+        assert_eq!(program.inputs[0].merkle_siblings.len(), 1_536);
+        assert_eq!(program.inputs[1].merkle_siblings.start(), 2_177);
+        assert_eq!(program.outputs[0].pk_recipient.start(), 3_717);
+        assert_eq!(program.outputs[1].r.end(), 3_973);
+        assert_eq!(program.ciphertext_hashes.start(), 3_973);
+        assert_eq!(program.ciphertext_hashes.end(), 4_069);
+    }
+
+    #[test]
     fn packed_smallwood_frontend_witness_satisfies_constraints() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -2199,32 +2218,6 @@ mod tests {
     }
 
     #[test]
-    fn packed_smallwood_bridge_first_merkle_aggregates_match_source() {
-        let mut witness = sample_witness();
-        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let challenge =
-            smallwood_bridge_merkle_challenge(&material.public_statement.public_values, 0, 0);
-        let current = witness.inputs[0].note.commitment();
-        let sibling = witness.inputs[0].merkle_path.siblings[0];
-        let current_row = bridge_row_input_current_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-        let left_row = bridge_row_input_left_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-        let right_row = bridge_row_input_right_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-        assert_eq!(
-            material.packed_witness_rows[current_row],
-            aggregate_hash(&current, challenge)
-        );
-        assert_eq!(
-            material.packed_witness_rows[left_row],
-            aggregate_hash(&current, challenge)
-        );
-        assert_eq!(
-            material.packed_witness_rows[right_row],
-            aggregate_hash(&sibling, challenge)
-        );
-    }
-
-    #[test]
     #[ignore = "experimental SmallWood packed candidate release proving is still too slow for the default test profile"]
     fn smallwood_candidate_roundtrip_verifies() {
         let mut witness = sample_witness();
@@ -2278,5 +2271,31 @@ mod tests {
         )
         .expect_err("mutated smallwood witness must fail");
         assert!(err.to_string().contains("witness test failed"));
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_first_merkle_aggregates_match_source() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let challenge =
+            smallwood_bridge_merkle_challenge(&material.public_statement.public_values, 0, 0);
+        let current = witness.inputs[0].note.commitment();
+        let sibling = witness.inputs[0].merkle_path.siblings[0];
+        let current_row = bridge_row_input_current_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
+        let left_row = bridge_row_input_left_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
+        let right_row = bridge_row_input_right_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
+        assert_eq!(
+            material.packed_witness_rows[current_row],
+            aggregate_hash(&current, challenge)
+        );
+        assert_eq!(
+            material.packed_witness_rows[left_row],
+            aggregate_hash(&current, challenge)
+        );
+        assert_eq!(
+            material.packed_witness_rows[right_row],
+            aggregate_hash(&sibling, challenge)
+        );
     }
 }

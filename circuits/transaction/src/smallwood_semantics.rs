@@ -58,7 +58,317 @@ const PUB_STABLE_ATTESTATION: usize = 70;
 const DIRECT_RAW_WITNESS_LEN: usize = 3_991;
 const DIRECT_EXPANDED_WITNESS_LEN: usize = 59_749;
 const DIRECT_ROW_COUNT: usize = 934;
+const DIRECT_PACKED_WITNESS_LEN: usize = DIRECT_ROW_COUNT * PACKING_FACTOR;
+const DIRECT_PACKED_PADDING_LEN: usize = DIRECT_PACKED_WITNESS_LEN - DIRECT_EXPANDED_WITNESS_LEN;
+const DIRECT_RAW_WITNESS_OFFSET: usize = PUBLIC_VALUE_COUNT;
+const DIRECT_POSEIDON_WITNESS_OFFSET: usize = DIRECT_RAW_WITNESS_OFFSET + DIRECT_RAW_WITNESS_LEN;
 const EFFECTIVE_CONSTRAINT_DEGREE: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PackedCellRef {
+    row: usize,
+    col: usize,
+}
+
+#[allow(dead_code)]
+impl PackedCellRef {
+    pub(crate) const fn new(row: usize, col: usize) -> Self {
+        Self { row, col }
+    }
+
+    pub(crate) const fn row(self) -> usize {
+        self.row
+    }
+
+    pub(crate) const fn col(self) -> usize {
+        self.col
+    }
+
+    pub(crate) const fn index(self, packing_factor: usize) -> usize {
+        self.row * packing_factor + self.col
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub(crate) struct PackedWitnessMatrix<'a> {
+    flat: &'a [u64],
+    row_count: usize,
+    packing_factor: usize,
+}
+
+#[allow(dead_code)]
+impl<'a> PackedWitnessMatrix<'a> {
+    pub(crate) fn new(
+        flat: &'a [u64],
+        row_count: usize,
+        packing_factor: usize,
+    ) -> Result<Self, TransactionCircuitError> {
+        if flat.len() != row_count * packing_factor {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "smallwood packed matrix length {} does not match rows {} x packing {}",
+                flat.len(),
+                row_count,
+                packing_factor
+            )));
+        }
+        Ok(Self {
+            flat,
+            row_count,
+            packing_factor,
+        })
+    }
+
+    pub(crate) fn direct(flat: &'a [u64]) -> Result<Self, TransactionCircuitError> {
+        Self::new(flat, DIRECT_ROW_COUNT, PACKING_FACTOR)
+    }
+
+    pub(crate) fn flat(&self) -> &'a [u64] {
+        self.flat
+    }
+
+    pub(crate) fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    pub(crate) fn packing_factor(&self) -> usize {
+        self.packing_factor
+    }
+
+    pub(crate) fn row_offset(&self, row: usize) -> Result<usize, TransactionCircuitError> {
+        if row >= self.row_count {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "smallwood packed matrix row {row} exceeds {}",
+                self.row_count
+            )));
+        }
+        Ok(row * self.packing_factor)
+    }
+
+    pub(crate) fn cell_index(
+        &self,
+        row: usize,
+        col: usize,
+    ) -> Result<usize, TransactionCircuitError> {
+        if col >= self.packing_factor {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "smallwood packed matrix column {col} exceeds {}",
+                self.packing_factor
+            )));
+        }
+        Ok(self.row_offset(row)? + col)
+    }
+
+    pub(crate) fn row(&self, row: usize) -> Result<&'a [u64], TransactionCircuitError> {
+        let start = self.row_offset(row)?;
+        Ok(&self.flat[start..start + self.packing_factor])
+    }
+
+    pub(crate) fn cell(&self, row: usize, col: usize) -> Result<u64, TransactionCircuitError> {
+        Ok(self.flat[self.cell_index(row, col)?])
+    }
+
+    pub(crate) fn cell_ref(row: usize, col: usize) -> PackedCellRef {
+        PackedCellRef::new(row, col)
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn direct_packed_cell_ref_from_offset(offset: usize) -> PackedCellRef {
+    PackedCellRef::new(offset / PACKING_FACTOR, offset % PACKING_FACTOR)
+}
+
+#[allow(dead_code)]
+pub(crate) fn direct_packed_public_value_cell(index: usize) -> PackedCellRef {
+    direct_packed_cell_ref_from_offset(index)
+}
+
+#[allow(dead_code)]
+pub(crate) fn direct_packed_raw_witness_cell(index: usize) -> PackedCellRef {
+    direct_packed_cell_ref_from_offset(DIRECT_RAW_WITNESS_OFFSET + index)
+}
+
+#[allow(dead_code)]
+pub(crate) fn direct_packed_poseidon_cell(
+    permutation: usize,
+    step_row: usize,
+    limb: usize,
+) -> PackedCellRef {
+    let offset = DIRECT_POSEIDON_WITNESS_OFFSET
+        + (permutation * POSEIDON_ROWS_PER_PERMUTATION + step_row) * POSEIDON2_WIDTH
+        + limb;
+    direct_packed_cell_ref_from_offset(offset)
+}
+
+#[allow(dead_code)]
+pub(crate) fn direct_packed_poseidon_offset(
+    permutation: usize,
+    step_row: usize,
+    limb: usize,
+) -> usize {
+    direct_packed_poseidon_cell(permutation, step_row, limb).index(PACKING_FACTOR)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedRange {
+    start: usize,
+    len: usize,
+}
+
+impl DirectPackedRange {
+    pub(crate) const fn new(start: usize, len: usize) -> Self {
+        Self { start, len }
+    }
+
+    pub(crate) const fn start(self) -> usize {
+        self.start
+    }
+
+    #[allow(dead_code)]
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    pub(crate) const fn end(self) -> usize {
+        self.start + self.len
+    }
+
+    pub(crate) fn slice<'a>(self, flat: &'a [u64]) -> Result<&'a [u64], TransactionCircuitError> {
+        flat.get(self.start..self.end()).ok_or_else(|| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "smallwood direct packed range [{}..{}) exceeds witness length {}",
+                self.start,
+                self.end(),
+                flat.len()
+            ))
+        })
+    }
+
+    pub(crate) fn cell_ref(self, index: usize) -> PackedCellRef {
+        direct_packed_cell_ref_from_offset(self.start + index)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedInputPlan {
+    pub(crate) value: PackedCellRef,
+    pub(crate) asset: PackedCellRef,
+    pub(crate) pk_recipient: DirectPackedRange,
+    pub(crate) pk_auth: DirectPackedRange,
+    pub(crate) rho: DirectPackedRange,
+    pub(crate) r: DirectPackedRange,
+    pub(crate) position: PackedCellRef,
+    pub(crate) rho_seed: DirectPackedRange,
+    pub(crate) merkle_siblings: DirectPackedRange,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedOutputPlan {
+    pub(crate) value: PackedCellRef,
+    pub(crate) asset: PackedCellRef,
+    pub(crate) pk_recipient: DirectPackedRange,
+    pub(crate) pk_auth: DirectPackedRange,
+    pub(crate) rho: DirectPackedRange,
+    pub(crate) r: DirectPackedRange,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedProgram {
+    pub(crate) public_values: DirectPackedRange,
+    pub(crate) raw_witness: DirectPackedRange,
+    pub(crate) poseidon_segment: DirectPackedRange,
+    pub(crate) padding: DirectPackedRange,
+    pub(crate) header: DirectPackedRange,
+    pub(crate) input_value_range: DirectPackedRange,
+    pub(crate) input_asset_range: DirectPackedRange,
+    pub(crate) inputs: [DirectPackedInputPlan; MAX_INPUTS],
+    pub(crate) output_value_range: DirectPackedRange,
+    pub(crate) output_asset_range: DirectPackedRange,
+    pub(crate) outputs: [DirectPackedOutputPlan; MAX_OUTPUTS],
+    pub(crate) ciphertext_hashes: DirectPackedRange,
+}
+
+fn take_direct_range(cursor: &mut usize, len: usize) -> DirectPackedRange {
+    let range = DirectPackedRange::new(*cursor, len);
+    *cursor += len;
+    range
+}
+
+pub(crate) fn direct_packed_program() -> DirectPackedProgram {
+    let public_values = DirectPackedRange::new(0, PUBLIC_VALUE_COUNT);
+    let raw_witness = DirectPackedRange::new(DIRECT_RAW_WITNESS_OFFSET, DIRECT_RAW_WITNESS_LEN);
+    let poseidon_segment = DirectPackedRange::new(
+        DIRECT_POSEIDON_WITNESS_OFFSET,
+        DIRECT_EXPANDED_WITNESS_LEN - DIRECT_POSEIDON_WITNESS_OFFSET,
+    );
+    let padding = DirectPackedRange::new(DIRECT_EXPANDED_WITNESS_LEN, DIRECT_PACKED_PADDING_LEN);
+
+    let mut raw_cursor = DIRECT_RAW_WITNESS_OFFSET;
+    let header = take_direct_range(&mut raw_cursor, 237);
+
+    let input_value_range = take_direct_range(&mut raw_cursor, MAX_INPUTS);
+    let input_asset_range = take_direct_range(&mut raw_cursor, MAX_INPUTS);
+    let input_pk_recipient_range = take_direct_range(&mut raw_cursor, MAX_INPUTS * 32);
+    let input_pk_auth_range = take_direct_range(&mut raw_cursor, MAX_INPUTS * 32);
+    let input_rho_range = take_direct_range(&mut raw_cursor, MAX_INPUTS * 32);
+    let input_r_range = take_direct_range(&mut raw_cursor, MAX_INPUTS * 32);
+    let input_position_range = take_direct_range(&mut raw_cursor, MAX_INPUTS);
+    let input_rho_seed_range = take_direct_range(&mut raw_cursor, MAX_INPUTS * 32);
+    let input_merkle_sibling_range =
+        take_direct_range(&mut raw_cursor, MAX_INPUTS * MERKLE_DEPTH * 48);
+
+    let output_value_range = take_direct_range(&mut raw_cursor, MAX_OUTPUTS);
+    let output_asset_range = take_direct_range(&mut raw_cursor, MAX_OUTPUTS);
+    let output_pk_recipient_range = take_direct_range(&mut raw_cursor, MAX_OUTPUTS * 32);
+    let output_pk_auth_range = take_direct_range(&mut raw_cursor, MAX_OUTPUTS * 32);
+    let output_rho_range = take_direct_range(&mut raw_cursor, MAX_OUTPUTS * 32);
+    let output_r_range = take_direct_range(&mut raw_cursor, MAX_OUTPUTS * 32);
+    let ciphertext_hashes = take_direct_range(&mut raw_cursor, MAX_OUTPUTS * 48);
+
+    debug_assert_eq!(
+        raw_cursor,
+        DIRECT_RAW_WITNESS_OFFSET + DIRECT_RAW_WITNESS_LEN
+    );
+
+    let inputs = core::array::from_fn(|idx| DirectPackedInputPlan {
+        value: input_value_range.cell_ref(idx),
+        asset: input_asset_range.cell_ref(idx),
+        pk_recipient: DirectPackedRange::new(input_pk_recipient_range.start() + idx * 32, 32),
+        pk_auth: DirectPackedRange::new(input_pk_auth_range.start() + idx * 32, 32),
+        rho: DirectPackedRange::new(input_rho_range.start() + idx * 32, 32),
+        r: DirectPackedRange::new(input_r_range.start() + idx * 32, 32),
+        position: input_position_range.cell_ref(idx),
+        rho_seed: DirectPackedRange::new(input_rho_seed_range.start() + idx * 32, 32),
+        merkle_siblings: DirectPackedRange::new(
+            input_merkle_sibling_range.start() + idx * MERKLE_DEPTH * 48,
+            MERKLE_DEPTH * 48,
+        ),
+    });
+
+    let outputs = core::array::from_fn(|idx| DirectPackedOutputPlan {
+        value: output_value_range.cell_ref(idx),
+        asset: output_asset_range.cell_ref(idx),
+        pk_recipient: DirectPackedRange::new(output_pk_recipient_range.start() + idx * 32, 32),
+        pk_auth: DirectPackedRange::new(output_pk_auth_range.start() + idx * 32, 32),
+        rho: DirectPackedRange::new(output_rho_range.start() + idx * 32, 32),
+        r: DirectPackedRange::new(output_r_range.start() + idx * 32, 32),
+    });
+
+    DirectPackedProgram {
+        public_values,
+        raw_witness,
+        poseidon_segment,
+        padding,
+        header,
+        input_value_range,
+        input_asset_range,
+        inputs,
+        output_value_range,
+        output_asset_range,
+        outputs,
+        ciphertext_hashes,
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct PackedStatement<'a> {
@@ -217,27 +527,37 @@ fn test_direct_packed_frontend_witness(
         )));
     }
 
-    let expanded = &witness_values[..DIRECT_EXPANDED_WITNESS_LEN];
-    if witness_values[DIRECT_EXPANDED_WITNESS_LEN..]
-        .iter()
-        .any(|value| *value != 0)
-    {
+    let matrix = PackedWitnessMatrix::direct(witness_values)?;
+    let program = direct_packed_program();
+    let expanded = matrix.flat();
+    let padding = program.padding.slice(expanded)?;
+    if padding.iter().any(|value| *value != 0) {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood packed frontend padding must be zero",
         ));
     }
 
-    let public_values = &expanded[..PUBLIC_VALUE_COUNT];
+    let public_values = program.public_values.slice(expanded)?;
     if public_values != linear_constraint_targets {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood packed frontend public prefix mismatch",
         ));
     }
+    let public_cell = direct_packed_public_value_cell(0);
+    if matrix.cell(public_cell.row(), public_cell.col())? != public_values[0] {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood packed frontend public matrix cell mismatch",
+        ));
+    }
 
-    let raw_start = PUBLIC_VALUE_COUNT;
-    let raw_end = raw_start + DIRECT_RAW_WITNESS_LEN;
-    let raw_witness = &expanded[raw_start..raw_end];
-    let poseidon_flat = &expanded[raw_end..DIRECT_EXPANDED_WITNESS_LEN];
+    let raw_witness = program.raw_witness.slice(expanded)?;
+    let poseidon_flat = program.poseidon_segment.slice(expanded)?;
+    let raw_cell = direct_packed_raw_witness_cell(0);
+    if matrix.cell(raw_cell.row(), raw_cell.col())? != raw_witness[0] {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood packed frontend raw matrix cell mismatch",
+        ));
+    }
 
     let witness = parse_direct_raw_witness(raw_witness)?;
     witness.validate()?;
@@ -258,6 +578,12 @@ fn test_direct_packed_frontend_witness(
     if poseidon_flat != expected_poseidon.as_slice() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood packed frontend poseidon subtrace mismatch",
+        ));
+    }
+    let poseidon_cell = direct_packed_poseidon_cell(0, 0, 0);
+    if matrix.cell(poseidon_cell.row(), poseidon_cell.col())? != expected_poseidon[0] {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood packed frontend poseidon matrix cell mismatch",
         ));
     }
 
